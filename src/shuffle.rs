@@ -1,4 +1,4 @@
-use ::c2rust_bitfields;
+
 use libc::{free, sprintf, strcasecmp, strcpy};
 use crate::file::{Dep, File};
 extern "C" {

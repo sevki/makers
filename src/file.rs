@@ -1,6 +1,6 @@
 use libc::{__errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink};
 use ::c2rust_bitfields;
-use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::stdio::{FILE};
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;

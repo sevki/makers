@@ -1,5 +1,5 @@
 use libc::{__errno_location, close, dup, fcntl, free, open, perror, pipe, printf, sprintf, sscanf, strcmp, strerror, unlink};
-use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::stdio::{FILE};
 extern "C" {
     fn pselect(
         __nfds: ::core::ffi::c_int,

@@ -1,5 +1,5 @@
 use libc::{fnmatch, free, strchr};
-use ::c2rust_bitfields;
+
 use crate::file::{Dep, File};
 extern "C" {
     pub type variable_set_list;

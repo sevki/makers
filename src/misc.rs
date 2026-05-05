@@ -1,6 +1,6 @@
 use libc::{__errno_location, free, getenv, mkstemp, putchar, sleep, sprintf, stpcpy, strchr, strcmp, strcpy, strdup, strerror, strtoul, unlink};
-use ::c2rust_bitfields;
-use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+
+use crate::stdio::{FILE};
 use crate::file::{Dep, File};
 extern "C" {
     pub type variable_set_list;

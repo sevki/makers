@@ -1,5 +1,5 @@
 use libc::{free};
-use ::c2rust_bitfields;
+
 use crate::file::{Dep, File, VariableSet, VariableSetList};
 extern "C" {
     pub type commands;
