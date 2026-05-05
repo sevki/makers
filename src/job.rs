@@ -1,10 +1,8 @@
 use libc::{__errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy, strchr, strcmp, strerror, strsignal};
 use ::c2rust_bitfields;
+use crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 extern "C" {
-    pub type _IO_wide_data;
-    pub type _IO_codecvt;
-    pub type _IO_marker;
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
@@ -299,41 +297,6 @@ pub const _CS_GNU_LIBPTHREAD_VERSION: C2RustUnnamed = 3;
 pub const _CS_GNU_LIBC_VERSION: C2RustUnnamed = 2;
 pub const _CS_V6_WIDTH_RESTRICTED_ENVS: C2RustUnnamed = 1;
 pub const _CS_PATH: C2RustUnnamed = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct _IO_FILE {
-    pub _flags: ::core::ffi::c_int,
-    pub _IO_read_ptr: *mut ::core::ffi::c_char,
-    pub _IO_read_end: *mut ::core::ffi::c_char,
-    pub _IO_read_base: *mut ::core::ffi::c_char,
-    pub _IO_write_base: *mut ::core::ffi::c_char,
-    pub _IO_write_ptr: *mut ::core::ffi::c_char,
-    pub _IO_write_end: *mut ::core::ffi::c_char,
-    pub _IO_buf_base: *mut ::core::ffi::c_char,
-    pub _IO_buf_end: *mut ::core::ffi::c_char,
-    pub _IO_save_base: *mut ::core::ffi::c_char,
-    pub _IO_backup_base: *mut ::core::ffi::c_char,
-    pub _IO_save_end: *mut ::core::ffi::c_char,
-    pub _markers: *mut _IO_marker,
-    pub _chain: *mut _IO_FILE,
-    pub _fileno: ::core::ffi::c_int,
-    pub _flags2: ::core::ffi::c_int,
-    pub _old_offset: __off_t,
-    pub _cur_column: ::core::ffi::c_ushort,
-    pub _vtable_offset: ::core::ffi::c_schar,
-    pub _shortbuf: [::core::ffi::c_char; 1],
-    pub _lock: *mut ::core::ffi::c_void,
-    pub _offset: __off64_t,
-    pub _codecvt: *mut _IO_codecvt,
-    pub _wide_data: *mut _IO_wide_data,
-    pub _freeres_list: *mut _IO_FILE,
-    pub _freeres_buf: *mut ::core::ffi::c_void,
-    pub __pad5: size_t,
-    pub _mode: ::core::ffi::c_int,
-    pub _unused2: [::core::ffi::c_char; 20],
-}
-pub type _IO_lock_t = ();
-pub type FILE = _IO_FILE;
 pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
