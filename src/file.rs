@@ -156,12 +156,7 @@ pub struct timeval {
     pub tv_sec: __time_t,
     pub tv_usec: __suseconds_t,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct timespec {
-    pub tv_sec: __time_t,
-    pub tv_nsec: __syscall_slong_t,
-}
+pub use crate::sys_stat::timespec;
 pub type C2RustUnnamed = ::core::ffi::c_uint;
 pub const _ISalnum: C2RustUnnamed = 8;
 pub const _ISpunct: C2RustUnnamed = 4;
@@ -373,7 +368,7 @@ pub struct nameseq {
     pub next: *mut nameseq,
     pub name: *const ::core::ffi::c_char,
 }
-pub type hash_map_func_t = Option<unsafe extern "C" fn(*const ::core::ffi::c_void) -> ()>;
+pub type hash_map_func_t = crate::hash::hash_map_func_t;
 pub type qsort_cmp_t = Option<
     unsafe extern "C" fn(
         *const ::core::ffi::c_void,

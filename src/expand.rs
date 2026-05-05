@@ -86,9 +86,9 @@ pub const us_none: update_status = 1;
 pub const us_success: update_status = 0;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::file::hash_table;
-pub type hash_cmp_func_t = crate::file::hash_cmp_func_t;
-pub type hash_func_t = crate::file::hash_func_t;
+pub type hash_table = crate::hash::hash_table;
+pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
+pub type hash_func_t = crate::hash::hash_func_t;
 pub type commands = Commands;
 use crate::floc::Floc;
 

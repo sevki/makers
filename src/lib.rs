@@ -42,6 +42,7 @@ pub mod rule;
 pub mod shuffle;
 pub mod signame;
 pub mod strcache;
+pub mod sys_stat;
 pub mod variable;
 pub mod version;
 pub mod vpath;

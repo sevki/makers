@@ -198,31 +198,8 @@ pub type __blkcnt_t = ::core::ffi::c_long;
 pub type __syscall_slong_t = ::core::ffi::c_long;
 pub type pid_t = __pid_t;
 pub type ssize_t = isize;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct timespec {
-    pub tv_sec: __time_t,
-    pub tv_nsec: __syscall_slong_t,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct stat {
-    pub st_dev: __dev_t,
-    pub st_ino: __ino_t,
-    pub st_nlink: __nlink_t,
-    pub st_mode: __mode_t,
-    pub st_uid: __uid_t,
-    pub st_gid: __gid_t,
-    pub __pad0: ::core::ffi::c_int,
-    pub st_rdev: __dev_t,
-    pub st_size: __off_t,
-    pub st_blksize: __blksize_t,
-    pub st_blocks: __blkcnt_t,
-    pub st_atim: timespec,
-    pub st_mtim: timespec,
-    pub st_ctim: timespec,
-    pub __glibc_reserved: [__syscall_slong_t; 3],
-}
+pub use crate::sys_stat::timespec;
+pub use crate::sys_stat::stat;
 pub type __compar_fn_t = Option<
     unsafe extern "C" fn(
         *const ::core::ffi::c_void,
@@ -244,9 +221,9 @@ pub const us_none: update_status_0 = 1;
 pub const us_success: update_status_0 = 0;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::file::hash_table;
-pub type hash_cmp_func_t = crate::file::hash_cmp_func_t;
-pub type hash_func_t = crate::file::hash_func_t;
+pub type hash_table = crate::hash::hash_table;
+pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
+pub type hash_func_t = crate::hash::hash_func_t;
 pub type dep = Dep;
 pub type commands = Commands;
 use crate::floc::Floc;
