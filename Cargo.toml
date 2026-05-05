@@ -1,0 +1,21 @@
+[workspace]
+members = [
+]
+[package]
+name = "make-sys"
+authors = ["C2Rust"]
+version = "0.0.0"
+publish = false
+edition = "2021"
+autobins = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+path = "bin/make.rs"
+name = "make"
+
+[dependencies]
+c2rust-bitfields = "0.22.1"
+libc = "0.2"
