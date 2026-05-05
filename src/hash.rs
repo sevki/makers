@@ -1,6 +1,6 @@
 use libc::{exit, free};
 use ::c2rust_bitfields;
-use crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
 extern "C" {
     static mut stderr: *mut FILE;
     fn fprintf(

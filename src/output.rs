@@ -1,6 +1,6 @@
 use libc::{__errno_location, close, exit, perror, sprintf, strcat, strerror};
 use ::c2rust_bitfields;
-use crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
 extern "C" {
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)

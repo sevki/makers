@@ -19,7 +19,7 @@ pub mod commands;
 pub mod default;
 pub mod dir;
 pub mod expand;
-pub mod ffi_types;
+pub mod stdio;
 pub mod file;
 pub mod floc;
 pub mod function;

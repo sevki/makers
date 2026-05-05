@@ -2,7 +2,7 @@ use ::c2rust_bitfields;
 use ::libc;
 use crate::default::{define_default_variables, install_default_implicit_rules, install_default_suffix_rules, set_default_suffixes, undefine_default_variables};
 use crate::dir::{hash_init_directories, print_dir_data_base};
-use crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::floc::Floc;
 use crate::load::unload_all;

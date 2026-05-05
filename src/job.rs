@@ -1,6 +1,6 @@
 use libc::{__errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy, strchr, strcmp, strerror, strsignal};
 use ::c2rust_bitfields;
-use crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 extern "C" {
     pub type __spawn_action;

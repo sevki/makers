@@ -1,6 +1,6 @@
 use libc::{__errno_location, exit, printf, puts, strchr, strcmp, strstr, unlink};
 use ::c2rust_bitfields;
-use crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::stdio::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
