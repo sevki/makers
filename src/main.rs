@@ -1,8 +1,13 @@
 use ::c2rust_bitfields;
 use ::libc;
-use crate::default::{define_default_variables, install_default_suffix_rules, undefine_default_variables};
+use crate::default::{define_default_variables, install_default_implicit_rules, install_default_suffix_rules, set_default_suffixes, undefine_default_variables};
 use crate::dir::{hash_init_directories, print_dir_data_base};
-use crate::strcache::strcache_init;
+use crate::misc::spin;
+use crate::read::construct_include_path;
+use crate::remote_stub::{remote_cleanup, remote_setup};
+use crate::strcache::{strcache_init, strcache_print_stats};
+use crate::variable::print_variable_data_base;
+use crate::vpath::{build_vpath_lists, print_vpath_data_base};
 use libc::{__errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv, setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink};
 extern "C" {
     pub type _IO_wide_data;
@@ -90,11 +95,6 @@ extern "C" {
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn get_tmpdir() -> *const ::core::ffi::c_char;
     fn get_tmpfile(_: *mut *mut ::core::ffi::c_char) -> *mut FILE;
-    fn set_default_suffixes();
-    fn install_default_implicit_rules();
-    fn build_vpath_lists();
-    fn construct_include_path(arg_dirs: *mut *const ::core::ffi::c_char);
-    fn strcache_print_stats(prefix: *const ::core::ffi::c_char);
     fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     fn guile_gmake_setup(flocp: *const floc) -> ::core::ffi::c_int;
     fn load_file(
@@ -103,11 +103,6 @@ extern "C" {
         noerror: ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
     fn unload_all();
-    fn spin(suffix: *const ::core::ffi::c_char);
-    fn remote_setup();
-    fn remote_cleanup();
-    fn print_variable_data_base();
-    fn print_vpath_data_base();
     static mut remote_description: *mut ::core::ffi::c_char;
     static mut make_host: *mut ::core::ffi::c_char;
     static mut version_string: *mut ::core::ffi::c_char;
