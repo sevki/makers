@@ -21,6 +21,7 @@ pub mod dir;
 pub mod expand;
 pub mod ffi_types;
 pub mod file;
+pub mod floc_types;
 pub mod function;
 pub mod getopt;
 pub mod getopt1;

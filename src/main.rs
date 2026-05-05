@@ -3,6 +3,7 @@ use ::libc;
 use crate::default::{define_default_variables, install_default_implicit_rules, install_default_suffix_rules, set_default_suffixes, undefine_default_variables};
 use crate::dir::{hash_init_directories, print_dir_data_base};
 use crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE};
+use crate::floc_types::floc;
 use crate::load::unload_all;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
 use crate::read::construct_include_path;
@@ -502,13 +503,6 @@ pub struct commands {
     pub any_recurse: [u8; 1],
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
 }
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
