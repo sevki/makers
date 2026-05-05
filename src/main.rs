@@ -2,7 +2,8 @@ use ::c2rust_bitfields;
 use ::libc;
 use crate::default::{define_default_variables, install_default_implicit_rules, install_default_suffix_rules, set_default_suffixes, undefine_default_variables};
 use crate::dir::{hash_init_directories, print_dir_data_base};
-use crate::misc::spin;
+use crate::load::unload_all;
+use crate::misc::{get_tmpdir, spin};
 use crate::read::construct_include_path;
 use crate::remote_stub::{remote_cleanup, remote_setup};
 use crate::strcache::{strcache_init, strcache_print_stats};
@@ -93,7 +94,6 @@ extern "C" {
     fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn get_tmpdir() -> *const ::core::ffi::c_char;
     fn get_tmpfile(_: *mut *mut ::core::ffi::c_char) -> *mut FILE;
     fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     fn guile_gmake_setup(flocp: *const floc) -> ::core::ffi::c_int;
@@ -102,7 +102,6 @@ extern "C" {
         file: *mut file,
         noerror: ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
-    fn unload_all();
     static mut remote_description: *mut ::core::ffi::c_char;
     static mut make_host: *mut ::core::ffi::c_char;
     static mut version_string: *mut ::core::ffi::c_char;
