@@ -11,8 +11,8 @@ extern "C" {
     );
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
     fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
@@ -145,13 +145,8 @@ pub struct dep {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 6],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub type ar_member_func_t = Option<
     unsafe extern "C" fn(
         ::core::ffi::c_int,
@@ -203,7 +198,7 @@ pub unsafe extern "C" fn ar_name(mut name: *const ::core::ffi::c_char) -> ::core
         && *end.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == ')' as i32
     {
         fatal(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             strlen(name) as size_t,
             b"attempt to use unsupported feature: '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
@@ -223,7 +218,7 @@ pub unsafe extern "C" fn ar_parse_name(
     p = strchr(*arname_p, '(' as i32);
     if p.is_null() {
         fatal(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             strlen(*arname_p) as size_t,
             b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
             *arname_p,
@@ -321,7 +316,7 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
     match ar_member_touch(arname, memname) {
         -1 => {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(arname) as size_t,
                 b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
                 arname,
@@ -329,7 +324,7 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
         }
         -2 => {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(arname) as size_t,
                 b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
                 arname,
@@ -343,7 +338,7 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
         }
         1 => {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(memname) as size_t).wrapping_add(strlen(arname) as size_t),
                 b"touch: member '%s' does not exist in '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -356,7 +351,7 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
         }
         _ => {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(name) as size_t,
                 b"touch: bad return code from ar_member_touch on '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,

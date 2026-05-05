@@ -25,10 +25,10 @@ extern "C" {
         origin: variable_origin,
         recursive: ::core::ffi::c_int,
         set: *mut variable_set,
-        flocp: *const floc,
+        flocp: *const Floc,
     ) -> *mut variable;
     fn undefine_variable_in_set(
-        flocp: *const floc,
+        flocp: *const Floc,
         name: *const ::core::ffi::c_char,
         length: size_t,
         origin: variable_origin,
@@ -173,7 +173,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -184,13 +184,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -204,7 +199,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -248,7 +243,7 @@ pub const SCCS_GET: [::core::ffi::c_char; 4] =
     unsafe { ::core::mem::transmute::<[u8; 4], [::core::ffi::c_char; 4]>(*b"get\0") };
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
-pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
+pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const GNUMAKEFLAGS_NAME: [::core::ffi::c_char; 13] =
     unsafe { ::core::mem::transmute::<[u8; 13], [::core::ffi::c_char; 13]>(*b"GNUMAKEFLAGS\0") };
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
@@ -681,7 +676,7 @@ pub unsafe fn undefine_default_variables() {
     s = &raw const default_variables as *const *const ::core::ffi::c_char;
     while !(*s).is_null() {
         undefine_variable_in_set(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             *s.offset(0 as ::core::ffi::c_int as isize),
             strlen(*s.offset(0 as ::core::ffi::c_int as isize)) as size_t,
             o_default,

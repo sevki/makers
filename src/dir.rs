@@ -21,7 +21,7 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
@@ -164,13 +164,8 @@ pub struct dirent {
     pub d_type: ::core::ffi::c_uchar,
     pub d_name: [::core::ffi::c_char; 256],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct directory {
@@ -608,7 +603,7 @@ unsafe extern "C" fn dir_contents_file_exists_p(
         if d.is_null() {
             if *__errno_location() != 0 {
                 fatal(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     (strlen((*dir).name) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                     b"readdir %s: %s\0" as *const u8 as *const ::core::ffi::c_char,

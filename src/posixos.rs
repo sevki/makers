@@ -31,8 +31,8 @@ extern "C" {
         __n: size_t,
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
     fn make_pid() -> pid_t;
@@ -135,13 +135,8 @@ pub struct _IO_FILE {
 pub type _IO_lock_t = ();
 pub type FILE = _IO_FILE;
 pub type uintmax_t = ::libc::uintmax_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct flock {
@@ -324,7 +319,7 @@ pub unsafe extern "C" fn jobserver_setup(
             }
             if job_fds[0 as usize] < 0 {
                 fatal(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     (strlen(fifo_name) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                     b"cannot open jobserver %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -343,7 +338,7 @@ pub unsafe extern "C" fn jobserver_setup(
             }
             if job_fds[0 as usize] < 0 {
                 fatal(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     (strlen(fifo_name) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                     b"cannot open jobserver %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -360,7 +355,7 @@ pub unsafe extern "C" fn jobserver_setup(
                 != 0
         {
             fatal(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(style) as size_t,
                 b"unknown jobserver auth style '%s'\0" as *const u8 as *const ::core::ffi::c_char,
                 style,
@@ -405,7 +400,7 @@ pub unsafe extern "C" fn jobserver_setup(
                 );
             }
             fatal(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH.wrapping_mul(2),
                 b"requested job count (%d) is larger than system limit (%d)\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -451,7 +446,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
         }
         if job_fds[0 as usize] < 0 {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(fifo_name) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                 b"cannot open jobserver %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -470,7 +465,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
         }
         if job_fds[1 as usize] < 0 {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(fifo_name) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                 b"cannot open jobserver %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -500,7 +495,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
         js_type = js_pipe;
     } else {
         error(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             strlen(auth) as size_t,
             b"invalid --jobserver-auth string '%s'\0" as *const u8 as *const ::core::ffi::c_char,
             auth,
@@ -735,7 +730,7 @@ pub unsafe extern "C" fn jobserver_acquire(mut timeout: ::core::ffi::c_int) -> :
                 EINTR => return 0,
                 EBADF => {
                     fatal(
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                         0,
                         b"job server shut down\0" as *const u8 as *const ::core::ffi::c_char,
                     );
@@ -817,7 +812,7 @@ pub unsafe extern "C" fn osync_parse_mutex(
     ) != 0
     {
         error(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             strlen(mutex) as size_t,
             b"invalid --sync-mutex string '%s'\0" as *const u8 as *const ::core::ffi::c_char,
             mutex,
@@ -837,7 +832,7 @@ pub unsafe extern "C" fn osync_parse_mutex(
     }
     if osync_handle < 0 {
         fatal(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             (strlen(osync_tmpfile) as size_t)
                 .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
             b"cannot open output sync mutex %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1050,7 +1045,7 @@ pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
         }
         if tfile.is_null() {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(strerror(*__errno_location())) as size_t,
                 b"tmpfile: %s\0" as *const u8 as *const ::core::ffi::c_char,
                 strerror(*__errno_location()),
@@ -1066,7 +1061,7 @@ pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
         }
         if fd < 0 {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(strerror(*__errno_location())) as size_t,
                 b"dup: %s\0" as *const u8 as *const ::core::ffi::c_char,
                 strerror(*__errno_location()),

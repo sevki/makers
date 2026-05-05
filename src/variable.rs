@@ -29,8 +29,8 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn format(
         prefix: *const ::core::ffi::c_char,
         length: size_t,
@@ -45,8 +45,8 @@ extern "C" {
     fn xstrndup(_: *const ::core::ffi::c_char, _: size_t) -> *mut ::core::ffi::c_char;
     fn next_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn skip_reference(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    static mut reading_file: *const floc;
-    static mut expanding_var: *mut *const floc;
+    static mut reading_file: *const Floc;
+    static mut expanding_var: *mut *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut env_overrides: ::core::ffi::c_int;
     static mut export_all_variables: ::core::ffi::c_int;
@@ -114,7 +114,7 @@ extern "C" {
     ) -> !;
     fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
     static mut warnings: [warning_action; 4];
-    fn decode_warn_actions(value: *const ::core::ffi::c_char, flocp: *const floc);
+    fn decode_warn_actions(value: *const ::core::ffi::c_char, flocp: *const Floc);
 }
 pub type size_t = usize;
 pub type __off_t = ::core::ffi::c_long;
@@ -291,7 +291,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -302,13 +302,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -322,7 +317,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -387,7 +382,7 @@ pub type warning_type = ::core::ffi::c_uint;
 pub const wt_max: warning_type = 4;
 pub const wt_circular_dep: warning_type = 0;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
+pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
     unsafe { ::core::mem::transmute::<[u8; 10], [::core::ffi::c_char; 10]>(*b"MAKELEVEL\0") };
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
@@ -552,7 +547,7 @@ static mut global_setlist: variable_set_list = unsafe {
 pub static mut current_variable_set_list: *mut variable_set_list =
     unsafe { &raw const global_setlist as *mut variable_set_list };
 unsafe extern "C" fn check_valid_name(
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut name: *const ::core::ffi::c_char,
     mut length: size_t,
 ) {
@@ -641,14 +636,14 @@ pub unsafe extern "C" fn define_variable_in_set(
     mut origin: variable_origin,
     mut recursive: ::core::ffi::c_int,
     mut set: *mut variable_set,
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
 ) -> *mut variable {
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
     let mut var_slot: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-        fileinfo: floc {
+        fileinfo: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
@@ -758,7 +753,7 @@ pub unsafe extern "C" fn free_variable_set(mut list: *mut variable_set_list) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn undefine_variable_in_set(
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut name: *const ::core::ffi::c_char,
     mut length: size_t,
     mut origin: variable_origin,
@@ -769,7 +764,7 @@ pub unsafe extern "C" fn undefine_variable_in_set(
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-        fileinfo: floc {
+        fileinfo: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
@@ -941,7 +936,7 @@ pub unsafe extern "C" fn lookup_variable(
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-        fileinfo: floc {
+        fileinfo: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
@@ -984,9 +979,9 @@ pub unsafe extern "C" fn lookup_variable_for_file(
     if file.is_null() {
         return lookup_variable(name, length);
     }
-    install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const floc>());
+    install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
     var = lookup_variable(name, length);
-    restore_file_context(savev, ::core::ptr::null::<floc>());
+    restore_file_context(savev, ::core::ptr::null::<Floc>());
     var
 }
 #[no_mangle]
@@ -998,7 +993,7 @@ pub unsafe extern "C" fn lookup_variable_in_set(
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-        fileinfo: floc {
+        fileinfo: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
@@ -1198,7 +1193,7 @@ pub unsafe extern "C" fn pop_variable_scope() {
 pub unsafe extern "C" fn install_file_context(
     mut file: *mut file,
     mut oldlist: *mut *mut variable_set_list,
-    mut oldfloc: *mut *const floc,
+    mut oldfloc: *mut *const Floc,
 ) {
     *oldlist = current_variable_set_list;
     current_variable_set_list = (*file).variables;
@@ -1207,14 +1202,14 @@ pub unsafe extern "C" fn install_file_context(
         if !(*file).cmds.is_null() && !(*(*file).cmds).fileinfo.filenm.is_null() {
             reading_file = &raw mut (*(*file).cmds).fileinfo;
         } else {
-            reading_file = ::core::ptr::null::<floc>();
+            reading_file = ::core::ptr::null::<Floc>();
         }
     }
 }
 #[no_mangle]
 pub unsafe extern "C" fn restore_file_context(
     mut oldlist: *mut variable_set_list,
-    mut oldfloc: *const floc,
+    mut oldfloc: *const Floc,
 ) {
     current_variable_set_list = oldlist;
     if !oldfloc.is_null() {
@@ -1899,7 +1894,7 @@ pub unsafe extern "C" fn shell_result(mut p: *const ::core::ffi::c_char) -> *mut
 }
 #[no_mangle]
 pub unsafe extern "C" fn do_variable_definition(
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut varname: *const ::core::ffi::c_char,
     mut value: *const ::core::ffi::c_char,
     mut origin: variable_origin,
@@ -2091,7 +2086,7 @@ pub unsafe extern "C" fn do_variable_definition(
                         b"newval\0" as *const u8 as *const ::core::ffi::c_char,
                         b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
                         1545 as ::core::ffi::c_uint,
-                        b"struct variable *do_variable_definition(const floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
+                        b"struct variable *do_variable_definition(const Floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
                             as *const u8 as *const ::core::ffi::c_char,
                     );
                 }
@@ -2301,7 +2296,7 @@ pub unsafe extern "C" fn assign_variable_definition(
 }
 #[no_mangle]
 pub unsafe extern "C" fn try_variable_definition(
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut line: *const ::core::ffi::c_char,
     mut origin: variable_origin,
     mut scope: variable_scope,
@@ -2309,7 +2304,7 @@ pub unsafe extern "C" fn try_variable_definition(
     let mut v: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-        fileinfo: floc {
+        fileinfo: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,

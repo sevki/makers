@@ -4,7 +4,7 @@ extern "C" {
     pub type variable_set_list;
     pub type commands;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn make_toui(
         _: *const ::core::ffi::c_char,
         _: *mut *const ::core::ffi::c_char,
@@ -109,13 +109,8 @@ pub struct dep {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 6],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct C2RustUnnamed {

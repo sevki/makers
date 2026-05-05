@@ -29,8 +29,8 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
@@ -365,7 +365,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -376,13 +376,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -396,7 +391,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -799,7 +794,7 @@ pub unsafe extern "C" fn rehash_file(
         && (*from_file).double_colon.is_null()
     {
         fatal(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             (strlen((*from_file).name) as size_t).wrapping_add(strlen(to_hname) as size_t),
             b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
@@ -810,7 +805,7 @@ pub unsafe extern "C" fn rehash_file(
     if (*to_file).double_colon.is_null() && !(*from_file).double_colon.is_null() {
         if (*to_file).is_target() != 0 {
             fatal(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen((*from_file).name) as size_t).wrapping_add(strlen(to_hname) as size_t),
                 b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -946,7 +941,7 @@ pub unsafe extern "C" fn remove_intermediates(mut sig: ::core::ffi::c_int) {
                             if (*f).dontcare() == 0 {
                                 if sig != 0 {
                                     error(
-                                        ::core::ptr::null_mut::<floc>(),
+                                        ::core::ptr::null_mut::<Floc>(),
                                         strlen((*f).name) as size_t,
                                         b"*** deleting intermediate file '%s'\0" as *const u8
                                             as *const ::core::ffi::c_char,
@@ -1413,7 +1408,7 @@ pub unsafe extern "C" fn snap_deps() {
             while !f2.is_null() {
                 if (*f2).notintermediate() != 0 {
                     fatal(
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                         strlen((*f2).name) as size_t,
                         b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -1437,7 +1432,7 @@ pub unsafe extern "C" fn snap_deps() {
                 while !f2.is_null() {
                     if (*f2).notintermediate() != 0 {
                         fatal(
-                            ::core::ptr::null_mut::<floc>(),
+                            ::core::ptr::null_mut::<Floc>(),
                             strlen((*f2).name) as size_t,
                             b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
                                 as *const ::core::ffi::c_char,
@@ -1461,7 +1456,7 @@ pub unsafe extern "C" fn snap_deps() {
     }
     if no_intermediates != 0 && all_secondary != 0 {
         fatal(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             0,
             b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
                 as *const ::core::ffi::c_char,
@@ -1690,7 +1685,7 @@ pub unsafe extern "C" fn file_timestamp_cons(
         };
         file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, ts);
         error(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             (strlen(f) as size_t)
                 .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
             b"%s: timestamp out of range: substituting %s\0" as *const u8
@@ -2108,7 +2103,7 @@ pub unsafe extern "C" fn verify_file(mut item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).name) == 0
     {
         error(
-            ::core::ptr::null::<floc>(),
+            ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
                     (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
@@ -2126,7 +2121,7 @@ pub unsafe extern "C" fn verify_file(mut item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).hname) == 0
     {
         error(
-            ::core::ptr::null::<floc>(),
+            ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
                     (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
@@ -2144,7 +2139,7 @@ pub unsafe extern "C" fn verify_file(mut item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).vpath) == 0
     {
         error(
-            ::core::ptr::null::<floc>(),
+            ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
                     (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
@@ -2162,7 +2157,7 @@ pub unsafe extern "C" fn verify_file(mut item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).stem) == 0
     {
         error(
-            ::core::ptr::null::<floc>(),
+            ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
                     (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
@@ -2183,7 +2178,7 @@ pub unsafe extern "C" fn verify_file(mut item: *const ::core::ffi::c_void) {
                 && strcache_iscached((*d).name) == 0
             {
                 error(
-                    ::core::ptr::null::<floc>(),
+                    ::core::ptr::null::<Floc>(),
                     (strlen((*d).name) as size_t)
                         .wrapping_add(
                             (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
@@ -2202,7 +2197,7 @@ pub unsafe extern "C" fn verify_file(mut item: *const ::core::ffi::c_void) {
             && strcache_iscached((*d).stem) == 0
         {
             error(
-                ::core::ptr::null::<floc>(),
+                ::core::ptr::null::<Floc>(),
                 (strlen((*d).name) as size_t)
                     .wrapping_add(
                         (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)

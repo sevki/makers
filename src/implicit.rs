@@ -105,7 +105,7 @@ extern "C" {
         origin: variable_origin,
         recursive: ::core::ffi::c_int,
         set: *mut variable_set,
-        flocp: *const floc,
+        flocp: *const Floc,
     ) -> *mut variable;
 }
 pub type size_t = usize;
@@ -289,7 +289,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -300,13 +300,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -320,7 +315,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -401,7 +396,7 @@ pub struct tryrule {
 pub const PATH_MAX: ::core::ffi::c_int = 4096 as ::core::ffi::c_int;
 pub const GET_PATH_MAX: ::core::ffi::c_int = PATH_MAX;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
+pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const __ASSERT_FUNCTION: [::core::ffi::c_char; 72] = unsafe {
     ::core::mem::transmute::<[u8; 72], [::core::ffi::c_char; 72]>(
         *b"int pattern_search(struct file *, int, unsigned int, unsigned int, int)\0",

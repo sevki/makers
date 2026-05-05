@@ -4,8 +4,8 @@ extern "C" {
     pub type commands;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    static mut reading_file: *const floc;
-    fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const floc);
+    static mut reading_file: *const Floc;
+    fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
     fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);
     fn restore_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t);
     fn allocated_expand_string_for_file(
@@ -13,7 +13,7 @@ extern "C" {
         file: *mut file,
     ) -> *mut ::core::ffi::c_char;
     fn define_new_function(
-        flocp: *const floc,
+        flocp: *const Floc,
         name: *const ::core::ffi::c_char,
         min: ::core::ffi::c_uint,
         max: ::core::ffi::c_uint,
@@ -35,13 +35,8 @@ pub type gmk_func_ptr = Option<
         *mut *mut ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char,
 >;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct file {
@@ -193,19 +188,19 @@ pub unsafe extern "C" fn gmk_eval(
     let mut pbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut plen: size_t = 0;
     let mut s: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut fl: floc = floc {
+    let mut fl: Floc = Floc {
         filenm: ::core::ptr::null::<::core::ffi::c_char>(),
         lineno: 0,
         offset: 0,
     };
-    let mut flp: *mut floc = ::core::ptr::null_mut::<floc>();
+    let mut flp: *mut Floc = ::core::ptr::null_mut::<Floc>();
     if !gfloc.is_null() {
         fl.filenm = (*gfloc).filenm;
         fl.lineno = (*gfloc).lineno;
         fl.offset = 0;
         flp = &raw mut fl;
     } else {
-        flp = ::core::ptr::null_mut::<floc>();
+        flp = ::core::ptr::null_mut::<Floc>();
     }
     install_variable_buffer(&raw mut pbuf, &raw mut plen);
     s = xstrdup(buffer);

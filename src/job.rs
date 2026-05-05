@@ -48,8 +48,8 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn message(prefix: ::core::ffi::c_int, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn die(_: ::core::ffi::c_int) -> !;
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
@@ -470,7 +470,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -481,13 +481,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -501,7 +496,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -620,7 +615,7 @@ pub const ENOEXEC: ::core::ffi::c_int = 8;
 pub const EACCES: ::core::ffi::c_int = 13;
 pub const WNOHANG: ::core::ffi::c_int = 1;
 pub const __WCOREFLAG: ::core::ffi::c_int = 0x80 as ::core::ffi::c_int;
-pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
+pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const INTSTR_LENGTH: usize = (53 as usize)
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
     .wrapping_div(22 as usize)
@@ -736,7 +731,7 @@ unsafe extern "C" fn child_error(
     let mut post: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut f: *const file = (*child).file;
-    let mut flocp: *const floc = &raw mut (*(*f).cmds).fileinfo;
+    let mut flocp: *const Floc = &raw mut (*(*f).cmds).fileinfo;
     let mut nm: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut l: size_t = 0;
@@ -866,7 +861,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, mut err: :
             fflush(stdout);
             if printed == 0 {
                 error(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"*** Waiting for unfinished jobs....\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -1080,7 +1075,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, mut err: :
             }
             if !e.is_null() {
                 error(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     (strlen((*c).cmd_name) as size_t).wrapping_add(strlen(e) as size_t),
                     b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                     (*c).cmd_name,
@@ -1242,7 +1237,7 @@ pub unsafe extern "C" fn free_child(mut child: *mut child) {
     output_close(&raw mut (*child).output);
     if jobserver_tokens == 0 {
         fatal(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             INTSTR_LENGTH.wrapping_add(strlen((*(*child).file).name) as size_t),
             b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
                 as *const ::core::ffi::c_char,
@@ -1793,7 +1788,7 @@ pub unsafe extern "C" fn new_job(mut file: *mut file) {
             }
             if children.is_null() {
                 fatal(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"INTERNAL: no children as we go to sleep on read\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -2108,7 +2103,7 @@ pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
         if lossage == -(1 as ::core::ffi::c_int) || *__errno_location() != lossage {
             if *__errno_location() == 0 {
                 error(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"cannot enforce load limits on this operating system\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -2445,7 +2440,7 @@ pub unsafe extern "C" fn child_execute_job(
     }
     if pid < 0 {
         error(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t).wrapping_add(strlen(strerror(r)) as size_t),
             b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
             *argv.offset(0 as ::core::ffi::c_int as isize),
@@ -2467,7 +2462,7 @@ pub unsafe extern "C" fn exec_command(
     match *__errno_location() {
         ENOENT => {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                 b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2508,7 +2503,7 @@ pub unsafe extern "C" fn exec_command(
             }
             execvp(shell, new_argv as *const *mut ::core::ffi::c_char);
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(*new_argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                 b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2518,7 +2513,7 @@ pub unsafe extern "C" fn exec_command(
         }
         _ => {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                 b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,

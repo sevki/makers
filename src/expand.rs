@@ -24,7 +24,7 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
@@ -35,7 +35,7 @@ extern "C" {
         _: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_char;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    static mut reading_file: *const floc;
+    static mut reading_file: *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     fn __assert_fail(
         __assertion: *const ::core::ffi::c_char,
@@ -61,9 +61,9 @@ extern "C" {
     fn install_file_context(
         file: *mut file,
         oldlist: *mut *mut variable_set_list,
-        oldfloc: *mut *const floc,
+        oldfloc: *mut *const Floc,
     );
-    fn restore_file_context(oldlist: *mut variable_set_list, oldfloc: *const floc);
+    fn restore_file_context(oldlist: *mut variable_set_list, oldfloc: *const Floc);
     fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
     fn lookup_variable_in_set(
         name: *const ::core::ffi::c_char,
@@ -217,7 +217,7 @@ pub type hash_func_t =
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -228,13 +228,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -248,7 +243,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -282,8 +277,8 @@ pub const f_bogus: variable_flavor = 0;
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 #[no_mangle]
-pub static mut expanding_var: *mut *const floc =
-    unsafe { &raw const reading_file as *mut *const floc };
+pub static mut expanding_var: *mut *const Floc =
+    unsafe { &raw const reading_file as *mut *const Floc };
 pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5;
 static mut variable_buffer_length: size_t = 0;
 #[no_mangle]
@@ -393,8 +388,8 @@ pub unsafe extern "C" fn recursively_expand_for_file(
     mut file: *mut file,
 ) -> *mut ::core::ffi::c_char {
     let mut value: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut this_var: *const floc = ::core::ptr::null::<floc>();
-    let mut saved_varp: *mut *const floc = ::core::ptr::null_mut::<*const floc>();
+    let mut this_var: *const Floc = ::core::ptr::null::<Floc>();
+    let mut saved_varp: *mut *const Floc = ::core::ptr::null_mut::<*const Floc>();
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut set_reading: ::core::ffi::c_int = 0;
     let mut nl: size_t = strlen((*v).name) as size_t;
@@ -446,7 +441,7 @@ pub unsafe extern "C" fn recursively_expand_for_file(
         (*v).set_exp_count((*v).exp_count() - 1);
     }
     if !file.is_null() {
-        install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const floc>());
+        install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
     }
     (*v).set_expanding(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if (*v).append() != 0 {
@@ -480,10 +475,10 @@ pub unsafe extern "C" fn recursively_expand_for_file(
     }
     (*v).set_expanding(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if set_reading != 0 {
-        reading_file = ::core::ptr::null::<floc>();
+        reading_file = ::core::ptr::null::<Floc>();
     }
     if !file.is_null() {
-        restore_file_context(savev, ::core::ptr::null::<floc>());
+        restore_file_context(savev, ::core::ptr::null::<Floc>());
     }
     expanding_var = saved_varp;
     value
@@ -576,7 +571,7 @@ pub unsafe extern "C" fn allocated_expand_variable_for_file(
 ) -> *mut ::core::ffi::c_char {
     let mut result: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut savef: *const floc = ::core::ptr::null::<floc>();
+    let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
         return allocated_expand_variable(name, length);
     }
@@ -862,7 +857,7 @@ pub unsafe extern "C" fn expand_string_for_file(
 ) -> *mut ::core::ffi::c_char {
     let mut result: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut savef: *const floc = ::core::ptr::null::<floc>();
+    let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
         return expand_string_buf(
             ::core::ptr::null_mut::<::core::ffi::c_char>(),

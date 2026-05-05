@@ -15,8 +15,8 @@ extern "C" {
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     fn variable_buffer_output(
         ptr: *mut ::core::ffi::c_char,
@@ -26,13 +26,8 @@ extern "C" {
 }
 pub type size_t = usize;
 pub type uintmax_t = ::libc::uintmax_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub type warning_type = ::core::ffi::c_uint;
 pub const wt_max: warning_type = 4;
 pub const wt_undefined_var: warning_type = 3;
@@ -171,7 +166,7 @@ unsafe fn decode_warn_name(
 #[no_mangle]
 pub unsafe extern "C" fn decode_warn_actions(
     mut value: *const ::core::ffi::c_char,
-    flocp: *const floc,
+    flocp: *const Floc,
 ) {
     let mut data: *mut warning_data = &raw mut warn_flag;
 

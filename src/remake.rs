@@ -25,8 +25,8 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn message(prefix: ::core::ffi::c_int, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
@@ -310,7 +310,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -321,13 +321,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct goaldep {
@@ -357,7 +352,7 @@ pub struct goaldep {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 2],
     pub error: ::core::ffi::c_int,
-    pub floc: floc,
+    pub floc: Floc,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -387,7 +382,7 @@ pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const PATH_MAX: ::core::ffi::c_int = 4096 as ::core::ffi::c_int;
 pub const GET_PATH_MAX: ::core::ffi::c_int = PATH_MAX;
-pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
+pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const RM_INCLUDED: ::core::ffi::c_int = (1) << 1;
 pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
 #[inline]
@@ -466,7 +461,7 @@ pub unsafe extern "C" fn check_also_make(mut file: *const file) {
                     if !(*file).cmds.is_null() {
                         &raw mut (*(*file).cmds).fileinfo
                     } else {
-                        ::core::ptr::null_mut::<floc>()
+                        ::core::ptr::null_mut::<Floc>()
                     },
                     strlen((*(*ad).file).name) as size_t,
                     b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
@@ -1002,7 +997,7 @@ unsafe extern "C" fn update_file_1(
             as ::core::ffi::c_int;
         if ns != 0 {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen((*file).name) as size_t,
                 b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
                     as *const u8 as *const ::core::ffi::c_char,
@@ -1123,7 +1118,7 @@ unsafe extern "C" fn update_file_1(
                     == w_error as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
                     fatal(
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
                         b"circular %s <- %s dependency detected\0" as *const u8
@@ -1136,7 +1131,7 @@ unsafe extern "C" fn update_file_1(
                     > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
                     error(
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
@@ -1352,7 +1347,7 @@ unsafe extern "C" fn update_file_1(
             && question_flag == 0
         {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen((*file).name) as size_t,
                 b"Target '%s' not remade because of errors.\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -1801,7 +1796,7 @@ unsafe extern "C" fn check_dep(
                     != 0
                 {
                     error(
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
@@ -2251,7 +2246,7 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, mut search: ::core::ffi::c
                     );
                 }
                 error(
-                    ::core::ptr::null_mut::<floc>(),
+                    ::core::ptr::null_mut::<Floc>(),
                     (strlen((*file).name) as size_t).wrapping_add(strlen(
                         &raw mut from_now_string as *mut ::core::ffi::c_char,
                     ) as size_t),
@@ -2462,7 +2457,7 @@ unsafe extern "C" fn library_search(
         p3 = find_percent(p);
         if p3.is_null() {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(p) as size_t,
                 b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
                     as *const ::core::ffi::c_char,

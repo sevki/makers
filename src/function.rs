@@ -53,8 +53,8 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn make_lltoa(
         _: ::core::ffi::c_longlong,
         _: *mut ::core::ffi::c_char,
@@ -75,8 +75,8 @@ extern "C" {
     ) -> ::core::ffi::c_int;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    static mut reading_file: *const floc;
-    static mut expanding_var: *mut *const floc;
+    static mut reading_file: *const Floc;
+    static mut expanding_var: *mut *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut command_count: ::core::ffi::c_ulong;
     static mut starting_directory: *mut ::core::ffi::c_char;
@@ -88,7 +88,7 @@ extern "C" {
         prefix: *const ::core::ffi::c_char,
         flags: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_void;
-    fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const floc);
+    fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
     fn hash_init(
         ht: *mut hash_table,
         size: ::core::ffi::c_ulong,
@@ -167,7 +167,7 @@ extern "C" {
         origin: variable_origin,
         recursive: ::core::ffi::c_int,
         set: *mut variable_set,
-        flocp: *const floc,
+        flocp: *const Floc,
     ) -> *mut variable;
     fn warn_undefined(name: *const ::core::ffi::c_char, length: size_t);
     fn target_environment(
@@ -402,7 +402,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -413,13 +413,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -433,7 +428,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -540,7 +535,7 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const MAP_DOT: ::core::ffi::c_int = 0x200 as ::core::ffi::c_int;
 pub const MAP_DIRSEP: ::core::ffi::c_int = 0x8000 as ::core::ffi::c_int;
-pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
+pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const INTSTR_LENGTH: usize = (53 as usize)
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
     .wrapping_div(22 as usize)
@@ -2269,7 +2264,7 @@ unsafe extern "C" fn func_eval(
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     install_variable_buffer(&raw mut buf, &raw mut len);
-    eval_buffer(*argv.offset(0 as ::core::ffi::c_int as isize), ::core::ptr::null::<floc>(),
+    eval_buffer(*argv.offset(0 as ::core::ffi::c_int as isize), ::core::ptr::null::<Floc>(),
     );
     restore_variable_buffer(buf, len);
     o
@@ -3217,7 +3212,7 @@ unsafe extern "C" fn func_call(
 }
 #[no_mangle]
 pub unsafe extern "C" fn define_new_function(
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut name: *const ::core::ffi::c_char,
     mut min: ::core::ffi::c_uint,
     mut max: ::core::ffi::c_uint,

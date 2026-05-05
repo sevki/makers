@@ -44,7 +44,7 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strndup(__string: *const ::core::ffi::c_char, __n: size_t) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn out_of_memory() -> !;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut posix_pedantic: ::core::ffi::c_int;
@@ -205,13 +205,8 @@ pub struct dep {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 6],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct nameseq {
@@ -839,7 +834,7 @@ pub unsafe fn get_tmpdir() -> *const ::core::ffi::c_char {
                 }
                 if r < 0 {
                     error(
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                         (strlen(*tp) as size_t)
                             .wrapping_add(strlen(tmpdir) as size_t)
                             .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -850,7 +845,7 @@ pub unsafe fn get_tmpdir() -> *const ::core::ffi::c_char {
                     );
                 } else if !(st.st_mode & __S_IFMT as __mode_t == 0o40000 as __mode_t) {
                     error(
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                         (strlen(*tp) as size_t).wrapping_add(strlen(tmpdir) as size_t),
                         b"%s value %s: not a directory\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -866,7 +861,7 @@ pub unsafe fn get_tmpdir() -> *const ::core::ffi::c_char {
         tmpdir = DEFAULT_TMPDIR.as_ptr();
         if found != 0 {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 strlen(tmpdir) as size_t,
                 b"using default temporary directory '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -925,7 +920,7 @@ pub unsafe extern "C" fn get_tmpfd(mut name: *mut *mut ::core::ffi::c_char) -> :
     }
     if fd < 0 {
         error(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             (strlen(tmpnm) as size_t).wrapping_add(strlen(strerror(*__errno_location())) as size_t),
             b"cannot create temporary file %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
             tmpnm,
@@ -946,7 +941,7 @@ pub unsafe extern "C" fn get_tmpfd(mut name: *mut *mut ::core::ffi::c_char) -> :
         }
         if r < 0 {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(tmpnm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                 b"cannot unlink temporary file %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1000,7 +995,7 @@ pub unsafe extern "C" fn get_tmpfile(mut name: *mut *mut ::core::ffi::c_char) ->
     }
     if file.is_null() {
         error(
-            ::core::ptr::null_mut::<floc>(),
+            ::core::ptr::null_mut::<Floc>(),
             (strlen(*name) as size_t).wrapping_add(strlen(strerror(*__errno_location())) as size_t),
             b"fdopen: temporary file %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
             *name,

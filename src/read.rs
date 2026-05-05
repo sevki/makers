@@ -59,8 +59,8 @@ extern "C" {
     ) -> ::core::ffi::c_int;
     fn globfree(__pglob: *mut glob_t);
     fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
-    fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn out_of_memory() -> !;
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
@@ -94,7 +94,7 @@ extern "C" {
     fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
         -> *const ::core::ffi::c_char;
     fn load_file(
-        flocp: *const floc,
+        flocp: *const Floc,
         file: *mut file,
         noerror: ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
@@ -173,7 +173,7 @@ extern "C" {
     ) -> *mut ::core::ffi::c_char;
     fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int);
     fn do_variable_definition(
-        flocp: *const floc,
+        flocp: *const Floc,
         name: *const ::core::ffi::c_char,
         value: *const ::core::ffi::c_char,
         origin: variable_origin,
@@ -190,7 +190,7 @@ extern "C" {
         line: *const ::core::ffi::c_char,
     ) -> *mut variable;
     fn try_variable_definition(
-        flocp: *const floc,
+        flocp: *const Floc,
         line: *const ::core::ffi::c_char,
         origin: variable_origin,
         scope: variable_scope,
@@ -203,10 +203,10 @@ extern "C" {
         origin: variable_origin,
         recursive: ::core::ffi::c_int,
         set: *mut variable_set,
-        flocp: *const floc,
+        flocp: *const Floc,
     ) -> *mut variable;
     fn undefine_variable_in_set(
-        flocp: *const floc,
+        flocp: *const Floc,
         name: *const ::core::ffi::c_char,
         length: size_t,
         origin: variable_origin,
@@ -445,7 +445,7 @@ pub struct dep {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct commands {
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub lines_flags: *mut ::core::ffi::c_uchar,
@@ -456,13 +456,8 @@ pub struct commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -476,7 +471,7 @@ pub const o_default: variable_origin = 0;
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: floc,
+    pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
     #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -563,7 +558,7 @@ pub struct goaldep {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 2],
     pub error: ::core::ffi::c_int,
-    pub floc: floc,
+    pub floc: Floc,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -573,7 +568,7 @@ pub struct ebuffer {
     pub bufstart: *mut ::core::ffi::c_char,
     pub size: size_t,
     pub fp: *mut FILE,
-    pub floc: floc,
+    pub floc: Floc,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -645,7 +640,7 @@ pub const GLOB_ALTDIRFUNC: ::core::ffi::c_int =
     (1) << 9;
 pub const GLOB_NOSPACE: ::core::ffi::c_int = 1;
 pub const GLOB_NOMATCH: ::core::ffi::c_int = 3;
-pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
+pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const RM_NO_DEFAULT_GOAL: ::core::ffi::c_int =
     (1) << 0;
 pub const RM_INCLUDED: ::core::ffi::c_int = (1) << 1;
@@ -691,7 +686,7 @@ static mut include_directories: *mut *const ::core::ffi::c_char =
     ::core::ptr::null::<*const ::core::ffi::c_char>() as *mut *const ::core::ffi::c_char;
 static mut max_incl_len: size_t = 0;
 #[no_mangle]
-pub static mut reading_file: *const floc = ::core::ptr::null::<floc>();
+pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
 static mut read_files: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 #[no_mangle]
 pub unsafe extern "C" fn read_all_makefiles(
@@ -813,13 +808,13 @@ unsafe extern "C" fn eval_makefile(
         bufstart: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         size: 0,
         fp: ::core::ptr::null_mut::<FILE>(),
-        floc: floc {
+        floc: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
         },
     };
-    let mut curfile: *const floc = ::core::ptr::null::<floc>();
+    let mut curfile: *const Floc = ::core::ptr::null::<Floc>();
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     deps = alloc_goaldep();
     (*deps).next = read_files;
@@ -961,14 +956,14 @@ unsafe extern "C" fn eval_makefile(
     deps
 }
 #[no_mangle]
-pub unsafe extern "C" fn eval_buffer(mut buffer: *mut ::core::ffi::c_char, mut flocp: *const floc) {
+pub unsafe extern "C" fn eval_buffer(mut buffer: *mut ::core::ffi::c_char, mut flocp: *const Floc) {
     let mut ebuf: ebuffer = ebuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufstart: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         size: 0,
         fp: ::core::ptr::null_mut::<FILE>(),
-        floc: floc {
+        floc: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
@@ -981,7 +976,7 @@ pub unsafe extern "C" fn eval_buffer(mut buffer: *mut ::core::ffi::c_char, mut f
         ignoring: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
     };
-    let mut curfile: *const floc = ::core::ptr::null::<floc>();
+    let mut curfile: *const Floc = ::core::ptr::null::<Floc>();
     ebuf.size = strlen(buffer) as size_t;
     ebuf.bufstart = buffer;
     ebuf.bufnext = ebuf.bufstart;
@@ -1006,7 +1001,7 @@ pub unsafe extern "C" fn eval_buffer(mut buffer: *mut ::core::ffi::c_char, mut f
 unsafe extern "C" fn parse_var_assignment(
     mut line: *const ::core::ffi::c_char,
     mut targvar: ::core::ffi::c_int,
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut vmod: *mut vmodifiers,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -1032,7 +1027,7 @@ unsafe extern "C" fn parse_var_assignment(
         let mut v: variable = variable {
             name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
             value: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-            fileinfo: floc {
+            fileinfo: Floc {
                 filenm: ::core::ptr::null::<::core::ffi::c_char>(),
                 lineno: 0,
                 offset: 0,
@@ -1150,7 +1145,7 @@ unsafe extern "C" fn parse_var_assignment(
                 b"warning: directive lines cannot start with TAB\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-            flocp = ::core::ptr::null::<floc>();
+            flocp = ::core::ptr::null::<Floc>();
         }
         p = next_token(p2);
         if *p as ::core::ffi::c_int == 0 {
@@ -1181,8 +1176,8 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
     let mut pattern: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut pattern_percent: *const ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>();
-    let mut fstart: *mut floc = ::core::ptr::null_mut::<floc>();
-    let mut fi: floc = floc {
+    let mut fstart: *mut Floc = ::core::ptr::null_mut::<Floc>();
+    let mut fi: Floc = Floc {
         filenm: ::core::ptr::null::<::core::ffi::c_char>(),
         lineno: 0,
         offset: 0,
@@ -1295,7 +1290,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
             if initial_tab != 0 {
                 &raw mut (*ebuf).floc
             } else {
-                ::core::ptr::null_mut::<floc>()
+                ::core::ptr::null_mut::<Floc>()
             },
             &raw mut vmod,
         );
@@ -2148,7 +2143,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                         p2 = parse_var_assignment(
                                             p2,
                                             1,
-                                            ::core::ptr::null::<floc>(),
+                                            ::core::ptr::null::<Floc>(),
                                             &raw mut vmod,
                                         );
                                         if vmod.assign_v() != 0 {
@@ -2416,7 +2411,7 @@ unsafe extern "C" fn do_define(
     let mut var: variable = variable {
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         value: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        fileinfo: floc {
+        fileinfo: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
@@ -2424,7 +2419,7 @@ unsafe extern "C" fn do_define(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    let mut defstart: floc = floc {
+    let mut defstart: Floc = Floc {
         filenm: ::core::ptr::null::<::core::ffi::c_char>(),
         lineno: 0,
         offset: 0,
@@ -2579,7 +2574,7 @@ unsafe extern "C" fn do_define(
 unsafe extern "C" fn conditional_line(
     mut line: *mut ::core::ffi::c_char,
     mut len: size_t,
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut initial_tab: ::core::ffi::c_uint,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
@@ -2998,7 +2993,7 @@ unsafe extern "C" fn record_target_var(
     mut defn: *mut ::core::ffi::c_char,
     mut origin: variable_origin,
     mut vmod: *mut vmodifiers,
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
 ) {
     let mut nextf: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
     let mut global: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -3022,7 +3017,7 @@ unsafe extern "C" fn record_target_var(
                         b"v != 0\0" as *const u8 as *const ::core::ffi::c_char,
                         b"src/read.c\0" as *const u8 as *const ::core::ffi::c_char,
                         1840 as ::core::ffi::c_uint,
-                        b"void record_target_var(struct nameseq *, char *, enum variable_origin, struct vmodifiers *, const floc *)\0"
+                        b"void record_target_var(struct nameseq *, char *, enum variable_origin, struct vmodifiers *, const Floc *)\0"
                             as *const u8 as *const ::core::ffi::c_char,
                     );
                 }
@@ -3279,7 +3274,7 @@ pub unsafe extern "C" fn check_specials(mut files: *mut nameseq, mut set_default
                         o_file,
                         0,
                         ::core::ptr::null_mut::<variable_set>(),
-                        ::core::ptr::null_mut::<floc>(),
+                        ::core::ptr::null_mut::<Floc>(),
                     );
                 }
             }
@@ -3288,7 +3283,7 @@ pub unsafe extern "C" fn check_specials(mut files: *mut nameseq, mut set_default
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn check_special_file(mut file: *mut file, mut flocp: *const floc) {
+pub unsafe extern "C" fn check_special_file(mut file: *mut file, mut flocp: *const Floc) {
     if *(*file).name as ::core::ffi::c_int
         == *(b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
         && (*(*file).name as ::core::ffi::c_int == 0
@@ -3328,7 +3323,7 @@ unsafe extern "C" fn record_files(
     mut commands_idx: size_t,
     mut two_colon: ::core::ffi::c_int,
     mut prefix: ::core::ffi::c_char,
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
 ) {
     let mut cmds: *mut commands = ::core::ptr::null_mut::<commands>();
     let mut deps: *mut dep = ::core::ptr::null_mut::<dep>();

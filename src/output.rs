@@ -105,13 +105,8 @@ pub type _IO_lock_t = ();
 pub type FILE = _IO_FILE;
 pub type va_list = __gnuc_va_list;
 pub type uintmax_t = ::libc::uintmax_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct output {
@@ -350,7 +345,7 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
         }
     }
     error(
-        ::core::ptr::null_mut::<floc>(),
+        ::core::ptr::null_mut::<Floc>(),
         0,
         b"cannot open output-sync lock file: suppressing output-sync\0" as *const u8
             as *const ::core::ffi::c_char,
@@ -372,7 +367,7 @@ pub unsafe extern "C" fn output_dump(mut out: *mut output) {
         let mut traced: ::core::ffi::c_int = 0;
         if osync_acquire() == 0 {
             error(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 0,
                 b"warning: cannot acquire output lock: disabling output sync\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -549,7 +544,7 @@ pub unsafe extern "C" fn message(
 }
 #[no_mangle]
 pub unsafe extern "C" fn error(
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut len: size_t,
     mut fmt: *const ::core::ffi::c_char,
     mut args: ...
@@ -609,7 +604,7 @@ pub unsafe extern "C" fn error(
                 b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
                 470,
-                b"void error(const floc *, size_t, const char *, ...)\0" as *const u8
+                b"void error(const Floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
@@ -618,7 +613,7 @@ pub unsafe extern "C" fn error(
 }
 #[no_mangle]
 pub unsafe extern "C" fn fatal(
-    mut flocp: *const floc,
+    mut flocp: *const Floc,
     mut len: size_t,
     mut fmt: *const ::core::ffi::c_char,
     mut args: ...
@@ -680,7 +675,7 @@ pub unsafe extern "C" fn fatal(
                 b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
                 502,
-                b"void fatal(const floc *, size_t, const char *, ...)\0" as *const u8
+                b"void fatal(const Floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
@@ -728,7 +723,7 @@ pub unsafe extern "C" fn perror_with_name(
 ) {
     let mut err: *const ::core::ffi::c_char = strerror(*__errno_location());
     error(
-        ::core::ptr::null_mut::<floc>(),
+        ::core::ptr::null_mut::<Floc>(),
         (strlen(str) as size_t)
             .wrapping_add(strlen(name) as size_t)
             .wrapping_add(strlen(err) as size_t),
@@ -742,7 +737,7 @@ pub unsafe extern "C" fn perror_with_name(
 pub unsafe extern "C" fn pfatal_with_name(mut name: *const ::core::ffi::c_char) -> ! {
     let mut err: *const ::core::ffi::c_char = strerror(*__errno_location());
     fatal(
-        ::core::ptr::null_mut::<floc>(),
+        ::core::ptr::null_mut::<Floc>(),
         (strlen(name) as size_t).wrapping_add(strlen(err) as size_t),
         b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
         name,

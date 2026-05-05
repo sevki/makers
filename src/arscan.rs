@@ -29,7 +29,7 @@ extern "C" {
         __n: size_t,
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
+    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn make_toui(
         _: *const ::core::ffi::c_char,
         _: *mut *const ::core::ffi::c_char,
@@ -78,13 +78,8 @@ pub struct stat {
 }
 pub type intmax_t = ::libc::intmax_t;
 pub type uintmax_t = ::libc::uintmax_t;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
-}
+use crate::floc::Floc;
+
 pub type ar_member_func_t = Option<
     unsafe extern "C" fn(
         ::core::ffi::c_int,
@@ -4226,7 +4221,7 @@ unsafe extern "C" fn parse_int(
             || val > max
         {
             fatal(
-                ::core::ptr::null_mut::<floc>(),
+                ::core::ptr::null_mut::<Floc>(),
                 (strlen(type_0) as size_t)
                     .wrapping_add(strlen(archive) as size_t)
                     .wrapping_add(strlen(name) as size_t),
