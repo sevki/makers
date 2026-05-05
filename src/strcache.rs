@@ -372,7 +372,7 @@ pub unsafe extern "C" fn strcache_add_len(
     add_hash(str, len)
 }
 #[no_mangle]
-pub unsafe extern "C" fn strcache_init() {
+pub unsafe fn strcache_init() {
     hash_init(
         &raw mut strings,
         8000 as ::core::ffi::c_ulong,

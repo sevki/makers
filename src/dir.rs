@@ -836,7 +836,7 @@ pub unsafe extern "C" fn dir_name(
     (*find_directory(dir)).name
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_dir_data_base() {
+pub unsafe fn print_dir_data_base() {
     let mut files: ::core::ffi::c_uint = 0;
     let mut impossible: ::core::ffi::c_uint = 0;
     let mut dir_slot: *mut *mut directory = ::core::ptr::null_mut::<*mut directory>();
@@ -1026,7 +1026,7 @@ pub unsafe extern "C" fn dir_setup_glob(mut gl: *mut glob_t) {
         >;
 }
 #[no_mangle]
-pub unsafe extern "C" fn hash_init_directories() {
+pub unsafe fn hash_init_directories() {
     hash_init(
         &raw mut directories,
         DIRECTORY_BUCKETS as ::core::ffi::c_ulong,

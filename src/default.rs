@@ -616,7 +616,7 @@ pub unsafe extern "C" fn set_default_suffixes() {
     };
 }
 #[no_mangle]
-pub unsafe extern "C" fn install_default_suffix_rules() {
+pub unsafe fn install_default_suffix_rules() {
     let mut s: *const *const ::core::ffi::c_char =
         ::core::ptr::null::<*const ::core::ffi::c_char>();
     if no_builtin_rules_flag != 0 {
@@ -654,7 +654,7 @@ pub unsafe extern "C" fn install_default_implicit_rules() {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn define_default_variables() {
+pub unsafe fn define_default_variables() {
     let mut s: *const *const ::core::ffi::c_char =
         ::core::ptr::null::<*const ::core::ffi::c_char>();
     if no_builtin_variables_flag != 0 {
@@ -675,7 +675,7 @@ pub unsafe extern "C" fn define_default_variables() {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn undefine_default_variables() {
+pub unsafe fn undefine_default_variables() {
     let mut s: *const *const ::core::ffi::c_char =
         ::core::ptr::null::<*const ::core::ffi::c_char>();
     s = &raw const default_variables as *const *const ::core::ffi::c_char;
