@@ -231,21 +231,21 @@ pub type intmax_t = ::libc::intmax_t;
 pub type uintmax_t = ::libc::uintmax_t;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
-pub struct file {
+pub struct File {
     pub name: *const ::core::ffi::c_char,
     pub hname: *const ::core::ffi::c_char,
     pub vpath: *const ::core::ffi::c_char,
-    pub deps: *mut dep,
-    pub cmds: *mut commands,
+    pub deps: *mut Dep,
+    pub cmds: *mut Commands,
     pub stem: *const ::core::ffi::c_char,
-    pub also_make: *mut dep,
-    pub prev: *mut file,
-    pub last: *mut file,
-    pub renamed: *mut file,
-    pub variables: *mut variable_set_list,
-    pub pat_variables: *mut variable_set_list,
-    pub parent: *mut file,
-    pub double_colon: *mut file,
+    pub also_make: *mut Dep,
+    pub prev: *mut File,
+    pub last: *mut File,
+    pub renamed: *mut File,
+    pub variables: *mut VariableSetList,
+    pub pat_variables: *mut VariableSetList,
+    pub parent: *mut File,
+    pub double_colon: *mut File,
     pub last_mtime: uintmax_t,
     pub mtime_before_update: uintmax_t,
     pub considered: ::core::ffi::c_uint,
@@ -296,14 +296,14 @@ pub const us_none: update_status_0 = 1;
 pub const us_success: update_status_0 = 0;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct variable_set_list {
-    pub next: *mut variable_set_list,
-    pub set: *mut variable_set,
+pub struct VariableSetList {
+    pub next: *mut VariableSetList,
+    pub set: *mut VariableSet,
     pub next_is_parent: ::core::ffi::c_int,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct variable_set {
+pub struct VariableSet {
     pub table: hash_table,
 }
 #[derive(Copy, Clone, BitfieldStruct)]
@@ -335,11 +335,11 @@ pub type hash_func_t =
     Option<unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong>;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
-pub struct dep {
-    pub next: *mut dep,
+pub struct Dep {
+    pub next: *mut Dep,
     pub name: *const ::core::ffi::c_char,
-    pub file: *mut file,
-    pub shuf: *mut dep,
+    pub file: *mut File,
+    pub shuf: *mut Dep,
     pub stem: *const ::core::ffi::c_char,
     #[bitfield(name = "flags", ty = "::core::ffi::c_uint", bits = "0..=7")]
     #[bitfield(name = "changed", ty = "::core::ffi::c_uint", bits = "8..=8")]
@@ -364,7 +364,7 @@ pub struct dep {
 }
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
-pub struct commands {
+pub struct Commands {
     pub fileinfo: Floc,
     pub commands: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
@@ -377,6 +377,12 @@ pub struct commands {
     pub c2rust_padding: [u8; 4],
 }
 use crate::floc::Floc;
+
+pub type file = File;
+pub type dep = Dep;
+pub type commands = Commands;
+pub type variable_set_list = VariableSetList;
+pub type variable_set = VariableSet;
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
