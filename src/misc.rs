@@ -825,7 +825,7 @@ pub unsafe extern "C" fn dbg(mut fmt: *const ::core::ffi::c_char, mut args: ...)
 pub const DEFAULT_TMPFILE: [::core::ffi::c_char; 9] =
     unsafe { ::core::mem::transmute::<[u8; 9], [::core::ffi::c_char; 9]>(*b"GmXXXXXX\0") };
 #[no_mangle]
-pub unsafe extern "C" fn get_tmpdir() -> *const ::core::ffi::c_char {
+pub unsafe fn get_tmpdir() -> *const ::core::ffi::c_char {
     static mut tmpdir: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     if tmpdir.is_null() {
         let mut tlist: [*const ::core::ffi::c_char; 3] = [

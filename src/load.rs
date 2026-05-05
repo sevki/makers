@@ -36,4 +36,4 @@ pub unsafe extern "C" fn unload_file(mut _name: *const ::core::ffi::c_char) -> :
     );
 }
 #[no_mangle]
-pub unsafe extern "C" fn unload_all() {}
+pub unsafe fn unload_all() {}
