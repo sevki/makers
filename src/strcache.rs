@@ -180,10 +180,8 @@ pub unsafe extern "C" fn str_hash_1(mut key: *const ::core::ffi::c_void) -> ::co
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
     _result_
 }
-#[no_mangle]
-pub unsafe extern "C" fn str_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut _result_: ::core::ffi::c_ulong = 0;
-    _result_
+extern "C" fn str_hash_2(_key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+    0
 }
 unsafe extern "C" fn str_hash_cmp(
     mut x: *const ::core::ffi::c_void,

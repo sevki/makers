@@ -86,7 +86,6 @@ extern "C" {
     static mut max_pattern_targets: ::core::ffi::c_uint;
     static mut max_pattern_dep_length: size_t;
     fn get_rule_defn(rule: *mut rule) -> *const ::core::ffi::c_char;
-    fn shuffle_deps_recursive(g: *mut dep);
     fn expand_string_for_file(
         string: *const ::core::ffi::c_char,
         file: *mut file,
@@ -1522,7 +1521,7 @@ unsafe extern "C" fn pattern_search(
                 (*file).set_was_shuffled(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             }
             if (*file).was_shuffled() == 0 {
-                shuffle_deps_recursive((*file).deps);
+                crate::shuffle::shuffle_deps_recursive((*file).deps as *mut crate::file::Dep);
             }
             if (*tryrules.offset(foundrule as isize)).checked_lastslash == 0 {
                 (*file).stem = strcache_add_len(stem, stemlen);

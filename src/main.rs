@@ -175,9 +175,6 @@ extern "C" {
     fn snap_implicit_rules();
     fn convert_to_pattern();
     fn print_rule_data_base();
-    fn shuffle_set_mode(cmdarg: *const ::core::ffi::c_char);
-    fn shuffle_get_mode() -> *const ::core::ffi::c_char;
-    fn shuffle_deps_recursive(g: *mut dep);
     static mut variable_buffer: *mut ::core::ffi::c_char;
     static mut current_variable_set_list: *mut variable_set_list;
     fn initialize_variable_output() -> *mut ::core::ffi::c_char;
@@ -1844,16 +1841,18 @@ unsafe fn main_0(
         BUFSIZ as size_t,
     );
     if !shuffle_mode.is_null() {
-        let mut effective_mode: *const ::core::ffi::c_char =
-            ::core::ptr::null::<::core::ffi::c_char>();
-        shuffle_set_mode(shuffle_mode);
+        let arg = ::core::ffi::CStr::from_ptr(shuffle_mode)
+            .to_str()
+            .unwrap_or("");
+        crate::shuffle::set_mode(arg);
         free(shuffle_mode as *mut ::core::ffi::c_void);
-        effective_mode = shuffle_get_mode();
-        if !effective_mode.is_null() {
-            shuffle_mode = xstrdup(effective_mode);
-        } else {
-            shuffle_mode = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        }
+        shuffle_mode = match crate::shuffle::get_mode() {
+            Some(s) => {
+                let cs = ::std::ffi::CString::new(s).unwrap();
+                xstrdup(cs.as_ptr())
+            }
+            None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        };
     }
     if isatty(fileno(stdout)) != 0 {
         if lookup_variable(
@@ -3082,7 +3081,7 @@ unsafe fn main_0(
                 as *const ::core::ffi::c_char,
         );
     }
-    shuffle_deps_recursive(goals as *mut dep);
+    crate::shuffle::shuffle_deps_recursive(goals as *mut crate::file::Dep);
     if 0x1 as ::core::ffi::c_int & db_level != 0 {
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);

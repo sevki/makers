@@ -103,7 +103,6 @@ extern "C" {
     ) -> *mut *mut ::core::ffi::c_void;
     fn jhash_string(key: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint;
     static mut hash_deleted_item: *const ::core::ffi::c_void;
-    fn shuffle_deps_recursive(g: *mut dep);
     static mut variable_buffer: *mut ::core::ffi::c_char;
     fn variable_buffer_output(
         ptr: *mut ::core::ffi::c_char,
@@ -1179,7 +1178,7 @@ pub unsafe extern "C" fn expand_deps(mut f: *mut file) {
         }
     }
     if changed_dep != 0 {
-        shuffle_deps_recursive((*f).deps);
+        crate::shuffle::shuffle_deps_recursive((*f).deps);
     }
 }
 #[no_mangle]

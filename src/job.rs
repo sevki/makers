@@ -158,7 +158,6 @@ extern "C" {
     fn jobserver_pre_acquire();
     fn jobserver_acquire(timeout: ::core::ffi::c_int) -> ::core::ffi::c_uint;
     fn get_bad_stdin() -> ::core::ffi::c_int;
-    fn shuffle_get_mode() -> *const ::core::ffi::c_char;
     fn allocated_expand_string_for_file(
         line: *const ::core::ffi::c_char,
         file: *mut file,
@@ -582,23 +581,13 @@ unsafe extern "C" fn child_error(
         .wrapping_add(strlen(nm))
         .wrapping_add(strlen((*f).name))
         .wrapping_add(strlen(post)) as size_t;
-    smode = shuffle_get_mode();
-    if !smode.is_null() {
-        alloca_allocations.push(::std::vec::from_elem(
-            0,
-            (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as usize)
-                .wrapping_sub(1 as usize)
-                .wrapping_add(strlen(smode) as usize)
-                .wrapping_add(1 as usize) as usize,
-        ));
-        let mut a_0: *mut ::core::ffi::c_char =
-            alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-        l = l.wrapping_add(sprintf(
-            a_0,
-            b" shuffle=%s\0" as *const u8 as *const ::core::ffi::c_char,
-            smode,
-        ) as size_t);
-        smode = a_0;
+    if let Some(label) = crate::shuffle::get_mode() {
+        let mut buf = format!(" shuffle={}", label).into_bytes();
+        let written = buf.len();
+        buf.push(0);
+        alloca_allocations.push(buf);
+        smode = alloca_allocations.last().unwrap().as_ptr() as *const ::core::ffi::c_char;
+        l = l.wrapping_add(written as size_t);
     }
     output_context = if (*child).output.syncout() as ::core::ffi::c_int != 0 {
         &raw mut (*child).output
