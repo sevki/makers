@@ -19,6 +19,7 @@ pub mod commands;
 pub mod default;
 pub mod dir;
 pub mod expand;
+pub mod ffi_types;
 pub mod file;
 pub mod function;
 pub mod getopt;
