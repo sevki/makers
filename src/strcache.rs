@@ -82,33 +82,9 @@ pub struct _IO_FILE {
 }
 pub type _IO_lock_t = ();
 pub type FILE = _IO_FILE;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct hash_table {
-    pub ht_vec: *mut *mut ::core::ffi::c_void,
-    pub ht_hash_1: hash_func_t,
-    pub ht_hash_2: hash_func_t,
-    pub ht_compare: hash_cmp_func_t,
-    pub ht_size: ::core::ffi::c_ulong,
-    pub ht_capacity: ::core::ffi::c_ulong,
-    pub ht_fill: ::core::ffi::c_ulong,
-    pub ht_empty_slots: ::core::ffi::c_ulong,
-    pub ht_collisions: ::core::ffi::c_ulong,
-    pub ht_lookups: ::core::ffi::c_ulong,
-    pub ht_rehashes: ::core::ffi::c_uint,
-    #[bitfield(name = "ht_in_map", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub ht_in_map: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
-}
-pub type hash_cmp_func_t = Option<
-    unsafe extern "C" fn(
-        *const ::core::ffi::c_void,
-        *const ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int,
->;
-pub type hash_func_t =
-    Option<unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong>;
+pub type hash_table = crate::hash::hash_table;
+pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
+pub type hash_func_t = crate::hash::hash_func_t;
 pub type sc_buflen_t = ::core::ffi::c_ushort;
 #[derive(Copy, Clone)]
 #[repr(C)]
