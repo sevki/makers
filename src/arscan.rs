@@ -111,13 +111,13 @@ pub struct ar_hdr {
     pub ar_size: [::core::ffi::c_char; 10],
     pub ar_fmag: [::core::ffi::c_char; 2],
 }
-pub const EINTR: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
+pub const EINTR: ::core::ffi::c_int = 4;
 pub const INT_MAX: ::core::ffi::c_int = __INT_MAX__;
 pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
-pub const O_RDONLY: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+pub const O_RDONLY: ::core::ffi::c_int = 0;
 pub const ARMAG: [::core::ffi::c_char; 9] =
     unsafe { ::core::mem::transmute::<[u8; 9], [::core::ffi::c_char; 9]>(*b"!<arch>\n\0") };
-pub const SARMAG: ::core::ffi::c_int = 8 as ::core::ffi::c_int;
+pub const SARMAG: ::core::ffi::c_int = 8;
 pub const ARFMAG: [::core::ffi::c_char; 3] =
     unsafe { ::core::mem::transmute::<[u8; 3], [::core::ffi::c_char; 3]>(*b"`\n\0") };
 pub const AR_HDR_SIZE: usize = ::core::mem::size_of::<ar_hdr>();
@@ -131,10 +131,10 @@ unsafe extern "C" fn parse_int(
     mut name: *const ::core::ffi::c_char,
 ) -> uintmax_t {
     let ep: *const ::core::ffi::c_char = ptr.offset(len as isize);
-    let maxchar: ::core::ffi::c_int = '0' as i32 + base - 1 as ::core::ffi::c_int;
+    let maxchar: ::core::ffi::c_int = '0' as i32 + base - 1;
     let mut val: uintmax_t = 0 as uintmax_t;
     while ptr < ep && *ptr as ::core::ffi::c_int == ' ' as i32 {
-        ptr = ptr.offset(1);
+        ptr = ptr.offset(1 as ::core::ffi::c_int as isize);
     }
     while ptr < ep && *ptr as ::core::ffi::c_int != ' ' as i32 {
         if (*ptr as ::core::ffi::c_int) < '0' as i32
@@ -145,192 +145,192 @@ unsafe extern "C" fn parse_int(
                 if !((0 as ::core::ffi::c_int as uintmax_t)
                     < -(1 as ::core::ffi::c_int) as uintmax_t)
                 {
-                    if (if base < 0 as ::core::ffi::c_int {
+                    if (if base < 0 {
                         if val < 0 as uintmax_t {
-                            if ((if 1 as ::core::ffi::c_int != 0 {
-                                0 as ::core::ffi::c_int
+                            if ((if 1 != 0 {
+                                0
                             } else {
-                                (if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                (if 1 != 0 {
+                                    0
                                 } else {
-                                    127 as ::core::ffi::c_int
+                                    127
                                 }) + base
-                            }) - 1 as ::core::ffi::c_int)
-                                < 0 as ::core::ffi::c_int
+                            }) - 1)
+                                < 0
                             {
-                                (val < (127 as ::core::ffi::c_int / base) as uintmax_t)
+                                (val < (127 / base) as uintmax_t)
                                     as ::core::ffi::c_int
                             } else {
-                                ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                ((if (if (if ((if 1 != 0 {
+                                    0
                                 } else {
                                     base
-                                }) - 1 as ::core::ffi::c_int)
-                                    < 0 as ::core::ffi::c_int
+                                }) - 1)
+                                    < 0
                                 {
-                                    !(((((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    !(((((if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 1 as ::core::ffi::c_int)
+                                    }) + 1)
                                         << (::core::mem::size_of::<::core::ffi::c_int>()
                                             as usize)
                                             .wrapping_mul(8 as usize)
                                             .wrapping_sub(2 as usize))
-                                        - 1 as ::core::ffi::c_int)
-                                        * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                        - 1)
+                                        * 2
+                                        + 1)
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 0 as ::core::ffi::c_int
-                                }) < 0 as ::core::ffi::c_int
+                                    }) + 0
+                                }) < 0
                                 {
                                     (base
-                                        < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        < -(if ((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                        }) - 1)
+                                            < 0
                                         {
-                                            ((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 1 as ::core::ffi::c_int)
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int
+                                                - 1)
+                                                * 2
+                                                + 1
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int
+                                            }) - 1
                                         }))
                                         as ::core::ffi::c_int
                                 } else {
-                                    ((0 as ::core::ffi::c_int) < base) as ::core::ffi::c_int
+                                    ((0) < base) as ::core::ffi::c_int
                                 }) != 0
                                 {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 127 as ::core::ffi::c_int
+                                    }) + 127
                                         >> (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                             .wrapping_mul(CHAR_BIT as usize)
                                             .wrapping_sub(1 as usize)
                                 } else {
-                                    127 as ::core::ffi::c_int / -base
+                                    127 / -base
                                 }) as uintmax_t
                                     <= (-(1 as ::core::ffi::c_int) as uintmax_t).wrapping_sub(val))
                                     as ::core::ffi::c_int
                             }
                         } else {
-                            if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                0 as ::core::ffi::c_int
+                            if (if (if ((if 1 != 0 {
+                                0
                             } else {
-                                (if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                (if 1 != 0 {
+                                    0
                                 } else {
                                     base
-                                }) + (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
-                            }) - 1 as ::core::ffi::c_int)
-                                < 0 as ::core::ffi::c_int
+                                }) + (-(127 as ::core::ffi::c_int) - 1)
+                            }) - 1)
+                                < 0
                             {
-                                !(((((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                !(((((if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
-                                }) + 1 as ::core::ffi::c_int)
+                                    }) + (-(127 as ::core::ffi::c_int) - 1)
+                                }) + 1)
                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                         .wrapping_mul(8 as usize)
                                         .wrapping_sub(2 as usize))
-                                    - 1 as ::core::ffi::c_int)
-                                    * 2 as ::core::ffi::c_int
-                                    + 1 as ::core::ffi::c_int)
+                                    - 1)
+                                    * 2
+                                    + 1)
                             } else {
-                                (if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                (if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
-                                }) + 0 as ::core::ffi::c_int
-                            }) < 0 as ::core::ffi::c_int
+                                    }) + (-(127 as ::core::ffi::c_int) - 1)
+                                }) + 0
+                            }) < 0
                             {
-                                ((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                ((if 1 != 0 {
+                                    0
                                 } else {
                                     base
-                                }) + (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
-                                    < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                }) + (-(127 as ::core::ffi::c_int) - 1)
+                                    < -(if ((if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
                                         }) + (-(127 as ::core::ffi::c_int)
-                                            - 1 as ::core::ffi::c_int)
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                            - 1)
+                                    }) - 1)
+                                        < 0
                                     {
-                                        ((((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        ((((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             }) + (-(127 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
-                                        }) + 1 as ::core::ffi::c_int)
+                                                - 1)
+                                        }) + 1)
                                             << (::core::mem::size_of::<::core::ffi::c_int>()
                                                 as usize)
                                                 .wrapping_mul(8 as usize)
                                                 .wrapping_sub(2 as usize))
-                                            - 1 as ::core::ffi::c_int)
-                                            * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int
+                                            - 1)
+                                            * 2
+                                            + 1
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             }) + (-(127 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
-                                        }) - 1 as ::core::ffi::c_int
+                                                - 1)
+                                        }) - 1
                                     })) as ::core::ffi::c_int
                             } else {
-                                ((0 as ::core::ffi::c_int)
-                                    < (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                ((0)
+                                    < (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int))
+                                    }) + (-(127 as ::core::ffi::c_int) - 1))
                                     as ::core::ffi::c_int
                             }) != 0
                                 && base == -(1 as ::core::ffi::c_int)
                             {
-                                if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if 1 != 0 {
                                     0 as uintmax_t
                                 } else {
                                     val
@@ -340,55 +340,55 @@ unsafe extern "C" fn parse_int(
                                 {
                                     ((0 as uintmax_t)
                                         < val.wrapping_add(
-                                            (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                            (-(127 as ::core::ffi::c_int) - 1)
                                                 as uintmax_t,
                                         )) as ::core::ffi::c_int
                                 } else {
                                     ((0 as uintmax_t) < val
                                         && ((-(1 as ::core::ffi::c_int)
                                             - (-(127 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int))
+                                                - 1))
                                             as uintmax_t)
                                             < val.wrapping_sub(1 as uintmax_t))
                                         as ::core::ffi::c_int
                                 }
                             } else {
-                                ((((-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int) / base)
+                                ((((-(127 as ::core::ffi::c_int) - 1) / base)
                                     as uintmax_t)
                                     < val) as ::core::ffi::c_int
                             }
                         }
                     } else {
-                        if base == 0 as ::core::ffi::c_int {
-                            0 as ::core::ffi::c_int
+                        if base == 0 {
+                            0
                         } else {
                             if val < 0 as uintmax_t {
-                                if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if (if (if 1 != 0 {
                                     0 as uintmax_t
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
+                                    (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
                                     })
                                     .wrapping_add(
-                                        (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                        (-(127 as ::core::ffi::c_int) - 1)
                                             as uintmax_t,
                                     )
                                 })
                                 .wrapping_sub(1 as uintmax_t)
                                     < 0 as uintmax_t
                                 {
-                                    !((if 1 as ::core::ffi::c_int != 0 {
+                                    !((if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
                                         })
                                         .wrapping_add(
-                                            (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                            (-(127 as ::core::ffi::c_int) - 1)
                                                 as uintmax_t,
                                         )
                                     })
@@ -400,57 +400,57 @@ unsafe extern "C" fn parse_int(
                                     .wrapping_mul(2 as uintmax_t)
                                     .wrapping_add(1 as uintmax_t)
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
+                                    (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
                                         })
                                         .wrapping_add(
-                                            (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                            (-(127 as ::core::ffi::c_int) - 1)
                                                 as uintmax_t,
                                         )
                                     })
                                     .wrapping_add(0 as uintmax_t)
                                 }) < 0 as uintmax_t
                                 {
-                                    ((if 1 as ::core::ffi::c_int != 0 {
+                                    ((if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
                                     })
                                     .wrapping_add(
-                                        (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                        (-(127 as ::core::ffi::c_int) - 1)
                                             as uintmax_t,
-                                    ) < (if (if 1 as ::core::ffi::c_int != 0 {
+                                    ) < (if (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
                                         })
                                         .wrapping_add(
-                                            (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                            (-(127 as ::core::ffi::c_int) - 1)
                                                 as uintmax_t,
                                         )
                                     })
                                     .wrapping_sub(1 as uintmax_t)
                                         < 0 as uintmax_t
                                     {
-                                        ((if 1 as ::core::ffi::c_int != 0 {
+                                        ((if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(127 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             )
                                         })
@@ -462,17 +462,17 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_mul(2 as uintmax_t)
                                         .wrapping_add(1 as uintmax_t)
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(127 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             )
                                         })
@@ -482,46 +482,46 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_int
                                 } else {
                                     ((0 as uintmax_t)
-                                        < (if 1 as ::core::ffi::c_int != 0 {
+                                        < (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
                                         })
                                         .wrapping_add(
-                                            (-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                            (-(127 as ::core::ffi::c_int) - 1)
                                                 as uintmax_t,
                                         )) as ::core::ffi::c_int
                                 }) != 0
                                     && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                 {
-                                    if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    if ((if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                    }) - 1)
+                                        < 0
                                     {
-                                        ((0 as ::core::ffi::c_int)
+                                        ((0)
                                             < base
                                                 + (-(127 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int))
+                                                    - 1))
                                             as ::core::ffi::c_int
                                     } else {
                                         (-(1 as ::core::ffi::c_int)
                                             - (-(127 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
-                                            < base - 1 as ::core::ffi::c_int)
+                                                - 1)
+                                            < base - 1)
                                             as ::core::ffi::c_int
                                     }
                                 } else {
-                                    (((-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                    (((-(127 as ::core::ffi::c_int) - 1)
                                         as uintmax_t)
                                         .wrapping_div(val)
                                         < base as uintmax_t)
                                         as ::core::ffi::c_int
                                 }
                             } else {
-                                (((127 as ::core::ffi::c_int / base) as uintmax_t) < val)
+                                (((127 / base) as uintmax_t) < val)
                                     as ::core::ffi::c_int
                             }
                         }
@@ -529,202 +529,202 @@ unsafe extern "C" fn parse_int(
                     {
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
                             as ::core::ffi::c_schar as uintmax_t;
-                        1 as ::core::ffi::c_int
+                        1
                     } else {
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
                             as ::core::ffi::c_schar as uintmax_t;
-                        0 as ::core::ffi::c_int
+                        0
                     }
                 } else {
-                    if (if base < 0 as ::core::ffi::c_int {
+                    if (if base < 0 {
                         if val < 0 as uintmax_t {
-                            if ((if 1 as ::core::ffi::c_int != 0 {
-                                0 as ::core::ffi::c_int
+                            if ((if 1 != 0 {
+                                0
                             } else {
-                                (if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                (if 1 != 0 {
+                                    0
                                 } else {
-                                    127 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int
+                                    127 * 2
+                                        + 1
                                 }) + base
-                            }) - 1 as ::core::ffi::c_int)
-                                < 0 as ::core::ffi::c_int
+                            }) - 1)
+                                < 0
                             {
-                                (val < ((127 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                    + 1 as ::core::ffi::c_int)
+                                (val < ((127 * 2
+                                    + 1)
                                     / base) as uintmax_t)
                                     as ::core::ffi::c_int
                             } else {
-                                ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                ((if (if (if ((if 1 != 0 {
+                                    0
                                 } else {
                                     base
-                                }) - 1 as ::core::ffi::c_int)
-                                    < 0 as ::core::ffi::c_int
+                                }) - 1)
+                                    < 0
                                 {
-                                    !(((((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    !(((((if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 1 as ::core::ffi::c_int)
+                                    }) + 1)
                                         << (::core::mem::size_of::<::core::ffi::c_int>()
                                             as usize)
                                             .wrapping_mul(8 as usize)
                                             .wrapping_sub(2 as usize))
-                                        - 1 as ::core::ffi::c_int)
-                                        * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                        - 1)
+                                        * 2
+                                        + 1)
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 0 as ::core::ffi::c_int
-                                }) < 0 as ::core::ffi::c_int
+                                    }) + 0
+                                }) < 0
                                 {
                                     (base
-                                        < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        < -(if ((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                        }) - 1)
+                                            < 0
                                         {
-                                            ((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 1 as ::core::ffi::c_int)
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int
+                                                - 1)
+                                                * 2
+                                                + 1
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int
+                                            }) - 1
                                         }))
                                         as ::core::ffi::c_int
                                 } else {
-                                    ((0 as ::core::ffi::c_int) < base) as ::core::ffi::c_int
+                                    ((0) < base) as ::core::ffi::c_int
                                 }) != 0
                                 {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + (127 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                    }) + (127 * 2
+                                        + 1)
                                         >> (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                             .wrapping_mul(CHAR_BIT as usize)
                                             .wrapping_sub(1 as usize)
                                 } else {
-                                    (127 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                    (127 * 2
+                                        + 1)
                                         / -base
                                 }) as uintmax_t
                                     <= (-(1 as ::core::ffi::c_int) as uintmax_t).wrapping_sub(val))
                                     as ::core::ffi::c_int
                             }
                         } else {
-                            if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                0 as ::core::ffi::c_int
+                            if (if (if ((if 1 != 0 {
+                                0
                             } else {
-                                (if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                (if 1 != 0 {
+                                    0
                                 } else {
                                     base
-                                }) + 0 as ::core::ffi::c_int
-                            }) - 1 as ::core::ffi::c_int)
-                                < 0 as ::core::ffi::c_int
+                                }) + 0
+                            }) - 1)
+                                < 0
                             {
-                                !(((((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                !(((((if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 0 as ::core::ffi::c_int
-                                }) + 1 as ::core::ffi::c_int)
+                                    }) + 0
+                                }) + 1)
                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                         .wrapping_mul(8 as usize)
                                         .wrapping_sub(2 as usize))
-                                    - 1 as ::core::ffi::c_int)
-                                    * 2 as ::core::ffi::c_int
-                                    + 1 as ::core::ffi::c_int)
+                                    - 1)
+                                    * 2
+                                    + 1)
                             } else {
-                                (if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                (if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 0 as ::core::ffi::c_int
-                                }) + 0 as ::core::ffi::c_int
-                            }) < 0 as ::core::ffi::c_int
+                                    }) + 0
+                                }) + 0
+                            }) < 0
                             {
-                                (((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                (((if 1 != 0 {
+                                    0
                                 } else {
                                     base
-                                }) + 0 as ::core::ffi::c_int)
-                                    < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                }) + 0)
+                                    < -(if ((if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                        }) + 0
+                                    }) - 1)
+                                        < 0
                                     {
-                                        ((((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        ((((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) + 1 as ::core::ffi::c_int)
+                                            }) + 0
+                                        }) + 1)
                                             << (::core::mem::size_of::<::core::ffi::c_int>()
                                                 as usize)
                                                 .wrapping_mul(8 as usize)
                                                 .wrapping_sub(2 as usize))
-                                            - 1 as ::core::ffi::c_int)
-                                            * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int
+                                            - 1)
+                                            * 2
+                                            + 1
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) - 1 as ::core::ffi::c_int
+                                            }) + 0
+                                        }) - 1
                                     })) as ::core::ffi::c_int
                             } else {
-                                ((0 as ::core::ffi::c_int)
-                                    < (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                ((0)
+                                    < (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 0 as ::core::ffi::c_int)
+                                    }) + 0)
                                     as ::core::ffi::c_int
                             }) != 0
                                 && base == -(1 as ::core::ffi::c_int)
                             {
-                                if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if 1 != 0 {
                                     0 as uintmax_t
                                 } else {
                                     val
@@ -736,25 +736,25 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_int
                                 } else {
                                     ((0 as uintmax_t) < val
-                                        && ((-(1 as ::core::ffi::c_int) - 0 as ::core::ffi::c_int)
+                                        && ((-(1 as ::core::ffi::c_int) - 0)
                                             as uintmax_t)
                                             < val.wrapping_sub(1 as uintmax_t))
                                         as ::core::ffi::c_int
                                 }
                             } else {
-                                (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
+                                (((0 / base) as uintmax_t) < val)
                                     as ::core::ffi::c_int
                             }
                         }
                     } else {
-                        if base == 0 as ::core::ffi::c_int {
-                            0 as ::core::ffi::c_int
+                        if base == 0 {
+                            0
                         } else {
                             if val < 0 as uintmax_t {
-                                if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if (if (if 1 != 0 {
                                     0 as uintmax_t
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
+                                    (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
@@ -764,10 +764,10 @@ unsafe extern "C" fn parse_int(
                                 .wrapping_sub(1 as uintmax_t)
                                     < 0 as uintmax_t
                                 {
-                                    !((if 1 as ::core::ffi::c_int != 0 {
+                                    !((if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -782,10 +782,10 @@ unsafe extern "C" fn parse_int(
                                     .wrapping_mul(2 as uintmax_t)
                                     .wrapping_add(1 as uintmax_t)
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
+                                    (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -795,16 +795,16 @@ unsafe extern "C" fn parse_int(
                                     .wrapping_add(0 as uintmax_t)
                                 }) < 0 as uintmax_t
                                 {
-                                    ((if 1 as ::core::ffi::c_int != 0 {
+                                    ((if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
                                     })
                                     .wrapping_add(0 as uintmax_t)
-                                        < (if (if 1 as ::core::ffi::c_int != 0 {
+                                        < (if (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -814,10 +814,10 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_sub(1 as uintmax_t)
                                             < 0 as uintmax_t
                                         {
-                                            ((if 1 as ::core::ffi::c_int != 0 {
+                                            ((if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -832,10 +832,10 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_mul(2 as uintmax_t)
                                             .wrapping_add(1 as uintmax_t)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -848,7 +848,7 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_int
                                 } else {
                                     ((0 as uintmax_t)
-                                        < (if 1 as ::core::ffi::c_int != 0 {
+                                        < (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -858,18 +858,18 @@ unsafe extern "C" fn parse_int(
                                 }) != 0
                                     && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                 {
-                                    if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    if ((if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                    }) - 1)
+                                        < 0
                                     {
-                                        ((0 as ::core::ffi::c_int) < base + 0 as ::core::ffi::c_int)
+                                        ((0) < base + 0)
                                             as ::core::ffi::c_int
                                     } else {
-                                        ((-(1 as ::core::ffi::c_int) - 0 as ::core::ffi::c_int)
-                                            < base - 1 as ::core::ffi::c_int)
+                                        ((-(1 as ::core::ffi::c_int) - 0)
+                                            < base - 1)
                                             as ::core::ffi::c_int
                                     }
                                 } else {
@@ -877,8 +877,8 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_int
                                 }
                             } else {
-                                ((((127 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                    + 1 as ::core::ffi::c_int)
+                                ((((127 * 2
+                                    + 1)
                                     / base) as uintmax_t)
                                     < val) as ::core::ffi::c_int
                             }
@@ -887,11 +887,11 @@ unsafe extern "C" fn parse_int(
                     {
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
                             as ::core::ffi::c_uchar as uintmax_t;
-                        1 as ::core::ffi::c_int
+                        1
                     } else {
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
                             as ::core::ffi::c_uchar as uintmax_t;
-                        0 as ::core::ffi::c_int
+                        0
                     }
                 }
             } else {
@@ -901,80 +901,80 @@ unsafe extern "C" fn parse_int(
                     if !((0 as ::core::ffi::c_int as uintmax_t)
                         < -(1 as ::core::ffi::c_int) as uintmax_t)
                     {
-                        if (if base < 0 as ::core::ffi::c_int {
+                        if (if base < 0 {
                             if val < 0 as uintmax_t {
-                                if ((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                if ((if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         32767 as ::core::ffi::c_int
                                     }) + base
-                                }) - 1 as ::core::ffi::c_int)
-                                    < 0 as ::core::ffi::c_int
+                                }) - 1)
+                                    < 0
                                 {
                                     (val < (32767 as ::core::ffi::c_int / base) as uintmax_t)
                                         as ::core::ffi::c_int
                                 } else {
-                                    ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    ((if (if (if ((if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                    }) - 1)
+                                        < 0
                                     {
-                                        !(((((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        !(((((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 1 as ::core::ffi::c_int)
+                                        }) + 1)
                                             << (::core::mem::size_of::<::core::ffi::c_int>()
                                                 as usize)
                                                 .wrapping_mul(8 as usize)
                                                 .wrapping_sub(2 as usize))
-                                            - 1 as ::core::ffi::c_int)
-                                            * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int)
+                                            - 1)
+                                            * 2
+                                            + 1)
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) < 0 as ::core::ffi::c_int
+                                        }) + 0
+                                    }) < 0
                                     {
                                         (base
-                                            < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            < -(if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                ((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                ((((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 1 as ::core::ffi::c_int)
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int
+                                                }) - 1
                                             }))
                                             as ::core::ffi::c_int
                                     } else {
-                                        ((0 as ::core::ffi::c_int) < base) as ::core::ffi::c_int
+                                        ((0) < base) as ::core::ffi::c_int
                                     }) != 0
                                     {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
                                         }) + 32767 as ::core::ffi::c_int
@@ -990,108 +990,108 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_int
                                 }
                             } else {
-                                if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                if (if (if ((if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + (-(32767 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
-                                }) - 1 as ::core::ffi::c_int)
-                                    < 0 as ::core::ffi::c_int
+                                    }) + (-(32767 as ::core::ffi::c_int) - 1)
+                                }) - 1)
+                                    < 0
                                 {
-                                    !(((((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    !(((((if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
                                         }) + (-(32767 as ::core::ffi::c_int)
-                                            - 1 as ::core::ffi::c_int)
-                                    }) + 1 as ::core::ffi::c_int)
+                                            - 1)
+                                    }) + 1)
                                         << (::core::mem::size_of::<::core::ffi::c_int>()
                                             as usize)
                                             .wrapping_mul(8 as usize)
                                             .wrapping_sub(2 as usize))
-                                        - 1 as ::core::ffi::c_int)
-                                        * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                        - 1)
+                                        * 2
+                                        + 1)
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
                                         }) + (-(32767 as ::core::ffi::c_int)
-                                            - 1 as ::core::ffi::c_int)
-                                    }) + 0 as ::core::ffi::c_int
-                                }) < 0 as ::core::ffi::c_int
+                                            - 1)
+                                    }) + 0
+                                }) < 0
                                 {
-                                    ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    ((if 1 != 0 {
+                                        0
                                     } else {
                                         base
                                     }) + (-(32767 as ::core::ffi::c_int)
-                                        - 1 as ::core::ffi::c_int)
-                                        < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        - 1)
+                                        < -(if ((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             }) + (-(32767 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                                - 1)
+                                        }) - 1)
+                                            < 0
                                         {
-                                            ((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((((if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 }) + (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
-                                            }) + 1 as ::core::ffi::c_int)
+                                                    - 1)
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int
+                                                - 1)
+                                                * 2
+                                                + 1
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 }) + (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
-                                            }) - 1 as ::core::ffi::c_int
+                                                    - 1)
+                                            }) - 1
                                         }))
                                         as ::core::ffi::c_int
                                 } else {
-                                    ((0 as ::core::ffi::c_int)
-                                        < (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                    ((0)
+                                        < (if 1 != 0 {
+                                            0
                                         } else {
                                             base
                                         }) + (-(32767 as ::core::ffi::c_int)
-                                            - 1 as ::core::ffi::c_int))
+                                            - 1))
                                         as ::core::ffi::c_int
                                 }) != 0
                                     && base == -(1 as ::core::ffi::c_int)
                                 {
-                                    if (if 1 as ::core::ffi::c_int != 0 {
+                                    if (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
@@ -1102,7 +1102,7 @@ unsafe extern "C" fn parse_int(
                                         ((0 as uintmax_t)
                                             < val.wrapping_add(
                                                 (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             ))
                                             as ::core::ffi::c_int
@@ -1110,51 +1110,51 @@ unsafe extern "C" fn parse_int(
                                         ((0 as uintmax_t) < val
                                             && ((-(1 as ::core::ffi::c_int)
                                                 - (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int))
+                                                    - 1))
                                                 as uintmax_t)
                                                 < val.wrapping_sub(1 as uintmax_t))
                                             as ::core::ffi::c_int
                                     }
                                 } else {
-                                    ((((-(32767 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                    ((((-(32767 as ::core::ffi::c_int) - 1)
                                         / base) as uintmax_t)
                                         < val)
                                         as ::core::ffi::c_int
                                 }
                             }
                         } else {
-                            if base == 0 as ::core::ffi::c_int {
-                                0 as ::core::ffi::c_int
+                            if base == 0 {
+                                0
                             } else {
                                 if val < 0 as uintmax_t {
-                                    if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                    if (if (if (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
                                         })
                                         .wrapping_add(
                                             (-(32767 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
+                                                - 1)
                                                 as uintmax_t,
                                         )
                                     })
                                     .wrapping_sub(1 as uintmax_t)
                                         < 0 as uintmax_t
                                     {
-                                        !((if 1 as ::core::ffi::c_int != 0 {
+                                        !((if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             )
                                         })
@@ -1166,60 +1166,60 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_mul(2 as uintmax_t)
                                         .wrapping_add(1 as uintmax_t)
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             )
                                         })
                                         .wrapping_add(0 as uintmax_t)
                                     }) < 0 as uintmax_t
                                     {
-                                        ((if 1 as ::core::ffi::c_int != 0 {
+                                        ((if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
                                         })
                                         .wrapping_add(
                                             (-(32767 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
+                                                - 1)
                                                 as uintmax_t,
-                                        ) < (if (if 1 as ::core::ffi::c_int != 0 {
+                                        ) < (if (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             )
                                         })
                                         .wrapping_sub(1 as uintmax_t)
                                             < 0 as uintmax_t
                                         {
-                                            ((if 1 as ::core::ffi::c_int != 0 {
+                                            ((if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(32767 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
+                                                        - 1)
                                                         as uintmax_t,
                                                 )
                                             })
@@ -1231,17 +1231,17 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_mul(2 as uintmax_t)
                                             .wrapping_add(1 as uintmax_t)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(32767 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
+                                                        - 1)
                                                         as uintmax_t,
                                                 )
                                             })
@@ -1251,41 +1251,41 @@ unsafe extern "C" fn parse_int(
                                             as ::core::ffi::c_int
                                     } else {
                                         ((0 as uintmax_t)
-                                            < (if 1 as ::core::ffi::c_int != 0 {
+                                            < (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             ))
                                             as ::core::ffi::c_int
                                     }) != 0
                                         && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                     {
-                                        if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        if ((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                        }) - 1)
+                                            < 0
                                         {
-                                            ((0 as ::core::ffi::c_int)
+                                            ((0)
                                                 < base
                                                     + (-(32767 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int))
+                                                        - 1))
                                                 as ::core::ffi::c_int
                                         } else {
                                             (-(1 as ::core::ffi::c_int)
                                                 - (-(32767 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
-                                                < base - 1 as ::core::ffi::c_int)
+                                                    - 1)
+                                                < base - 1)
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
-                                        (((-(32767 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
+                                        (((-(32767 as ::core::ffi::c_int) - 1)
                                             as uintmax_t)
                                             .wrapping_div(val)
                                             < base as uintmax_t)
@@ -1302,104 +1302,104 @@ unsafe extern "C" fn parse_int(
                                 .wrapping_mul(base as ::core::ffi::c_uint)
                                 as ::core::ffi::c_short
                                 as uintmax_t;
-                            1 as ::core::ffi::c_int
+                            1
                         } else {
                             val = (val as ::core::ffi::c_uint)
                                 .wrapping_mul(base as ::core::ffi::c_uint)
                                 as ::core::ffi::c_short
                                 as uintmax_t;
-                            0 as ::core::ffi::c_int
+                            0
                         }
                     } else {
-                        if (if base < 0 as ::core::ffi::c_int {
+                        if (if base < 0 {
                             if val < 0 as uintmax_t {
-                                if ((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                if ((if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
-                                        32767 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int
+                                        32767 as ::core::ffi::c_int * 2
+                                            + 1
                                     }) + base
-                                }) - 1 as ::core::ffi::c_int)
-                                    < 0 as ::core::ffi::c_int
+                                }) - 1)
+                                    < 0
                                 {
-                                    (val < ((32767 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                    (val < ((32767 as ::core::ffi::c_int * 2
+                                        + 1)
                                         / base)
                                         as uintmax_t)
                                         as ::core::ffi::c_int
                                 } else {
-                                    ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    ((if (if (if ((if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                    }) - 1)
+                                        < 0
                                     {
-                                        !(((((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        !(((((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 1 as ::core::ffi::c_int)
+                                        }) + 1)
                                             << (::core::mem::size_of::<::core::ffi::c_int>()
                                                 as usize)
                                                 .wrapping_mul(8 as usize)
                                                 .wrapping_sub(2 as usize))
-                                            - 1 as ::core::ffi::c_int)
-                                            * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int)
+                                            - 1)
+                                            * 2
+                                            + 1)
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) < 0 as ::core::ffi::c_int
+                                        }) + 0
+                                    }) < 0
                                     {
                                         (base
-                                            < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            < -(if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                ((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                ((((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 1 as ::core::ffi::c_int)
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int
+                                                }) - 1
                                             }))
                                             as ::core::ffi::c_int
                                     } else {
-                                        ((0 as ::core::ffi::c_int) < base) as ::core::ffi::c_int
+                                        ((0) < base) as ::core::ffi::c_int
                                     }) != 0
                                     {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + (32767 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int)
+                                        }) + (32767 as ::core::ffi::c_int * 2
+                                            + 1)
                                             >> (::core::mem::size_of::<::core::ffi::c_int>()
                                                 as usize)
                                                 .wrapping_mul(CHAR_BIT as usize)
                                                 .wrapping_sub(1 as usize)
                                     } else {
-                                        (32767 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int)
+                                        (32767 as ::core::ffi::c_int * 2
+                                            + 1)
                                             / -base
                                     }) as uintmax_t
                                         <= (-(1 as ::core::ffi::c_int) as uintmax_t)
@@ -1407,101 +1407,101 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_int
                                 }
                             } else {
-                                if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                    0 as ::core::ffi::c_int
+                                if (if (if ((if 1 != 0 {
+                                    0
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 0 as ::core::ffi::c_int
-                                }) - 1 as ::core::ffi::c_int)
-                                    < 0 as ::core::ffi::c_int
+                                    }) + 0
+                                }) - 1)
+                                    < 0
                                 {
-                                    !(((((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    !(((((if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) + 1 as ::core::ffi::c_int)
+                                        }) + 0
+                                    }) + 1)
                                         << (::core::mem::size_of::<::core::ffi::c_int>()
                                             as usize)
                                             .wrapping_mul(8 as usize)
                                             .wrapping_sub(2 as usize))
-                                        - 1 as ::core::ffi::c_int)
-                                        * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                        - 1)
+                                        * 2
+                                        + 1)
                                 } else {
-                                    (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) + 0 as ::core::ffi::c_int
-                                }) < 0 as ::core::ffi::c_int
+                                        }) + 0
+                                    }) + 0
+                                }) < 0
                                 {
-                                    (((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    (((if 1 != 0 {
+                                        0
                                     } else {
                                         base
-                                    }) + 0 as ::core::ffi::c_int)
-                                        < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                    }) + 0)
+                                        < -(if ((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                            }) + 0
+                                        }) - 1)
+                                            < 0
                                         {
-                                            ((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((((if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) + 1 as ::core::ffi::c_int)
+                                                }) + 0
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int
+                                                - 1)
+                                                * 2
+                                                + 1
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) - 1 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) - 1
                                         }))
                                         as ::core::ffi::c_int
                                 } else {
-                                    ((0 as ::core::ffi::c_int)
-                                        < (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                    ((0)
+                                        < (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int)
+                                        }) + 0)
                                         as ::core::ffi::c_int
                                 }) != 0
                                     && base == -(1 as ::core::ffi::c_int)
                                 {
-                                    if (if 1 as ::core::ffi::c_int != 0 {
+                                    if (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
@@ -1514,25 +1514,25 @@ unsafe extern "C" fn parse_int(
                                     } else {
                                         ((0 as uintmax_t) < val
                                             && ((-(1 as ::core::ffi::c_int)
-                                                - 0 as ::core::ffi::c_int)
+                                                - 0)
                                                 as uintmax_t)
                                                 < val.wrapping_sub(1 as uintmax_t))
                                             as ::core::ffi::c_int
                                     }
                                 } else {
-                                    (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
+                                    (((0 / base) as uintmax_t) < val)
                                         as ::core::ffi::c_int
                                 }
                             }
                         } else {
-                            if base == 0 as ::core::ffi::c_int {
-                                0 as ::core::ffi::c_int
+                            if base == 0 {
+                                0
                             } else {
                                 if val < 0 as uintmax_t {
-                                    if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                    if (if (if (if 1 != 0 {
                                         0 as uintmax_t
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -1542,10 +1542,10 @@ unsafe extern "C" fn parse_int(
                                     .wrapping_sub(1 as uintmax_t)
                                         < 0 as uintmax_t
                                     {
-                                        !((if 1 as ::core::ffi::c_int != 0 {
+                                        !((if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -1560,10 +1560,10 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_mul(2 as uintmax_t)
                                         .wrapping_add(1 as uintmax_t)
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
+                                        (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -1573,16 +1573,16 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_add(0 as uintmax_t)
                                     }) < 0 as uintmax_t
                                     {
-                                        ((if 1 as ::core::ffi::c_int != 0 {
+                                        ((if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
                                         })
                                         .wrapping_add(0 as uintmax_t)
-                                            < (if (if 1 as ::core::ffi::c_int != 0 {
+                                            < (if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -1592,10 +1592,10 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_sub(1 as uintmax_t)
                                                 < 0 as uintmax_t
                                             {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
+                                                ((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -1611,10 +1611,10 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_mul(2 as uintmax_t)
                                                 .wrapping_add(1 as uintmax_t)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -1627,7 +1627,7 @@ unsafe extern "C" fn parse_int(
                                             as ::core::ffi::c_int
                                     } else {
                                         ((0 as uintmax_t)
-                                            < (if 1 as ::core::ffi::c_int != 0 {
+                                            < (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -1637,19 +1637,19 @@ unsafe extern "C" fn parse_int(
                                     }) != 0
                                         && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                     {
-                                        if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        if ((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                        }) - 1)
+                                            < 0
                                         {
-                                            ((0 as ::core::ffi::c_int)
-                                                < base + 0 as ::core::ffi::c_int)
+                                            ((0)
+                                                < base + 0)
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((-(1 as ::core::ffi::c_int) - 0 as ::core::ffi::c_int)
-                                                < base - 1 as ::core::ffi::c_int)
+                                            ((-(1 as ::core::ffi::c_int) - 0)
+                                                < base - 1)
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
@@ -1657,8 +1657,8 @@ unsafe extern "C" fn parse_int(
                                             as ::core::ffi::c_int
                                     }
                                 } else {
-                                    ((((32767 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
-                                        + 1 as ::core::ffi::c_int)
+                                    ((((32767 as ::core::ffi::c_int * 2
+                                        + 1)
                                         / base) as uintmax_t)
                                         < val)
                                         as ::core::ffi::c_int
@@ -1670,20 +1670,20 @@ unsafe extern "C" fn parse_int(
                                 .wrapping_mul(base as ::core::ffi::c_uint)
                                 as ::core::ffi::c_ushort
                                 as uintmax_t;
-                            1 as ::core::ffi::c_int
+                            1
                         } else {
                             val = (val as ::core::ffi::c_uint)
                                 .wrapping_mul(base as ::core::ffi::c_uint)
                                 as ::core::ffi::c_ushort
                                 as uintmax_t;
-                            0 as ::core::ffi::c_int
+                            0
                         }
                     }
                 } else {
                     if ::core::mem::size_of::<uintmax_t>() as usize
                         == ::core::mem::size_of::<::core::ffi::c_int>() as usize
                     {
-                        if (if 1 as ::core::ffi::c_int != 0 {
+                        if (if 1 != 0 {
                             0 as uintmax_t
                         } else {
                             val
@@ -1691,81 +1691,81 @@ unsafe extern "C" fn parse_int(
                         .wrapping_sub(1 as uintmax_t)
                             < 0 as uintmax_t
                         {
-                            if (if base < 0 as ::core::ffi::c_int {
+                            if (if base < 0 {
                                 if val < 0 as uintmax_t {
-                                    if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    if ((if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             2147483647 as ::core::ffi::c_int
                                         }) + base
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                    }) - 1)
+                                        < 0
                                     {
                                         (val < (2147483647 as ::core::ffi::c_int / base)
                                             as uintmax_t)
                                             as ::core::ffi::c_int
                                     } else {
-                                        ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        ((if (if (if ((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                        }) - 1)
+                                            < 0
                                         {
-                                            !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            !(((((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 1 as ::core::ffi::c_int)
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int)
+                                                - 1)
+                                                * 2
+                                                + 1)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) < 0 as ::core::ffi::c_int
+                                            }) + 0
+                                        }) < 0
                                         {
                                             (base
-                                                < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                < -(if ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    ((((if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) + 1 as ::core::ffi::c_int)
+                                                    }) + 1)
                                                         << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                             .wrapping_mul(8 as usize)
-                                                            .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                        * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                            .wrapping_sub(2 as usize)) - 1)
+                                                        * 2 + 1
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) - 1 as ::core::ffi::c_int
+                                                    }) - 1
                                                 }))
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((0 as ::core::ffi::c_int) < base) as ::core::ffi::c_int
+                                            ((0) < base) as ::core::ffi::c_int
                                         }) != 0
                                         {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             }) + 2147483647 as ::core::ffi::c_int
@@ -1781,107 +1781,107 @@ unsafe extern "C" fn parse_int(
                                             as ::core::ffi::c_int
                                     }
                                 } else {
-                                    if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    if (if (if ((if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
                                         }) + (-(2147483647 as ::core::ffi::c_int)
-                                            - 1 as ::core::ffi::c_int)
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                            - 1)
+                                    }) - 1)
+                                        < 0
                                     {
-                                        !(((((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        !(((((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             }) + (-(2147483647 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
-                                        }) + 1 as ::core::ffi::c_int)
+                                                - 1)
+                                        }) + 1)
                                             << (::core::mem::size_of::<::core::ffi::c_int>()
                                                 as usize)
                                                 .wrapping_mul(8 as usize)
                                                 .wrapping_sub(2 as usize))
-                                            - 1 as ::core::ffi::c_int)
-                                            * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int)
+                                            - 1)
+                                            * 2
+                                            + 1)
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             }) + (-(2147483647 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) < 0 as ::core::ffi::c_int
+                                                - 1)
+                                        }) + 0
+                                    }) < 0
                                     {
-                                        ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        ((if 1 != 0 {
+                                            0
                                         } else {
                                             base
                                         }) + (-(2147483647 as ::core::ffi::c_int)
-                                            - 1 as ::core::ffi::c_int)
-                                            < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            - 1)
+                                            < -(if ((if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 }) + (-(2147483647 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                                    - 1)
+                                            }) - 1)
+                                                < 0
                                             {
-                                                ((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                ((((if 1 != 0 {
+                                                    0
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
                                                     })
                                                         + (-(2147483647 as ::core::ffi::c_int)
-                                                            - 1 as ::core::ffi::c_int)
-                                                }) + 1 as ::core::ffi::c_int)
+                                                            - 1)
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
                                                     }) + (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
-                                                }) - 1 as ::core::ffi::c_int
+                                                        - 1)
+                                                }) - 1
                                             }))
                                             as ::core::ffi::c_int
                                     } else {
-                                        ((0 as ::core::ffi::c_int)
-                                            < (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                        ((0)
+                                            < (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             }) + (-(2147483647 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int))
+                                                - 1))
                                             as ::core::ffi::c_int
                                     }) != 0
                                         && base == -(1 as ::core::ffi::c_int)
                                     {
-                                        if (if 1 as ::core::ffi::c_int != 0 {
+                                        if (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -1892,7 +1892,7 @@ unsafe extern "C" fn parse_int(
                                             ((0 as uintmax_t)
                                                 < val.wrapping_add(
                                                     (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
+                                                        - 1)
                                                         as uintmax_t,
                                                 ))
                                                 as ::core::ffi::c_int
@@ -1900,14 +1900,14 @@ unsafe extern "C" fn parse_int(
                                             ((0 as uintmax_t) < val
                                                 && ((-(1 as ::core::ffi::c_int)
                                                     - (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int))
+                                                        - 1))
                                                     as uintmax_t)
                                                     < val.wrapping_sub(1 as uintmax_t))
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
                                         ((((-(2147483647 as ::core::ffi::c_int)
-                                            - 1 as ::core::ffi::c_int)
+                                            - 1)
                                             / base)
                                             as uintmax_t)
                                             < val)
@@ -1915,38 +1915,38 @@ unsafe extern "C" fn parse_int(
                                     }
                                 }
                             } else {
-                                if base == 0 as ::core::ffi::c_int {
-                                    0 as ::core::ffi::c_int
+                                if base == 0 {
+                                    0
                                 } else {
                                     if val < 0 as uintmax_t {
-                                        if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if (if (if (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(2147483647 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
                                             )
                                         })
                                         .wrapping_sub(1 as uintmax_t)
                                             < 0 as uintmax_t
                                         {
-                                            !((if 1 as ::core::ffi::c_int != 0 {
+                                            !((if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
+                                                        - 1)
                                                         as uintmax_t,
                                                 )
                                             })
@@ -1958,60 +1958,60 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_mul(2 as uintmax_t)
                                             .wrapping_add(1 as uintmax_t)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
+                                                        - 1)
                                                         as uintmax_t,
                                                 )
                                             })
                                             .wrapping_add(0 as uintmax_t)
                                         }) < 0 as uintmax_t
                                         {
-                                            ((if 1 as ::core::ffi::c_int != 0 {
+                                            ((if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(
                                                 (-(2147483647 as ::core::ffi::c_int)
-                                                    - 1 as ::core::ffi::c_int)
+                                                    - 1)
                                                     as uintmax_t,
-                                            ) < (if (if 1 as ::core::ffi::c_int != 0 {
+                                            ) < (if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
+                                                        - 1)
                                                         as uintmax_t,
                                                 )
                                             })
                                             .wrapping_sub(1 as uintmax_t)
                                                 < 0 as uintmax_t
                                             {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
+                                                ((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
                                                     })
                                                     .wrapping_add(
                                                         (-(2147483647 as ::core::ffi::c_int)
-                                                            - 1 as ::core::ffi::c_int)
+                                                            - 1)
                                                             as uintmax_t,
                                                     )
                                                 })
@@ -2024,17 +2024,17 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_mul(2 as uintmax_t)
                                                 .wrapping_add(1 as uintmax_t)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
                                                     })
                                                     .wrapping_add(
                                                         (-(2147483647 as ::core::ffi::c_int)
-                                                            - 1 as ::core::ffi::c_int)
+                                                            - 1)
                                                             as uintmax_t,
                                                     )
                                                 })
@@ -2044,42 +2044,42 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_int
                                         } else {
                                             ((0 as uintmax_t)
-                                                < (if 1 as ::core::ffi::c_int != 0 {
+                                                < (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
+                                                        - 1)
                                                         as uintmax_t,
                                                 ))
                                                 as ::core::ffi::c_int
                                         }) != 0
                                             && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                         {
-                                            if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                ((0 as ::core::ffi::c_int)
+                                                ((0)
                                                     < base
                                                         + (-(2147483647 as ::core::ffi::c_int)
-                                                            - 1 as ::core::ffi::c_int))
+                                                            - 1))
                                                     as ::core::ffi::c_int
                                             } else {
                                                 (-(1 as ::core::ffi::c_int)
                                                     - (-(2147483647 as ::core::ffi::c_int)
-                                                        - 1 as ::core::ffi::c_int)
-                                                    < base - 1 as ::core::ffi::c_int)
+                                                        - 1)
+                                                    < base - 1)
                                                     as ::core::ffi::c_int
                                             }
                                         } else {
                                             (((-(2147483647 as ::core::ffi::c_int)
-                                                - 1 as ::core::ffi::c_int)
+                                                - 1)
                                                 as uintmax_t)
                                                 .wrapping_div(val)
                                                 < base as uintmax_t)
@@ -2097,99 +2097,99 @@ unsafe extern "C" fn parse_int(
                                     .wrapping_mul(base as ::core::ffi::c_uint)
                                     as ::core::ffi::c_int
                                     as uintmax_t;
-                                1 as ::core::ffi::c_int
+                                1
                             } else {
                                 val = (val as ::core::ffi::c_uint)
                                     .wrapping_mul(base as ::core::ffi::c_uint)
                                     as ::core::ffi::c_int
                                     as uintmax_t;
-                                0 as ::core::ffi::c_int
+                                0
                             }
                         } else {
-                            if (if base < 0 as ::core::ffi::c_int {
+                            if (if base < 0 {
                                 if val < 0 as uintmax_t {
-                                    if (if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_uint
+                                    if (if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_uint
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             (2147483647 as ::core::ffi::c_int
                                                 as ::core::ffi::c_uint)
-                                                .wrapping_mul(2 as ::core::ffi::c_uint)
-                                                .wrapping_add(1 as ::core::ffi::c_uint)
+                                                .wrapping_mul(2)
+                                                .wrapping_add(1)
                                         })
                                         .wrapping_add(base as ::core::ffi::c_uint)
                                     })
-                                    .wrapping_sub(1 as ::core::ffi::c_uint)
-                                        < 0 as ::core::ffi::c_uint
+                                    .wrapping_sub(1)
+                                        < 0
                                     {
                                         (val < (2147483647 as ::core::ffi::c_int
                                             as ::core::ffi::c_uint)
-                                            .wrapping_mul(2 as ::core::ffi::c_uint)
-                                            .wrapping_add(1 as ::core::ffi::c_uint)
+                                            .wrapping_mul(2)
+                                            .wrapping_add(1)
                                             .wrapping_div(base as ::core::ffi::c_uint)
                                             as uintmax_t)
                                             as ::core::ffi::c_int
                                     } else {
-                                        ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        ((if (if (if ((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                        }) - 1)
+                                            < 0
                                         {
-                                            !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            !(((((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 1 as ::core::ffi::c_int)
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int)
+                                                - 1)
+                                                * 2
+                                                + 1)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) < 0 as ::core::ffi::c_int
+                                            }) + 0
+                                        }) < 0
                                         {
                                             (base
-                                                < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                < -(if ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    ((((if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) + 1 as ::core::ffi::c_int)
+                                                    }) + 1)
                                                         << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                             .wrapping_mul(8 as usize)
-                                                            .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                        * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                            .wrapping_sub(2 as usize)) - 1)
+                                                        * 2 + 1
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) - 1 as ::core::ffi::c_int
+                                                    }) - 1
                                                 }))
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((0 as ::core::ffi::c_int) < base) as ::core::ffi::c_int
+                                            ((0) < base) as ::core::ffi::c_int
                                         }) != 0
                                         {
-                                            ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             })
@@ -2197,8 +2197,8 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_add(
                                                     (2147483647 as ::core::ffi::c_int
                                                         as ::core::ffi::c_uint)
-                                                        .wrapping_mul(2 as ::core::ffi::c_uint)
-                                                        .wrapping_add(1 as ::core::ffi::c_uint),
+                                                        .wrapping_mul(2)
+                                                        .wrapping_add(1),
                                                 )
                                                 >> (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
@@ -2207,8 +2207,8 @@ unsafe extern "C" fn parse_int(
                                         } else {
                                             (2147483647 as ::core::ffi::c_int
                                                 as ::core::ffi::c_uint)
-                                                .wrapping_mul(2 as ::core::ffi::c_uint)
-                                                .wrapping_add(1 as ::core::ffi::c_uint)
+                                                .wrapping_mul(2)
+                                                .wrapping_add(1)
                                                 .wrapping_div(-base as ::core::ffi::c_uint)
                                         }) as uintmax_t
                                             <= (-(1 as ::core::ffi::c_int) as uintmax_t)
@@ -2216,98 +2216,98 @@ unsafe extern "C" fn parse_int(
                                             as ::core::ffi::c_int
                                     }
                                 } else {
-                                    if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                        0 as ::core::ffi::c_int
+                                    if (if (if ((if 1 != 0 {
+                                        0
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) - 1 as ::core::ffi::c_int)
-                                        < 0 as ::core::ffi::c_int
+                                        }) + 0
+                                    }) - 1)
+                                        < 0
                                     {
-                                        !(((((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        !(((((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) + 1 as ::core::ffi::c_int)
+                                            }) + 0
+                                        }) + 1)
                                             << (::core::mem::size_of::<::core::ffi::c_int>()
                                                 as usize)
                                                 .wrapping_mul(8 as usize)
                                                 .wrapping_sub(2 as usize))
-                                            - 1 as ::core::ffi::c_int)
-                                            * 2 as ::core::ffi::c_int
-                                            + 1 as ::core::ffi::c_int)
+                                            - 1)
+                                            * 2
+                                            + 1)
                                     } else {
-                                        (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) + 0 as ::core::ffi::c_int
-                                    }) < 0 as ::core::ffi::c_int
+                                            }) + 0
+                                        }) + 0
+                                    }) < 0
                                     {
-                                        (((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        (((if 1 != 0 {
+                                            0
                                         } else {
                                             base
-                                        }) + 0 as ::core::ffi::c_int)
-                                            < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                        }) + 0)
+                                            < -(if ((if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) - 1)
+                                                < 0
                                             {
-                                                ((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                ((((if 1 != 0 {
+                                                    0
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) + 0 as ::core::ffi::c_int
-                                                }) + 1 as ::core::ffi::c_int)
+                                                    }) + 0
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) + 0 as ::core::ffi::c_int
-                                                }) - 1 as ::core::ffi::c_int
+                                                    }) + 0
+                                                }) - 1
                                             }))
                                             as ::core::ffi::c_int
                                     } else {
-                                        ((0 as ::core::ffi::c_int)
-                                            < (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                        ((0)
+                                            < (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int)
+                                            }) + 0)
                                             as ::core::ffi::c_int
                                     }) != 0
                                         && base == -(1 as ::core::ffi::c_int)
                                     {
-                                        if (if 1 as ::core::ffi::c_int != 0 {
+                                        if (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -2320,25 +2320,25 @@ unsafe extern "C" fn parse_int(
                                         } else {
                                             ((0 as uintmax_t) < val
                                                 && ((-(1 as ::core::ffi::c_int)
-                                                    - 0 as ::core::ffi::c_int)
+                                                    - 0)
                                                     as uintmax_t)
                                                     < val.wrapping_sub(1 as uintmax_t))
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
-                                        (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
+                                        (((0 / base) as uintmax_t) < val)
                                             as ::core::ffi::c_int
                                     }
                                 }
                             } else {
-                                if base == 0 as ::core::ffi::c_int {
-                                    0 as ::core::ffi::c_int
+                                if base == 0 {
+                                    0
                                 } else {
                                     if val < 0 as uintmax_t {
-                                        if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if (if (if (if 1 != 0 {
                                             0 as uintmax_t
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -2348,10 +2348,10 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_sub(1 as uintmax_t)
                                             < 0 as uintmax_t
                                         {
-                                            !((if 1 as ::core::ffi::c_int != 0 {
+                                            !((if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -2366,10 +2366,10 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_mul(2 as uintmax_t)
                                             .wrapping_add(1 as uintmax_t)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -2379,16 +2379,16 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_add(0 as uintmax_t)
                                         }) < 0 as uintmax_t
                                         {
-                                            ((if 1 as ::core::ffi::c_int != 0 {
+                                            ((if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
                                             })
                                             .wrapping_add(0 as uintmax_t)
-                                                < (if (if 1 as ::core::ffi::c_int != 0 {
+                                                < (if (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -2398,10 +2398,10 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_sub(1 as uintmax_t)
                                                     < 0 as uintmax_t
                                                 {
-                                                    ((if 1 as ::core::ffi::c_int != 0 {
+                                                    ((if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
                                                             val
@@ -2417,10 +2417,10 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_mul(2 as uintmax_t)
                                                     .wrapping_add(1 as uintmax_t)
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
                                                             val
@@ -2433,7 +2433,7 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_int
                                         } else {
                                             ((0 as uintmax_t)
-                                                < (if 1 as ::core::ffi::c_int != 0 {
+                                                < (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -2443,20 +2443,20 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                         {
-                                            if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                ((0 as ::core::ffi::c_int)
-                                                    < base + 0 as ::core::ffi::c_int)
+                                                ((0)
+                                                    < base + 0)
                                                     as ::core::ffi::c_int
                                             } else {
                                                 ((-(1 as ::core::ffi::c_int)
-                                                    - 0 as ::core::ffi::c_int)
-                                                    < base - 1 as ::core::ffi::c_int)
+                                                    - 0)
+                                                    < base - 1)
                                                     as ::core::ffi::c_int
                                             }
                                         } else {
@@ -2465,8 +2465,8 @@ unsafe extern "C" fn parse_int(
                                         }
                                     } else {
                                         (((2147483647 as ::core::ffi::c_int as ::core::ffi::c_uint)
-                                            .wrapping_mul(2 as ::core::ffi::c_uint)
-                                            .wrapping_add(1 as ::core::ffi::c_uint)
+                                            .wrapping_mul(2)
+                                            .wrapping_add(1)
                                             .wrapping_div(base as ::core::ffi::c_uint)
                                             as uintmax_t)
                                             < val)
@@ -2478,19 +2478,19 @@ unsafe extern "C" fn parse_int(
                                 val = (val as ::core::ffi::c_uint)
                                     .wrapping_mul(base as ::core::ffi::c_uint)
                                     as uintmax_t;
-                                1 as ::core::ffi::c_int
+                                1
                             } else {
                                 val = (val as ::core::ffi::c_uint)
                                     .wrapping_mul(base as ::core::ffi::c_uint)
                                     as uintmax_t;
-                                0 as ::core::ffi::c_int
+                                0
                             }
                         }
                     } else {
                         if ::core::mem::size_of::<uintmax_t>() as usize
                             == ::core::mem::size_of::<::core::ffi::c_long>() as usize
                         {
-                            if (if 1 as ::core::ffi::c_int != 0 {
+                            if (if 1 != 0 {
                                 0 as uintmax_t
                             } else {
                                 val
@@ -2498,61 +2498,61 @@ unsafe extern "C" fn parse_int(
                             .wrapping_sub(1 as uintmax_t)
                                 < 0 as uintmax_t
                             {
-                                if (if base < 0 as ::core::ffi::c_int {
+                                if (if base < 0 {
                                     if val < 0 as uintmax_t {
-                                        if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_long
+                                        if ((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_long
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 9223372036854775807 as ::core::ffi::c_long
                                             }) + base as ::core::ffi::c_long
-                                        }) - 1 as ::core::ffi::c_long)
-                                            < 0 as ::core::ffi::c_long
+                                        }) - 1)
+                                            < 0
                                         {
                                             (val < (9223372036854775807 as ::core::ffi::c_long
                                                 / base as ::core::ffi::c_long)
                                                 as uintmax_t)
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((if (if (if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                !(((((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 1 as ::core::ffi::c_int)
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) < 0 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) < 0
                                             {
                                                 (base
-                                                    < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    < -(if ((if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) - 1 as ::core::ffi::c_int)
-                                                        < 0 as ::core::ffi::c_int
+                                                    }) - 1)
+                                                        < 0
                                                     {
-                                                        ((((if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        ((((if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 1 as ::core::ffi::c_int)
+                                                        }) + 1)
                                                             << (::core::mem::size_of::<
                                                                 ::core::ffi::c_int,
                                                             >(
@@ -2560,24 +2560,24 @@ unsafe extern "C" fn parse_int(
                                                                 as usize)
                                                                 .wrapping_mul(8 as usize)
                                                                 .wrapping_sub(2 as usize))
-                                                            - 1 as ::core::ffi::c_int)
-                                                            * 2 as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int
+                                                            - 1)
+                                                            * 2
+                                                            + 1
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) - 1 as ::core::ffi::c_int
+                                                        }) - 1
                                                     }))
                                                     as ::core::ffi::c_int
                                             } else {
-                                                ((0 as ::core::ffi::c_int) < base)
+                                                ((0) < base)
                                                     as ::core::ffi::c_int
                                             }) != 0
                                             {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
@@ -2597,92 +2597,92 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
-                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_long
+                                        if (if (if ((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             })
                                                 as ::core::ffi::c_long
                                                 + (-(9223372036854775807 as ::core::ffi::c_long)
-                                                    - 1 as ::core::ffi::c_long)
-                                        }) - 1 as ::core::ffi::c_long)
-                                            < 0 as ::core::ffi::c_long
+                                                    - 1)
+                                        }) - 1)
+                                            < 0
                                         {
-                                            !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_long
+                                            !(((((if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
                                                     as ::core::ffi::c_long
                                                     + (-(9223372036854775807
                                                         as ::core::ffi::c_long)
-                                                        - 1 as ::core::ffi::c_long)
-                                            }) + 1 as ::core::ffi::c_long)
+                                                        - 1)
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_long>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_long)
-                                                * 2 as ::core::ffi::c_long
-                                                + 1 as ::core::ffi::c_long)
+                                                - 1)
+                                                * 2
+                                                + 1)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_long
+                                            (if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
                                                     as ::core::ffi::c_long
                                                     + (-(9223372036854775807
                                                         as ::core::ffi::c_long)
-                                                        - 1 as ::core::ffi::c_long)
-                                            }) + 0 as ::core::ffi::c_long
-                                        }) < 0 as ::core::ffi::c_long
+                                                        - 1)
+                                            }) + 0
+                                        }) < 0
                                         {
-                                            ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             })
                                                 as ::core::ffi::c_long
                                                 + (-(9223372036854775807 as ::core::ffi::c_long)
-                                                    - 1 as ::core::ffi::c_long)
-                                                < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_long
+                                                    - 1)
+                                                < -(if ((if 1 != 0 {
+                                                    0
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
                                                     })
                                                         as ::core::ffi::c_long
                                                         + (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long)
-                                                }) - 1 as ::core::ffi::c_long)
-                                                    < 0 as ::core::ffi::c_long
+                                                            - 1)
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_long
+                                                    ((((if 1 != 0 {
+                                                        0
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
                                                         })
                                                             as ::core::ffi::c_long
                                                             + (-(9223372036854775807
                                                                 as ::core::ffi::c_long)
-                                                                - 1 as ::core::ffi::c_long)
-                                                    }) + 1 as ::core::ffi::c_long)
+                                                                - 1)
+                                                    }) + 1)
                                                         << (::core::mem::size_of::<
                                                             ::core::ffi::c_long,
                                                         >(
@@ -2690,41 +2690,41 @@ unsafe extern "C" fn parse_int(
                                                             as usize)
                                                             .wrapping_mul(8 as usize)
                                                             .wrapping_sub(2 as usize))
-                                                        - 1 as ::core::ffi::c_long)
-                                                        * 2 as ::core::ffi::c_long
-                                                        + 1 as ::core::ffi::c_long
+                                                        - 1)
+                                                        * 2
+                                                        + 1
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_long
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
                                                         })
                                                             as ::core::ffi::c_long
                                                             + (-(9223372036854775807
                                                                 as ::core::ffi::c_long)
-                                                                - 1 as ::core::ffi::c_long)
-                                                    }) - 1 as ::core::ffi::c_long
+                                                                - 1)
+                                                    }) - 1
                                                 }))
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((0 as ::core::ffi::c_long)
-                                                < (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                            ((0)
+                                                < (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
                                                     as ::core::ffi::c_long
                                                     + (-(9223372036854775807
                                                         as ::core::ffi::c_long)
-                                                        - 1 as ::core::ffi::c_long))
+                                                        - 1))
                                                 as ::core::ffi::c_int
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -2736,7 +2736,7 @@ unsafe extern "C" fn parse_int(
                                                     < val.wrapping_add(
                                                         (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long)
+                                                            - 1)
                                                             as uintmax_t,
                                                     ))
                                                     as ::core::ffi::c_int
@@ -2746,14 +2746,14 @@ unsafe extern "C" fn parse_int(
                                                         as ::core::ffi::c_long
                                                         - (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long))
+                                                            - 1))
                                                         as uintmax_t)
                                                         < val.wrapping_sub(1 as uintmax_t))
                                                     as ::core::ffi::c_int
                                             }
                                         } else {
                                             ((((-(9223372036854775807 as ::core::ffi::c_long)
-                                                - 1 as ::core::ffi::c_long)
+                                                - 1)
                                                 / base as ::core::ffi::c_long)
                                                 as uintmax_t)
                                                 < val)
@@ -2761,31 +2761,31 @@ unsafe extern "C" fn parse_int(
                                         }
                                     }
                                 } else {
-                                    if base == 0 as ::core::ffi::c_int {
-                                        0 as ::core::ffi::c_int
+                                    if base == 0 {
+                                        0
                                     } else {
                                         if val < 0 as uintmax_t {
-                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if (if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(9223372036854775807 as ::core::ffi::c_long)
-                                                        - 1 as ::core::ffi::c_long)
+                                                        - 1)
                                                         as uintmax_t,
                                                 )
                                             })
                                             .wrapping_sub(1 as uintmax_t)
                                                 < 0 as uintmax_t
                                             {
-                                                !((if 1 as ::core::ffi::c_int != 0 {
+                                                !((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -2793,7 +2793,7 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_add(
                                                         (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long)
+                                                            - 1)
                                                             as uintmax_t,
                                                     )
                                                 })
@@ -2806,10 +2806,10 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_mul(2 as uintmax_t)
                                                 .wrapping_add(1 as uintmax_t)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -2817,26 +2817,26 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_add(
                                                         (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long)
+                                                            - 1)
                                                             as uintmax_t,
                                                     )
                                                 })
                                                 .wrapping_add(0 as uintmax_t)
                                             }) < 0 as uintmax_t
                                             {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
+                                                ((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(
                                                     (-(9223372036854775807 as ::core::ffi::c_long)
-                                                        - 1 as ::core::ffi::c_long)
+                                                        - 1)
                                                         as uintmax_t,
-                                                ) < (if (if 1 as ::core::ffi::c_int != 0 {
+                                                ) < (if (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -2844,17 +2844,17 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_add(
                                                         (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long)
+                                                            - 1)
                                                             as uintmax_t,
                                                     )
                                                 })
                                                 .wrapping_sub(1 as uintmax_t)
                                                     < 0 as uintmax_t
                                                 {
-                                                    ((if 1 as ::core::ffi::c_int != 0 {
+                                                    ((if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
                                                             val
@@ -2862,7 +2862,7 @@ unsafe extern "C" fn parse_int(
                                                         .wrapping_add(
                                                             (-(9223372036854775807
                                                                 as ::core::ffi::c_long)
-                                                                - 1 as ::core::ffi::c_long)
+                                                                - 1)
                                                                 as uintmax_t,
                                                         )
                                                     })
@@ -2875,10 +2875,10 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_mul(2 as uintmax_t)
                                                     .wrapping_add(1 as uintmax_t)
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
                                                             val
@@ -2886,7 +2886,7 @@ unsafe extern "C" fn parse_int(
                                                         .wrapping_add(
                                                             (-(9223372036854775807
                                                                 as ::core::ffi::c_long)
-                                                                - 1 as ::core::ffi::c_long)
+                                                                - 1)
                                                                 as uintmax_t,
                                                         )
                                                     })
@@ -2896,7 +2896,7 @@ unsafe extern "C" fn parse_int(
                                                     as ::core::ffi::c_int
                                             } else {
                                                 ((0 as uintmax_t)
-                                                    < (if 1 as ::core::ffi::c_int != 0 {
+                                                    < (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -2904,39 +2904,39 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_add(
                                                         (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long)
+                                                            - 1)
                                                             as uintmax_t,
                                                     ))
                                                     as ::core::ffi::c_int
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                if ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((0 as ::core::ffi::c_long)
+                                                    ((0)
                                                         < base as ::core::ffi::c_long
                                                             + (-(9223372036854775807
                                                                 as ::core::ffi::c_long)
-                                                                - 1 as ::core::ffi::c_long))
+                                                                - 1))
                                                         as ::core::ffi::c_int
                                                 } else {
                                                     (-(1 as ::core::ffi::c_int)
                                                         as ::core::ffi::c_long
                                                         - (-(9223372036854775807
                                                             as ::core::ffi::c_long)
-                                                            - 1 as ::core::ffi::c_long)
-                                                        < (base - 1 as ::core::ffi::c_int)
+                                                            - 1)
+                                                        < (base - 1)
                                                             as ::core::ffi::c_long)
                                                         as ::core::ffi::c_int
                                                 }
                                             } else {
                                                 (((-(9223372036854775807 as ::core::ffi::c_long)
-                                                    - 1 as ::core::ffi::c_long)
+                                                    - 1)
                                                     as uintmax_t)
                                                     .wrapping_div(val)
                                                     < base as uintmax_t)
@@ -2956,32 +2956,32 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_mul(base as ::core::ffi::c_ulong)
                                         as ::core::ffi::c_long
                                         as uintmax_t;
-                                    1 as ::core::ffi::c_int
+                                    1
                                 } else {
                                     val = (val as ::core::ffi::c_ulong)
                                         .wrapping_mul(base as ::core::ffi::c_ulong)
                                         as ::core::ffi::c_long
                                         as uintmax_t;
-                                    0 as ::core::ffi::c_int
+                                    0
                                 }
                             } else {
-                                if (if base < 0 as ::core::ffi::c_int {
+                                if (if base < 0 {
                                     if val < 0 as uintmax_t {
-                                        if (if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_ulong
+                                        if (if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_ulong
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 (9223372036854775807 as ::core::ffi::c_long
                                                     as ::core::ffi::c_ulong)
-                                                    .wrapping_mul(2 as ::core::ffi::c_ulong)
-                                                    .wrapping_add(1 as ::core::ffi::c_ulong)
+                                                    .wrapping_mul(2)
+                                                    .wrapping_add(1)
                                             })
                                             .wrapping_add(base as ::core::ffi::c_ulong)
                                         })
-                                        .wrapping_sub(1 as ::core::ffi::c_ulong)
-                                            < 0 as ::core::ffi::c_ulong
+                                        .wrapping_sub(1)
+                                            < 0
                                         {
                                             (val < (9223372036854775807 as uintmax_t)
                                                 .wrapping_mul(2 as uintmax_t)
@@ -2989,43 +2989,43 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_div(base as uintmax_t))
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((if (if (if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                !(((((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 1 as ::core::ffi::c_int)
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) < 0 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) < 0
                                             {
                                                 (base
-                                                    < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    < -(if ((if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) - 1 as ::core::ffi::c_int)
-                                                        < 0 as ::core::ffi::c_int
+                                                    }) - 1)
+                                                        < 0
                                                     {
-                                                        ((((if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        ((((if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 1 as ::core::ffi::c_int)
+                                                        }) + 1)
                                                             << (::core::mem::size_of::<
                                                                 ::core::ffi::c_int,
                                                             >(
@@ -3033,24 +3033,24 @@ unsafe extern "C" fn parse_int(
                                                                 as usize)
                                                                 .wrapping_mul(8 as usize)
                                                                 .wrapping_sub(2 as usize))
-                                                            - 1 as ::core::ffi::c_int)
-                                                            * 2 as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int
+                                                            - 1)
+                                                            * 2
+                                                            + 1
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) - 1 as ::core::ffi::c_int
+                                                        }) - 1
                                                     }))
                                                     as ::core::ffi::c_int
                                             } else {
-                                                ((0 as ::core::ffi::c_int) < base)
+                                                ((0) < base)
                                                     as ::core::ffi::c_int
                                             }) != 0
                                             {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
@@ -3074,98 +3074,98 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
-                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        if (if (if ((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                            }) + 0
+                                        }) - 1)
+                                            < 0
                                         {
-                                            !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            !(((((if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) + 1 as ::core::ffi::c_int)
+                                                }) + 0
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int)
+                                                - 1)
+                                                * 2
+                                                + 1)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) < 0 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) + 0
+                                        }) < 0
                                         {
-                                            (((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int)
-                                                < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                            }) + 0)
+                                                < -(if ((if 1 != 0 {
+                                                    0
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) + 0 as ::core::ffi::c_int
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                    }) + 0
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    ((((if 1 != 0 {
+                                                        0
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 0 as ::core::ffi::c_int
-                                                    }) + 1 as ::core::ffi::c_int)
+                                                        }) + 0
+                                                    }) + 1)
                                                         << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                             .wrapping_mul(8 as usize)
-                                                            .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                        * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                            .wrapping_sub(2 as usize)) - 1)
+                                                        * 2 + 1
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 0 as ::core::ffi::c_int
-                                                    }) - 1 as ::core::ffi::c_int
+                                                        }) + 0
+                                                    }) - 1
                                                 }))
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((0 as ::core::ffi::c_int)
-                                                < (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                            ((0)
+                                                < (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int)
+                                                }) + 0)
                                                 as ::core::ffi::c_int
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -3179,25 +3179,25 @@ unsafe extern "C" fn parse_int(
                                             } else {
                                                 ((0 as uintmax_t) < val
                                                     && ((-(1 as ::core::ffi::c_int)
-                                                        - 0 as ::core::ffi::c_int)
+                                                        - 0)
                                                         as uintmax_t)
                                                         < val.wrapping_sub(1 as uintmax_t))
                                                     as ::core::ffi::c_int
                                             }
                                         } else {
-                                            (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
+                                            (((0 / base) as uintmax_t) < val)
                                                 as ::core::ffi::c_int
                                         }
                                     }
                                 } else {
-                                    if base == 0 as ::core::ffi::c_int {
-                                        0 as ::core::ffi::c_int
+                                    if base == 0 {
+                                        0
                                     } else {
                                         if val < 0 as uintmax_t {
-                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if (if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -3207,10 +3207,10 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_sub(1 as uintmax_t)
                                                 < 0 as uintmax_t
                                             {
-                                                !((if 1 as ::core::ffi::c_int != 0 {
+                                                !((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -3226,10 +3226,10 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_mul(2 as uintmax_t)
                                                 .wrapping_add(1 as uintmax_t)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -3239,16 +3239,16 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_add(0 as uintmax_t)
                                             }) < 0 as uintmax_t
                                             {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
+                                                ((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(0 as uintmax_t)
-                                                    < (if (if 1 as ::core::ffi::c_int != 0 {
+                                                    < (if (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
                                                             val
@@ -3258,10 +3258,10 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_sub(1 as uintmax_t)
                                                         < 0 as uintmax_t
                                                     {
-                                                        ((if 1 as ::core::ffi::c_int != 0 {
+                                                        ((if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
-                                                            (if 1 as ::core::ffi::c_int != 0 {
+                                                            (if 1 != 0 {
                                                                 0 as uintmax_t
                                                             } else {
                                                                 val
@@ -3277,10 +3277,10 @@ unsafe extern "C" fn parse_int(
                                                         .wrapping_mul(2 as uintmax_t)
                                                         .wrapping_add(1 as uintmax_t)
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
-                                                            (if 1 as ::core::ffi::c_int != 0 {
+                                                            (if 1 != 0 {
                                                                 0 as uintmax_t
                                                             } else {
                                                                 val
@@ -3293,7 +3293,7 @@ unsafe extern "C" fn parse_int(
                                                     as ::core::ffi::c_int
                                             } else {
                                                 ((0 as uintmax_t)
-                                                    < (if 1 as ::core::ffi::c_int != 0 {
+                                                    < (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -3303,20 +3303,20 @@ unsafe extern "C" fn parse_int(
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                if ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((0 as ::core::ffi::c_int)
-                                                        < base + 0 as ::core::ffi::c_int)
+                                                    ((0)
+                                                        < base + 0)
                                                         as ::core::ffi::c_int
                                                 } else {
                                                     ((-(1 as ::core::ffi::c_int)
-                                                        - 0 as ::core::ffi::c_int)
-                                                        < base - 1 as ::core::ffi::c_int)
+                                                        - 0)
+                                                        < base - 1)
                                                         as ::core::ffi::c_int
                                                 }
                                             } else {
@@ -3338,16 +3338,16 @@ unsafe extern "C" fn parse_int(
                                     val = (val as ::core::ffi::c_ulong)
                                         .wrapping_mul(base as ::core::ffi::c_ulong)
                                         as uintmax_t;
-                                    1 as ::core::ffi::c_int
+                                    1
                                 } else {
                                     val = (val as ::core::ffi::c_ulong)
                                         .wrapping_mul(base as ::core::ffi::c_ulong)
                                         as uintmax_t;
-                                    0 as ::core::ffi::c_int
+                                    0
                                 }
                             }
                         } else {
-                            if (if 1 as ::core::ffi::c_int != 0 {
+                            if (if 1 != 0 {
                                 0 as uintmax_t
                             } else {
                                 val
@@ -3355,12 +3355,12 @@ unsafe extern "C" fn parse_int(
                             .wrapping_sub(1 as uintmax_t)
                                 < 0 as uintmax_t
                             {
-                                if (if base < 0 as ::core::ffi::c_int {
+                                if (if base < 0 {
                                     if val < 0 as uintmax_t {
-                                        if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if ((if 1 != 0 {
                                             0 as ::core::ffi::c_longlong
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as ::core::ffi::c_longlong
                                             } else {
                                                 9223372036854775807 as ::core::ffi::c_longlong
@@ -3374,43 +3374,43 @@ unsafe extern "C" fn parse_int(
                                                     as ::core::ffi::c_ulonglong)
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((if (if (if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                !(((((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 1 as ::core::ffi::c_int)
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) < 0 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) < 0
                                             {
                                                 (base
-                                                    < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    < -(if ((if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) - 1 as ::core::ffi::c_int)
-                                                        < 0 as ::core::ffi::c_int
+                                                    }) - 1)
+                                                        < 0
                                                     {
-                                                        ((((if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        ((((if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 1 as ::core::ffi::c_int)
+                                                        }) + 1)
                                                             << (::core::mem::size_of::<
                                                                 ::core::ffi::c_int,
                                                             >(
@@ -3418,24 +3418,24 @@ unsafe extern "C" fn parse_int(
                                                                 as usize)
                                                                 .wrapping_mul(8 as usize)
                                                                 .wrapping_sub(2 as usize))
-                                                            - 1 as ::core::ffi::c_int)
-                                                            * 2 as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int
+                                                            - 1)
+                                                            * 2
+                                                            + 1
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) - 1 as ::core::ffi::c_int
+                                                        }) - 1
                                                     }))
                                                     as ::core::ffi::c_int
                                             } else {
-                                                ((0 as ::core::ffi::c_int) < base)
+                                                ((0) < base)
                                                     as ::core::ffi::c_int
                                             }) != 0
                                             {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
@@ -3456,11 +3456,11 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
-                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if (if (if ((if 1 != 0 {
                                             0 as ::core::ffi::c_longlong
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             })
@@ -3471,11 +3471,11 @@ unsafe extern "C" fn parse_int(
                                         }) - 1 as ::core::ffi::c_longlong)
                                             < 0 as ::core::ffi::c_longlong
                                         {
-                                            !(((((if 1 as ::core::ffi::c_int != 0 {
+                                            !(((((if 1 != 0 {
                                                 0 as ::core::ffi::c_longlong
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 }) as ::core::ffi::c_longlong
@@ -3489,11 +3489,11 @@ unsafe extern "C" fn parse_int(
                                                 * 2 as ::core::ffi::c_longlong
                                                 + 1 as ::core::ffi::c_longlong)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as ::core::ffi::c_longlong
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
@@ -3504,8 +3504,8 @@ unsafe extern "C" fn parse_int(
                                             }) + 0 as ::core::ffi::c_longlong
                                         }) < 0 as ::core::ffi::c_longlong
                                         {
-                                            ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
                                             })
@@ -3513,11 +3513,11 @@ unsafe extern "C" fn parse_int(
                                                 + (-(9223372036854775807
                                                     as ::core::ffi::c_longlong)
                                                     - 1 as ::core::ffi::c_longlong)
-                                                < -(if ((if 1 as ::core::ffi::c_int != 0 {
+                                                < -(if ((if 1 != 0 {
                                                     0 as ::core::ffi::c_longlong
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
                                                     })
@@ -3528,11 +3528,11 @@ unsafe extern "C" fn parse_int(
                                                 }) - 1 as ::core::ffi::c_longlong)
                                                     < 0 as ::core::ffi::c_longlong
                                                 {
-                                                    ((((if 1 as ::core::ffi::c_int != 0 {
+                                                    ((((if 1 != 0 {
                                                         0 as ::core::ffi::c_longlong
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
                                                         })
@@ -3552,11 +3552,11 @@ unsafe extern "C" fn parse_int(
                                                         * 2 as ::core::ffi::c_longlong
                                                         + 1 as ::core::ffi::c_longlong
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as ::core::ffi::c_longlong
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
                                                         })
@@ -3569,8 +3569,8 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_int
                                         } else {
                                             ((0 as ::core::ffi::c_longlong)
-                                                < (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                < (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
@@ -3582,7 +3582,7 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -3621,14 +3621,14 @@ unsafe extern "C" fn parse_int(
                                         }
                                     }
                                 } else {
-                                    if base == 0 as ::core::ffi::c_int {
-                                        0 as ::core::ffi::c_int
+                                    if base == 0 {
+                                        0
                                     } else {
                                         if val < 0 as uintmax_t {
-                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if (if (if 1 != 0 {
                                                 0 as ::core::ffi::c_ulonglong
                                             } else {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
+                                                ((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -3644,10 +3644,10 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_sub(1 as ::core::ffi::c_ulonglong)
                                                 < 0 as ::core::ffi::c_ulonglong
                                             {
-                                                !((if 1 as ::core::ffi::c_int != 0 {
+                                                !((if 1 != 0 {
                                                     0 as ::core::ffi::c_ulonglong
                                                 } else {
-                                                    ((if 1 as ::core::ffi::c_int != 0 {
+                                                    ((if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -3672,10 +3672,10 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_mul(2 as ::core::ffi::c_ulonglong)
                                                 .wrapping_add(1 as ::core::ffi::c_ulonglong)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as ::core::ffi::c_ulonglong
                                                 } else {
-                                                    ((if 1 as ::core::ffi::c_int != 0 {
+                                                    ((if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -3691,7 +3691,7 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_add(0 as ::core::ffi::c_ulonglong)
                                             }) < 0 as ::core::ffi::c_ulonglong
                                             {
-                                                (((if 1 as ::core::ffi::c_int != 0 {
+                                                (((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -3700,10 +3700,10 @@ unsafe extern "C" fn parse_int(
                                                         (-(9223372036854775807 as ::core::ffi::c_longlong)
                                                             - 1 as ::core::ffi::c_longlong) as ::core::ffi::c_ulonglong,
                                                     )
-                                                    < (if (if 1 as ::core::ffi::c_int != 0 {
+                                                    < (if (if 1 != 0 {
                                                         0 as ::core::ffi::c_ulonglong
                                                     } else {
-                                                        ((if 1 as ::core::ffi::c_int != 0 {
+                                                        ((if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
                                                             val
@@ -3716,10 +3716,10 @@ unsafe extern "C" fn parse_int(
                                                         .wrapping_sub(1 as ::core::ffi::c_ulonglong)
                                                         < 0 as ::core::ffi::c_ulonglong
                                                     {
-                                                        ((if 1 as ::core::ffi::c_int != 0 {
+                                                        ((if 1 != 0 {
                                                             0 as ::core::ffi::c_ulonglong
                                                         } else {
-                                                            ((if 1 as ::core::ffi::c_int != 0 {
+                                                            ((if 1 != 0 {
                                                                 0 as uintmax_t
                                                             } else {
                                                                 val
@@ -3738,10 +3738,10 @@ unsafe extern "C" fn parse_int(
                                                             .wrapping_mul(2 as ::core::ffi::c_ulonglong)
                                                             .wrapping_add(1 as ::core::ffi::c_ulonglong)
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as ::core::ffi::c_ulonglong
                                                         } else {
-                                                            ((if 1 as ::core::ffi::c_int != 0 {
+                                                            ((if 1 != 0 {
                                                                 0 as uintmax_t
                                                             } else {
                                                                 val
@@ -3756,7 +3756,7 @@ unsafe extern "C" fn parse_int(
                                                         .wrapping_neg()) as ::core::ffi::c_int
                                             } else {
                                                 ((0 as ::core::ffi::c_ulonglong)
-                                                    < ((if 1 as ::core::ffi::c_int != 0 {
+                                                    < ((if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -3772,12 +3772,12 @@ unsafe extern "C" fn parse_int(
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                if ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                }) - 1)
+                                                    < 0
                                                 {
                                                     ((0 as ::core::ffi::c_longlong)
                                                         < base as ::core::ffi::c_longlong
@@ -3791,7 +3791,7 @@ unsafe extern "C" fn parse_int(
                                                         - (-(9223372036854775807
                                                             as ::core::ffi::c_longlong)
                                                             - 1 as ::core::ffi::c_longlong)
-                                                        < (base - 1 as ::core::ffi::c_int)
+                                                        < (base - 1)
                                                             as ::core::ffi::c_longlong)
                                                         as ::core::ffi::c_int
                                                 }
@@ -3818,21 +3818,21 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_mul(base as ::core::ffi::c_ulonglong)
                                         as ::core::ffi::c_longlong
                                         as uintmax_t;
-                                    1 as ::core::ffi::c_int
+                                    1
                                 } else {
                                     val = (val as ::core::ffi::c_ulonglong)
                                         .wrapping_mul(base as ::core::ffi::c_ulonglong)
                                         as ::core::ffi::c_longlong
                                         as uintmax_t;
-                                    0 as ::core::ffi::c_int
+                                    0
                                 }
                             } else {
-                                if (if base < 0 as ::core::ffi::c_int {
+                                if (if base < 0 {
                                     if val < 0 as uintmax_t {
-                                        if (if 1 as ::core::ffi::c_int != 0 {
+                                        if (if 1 != 0 {
                                             0 as ::core::ffi::c_ulonglong
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
+                                            (if 1 != 0 {
                                                 0 as ::core::ffi::c_ulonglong
                                             } else {
                                                 (9223372036854775807 as ::core::ffi::c_ulonglong)
@@ -3851,43 +3851,43 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_div(base as ::core::ffi::c_ulonglong))
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            ((if (if (if ((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) - 1 as ::core::ffi::c_int)
-                                                < 0 as ::core::ffi::c_int
+                                            }) - 1)
+                                                < 0
                                             {
-                                                !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                !(((((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 1 as ::core::ffi::c_int)
+                                                }) + 1)
                                                     << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                         .wrapping_mul(8 as usize)
-                                                        .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                    * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int)
+                                                        .wrapping_sub(2 as usize)) - 1)
+                                                    * 2 + 1)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) < 0 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) < 0
                                             {
                                                 (base
-                                                    < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    < -(if ((if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) - 1 as ::core::ffi::c_int)
-                                                        < 0 as ::core::ffi::c_int
+                                                    }) - 1)
+                                                        < 0
                                                     {
-                                                        ((((if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        ((((if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 1 as ::core::ffi::c_int)
+                                                        }) + 1)
                                                             << (::core::mem::size_of::<
                                                                 ::core::ffi::c_int,
                                                             >(
@@ -3895,24 +3895,24 @@ unsafe extern "C" fn parse_int(
                                                                 as usize)
                                                                 .wrapping_mul(8 as usize)
                                                                 .wrapping_sub(2 as usize))
-                                                            - 1 as ::core::ffi::c_int)
-                                                            * 2 as ::core::ffi::c_int
-                                                            + 1 as ::core::ffi::c_int
+                                                            - 1)
+                                                            * 2
+                                                            + 1
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) - 1 as ::core::ffi::c_int
+                                                        }) - 1
                                                     }))
                                                     as ::core::ffi::c_int
                                             } else {
-                                                ((0 as ::core::ffi::c_int) < base)
+                                                ((0) < base)
                                                     as ::core::ffi::c_int
                                             }) != 0
                                             {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
                                                 })
@@ -3942,98 +3942,98 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_int
                                         }
                                     } else {
-                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
-                                            0 as ::core::ffi::c_int
+                                        if (if (if ((if 1 != 0 {
+                                            0
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) - 1 as ::core::ffi::c_int)
-                                            < 0 as ::core::ffi::c_int
+                                            }) + 0
+                                        }) - 1)
+                                            < 0
                                         {
-                                            !(((((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            !(((((if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) + 1 as ::core::ffi::c_int)
+                                                }) + 0
+                                            }) + 1)
                                                 << (::core::mem::size_of::<::core::ffi::c_int>()
                                                     as usize)
                                                     .wrapping_mul(8 as usize)
                                                     .wrapping_sub(2 as usize))
-                                                - 1 as ::core::ffi::c_int)
-                                                * 2 as ::core::ffi::c_int
-                                                + 1 as ::core::ffi::c_int)
+                                                - 1)
+                                                * 2
+                                                + 1)
                                         } else {
-                                            (if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (if 1 != 0 {
+                                                0
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int
-                                            }) + 0 as ::core::ffi::c_int
-                                        }) < 0 as ::core::ffi::c_int
+                                                }) + 0
+                                            }) + 0
+                                        }) < 0
                                         {
-                                            (((if 1 as ::core::ffi::c_int != 0 {
-                                                0 as ::core::ffi::c_int
+                                            (((if 1 != 0 {
+                                                0
                                             } else {
                                                 base
-                                            }) + 0 as ::core::ffi::c_int)
-                                                < -(if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                            }) + 0)
+                                                < -(if ((if 1 != 0 {
+                                                    0
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
                                                         base
-                                                    }) + 0 as ::core::ffi::c_int
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                    }) + 0
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((((if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    ((((if 1 != 0 {
+                                                        0
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 0 as ::core::ffi::c_int
-                                                    }) + 1 as ::core::ffi::c_int)
+                                                        }) + 0
+                                                    }) + 1)
                                                         << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                                                             .wrapping_mul(8 as usize)
-                                                            .wrapping_sub(2 as usize)) - 1 as ::core::ffi::c_int)
-                                                        * 2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int
+                                                            .wrapping_sub(2 as usize)) - 1)
+                                                        * 2 + 1
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
-                                                        0 as ::core::ffi::c_int
+                                                    (if 1 != 0 {
+                                                        0
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
-                                                            0 as ::core::ffi::c_int
+                                                        (if 1 != 0 {
+                                                            0
                                                         } else {
                                                             base
-                                                        }) + 0 as ::core::ffi::c_int
-                                                    }) - 1 as ::core::ffi::c_int
+                                                        }) + 0
+                                                    }) - 1
                                                 }))
                                                 as ::core::ffi::c_int
                                         } else {
-                                            ((0 as ::core::ffi::c_int)
-                                                < (if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                            ((0)
+                                                < (if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) + 0 as ::core::ffi::c_int)
+                                                }) + 0)
                                                 as ::core::ffi::c_int
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -4047,25 +4047,25 @@ unsafe extern "C" fn parse_int(
                                             } else {
                                                 ((0 as uintmax_t) < val
                                                     && ((-(1 as ::core::ffi::c_int)
-                                                        - 0 as ::core::ffi::c_int)
+                                                        - 0)
                                                         as uintmax_t)
                                                         < val.wrapping_sub(1 as uintmax_t))
                                                     as ::core::ffi::c_int
                                             }
                                         } else {
-                                            (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
+                                            (((0 / base) as uintmax_t) < val)
                                                 as ::core::ffi::c_int
                                         }
                                     }
                                 } else {
-                                    if base == 0 as ::core::ffi::c_int {
-                                        0 as ::core::ffi::c_int
+                                    if base == 0 {
+                                        0
                                     } else {
                                         if val < 0 as uintmax_t {
-                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if (if (if 1 != 0 {
                                                 0 as uintmax_t
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
@@ -4075,10 +4075,10 @@ unsafe extern "C" fn parse_int(
                                             .wrapping_sub(1 as uintmax_t)
                                                 < 0 as uintmax_t
                                             {
-                                                !((if 1 as ::core::ffi::c_int != 0 {
+                                                !((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -4094,10 +4094,10 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_mul(2 as uintmax_t)
                                                 .wrapping_add(1 as uintmax_t)
                                             } else {
-                                                (if 1 as ::core::ffi::c_int != 0 {
+                                                (if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
-                                                    (if 1 as ::core::ffi::c_int != 0 {
+                                                    (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -4107,16 +4107,16 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_add(0 as uintmax_t)
                                             }) < 0 as uintmax_t
                                             {
-                                                ((if 1 as ::core::ffi::c_int != 0 {
+                                                ((if 1 != 0 {
                                                     0 as uintmax_t
                                                 } else {
                                                     val
                                                 })
                                                 .wrapping_add(0 as uintmax_t)
-                                                    < (if (if 1 as ::core::ffi::c_int != 0 {
+                                                    < (if (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
                                                             val
@@ -4126,10 +4126,10 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_sub(1 as uintmax_t)
                                                         < 0 as uintmax_t
                                                     {
-                                                        ((if 1 as ::core::ffi::c_int != 0 {
+                                                        ((if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
-                                                            (if 1 as ::core::ffi::c_int != 0 {
+                                                            (if 1 != 0 {
                                                                 0 as uintmax_t
                                                             } else {
                                                                 val
@@ -4145,10 +4145,10 @@ unsafe extern "C" fn parse_int(
                                                         .wrapping_mul(2 as uintmax_t)
                                                         .wrapping_add(1 as uintmax_t)
                                                     } else {
-                                                        (if 1 as ::core::ffi::c_int != 0 {
+                                                        (if 1 != 0 {
                                                             0 as uintmax_t
                                                         } else {
-                                                            (if 1 as ::core::ffi::c_int != 0 {
+                                                            (if 1 != 0 {
                                                                 0 as uintmax_t
                                                             } else {
                                                                 val
@@ -4161,7 +4161,7 @@ unsafe extern "C" fn parse_int(
                                                     as ::core::ffi::c_int
                                             } else {
                                                 ((0 as uintmax_t)
-                                                    < (if 1 as ::core::ffi::c_int != 0 {
+                                                    < (if 1 != 0 {
                                                         0 as uintmax_t
                                                     } else {
                                                         val
@@ -4171,20 +4171,20 @@ unsafe extern "C" fn parse_int(
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                if ((if 1 as ::core::ffi::c_int != 0 {
-                                                    0 as ::core::ffi::c_int
+                                                if ((if 1 != 0 {
+                                                    0
                                                 } else {
                                                     base
-                                                }) - 1 as ::core::ffi::c_int)
-                                                    < 0 as ::core::ffi::c_int
+                                                }) - 1)
+                                                    < 0
                                                 {
-                                                    ((0 as ::core::ffi::c_int)
-                                                        < base + 0 as ::core::ffi::c_int)
+                                                    ((0)
+                                                        < base + 0)
                                                         as ::core::ffi::c_int
                                                 } else {
                                                     ((-(1 as ::core::ffi::c_int)
-                                                        - 0 as ::core::ffi::c_int)
-                                                        < base - 1 as ::core::ffi::c_int)
+                                                        - 0)
+                                                        < base - 1)
                                                         as ::core::ffi::c_int
                                                 }
                                             } else {
@@ -4206,12 +4206,12 @@ unsafe extern "C" fn parse_int(
                                     val = (val as ::core::ffi::c_ulonglong)
                                         .wrapping_mul(base as ::core::ffi::c_ulonglong)
                                         as uintmax_t;
-                                    1 as ::core::ffi::c_int
+                                    1
                                 } else {
                                     val = (val as ::core::ffi::c_ulonglong)
                                         .wrapping_mul(base as ::core::ffi::c_ulonglong)
                                         as uintmax_t;
-                                    0 as ::core::ffi::c_int
+                                    0
                                 }
                             }
                         }
@@ -4236,7 +4236,7 @@ unsafe extern "C" fn parse_int(
                 name,
             );
         }
-        ptr = ptr.offset(1);
+        ptr = ptr.offset(1 as ::core::ffi::c_int as isize);
     }
     val
 }
@@ -4249,9 +4249,9 @@ pub unsafe extern "C" fn ar_scan(
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut current_block: u64;
     let mut namemap: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut namemap_size: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
-    let mut desc: ::core::ffi::c_int = open(archive, O_RDONLY, 0 as ::core::ffi::c_int);
-    if desc < 0 as ::core::ffi::c_int {
+    let mut namemap_size: ::core::ffi::c_uint = 0;
+    let mut desc: ::core::ffi::c_int = open(archive, O_RDONLY, 0);
+    if desc < 0 {
         return -(1 as ::core::ffi::c_int) as intmax_t;
     }
     let mut buf: [::core::ffi::c_char; 8] = [0; 8];
@@ -4283,7 +4283,7 @@ pub unsafe extern "C" fn ar_scan(
             let mut namebuf: [::core::ffi::c_char; 17] = [0; 17];
             let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
             let mut is_namemap: ::core::ffi::c_int = 0;
-            let mut long_name: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+            let mut long_name: ::core::ffi::c_int = 0;
             let mut eltsize: ::core::ffi::c_long = 0;
             let mut eltmode: ::core::ffi::c_uint = 0;
             let mut eltdate: intmax_t = 0;
@@ -4293,11 +4293,11 @@ pub unsafe extern "C" fn ar_scan(
             let mut o: off_t = 0;
             memset(
                 &raw mut member_header as *mut ::core::ffi::c_void,
-                '\0' as i32,
+                0,
                 ::core::mem::size_of::<ar_hdr>() as size_t,
             );
             loop {
-                o = lseek(desc, member_offset as __off_t, 0 as ::core::ffi::c_int) as off_t;
+                o = lseek(desc, member_offset as __off_t, 0) as off_t;
                 if !(o == -(1 as ::core::ffi::c_int) as off_t && *__errno_location() == EINTR) {
                     break;
                 }
@@ -4320,9 +4320,9 @@ pub unsafe extern "C" fn ar_scan(
                     &raw mut member_header.ar_fmag as *mut ::core::ffi::c_char
                         as *const ::core::ffi::c_void,
                     ARFMAG.as_ptr() as *const ::core::ffi::c_void,
-                    2 as size_t,
+                    2,
                 ) != 0
-                    && 1 as ::core::ffi::c_int != 0
+                    && 1 != 0
             {
                 current_block = 13383231232214443762;
                 break;
@@ -4337,9 +4337,9 @@ pub unsafe extern "C" fn ar_scan(
             let mut p: *mut ::core::ffi::c_char =
                 name.offset(::core::mem::size_of::<[::core::ffi::c_char; 16]>() as usize as isize);
             loop {
-                *p = '\0' as i32 as ::core::ffi::c_char;
+                *p = 0;
                 if !(p > name && {
-                    p = p.offset(-1);
+                    p = p.offset(-(1 as ::core::ffi::c_int) as isize);
                     *p as ::core::ffi::c_int == ' ' as i32
                 }) {
                     break;
@@ -4351,13 +4351,11 @@ pub unsafe extern "C" fn ar_scan(
                     b"ARFILENAMES/\0" as *const u8 as *const ::core::ffi::c_char,
                 ) == 0) as ::core::ffi::c_int;
             if *p as ::core::ffi::c_int == '/' as i32 {
-                *p = '\0' as i32 as ::core::ffi::c_char;
+                *p = 0;
             }
             if is_namemap == 0
-                && (*name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == ' ' as i32
-                    || *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                        == '/' as i32)
+                && (*name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == ' ' as i32
+                    || *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32)
                 && !namemap.is_null()
             {
                 let mut err: *const ::core::ffi::c_char =
@@ -4371,15 +4369,13 @@ pub unsafe extern "C" fn ar_scan(
                 }
                 name = namemap.offset(name_off as isize);
                 name_len = strlen(name) as size_t;
-                if name_len < 1 as size_t {
+                if name_len < 1 {
                     current_block = 13383231232214443762;
                     break;
                 }
-                long_name = 1 as ::core::ffi::c_int;
-            } else if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                == '#' as i32
-                && *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == '1' as i32
+                long_name = 1;
+            } else if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '#' as i32
+                && *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '1' as i32
                 && *name.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                     == '/' as i32
             {
@@ -4390,7 +4386,7 @@ pub unsafe extern "C" fn ar_scan(
                     &raw mut err_0,
                 );
                 if !err_0.is_null()
-                    || name_len_0 == 0 as ::core::ffi::c_uint
+                    || name_len_0 == 0
                     || name_len_0
                         >= (if (4096 as ::core::ffi::c_int) < 2147483647 as ::core::ffi::c_int {
                             4096 as ::core::ffi::c_int
@@ -4403,7 +4399,7 @@ pub unsafe extern "C" fn ar_scan(
                 }
                 alloca_allocations.push(::std::vec::from_elem(
                     0,
-                    name_len_0.wrapping_add(1 as ::core::ffi::c_uint) as ::core::ffi::c_ulong
+                    name_len_0.wrapping_add(1) as ::core::ffi::c_ulong
                         as usize,
                 ));
                 name =
@@ -4413,13 +4409,13 @@ pub unsafe extern "C" fn ar_scan(
                     current_block = 13383231232214443762;
                     break;
                 }
-                *name.offset(name_len_0 as isize) = '\0' as i32 as ::core::ffi::c_char;
-                long_name = 1 as ::core::ffi::c_int;
+                *name.offset(name_len_0 as isize) = 0;
+                long_name = 1;
             }
             eltmode = parse_int(
                 &raw mut member_header.ar_mode as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t,
-                8 as ::core::ffi::c_int,
+                8,
                 (if (0 as ::core::ffi::c_int as ::core::ffi::c_uint)
                     < -(1 as ::core::ffi::c_int) as ::core::ffi::c_uint
                 {
@@ -4429,9 +4425,9 @@ pub unsafe extern "C" fn ar_scan(
                         << (::core::mem::size_of::<::core::ffi::c_uint>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(2 as usize))
-                    .wrapping_sub(1 as ::core::ffi::c_uint)
-                    .wrapping_mul(2 as ::core::ffi::c_uint)
-                    .wrapping_add(1 as ::core::ffi::c_uint)
+                    .wrapping_sub(1)
+                    .wrapping_mul(2)
+                    .wrapping_add(1)
                 }) as uintmax_t,
                 b"mode\0" as *const u8 as *const ::core::ffi::c_char,
                 archive,
@@ -4440,7 +4436,7 @@ pub unsafe extern "C" fn ar_scan(
             eltsize = parse_int(
                 &raw mut member_header.ar_size as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t,
-                10 as ::core::ffi::c_int,
+                10,
                 (if (0 as ::core::ffi::c_int as ::core::ffi::c_long)
                     < -(1 as ::core::ffi::c_int) as ::core::ffi::c_long
                 {
@@ -4450,9 +4446,9 @@ pub unsafe extern "C" fn ar_scan(
                         << (::core::mem::size_of::<::core::ffi::c_long>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(2 as usize))
-                        - 1 as ::core::ffi::c_long)
-                        * 2 as ::core::ffi::c_long
-                        + 1 as ::core::ffi::c_long
+                        - 1)
+                        * 2
+                        + 1
                 }) as uintmax_t,
                 b"size\0" as *const u8 as *const ::core::ffi::c_char,
                 archive,
@@ -4461,7 +4457,7 @@ pub unsafe extern "C" fn ar_scan(
             eltdate = parse_int(
                 &raw mut member_header.ar_date as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t,
-                10 as ::core::ffi::c_int,
+                10,
                 (if (0 as ::core::ffi::c_int as intmax_t) < -(1 as ::core::ffi::c_int) as intmax_t {
                     -(1 as ::core::ffi::c_int) as intmax_t
                 } else {
@@ -4480,17 +4476,17 @@ pub unsafe extern "C" fn ar_scan(
             eltuid = parse_int(
                 &raw mut member_header.ar_uid as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t,
-                10 as ::core::ffi::c_int,
-                (if (0 as ::core::ffi::c_int) < -(1 as ::core::ffi::c_int) {
+                10,
+                (if (0) < -(1 as ::core::ffi::c_int) {
                     -(1 as ::core::ffi::c_int)
                 } else {
-                    (((1 as ::core::ffi::c_int)
+                    (((1)
                         << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(2 as usize))
-                        - 1 as ::core::ffi::c_int)
-                        * 2 as ::core::ffi::c_int
-                        + 1 as ::core::ffi::c_int
+                        - 1)
+                        * 2
+                        + 1
                 }) as uintmax_t,
                 b"uid\0" as *const u8 as *const ::core::ffi::c_char,
                 archive,
@@ -4499,17 +4495,17 @@ pub unsafe extern "C" fn ar_scan(
             eltgid = parse_int(
                 &raw mut member_header.ar_gid as *mut ::core::ffi::c_char,
                 ::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t,
-                10 as ::core::ffi::c_int,
-                (if (0 as ::core::ffi::c_int) < -(1 as ::core::ffi::c_int) {
+                10,
+                (if (0) < -(1 as ::core::ffi::c_int) {
                     -(1 as ::core::ffi::c_int)
                 } else {
-                    (((1 as ::core::ffi::c_int)
+                    (((1)
                         << (::core::mem::size_of::<::core::ffi::c_int>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(2 as usize))
-                        - 1 as ::core::ffi::c_int)
-                        * 2 as ::core::ffi::c_int
-                        + 1 as ::core::ffi::c_int
+                        - 1)
+                        * 2
+                        + 1
                 }) as uintmax_t,
                 b"gid\0" as *const u8 as *const ::core::ffi::c_char,
                 archive,
@@ -4544,7 +4540,7 @@ pub unsafe extern "C" fn ar_scan(
                 }
                 alloca_allocations.push(::std::vec::from_elem(
                     0,
-                    (eltsize + 1 as ::core::ffi::c_long) as ::core::ffi::c_ulong as usize,
+                    (eltsize + 1) as ::core::ffi::c_ulong as usize,
                 ));
                 namemap =
                     alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
@@ -4558,23 +4554,21 @@ pub unsafe extern "C" fn ar_scan(
                 clear = namemap;
                 while clear < limit {
                     if *clear as ::core::ffi::c_int == '\n' as i32 {
-                        *clear = '\0' as i32 as ::core::ffi::c_char;
-                        if *clear.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
-                            == '/' as i32
+                        *clear = 0;
+                        if *clear.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '/' as i32
                         {
-                            *clear.offset(-(1 as ::core::ffi::c_int) as isize) =
-                                '\0' as i32 as ::core::ffi::c_char;
+                            *clear.offset(-(1 as ::core::ffi::c_int) as isize) = 0;
                         }
                     }
-                    clear = clear.offset(1);
+                    clear = clear.offset(1 as ::core::ffi::c_int as isize);
                 }
-                *limit = '\0' as i32 as ::core::ffi::c_char;
-                is_namemap = 0 as ::core::ffi::c_int;
+                *limit = 0;
+                is_namemap = 0;
             }
             member_offset = (member_offset as ::core::ffi::c_ulong)
                 .wrapping_add(AR_HDR_SIZE.wrapping_add(eltsize as usize) as ::core::ffi::c_ulong)
                 as ::core::ffi::c_long as ::core::ffi::c_long;
-            if member_offset % 2 as ::core::ffi::c_long != 0 as ::core::ffi::c_long {
+            if member_offset % 2 != 0 {
                 member_offset += 1;
             }
         }
@@ -4597,13 +4591,10 @@ pub unsafe extern "C" fn ar_name_equal(
 ) -> ::core::ffi::c_int {
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     if *name as ::core::ffi::c_int == *mem as ::core::ffi::c_int
-        && (*name as ::core::ffi::c_int == '\0' as i32
-            || strcmp(
-                name.offset(1 as ::core::ffi::c_int as isize),
-                mem.offset(1 as ::core::ffi::c_int as isize),
-            ) == 0)
+        && (*name as ::core::ffi::c_int == 0
+            || strcmp(name.offset(1 as ::core::ffi::c_int as isize), mem.offset(1 as ::core::ffi::c_int as isize), ) == 0)
     {
-        return 1 as ::core::ffi::c_int;
+        return 1;
     }
     p = strrchr(name, '/' as i32);
     if !p.is_null() {
@@ -4623,8 +4614,8 @@ pub unsafe extern "C" fn ar_name_equal(
             name,
             mem,
             (::core::mem::size_of::<[::core::ffi::c_char; 16]>() as size_t)
-                .wrapping_sub(1 as size_t),
-        ) == 0 as ::core::ffi::c_int) as ::core::ffi::c_int;
+                .wrapping_sub(1),
+        ) == 0) as ::core::ffi::c_int;
     }
     (strcmp(name, mem) == 0) as ::core::ffi::c_int
 }
@@ -4715,7 +4706,7 @@ pub unsafe extern "C" fn ar_member_touch(
         return pos as ::core::ffi::c_int;
     }
     if pos == 0 {
-        return 1 as ::core::ffi::c_int;
+        return 1;
     }
     opos = pos as off_t;
     loop {
@@ -4728,11 +4719,11 @@ pub unsafe extern "C" fn ar_member_touch(
             break;
         }
     }
-    if fd < 0 as ::core::ffi::c_int {
+    if fd < 0 {
         return -(3 as ::core::ffi::c_int);
     }
     loop {
-        o = lseek(fd, opos as __off_t, 0 as ::core::ffi::c_int) as off_t;
+        o = lseek(fd, opos as __off_t, 0) as off_t;
         if !(o == -(1 as ::core::ffi::c_int) as off_t && *__errno_location() == EINTR) {
             break;
         }
@@ -4747,14 +4738,14 @@ pub unsafe extern "C" fn ar_member_touch(
                     break;
                 }
             }
-            if !(r < 0 as ::core::ffi::c_int) {
+            if !(r < 0) {
                 datelen = snprintf(
                     &raw mut ar_hdr.ar_date as *mut ::core::ffi::c_char,
                     ::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t,
                     b"%ld\0" as *const u8 as *const ::core::ffi::c_char,
                     statbuf.st_mtim.tv_sec as intmax_t,
                 );
-                if 0 as ::core::ffi::c_int <= datelen
+                if 0 <= datelen
                     && datelen
                         < ::core::mem::size_of::<[::core::ffi::c_char; 12]>() as ::core::ffi::c_int
                 {
@@ -4767,7 +4758,7 @@ pub unsafe extern "C" fn ar_member_touch(
                             .wrapping_sub(datelen as size_t),
                     );
                     loop {
-                        o = lseek(fd, opos as __off_t, 0 as ::core::ffi::c_int) as off_t;
+                        o = lseek(fd, opos as __off_t, 0) as off_t;
                         if !(o == -(1 as ::core::ffi::c_int) as off_t
                             && *__errno_location() == EINTR)
                         {
@@ -4782,7 +4773,7 @@ pub unsafe extern "C" fn ar_member_touch(
                         ) as ::core::ffi::c_int;
                         if !(r as usize != AR_HDR_SIZE) {
                             close(fd);
-                            return 0 as ::core::ffi::c_int;
+                            return 0;
                         }
                     }
                 }
@@ -4794,5 +4785,5 @@ pub unsafe extern "C" fn ar_member_touch(
     *__errno_location() = r;
     -(3 as ::core::ffi::c_int)
 }
-pub const __CHAR_BIT__: ::core::ffi::c_int = 8 as ::core::ffi::c_int;
+pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
 pub const __INT_MAX__: ::core::ffi::c_int = 2147483647 as ::core::ffi::c_int;

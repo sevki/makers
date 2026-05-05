@@ -323,7 +323,7 @@ pub const INTSTR_LENGTH: usize = (53 as usize)
     .wrapping_div(22 as usize)
     .wrapping_add(3 as usize);
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
-pub const PARSEFS_NONE: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
 #[inline]
 
 unsafe extern "C" fn alloc_dep() -> *mut dep {
@@ -351,16 +351,16 @@ pub static mut suffix_file: *mut file = ::core::ptr::null::<file>() as *mut file
 #[no_mangle]
 pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::c_char {
     if (*r)._defn.is_null() {
-        let mut len: size_t = 8 as size_t;
+        let mut len: size_t = 8;
         let mut k: ::core::ffi::c_uint = 0;
         let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut sep: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
         let mut dep: *const dep = ::core::ptr::null::<dep>();
         let mut ood: *const dep = ::core::ptr::null::<dep>();
-        k = 0 as ::core::ffi::c_uint;
+        k = 0;
         while k < (*r).num as ::core::ffi::c_uint {
             len = len.wrapping_add(
-                (*(*r).lens.offset(k as isize)).wrapping_add(1 as ::core::ffi::c_uint) as size_t,
+                (*(*r).lens.offset(k as isize)).wrapping_add(1) as size_t,
             );
             k = k.wrapping_add(1);
         }
@@ -377,18 +377,18 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
                 .wrapping_add(
                     if (*dep).wait_here() as ::core::ffi::c_int != 0 {
                         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                            .wrapping_sub(1 as size_t)
+                            .wrapping_sub(1)
                     } else {
-                        0 as size_t
+                        0
                     },
                 )
-                .wrapping_add(1 as size_t) as ::core::ffi::c_ulong,
+                .wrapping_add(1) as ::core::ffi::c_ulong,
             ) as size_t as size_t;
             dep = (*dep).next;
         }
         (*r)._defn = xmalloc(len) as *mut ::core::ffi::c_char;
         p = (*r)._defn;
-        k = 0 as ::core::ffi::c_uint;
+        k = 0;
         while k < (*r).num as ::core::ffi::c_uint {
             p = mempcpy(
                 mempcpy(
@@ -403,23 +403,23 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
             sep = b" \0" as *const u8 as *const ::core::ffi::c_char;
         }
         let fresh4 = p;
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
         *fresh4 = ':' as i32 as ::core::ffi::c_char;
         if (*r).terminal != 0 {
             let fresh5 = p;
-            p = p.offset(1);
+            p = p.offset(1 as ::core::ffi::c_int as isize);
             *fresh5 = ':' as i32 as ::core::ffi::c_char;
         }
         dep = (*r).deps;
         while !dep.is_null() {
-            if (*dep).ignore_mtime() as ::core::ffi::c_int == 0 as ::core::ffi::c_int {
+            if (*dep).ignore_mtime() as ::core::ffi::c_int == 0 {
                 if (*dep).wait_here() != 0 {
                     p = mempcpy(
                         p as *mut ::core::ffi::c_void,
                         b" .WAIT\0" as *const u8 as *const ::core::ffi::c_char
                             as *const ::core::ffi::c_void,
                         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                            .wrapping_sub(1 as size_t),
+                            .wrapping_sub(1),
                     ) as *mut ::core::ffi::c_char;
                 }
                 p = mempcpy(
@@ -427,7 +427,7 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
                         p as *mut ::core::ffi::c_void,
                         b" \0" as *const u8 as *const ::core::ffi::c_char
                             as *const ::core::ffi::c_void,
-                        1 as size_t,
+                        1,
                     ),
                     (if !(*dep).name.is_null() {
                         (*dep).name
@@ -459,7 +459,7 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
                         b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
                             as *const ::core::ffi::c_void,
                         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                            .wrapping_sub(1 as size_t),
+                            .wrapping_sub(1),
                     ) as *mut ::core::ffi::c_char;
                 }
                 p = mempcpy(
@@ -479,22 +479,22 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
             ood = (*ood).next;
             sep = b" \0" as *const u8 as *const ::core::ffi::c_char;
         }
-        *p = '\0' as i32 as ::core::ffi::c_char;
+        *p = 0;
     }
     (*r)._defn
 }
 #[no_mangle]
 pub unsafe extern "C" fn snap_implicit_rules() {
     let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut namelen: size_t = 0 as size_t;
+    let mut namelen: size_t = 0;
     let mut rule: *mut rule = ::core::ptr::null_mut::<rule>();
     let mut dep: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
         b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1 as size_t),
+        (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
     ));
-    let mut pre_deps: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
-    max_pattern_dep_length = 0 as size_t;
+    let mut pre_deps: ::core::ffi::c_uint = 0;
+    max_pattern_dep_length = 0;
     dep = prereqs;
     while !dep.is_null() {
         let mut d: *const ::core::ffi::c_char = if !(*dep).name.is_null() {
@@ -515,8 +515,8 @@ pub unsafe extern "C" fn snap_implicit_rules() {
                 if d.is_null() {
                     break;
                 }
-                l = l.wrapping_add(4 as size_t);
-                d = d.offset(1);
+                l = l.wrapping_add(4);
+                d = d.offset(1 as ::core::ffi::c_int as isize);
             }
         }
         if l > max_pattern_dep_length {
@@ -525,7 +525,7 @@ pub unsafe extern "C" fn snap_implicit_rules() {
         pre_deps = pre_deps.wrapping_add(1);
         dep = (*dep).next;
     }
-    max_pattern_deps = 0 as ::core::ffi::c_uint;
+    max_pattern_deps = 0;
     max_pattern_targets = max_pattern_deps;
     num_pattern_rules = max_pattern_targets;
     rule = pattern_rules;
@@ -559,13 +559,13 @@ pub unsafe extern "C" fn snap_implicit_rules() {
             }
             if !p2.is_null() {
                 if p == dname {
-                    p = p.offset(1);
+                    p = p.offset(1 as ::core::ffi::c_int as isize);
                 }
                 if p.offset_from(dname) as ::core::ffi::c_long as size_t > namelen {
                     namelen = p.offset_from(dname) as ::core::ffi::c_long as size_t;
                     name = xrealloc(
                         name as *mut ::core::ffi::c_void,
-                        namelen.wrapping_add(1 as size_t),
+                        namelen.wrapping_add(1),
                     ) as *mut ::core::ffi::c_char;
                 }
                 memcpy(
@@ -574,7 +574,7 @@ pub unsafe extern "C" fn snap_implicit_rules() {
                     p.offset_from(dname) as ::core::ffi::c_long as size_t,
                 );
                 *name.offset(p.offset_from(dname) as ::core::ffi::c_long as isize) =
-                    '\0' as i32 as ::core::ffi::c_char;
+                    0;
                 (*dep).set_changed(
                     (dir_file_exists_p(name, b"\0" as *const u8 as *const ::core::ffi::c_char) == 0)
                         as ::core::ffi::c_int as ::core::ffi::c_uint
@@ -618,14 +618,14 @@ unsafe extern "C" fn convert_suffix_rule(
     if target.is_null() {
         *names = strcache_add_len(
             b"(%.o)\0" as *const u8 as *const ::core::ffi::c_char,
-            5 as size_t,
+            5,
         );
         *percents = (*names).offset(1 as ::core::ffi::c_int as isize);
     } else {
         let mut len: size_t = strlen(target) as size_t;
         alloca_allocations.push(::std::vec::from_elem(
             0,
-            (1 as size_t).wrapping_add(len).wrapping_add(1 as size_t) as usize,
+            (1 as size_t).wrapping_add(len).wrapping_add(1) as usize,
         ));
         let mut p: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
@@ -633,9 +633,9 @@ unsafe extern "C" fn convert_suffix_rule(
         memcpy(
             p.offset(1 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void,
             target as *const ::core::ffi::c_void,
-            (len as size_t).wrapping_add(1 as size_t),
+            (len as size_t).wrapping_add(1),
         );
-        *names = strcache_add_len(p, len.wrapping_add(1 as size_t));
+        *names = strcache_add_len(p, len.wrapping_add(1));
         *percents = *names;
     }
     if source.is_null() {
@@ -644,7 +644,7 @@ unsafe extern "C" fn convert_suffix_rule(
         let mut len_0: size_t = strlen(source) as size_t;
         alloca_allocations.push(::std::vec::from_elem(
             0,
-            (1 as size_t).wrapping_add(len_0).wrapping_add(1 as size_t) as usize,
+            (1 as size_t).wrapping_add(len_0).wrapping_add(1) as usize,
         ));
         let mut p_0: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
@@ -652,19 +652,19 @@ unsafe extern "C" fn convert_suffix_rule(
         memcpy(
             p_0.offset(1 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void,
             source as *const ::core::ffi::c_void,
-            (len_0 as size_t).wrapping_add(1 as size_t),
+            (len_0 as size_t).wrapping_add(1),
         );
         deps = alloc_dep();
-        (*deps).name = strcache_add_len(p_0, len_0.wrapping_add(1 as size_t));
+        (*deps).name = strcache_add_len(p_0, len_0.wrapping_add(1));
     }
     create_pattern_rule(
         names,
         percents,
-        1 as ::core::ffi::c_ushort,
-        0 as ::core::ffi::c_int,
+        1,
+        0,
         deps,
         cmds,
-        0 as ::core::ffi::c_int,
+        0,
     );
 }
 #[no_mangle]
@@ -673,7 +673,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
     let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d2: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut rulename: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut maxsuffix: size_t = 0 as size_t;
+    let mut maxsuffix: size_t = 0;
     d = (*suffix_file).deps;
     while !d.is_null() {
         let mut l: size_t = strlen(if !(*d).name.is_null() {
@@ -689,8 +689,8 @@ pub unsafe extern "C" fn convert_to_pattern() {
     alloca_allocations.push(::std::vec::from_elem(
         0,
         maxsuffix
-            .wrapping_mul(2 as size_t)
-            .wrapping_add(1 as size_t) as usize,
+            .wrapping_mul(2)
+            .wrapping_add(1) as usize,
     ));
     rulename = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
     d = (*suffix_file).deps;
@@ -729,7 +729,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
             } else {
                 (*(*d).file).name
             }) as *const ::core::ffi::c_void,
-            (slen as size_t).wrapping_add(1 as size_t),
+            (slen as size_t).wrapping_add(1),
         );
         f = lookup_file(rulename);
         if !f.is_null() && !(*f).cmds.is_null() {
@@ -738,7 +738,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
             } else if posix_pedantic == 0 {
                 error(
                     &raw mut (*(*f).cmds).fileinfo,
-                    0 as size_t,
+                    0,
                     b"warning: ignoring prerequisites on suffix rule definition\0" as *const u8
                         as *const ::core::ffi::c_char,
                 );
@@ -770,20 +770,18 @@ pub unsafe extern "C" fn convert_to_pattern() {
                     } else {
                         (*(*d).file).name
                     }) as ::core::ffi::c_int
-                        == '\0' as i32
+                        == 0
                         || strcmp(
                             (if !(*d).name.is_null() {
                                 (*d).name
                             } else {
                                 (*(*d).file).name
-                            })
-                            .offset(1 as ::core::ffi::c_int as isize),
+                            }) . offset ( 1 ) ,
                             (if !(*d2).name.is_null() {
                                 (*d2).name
                             } else {
                                 (*(*d2).file).name
-                            })
-                            .offset(1 as ::core::ffi::c_int as isize),
+                            }) . offset ( 1 ) ,
                         ) == 0)))
             {
                 memcpy(
@@ -793,7 +791,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
                     } else {
                         (*(*d2).file).name
                     }) as *const ::core::ffi::c_void,
-                    (s2len as size_t).wrapping_add(1 as size_t),
+                    (s2len as size_t).wrapping_add(1),
                 );
                 f = lookup_file(rulename);
                 if !(f.is_null() || (*f).cmds.is_null()) {
@@ -803,7 +801,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
                         } else {
                             error(
                                 &raw mut (*(*f).cmds).fileinfo,
-                                0 as size_t,
+                                0,
                                 b"warning: ignoring prerequisites on suffix rule definition\0"
                                     as *const u8
                                     as *const ::core::ffi::c_char,
@@ -817,10 +815,10 @@ pub unsafe extern "C" fn convert_to_pattern() {
                         11584701595673473500 => {}
                         _ => {
                             (*f).set_suffix(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            if s2len == 2 as size_t
+                            if s2len == 2
                                 && *rulename.offset(slen as isize) as ::core::ffi::c_int
                                     == '.' as i32
-                                && *rulename.offset(slen.wrapping_add(1 as size_t) as isize)
+                                && *rulename.offset(slen.wrapping_add(1) as isize)
                                     as ::core::ffi::c_int
                                     == 'a' as i32
                             {
@@ -864,24 +862,22 @@ unsafe extern "C" fn new_pattern_rule(
     let mut lastrule: *mut rule = ::core::ptr::null_mut::<rule>();
     let mut i: ::core::ffi::c_uint = 0;
     let mut j: ::core::ffi::c_uint = 0;
-    (*rule).in_use = 0 as ::core::ffi::c_char;
-    (*rule).terminal = 0 as ::core::ffi::c_char;
+    (*rule).in_use = 0;
+    (*rule).terminal = 0;
     (*rule).next = ::core::ptr::null_mut::<rule>();
     lastrule = ::core::ptr::null_mut::<rule>();
     r = pattern_rules;
     's_18: while !r.is_null() {
-        i = 0 as ::core::ffi::c_uint;
+        i = 0;
         while i < (*rule).num as ::core::ffi::c_uint {
-            j = 0 as ::core::ffi::c_uint;
+            j = 0;
             while j < (*r).num as ::core::ffi::c_uint {
                 if !(**(*rule).targets.offset(i as isize) as ::core::ffi::c_int
                     == **(*r).targets.offset(j as isize) as ::core::ffi::c_int
-                    && (**(*rule).targets.offset(i as isize) as ::core::ffi::c_int == '\0' as i32
+                    && (**(*rule).targets.offset(i as isize) as ::core::ffi::c_int == 0
                         || strcmp(
-                            (*(*rule).targets.offset(i as isize))
-                                .offset(1 as ::core::ffi::c_int as isize),
-                            (*(*r).targets.offset(j as isize))
-                                .offset(1 as ::core::ffi::c_int as isize),
+                            (*(*rule).targets.offset(i as isize)).offset(1 as ::core::ffi::c_int as isize),
+                            (*(*r).targets.offset(j as isize)).offset(1 as ::core::ffi::c_int as isize),
                         ) == 0))
                 {
                     break;
@@ -909,20 +905,18 @@ unsafe extern "C" fn new_pattern_rule(
                         } else {
                             (*(*d).file).name
                         }) as ::core::ffi::c_int
-                            == '\0' as i32
+                            == 0
                             || strcmp(
                                 (if !(*d).name.is_null() {
                                     (*d).name
                                 } else {
                                     (*(*d).file).name
-                                })
-                                .offset(1 as ::core::ffi::c_int as isize),
+                                }) . offset ( 1 ) ,
                                 (if !(*d2).name.is_null() {
                                     (*d2).name
                                 } else {
                                     (*(*d2).file).name
-                                })
-                                .offset(1 as ::core::ffi::c_int as isize),
+                                }) . offset ( 1 ) ,
                             ) == 0))
                     {
                         break;
@@ -942,7 +936,7 @@ unsafe extern "C" fn new_pattern_rule(
                         break 's_18;
                     } else {
                         freerule(rule, ::core::ptr::null_mut::<rule>());
-                        return 0 as ::core::ffi::c_int;
+                        return 0;
                     }
                 }
             }
@@ -959,7 +953,7 @@ unsafe extern "C" fn new_pattern_rule(
         }
         last_pattern_rule = rule;
     }
-    1 as ::core::ffi::c_int
+    1
 }
 #[no_mangle]
 pub unsafe extern "C" fn install_pattern_rule(
@@ -969,7 +963,7 @@ pub unsafe extern "C" fn install_pattern_rule(
     let mut r: *mut rule = ::core::ptr::null_mut::<rule>();
     let mut ptr: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     r = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
-    (*r).num = 1 as ::core::ffi::c_ushort;
+    (*r).num = 1;
     (*r).targets = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
         as *mut *const ::core::ffi::c_char;
     (*r).suffixes = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
@@ -977,28 +971,26 @@ pub unsafe extern "C" fn install_pattern_rule(
     (*r).lens = xmalloc(::core::mem::size_of::<::core::ffi::c_uint>() as size_t)
         as *mut ::core::ffi::c_uint;
     (*r)._defn = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    *(*r).lens.offset(0 as ::core::ffi::c_int as isize) =
-        strlen((*p).target) as ::core::ffi::c_uint;
+    *(*r).lens.offset(0 as ::core::ffi::c_int as isize) = strlen((*p).target) as ::core::ffi::c_uint;
     let ref mut fresh1 = *(*r).targets.offset(0 as ::core::ffi::c_int as isize);
     *fresh1 = (*p).target;
     let ref mut fresh2 = *(*r).suffixes.offset(0 as ::core::ffi::c_int as isize);
     *fresh2 =
-        find_percent_cached((*r).targets.offset(0 as ::core::ffi::c_int as isize)
-            as *mut *const ::core::ffi::c_char);
+        find_percent_cached((*r).targets.offset(0 as ::core::ffi::c_int as isize) as *mut *const ::core::ffi::c_char);
     '_c2rust_label: {
         if !(*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize)).is_null() {
         } else {
             __assert_fail(
                 b"r->suffixes[0] != NULL\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/rule.c\0" as *const u8 as *const ::core::ffi::c_char,
-                492 as ::core::ffi::c_uint,
+                492,
                 b"void install_pattern_rule(const struct pspec *, int)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
     };
     let ref mut fresh3 = *(*r).suffixes.offset(0 as ::core::ffi::c_int as isize);
-    *fresh3 = (*fresh3).offset(1);
+    *fresh3 = (*fresh3).offset(1 as ::core::ffi::c_int as isize);
     ptr = (*p).dep;
     (*r).deps = parse_file_seq(
         &raw mut ptr as *mut *mut ::core::ffi::c_char,
@@ -1007,16 +999,16 @@ pub unsafe extern "C" fn install_pattern_rule(
         ::core::ptr::null::<::core::ffi::c_char>(),
         PARSEFS_NONE,
     ) as *mut dep as *mut dep;
-    if new_pattern_rule(r, 0 as ::core::ffi::c_int) != 0 {
+    if new_pattern_rule(r, 0) != 0 {
         (*r).terminal = (if terminal != 0 {
-            1 as ::core::ffi::c_int
+            1
         } else {
-            0 as ::core::ffi::c_int
+            0
         }) as ::core::ffi::c_char;
         (*r).cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
         (*(*r).cmds).fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
-        (*(*r).cmds).fileinfo.lineno = 0 as ::core::ffi::c_ulong;
-        (*(*r).cmds).fileinfo.offset = 0 as ::core::ffi::c_ulong;
+        (*(*r).cmds).fileinfo.lineno = 0;
+        (*(*r).cmds).fileinfo.offset = 0;
         (*(*r).cmds).commands = xstrdup((*p).commands);
         (*(*r).cmds).command_lines = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
         (*(*r).cmds).recipe_prefix = RECIPEPREFIX_DEFAULT as ::core::ffi::c_char;
@@ -1065,7 +1057,7 @@ pub unsafe extern "C" fn create_pattern_rule(
         (n as size_t).wrapping_mul(::core::mem::size_of::<::core::ffi::c_uint>() as size_t),
     ) as *mut ::core::ffi::c_uint;
     (*r)._defn = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    i = 0 as ::core::ffi::c_uint;
+    i = 0;
     while i < n as ::core::ffi::c_uint {
         *(*r).lens.offset(i as isize) = strlen(*targets.offset(i as isize)) as ::core::ffi::c_uint;
         '_c2rust_label: {
@@ -1075,21 +1067,21 @@ pub unsafe extern "C" fn create_pattern_rule(
                     b"r->suffixes[i] != NULL\0" as *const u8
                         as *const ::core::ffi::c_char,
                     b"src/rule.c\0" as *const u8 as *const ::core::ffi::c_char,
-                    584 as ::core::ffi::c_uint,
+                    584,
                     b"void create_pattern_rule(const char **, const char **, unsigned short, int, struct dep *, struct commands *, int)\0"
                         as *const u8 as *const ::core::ffi::c_char,
                 );
             }
         };
         let ref mut fresh0 = *(*r).suffixes.offset(i as isize);
-        *fresh0 = (*fresh0).offset(1);
+        *fresh0 = (*fresh0).offset(1 as ::core::ffi::c_int as isize);
         i = i.wrapping_add(1);
     }
     if new_pattern_rule(r, override_0) != 0 {
         (*r).terminal = (if terminal != 0 {
-            1 as ::core::ffi::c_int
+            1
         } else {
-            0 as ::core::ffi::c_int
+            0
         }) as ::core::ffi::c_char;
     }
 }
@@ -1107,7 +1099,7 @@ pub unsafe extern "C" fn print_rule_data_base() {
     let mut terminal: ::core::ffi::c_uint = 0;
     let mut r: *mut rule = ::core::ptr::null_mut::<rule>();
     puts(b"\n# Implicit Rules\0" as *const u8 as *const ::core::ffi::c_char);
-    terminal = 0 as ::core::ffi::c_uint;
+    terminal = 0;
     rules = terminal;
     r = pattern_rules;
     while !r.is_null() {
@@ -1119,7 +1111,7 @@ pub unsafe extern "C" fn print_rule_data_base() {
         }
         r = (*r).next;
     }
-    if rules == 0 as ::core::ffi::c_uint {
+    if rules == 0 {
         puts(b"\n# No implicit rules.\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
         printf(
@@ -1131,10 +1123,10 @@ pub unsafe extern "C" fn print_rule_data_base() {
         );
     }
     if num_pattern_rules != rules {
-        if num_pattern_rules != 0 as ::core::ffi::c_uint {
+        if num_pattern_rules != 0 {
             fatal(
                 ::core::ptr::null_mut::<floc>(),
-                INTSTR_LENGTH.wrapping_mul(2 as size_t),
+                INTSTR_LENGTH.wrapping_mul(2),
                 b"INTERNAL: num_pattern_rules is wrong!  %u != %u\0" as *const u8
                     as *const ::core::ffi::c_char,
                 num_pattern_rules,

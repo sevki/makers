@@ -19,18 +19,18 @@ pub unsafe extern "C" fn load_file(
     if noerror == 0 {
         fatal(
             flocp,
-            0 as size_t,
+            0,
             b"'load' is not supported on this platform\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    0 as ::core::ffi::c_int
+    0
 }
 #[no_mangle]
 pub unsafe extern "C" fn unload_file(mut _name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     fatal(
         ::core::ptr::null_mut::<floc>(),
-        0 as size_t,
+        0,
         b"INTERNAL: cannot unload when load is not supported\0" as *const u8
             as *const ::core::ffi::c_char,
     );

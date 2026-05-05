@@ -284,7 +284,7 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 #[no_mangle]
 pub static mut expanding_var: *mut *const floc =
     unsafe { &raw const reading_file as *mut *const floc };
-pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5 as ::core::ffi::c_int;
+pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5;
 static mut variable_buffer_length: size_t = 0;
 #[no_mangle]
 pub static mut variable_buffer: *mut ::core::ffi::c_char =
@@ -303,7 +303,7 @@ pub unsafe extern "C" fn variable_buffer_output(
             __assert_fail(
                 b"ptr >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                61 as ::core::ffi::c_uint,
+                61,
                 b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
@@ -316,7 +316,7 @@ pub unsafe extern "C" fn variable_buffer_output(
                 b"ptr < variable_buffer + variable_buffer_length\0" as *const u8
                     as *const ::core::ffi::c_char,
                 b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                62 as ::core::ffi::c_uint,
+                62,
                 b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
@@ -324,20 +324,20 @@ pub unsafe extern "C" fn variable_buffer_output(
     };
     if newlen
         .wrapping_add(VARIABLE_BUFFER_ZONE as size_t)
-        .wrapping_add(1 as size_t)
+        .wrapping_add(1)
         > variable_buffer_length
     {
         let mut offset: size_t = ptr.offset_from(variable_buffer) as ::core::ffi::c_long as size_t;
-        variable_buffer_length = if newlen.wrapping_add(100 as size_t)
+        variable_buffer_length = if newlen.wrapping_add(100)
             > (2 as size_t).wrapping_mul(variable_buffer_length)
         {
-            newlen.wrapping_add(100 as size_t)
+            newlen.wrapping_add(100)
         } else {
             (2 as size_t).wrapping_mul(variable_buffer_length)
         };
         variable_buffer = xrealloc(
             variable_buffer as *mut ::core::ffi::c_void,
-            variable_buffer_length.wrapping_add(1 as size_t),
+            variable_buffer_length.wrapping_add(1),
         ) as *mut ::core::ffi::c_char;
         ptr = variable_buffer.offset(offset as isize);
     }
@@ -346,16 +346,16 @@ pub unsafe extern "C" fn variable_buffer_output(
         string as *const ::core::ffi::c_void,
         length as size_t,
     ) as *mut ::core::ffi::c_char;
-    *ptr = '\0' as i32 as ::core::ffi::c_char;
+    *ptr = 0;
     ptr
 }
 #[no_mangle]
 pub unsafe extern "C" fn initialize_variable_output() -> *mut ::core::ffi::c_char {
     if variable_buffer.is_null() {
-        variable_buffer_length = 200 as size_t;
+        variable_buffer_length = 200;
         variable_buffer = xmalloc(variable_buffer_length) as *mut ::core::ffi::c_char;
     }
-    *variable_buffer.offset(0 as ::core::ffi::c_int as isize) = '\0' as i32 as ::core::ffi::c_char;
+    *variable_buffer.offset(0 as ::core::ffi::c_int as isize) = 0;
     variable_buffer
 }
 #[no_mangle]
@@ -396,7 +396,7 @@ pub unsafe extern "C" fn recursively_expand_for_file(
     let mut this_var: *const floc = ::core::ptr::null::<floc>();
     let mut saved_varp: *mut *const floc = ::core::ptr::null_mut::<*const floc>();
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut set_reading: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+    let mut set_reading: ::core::ffi::c_int = 0;
     let mut nl: size_t = strlen((*v).name) as size_t;
     let mut parent: *mut variable = ::core::ptr::null_mut::<variable>();
     if (*v).expanding() as ::core::ffi::c_int != 0 && env_recursion != 0 {
@@ -414,16 +414,13 @@ pub unsafe extern "C" fn recursively_expand_for_file(
         }
         ep = environ;
         while !(*ep).is_null() {
-            if strncmp(*ep, (*v).name, nl as size_t) == 0 as ::core::ffi::c_int
+            if strncmp(*ep, (*v).name, nl as size_t) == 0
                 && *(*ep).offset(nl as isize) as ::core::ffi::c_int == '=' as i32
             {
-                return xstrdup(
-                    (*ep)
-                        .offset(nl as isize)
-                        .offset(1 as ::core::ffi::c_int as isize),
+                return xstrdup((*ep).offset(nl as isize) . offset ( 1 ) ,
                 );
             }
-            ep = ep.offset(1);
+            ep = ep.offset(1 as ::core::ffi::c_int as isize);
         }
         return xstrdup(b"\0" as *const u8 as *const ::core::ffi::c_char);
     }
@@ -433,7 +430,7 @@ pub unsafe extern "C" fn recursively_expand_for_file(
         expanding_var = &raw mut this_var;
     }
     if reading_file.is_null() {
-        set_reading = 1 as ::core::ffi::c_int;
+        set_reading = 1;
         reading_file = &raw mut (*v).fileinfo;
     }
     if (*v).expanding() != 0 {
@@ -446,7 +443,7 @@ pub unsafe extern "C" fn recursively_expand_for_file(
                 (*v).name,
             );
         }
-        (*v).set_exp_count((*v).exp_count() - 1 as ::core::ffi::c_uint);
+        (*v).set_exp_count((*v).exp_count() - 1);
     }
     if !file.is_null() {
         install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const floc>());
@@ -505,8 +502,7 @@ pub unsafe extern "C" fn expand_variable_output(
         warn_undefined(name, length);
     }
     if v.is_null()
-        || *(*v).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '\0' as i32
-            && (*v).append() == 0
+        || *(*v).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 && (*v).append() == 0
     {
         return ptr;
     }
@@ -538,7 +534,7 @@ pub unsafe extern "C" fn expand_variable_buf(
             __assert_fail(
                 b"buf >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                315 as ::core::ffi::c_uint,
+                315,
                 b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
@@ -551,7 +547,7 @@ pub unsafe extern "C" fn expand_variable_buf(
                 b"buf < variable_buffer + variable_buffer_length\0" as *const u8
                     as *const ::core::ffi::c_char,
                 b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                316 as ::core::ffi::c_uint,
+                316,
                 b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
@@ -607,7 +603,7 @@ pub unsafe extern "C" fn expand_string_buf(
     }
     o = buf;
     line_offset = buf.offset_from(variable_buffer) as ::core::ffi::c_long as size_t;
-    if length == 0 as size_t {
+    if length == 0 {
         return variable_buffer;
     }
     save = if length == SIZE_MAX as size_t {
@@ -624,7 +620,7 @@ pub unsafe extern "C" fn expand_string_buf(
             if !p1.is_null() {
                 p1.offset_from(p) as ::core::ffi::c_long as size_t
             } else {
-                (strlen(p) as size_t).wrapping_add(1 as size_t)
+                (strlen(p) as size_t).wrapping_add(1)
             },
         );
         if p1.is_null() {
@@ -633,7 +629,7 @@ pub unsafe extern "C" fn expand_string_buf(
         p = p1.offset(1 as ::core::ffi::c_int as isize);
         match *p as ::core::ffi::c_int {
             36 | 0 => {
-                o = variable_buffer_output(o, p1, 1 as size_t);
+                o = variable_buffer_output(o, p1, 1);
             }
             40 | 123 => {
                 let mut openparen: ::core::ffi::c_char = *p;
@@ -656,32 +652,32 @@ pub unsafe extern "C" fn expand_string_buf(
                     if end.is_null() {
                         fatal(
                             *expanding_var,
-                            0 as size_t,
+                            0,
                             b"unterminated variable reference\0" as *const u8
                                 as *const ::core::ffi::c_char,
                         );
                     }
                     p1 = lindex(beg, end, '$' as i32);
                     if !p1.is_null() {
-                        let mut count: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
+                        let mut count: ::core::ffi::c_int = 1;
                         p = beg;
-                        while *p as ::core::ffi::c_int != '\0' as i32 {
+                        while *p as ::core::ffi::c_int != 0 {
                             if *p as ::core::ffi::c_int == openparen as ::core::ffi::c_int {
                                 count += 1;
                             } else if *p as ::core::ffi::c_int == closeparen as ::core::ffi::c_int
                                 && {
                                     count -= 1;
-                                    count == 0 as ::core::ffi::c_int
+                                    count == 0
                                 }
                             {
                                 break;
                             }
-                            p = p.offset(1);
+                            p = p.offset(1 as ::core::ffi::c_int as isize);
                         }
-                        if count == 0 as ::core::ffi::c_int {
+                        if count == 0 {
                             abeg = expand_argument(beg, p);
                             beg = abeg;
-                            end = strchr(beg, '\0' as i32);
+                            end = strchr(beg, 0);
                         }
                     } else {
                         p = end;
@@ -708,7 +704,7 @@ pub unsafe extern "C" fn expand_string_buf(
                                     colon.offset_from(beg) as ::core::ffi::c_long as size_t,
                                 );
                             }
-                            if !v.is_null() && *(*v).value as ::core::ffi::c_int != '\0' as i32 {
+                            if !v.is_null() && *(*v).value as ::core::ffi::c_int != 0 {
                                 let mut pattern: *mut ::core::ffi::c_char =
                                     ::core::ptr::null_mut::<::core::ffi::c_char>();
                                 let mut replace: *mut ::core::ffi::c_char =
@@ -728,14 +724,14 @@ pub unsafe extern "C" fn expand_string_buf(
                                 alloca_allocations.push(::std::vec::from_elem(
                                     0,
                                     (subst_end.offset_from(subst_beg) as ::core::ffi::c_long
-                                        + 2 as ::core::ffi::c_long)
+                                        + 2)
                                         as ::core::ffi::c_ulong
                                         as usize,
                                 ));
                                 pattern = alloca_allocations.last_mut().unwrap().as_mut_ptr()
                                     as *mut ::core::ffi::c_char;
                                 let fresh0 = pattern;
-                                pattern = pattern.offset(1);
+                                pattern = pattern.offset(1 as ::core::ffi::c_int as isize);
                                 *fresh0 = '%' as i32 as ::core::ffi::c_char;
                                 memcpy(
                                     pattern as *mut ::core::ffi::c_void,
@@ -745,18 +741,18 @@ pub unsafe extern "C" fn expand_string_buf(
                                 );
                                 *pattern.offset(subst_end.offset_from(subst_beg)
                                     as ::core::ffi::c_long
-                                    as isize) = '\0' as i32 as ::core::ffi::c_char;
+                                    as isize) = 0;
                                 alloca_allocations.push(::std::vec::from_elem(
                                     0,
                                     (replace_end.offset_from(replace_beg) as ::core::ffi::c_long
-                                        + 2 as ::core::ffi::c_long)
+                                        + 2)
                                         as ::core::ffi::c_ulong
                                         as usize,
                                 ));
                                 replace = alloca_allocations.last_mut().unwrap().as_mut_ptr()
                                     as *mut ::core::ffi::c_char;
                                 let fresh1 = replace;
-                                replace = replace.offset(1);
+                                replace = replace.offset(1 as ::core::ffi::c_int as isize);
                                 *fresh1 = '%' as i32 as ::core::ffi::c_char;
                                 memcpy(
                                     replace as *mut ::core::ffi::c_void,
@@ -766,19 +762,19 @@ pub unsafe extern "C" fn expand_string_buf(
                                 );
                                 *replace.offset(replace_end.offset_from(replace_beg)
                                     as ::core::ffi::c_long
-                                    as isize) = '\0' as i32 as ::core::ffi::c_char;
+                                    as isize) = 0;
                                 ppercent = find_percent(pattern);
                                 if !ppercent.is_null() {
-                                    ppercent = ppercent.offset(1);
+                                    ppercent = ppercent.offset(1 as ::core::ffi::c_int as isize);
                                     rpercent = find_percent(replace);
                                     if !rpercent.is_null() {
-                                        rpercent = rpercent.offset(1);
+                                        rpercent = rpercent.offset(1 as ::core::ffi::c_int as isize);
                                     }
                                 } else {
                                     ppercent = pattern;
                                     rpercent = replace;
-                                    pattern = pattern.offset(-1);
-                                    replace = replace.offset(-1);
+                                    pattern = pattern.offset(-(1 as ::core::ffi::c_int) as isize);
+                                    replace = replace.offset(-(1 as ::core::ffi::c_int) as isize);
                                 }
                                 o = patsubst_expand_pat(
                                     o, value, pattern, replace, ppercent, rpercent,
@@ -802,18 +798,18 @@ pub unsafe extern "C" fn expand_string_buf(
             _ => {
                 if !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
                     *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize,
-                ) as ::core::ffi::c_int
+                    ) as ::core::ffi::c_int
                     & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                    != 0 as ::core::ffi::c_int)
+                    != 0)
                 {
-                    o = expand_variable_output(o, p, 1 as size_t);
+                    o = expand_variable_output(o, p, 1);
                 }
             }
         }
-        if *p as ::core::ffi::c_int == '\0' as i32 {
+        if *p as ::core::ffi::c_int == 0 {
             break;
         }
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
     }
     free(save as *mut ::core::ffi::c_void);
     variable_buffer.offset(line_offset as isize)
@@ -830,20 +826,20 @@ pub unsafe extern "C" fn expand_argument(
     if str == end {
         return xstrdup(b"\0" as *const u8 as *const ::core::ffi::c_char);
     }
-    if end.is_null() || *end as ::core::ffi::c_int == '\0' as i32 {
+    if end.is_null() || *end as ::core::ffi::c_int == 0 {
         return allocated_expand_string_for_file(str, ::core::ptr::null_mut::<file>());
     }
-    if end.offset_from(str) as ::core::ffi::c_long + 1 as ::core::ffi::c_long
+    if end.offset_from(str) as ::core::ffi::c_long + 1
         > 1000 as ::core::ffi::c_long
     {
         alloc = xmalloc(
-            (end.offset_from(str) as ::core::ffi::c_long + 1 as ::core::ffi::c_long) as size_t,
+            (end.offset_from(str) as ::core::ffi::c_long + 1) as size_t,
         ) as *mut ::core::ffi::c_char;
         tmp = alloc;
     } else {
         alloca_allocations.push(::std::vec::from_elem(
             0,
-            (end.offset_from(str) as ::core::ffi::c_long + 1 as ::core::ffi::c_long)
+            (end.offset_from(str) as ::core::ffi::c_long + 1)
                 as ::core::ffi::c_ulong as usize,
         ));
         tmp = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
@@ -854,7 +850,7 @@ pub unsafe extern "C" fn expand_argument(
         end.offset_from(str) as ::core::ffi::c_long as size_t,
     );
     *tmp.offset(end.offset_from(str) as ::core::ffi::c_long as isize) =
-        '\0' as i32 as ::core::ffi::c_char;
+        0;
     r = allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>());
     free(alloc as *mut ::core::ffi::c_void);
     r
@@ -907,7 +903,7 @@ unsafe extern "C" fn variable_append(
         return initialize_variable_output();
     }
     nextlocal =
-        (local != 0 && (*set).next_is_parent == 0 as ::core::ffi::c_int) as ::core::ffi::c_int;
+        (local != 0 && (*set).next_is_parent == 0) as ::core::ffi::c_int;
     v = lookup_variable_in_set(name, length, (*set).set);
     if v.is_null() || local == 0 && (*v).private_var() as ::core::ffi::c_int != 0 {
         return variable_append(name, length, (*set).next, nextlocal);
@@ -921,7 +917,7 @@ unsafe extern "C" fn variable_append(
         buf = variable_buffer_output(
             buf,
             b" \0" as *const u8 as *const ::core::ffi::c_char,
-            1 as size_t,
+            1,
         );
     }
     if (*v).recursive() == 0 {
@@ -939,7 +935,7 @@ pub unsafe extern "C" fn allocated_variable_append(mut v: *const variable) -> *m
         (*v).name,
         strlen((*v).name) as size_t,
         current_variable_set_list,
-        1 as ::core::ffi::c_int,
+        1,
     );
     swap_variable_buffer(obuf, olen)
 }

@@ -252,7 +252,7 @@ pub const NILF: *mut floc = ::core::ptr::null_mut::<floc>();
 pub const GNUMAKEFLAGS_NAME: [::core::ffi::c_char; 13] =
     unsafe { ::core::mem::transmute::<[u8; 13], [::core::ffi::c_char; 13]>(*b"GNUMAKEFLAGS\0") };
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
-pub const PARSEFS_NONE: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
 static mut default_suffixes: [::core::ffi::c_char; 147] = unsafe {
     ::core::mem::transmute::<
         [u8; 147],
@@ -577,10 +577,10 @@ pub unsafe extern "C" fn set_default_suffixes() {
         define_variable_in_set(
             b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                .wrapping_sub(1 as size_t),
+                .wrapping_sub(1),
             b"\0" as *const u8 as *const ::core::ffi::c_char,
             o_default,
-            0 as ::core::ffi::c_int,
+            0,
             (*current_variable_set_list).set,
             NILF,
         );
@@ -606,10 +606,10 @@ pub unsafe extern "C" fn set_default_suffixes() {
         define_variable_in_set(
             b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                .wrapping_sub(1 as size_t),
+                .wrapping_sub(1),
             &raw const default_suffixes as *const ::core::ffi::c_char,
             o_default,
-            0 as ::core::ffi::c_int,
+            0,
             (*current_variable_set_list).set,
             NILF,
         );
@@ -624,8 +624,7 @@ pub unsafe extern "C" fn install_default_suffix_rules() {
     }
     s = &raw const default_suffix_rules as *const *const ::core::ffi::c_char;
     while !(*s).is_null() {
-        let mut f: *mut file =
-            enter_file(strcache_add(*s.offset(0 as ::core::ffi::c_int as isize)));
+        let mut f: *mut file = enter_file(strcache_add(*s.offset(0 as ::core::ffi::c_int as isize)));
         if (*f).cmds.is_null() {
             (*f).cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
             (*(*f).cmds).fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
@@ -645,13 +644,13 @@ pub unsafe extern "C" fn install_default_implicit_rules() {
     }
     p = &raw const default_pattern_rules as *const pspec;
     while !(*p).target.is_null() {
-        install_pattern_rule(p, 0 as ::core::ffi::c_int);
-        p = p.offset(1);
+        install_pattern_rule(p, 0);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
     }
     p = &raw const default_terminal_rules as *const pspec;
     while !(*p).target.is_null() {
-        install_pattern_rule(p, 1 as ::core::ffi::c_int);
-        p = p.offset(1);
+        install_pattern_rule(p, 1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
     }
 }
 #[no_mangle]
@@ -668,7 +667,7 @@ pub unsafe extern "C" fn define_default_variables() {
             strlen(*s.offset(0 as ::core::ffi::c_int as isize)) as size_t,
             *s.offset(1 as ::core::ffi::c_int as isize),
             o_default,
-            1 as ::core::ffi::c_int,
+            1,
             (*current_variable_set_list).set,
             NILF,
         );

@@ -1,7 +1,7 @@
 use libc::{__errno_location};
 pub type __pid_t = ::core::ffi::c_int;
 pub type pid_t = __pid_t;
-pub const ECHILD: ::core::ffi::c_int = 10 as ::core::ffi::c_int;
+pub const ECHILD: ::core::ffi::c_int = 10;
 #[no_mangle]
 pub static mut remote_description: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
@@ -11,7 +11,7 @@ pub unsafe extern "C" fn remote_setup() {}
 pub unsafe extern "C" fn remote_cleanup() {}
 #[no_mangle]
 pub unsafe extern "C" fn start_remote_job_p(mut _first_p: ::core::ffi::c_int) -> ::core::ffi::c_int {
-    0 as ::core::ffi::c_int
+    0
 }
 #[no_mangle]
 pub unsafe extern "C" fn start_remote_job(

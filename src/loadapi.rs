@@ -202,7 +202,7 @@ pub unsafe extern "C" fn gmk_eval(
     if !gfloc.is_null() {
         fl.filenm = (*gfloc).filenm;
         fl.lineno = (*gfloc).lineno;
-        fl.offset = 0 as ::core::ffi::c_ulong;
+        fl.offset = 0;
         flp = &raw mut fl;
     } else {
         flp = ::core::ptr::null_mut::<floc>();

@@ -177,7 +177,7 @@ pub unsafe extern "C" fn decode_warn_actions(
 
     // Skip leading blanks/name-stop characters.
     while stopmap(*value) & (STOPMAP_BLANK | STOPMAP_NAME_END) != 0 {
-        value = value.offset(1);
+        value = value.offset(1 as ::core::ffi::c_int as isize);
     }
     if !flocp.is_null() {
         data = &raw mut warn_variable;
@@ -191,7 +191,7 @@ pub unsafe extern "C" fn decode_warn_actions(
         let mut ep: *const ::core::ffi::c_char = value;
         // Walk to the next blank/comma/end.
         while stopmap(*ep) & (STOPMAP_BLANK | STOPMAP_COMMA | STOPMAP_END) == 0 {
-            ep = ep.offset(1);
+            ep = ep.offset(1 as ::core::ffi::c_int as isize);
         }
         let span = ep.offset_from(value) as size_t;
         action = decode_warn_action(value, span);
@@ -211,7 +211,7 @@ pub unsafe extern "C" fn decode_warn_actions(
                 action = w_warn;
                 al = 0;
             } else {
-                cp = cp.offset(1);
+                cp = cp.offset(1 as ::core::ffi::c_int as isize);
                 al = ep.offset_from(cp) as ::core::ffi::c_int;
                 action = decode_warn_action(cp, al as size_t);
             }
@@ -256,7 +256,7 @@ pub unsafe extern "C" fn decode_warn_actions(
         value = ep;
         // Skip the separator(s).
         while stopmap(*value) & (STOPMAP_BLANK | STOPMAP_COMMA) != 0 {
-            value = value.offset(1);
+            value = value.offset(1 as ::core::ffi::c_int as isize);
         }
     }
     set_warnings();

@@ -184,21 +184,20 @@ pub struct ar_glob_state {
 }
 pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const FNM_PATHNAME: ::core::ffi::c_int = (1 as ::core::ffi::c_int) << 0 as ::core::ffi::c_int;
-pub const FNM_PERIOD: ::core::ffi::c_int = (1 as ::core::ffi::c_int) << 2 as ::core::ffi::c_int;
+pub const FNM_PATHNAME: ::core::ffi::c_int = (1) << 0;
+pub const FNM_PERIOD: ::core::ffi::c_int = (1) << 2;
 #[no_mangle]
 pub unsafe extern "C" fn ar_name(mut name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut p: *const ::core::ffi::c_char = strchr(name, '(' as i32);
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     if p.is_null() || p == name {
-        return 0 as ::core::ffi::c_int;
+        return 0;
     }
     end = p
         .offset(strlen(p) as isize)
         .offset(-(1 as ::core::ffi::c_int as isize));
-    if *end as ::core::ffi::c_int != ')' as i32 || end == p.offset(1 as ::core::ffi::c_int as isize)
-    {
-        return 0 as ::core::ffi::c_int;
+    if *end as ::core::ffi::c_int != ')' as i32 || end == p.offset(1 as ::core::ffi::c_int as isize) {
+        return 0;
     }
     if *p.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '(' as i32
         && *end.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == ')' as i32
@@ -211,7 +210,7 @@ pub unsafe extern "C" fn ar_name(mut name: *const ::core::ffi::c_char) -> ::core
             name,
         );
     }
-    1 as ::core::ffi::c_int
+    1
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_parse_name(
@@ -231,9 +230,9 @@ pub unsafe extern "C" fn ar_parse_name(
         );
     }
     let fresh0 = p;
-    p = p.offset(1);
-    *fresh0 = '\0' as i32 as ::core::ffi::c_char;
-    *p.offset(strlen(p).wrapping_sub(1 as size_t) as isize) = '\0' as i32 as ::core::ffi::c_char;
+    p = p.offset(1 as ::core::ffi::c_int as isize);
+    *fresh0 = 0;
+    *p.offset(strlen(p).wrapping_sub(1) as isize) = 0;
     *memname_p = p;
 }
 unsafe extern "C" fn ar_member_date_1(
@@ -267,7 +266,7 @@ pub unsafe extern "C" fn ar_member_date(mut name: *const ::core::ffi::c_char) ->
         arfile = enter_file(strcache_add(arname));
     }
     if !arfile.is_null() {
-        f_mtime(arfile, 0 as ::core::ffi::c_int);
+        f_mtime(arfile, 0);
     }
     val = ar_scan(
         arname,
@@ -317,8 +316,8 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
     ar_parse_name(name, &raw mut arname, &raw mut memname);
     let mut arfile: *mut file = ::core::ptr::null_mut::<file>();
     arfile = enter_file(strcache_add(arname));
-    f_mtime(arfile, 0 as ::core::ffi::c_int);
-    val = 1 as ::core::ffi::c_int;
+    f_mtime(arfile, 0);
+    val = 1;
     match ar_member_touch(arname, memname) {
         -1 => {
             error(
@@ -353,7 +352,7 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
             );
         }
         0 => {
-            val = 0 as ::core::ffi::c_int;
+            val = 0;
         }
         _ => {
             error(
@@ -382,10 +381,10 @@ unsafe extern "C" fn ar_glob_match(
     mut arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
     let mut state: *mut ar_glob_state = arg as *mut ar_glob_state;
-    if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 as ::core::ffi::c_int {
+    if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
         let mut new: *mut nameseq = xcalloc((*state).size) as *mut nameseq;
         (*new).name = strcache_add(concat(
-            4 as ::core::ffi::c_uint,
+            4,
             (*state).arname,
             b"(\0" as *const u8 as *const ::core::ffi::c_char,
             mem,
@@ -402,29 +401,29 @@ unsafe extern "C" fn ar_glob_pattern_p(
     mut quote: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut opened: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+    let mut opened: ::core::ffi::c_int = 0;
     p = pattern;
-    while *p as ::core::ffi::c_int != '\0' as i32 {
+    while *p as ::core::ffi::c_int != 0 {
         match *p as ::core::ffi::c_int {
-            63 | 42 => return 1 as ::core::ffi::c_int,
+            63 | 42 => return 1,
             92 => {
                 if quote != 0 {
-                    p = p.offset(1);
+                    p = p.offset(1 as ::core::ffi::c_int as isize);
                 }
             }
             91 => {
-                opened = 1 as ::core::ffi::c_int;
+                opened = 1;
             }
             93 => {
                 if opened != 0 {
-                    return 1 as ::core::ffi::c_int;
+                    return 1;
                 }
             }
             _ => {}
         }
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
     }
-    0 as ::core::ffi::c_int
+    0
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_glob(
@@ -444,14 +443,14 @@ pub unsafe extern "C" fn ar_glob(
     let mut names: *mut *const ::core::ffi::c_char =
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
     let mut i: ::core::ffi::c_uint = 0;
-    if ar_glob_pattern_p(member_pattern, 1 as ::core::ffi::c_int) == 0 {
+    if ar_glob_pattern_p(member_pattern, 1) == 0 {
         return ::core::ptr::null_mut::<nameseq>();
     }
     state.arname = arname;
     state.pattern = member_pattern;
     state.size = size;
     state.chain = ::core::ptr::null_mut::<nameseq>();
-    state.n = 0 as ::core::ffi::c_uint;
+    state.n = 0;
     ar_scan(
         arname,
         Some(
@@ -482,7 +481,7 @@ pub unsafe extern "C" fn ar_glob(
             as usize,
     ));
     names = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *const ::core::ffi::c_char;
-    i = 0 as ::core::ffi::c_uint;
+    i = 0;
     n = state.chain;
     while !n.is_null() {
         let fresh1 = i;
@@ -503,7 +502,7 @@ pub unsafe extern "C" fn ar_glob(
                 ) -> ::core::ffi::c_int,
         ),
     );
-    i = 0 as ::core::ffi::c_uint;
+    i = 0;
     n = state.chain;
     while !n.is_null() {
         let fresh3 = i;
@@ -513,4 +512,4 @@ pub unsafe extern "C" fn ar_glob(
     }
     state.chain
 }
-pub const __CHAR_BIT__: ::core::ffi::c_int = 8 as ::core::ffi::c_int;
+pub const __CHAR_BIT__: ::core::ffi::c_int = 8;

@@ -128,21 +128,21 @@ pub struct fmtstring {
     pub buffer: *mut ::core::ffi::c_char,
     pub size: size_t,
 }
-pub const EINTR: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
+pub const EINTR: ::core::ffi::c_int = 4;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const INTSTR_LENGTH: usize = (53 as usize)
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
     .wrapping_div(22 as usize)
     .wrapping_add(3 as usize);
-pub const OUTPUT_SYNC_NONE: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-pub const OUTPUT_SYNC_RECURSE: ::core::ffi::c_int = 3 as ::core::ffi::c_int;
-pub const MAKE_FAILURE: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
-pub const SEEK_SET: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-pub const SEEK_END: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
+pub const OUTPUT_SYNC_NONE: ::core::ffi::c_int = 0;
+pub const OUTPUT_SYNC_RECURSE: ::core::ffi::c_int = 3;
+pub const MAKE_FAILURE: ::core::ffi::c_int = 2;
+pub const SEEK_SET: ::core::ffi::c_int = 0;
+pub const SEEK_END: ::core::ffi::c_int = 2;
 #[no_mangle]
 pub static mut output_context: *mut output = ::core::ptr::null::<output>() as *mut output;
 #[no_mangle]
-pub static mut stdio_traced: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
+pub static mut stdio_traced: ::core::ffi::c_uint = 0;
 pub const OUTPUT_NONE: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 unsafe extern "C" fn _outputs(
     mut out: *mut output,
@@ -156,7 +156,7 @@ unsafe extern "C" fn _outputs(
             let mut len: size_t = strlen(msg) as size_t;
             let mut r: ::core::ffi::c_int = 0;
             loop {
-                r = lseek(fd, 0 as __off_t, 2 as ::core::ffi::c_int) as ::core::ffi::c_int;
+                r = lseek(fd, 0 as __off_t, 2) as ::core::ffi::c_int;
                 if !(r == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
                     break;
                 }
@@ -173,18 +173,18 @@ unsafe extern "C" fn _outputs(
 pub unsafe extern "C" fn log_working_directory(mut entering: ::core::ffi::c_int) -> ::core::ffi::c_int {
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-    static mut len: size_t = 0 as size_t;
+    static mut len: size_t = 0;
     let mut need: size_t = 0;
     let mut fmt: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     need = strlen(program)
         .wrapping_add(INTSTR_LENGTH)
-        .wrapping_add(2 as size_t)
-        .wrapping_add(1 as size_t) as size_t;
+        .wrapping_add(2)
+        .wrapping_add(1) as size_t;
     if !starting_directory.is_null() {
         need = need.wrapping_add(strlen(starting_directory) as size_t);
     }
-    if makelevel == 0 as ::core::ffi::c_uint {
+    if makelevel == 0 {
         if starting_directory.is_null() {
             if entering != 0 {
                 fmt = b"%s: Entering an unknown directory\n\0" as *const u8
@@ -219,13 +219,13 @@ pub unsafe extern "C" fn log_working_directory(mut entering: ::core::ffi::c_int)
     p = buf;
     if print_data_base_flag != 0 {
         let fresh0 = p;
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
         *fresh0 = '#' as i32 as ::core::ffi::c_char;
         let fresh1 = p;
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
         *fresh1 = ' ' as i32 as ::core::ffi::c_char;
     }
-    if makelevel == 0 as ::core::ffi::c_uint {
+    if makelevel == 0 {
         if starting_directory.is_null() {
             sprintf(p, fmt, program);
         } else {
@@ -238,10 +238,10 @@ pub unsafe extern "C" fn log_working_directory(mut entering: ::core::ffi::c_int)
     }
     _outputs(
         ::core::ptr::null_mut::<output>(),
-        0 as ::core::ffi::c_int,
+        0,
         buf,
     );
-    1 as ::core::ffi::c_int
+    1
 }
 #[no_mangle]
 pub unsafe extern "C" fn pump_from_tmp(mut from: ::core::ffi::c_int, mut to: *mut FILE) {
@@ -261,18 +261,18 @@ pub unsafe extern "C" fn pump_from_tmp(mut from: ::core::ffi::c_int, mut to: *mu
                 break;
             }
         }
-        if len < 0 as ::core::ffi::c_int {
+        if len < 0 {
             perror(b"read()\0" as *const u8 as *const ::core::ffi::c_char);
         }
-        if len <= 0 as ::core::ffi::c_int {
+        if len <= 0 {
             break;
         }
         if fwrite(
             &raw mut buffer as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
             len as size_t,
-            1 as size_t,
+            1,
             to,
-        ) < 1 as ::core::ffi::c_ulong
+        ) < 1
         {
             perror(b"fwrite()\0" as *const u8 as *const ::core::ffi::c_char);
             break;
@@ -290,24 +290,24 @@ pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
 #[no_mangle]
 pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
     let mut current_block: u64;
-    static mut in_setup: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
+    static mut in_setup: ::core::ffi::c_uint = 0;
     let mut io_state: ::core::ffi::c_uint = 0;
     if in_setup != 0 {
         return;
     }
-    in_setup = 1 as ::core::ffi::c_uint;
+    in_setup = 1;
     io_state = check_io_state();
     if !(io_state & (0x8 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int) as ::core::ffi::c_uint
-        != 0 as ::core::ffi::c_uint)
+        != 0)
     {
         perror_with_name(
             b"output-sync suppressed: \0" as *const u8 as *const ::core::ffi::c_char,
             b"stderr\0" as *const u8 as *const ::core::ffi::c_char,
         );
     } else {
-        if io_state & 0x8 as ::core::ffi::c_uint != 0 as ::core::ffi::c_uint {
+        if io_state & 0x8 as ::core::ffi::c_uint != 0 {
             let mut fd: ::core::ffi::c_int = output_tmpfd();
-            if fd < 0 as ::core::ffi::c_int {
+            if fd < 0 {
                 current_block = 2479664526570923066;
             } else {
                 fd_noinherit(fd);
@@ -320,15 +320,15 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
         match current_block {
             2479664526570923066 => {}
             _ => {
-                if io_state & 0x10 as ::core::ffi::c_uint != 0 as ::core::ffi::c_uint {
+                if io_state & 0x10 as ::core::ffi::c_uint != 0 {
                     if (*out).out != OUTPUT_NONE
-                        && io_state & 0x2 as ::core::ffi::c_uint != 0 as ::core::ffi::c_uint
+                        && io_state & 0x2 as ::core::ffi::c_uint != 0
                     {
                         (*out).err = (*out).out;
                         current_block = 9606288038608642794;
                     } else {
                         let mut fd_0: ::core::ffi::c_int = output_tmpfd();
-                        if fd_0 < 0 as ::core::ffi::c_int {
+                        if fd_0 < 0 {
                             current_block = 2479664526570923066;
                         } else {
                             fd_noinherit(fd_0);
@@ -342,7 +342,7 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
                 match current_block {
                     2479664526570923066 => {}
                     _ => {
-                        in_setup = 0 as ::core::ffi::c_uint;
+                        in_setup = 0;
                         return;
                     }
                 }
@@ -351,14 +351,14 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
     }
     error(
         ::core::ptr::null_mut::<floc>(),
-        0 as size_t,
+        0,
         b"cannot open output-sync lock file: suppressing output-sync\0" as *const u8
             as *const ::core::ffi::c_char,
     );
     output_close(out);
     output_sync = OUTPUT_SYNC_NONE;
     osync_clear();
-    in_setup = 0 as ::core::ffi::c_uint;
+    in_setup = 0;
 }
 #[no_mangle]
 pub unsafe extern "C" fn output_dump(mut out: *mut output) {
@@ -369,18 +369,18 @@ pub unsafe extern "C" fn output_dump(mut out: *mut output) {
         && lseek((*out).err, 0 as __off_t, SEEK_END) > 0 as __off_t)
         as ::core::ffi::c_int;
     if outfd_not_empty != 0 || errfd_not_empty != 0 {
-        let mut traced: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+        let mut traced: ::core::ffi::c_int = 0;
         if osync_acquire() == 0 {
             error(
                 ::core::ptr::null_mut::<floc>(),
-                0 as size_t,
+                0,
                 b"warning: cannot acquire output lock: disabling output sync\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
             osync_clear();
         }
         if output_sync != OUTPUT_SYNC_RECURSE && should_print_dir() != 0 {
-            traced = log_working_directory(1 as ::core::ffi::c_int);
+            traced = log_working_directory(1);
         }
         if outfd_not_empty != 0 {
             pump_from_tmp((*out).out, stdout);
@@ -389,7 +389,7 @@ pub unsafe extern "C" fn output_dump(mut out: *mut output) {
             pump_from_tmp((*out).err, stderr);
         }
         if traced != 0 {
-            log_working_directory(0 as ::core::ffi::c_int);
+            log_working_directory(0);
         }
         osync_release();
         if (*out).out != OUTPUT_NONE {
@@ -433,17 +433,17 @@ pub unsafe extern "C" fn output_init(mut out: *mut output) {
 pub unsafe extern "C" fn output_close(mut out: *mut output) {
     if out.is_null() {
         if stdio_traced != 0 {
-            log_working_directory(0 as ::core::ffi::c_int);
+            log_working_directory(0);
         }
         fd_reset_append(fileno(stdout), stdout_flags);
         fd_reset_append(fileno(stderr), stderr_flags);
         return;
     }
     output_dump(out);
-    if (*out).out >= 0 as ::core::ffi::c_int {
+    if (*out).out >= 0 {
         close((*out).out);
     }
-    if (*out).err >= 0 as ::core::ffi::c_int && (*out).err != (*out).out {
+    if (*out).err >= 0 && (*out).err != (*out).out {
         close((*out).err);
     }
     output_init(out);
@@ -451,15 +451,15 @@ pub unsafe extern "C" fn output_close(mut out: *mut output) {
 #[no_mangle]
 pub unsafe extern "C" fn output_start() {
     if !output_context.is_null() && (*output_context).syncout() as ::core::ffi::c_int != 0 {
-        if !((*output_context).out >= 0 as ::core::ffi::c_int
-            || (*output_context).err >= 0 as ::core::ffi::c_int)
+        if !((*output_context).out >= 0
+            || (*output_context).err >= 0)
         {
             setup_tmpfile(output_context);
         }
     }
     if output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE {
         if stdio_traced == 0 && should_print_dir() != 0 {
-            stdio_traced = log_working_directory(1 as ::core::ffi::c_int) as ::core::ffi::c_uint;
+            stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
         }
     }
 }
@@ -468,7 +468,7 @@ pub unsafe extern "C" fn outputs(
     mut is_err: ::core::ffi::c_int,
     mut msg: *const ::core::ffi::c_char,
 ) {
-    if msg.is_null() || *msg as ::core::ffi::c_int == '\0' as i32 {
+    if msg.is_null() || *msg as ::core::ffi::c_int == 0 {
         return;
     }
     output_start();
@@ -476,18 +476,18 @@ pub unsafe extern "C" fn outputs(
 }
 static mut fmtbuf: fmtstring = fmtstring {
     buffer: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    size: 0 as size_t,
+    size: 0,
 };
 #[no_mangle]
 pub unsafe extern "C" fn get_buffer(mut need: size_t) -> *mut ::core::ffi::c_char {
     if need > fmtbuf.size {
-        fmtbuf.size = fmtbuf.size.wrapping_add(need.wrapping_mul(2 as size_t));
+        fmtbuf.size = fmtbuf.size.wrapping_add(need.wrapping_mul(2));
         fmtbuf.buffer = xrealloc(fmtbuf.buffer as *mut ::core::ffi::c_void, fmtbuf.size)
             as *mut ::core::ffi::c_char;
     }
     *fmtbuf
         .buffer
-        .offset(need.wrapping_sub(1 as size_t) as isize) = '\0' as i32 as ::core::ffi::c_char;
+        .offset(need.wrapping_sub(1) as isize) = 0;
     fmtbuf.buffer
 }
 #[no_mangle]
@@ -504,15 +504,15 @@ pub unsafe extern "C" fn message(
         strlen(fmt)
             .wrapping_add(strlen(program))
             .wrapping_add(INTSTR_LENGTH)
-            .wrapping_add(4 as size_t)
-            .wrapping_add(1 as size_t)
-            .wrapping_add(1 as size_t) as ::core::ffi::c_ulong,
+            .wrapping_add(4)
+            .wrapping_add(1)
+            .wrapping_add(1) as ::core::ffi::c_ulong,
     ) as size_t as size_t;
     p = get_buffer(len);
     start = p;
     if prefix != 0 {
         p = p.offset(
-            (if makelevel == 0 as ::core::ffi::c_uint {
+            (if makelevel == 0 {
                 sprintf(
                     p,
                     b"%s: \0" as *const u8 as *const ::core::ffi::c_char,
@@ -532,20 +532,20 @@ pub unsafe extern "C" fn message(
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
     '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1 as size_t) as isize) as ::core::ffi::c_int
-            == '\0' as i32
+        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+            == 0
         {
         } else {
             __assert_fail(
                 b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-                440 as ::core::ffi::c_uint,
+                440,
                 b"void message(int, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
     };
-    outputs(0 as ::core::ffi::c_int, start);
+    outputs(0, start);
 }
 #[no_mangle]
 pub unsafe extern "C" fn error(
@@ -564,13 +564,13 @@ pub unsafe extern "C" fn error(
                 if !flocp.is_null() && !(*flocp).filenm.is_null() {
                     strlen((*flocp).filenm)
                 } else {
-                    0 as size_t
+                    0
                 },
             )
             .wrapping_add(INTSTR_LENGTH)
-            .wrapping_add(4 as size_t)
-            .wrapping_add(1 as size_t)
-            .wrapping_add(1 as size_t) as ::core::ffi::c_ulong,
+            .wrapping_add(4)
+            .wrapping_add(1)
+            .wrapping_add(1) as ::core::ffi::c_ulong,
     ) as size_t as size_t;
     p = get_buffer(len);
     start = p;
@@ -582,7 +582,7 @@ pub unsafe extern "C" fn error(
                 (*flocp).filenm,
                 (*flocp).lineno.wrapping_add((*flocp).offset),
             )
-        } else if makelevel == 0 as ::core::ffi::c_uint {
+        } else if makelevel == 0 {
             sprintf(
                 p,
                 b"%s: \0" as *const u8 as *const ::core::ffi::c_char,
@@ -601,20 +601,20 @@ pub unsafe extern "C" fn error(
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
     '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1 as size_t) as isize) as ::core::ffi::c_int
-            == '\0' as i32
+        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+            == 0
         {
         } else {
             __assert_fail(
                 b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-                470 as ::core::ffi::c_uint,
+                470,
                 b"void error(const floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
     };
-    outputs(1 as ::core::ffi::c_int, start);
+    outputs(1, start);
 }
 #[no_mangle]
 pub unsafe extern "C" fn fatal(
@@ -635,13 +635,13 @@ pub unsafe extern "C" fn fatal(
                 if !flocp.is_null() && !(*flocp).filenm.is_null() {
                     strlen((*flocp).filenm)
                 } else {
-                    0 as size_t
+                    0
                 },
             )
             .wrapping_add(INTSTR_LENGTH)
-            .wrapping_add(8 as size_t)
+            .wrapping_add(8)
             .wrapping_add(strlen(stop))
-            .wrapping_add(1 as size_t) as ::core::ffi::c_ulong,
+            .wrapping_add(1) as ::core::ffi::c_ulong,
     ) as size_t as size_t;
     p = get_buffer(len);
     start = p;
@@ -653,7 +653,7 @@ pub unsafe extern "C" fn fatal(
                 (*flocp).filenm,
                 (*flocp).lineno.wrapping_add((*flocp).offset),
             )
-        } else if makelevel == 0 as ::core::ffi::c_uint {
+        } else if makelevel == 0 {
             sprintf(
                 p,
                 b"%s: *** \0" as *const u8 as *const ::core::ffi::c_char,
@@ -672,20 +672,20 @@ pub unsafe extern "C" fn fatal(
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, stop);
     '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1 as size_t) as isize) as ::core::ffi::c_int
-            == '\0' as i32
+        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+            == 0
         {
         } else {
             __assert_fail(
                 b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
                 b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-                502 as ::core::ffi::c_uint,
+                502,
                 b"void fatal(const floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
     };
-    outputs(1 as ::core::ffi::c_int, start);
+    outputs(1, start);
     die(MAKE_FAILURE);
 }
 #[no_mangle]
@@ -699,14 +699,14 @@ pub unsafe extern "C" fn format(
     let mut plen: size_t = if !prefix.is_null() {
         strlen(prefix) as size_t
     } else {
-        0 as size_t
+        0
     };
     let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     len = len.wrapping_add(
         strlen(fmt)
             .wrapping_add(plen as size_t)
-            .wrapping_add(1 as size_t) as size_t,
+            .wrapping_add(1) as size_t,
     );
     p = get_buffer(len);
     start = p;
@@ -760,7 +760,7 @@ pub unsafe extern "C" fn out_of_memory() -> ! {
         fileno(stdout),
         b": *** virtual memory exhausted\n\0" as *const u8 as *const ::core::ffi::c_char
             as *const ::core::ffi::c_void,
-        (::core::mem::size_of::<[::core::ffi::c_char; 32]>() as size_t).wrapping_sub(1 as size_t),
+        (::core::mem::size_of::<[::core::ffi::c_char; 32]>() as size_t).wrapping_sub(1),
     );
     exit(MAKE_FAILURE);
 }

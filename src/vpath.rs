@@ -242,11 +242,11 @@ pub struct vpath {
     pub searchpath: *mut *const ::core::ffi::c_char,
     pub maxlen: size_t,
 }
-pub const EINTR: ::core::ffi::c_int = 4 as ::core::ffi::c_int;
+pub const EINTR: ::core::ffi::c_int = 4;
 pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
-pub const OLD_MTIME: ::core::ffi::c_int = 2 as ::core::ffi::c_int;
+pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
+pub const OLD_MTIME: ::core::ffi::c_int = 2;
 static mut vpaths: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
 static mut general_vpath: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
 static mut gpaths: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
@@ -267,16 +267,16 @@ pub unsafe extern "C" fn build_vpath_lists() {
     p = expand_variable_buf(
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
         b"VPATH\0" as *const u8 as *const ::core::ffi::c_char,
-        5 as size_t,
+        5,
     );
     while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
         .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0 as ::core::ffi::c_int
+        != 0
     {
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
     }
-    if *p as ::core::ffi::c_int != '\0' as i32 {
+    if *p as ::core::ffi::c_int != 0 {
         let mut save_vpaths: *mut vpath = vpaths;
         let mut gp: [::core::ffi::c_char; 2] =
             ::core::mem::transmute::<[u8; 2], [::core::ffi::c_char; 2]>(*b"%\0");
@@ -288,16 +288,16 @@ pub unsafe extern "C" fn build_vpath_lists() {
     p = expand_variable_buf(
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
         b"GPATH\0" as *const u8 as *const ::core::ffi::c_char,
-        5 as size_t,
+        5,
     );
     while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
         .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0 as ::core::ffi::c_int
+        != 0
     {
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
     }
-    if *p as ::core::ffi::c_int != '\0' as i32 {
+    if *p as ::core::ffi::c_int != 0 {
         let mut save_vpaths_0: *mut vpath = vpaths;
         let mut gp_0: [::core::ffi::c_char; 2] =
             ::core::mem::transmute::<[u8; 2], [::core::ffi::c_char; 2]>(*b"%\0");
@@ -334,11 +334,8 @@ pub unsafe extern "C" fn construct_vpath_list(
                     || percent.offset_from(pattern) as ::core::ffi::c_long
                         == (*path).percent.offset_from((*path).pattern) as ::core::ffi::c_long)
                     && (*pattern as ::core::ffi::c_int == *(*path).pattern as ::core::ffi::c_int
-                        && (*pattern as ::core::ffi::c_int == '\0' as i32
-                            || strcmp(
-                                pattern.offset(1 as ::core::ffi::c_int as isize),
-                                (*path).pattern.offset(1 as ::core::ffi::c_int as isize),
-                            ) == 0))
+                        && (*pattern as ::core::ffi::c_int == 0
+                            || strcmp(pattern.offset(1 as ::core::ffi::c_int as isize), (*path).pattern.offset(1 as ::core::ffi::c_int as isize), ) == 0))
             {
                 if lastpath.is_null() {
                     vpaths = (*path).next;
@@ -357,19 +354,19 @@ pub unsafe extern "C" fn construct_vpath_list(
     while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
         .offset(*dirpath as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int)
-        != 0 as ::core::ffi::c_int
+        != 0
     {
-        dirpath = dirpath.offset(1);
+        dirpath = dirpath.offset(1 as ::core::ffi::c_int as isize);
     }
-    maxelem = 2 as ::core::ffi::c_uint;
+    maxelem = 2;
     p = dirpath;
-    while *p as ::core::ffi::c_int != '\0' as i32 {
+    while *p as ::core::ffi::c_int != 0 {
         let fresh0 = p;
-        p = p.offset(1);
+        p = p.offset(1 as ::core::ffi::c_int as isize);
         if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
             .offset(*fresh0 as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x2 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int)
-            != 0 as ::core::ffi::c_int
+            != 0
         {
             maxelem = maxelem.wrapping_add(1);
         }
@@ -378,29 +375,28 @@ pub unsafe extern "C" fn construct_vpath_list(
         (maxelem as size_t)
             .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
     ) as *mut *const ::core::ffi::c_char;
-    maxvpath = 0 as size_t;
-    elem = 0 as ::core::ffi::c_uint;
+    maxvpath = 0;
+    elem = 0;
     p = dirpath;
-    while *p as ::core::ffi::c_int != '\0' as i32 {
+    while *p as ::core::ffi::c_int != 0 {
         let mut v: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut len: size_t = 0;
         v = p;
-        while *p as ::core::ffi::c_int != '\0' as i32
+        while *p as ::core::ffi::c_int != 0
             && *p as ::core::ffi::c_int != PATH_SEPARATOR_CHAR
             && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
                 .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
                 & 0x2 as ::core::ffi::c_int
-                != 0 as ::core::ffi::c_int)
+                != 0)
         {
-            p = p.offset(1);
+            p = p.offset(1 as ::core::ffi::c_int as isize);
         }
         len = p.offset_from(v) as ::core::ffi::c_long as size_t;
-        if len > 1 as size_t
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '/' as i32
-        {
+        if len > 1
+            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '/' as i32 {
             len = len.wrapping_sub(1);
         }
-        if len > 1 as size_t || *v as ::core::ffi::c_int != '.' as i32 {
+        if len > 1 || *v as ::core::ffi::c_int != '.' as i32 {
             let fresh1 = elem;
             elem = elem.wrapping_add(1);
             let ref mut fresh2 = *vpath.offset(fresh1 as isize);
@@ -412,17 +408,17 @@ pub unsafe extern "C" fn construct_vpath_list(
         while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
             .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x2 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int)
-            != 0 as ::core::ffi::c_int
+            != 0
         {
-            p = p.offset(1);
+            p = p.offset(1 as ::core::ffi::c_int as isize);
         }
     }
-    if elem > 0 as ::core::ffi::c_uint {
+    if elem > 0 {
         let mut path_0: *mut vpath = ::core::ptr::null_mut::<vpath>();
-        if elem < maxelem.wrapping_sub(1 as ::core::ffi::c_uint) {
+        if elem < maxelem.wrapping_sub(1) {
             vpath = xrealloc(
                 vpath as *mut ::core::ffi::c_void,
-                (elem.wrapping_add(1 as ::core::ffi::c_uint) as size_t)
+                (elem.wrapping_add(1) as size_t)
                     .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
             ) as *mut *const ::core::ffi::c_char;
         }
@@ -456,15 +452,15 @@ pub unsafe extern "C" fn gpath_search(
             ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
         gp = (*gpaths).searchpath;
         while !(*gp).is_null() {
-            if strncmp(*gp, file, len as size_t) == 0 as ::core::ffi::c_int
-                && *(*gp).offset(len as isize) as ::core::ffi::c_int == '\0' as i32
+            if strncmp(*gp, file, len as size_t) == 0
+                && *(*gp).offset(len as isize) as ::core::ffi::c_int == 0
             {
-                return 1 as ::core::ffi::c_int;
+                return 1;
             }
-            gp = gp.offset(1);
+            gp = gp.offset(1 as ::core::ffi::c_int as isize);
         }
     }
-    0 as ::core::ffi::c_int
+    0
 }
 unsafe extern "C" fn selective_vpath_search(
     mut path: *mut vpath,
@@ -482,7 +478,7 @@ unsafe extern "C" fn selective_vpath_search(
     let mut i: ::core::ffi::c_uint = 0;
     let mut flen: size_t = 0;
     let mut name_dplen: size_t = 0;
-    let mut exists: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+    let mut exists: ::core::ffi::c_int = 0;
     let mut f: *mut file = lookup_file(file);
     not_target = (f.is_null() || (*f).is_target() == 0) as ::core::ffi::c_int;
     flen = strlen(file) as size_t;
@@ -490,30 +486,27 @@ unsafe extern "C" fn selective_vpath_search(
     name_dplen = (if !n.is_null() {
         n.offset_from(file) as ::core::ffi::c_long
     } else {
-        0 as ::core::ffi::c_long
+        0
     }) as size_t;
-    filename = if name_dplen > 0 as size_t {
-        n.offset(1 as ::core::ffi::c_int as isize)
-    } else {
-        file
+    filename = if name_dplen > 0 { n.offset(1 as ::core::ffi::c_int as isize) } else { file
     };
-    if name_dplen > 0 as size_t {
-        flen = flen.wrapping_sub(name_dplen.wrapping_add(1 as size_t));
+    if name_dplen > 0 {
+        flen = flen.wrapping_sub(name_dplen.wrapping_add(1));
     }
     alloca_allocations.push(::std::vec::from_elem(
         0,
         maxvpath
-            .wrapping_add(1 as size_t)
+            .wrapping_add(1)
             .wrapping_add(name_dplen)
-            .wrapping_add(1 as size_t)
+            .wrapping_add(1)
             .wrapping_add(flen)
-            .wrapping_add(1 as size_t) as usize,
+            .wrapping_add(1) as usize,
     ));
     name = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
     let mut current_block_45: u64;
-    i = 0 as ::core::ffi::c_uint;
+    i = 0;
     while !(*vpath.offset(i as isize)).is_null() {
-        let mut exists_in_cache: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
+        let mut exists_in_cache: ::core::ffi::c_int = 0;
         let mut p: *mut ::core::ffi::c_char = name;
         let mut vlen: size_t = strlen(*vpath.offset(i as isize)) as size_t;
         p = mempcpy(
@@ -521,9 +514,9 @@ unsafe extern "C" fn selective_vpath_search(
             *vpath.offset(i as isize) as *const ::core::ffi::c_void,
             vlen as size_t,
         ) as *mut ::core::ffi::c_char;
-        if name_dplen > 0 as size_t {
+        if name_dplen > 0 {
             let fresh4 = p;
-            p = p.offset(1);
+            p = p.offset(1 as ::core::ffi::c_int as isize);
             *fresh4 = '/' as i32 as ::core::ffi::c_char;
             p = mempcpy(
                 p as *mut ::core::ffi::c_void,
@@ -532,19 +525,18 @@ unsafe extern "C" fn selective_vpath_search(
             ) as *mut ::core::ffi::c_char;
         }
         if p != name
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '/' as i32
-        {
+            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '/' as i32 {
             *p = '/' as i32 as ::core::ffi::c_char;
             memcpy(
                 p.offset(1 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void,
                 filename as *const ::core::ffi::c_void,
-                (flen as size_t).wrapping_add(1 as size_t),
+                (flen as size_t).wrapping_add(1),
             );
         } else {
             memcpy(
                 p as *mut ::core::ffi::c_void,
                 filename as *const ::core::ffi::c_void,
-                (flen as size_t).wrapping_add(1 as size_t),
+                (flen as size_t).wrapping_add(1),
             );
         }
         let mut f_0: *mut file = lookup_file(name);
@@ -571,7 +563,7 @@ unsafe extern "C" fn selective_vpath_search(
             }
         }
         if exists == 0 {
-            *p = '\0' as i32 as ::core::ffi::c_char;
+            *p = 0;
             exists = dir_file_exists_p(name, filename);
             exists_in_cache = exists;
         }
@@ -611,8 +603,8 @@ unsafe extern "C" fn selective_vpath_search(
                         break;
                     }
                 }
-                if e != 0 as ::core::ffi::c_int {
-                    exists = 0 as ::core::ffi::c_int;
+                if e != 0 {
+                    exists = 0;
                     current_block_45 = 2868539653012386629;
                 } else {
                     if !mtime_ptr.is_null() {
@@ -639,8 +631,7 @@ unsafe extern "C" fn selective_vpath_search(
                     }
                     return strcache_add_len(
                         name,
-                        (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name)
-                            as ::core::ffi::c_long as size_t)
+                        (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name) as ::core::ffi::c_long as size_t)
                             .wrapping_add(flen),
                     );
                 }
@@ -664,8 +655,8 @@ pub unsafe extern "C" fn vpath_search(
         return ::core::ptr::null::<::core::ffi::c_char>();
     }
     if !vpath_index.is_null() {
-        *vpath_index = 0 as ::core::ffi::c_uint;
-        *path_index = 0 as ::core::ffi::c_uint;
+        *vpath_index = 0;
+        *path_index = 0;
     }
     v = vpaths;
     while !v.is_null() {
@@ -695,7 +686,7 @@ pub unsafe extern "C" fn print_vpath_data_base() {
     let mut nvpaths: ::core::ffi::c_uint = 0;
     let mut v: *mut vpath = ::core::ptr::null_mut::<vpath>();
     puts(b"\n# VPATH Search Paths\n\0" as *const u8 as *const ::core::ffi::c_char);
-    nvpaths = 0 as ::core::ffi::c_uint;
+    nvpaths = 0;
     v = vpaths;
     while !v.is_null() {
         let mut i: ::core::ffi::c_uint = 0;
@@ -704,14 +695,14 @@ pub unsafe extern "C" fn print_vpath_data_base() {
             b"vpath %s \0" as *const u8 as *const ::core::ffi::c_char,
             (*v).pattern,
         );
-        i = 0 as ::core::ffi::c_uint;
+        i = 0;
         while !(*(*v).searchpath.offset(i as isize)).is_null() {
             printf(
                 b"%s%c\0" as *const u8 as *const ::core::ffi::c_char,
                 *(*v).searchpath.offset(i as isize),
                 if (*(*v)
                     .searchpath
-                    .offset(i.wrapping_add(1 as ::core::ffi::c_uint) as isize))
+                    .offset(i.wrapping_add(1) as isize))
                 .is_null()
                 {
                     '\n' as i32
@@ -744,12 +735,12 @@ pub unsafe extern "C" fn print_vpath_data_base() {
                 as *const ::core::ffi::c_char,
             stdout,
         );
-        i_0 = 0 as ::core::ffi::c_uint;
+        i_0 = 0;
         while !(*path.offset(i_0 as isize)).is_null() {
             printf(
                 b"%s%c\0" as *const u8 as *const ::core::ffi::c_char,
                 *path.offset(i_0 as isize),
-                if (*path.offset(i_0.wrapping_add(1 as ::core::ffi::c_uint) as isize)).is_null() {
+                if (*path.offset(i_0.wrapping_add(1) as isize)).is_null() {
                     '\n' as i32
                 } else {
                     PATH_SEPARATOR_CHAR
@@ -759,5 +750,5 @@ pub unsafe extern "C" fn print_vpath_data_base() {
         }
     };
 }
-pub const __CHAR_BIT__: ::core::ffi::c_int = 8 as ::core::ffi::c_int;
+pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
 pub const PATH_SEPARATOR_CHAR: ::core::ffi::c_int = ':' as i32;
