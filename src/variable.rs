@@ -2572,7 +2572,7 @@ unsafe extern "C" fn print_variable_set(
     putc('\n' as i32, stdout);
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_variable_data_base() {
+pub unsafe fn print_variable_data_base() {
     puts(b"\n# Variables\n\0" as *const u8 as *const ::core::ffi::c_char);
     print_variable_set(
         &raw mut global_variable_set,

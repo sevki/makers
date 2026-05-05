@@ -392,7 +392,7 @@ pub unsafe fn strcache_init() {
     );
 }
 #[no_mangle]
-pub unsafe extern "C" fn strcache_print_stats(mut prefix: *const ::core::ffi::c_char) {
+pub unsafe fn strcache_print_stats(mut prefix: *const ::core::ffi::c_char) {
     let mut sp: *const strcache = ::core::ptr::null::<strcache>();
     let mut numbuffs: ::core::ffi::c_ulong = 0;
     let mut fullbuffs: ::core::ffi::c_ulong = 0;

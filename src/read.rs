@@ -4075,7 +4075,7 @@ unsafe extern "C" fn get_next_mword(
     wtype
 }
 #[no_mangle]
-pub unsafe extern "C" fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_char) {
+pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_char) {
     let mut stbuf: stat = stat {
         st_dev: 0,
         st_ino: 0,

@@ -568,7 +568,7 @@ static mut default_variables: [*const ::core::ffi::c_char; 130] = [
     ::core::ptr::null::<::core::ffi::c_char>(),
 ];
 #[no_mangle]
-pub unsafe extern "C" fn set_default_suffixes() {
+pub unsafe fn set_default_suffixes() {
     suffix_file = enter_file(strcache_add(
         b".SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
     ));
@@ -637,7 +637,7 @@ pub unsafe fn install_default_suffix_rules() {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn install_default_implicit_rules() {
+pub unsafe fn install_default_implicit_rules() {
     let mut p: *const pspec = ::core::ptr::null::<pspec>();
     if no_builtin_rules_flag != 0 {
         return;

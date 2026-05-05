@@ -251,7 +251,7 @@ static mut vpaths: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
 static mut general_vpath: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
 static mut gpaths: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
 #[no_mangle]
-pub unsafe extern "C" fn build_vpath_lists() {
+pub unsafe fn build_vpath_lists() {
     let mut new: *mut vpath = ::core::ptr::null_mut::<vpath>();
     let mut old: *mut vpath = ::core::ptr::null_mut::<vpath>();
     let mut nexto: *mut vpath = ::core::ptr::null_mut::<vpath>();
@@ -682,7 +682,7 @@ pub unsafe extern "C" fn vpath_search(
     ::core::ptr::null::<::core::ffi::c_char>()
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_vpath_data_base() {
+pub unsafe fn print_vpath_data_base() {
     let mut nvpaths: ::core::ffi::c_uint = 0;
     let mut v: *mut vpath = ::core::ptr::null_mut::<vpath>();
     puts(b"\n# VPATH Search Paths\n\0" as *const u8 as *const ::core::ffi::c_char);

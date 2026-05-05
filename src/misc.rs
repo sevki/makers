@@ -749,7 +749,7 @@ pub unsafe extern "C" fn free_ns_chain(mut ns: *mut nameseq) {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn spin(mut type_0: *const ::core::ffi::c_char) {
+pub unsafe fn spin(mut type_0: *const ::core::ffi::c_char) {
     let mut filenm: [::core::ffi::c_char; 256] = [0; 256];
     let mut dummy: stat = stat {
         st_dev: 0,

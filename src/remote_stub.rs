@@ -6,9 +6,9 @@ pub const ECHILD: ::core::ffi::c_int = 10;
 pub static mut remote_description: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 #[no_mangle]
-pub unsafe extern "C" fn remote_setup() {}
+pub unsafe fn remote_setup() {}
 #[no_mangle]
-pub unsafe extern "C" fn remote_cleanup() {}
+pub unsafe fn remote_cleanup() {}
 #[no_mangle]
 pub unsafe extern "C" fn start_remote_job_p(mut _first_p: ::core::ffi::c_int) -> ::core::ffi::c_int {
     0
