@@ -13,7 +13,7 @@ pub struct floc {
 #[no_mangle]
 pub unsafe extern "C" fn load_file(
     mut flocp: *const floc,
-    mut file: *mut file,
+    mut _file: *mut file,
     mut noerror: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     if noerror == 0 {
@@ -24,10 +24,10 @@ pub unsafe extern "C" fn load_file(
                 as *const ::core::ffi::c_char,
         );
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 #[no_mangle]
-pub unsafe extern "C" fn unload_file(mut name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn unload_file(mut _name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     fatal(
         ::core::ptr::null_mut::<floc>(),
         0 as size_t,

@@ -1,16 +1,14 @@
+use libc::{fnmatch, free, strchr};
 use ::c2rust_bitfields;
 extern "C" {
     pub type variable_set_list;
     pub type commands;
-    fn free(__ptr: *mut ::core::ffi::c_void);
     fn qsort(
         __base: *mut ::core::ffi::c_void,
         __nmemb: size_t,
         __size: size_t,
         __compar: __compar_fn_t,
     );
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
     fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
@@ -38,11 +36,6 @@ extern "C" {
     ) -> ::core::ffi::c_int;
     fn file_exists_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    fn fnmatch(
-        __pattern: *const ::core::ffi::c_char,
-        __name: *const ::core::ffi::c_char,
-        __flags: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t;
@@ -218,7 +211,7 @@ pub unsafe extern "C" fn ar_name(mut name: *const ::core::ffi::c_char) -> ::core
             name,
         );
     }
-    return 1 as ::core::ffi::c_int;
+    1 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_parse_name(
@@ -244,23 +237,23 @@ pub unsafe extern "C" fn ar_parse_name(
     *memname_p = p;
 }
 unsafe extern "C" fn ar_member_date_1(
-    mut desc: ::core::ffi::c_int,
+    mut _desc: ::core::ffi::c_int,
     mut mem: *const ::core::ffi::c_char,
     mut truncated: ::core::ffi::c_int,
-    mut hdrpos: ::core::ffi::c_long,
-    mut datapos: ::core::ffi::c_long,
-    mut size: ::core::ffi::c_long,
+    mut _hdrpos: ::core::ffi::c_long,
+    mut _datapos: ::core::ffi::c_long,
+    mut _size: ::core::ffi::c_long,
     mut date: intmax_t,
-    mut uid: ::core::ffi::c_int,
-    mut gid: ::core::ffi::c_int,
-    mut mode: ::core::ffi::c_uint,
+    mut _uid: ::core::ffi::c_int,
+    mut _gid: ::core::ffi::c_int,
+    mut _mode: ::core::ffi::c_uint,
     mut name: *const ::core::ffi::c_void,
 ) -> intmax_t {
-    return if ar_name_equal(name as *const ::core::ffi::c_char, mem, truncated) != 0 {
+    if ar_name_equal(name as *const ::core::ffi::c_char, mem, truncated) != 0 {
         date
     } else {
         0 as intmax_t
-    };
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_member_date(mut name: *const ::core::ffi::c_char) -> time_t {
@@ -297,7 +290,7 @@ pub unsafe extern "C" fn ar_member_date(mut name: *const ::core::ffi::c_char) ->
         memname as *const ::core::ffi::c_void,
     );
     free(arname as *mut ::core::ffi::c_void);
-    return if (0 as intmax_t) < val
+    if (0 as intmax_t) < val
         && val
             <= (if (0 as ::core::ffi::c_int as time_t) < -(1 as ::core::ffi::c_int) as time_t {
                 -(1 as ::core::ffi::c_int) as time_t
@@ -314,7 +307,7 @@ pub unsafe extern "C" fn ar_member_date(mut name: *const ::core::ffi::c_char) ->
         val as time_t
     } else {
         -(1 as ::core::ffi::c_int) as time_t
-    };
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
@@ -373,19 +366,19 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
         }
     }
     free(arname as *mut ::core::ffi::c_void);
-    return val;
+    val
 }
 unsafe extern "C" fn ar_glob_match(
-    mut desc: ::core::ffi::c_int,
+    mut _desc: ::core::ffi::c_int,
     mut mem: *const ::core::ffi::c_char,
-    mut truncated: ::core::ffi::c_int,
-    mut hdrpos: ::core::ffi::c_long,
-    mut datapos: ::core::ffi::c_long,
-    mut size: ::core::ffi::c_long,
-    mut date: intmax_t,
-    mut uid: ::core::ffi::c_int,
-    mut gid: ::core::ffi::c_int,
-    mut mode: ::core::ffi::c_uint,
+    mut _truncated: ::core::ffi::c_int,
+    mut _hdrpos: ::core::ffi::c_long,
+    mut _datapos: ::core::ffi::c_long,
+    mut _size: ::core::ffi::c_long,
+    mut _date: intmax_t,
+    mut _uid: ::core::ffi::c_int,
+    mut _gid: ::core::ffi::c_int,
+    mut _mode: ::core::ffi::c_uint,
     mut arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
     let mut state: *mut ar_glob_state = arg as *mut ar_glob_state;
@@ -402,7 +395,7 @@ unsafe extern "C" fn ar_glob_match(
         (*state).chain = new;
         (*state).n = (*state).n.wrapping_add(1);
     }
-    return 0 as intmax_t;
+    0 as intmax_t
 }
 unsafe extern "C" fn ar_glob_pattern_p(
     mut pattern: *const ::core::ffi::c_char,
@@ -431,7 +424,7 @@ unsafe extern "C" fn ar_glob_pattern_p(
         }
         p = p.offset(1);
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_glob(
@@ -518,6 +511,6 @@ pub unsafe extern "C" fn ar_glob(
         (*n).name = *names.offset(fresh3 as isize);
         n = (*n).next;
     }
-    return state.chain;
+    state.chain
 }
 pub const __CHAR_BIT__: ::core::ffi::c_int = 8 as ::core::ffi::c_int;

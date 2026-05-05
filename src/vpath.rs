@@ -1,3 +1,4 @@
+use libc::{__errno_location, free, printf, puts, strcmp, strrchr};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -7,29 +8,17 @@ extern "C" {
     pub type commands;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn puts(__s: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -475,7 +464,7 @@ pub unsafe extern "C" fn gpath_search(
             gp = gp.offset(1);
         }
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 unsafe extern "C" fn selective_vpath_search(
     mut path: *mut vpath,
@@ -567,14 +556,14 @@ unsafe extern "C" fn selective_vpath_search(
                 && ((*f_0).last_mtime == OLD_MTIME as uintmax_t
                     || (*f_0).last_mtime
                         == (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
-                            (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                            if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                                 0 as ::core::ffi::c_int as uintmax_t
                             } else {
                                 !(0 as ::core::ffi::c_int as uintmax_t)
                                     << (::core::mem::size_of::<uintmax_t>() as usize)
                                         .wrapping_mul(CHAR_BIT as usize)
                                         .wrapping_sub(1 as usize)
-                            }),
+                            },
                         ))
             {
                 *mtime_ptr = (*f_0).last_mtime;
@@ -659,7 +648,7 @@ unsafe extern "C" fn selective_vpath_search(
         }
         i = i.wrapping_add(1);
     }
-    return ::core::ptr::null::<::core::ffi::c_char>();
+    ::core::ptr::null::<::core::ffi::c_char>()
 }
 #[no_mangle]
 pub unsafe extern "C" fn vpath_search(
@@ -699,7 +688,7 @@ pub unsafe extern "C" fn vpath_search(
             return p_0;
         }
     }
-    return ::core::ptr::null::<::core::ffi::c_char>();
+    ::core::ptr::null::<::core::ffi::c_char>()
 }
 #[no_mangle]
 pub unsafe extern "C" fn print_vpath_data_base() {

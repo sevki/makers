@@ -1,3 +1,4 @@
+use libc::{__errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror, strrchr};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -7,7 +8,6 @@ extern "C" {
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
     fn lstat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
-    fn close(__fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
         -> ssize_t;
     fn write(__fd: ::core::ffi::c_int, __buf: *const ::core::ffi::c_void, __n: size_t) -> ssize_t;
@@ -18,35 +18,12 @@ extern "C" {
     ) -> ssize_t;
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn sprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn puts(__s: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn abort() -> !;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strerror(__errnum: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
     fn message(prefix: ::core::ffi::c_int, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
@@ -87,11 +64,6 @@ extern "C" {
     static mut rebuilding_makefiles: ::core::ffi::c_int;
     static mut command_count: ::core::ffi::c_ulong;
     static mut no_intermediates: ::core::ffi::c_uint;
-    fn open(
-        __file: *const ::core::ffi::c_char,
-        __oflag: ::core::ffi::c_int,
-        ...
-    ) -> ::core::ffi::c_int;
     fn execute_file_commands(file: *mut file);
     fn chop_commands(cmds: *mut commands);
     static mut db_level: ::core::ffi::c_int;
@@ -456,14 +428,14 @@ pub unsafe extern "C" fn check_also_make(mut file: *const file) {
         && mtime
             <= ((!(0 as ::core::ffi::c_int as uintmax_t))
                 .wrapping_sub(
-                    (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                    if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                         0 as ::core::ffi::c_int as uintmax_t
                     } else {
                         !(0 as ::core::ffi::c_int as uintmax_t)
                             << (::core::mem::size_of::<uintmax_t>() as usize)
                                 .wrapping_mul(8 as usize)
                                 .wrapping_sub(1 as usize)
-                    }),
+                    },
                 )
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 {
@@ -706,7 +678,7 @@ pub unsafe extern "C" fn update_goal_chain(mut goaldeps: *mut goaldep) -> update
         question_flag = q;
         just_print_flag = n;
     }
-    return status as update_status;
+    status as update_status
 }
 #[no_mangle]
 pub unsafe extern "C" fn show_goal_error() {
@@ -791,7 +763,7 @@ unsafe extern "C" fn update_file(
         }
         f = (*f).prev;
     }
-    return status;
+    status
 }
 #[no_mangle]
 pub unsafe extern "C" fn complain(mut file: *mut file) {
@@ -988,14 +960,14 @@ unsafe extern "C" fn update_file_1(
         && this_mtime
             <= ((!(0 as ::core::ffi::c_int as uintmax_t))
                 .wrapping_sub(
-                    (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                    if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                         0 as ::core::ffi::c_int as uintmax_t
                     } else {
                         !(0 as ::core::ffi::c_int as uintmax_t)
                             << (::core::mem::size_of::<uintmax_t>() as usize)
                                 .wrapping_mul(8 as usize)
                                 .wrapping_sub(1 as usize)
-                    }),
+                    },
                 )
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 {
@@ -1600,7 +1572,7 @@ unsafe extern "C" fn update_file_1(
         1 | _ => {}
     }
     (*file).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    return (*file).update_status() as update_status;
+    (*file).update_status() as update_status
 }
 #[no_mangle]
 pub unsafe extern "C" fn notice_finished_file(mut file: *mut file) {
@@ -1676,14 +1648,14 @@ pub unsafe extern "C" fn notice_finished_file(mut file: *mut file) {
             UNKNOWN_MTIME as uintmax_t
         } else {
             (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
-                (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
                 } else {
                     !(0 as ::core::ffi::c_int as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(1 as usize)
-                }),
+                },
             )
         };
     }
@@ -1718,14 +1690,14 @@ pub unsafe extern "C" fn notice_finished_file(mut file: *mut file) {
                 if just_print_flag != 0 {
                     (*(*d).file).last_mtime = (!(0 as ::core::ffi::c_int as uintmax_t))
                         .wrapping_sub(
-                            (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                            if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                                 0 as ::core::ffi::c_int as uintmax_t
                             } else {
                                 !(0 as ::core::ffi::c_int as uintmax_t)
                                     << (::core::mem::size_of::<uintmax_t>() as usize)
                                         .wrapping_mul(CHAR_BIT as usize)
                                         .wrapping_sub(1 as usize)
-                            }),
+                            },
                         );
                 }
             }
@@ -1900,7 +1872,7 @@ unsafe extern "C" fn check_dep(
         ofile
     };
     (*fresh7).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    return dep_status;
+    dep_status
 }
 #[no_mangle]
 pub unsafe extern "C" fn touch_file(mut file: *mut file) -> update_status {
@@ -2046,7 +2018,7 @@ pub unsafe extern "C" fn touch_file(mut file: *mut file) -> update_status {
             close(fd);
         }
     }
-    return us_success;
+    us_success
 }
 #[no_mangle]
 pub unsafe extern "C" fn remake_file(mut file: *mut file) {
@@ -2200,14 +2172,14 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, mut search: ::core::ffi::c
                 if mtime != OLD_MTIME as uintmax_t
                     && mtime
                         != (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
-                            (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                            if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                                 0 as ::core::ffi::c_int as uintmax_t
                             } else {
                                 !(0 as ::core::ffi::c_int as uintmax_t)
                                     << (::core::mem::size_of::<uintmax_t>() as usize)
                                         .wrapping_mul(CHAR_BIT as usize)
                                         .wrapping_sub(1 as usize)
-                            }),
+                            },
                         )
                 {
                     mtime = name_mtime(name_0);
@@ -2219,14 +2191,14 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, mut search: ::core::ffi::c
         && mtime != NONEXISTENT_MTIME as uintmax_t
         && mtime
             != (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
-                (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
                 } else {
                     !(0 as ::core::ffi::c_int as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(1 as usize)
-                }),
+                },
             )
         && (*file).updated() == 0
     {
@@ -2321,7 +2293,7 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, mut search: ::core::ffi::c
             break;
         }
     }
-    return mtime;
+    mtime
 }
 #[no_mangle]
 pub unsafe extern "C" fn name_mtime(mut name: *const ::core::ffi::c_char) -> uintmax_t {
@@ -2453,7 +2425,7 @@ pub unsafe extern "C" fn name_mtime(mut name: *const ::core::ffi::c_char) -> uin
             }
         }
     }
-    return mtime;
+    mtime
 }
 unsafe extern "C" fn library_search(
     mut lib: *const ::core::ffi::c_char,
@@ -2602,7 +2574,7 @@ unsafe extern "C" fn library_search(
         }
     }
     free(libpatterns as *mut ::core::ffi::c_void);
-    return file;
+    file
 }
 pub const LIBDIR: [::core::ffi::c_char; 15] =
     unsafe { ::core::mem::transmute::<[u8; 15], [::core::ffi::c_char; 15]>(*b"/usr/local/lib\0") };

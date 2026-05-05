@@ -1,3 +1,4 @@
+use libc::{__errno_location, free, printf, puts, strcmp, strerror, strrchr};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -8,11 +9,7 @@ extern "C" {
     fn lstat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn puts(__s: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -23,16 +20,7 @@ extern "C" {
         __c: ::core::ffi::c_int,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strerror(__errnum: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
     fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
@@ -258,7 +246,7 @@ unsafe extern "C" fn clear_directory_contents(
     if !(*dc).dirfiles.ht_vec.is_null() {
         hash_free(&raw mut (*dc).dirfiles, 1 as ::core::ffi::c_int);
     }
-    return ::core::ptr::null_mut::<directory_contents>();
+    ::core::ptr::null_mut::<directory_contents>()
 }
 unsafe extern "C" fn directory_contents_hash_1(
     mut key_0: *const ::core::ffi::c_void,
@@ -267,7 +255,7 @@ unsafe extern "C" fn directory_contents_hash_1(
     let mut hash: ::core::ffi::c_ulong = 0;
     hash = (((*key).dev as ::core::ffi::c_uint) << 4 as ::core::ffi::c_int
         ^ (*key).ino as ::core::ffi::c_uint) as ::core::ffi::c_ulong;
-    return hash;
+    hash
 }
 unsafe extern "C" fn directory_contents_hash_2(
     mut key_0: *const ::core::ffi::c_void,
@@ -276,7 +264,7 @@ unsafe extern "C" fn directory_contents_hash_2(
     let mut hash: ::core::ffi::c_ulong = 0;
     hash = (((*key).dev as ::core::ffi::c_uint) << 4 as ::core::ffi::c_int
         ^ !(*key).ino as ::core::ffi::c_uint) as ::core::ffi::c_ulong;
-    return hash;
+    hash
 }
 unsafe extern "C" fn directory_contents_hash_cmp(
     mut xv: *const ::core::ffi::c_void,
@@ -295,13 +283,13 @@ unsafe extern "C" fn directory_contents_hash_cmp(
     if result != 0 {
         return result;
     }
-    return if (*x).dev < (*y).dev {
+    if (*x).dev < (*y).dev {
         -(1 as ::core::ffi::c_int)
     } else if (*x).dev == (*y).dev {
         0 as ::core::ffi::c_int
     } else {
         1 as ::core::ffi::c_int
-    };
+    }
 }
 static mut directory_contents: hash_table = hash_table {
     ht_vec: ::core::ptr::null_mut::<*mut ::core::ffi::c_void>(),
@@ -324,25 +312,25 @@ pub unsafe extern "C" fn directory_hash_1(mut key: *const ::core::ffi::c_void) -
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const directory)).name as *const ::core::ffi::c_uchar;
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
-    return _result_;
+    _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn directory_hash_2(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn directory_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
-    return _result_;
+    _result_
 }
 unsafe extern "C" fn directory_hash_cmp(
     mut x: *const ::core::ffi::c_void,
     mut y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    return if (*(x as *const directory)).name == (*(y as *const directory)).name {
+    if (*(x as *const directory)).name == (*(y as *const directory)).name {
         0 as ::core::ffi::c_int
     } else {
         strcmp(
             (*(x as *const directory)).name,
             (*(y as *const directory)).name,
         )
-    };
+    }
 }
 static mut directories: hash_table = hash_table {
     ht_vec: ::core::ptr::null_mut::<*mut ::core::ffi::c_void>(),
@@ -365,12 +353,12 @@ pub unsafe extern "C" fn dirfile_hash_1(mut key: *const ::core::ffi::c_void) -> 
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const dirfile)).name as *const ::core::ffi::c_uchar;
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
-    return _result_;
+    _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn dirfile_hash_2(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn dirfile_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
-    return _result_;
+    _result_
 }
 unsafe extern "C" fn dirfile_hash_cmp(
     mut xv: *const ::core::ffi::c_void,
@@ -383,11 +371,11 @@ unsafe extern "C" fn dirfile_hash_cmp(
     if result != 0 {
         return result;
     }
-    return if (*x).name == (*y).name {
+    if (*x).name == (*y).name {
         0 as ::core::ffi::c_int
     } else {
         strcmp((*x).name, (*y).name)
-    };
+    }
 }
 pub const DIRFILE_BUCKETS: ::core::ffi::c_int = 107 as ::core::ffi::c_int;
 #[no_mangle]
@@ -566,7 +554,7 @@ pub unsafe extern "C" fn find_directory(mut name: *const ::core::ffi::c_char) ->
             }
         }
     }
-    return dir;
+    dir
 }
 unsafe extern "C" fn dir_contents_file_exists_p(
     mut dir: *mut directory,
@@ -670,14 +658,14 @@ unsafe extern "C" fn dir_contents_file_exists_p(
         closedir((*dc).dirstream);
         (*dc).dirstream = ::core::ptr::null_mut::<DIR>();
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn dir_file_exists_p(
     mut dirname: *const ::core::ffi::c_char,
     mut filename: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
-    return dir_contents_file_exists_p(find_directory(dirname), filename);
+    dir_contents_file_exists_p(find_directory(dirname), filename)
 }
 #[no_mangle]
 pub unsafe extern "C" fn file_exists_p(mut name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
@@ -714,7 +702,7 @@ pub unsafe extern "C" fn file_exists_p(mut name: *const ::core::ffi::c_char) -> 
         dirname = p;
     }
     slash = slash.offset(1);
-    return dir_file_exists_p(dirname, slash);
+    dir_file_exists_p(dirname, slash)
 }
 #[no_mangle]
 pub unsafe extern "C" fn file_impossible(mut filename: *const ::core::ffi::c_char) {
@@ -840,13 +828,13 @@ pub unsafe extern "C" fn file_impossible_p(
     if !dirfile.is_null() {
         return (*dirfile).impossible as ::core::ffi::c_int;
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn dir_name(
     mut dir: *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
-    return (*find_directory(dir)).name;
+    (*find_directory(dir)).name
 }
 #[no_mangle]
 pub unsafe extern "C" fn print_dir_data_base() {
@@ -968,7 +956,7 @@ unsafe extern "C" fn open_dirstream(
     new = xmalloc(::core::mem::size_of::<dirstream>() as size_t) as *mut dirstream;
     (*new).contents = (*dir).contents;
     (*new).dirfile_slot = (*(*new).contents).dirfiles.ht_vec as *mut *mut dirfile;
-    return new as *mut ::core::ffi::c_void;
+    new as *mut ::core::ffi::c_void
 }
 #[no_mangle]
 pub unsafe extern "C" fn read_dirstream(mut stream: *mut ::core::ffi::c_void) -> *mut dirent {
@@ -1010,7 +998,7 @@ pub unsafe extern "C" fn read_dirstream(mut stream: *mut ::core::ffi::c_void) ->
             return d;
         }
     }
-    return ::core::ptr::null_mut::<dirent>();
+    ::core::ptr::null_mut::<dirent>()
 }
 #[no_mangle]
 pub unsafe extern "C" fn dir_setup_glob(mut gl: *mut glob_t) {

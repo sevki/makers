@@ -1,21 +1,16 @@
+use libc::{__errno_location, close, exit, perror, sprintf, strcat, strerror};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
     pub type _IO_codecvt;
     pub type _IO_marker;
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
-    fn close(__fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
         -> ssize_t;
     fn ftruncate(__fd: ::core::ffi::c_int, __length: __off_t) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn sprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn vsprintf(
         __s: *mut ::core::ffi::c_char,
         __format: *const ::core::ffi::c_char,
@@ -28,21 +23,13 @@ extern "C" {
         __n: size_t,
         __s: *mut FILE,
     ) -> ::core::ffi::c_ulong;
-    fn perror(__s: *const ::core::ffi::c_char);
     fn fileno(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn exit(__status: ::core::ffi::c_int) -> !;
-    fn strcat(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strerror(__errnum: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
     fn should_print_dir() -> ::core::ffi::c_int;
     fn die(_: ::core::ffi::c_int) -> !;
     fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
@@ -254,7 +241,7 @@ pub unsafe extern "C" fn log_working_directory(mut entering: ::core::ffi::c_int)
         0 as ::core::ffi::c_int,
         buf,
     );
-    return 1 as ::core::ffi::c_int;
+    1 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn pump_from_tmp(mut from: ::core::ffi::c_int, mut to: *mut FILE) {
@@ -298,7 +285,7 @@ pub unsafe extern "C" fn pump_from_tmp(mut from: ::core::ffi::c_int, mut to: *mu
 pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
     let mut fd: ::core::ffi::c_int = get_tmpfd(::core::ptr::null_mut::<*mut ::core::ffi::c_char>());
     fd_set_append(fd);
-    return fd;
+    fd
 }
 #[no_mangle]
 pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
@@ -501,7 +488,7 @@ pub unsafe extern "C" fn get_buffer(mut need: size_t) -> *mut ::core::ffi::c_cha
     *fmtbuf
         .buffer
         .offset(need.wrapping_sub(1 as size_t) as isize) = '\0' as i32 as ::core::ffi::c_char;
-    return fmtbuf.buffer;
+    fmtbuf.buffer
 }
 #[no_mangle]
 pub unsafe extern "C" fn message(
@@ -574,11 +561,11 @@ pub unsafe extern "C" fn error(
         strlen(fmt)
             .wrapping_add(strlen(program))
             .wrapping_add(
-                (if !flocp.is_null() && !(*flocp).filenm.is_null() {
+                if !flocp.is_null() && !(*flocp).filenm.is_null() {
                     strlen((*flocp).filenm)
                 } else {
                     0 as size_t
-                }),
+                },
             )
             .wrapping_add(INTSTR_LENGTH)
             .wrapping_add(4 as size_t)
@@ -645,11 +632,11 @@ pub unsafe extern "C" fn fatal(
         strlen(fmt)
             .wrapping_add(strlen(program))
             .wrapping_add(
-                (if !flocp.is_null() && !(*flocp).filenm.is_null() {
+                if !flocp.is_null() && !(*flocp).filenm.is_null() {
                     strlen((*flocp).filenm)
                 } else {
                     0 as size_t
-                }),
+                },
             )
             .wrapping_add(INTSTR_LENGTH)
             .wrapping_add(8 as size_t)
@@ -732,7 +719,7 @@ pub unsafe extern "C" fn format(
     }
     args_0 = args.clone();
     vsprintf(p, fmt, args_0.as_va_list());
-    return start;
+    start
 }
 #[no_mangle]
 pub unsafe extern "C" fn perror_with_name(

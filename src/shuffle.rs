@@ -1,22 +1,9 @@
 use ::c2rust_bitfields;
+use libc::{free, sprintf, strcasecmp, strcpy};
 extern "C" {
     pub type variable_set_list;
     pub type commands;
-    fn sprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn strcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strcasecmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn make_toui(
         _: *const ::core::ffi::c_char,
@@ -142,206 +129,154 @@ pub const sm_identity: shuffle_mode = 3;
 pub const sm_reverse: shuffle_mode = 2;
 pub const sm_random: shuffle_mode = 1;
 pub const sm_none: shuffle_mode = 0;
-pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-static mut config: C2RustUnnamed = unsafe {
-    C2RustUnnamed {
-        mode: sm_none,
-        seed: 0 as ::core::ffi::c_uint,
-        shuffler: None,
-        strval: ::core::mem::transmute::<[u8; 23], [::core::ffi::c_char; 23]>(
-            *b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
-        ),
-    }
+
+static mut config: C2RustUnnamed = C2RustUnnamed {
+    mode: sm_none,
+    seed: 0,
+    shuffler: None,
+    strval: [0; 23],
 };
+
 #[no_mangle]
 pub unsafe extern "C" fn shuffle_get_mode() -> *const ::core::ffi::c_char {
-    return if config.strval[0 as ::core::ffi::c_int as usize] as ::core::ffi::c_int == '\0' as i32 {
-        ::core::ptr::null_mut::<::core::ffi::c_char>()
+    if config.strval[0] == 0 {
+        ::core::ptr::null()
     } else {
-        &raw mut config.strval as *mut ::core::ffi::c_char
-    };
+        &raw const config.strval as *const ::core::ffi::c_char
+    }
 }
+
+// Pre-1.77 nightly: no `c"..."` literals, so build C strings as byte slices
+// with explicit NUL and reinterpret the pointer.
+const fn cstr(b: &[u8]) -> *const ::core::ffi::c_char {
+    b.as_ptr() as *const ::core::ffi::c_char
+}
+
 #[no_mangle]
-pub unsafe extern "C" fn shuffle_set_mode(mut cmdarg: *const ::core::ffi::c_char) {
-    if strcasecmp(
-        cmdarg,
-        b"reverse\0" as *const u8 as *const ::core::ffi::c_char,
-    ) == 0 as ::core::ffi::c_int
-    {
+pub unsafe extern "C" fn shuffle_set_mode(cmdarg: *const ::core::ffi::c_char) {
+    let strval_ptr = &raw mut config.strval as *mut ::core::ffi::c_char;
+
+    if strcasecmp(cmdarg, cstr(b"reverse\0")) == 0 {
         config.mode = sm_reverse;
-        config.shuffler = Some(
-            reverse_shuffle_array
-                as unsafe extern "C" fn(*mut *mut ::core::ffi::c_void, size_t) -> (),
-        )
-            as Option<unsafe extern "C" fn(*mut *mut ::core::ffi::c_void, size_t) -> ()>;
-        strcpy(
-            &raw mut config.strval as *mut ::core::ffi::c_char,
-            b"reverse\0" as *const u8 as *const ::core::ffi::c_char,
-        );
-    } else if strcasecmp(
-        cmdarg,
-        b"identity\0" as *const u8 as *const ::core::ffi::c_char,
-    ) == 0 as ::core::ffi::c_int
-    {
+        config.shuffler = Some(reverse_shuffle_array);
+        strcpy(strval_ptr, cstr(b"reverse\0"));
+    } else if strcasecmp(cmdarg, cstr(b"identity\0")) == 0 {
         config.mode = sm_identity;
-        config.shuffler = Some(
-            identity_shuffle_array
-                as unsafe extern "C" fn(*mut *mut ::core::ffi::c_void, size_t) -> (),
-        )
-            as Option<unsafe extern "C" fn(*mut *mut ::core::ffi::c_void, size_t) -> ()>;
-        strcpy(
-            &raw mut config.strval as *mut ::core::ffi::c_char,
-            b"identity\0" as *const u8 as *const ::core::ffi::c_char,
-        );
-    } else if strcasecmp(cmdarg, b"none\0" as *const u8 as *const ::core::ffi::c_char)
-        == 0 as ::core::ffi::c_int
-    {
+        config.shuffler = Some(identity_shuffle_array);
+        strcpy(strval_ptr, cstr(b"identity\0"));
+    } else if strcasecmp(cmdarg, cstr(b"none\0")) == 0 {
         config.mode = sm_none;
         config.shuffler = None;
-        config.strval[0 as ::core::ffi::c_int as usize] = '\0' as i32 as ::core::ffi::c_char;
+        config.strval[0] = 0;
     } else {
-        if strcasecmp(
-            cmdarg,
-            b"random\0" as *const u8 as *const ::core::ffi::c_char,
-        ) == 0 as ::core::ffi::c_int
-        {
+        if strcasecmp(cmdarg, cstr(b"random\0")) == 0 {
             config.seed = make_rand();
         } else {
-            let mut err: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+            let mut err: *const ::core::ffi::c_char = ::core::ptr::null();
             config.seed = make_toui(cmdarg, &raw mut err);
             if !err.is_null() {
                 fatal(
-                    ::core::ptr::null_mut::<floc>(),
-                    (strlen(err) as size_t).wrapping_add(strlen(cmdarg) as size_t),
-                    b"invalid shuffle mode: %s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                    ::core::ptr::null(),
+                    strlen(err) + strlen(cmdarg),
+                    cstr(b"invalid shuffle mode: %s: '%s'\0"),
                     err,
                     cmdarg,
                 );
             }
         }
         config.mode = sm_random;
-        config.shuffler = Some(
-            random_shuffle_array
-                as unsafe extern "C" fn(*mut *mut ::core::ffi::c_void, size_t) -> (),
-        )
-            as Option<unsafe extern "C" fn(*mut *mut ::core::ffi::c_void, size_t) -> ()>;
-        sprintf(
-            &raw mut config.strval as *mut ::core::ffi::c_char,
-            b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-            config.seed,
-        );
-    };
+        config.shuffler = Some(random_shuffle_array);
+        sprintf(strval_ptr, cstr(b"%u\0"), config.seed);
+    }
 }
-#[no_mangle]
-pub unsafe extern "C" fn random_shuffle_array(mut a: *mut *mut ::core::ffi::c_void, mut len: size_t) {
-    let mut i: size_t = 0;
-    if len <= 1 as size_t {
+
+/// Fisher-Yates shuffle. The `extern "C"` signature is fixed because this is
+/// stored as a function pointer in `config.shuffler`; the body operates on a
+/// safe slice view to drop the pointer arithmetic.
+unsafe extern "C" fn random_shuffle_array(a: *mut *mut ::core::ffi::c_void, len: size_t) {
+    if len <= 1 {
         return;
     }
-    i = len.wrapping_sub(1 as size_t);
-    while i >= 1 as size_t {
-        let mut t: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-        let mut j: ::core::ffi::c_uint = (make_rand() as size_t)
-            .wrapping_rem(i.wrapping_add(1 as size_t))
-            as ::core::ffi::c_uint;
-        if !(i == j as size_t) {
-            t = *a.offset(i as isize);
-            let ref mut fresh0 = *a.offset(i as isize);
-            *fresh0 = *a.offset(j as isize);
-            let ref mut fresh1 = *a.offset(j as isize);
-            *fresh1 = t;
+    let slice = ::core::slice::from_raw_parts_mut(a, len);
+    for i in (1..len).rev() {
+        let j = (make_rand() as size_t) % (i + 1);
+        if i != j {
+            slice.swap(i, j);
         }
-        i = i.wrapping_sub(1);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn reverse_shuffle_array(mut a: *mut *mut ::core::ffi::c_void, mut len: size_t) {
-    let mut i: size_t = 0;
-    i = 0 as size_t;
-    while i < len.wrapping_div(2 as size_t) {
-        let mut t: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-        let mut j: size_t = len.wrapping_sub(1 as size_t).wrapping_sub(i);
-        t = *a.offset(i as isize);
-        let ref mut fresh2 = *a.offset(i as isize);
-        *fresh2 = *a.offset(j as isize);
-        let ref mut fresh3 = *a.offset(j as isize);
-        *fresh3 = t;
-        i = i.wrapping_add(1);
+
+unsafe extern "C" fn reverse_shuffle_array(a: *mut *mut ::core::ffi::c_void, len: size_t) {
+    let slice = ::core::slice::from_raw_parts_mut(a, len);
+    for i in 0..len / 2 {
+        slice.swap(i, len - 1 - i);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn identity_shuffle_array(mut a: *mut *mut ::core::ffi::c_void, mut len: size_t) {
-}
-#[no_mangle]
-pub unsafe extern "C" fn shuffle_deps(mut deps: *mut dep) {
-    let mut ndeps: size_t = 0 as size_t;
-    let mut dep: *mut dep = ::core::ptr::null_mut::<dep>();
-    let mut da: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    let mut dp: *mut *mut ::core::ffi::c_void = ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    dep = deps;
-    while !dep.is_null() {
-        if (*dep).wait_here() != 0 {
+
+unsafe extern "C" fn identity_shuffle_array(_a: *mut *mut ::core::ffi::c_void, _len: size_t) {}
+
+/// Walk the deps linked list, shuffle the order, and write the new order back
+/// via the `shuf` field on each node.
+unsafe fn shuffle_deps(deps: *mut dep) {
+    // Count deps; bail out if any has wait_here (those preserve order).
+    let mut ndeps: size_t = 0;
+    let mut d = deps;
+    while !d.is_null() {
+        if (*d).wait_here() != 0 {
             return;
         }
-        ndeps = ndeps.wrapping_add(1);
-        dep = (*dep).next;
+        ndeps += 1;
+        d = (*d).next;
     }
-    if ndeps == 0 as size_t {
+    if ndeps == 0 {
         return;
     }
-    da = xmalloc((::core::mem::size_of::<*mut dep>() as size_t).wrapping_mul(ndeps))
-        as *mut *mut ::core::ffi::c_void;
-    dep = deps;
-    dp = da;
-    while !dep.is_null() {
-        *dp = dep as *mut ::core::ffi::c_void;
-        dep = (*dep).next;
-        dp = dp.offset(1);
+
+    // Pack pointers into a contiguous array, shuffle, then write back.
+    let da = xmalloc(::core::mem::size_of::<*mut dep>() * ndeps) as *mut *mut ::core::ffi::c_void;
+    let slots = ::core::slice::from_raw_parts_mut(da, ndeps);
+
+    d = deps;
+    for slot in slots.iter_mut() {
+        *slot = d as *mut ::core::ffi::c_void;
+        d = (*d).next;
     }
+
     config.shuffler.expect("non-null function pointer")(da, ndeps);
-    dep = deps;
-    dp = da;
-    while !dep.is_null() {
-        (*dep).shuf = *dp as *mut dep;
-        dep = (*dep).next;
-        dp = dp.offset(1);
+
+    d = deps;
+    for slot in slots.iter() {
+        (*d).shuf = *slot as *mut dep;
+        d = (*d).next;
     }
     free(da as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn shuffle_file_deps_recursive(mut f: *mut file) {
-    let mut dep: *mut dep = ::core::ptr::null_mut::<dep>();
-    if f.is_null() {
+
+unsafe fn shuffle_file_deps_recursive(f: *mut file) {
+    if f.is_null() || (*f).was_shuffled() != 0 {
         return;
     }
-    if (*f).was_shuffled() != 0 {
-        return;
-    }
-    (*f).set_was_shuffled(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    (*f).set_was_shuffled(1);
     shuffle_deps((*f).deps);
-    dep = (*f).deps;
-    while !dep.is_null() {
-        shuffle_file_deps_recursive((*dep).file);
-        dep = (*dep).next;
+    let mut d = (*f).deps;
+    while !d.is_null() {
+        shuffle_file_deps_recursive((*d).file);
+        d = (*d).next;
     }
 }
+
 #[no_mangle]
-pub unsafe extern "C" fn shuffle_deps_recursive(mut deps: *mut dep) {
-    let mut dep: *mut dep = ::core::ptr::null_mut::<dep>();
-    if config.mode as ::core::ffi::c_uint == sm_none as ::core::ffi::c_int as ::core::ffi::c_uint {
+pub unsafe extern "C" fn shuffle_deps_recursive(deps: *mut dep) {
+    if config.mode == sm_none || not_parallel != 0 {
         return;
     }
-    if not_parallel != 0 {
-        return;
-    }
-    if config.mode as ::core::ffi::c_uint == sm_random as ::core::ffi::c_int as ::core::ffi::c_uint
-    {
+    if config.mode == sm_random {
         make_seed(config.seed);
     }
     shuffle_deps(deps);
-    dep = deps;
-    while !dep.is_null() {
-        shuffle_file_deps_recursive((*dep).file);
-        dep = (*dep).next;
+    let mut d = deps;
+    while !d.is_null() {
+        shuffle_file_deps_recursive((*d).file);
+        d = (*d).next;
     }
 }

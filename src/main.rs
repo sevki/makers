@@ -1,5 +1,6 @@
 use ::c2rust_bitfields;
 use ::libc;
+use libc::{__errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv, setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink};
 extern "C" {
     pub type _IO_wide_data;
     pub type _IO_codecvt;
@@ -16,13 +17,8 @@ extern "C" {
         __act: *const sigaction,
         __oact: *mut sigaction,
     ) -> ::core::ffi::c_int;
-    fn chdir(__path: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn getcwd(__buf: *mut ::core::ffi::c_char, __size: size_t) -> *mut ::core::ffi::c_char;
     static mut environ: *mut *mut ::core::ffi::c_char;
-    fn _exit(__status: ::core::ffi::c_int) -> !;
-    fn ttyname(__fd: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
-    fn isatty(__fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn unlink(__name: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     static mut optarg: *mut ::core::ffi::c_char;
     static mut optind: ::core::ffi::c_int;
     static mut opterr: ::core::ffi::c_int;
@@ -42,13 +38,6 @@ extern "C" {
         __format: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn sprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn putchar(__c: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
     fn fread(
         __ptr: *mut ::core::ffi::c_void,
@@ -66,14 +55,7 @@ extern "C" {
     fn ferror(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn fileno(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
-    fn tolower(__c: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn atof(__nptr: *const ::core::ffi::c_char) -> ::core::ffi::c_double;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn abort() -> !;
     fn atexit(__func: Option<unsafe extern "C" fn() -> ()>) -> ::core::ffi::c_int;
-    fn exit(__status: ::core::ffi::c_int) -> !;
-    fn putenv(__string: *mut ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -84,31 +66,12 @@ extern "C" {
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strerror(__errnum: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
-    fn stpcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn setlocale(
-        __category: ::core::ffi::c_int,
-        __locale: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
     fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
@@ -804,7 +767,7 @@ pub const PARSEFS_NONE: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 #[inline]
 #[no_mangle]
 pub unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
-    return xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep;
+    xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
 }
 #[inline]
 
@@ -1397,7 +1360,7 @@ unsafe extern "C" fn bsd_signal(
             -(1 as ::core::ffi::c_int) as ::libc::intptr_t,
         );
     }
-    return oact.__sigaction_handler.sa_handler as bsd_signal_ret_t;
+    oact.__sigaction_handler.sa_handler as bsd_signal_ret_t
 }
 #[no_mangle]
 pub unsafe extern "C" fn initialize_global_hash_tables() {
@@ -1502,10 +1465,10 @@ unsafe extern "C" fn expand_command_line_file(
     }
     cp = strcache_add(name);
     free(expanded as *mut ::core::ffi::c_void);
-    return cp;
+    cp
 }
 #[no_mangle]
-pub unsafe extern "C" fn debug_signal_handler(mut sig: ::core::ffi::c_int) {
+pub unsafe extern "C" fn debug_signal_handler(mut _sig: ::core::ffi::c_int) {
     db_level = if db_level != 0 { DB_NONE } else { DB_BASIC };
 }
 #[no_mangle]
@@ -2636,14 +2599,14 @@ unsafe fn main_0(
         while !(*p_2).is_null() {
             let mut f_1: *mut file = enter_file(*p_2);
             (*f_1).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
-                (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
                 } else {
                     !(0 as ::core::ffi::c_int as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(1 as usize)
-                }),
+                },
             );
             (*f_1).last_mtime = (*f_1).mtime_before_update;
             p_2 = p_2.offset(1);
@@ -2760,11 +2723,11 @@ unsafe fn main_0(
             error(
                 &raw mut (*d_1).floc,
                 (strlen(
-                    (if !(*d_1).name.is_null() {
+                    if !(*d_1).name.is_null() {
                         (*d_1).name
                     } else {
                         (*(*d_1).file).name
-                    }),
+                    },
                 ) as size_t)
                     .wrapping_add(strlen(err) as size_t),
                 b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3230,14 +3193,14 @@ unsafe fn main_0(
         while !(*p_5).is_null() {
             let mut f_5: *mut file = enter_file(*p_5);
             (*f_5).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
-                (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
                 } else {
                     !(0 as ::core::ffi::c_int as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
                             .wrapping_sub(1 as usize)
-                }),
+                },
             );
             (*f_5).last_mtime = (*f_5).mtime_before_update;
             p_5 = p_5.offset(1);
@@ -3508,7 +3471,7 @@ unsafe extern "C" fn handle_non_switch_argument(
             NILF,
         );
     }
-    return 0 as ::core::ffi::c_uint;
+    0 as ::core::ffi::c_uint
 }
 #[no_mangle]
 pub unsafe extern "C" fn reset_makeflags(mut origin: variable_origin) {
@@ -4060,7 +4023,7 @@ unsafe extern "C" fn quote_for_env(
         out = out.offset(1);
         *fresh32 = *fresh31;
     }
-    return out;
+    out
 }
 #[no_mangle]
 pub unsafe extern "C" fn disable_builtins() {
@@ -4446,15 +4409,15 @@ pub unsafe extern "C" fn define_makeflags(mut makefile: ::core::ffi::c_int) -> *
     );
     (*v).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     restore_variable_buffer(bufsave, lensave);
-    return v;
+    v
 }
 #[no_mangle]
 pub unsafe extern "C" fn should_print_dir() -> ::core::ffi::c_int {
     if print_directory_flag >= 0 as ::core::ffi::c_int {
         return print_directory_flag;
     }
-    return (silent_flag == 0 && (makelevel > 0 as ::core::ffi::c_uint || !directories.is_null()))
-        as ::core::ffi::c_int;
+    (silent_flag == 0 && (makelevel > 0 as ::core::ffi::c_uint || !directories.is_null()))
+        as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn print_version() {

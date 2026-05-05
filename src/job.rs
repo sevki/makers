@@ -1,3 +1,4 @@
+use libc::{__errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy, strchr, strcmp, strerror, strsignal};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -12,7 +13,6 @@ extern "C" {
         __oset: *mut sigset_t,
     ) -> ::core::ffi::c_int;
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
-    fn close(__fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
         -> ssize_t;
     static mut environ: *mut *mut ::core::ffi::c_char;
@@ -28,23 +28,9 @@ extern "C" {
     static mut stdin: *mut FILE;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
-    fn remove(__filename: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn sprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn fileno(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn time(__timer: *mut time_t) -> time_t;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn getenv(__name: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn getloadavg(
-        __loadavg: *mut ::core::ffi::c_double,
-        __nelem: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -55,24 +41,12 @@ extern "C" {
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strerror(__errnum: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
-    fn strsignal(__sig: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
-    fn stpcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn message(prefix: ::core::ffi::c_int, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
@@ -129,11 +103,6 @@ extern "C" {
         __line: ::core::ffi::c_uint,
         __function: *const ::core::ffi::c_char,
     ) -> !;
-    fn open(
-        __file: *const ::core::ffi::c_char,
-        __oflag: ::core::ffi::c_int,
-        ...
-    ) -> ::core::ffi::c_int;
     fn wait(__stat_loc: *mut ::core::ffi::c_int) -> __pid_t;
     fn waitpid(
         __pid: __pid_t,
@@ -681,7 +650,7 @@ pub unsafe extern "C" fn pid2str(mut pid: pid_t) -> *const ::core::ffi::c_char {
         b"%lu\0" as *const u8 as *const ::core::ffi::c_char,
         pid as ::core::ffi::c_ulong,
     );
-    return &raw mut pidstring as *mut ::core::ffi::c_char;
+    &raw mut pidstring as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub static mut children: *mut child = ::core::ptr::null::<child>() as *mut child;
@@ -728,7 +697,7 @@ pub unsafe extern "C" fn is_bourne_compatible_shell(
         }
         s = s.offset(1);
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn block_sigs() {
@@ -870,7 +839,7 @@ unsafe extern "C" fn child_error(
 }
 static mut dead_children: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
 #[no_mangle]
-pub unsafe extern "C" fn child_handler(mut sig: ::core::ffi::c_int) {
+pub unsafe extern "C" fn child_handler(mut _sig: ::core::ffi::c_int) {
     dead_children = dead_children.wrapping_add(1);
     jobserver_signal();
 }
@@ -1662,7 +1631,7 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
         }
         _ => {}
     }
-    return 1 as ::core::ffi::c_int;
+    1 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn new_job(mut file: *mut file) {
@@ -2030,7 +1999,7 @@ pub unsafe extern "C" fn job_next_command(mut child: *mut child) -> ::core::ffi:
     }
     (*(*(*child).file).cmds).fileinfo.offset =
         (*child).command_line.wrapping_sub(1 as ::core::ffi::c_uint) as ::core::ffi::c_ulong;
-    return 1 as ::core::ffi::c_int;
+    1 as ::core::ffi::c_int
 }
 pub const LOAD_WEIGHT_A: ::core::ffi::c_double = 0.25f64;
 pub const LOAD_WEIGHT_B: ::core::ffi::c_double = 0.25f64;
@@ -2191,7 +2160,7 @@ pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
         );
         fflush(stdout);
     }
-    return (guess >= max_load_average) as ::core::ffi::c_int;
+    (guess >= max_load_average) as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn start_waiting_jobs() {
@@ -2505,7 +2474,7 @@ pub unsafe extern "C" fn child_execute_job(
             strerror(r),
         );
     }
-    return pid;
+    pid
 }
 #[no_mangle]
 pub unsafe extern "C" fn exec_command(
@@ -2582,7 +2551,7 @@ pub unsafe extern "C" fn exec_command(
             );
         }
     }
-    return pid;
+    pid
 }
 unsafe extern "C" fn construct_command_argv_internal(
     mut line: *mut ::core::ffi::c_char,
@@ -2591,7 +2560,7 @@ unsafe extern "C" fn construct_command_argv_internal(
     mut shellflags: *const ::core::ffi::c_char,
     mut ifs: *const ::core::ffi::c_char,
     mut flags: ::core::ffi::c_int,
-    mut batch_filename: *mut *mut ::core::ffi::c_char,
+    mut _batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut current_block: u64;
@@ -3269,7 +3238,7 @@ unsafe extern "C" fn construct_command_argv_internal(
         );
     }
     free(new_line as *mut ::core::ffi::c_void);
-    return new_argv;
+    new_argv
 }
 pub const PRESERVE_BSNL: ::core::ffi::c_int = 1 as ::core::ffi::c_int;
 #[no_mangle]
@@ -3330,5 +3299,5 @@ pub unsafe extern "C" fn construct_command_argv(
     free(shell as *mut ::core::ffi::c_void);
     free(allocflags as *mut ::core::ffi::c_void);
     free(ifs as *mut ::core::ffi::c_void);
-    return argv;
+    argv
 }

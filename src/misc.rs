@@ -1,3 +1,4 @@
+use libc::{__errno_location, free, getenv, mkstemp, putchar, sleep, sprintf, stpcpy, strchr, strcmp, strcpy, strdup, strerror, strtoul, unlink};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -10,9 +11,7 @@ extern "C" {
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
         -> ssize_t;
     fn write(__fd: ::core::ffi::c_int, __buf: *const ::core::ffi::c_void, __n: size_t) -> ssize_t;
-    fn sleep(__seconds: ::core::ffi::c_uint) -> ::core::ffi::c_uint;
     fn getpid() -> __pid_t;
-    fn unlink(__name: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     static mut stderr: *mut FILE;
     fn fclose(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -26,30 +25,15 @@ extern "C" {
         __format: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn sprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
     fn vsprintf(
         __s: *mut ::core::ffi::c_char,
         __format: *const ::core::ffi::c_char,
         __arg: ::core::ffi::VaList,
     ) -> ::core::ffi::c_int;
-    fn putchar(__c: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn time(__timer: *mut time_t) -> time_t;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn strtoul(
-        __nptr: *const ::core::ffi::c_char,
-        __endptr: *mut *mut ::core::ffi::c_char,
-        __base: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_ulong;
     fn malloc(__size: size_t) -> *mut ::core::ffi::c_void;
     fn calloc(__nmemb: size_t, __size: size_t) -> *mut ::core::ffi::c_void;
     fn realloc(__ptr: *mut ::core::ffi::c_void, __size: size_t) -> *mut ::core::ffi::c_void;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn getenv(__name: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn mkstemp(__template: *mut ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -60,24 +44,8 @@ extern "C" {
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strdup(__s: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn strndup(__string: *const ::core::ffi::c_char, __n: size_t) -> *mut ::core::ffi::c_char;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strerror(__errnum: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
-    fn stpcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn error(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn out_of_memory() -> !;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
@@ -317,7 +285,7 @@ pub unsafe extern "C" fn make_toui(
             *error_0 = ::core::ptr::null::<::core::ffi::c_char>();
         }
     }
-    return val as ::core::ffi::c_uint;
+    val as ::core::ffi::c_uint
 }
 #[no_mangle]
 pub unsafe extern "C" fn make_lltoa(
@@ -329,7 +297,7 @@ pub unsafe extern "C" fn make_lltoa(
         b"%lld\0" as *const u8 as *const ::core::ffi::c_char,
         val,
     );
-    return buf;
+    buf
 }
 #[no_mangle]
 pub unsafe extern "C" fn make_ulltoa(
@@ -341,7 +309,7 @@ pub unsafe extern "C" fn make_ulltoa(
         b"%llu\0" as *const u8 as *const ::core::ffi::c_char,
         val,
     );
-    return buf;
+    buf
 }
 static mut mk_state: ::core::ffi::c_uint = 0 as ::core::ffi::c_uint;
 #[no_mangle]
@@ -358,7 +326,7 @@ pub unsafe extern "C" fn make_rand() -> ::core::ffi::c_uint {
     mk_state ^= mk_state << 13 as ::core::ffi::c_int;
     mk_state ^= mk_state >> 17 as ::core::ffi::c_int;
     mk_state ^= mk_state << 5 as ::core::ffi::c_int;
-    return mk_state;
+    mk_state
 }
 #[no_mangle]
 pub unsafe extern "C" fn alpha_compare(
@@ -370,7 +338,7 @@ pub unsafe extern "C" fn alpha_compare(
     if *s1 as ::core::ffi::c_int != *s2 as ::core::ffi::c_int {
         return *s1 as ::core::ffi::c_int - *s2 as ::core::ffi::c_int;
     }
-    return strcmp(s1, s2);
+    strcmp(s1, s2)
 }
 #[no_mangle]
 pub unsafe extern "C" fn collapse_continuations(mut line: *mut ::core::ffi::c_char) {
@@ -520,11 +488,11 @@ pub unsafe extern "C" fn concat(
         result = xrealloc(result as *mut ::core::ffi::c_void, rlen) as *mut ::core::ffi::c_char;
     }
     *result.offset(ri as isize) = '\0' as i32 as ::core::ffi::c_char;
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn make_pid() -> pid_t {
-    return getpid() as pid_t;
+    getpid() as pid_t
 }
 #[no_mangle]
 pub unsafe extern "C" fn xmalloc(mut size: size_t) -> *mut ::core::ffi::c_void {
@@ -536,7 +504,7 @@ pub unsafe extern "C" fn xmalloc(mut size: size_t) -> *mut ::core::ffi::c_void {
     if result.is_null() {
         out_of_memory();
     }
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn xcalloc(mut size: size_t) -> *mut ::core::ffi::c_void {
@@ -551,7 +519,7 @@ pub unsafe extern "C" fn xcalloc(mut size: size_t) -> *mut ::core::ffi::c_void {
     if result.is_null() {
         out_of_memory();
     }
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn xrealloc(
@@ -570,7 +538,7 @@ pub unsafe extern "C" fn xrealloc(
     if result.is_null() {
         out_of_memory();
     }
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn xstrdup(mut ptr: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
@@ -579,7 +547,7 @@ pub unsafe extern "C" fn xstrdup(mut ptr: *const ::core::ffi::c_char) -> *mut ::
     if result.is_null() {
         out_of_memory();
     }
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn xstrndup(
@@ -591,7 +559,7 @@ pub unsafe extern "C" fn xstrndup(
     if result.is_null() {
         out_of_memory();
     }
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn lindex(
@@ -606,7 +574,7 @@ pub unsafe extern "C" fn lindex(
             return s.offset(-(1 as ::core::ffi::c_int as isize)) as *mut ::core::ffi::c_char;
         }
     }
-    return ::core::ptr::null_mut::<::core::ffi::c_char>();
+    ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
 #[no_mangle]
 pub unsafe extern "C" fn end_of_token(
@@ -619,7 +587,7 @@ pub unsafe extern "C" fn end_of_token(
     {
         s = s.offset(1);
     }
-    return s as *mut ::core::ffi::c_char;
+    s as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub unsafe extern "C" fn next_token(mut s: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
@@ -630,7 +598,7 @@ pub unsafe extern "C" fn next_token(mut s: *const ::core::ffi::c_char) -> *mut :
     {
         s = s.offset(1);
     }
-    return s as *mut ::core::ffi::c_char;
+    s as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub unsafe extern "C" fn skip_reference(
@@ -674,7 +642,7 @@ pub unsafe extern "C" fn skip_reference(
             break;
         }
     }
-    return p as *mut ::core::ffi::c_char;
+    p as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub unsafe extern "C" fn find_next_token(
@@ -689,7 +657,7 @@ pub unsafe extern "C" fn find_next_token(
     if !lengthptr.is_null() {
         *lengthptr = (*ptr).offset_from(p) as ::core::ffi::c_long as size_t;
     }
-    return p as *mut ::core::ffi::c_char;
+    p as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub unsafe extern "C" fn writebuf(
@@ -713,7 +681,7 @@ pub unsafe extern "C" fn writebuf(
         l = l.wrapping_sub(r as size_t);
         msg = msg.offset(r as isize);
     }
-    return len as ssize_t;
+    len as ssize_t
 }
 #[no_mangle]
 pub unsafe extern "C" fn readbuf(
@@ -739,7 +707,7 @@ pub unsafe extern "C" fn readbuf(
         len = len.wrapping_sub(r as size_t);
         msg = msg.offset(r as isize);
     }
-    return msg.offset_from(buffer as *mut ::core::ffi::c_char) as ::core::ffi::c_long as ssize_t;
+    msg.offset_from(buffer as *mut ::core::ffi::c_char) as ::core::ffi::c_long as ssize_t
 }
 #[no_mangle]
 pub unsafe extern "C" fn copy_dep(mut d: *const dep) -> *mut dep {
@@ -756,7 +724,7 @@ pub unsafe extern "C" fn copy_dep(mut d: *const dep) -> *mut dep {
         }
         (*new).next = ::core::ptr::null_mut::<dep>();
     }
-    return new;
+    new
 }
 #[no_mangle]
 pub unsafe extern "C" fn copy_dep_chain(mut d: *const dep) -> *mut dep {
@@ -773,7 +741,7 @@ pub unsafe extern "C" fn copy_dep_chain(mut d: *const dep) -> *mut dep {
         }
         d = (*d).next;
     }
-    return firstnew;
+    firstnew
 }
 #[no_mangle]
 pub unsafe extern "C" fn free_ns_chain(mut ns: *mut nameseq) {
@@ -946,7 +914,7 @@ pub unsafe extern "C" fn get_tmpdir() -> *const ::core::ffi::c_char {
             );
         }
     }
-    return tmpdir;
+    tmpdir
 }
 #[no_mangle]
 pub unsafe extern "C" fn get_tmptemplate() -> *mut ::core::ffi::c_char {
@@ -973,7 +941,7 @@ pub unsafe extern "C" fn get_tmptemplate() -> *mut ::core::ffi::c_char {
         *fresh5 = '/' as i32 as ::core::ffi::c_char;
     }
     strcpy(cp, DEFAULT_TMPFILE.as_ptr());
-    return template;
+    template
 }
 #[no_mangle]
 pub unsafe extern "C" fn get_tmpfd(mut name: *mut *mut ::core::ffi::c_char) -> ::core::ffi::c_int {
@@ -1030,7 +998,7 @@ pub unsafe extern "C" fn get_tmpfd(mut name: *mut *mut ::core::ffi::c_char) -> :
         free(tmpnm as *mut ::core::ffi::c_void);
     }
     umask(mask as __mode_t);
-    return fd;
+    fd
 }
 #[no_mangle]
 pub unsafe extern "C" fn get_tmpfile(mut name: *mut *mut ::core::ffi::c_char) -> *mut FILE {
@@ -1080,5 +1048,5 @@ pub unsafe extern "C" fn get_tmpfile(mut name: *mut *mut ::core::ffi::c_char) ->
             strerror(*__errno_location()),
         );
     }
-    return file;
+    file
 }

@@ -1,7 +1,7 @@
+use libc::{free};
 use ::c2rust_bitfields;
 extern "C" {
     pub type commands;
-    fn free(__ptr: *mut ::core::ffi::c_void);
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut reading_file: *const floc;
@@ -179,7 +179,7 @@ pub struct dep {
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 #[no_mangle]
 pub unsafe extern "C" fn gmk_alloc(mut len: ::core::ffi::c_uint) -> *mut ::core::ffi::c_char {
-    return xmalloc(len as size_t) as *mut ::core::ffi::c_char;
+    xmalloc(len as size_t) as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub unsafe extern "C" fn gmk_free(mut s: *mut ::core::ffi::c_char) {
@@ -217,7 +217,7 @@ pub unsafe extern "C" fn gmk_eval(
 pub unsafe extern "C" fn gmk_expand(
     mut ref_0: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    return allocated_expand_string_for_file(ref_0, ::core::ptr::null_mut::<file>());
+    allocated_expand_string_for_file(ref_0, ::core::ptr::null_mut::<file>())
 }
 #[no_mangle]
 pub unsafe extern "C" fn gmk_add_function(

@@ -1,10 +1,10 @@
+use libc::{printf, strcmp};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
     pub type _IO_codecvt;
     pub type _IO_marker;
     static mut stdout: *mut FILE;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
@@ -16,10 +16,6 @@ extern "C" {
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn __assert_fail(
@@ -158,7 +154,7 @@ unsafe extern "C" fn new_cache(
     (*new).next = *head;
     *head = new;
     total_buffers = total_buffers.wrapping_add(1);
-    return new;
+    new
 }
 unsafe extern "C" fn copy_string(
     mut sp: *mut strcache,
@@ -180,7 +176,7 @@ unsafe extern "C" fn copy_string(
     (*sp).bytesfree =
         ((*sp).bytesfree as ::core::ffi::c_int - len as ::core::ffi::c_int) as sc_buflen_t;
     (*sp).count = (*sp).count.wrapping_add(1);
-    return res;
+    res
 }
 unsafe extern "C" fn add_string(
     mut str: *const ::core::ffi::c_char,
@@ -218,7 +214,7 @@ unsafe extern "C" fn add_string(
         (*sp).next = fullcache;
         fullcache = sp;
     }
-    return res;
+    res
 }
 static mut hugestrings: *mut hugestring = ::core::ptr::null::<hugestring>() as *mut hugestring;
 unsafe extern "C" fn add_hugestring(
@@ -237,7 +233,7 @@ unsafe extern "C" fn add_hugestring(
         '\0' as i32 as ::core::ffi::c_char;
     (*new).next = hugestrings;
     hugestrings = new;
-    return &raw mut (*new).buffer as *mut ::core::ffi::c_char;
+    &raw mut (*new).buffer as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub unsafe extern "C" fn str_hash_1(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
@@ -245,25 +241,25 @@ pub unsafe extern "C" fn str_hash_1(mut key: *const ::core::ffi::c_void) -> ::co
     let mut _key_: *const ::core::ffi::c_uchar =
         key as *const ::core::ffi::c_char as *const ::core::ffi::c_uchar;
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
-    return _result_;
+    _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn str_hash_2(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn str_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
-    return _result_;
+    _result_
 }
 unsafe extern "C" fn str_hash_cmp(
     mut x: *const ::core::ffi::c_void,
     mut y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    return if x as *const ::core::ffi::c_char == y as *const ::core::ffi::c_char {
+    if x as *const ::core::ffi::c_char == y as *const ::core::ffi::c_char {
         0 as ::core::ffi::c_int
     } else {
         strcmp(
             x as *const ::core::ffi::c_char,
             y as *const ::core::ffi::c_char,
         )
-    };
+    }
 }
 static mut strings: hash_table = hash_table {
     ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
@@ -305,7 +301,7 @@ unsafe extern "C" fn add_hash(
         key as *const ::core::ffi::c_void,
         slot as *const ::core::ffi::c_void,
     );
-    return key;
+    key
 }
 #[no_mangle]
 pub unsafe extern "C" fn strcache_iscached(
@@ -344,13 +340,13 @@ pub unsafe extern "C" fn strcache_iscached(
         }
         hp = (*hp).next;
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn strcache_add(
     mut str: *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
-    return add_hash(str, strlen(str) as size_t);
+    add_hash(str, strlen(str) as size_t)
 }
 #[no_mangle]
 pub unsafe extern "C" fn strcache_add_len(
@@ -373,7 +369,7 @@ pub unsafe extern "C" fn strcache_add_len(
         *key.offset(len as isize) = '\0' as i32 as ::core::ffi::c_char;
         str = key;
     }
-    return add_hash(str, len);
+    add_hash(str, len)
 }
 #[no_mangle]
 pub unsafe extern "C" fn strcache_init() {

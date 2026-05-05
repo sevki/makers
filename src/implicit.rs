@@ -1,3 +1,4 @@
+use libc::{free, printf, strchr, strcmp, strcpy};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -5,8 +6,6 @@ extern "C" {
     pub type _IO_marker;
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
     fn qsort(
         __base: *mut ::core::ffi::c_void,
         __nmemb: size_t,
@@ -28,21 +27,11 @@ extern "C" {
         __c: ::core::ffi::c_int,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -421,7 +410,7 @@ pub const __ASSERT_FUNCTION: [::core::ffi::c_char; 72] = unsafe {
 #[inline]
 #[no_mangle]
 pub unsafe extern "C" fn alloc_dep() -> *mut dep {
-    return xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep;
+    xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
 }
 #[inline]
 
@@ -482,7 +471,7 @@ pub unsafe extern "C" fn try_implicit_rule(
             fflush(stdout);
         }
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 unsafe extern "C" fn get_next_word(
     mut buffer: *const ::core::ffi::c_char,
@@ -534,7 +523,7 @@ unsafe extern "C" fn get_next_word(
     if !length.is_null() {
         *length = p.offset_from(beg) as ::core::ffi::c_long as size_t;
     }
-    return beg;
+    beg
 }
 #[no_mangle]
 pub unsafe extern "C" fn stemlen_compare(
@@ -544,11 +533,11 @@ pub unsafe extern "C" fn stemlen_compare(
     let mut r1: *const tryrule = v1 as *const tryrule;
     let mut r2: *const tryrule = v2 as *const tryrule;
     let mut r: ::core::ffi::c_int = (*r1).stemlen.wrapping_sub((*r2).stemlen) as ::core::ffi::c_int;
-    return if r != 0 as ::core::ffi::c_int {
+    if r != 0 as ::core::ffi::c_int {
         r
     } else {
         (*r1).order.wrapping_sub((*r2).order) as ::core::ffi::c_int
-    };
+    }
 }
 unsafe extern "C" fn pattern_search(
     mut file: *mut file,
@@ -754,14 +743,14 @@ unsafe extern "C" fn pattern_search(
                                                         ti;
                                                     (*tryrules.offset(nrules as isize)).stemlen =
                                                         stemlen.wrapping_add(
-                                                            (if check_lastslash
+                                                            if check_lastslash
                                                                 as ::core::ffi::c_int
                                                                 != 0
                                                             {
                                                                 pathlen
                                                             } else {
                                                                 0 as size_t
-                                                            }),
+                                                            },
                                                         );
                                                     (*tryrules.offset(nrules as isize)).order =
                                                         nrules;
@@ -889,11 +878,11 @@ unsafe extern "C" fn pattern_search(
                             fflush(stdout);
                         }
                         if stemlen.wrapping_add(
-                            (if check_lastslash_0 as ::core::ffi::c_int != 0 {
+                            if check_lastslash_0 as ::core::ffi::c_int != 0 {
                                 pathlen
                             } else {
                                 0 as size_t
-                            }),
+                            },
                         ) > GET_PATH_MAX as size_t
                         {
                             if 0x8 as ::core::ffi::c_int & db_level != 0 {
@@ -1859,5 +1848,5 @@ unsafe extern "C" fn pattern_search(
         );
         fflush(stdout);
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }

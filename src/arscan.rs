@@ -1,14 +1,13 @@
+use libc::{__errno_location, close, open, strcmp, strrchr};
 extern "C" {
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
-    fn close(__fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn snprintf(
         __s: *mut ::core::ffi::c_char,
         __maxlen: size_t,
         __format: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -24,19 +23,11 @@ extern "C" {
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn fatal(flocp: *const floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn make_toui(
@@ -45,11 +36,6 @@ extern "C" {
     ) -> ::core::ffi::c_uint;
     fn writebuf(_: ::core::ffi::c_int, _: *const ::core::ffi::c_void, _: size_t) -> ssize_t;
     fn readbuf(_: ::core::ffi::c_int, _: *mut ::core::ffi::c_void, _: size_t) -> ssize_t;
-    fn open(
-        __file: *const ::core::ffi::c_char,
-        __oflag: ::core::ffi::c_int,
-        ...
-    ) -> ::core::ffi::c_int;
 }
 pub type size_t = usize;
 pub type __dev_t = ::core::ffi::c_ulong;
@@ -156,12 +142,12 @@ unsafe extern "C" fn parse_int(
             || (if ::core::mem::size_of::<uintmax_t>() as usize
                 == ::core::mem::size_of::<::core::ffi::c_schar>() as usize
             {
-                (if !((0 as ::core::ffi::c_int as uintmax_t)
+                if !((0 as ::core::ffi::c_int as uintmax_t)
                     < -(1 as ::core::ffi::c_int) as uintmax_t)
                 {
-                    (if (if base < 0 as ::core::ffi::c_int {
-                        (if val < 0 as uintmax_t {
-                            (if ((if 1 as ::core::ffi::c_int != 0 {
+                    if (if base < 0 as ::core::ffi::c_int {
+                        if val < 0 as uintmax_t {
+                            if ((if 1 as ::core::ffi::c_int != 0 {
                                 0 as ::core::ffi::c_int
                             } else {
                                 (if 1 as ::core::ffi::c_int != 0 {
@@ -247,9 +233,9 @@ unsafe extern "C" fn parse_int(
                                 }) as uintmax_t
                                     <= (-(1 as ::core::ffi::c_int) as uintmax_t).wrapping_sub(val))
                                     as ::core::ffi::c_int
-                            })
+                            }
                         } else {
-                            (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                            if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                 0 as ::core::ffi::c_int
                             } else {
                                 (if 1 as ::core::ffi::c_int != 0 {
@@ -344,7 +330,7 @@ unsafe extern "C" fn parse_int(
                             }) != 0
                                 && base == -(1 as ::core::ffi::c_int)
                             {
-                                (if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if 1 as ::core::ffi::c_int != 0 {
                                     0 as uintmax_t
                                 } else {
                                     val
@@ -365,19 +351,19 @@ unsafe extern "C" fn parse_int(
                                             as uintmax_t)
                                             < val.wrapping_sub(1 as uintmax_t))
                                         as ::core::ffi::c_int
-                                })
+                                }
                             } else {
                                 ((((-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int) / base)
                                     as uintmax_t)
                                     < val) as ::core::ffi::c_int
-                            })
-                        })
+                            }
+                        }
                     } else {
-                        (if base == 0 as ::core::ffi::c_int {
+                        if base == 0 as ::core::ffi::c_int {
                             0 as ::core::ffi::c_int
                         } else {
-                            (if val < 0 as uintmax_t {
-                                (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                            if val < 0 as uintmax_t {
+                                if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                     0 as uintmax_t
                                 } else {
                                     (if 1 as ::core::ffi::c_int != 0 {
@@ -508,7 +494,7 @@ unsafe extern "C" fn parse_int(
                                 }) != 0
                                     && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                 {
-                                    (if ((if 1 as ::core::ffi::c_int != 0 {
+                                    if ((if 1 as ::core::ffi::c_int != 0 {
                                         0 as ::core::ffi::c_int
                                     } else {
                                         base
@@ -526,19 +512,19 @@ unsafe extern "C" fn parse_int(
                                                 - 1 as ::core::ffi::c_int)
                                             < base - 1 as ::core::ffi::c_int)
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
                                     (((-(127 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
                                         as uintmax_t)
                                         .wrapping_div(val)
                                         < base as uintmax_t)
                                         as ::core::ffi::c_int
-                                })
+                                }
                             } else {
                                 (((127 as ::core::ffi::c_int / base) as uintmax_t) < val)
                                     as ::core::ffi::c_int
-                            })
-                        })
+                            }
+                        }
                     }) != 0
                     {
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
@@ -548,11 +534,11 @@ unsafe extern "C" fn parse_int(
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
                             as ::core::ffi::c_schar as uintmax_t;
                         0 as ::core::ffi::c_int
-                    })
+                    }
                 } else {
-                    (if (if base < 0 as ::core::ffi::c_int {
-                        (if val < 0 as uintmax_t {
-                            (if ((if 1 as ::core::ffi::c_int != 0 {
+                    if (if base < 0 as ::core::ffi::c_int {
+                        if val < 0 as uintmax_t {
+                            if ((if 1 as ::core::ffi::c_int != 0 {
                                 0 as ::core::ffi::c_int
                             } else {
                                 (if 1 as ::core::ffi::c_int != 0 {
@@ -644,9 +630,9 @@ unsafe extern "C" fn parse_int(
                                 }) as uintmax_t
                                     <= (-(1 as ::core::ffi::c_int) as uintmax_t).wrapping_sub(val))
                                     as ::core::ffi::c_int
-                            })
+                            }
                         } else {
-                            (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                            if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                 0 as ::core::ffi::c_int
                             } else {
                                 (if 1 as ::core::ffi::c_int != 0 {
@@ -738,7 +724,7 @@ unsafe extern "C" fn parse_int(
                             }) != 0
                                 && base == -(1 as ::core::ffi::c_int)
                             {
-                                (if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if 1 as ::core::ffi::c_int != 0 {
                                     0 as uintmax_t
                                 } else {
                                     val
@@ -754,18 +740,18 @@ unsafe extern "C" fn parse_int(
                                             as uintmax_t)
                                             < val.wrapping_sub(1 as uintmax_t))
                                         as ::core::ffi::c_int
-                                })
+                                }
                             } else {
                                 (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
                                     as ::core::ffi::c_int
-                            })
-                        })
+                            }
+                        }
                     } else {
-                        (if base == 0 as ::core::ffi::c_int {
+                        if base == 0 as ::core::ffi::c_int {
                             0 as ::core::ffi::c_int
                         } else {
-                            (if val < 0 as uintmax_t {
-                                (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                            if val < 0 as uintmax_t {
+                                if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                     0 as uintmax_t
                                 } else {
                                     (if 1 as ::core::ffi::c_int != 0 {
@@ -872,7 +858,7 @@ unsafe extern "C" fn parse_int(
                                 }) != 0
                                     && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                 {
-                                    (if ((if 1 as ::core::ffi::c_int != 0 {
+                                    if ((if 1 as ::core::ffi::c_int != 0 {
                                         0 as ::core::ffi::c_int
                                     } else {
                                         base
@@ -885,18 +871,18 @@ unsafe extern "C" fn parse_int(
                                         ((-(1 as ::core::ffi::c_int) - 0 as ::core::ffi::c_int)
                                             < base - 1 as ::core::ffi::c_int)
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
                                     ((0 as uintmax_t).wrapping_div(val) < base as uintmax_t)
                                         as ::core::ffi::c_int
-                                })
+                                }
                             } else {
                                 ((((127 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
                                     + 1 as ::core::ffi::c_int)
                                     / base) as uintmax_t)
                                     < val) as ::core::ffi::c_int
-                            })
-                        })
+                            }
+                        }
                     }) != 0
                     {
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
@@ -906,18 +892,18 @@ unsafe extern "C" fn parse_int(
                         val = (val as ::core::ffi::c_uint).wrapping_mul(base as ::core::ffi::c_uint)
                             as ::core::ffi::c_uchar as uintmax_t;
                         0 as ::core::ffi::c_int
-                    })
-                })
+                    }
+                }
             } else {
-                (if ::core::mem::size_of::<uintmax_t>() as usize
+                if ::core::mem::size_of::<uintmax_t>() as usize
                     == ::core::mem::size_of::<::core::ffi::c_short>() as usize
                 {
-                    (if !((0 as ::core::ffi::c_int as uintmax_t)
+                    if !((0 as ::core::ffi::c_int as uintmax_t)
                         < -(1 as ::core::ffi::c_int) as uintmax_t)
                     {
-                        (if (if base < 0 as ::core::ffi::c_int {
-                            (if val < 0 as uintmax_t {
-                                (if ((if 1 as ::core::ffi::c_int != 0 {
+                        if (if base < 0 as ::core::ffi::c_int {
+                            if val < 0 as uintmax_t {
+                                if ((if 1 as ::core::ffi::c_int != 0 {
                                     0 as ::core::ffi::c_int
                                 } else {
                                     (if 1 as ::core::ffi::c_int != 0 {
@@ -1002,9 +988,9 @@ unsafe extern "C" fn parse_int(
                                         <= (-(1 as ::core::ffi::c_int) as uintmax_t)
                                             .wrapping_sub(val))
                                         as ::core::ffi::c_int
-                                })
+                                }
                             } else {
-                                (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                     0 as ::core::ffi::c_int
                                 } else {
                                     (if 1 as ::core::ffi::c_int != 0 {
@@ -1105,7 +1091,7 @@ unsafe extern "C" fn parse_int(
                                 }) != 0
                                     && base == -(1 as ::core::ffi::c_int)
                                 {
-                                    (if (if 1 as ::core::ffi::c_int != 0 {
+                                    if (if 1 as ::core::ffi::c_int != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
@@ -1128,20 +1114,20 @@ unsafe extern "C" fn parse_int(
                                                 as uintmax_t)
                                                 < val.wrapping_sub(1 as uintmax_t))
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
                                     ((((-(32767 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
                                         / base) as uintmax_t)
                                         < val)
                                         as ::core::ffi::c_int
-                                })
-                            })
+                                }
+                            }
                         } else {
-                            (if base == 0 as ::core::ffi::c_int {
+                            if base == 0 as ::core::ffi::c_int {
                                 0 as ::core::ffi::c_int
                             } else {
-                                (if val < 0 as uintmax_t {
-                                    (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                if val < 0 as uintmax_t {
+                                    if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                         0 as uintmax_t
                                     } else {
                                         (if 1 as ::core::ffi::c_int != 0 {
@@ -1279,7 +1265,7 @@ unsafe extern "C" fn parse_int(
                                     }) != 0
                                         && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                     {
-                                        (if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_int
                                         } else {
                                             base
@@ -1297,19 +1283,19 @@ unsafe extern "C" fn parse_int(
                                                     - 1 as ::core::ffi::c_int)
                                                 < base - 1 as ::core::ffi::c_int)
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
                                         (((-(32767 as ::core::ffi::c_int) - 1 as ::core::ffi::c_int)
                                             as uintmax_t)
                                             .wrapping_div(val)
                                             < base as uintmax_t)
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
                                     (((32767 as ::core::ffi::c_int / base) as uintmax_t) < val)
                                         as ::core::ffi::c_int
-                                })
-                            })
+                                }
+                            }
                         }) != 0
                         {
                             val = (val as ::core::ffi::c_uint)
@@ -1323,11 +1309,11 @@ unsafe extern "C" fn parse_int(
                                 as ::core::ffi::c_short
                                 as uintmax_t;
                             0 as ::core::ffi::c_int
-                        })
+                        }
                     } else {
-                        (if (if base < 0 as ::core::ffi::c_int {
-                            (if val < 0 as uintmax_t {
-                                (if ((if 1 as ::core::ffi::c_int != 0 {
+                        if (if base < 0 as ::core::ffi::c_int {
+                            if val < 0 as uintmax_t {
+                                if ((if 1 as ::core::ffi::c_int != 0 {
                                     0 as ::core::ffi::c_int
                                 } else {
                                     (if 1 as ::core::ffi::c_int != 0 {
@@ -1419,9 +1405,9 @@ unsafe extern "C" fn parse_int(
                                         <= (-(1 as ::core::ffi::c_int) as uintmax_t)
                                             .wrapping_sub(val))
                                         as ::core::ffi::c_int
-                                })
+                                }
                             } else {
-                                (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                     0 as ::core::ffi::c_int
                                 } else {
                                     (if 1 as ::core::ffi::c_int != 0 {
@@ -1515,7 +1501,7 @@ unsafe extern "C" fn parse_int(
                                 }) != 0
                                     && base == -(1 as ::core::ffi::c_int)
                                 {
-                                    (if (if 1 as ::core::ffi::c_int != 0 {
+                                    if (if 1 as ::core::ffi::c_int != 0 {
                                         0 as uintmax_t
                                     } else {
                                         val
@@ -1532,18 +1518,18 @@ unsafe extern "C" fn parse_int(
                                                 as uintmax_t)
                                                 < val.wrapping_sub(1 as uintmax_t))
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
                                     (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
                                         as ::core::ffi::c_int
-                                })
-                            })
+                                }
+                            }
                         } else {
-                            (if base == 0 as ::core::ffi::c_int {
+                            if base == 0 as ::core::ffi::c_int {
                                 0 as ::core::ffi::c_int
                             } else {
-                                (if val < 0 as uintmax_t {
-                                    (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                if val < 0 as uintmax_t {
+                                    if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                         0 as uintmax_t
                                     } else {
                                         (if 1 as ::core::ffi::c_int != 0 {
@@ -1651,7 +1637,7 @@ unsafe extern "C" fn parse_int(
                                     }) != 0
                                         && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                     {
-                                        (if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_int
                                         } else {
                                             base
@@ -1665,19 +1651,19 @@ unsafe extern "C" fn parse_int(
                                             ((-(1 as ::core::ffi::c_int) - 0 as ::core::ffi::c_int)
                                                 < base - 1 as ::core::ffi::c_int)
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
                                         ((0 as uintmax_t).wrapping_div(val) < base as uintmax_t)
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
                                     ((((32767 as ::core::ffi::c_int * 2 as ::core::ffi::c_int
                                         + 1 as ::core::ffi::c_int)
                                         / base) as uintmax_t)
                                         < val)
                                         as ::core::ffi::c_int
-                                })
-                            })
+                                }
+                            }
                         }) != 0
                         {
                             val = (val as ::core::ffi::c_uint)
@@ -1691,13 +1677,13 @@ unsafe extern "C" fn parse_int(
                                 as ::core::ffi::c_ushort
                                 as uintmax_t;
                             0 as ::core::ffi::c_int
-                        })
-                    })
+                        }
+                    }
                 } else {
-                    (if ::core::mem::size_of::<uintmax_t>() as usize
+                    if ::core::mem::size_of::<uintmax_t>() as usize
                         == ::core::mem::size_of::<::core::ffi::c_int>() as usize
                     {
-                        (if (if 1 as ::core::ffi::c_int != 0 {
+                        if (if 1 as ::core::ffi::c_int != 0 {
                             0 as uintmax_t
                         } else {
                             val
@@ -1705,9 +1691,9 @@ unsafe extern "C" fn parse_int(
                         .wrapping_sub(1 as uintmax_t)
                             < 0 as uintmax_t
                         {
-                            (if (if base < 0 as ::core::ffi::c_int {
-                                (if val < 0 as uintmax_t {
-                                    (if ((if 1 as ::core::ffi::c_int != 0 {
+                            if (if base < 0 as ::core::ffi::c_int {
+                                if val < 0 as uintmax_t {
+                                    if ((if 1 as ::core::ffi::c_int != 0 {
                                         0 as ::core::ffi::c_int
                                     } else {
                                         (if 1 as ::core::ffi::c_int != 0 {
@@ -1793,9 +1779,9 @@ unsafe extern "C" fn parse_int(
                                             <= (-(1 as ::core::ffi::c_int) as uintmax_t)
                                                 .wrapping_sub(val))
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
-                                    (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                    if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                         0 as ::core::ffi::c_int
                                     } else {
                                         (if 1 as ::core::ffi::c_int != 0 {
@@ -1895,7 +1881,7 @@ unsafe extern "C" fn parse_int(
                                     }) != 0
                                         && base == -(1 as ::core::ffi::c_int)
                                     {
-                                        (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if (if 1 as ::core::ffi::c_int != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -1918,7 +1904,7 @@ unsafe extern "C" fn parse_int(
                                                     as uintmax_t)
                                                     < val.wrapping_sub(1 as uintmax_t))
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
                                         ((((-(2147483647 as ::core::ffi::c_int)
                                             - 1 as ::core::ffi::c_int)
@@ -1926,14 +1912,14 @@ unsafe extern "C" fn parse_int(
                                             as uintmax_t)
                                             < val)
                                             as ::core::ffi::c_int
-                                    })
-                                })
+                                    }
+                                }
                             } else {
-                                (if base == 0 as ::core::ffi::c_int {
+                                if base == 0 as ::core::ffi::c_int {
                                     0 as ::core::ffi::c_int
                                 } else {
-                                    (if val < 0 as uintmax_t {
-                                        (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                    if val < 0 as uintmax_t {
+                                        if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                             0 as uintmax_t
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -2072,7 +2058,7 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                         {
-                                            (if ((if 1 as ::core::ffi::c_int != 0 {
+                                            if ((if 1 as ::core::ffi::c_int != 0 {
                                                 0 as ::core::ffi::c_int
                                             } else {
                                                 base
@@ -2090,7 +2076,7 @@ unsafe extern "C" fn parse_int(
                                                         - 1 as ::core::ffi::c_int)
                                                     < base - 1 as ::core::ffi::c_int)
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             (((-(2147483647 as ::core::ffi::c_int)
                                                 - 1 as ::core::ffi::c_int)
@@ -2098,13 +2084,13 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_div(val)
                                                 < base as uintmax_t)
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
                                         (((2147483647 as ::core::ffi::c_int / base) as uintmax_t)
                                             < val)
                                             as ::core::ffi::c_int
-                                    })
-                                })
+                                    }
+                                }
                             }) != 0
                             {
                                 val = (val as ::core::ffi::c_uint)
@@ -2118,11 +2104,11 @@ unsafe extern "C" fn parse_int(
                                     as ::core::ffi::c_int
                                     as uintmax_t;
                                 0 as ::core::ffi::c_int
-                            })
+                            }
                         } else {
-                            (if (if base < 0 as ::core::ffi::c_int {
-                                (if val < 0 as uintmax_t {
-                                    (if (if 1 as ::core::ffi::c_int != 0 {
+                            if (if base < 0 as ::core::ffi::c_int {
+                                if val < 0 as uintmax_t {
+                                    if (if 1 as ::core::ffi::c_int != 0 {
                                         0 as ::core::ffi::c_uint
                                     } else {
                                         (if 1 as ::core::ffi::c_int != 0 {
@@ -2228,9 +2214,9 @@ unsafe extern "C" fn parse_int(
                                             <= (-(1 as ::core::ffi::c_int) as uintmax_t)
                                                 .wrapping_sub(val))
                                             as ::core::ffi::c_int
-                                    })
+                                    }
                                 } else {
-                                    (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                    if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                         0 as ::core::ffi::c_int
                                     } else {
                                         (if 1 as ::core::ffi::c_int != 0 {
@@ -2321,7 +2307,7 @@ unsafe extern "C" fn parse_int(
                                     }) != 0
                                         && base == -(1 as ::core::ffi::c_int)
                                     {
-                                        (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if (if 1 as ::core::ffi::c_int != 0 {
                                             0 as uintmax_t
                                         } else {
                                             val
@@ -2338,18 +2324,18 @@ unsafe extern "C" fn parse_int(
                                                     as uintmax_t)
                                                     < val.wrapping_sub(1 as uintmax_t))
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
                                         (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
                                             as ::core::ffi::c_int
-                                    })
-                                })
+                                    }
+                                }
                             } else {
-                                (if base == 0 as ::core::ffi::c_int {
+                                if base == 0 as ::core::ffi::c_int {
                                     0 as ::core::ffi::c_int
                                 } else {
-                                    (if val < 0 as uintmax_t {
-                                        (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                    if val < 0 as uintmax_t {
+                                        if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                             0 as uintmax_t
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -2457,7 +2443,7 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                         {
-                                            (if ((if 1 as ::core::ffi::c_int != 0 {
+                                            if ((if 1 as ::core::ffi::c_int != 0 {
                                                 0 as ::core::ffi::c_int
                                             } else {
                                                 base
@@ -2472,11 +2458,11 @@ unsafe extern "C" fn parse_int(
                                                     - 0 as ::core::ffi::c_int)
                                                     < base - 1 as ::core::ffi::c_int)
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             ((0 as uintmax_t).wrapping_div(val) < base as uintmax_t)
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
                                         (((2147483647 as ::core::ffi::c_int as ::core::ffi::c_uint)
                                             .wrapping_mul(2 as ::core::ffi::c_uint)
@@ -2485,8 +2471,8 @@ unsafe extern "C" fn parse_int(
                                             as uintmax_t)
                                             < val)
                                             as ::core::ffi::c_int
-                                    })
-                                })
+                                    }
+                                }
                             }) != 0
                             {
                                 val = (val as ::core::ffi::c_uint)
@@ -2498,13 +2484,13 @@ unsafe extern "C" fn parse_int(
                                     .wrapping_mul(base as ::core::ffi::c_uint)
                                     as uintmax_t;
                                 0 as ::core::ffi::c_int
-                            })
-                        })
+                            }
+                        }
                     } else {
-                        (if ::core::mem::size_of::<uintmax_t>() as usize
+                        if ::core::mem::size_of::<uintmax_t>() as usize
                             == ::core::mem::size_of::<::core::ffi::c_long>() as usize
                         {
-                            (if (if 1 as ::core::ffi::c_int != 0 {
+                            if (if 1 as ::core::ffi::c_int != 0 {
                                 0 as uintmax_t
                             } else {
                                 val
@@ -2512,9 +2498,9 @@ unsafe extern "C" fn parse_int(
                             .wrapping_sub(1 as uintmax_t)
                                 < 0 as uintmax_t
                             {
-                                (if (if base < 0 as ::core::ffi::c_int {
-                                    (if val < 0 as uintmax_t {
-                                        (if ((if 1 as ::core::ffi::c_int != 0 {
+                                if (if base < 0 as ::core::ffi::c_int {
+                                    if val < 0 as uintmax_t {
+                                        if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_long
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -2609,9 +2595,9 @@ unsafe extern "C" fn parse_int(
                                                 <= (-(1 as ::core::ffi::c_int) as uintmax_t)
                                                     .wrapping_sub(val))
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
-                                        (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_long
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -2738,7 +2724,7 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -2764,7 +2750,7 @@ unsafe extern "C" fn parse_int(
                                                         as uintmax_t)
                                                         < val.wrapping_sub(1 as uintmax_t))
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             ((((-(9223372036854775807 as ::core::ffi::c_long)
                                                 - 1 as ::core::ffi::c_long)
@@ -2772,14 +2758,14 @@ unsafe extern "C" fn parse_int(
                                                 as uintmax_t)
                                                 < val)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 } else {
-                                    (if base == 0 as ::core::ffi::c_int {
+                                    if base == 0 as ::core::ffi::c_int {
                                         0 as ::core::ffi::c_int
                                     } else {
-                                        (if val < 0 as uintmax_t {
-                                            (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if val < 0 as uintmax_t {
+                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 (if 1 as ::core::ffi::c_int != 0 {
@@ -2925,7 +2911,7 @@ unsafe extern "C" fn parse_int(
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                (if ((if 1 as ::core::ffi::c_int != 0 {
+                                                if ((if 1 as ::core::ffi::c_int != 0 {
                                                     0 as ::core::ffi::c_int
                                                 } else {
                                                     base
@@ -2947,7 +2933,7 @@ unsafe extern "C" fn parse_int(
                                                         < (base - 1 as ::core::ffi::c_int)
                                                             as ::core::ffi::c_long)
                                                         as ::core::ffi::c_int
-                                                })
+                                                }
                                             } else {
                                                 (((-(9223372036854775807 as ::core::ffi::c_long)
                                                     - 1 as ::core::ffi::c_long)
@@ -2955,15 +2941,15 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_div(val)
                                                     < base as uintmax_t)
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             (((9223372036854775807 as ::core::ffi::c_long
                                                 / base as ::core::ffi::c_long)
                                                 as uintmax_t)
                                                 < val)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 }) != 0
                                 {
                                     val = (val as ::core::ffi::c_ulong)
@@ -2977,11 +2963,11 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_long
                                         as uintmax_t;
                                     0 as ::core::ffi::c_int
-                                })
+                                }
                             } else {
-                                (if (if base < 0 as ::core::ffi::c_int {
-                                    (if val < 0 as uintmax_t {
-                                        (if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if base < 0 as ::core::ffi::c_int {
+                                    if val < 0 as uintmax_t {
+                                        if (if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_ulong
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -3086,9 +3072,9 @@ unsafe extern "C" fn parse_int(
                                             }) <= (-(1 as ::core::ffi::c_int) as uintmax_t)
                                                 .wrapping_sub(val))
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
-                                        (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_int
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -3179,7 +3165,7 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -3197,18 +3183,18 @@ unsafe extern "C" fn parse_int(
                                                         as uintmax_t)
                                                         < val.wrapping_sub(1 as uintmax_t))
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 } else {
-                                    (if base == 0 as ::core::ffi::c_int {
+                                    if base == 0 as ::core::ffi::c_int {
                                         0 as ::core::ffi::c_int
                                     } else {
-                                        (if val < 0 as uintmax_t {
-                                            (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if val < 0 as uintmax_t {
+                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 (if 1 as ::core::ffi::c_int != 0 {
@@ -3317,7 +3303,7 @@ unsafe extern "C" fn parse_int(
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                (if ((if 1 as ::core::ffi::c_int != 0 {
+                                                if ((if 1 as ::core::ffi::c_int != 0 {
                                                     0 as ::core::ffi::c_int
                                                 } else {
                                                     base
@@ -3332,12 +3318,12 @@ unsafe extern "C" fn parse_int(
                                                         - 0 as ::core::ffi::c_int)
                                                         < base - 1 as ::core::ffi::c_int)
                                                         as ::core::ffi::c_int
-                                                })
+                                                }
                                             } else {
                                                 ((0 as uintmax_t).wrapping_div(val)
                                                     < base as uintmax_t)
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             ((9223372036854775807 as uintmax_t)
                                                 .wrapping_mul(2 as uintmax_t)
@@ -3345,8 +3331,8 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_div(base as uintmax_t)
                                                 < val)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 }) != 0
                                 {
                                     val = (val as ::core::ffi::c_ulong)
@@ -3358,10 +3344,10 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_mul(base as ::core::ffi::c_ulong)
                                         as uintmax_t;
                                     0 as ::core::ffi::c_int
-                                })
-                            })
+                                }
+                            }
                         } else {
-                            (if (if 1 as ::core::ffi::c_int != 0 {
+                            if (if 1 as ::core::ffi::c_int != 0 {
                                 0 as uintmax_t
                             } else {
                                 val
@@ -3369,9 +3355,9 @@ unsafe extern "C" fn parse_int(
                             .wrapping_sub(1 as uintmax_t)
                                 < 0 as uintmax_t
                             {
-                                (if (if base < 0 as ::core::ffi::c_int {
-                                    (if val < 0 as uintmax_t {
-                                        (if ((if 1 as ::core::ffi::c_int != 0 {
+                                if (if base < 0 as ::core::ffi::c_int {
+                                    if val < 0 as uintmax_t {
+                                        if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_longlong
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -3468,9 +3454,9 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_sub(val)
                                                     as ::core::ffi::c_ulonglong)
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
-                                        (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_longlong
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -3596,7 +3582,7 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -3624,7 +3610,7 @@ unsafe extern "C" fn parse_int(
                                                         < val.wrapping_sub(1 as uintmax_t)
                                                             as ::core::ffi::c_ulonglong)
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             ((((-(9223372036854775807 as ::core::ffi::c_longlong)
                                                 - 1 as ::core::ffi::c_longlong)
@@ -3632,14 +3618,14 @@ unsafe extern "C" fn parse_int(
                                                 as ::core::ffi::c_ulonglong)
                                                 < val as ::core::ffi::c_ulonglong)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 } else {
-                                    (if base == 0 as ::core::ffi::c_int {
+                                    if base == 0 as ::core::ffi::c_int {
                                         0 as ::core::ffi::c_int
                                     } else {
-                                        (if val < 0 as uintmax_t {
-                                            (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if val < 0 as uintmax_t {
+                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as ::core::ffi::c_ulonglong
                                             } else {
                                                 ((if 1 as ::core::ffi::c_int != 0 {
@@ -3786,7 +3772,7 @@ unsafe extern "C" fn parse_int(
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                (if ((if 1 as ::core::ffi::c_int != 0 {
+                                                if ((if 1 as ::core::ffi::c_int != 0 {
                                                     0 as ::core::ffi::c_int
                                                 } else {
                                                     base
@@ -3808,7 +3794,7 @@ unsafe extern "C" fn parse_int(
                                                         < (base - 1 as ::core::ffi::c_int)
                                                             as ::core::ffi::c_longlong)
                                                         as ::core::ffi::c_int
-                                                })
+                                                }
                                             } else {
                                                 (((-(9223372036854775807
                                                     as ::core::ffi::c_longlong)
@@ -3817,15 +3803,15 @@ unsafe extern "C" fn parse_int(
                                                     .wrapping_div(val as ::core::ffi::c_ulonglong)
                                                     < base as ::core::ffi::c_ulonglong)
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             (((9223372036854775807 as ::core::ffi::c_longlong
                                                 / base as ::core::ffi::c_longlong)
                                                 as ::core::ffi::c_ulonglong)
                                                 < val as ::core::ffi::c_ulonglong)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 }) != 0
                                 {
                                     val = (val as ::core::ffi::c_ulonglong)
@@ -3839,11 +3825,11 @@ unsafe extern "C" fn parse_int(
                                         as ::core::ffi::c_longlong
                                         as uintmax_t;
                                     0 as ::core::ffi::c_int
-                                })
+                                }
                             } else {
-                                (if (if base < 0 as ::core::ffi::c_int {
-                                    (if val < 0 as uintmax_t {
-                                        (if (if 1 as ::core::ffi::c_int != 0 {
+                                if (if base < 0 as ::core::ffi::c_int {
+                                    if val < 0 as uintmax_t {
+                                        if (if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_ulonglong
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -3954,9 +3940,9 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_sub(val)
                                                 as ::core::ffi::c_ulonglong)
                                                 as ::core::ffi::c_int
-                                        })
+                                        }
                                     } else {
-                                        (if (if (if ((if 1 as ::core::ffi::c_int != 0 {
+                                        if (if (if ((if 1 as ::core::ffi::c_int != 0 {
                                             0 as ::core::ffi::c_int
                                         } else {
                                             (if 1 as ::core::ffi::c_int != 0 {
@@ -4047,7 +4033,7 @@ unsafe extern "C" fn parse_int(
                                         }) != 0
                                             && base == -(1 as ::core::ffi::c_int)
                                         {
-                                            (if (if 1 as ::core::ffi::c_int != 0 {
+                                            if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 val
@@ -4065,18 +4051,18 @@ unsafe extern "C" fn parse_int(
                                                         as uintmax_t)
                                                         < val.wrapping_sub(1 as uintmax_t))
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             (((0 as ::core::ffi::c_int / base) as uintmax_t) < val)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 } else {
-                                    (if base == 0 as ::core::ffi::c_int {
+                                    if base == 0 as ::core::ffi::c_int {
                                         0 as ::core::ffi::c_int
                                     } else {
-                                        (if val < 0 as uintmax_t {
-                                            (if (if (if (if 1 as ::core::ffi::c_int != 0 {
+                                        if val < 0 as uintmax_t {
+                                            if (if (if (if 1 as ::core::ffi::c_int != 0 {
                                                 0 as uintmax_t
                                             } else {
                                                 (if 1 as ::core::ffi::c_int != 0 {
@@ -4185,7 +4171,7 @@ unsafe extern "C" fn parse_int(
                                             }) != 0
                                                 && val == -(1 as ::core::ffi::c_int) as uintmax_t
                                             {
-                                                (if ((if 1 as ::core::ffi::c_int != 0 {
+                                                if ((if 1 as ::core::ffi::c_int != 0 {
                                                     0 as ::core::ffi::c_int
                                                 } else {
                                                     base
@@ -4200,12 +4186,12 @@ unsafe extern "C" fn parse_int(
                                                         - 0 as ::core::ffi::c_int)
                                                         < base - 1 as ::core::ffi::c_int)
                                                         as ::core::ffi::c_int
-                                                })
+                                                }
                                             } else {
                                                 ((0 as uintmax_t).wrapping_div(val)
                                                     < base as uintmax_t)
                                                     as ::core::ffi::c_int
-                                            })
+                                            }
                                         } else {
                                             ((9223372036854775807 as ::core::ffi::c_ulonglong)
                                                 .wrapping_mul(2 as ::core::ffi::c_ulonglong)
@@ -4213,8 +4199,8 @@ unsafe extern "C" fn parse_int(
                                                 .wrapping_div(base as ::core::ffi::c_ulonglong)
                                                 < val as ::core::ffi::c_ulonglong)
                                                 as ::core::ffi::c_int
-                                        })
-                                    })
+                                        }
+                                    }
                                 }) != 0
                                 {
                                     val = (val as ::core::ffi::c_ulonglong)
@@ -4226,11 +4212,11 @@ unsafe extern "C" fn parse_int(
                                         .wrapping_mul(base as ::core::ffi::c_ulonglong)
                                         as uintmax_t;
                                     0 as ::core::ffi::c_int
-                                })
-                            })
-                        })
-                    })
-                })
+                                }
+                            }
+                        }
+                    }
+                }
             }) != 0
             || {
                 let (fresh0, fresh1) = val.overflowing_add((*ptr as ::core::ffi::c_int - '0' as i32) as u64);
@@ -4252,7 +4238,7 @@ unsafe extern "C" fn parse_int(
         }
         ptr = ptr.offset(1);
     }
-    return val;
+    val
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_scan(
@@ -4601,7 +4587,7 @@ pub unsafe extern "C" fn ar_scan(
         }
     }
     close(desc);
-    return -(2 as ::core::ffi::c_int) as intmax_t;
+    -(2 as ::core::ffi::c_int) as intmax_t
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_name_equal(
@@ -4624,7 +4610,7 @@ pub unsafe extern "C" fn ar_name_equal(
         name = p.offset(1 as ::core::ffi::c_int as isize);
     }
     if truncated != 0 {
-        let mut hdr: ar_hdr = ar_hdr {
+        let mut _hdr: ar_hdr = ar_hdr {
             ar_name: [0; 16],
             ar_date: [0; 12],
             ar_uid: [0; 6],
@@ -4640,25 +4626,25 @@ pub unsafe extern "C" fn ar_name_equal(
                 .wrapping_sub(1 as size_t),
         ) == 0 as ::core::ffi::c_int) as ::core::ffi::c_int;
     }
-    return (strcmp(name, mem) == 0) as ::core::ffi::c_int;
+    (strcmp(name, mem) == 0) as ::core::ffi::c_int
 }
 unsafe extern "C" fn ar_member_pos(
-    mut desc: ::core::ffi::c_int,
+    mut _desc: ::core::ffi::c_int,
     mut mem: *const ::core::ffi::c_char,
     mut truncated: ::core::ffi::c_int,
     mut hdrpos: ::core::ffi::c_long,
-    mut datapos: ::core::ffi::c_long,
-    mut size: ::core::ffi::c_long,
-    mut date: intmax_t,
-    mut uid: ::core::ffi::c_int,
-    mut gid: ::core::ffi::c_int,
-    mut mode: ::core::ffi::c_uint,
+    mut _datapos: ::core::ffi::c_long,
+    mut _size: ::core::ffi::c_long,
+    mut _date: intmax_t,
+    mut _uid: ::core::ffi::c_int,
+    mut _gid: ::core::ffi::c_int,
+    mut _mode: ::core::ffi::c_uint,
     mut name: *const ::core::ffi::c_void,
 ) -> intmax_t {
     if ar_name_equal(name as *const ::core::ffi::c_char, mem, truncated) == 0 {
         return 0 as intmax_t;
     }
-    return hdrpos as intmax_t;
+    hdrpos as intmax_t
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_member_touch(
@@ -4806,7 +4792,7 @@ pub unsafe extern "C" fn ar_member_touch(
     r = *__errno_location();
     close(fd);
     *__errno_location() = r;
-    return -(3 as ::core::ffi::c_int);
+    -(3 as ::core::ffi::c_int)
 }
 pub const __CHAR_BIT__: ::core::ffi::c_int = 8 as ::core::ffi::c_int;
 pub const __INT_MAX__: ::core::ffi::c_int = 2147483647 as ::core::ffi::c_int;

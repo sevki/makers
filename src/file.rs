@@ -1,29 +1,18 @@
+use libc::{__errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
     pub type _IO_codecvt;
     pub type _IO_marker;
-    fn unlink(__name: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn sprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        ...
-    ) -> ::core::ffi::c_int;
-    fn putchar(__c: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn puts(__s: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
     fn gettimeofday(__tv: *mut timeval, __tz: *mut ::core::ffi::c_void) -> ::core::ffi::c_int;
     fn time(__timer: *mut time_t) -> time_t;
     fn localtime(__timer: *const time_t) -> *mut tm;
     fn clock_gettime(__clock_id: clockid_t, __tp: *mut timespec) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn abort() -> !;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -34,16 +23,6 @@ extern "C" {
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -499,22 +478,22 @@ pub unsafe extern "C" fn file_hash_1(mut key: *const ::core::ffi::c_void) -> ::c
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const file)).hname as *const ::core::ffi::c_uchar;
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
-    return _result_;
+    _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn file_hash_2(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0 as ::core::ffi::c_ulong;
-    return _result_;
+    _result_
 }
 unsafe extern "C" fn file_hash_cmp(
     mut x: *const ::core::ffi::c_void,
     mut y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    return if (*(x as *const file)).hname == (*(y as *const file)).hname {
+    if (*(x as *const file)).hname == (*(y as *const file)).hname {
         0 as ::core::ffi::c_int
     } else {
         strcmp((*(x as *const file)).hname, (*(y as *const file)).hname)
-    };
+    }
 }
 static mut files: hash_table = hash_table {
     ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
@@ -597,7 +576,7 @@ pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *m
         &raw mut files,
         &raw mut file_key as *const ::core::ffi::c_void,
     ) as *mut file;
-    return f;
+    f
 }
 #[no_mangle]
 pub unsafe extern "C" fn enter_file(mut name: *const ::core::ffi::c_char) -> *mut file {
@@ -681,7 +660,7 @@ pub unsafe extern "C" fn enter_file(mut name: *const ::core::ffi::c_char) -> *mu
         (*(*f).last).prev = new;
         (*f).last = new;
     }
-    return new;
+    new
 }
 #[no_mangle]
 pub unsafe extern "C" fn rehash_file(
@@ -1058,7 +1037,7 @@ pub unsafe extern "C" fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut 
             ood = (*ood).next;
         }
     }
-    return new;
+    new
 }
 #[no_mangle]
 pub unsafe extern "C" fn enter_prereqs(
@@ -1156,7 +1135,7 @@ pub unsafe extern "C" fn enter_prereqs(
         }
         d1 = (*d1).next;
     }
-    return deps;
+    deps
 }
 #[no_mangle]
 pub unsafe extern "C" fn expand_deps(mut f: *mut file) {
@@ -1293,7 +1272,7 @@ pub unsafe extern "C" fn expand_extra_prereqs(mut extra: *const variable) -> *mu
         (*d).set_ignore_automatic_vars(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         d = (*d).next;
     }
-    return prereqs;
+    prereqs
 }
 #[no_mangle]
 pub unsafe extern "C" fn snap_file(mut f: *mut file, mut deps: *const dep) {
@@ -1603,14 +1582,14 @@ pub unsafe extern "C" fn file_timestamp_cons(
     if !(s
         <= ((!(0 as ::core::ffi::c_int as uintmax_t))
             .wrapping_sub(
-                (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
                 } else {
                     !(0 as ::core::ffi::c_int as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
                             .wrapping_mul(8 as usize)
                             .wrapping_sub(1 as usize)
-                }),
+                },
             )
             .wrapping_sub((2 as ::core::ffi::c_int + 1 as ::core::ffi::c_int) as uintmax_t)
             >> (if 1 as ::core::ffi::c_int != 0 {
@@ -1642,14 +1621,14 @@ pub unsafe extern "C" fn file_timestamp_cons(
         && ts
             <= ((!(0 as ::core::ffi::c_int as uintmax_t))
                 .wrapping_sub(
-                    (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                    if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                         0 as ::core::ffi::c_int as uintmax_t
                     } else {
                         !(0 as ::core::ffi::c_int as uintmax_t)
                             << (::core::mem::size_of::<uintmax_t>() as usize)
                                 .wrapping_mul(8 as usize)
                                 .wrapping_sub(1 as usize)
-                    }),
+                    },
                 )
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 {
@@ -1683,14 +1662,14 @@ pub unsafe extern "C" fn file_timestamp_cons(
         } else {
             ((!(0 as ::core::ffi::c_int as uintmax_t))
                 .wrapping_sub(
-                    (if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
+                    if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                         0 as ::core::ffi::c_int as uintmax_t
                     } else {
                         !(0 as ::core::ffi::c_int as uintmax_t)
                             << (::core::mem::size_of::<uintmax_t>() as usize)
                                 .wrapping_mul(8 as usize)
                                 .wrapping_sub(1 as usize)
-                    }),
+                    },
                 )
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 {
@@ -1724,7 +1703,7 @@ pub unsafe extern "C" fn file_timestamp_cons(
             &raw mut buf as *mut ::core::ffi::c_char,
         );
     }
-    return ts;
+    ts
 }
 #[no_mangle]
 pub unsafe extern "C" fn file_timestamp_now(mut resolution: *mut ::core::ffi::c_int) -> uintmax_t {
@@ -1759,11 +1738,11 @@ pub unsafe extern "C" fn file_timestamp_now(mut resolution: *mut ::core::ffi::c_
         }
     }
     *resolution = r;
-    return file_timestamp_cons(
+    file_timestamp_cons(
         ::core::ptr::null::<::core::ffi::c_char>(),
         s,
         ns as ::core::ffi::c_long,
-    );
+    )
 }
 #[no_mangle]
 pub unsafe extern "C" fn file_timestamp_sprintf(
@@ -2303,7 +2282,7 @@ pub unsafe extern "C" fn build_target_list(
         *p.offset(-(1 as ::core::ffi::c_int as isize)) = '\0' as i32 as ::core::ffi::c_char;
         last_targ_count = files.ht_fill;
     }
-    return value;
+    value
 }
 #[no_mangle]
 pub unsafe extern "C" fn init_hash_files() {

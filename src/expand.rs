@@ -1,3 +1,4 @@
+use libc::{free, printf, strchr};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -7,8 +8,6 @@ extern "C" {
     static mut environ: *mut *mut ::core::ffi::c_char;
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -19,8 +18,6 @@ extern "C" {
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -350,7 +347,7 @@ pub unsafe extern "C" fn variable_buffer_output(
         length as size_t,
     ) as *mut ::core::ffi::c_char;
     *ptr = '\0' as i32 as ::core::ffi::c_char;
-    return ptr;
+    ptr
 }
 #[no_mangle]
 pub unsafe extern "C" fn initialize_variable_output() -> *mut ::core::ffi::c_char {
@@ -359,7 +356,7 @@ pub unsafe extern "C" fn initialize_variable_output() -> *mut ::core::ffi::c_cha
         variable_buffer = xmalloc(variable_buffer_length) as *mut ::core::ffi::c_char;
     }
     *variable_buffer.offset(0 as ::core::ffi::c_int as isize) = '\0' as i32 as ::core::ffi::c_char;
-    return variable_buffer;
+    variable_buffer
 }
 #[no_mangle]
 pub unsafe extern "C" fn install_variable_buffer(
@@ -388,7 +385,7 @@ pub unsafe extern "C" fn swap_variable_buffer(
     let mut p: *mut ::core::ffi::c_char = variable_buffer;
     variable_buffer = buf;
     variable_buffer_length = len;
-    return p;
+    p
 }
 #[no_mangle]
 pub unsafe extern "C" fn recursively_expand_for_file(
@@ -492,7 +489,7 @@ pub unsafe extern "C" fn recursively_expand_for_file(
         restore_file_context(savev, ::core::ptr::null::<floc>());
     }
     expanding_var = saved_varp;
-    return value;
+    value
 }
 #[no_mangle]
 pub unsafe extern "C" fn expand_variable_output(
@@ -523,7 +520,7 @@ pub unsafe extern "C" fn expand_variable_output(
     if recursive != 0 {
         free(value as *mut ::core::ffi::c_void);
     }
-    return ptr;
+    ptr
 }
 #[no_mangle]
 pub unsafe extern "C" fn expand_variable_buf(
@@ -562,7 +559,7 @@ pub unsafe extern "C" fn expand_variable_buf(
     };
     offs = buf.offset_from(variable_buffer) as ::core::ffi::c_long as size_t;
     expand_variable_output(buf, name, length);
-    return variable_buffer.offset(offs as isize);
+    variable_buffer.offset(offs as isize)
 }
 #[no_mangle]
 pub unsafe extern "C" fn allocated_expand_variable(
@@ -573,7 +570,7 @@ pub unsafe extern "C" fn allocated_expand_variable(
     let mut olen: size_t = 0;
     install_variable_buffer(&raw mut obuf, &raw mut olen);
     expand_variable_output(variable_buffer, name, length);
-    return swap_variable_buffer(obuf, olen);
+    swap_variable_buffer(obuf, olen)
 }
 #[no_mangle]
 pub unsafe extern "C" fn allocated_expand_variable_for_file(
@@ -590,7 +587,7 @@ pub unsafe extern "C" fn allocated_expand_variable_for_file(
     install_file_context(file, &raw mut savev, &raw mut savef);
     result = allocated_expand_variable(name, length);
     restore_file_context(savev, savef);
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn expand_string_buf(
@@ -819,7 +816,7 @@ pub unsafe extern "C" fn expand_string_buf(
         p = p.offset(1);
     }
     free(save as *mut ::core::ffi::c_void);
-    return variable_buffer.offset(line_offset as isize);
+    variable_buffer.offset(line_offset as isize)
 }
 #[no_mangle]
 pub unsafe extern "C" fn expand_argument(
@@ -860,7 +857,7 @@ pub unsafe extern "C" fn expand_argument(
         '\0' as i32 as ::core::ffi::c_char;
     r = allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>());
     free(alloc as *mut ::core::ffi::c_void);
-    return r;
+    r
 }
 #[no_mangle]
 pub unsafe extern "C" fn expand_string_for_file(
@@ -884,7 +881,7 @@ pub unsafe extern "C" fn expand_string_for_file(
         SIZE_MAX as size_t,
     );
     restore_file_context(savev, savef);
-    return result;
+    result
 }
 #[no_mangle]
 pub unsafe extern "C" fn allocated_expand_string_for_file(
@@ -895,7 +892,7 @@ pub unsafe extern "C" fn allocated_expand_string_for_file(
     let mut olen: size_t = 0;
     install_variable_buffer(&raw mut obuf, &raw mut olen);
     expand_string_for_file(string, file);
-    return swap_variable_buffer(obuf, olen);
+    swap_variable_buffer(obuf, olen)
 }
 unsafe extern "C" fn variable_append(
     mut name: *const ::core::ffi::c_char,
@@ -931,7 +928,7 @@ unsafe extern "C" fn variable_append(
         return variable_buffer_output(buf, (*v).value, strlen((*v).value) as size_t);
     }
     buf = expand_string_buf(buf, (*v).value, strlen((*v).value) as size_t);
-    return buf.offset(strlen(buf) as isize);
+    buf.offset(strlen(buf) as isize)
 }
 #[no_mangle]
 pub unsafe extern "C" fn allocated_variable_append(mut v: *const variable) -> *mut ::core::ffi::c_char {
@@ -944,5 +941,5 @@ pub unsafe extern "C" fn allocated_variable_append(mut v: *const variable) -> *m
         current_variable_set_list,
         1 as ::core::ffi::c_int,
     );
-    return swap_variable_buffer(obuf, olen);
+    swap_variable_buffer(obuf, olen)
 }

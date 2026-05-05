@@ -1,30 +1,16 @@
+use libc::{abort, free, printf, putchar, puts, strchr, strcmp, strrchr};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
     pub type _IO_codecvt;
     pub type _IO_marker;
     static mut stdout: *mut FILE;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
-    fn putchar(__c: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn puts(__s: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn abort() -> !;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strrchr(
-        __s: *const ::core::ffi::c_char,
-        __c: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -341,7 +327,7 @@ pub const PARSEFS_NONE: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 #[inline]
 
 unsafe extern "C" fn alloc_dep() -> *mut dep {
-    return xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep;
+    xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
 }
 #[inline]
 
@@ -382,19 +368,19 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
         while !dep.is_null() {
             len = (len as ::core::ffi::c_ulong).wrapping_add(
                 strlen(
-                    (if !(*dep).name.is_null() {
+                    if !(*dep).name.is_null() {
                         (*dep).name
                     } else {
                         (*(*dep).file).name
-                    }),
+                    },
                 )
                 .wrapping_add(
-                    (if (*dep).wait_here() as ::core::ffi::c_int != 0 {
+                    if (*dep).wait_here() as ::core::ffi::c_int != 0 {
                         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
                             .wrapping_sub(1 as size_t)
                     } else {
                         0 as size_t
-                    }),
+                    },
                 )
                 .wrapping_add(1 as size_t) as ::core::ffi::c_ulong,
             ) as size_t as size_t;
@@ -495,7 +481,7 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
         }
         *p = '\0' as i32 as ::core::ffi::c_char;
     }
-    return (*r)._defn;
+    (*r)._defn
 }
 #[no_mangle]
 pub unsafe extern "C" fn snap_implicit_rules() {
@@ -973,7 +959,7 @@ unsafe extern "C" fn new_pattern_rule(
         }
         last_pattern_rule = rule;
     }
-    return 1 as ::core::ffi::c_int;
+    1 as ::core::ffi::c_int
 }
 #[no_mangle]
 pub unsafe extern "C" fn install_pattern_rule(

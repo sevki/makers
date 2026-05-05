@@ -1,3 +1,4 @@
+use libc::{exit, free};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -9,8 +10,6 @@ extern "C" {
         __format: *const ::core::ffi::c_char,
         ...
     ) -> ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn exit(__status: ::core::ffi::c_int) -> !;
     fn qsort(
         __base: *mut ::core::ffi::c_void,
         __nmemb: size_t,
@@ -228,11 +227,11 @@ pub unsafe extern "C" fn hash_find_item(
     mut key: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
     let mut slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, key);
-    return if (*slot).is_null() || *slot == hash_deleted_item as *mut ::core::ffi::c_void {
+    if (*slot).is_null() || *slot == hash_deleted_item as *mut ::core::ffi::c_void {
         ::core::ptr::null_mut::<::core::ffi::c_void>()
     } else {
         *slot
-    };
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_insert(
@@ -242,13 +241,13 @@ pub unsafe extern "C" fn hash_insert(
     let mut slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, item);
     let mut old_item: *const ::core::ffi::c_void = *slot;
     hash_insert_at(ht, item, slot as *const ::core::ffi::c_void);
-    return (if old_item.is_null()
+    (if old_item.is_null()
         || old_item as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
     {
         ::core::ptr::null::<::core::ffi::c_void>()
     } else {
         old_item
-    }) as *mut ::core::ffi::c_void;
+    }) as *mut ::core::ffi::c_void
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_insert_at(
@@ -282,10 +281,10 @@ pub unsafe extern "C" fn hash_insert_at(
     *fresh1 = item;
     if (*ht).ht_empty_slots < (*ht).ht_size.wrapping_sub((*ht).ht_capacity) {
         hash_rehash(ht);
-        return hash_find_slot(ht, item) as *mut ::core::ffi::c_void;
+        hash_find_slot(ht, item) as *mut ::core::ffi::c_void
     } else {
-        return slot as *mut ::core::ffi::c_void;
-    };
+        slot as *mut ::core::ffi::c_void
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_delete(
@@ -293,7 +292,7 @@ pub unsafe extern "C" fn hash_delete(
     mut item: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
     let mut slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, item);
-    return hash_delete_at(ht, slot as *const ::core::ffi::c_void);
+    hash_delete_at(ht, slot as *const ::core::ffi::c_void)
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_delete_at(
@@ -305,10 +304,10 @@ pub unsafe extern "C" fn hash_delete_at(
         let ref mut fresh2 = *(slot as *mut *const ::core::ffi::c_void);
         *fresh2 = hash_deleted_item;
         (*ht).ht_fill = (*ht).ht_fill.wrapping_sub(1);
-        return item;
+        item
     } else {
-        return ::core::ptr::null_mut::<::core::ffi::c_void>();
-    };
+        ::core::ptr::null_mut::<::core::ffi::c_void>()
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_free_items(mut ht: *mut hash_table) {
@@ -521,7 +520,7 @@ pub unsafe extern "C" fn hash_dump(
             compare as __compar_fn_t,
         );
     }
-    return vector_0;
+    vector_0
 }
 #[no_mangle]
 pub unsafe extern "C" fn round_up_2(mut n: ::core::ffi::c_ulong) -> ::core::ffi::c_ulong {
@@ -531,7 +530,7 @@ pub unsafe extern "C" fn round_up_2(mut n: ::core::ffi::c_ulong) -> ::core::ffi:
     n |= n >> 8 as ::core::ffi::c_int;
     n |= n >> 16 as ::core::ffi::c_int;
     n |= n >> 32 as ::core::ffi::c_int;
-    return n.wrapping_add(1 as ::core::ffi::c_ulong);
+    n.wrapping_add(1 as ::core::ffi::c_ulong)
 }
 pub const JHASH_INITVAL: ::core::ffi::c_uint = 0xdeadbeef as ::core::ffi::c_uint;
 #[no_mangle]
@@ -662,7 +661,7 @@ pub unsafe extern "C" fn jhash(
     c = c.wrapping_sub(
         b << 24 as ::core::ffi::c_int | b >> 32 as ::core::ffi::c_int - 24 as ::core::ffi::c_int,
     );
-    return c;
+    c
 }
 pub const UINTSZ: usize = ::core::mem::size_of::<::core::ffi::c_uint>();
 #[no_mangle]
@@ -873,5 +872,5 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
     c = c.wrapping_sub(
         b << 24 as ::core::ffi::c_int | b >> 32 as ::core::ffi::c_int - 24 as ::core::ffi::c_int,
     );
-    return c.wrapping_add(k.offset_from(start) as ::core::ffi::c_long as ::core::ffi::c_uint);
+    c.wrapping_add(k.offset_from(start) as ::core::ffi::c_long as ::core::ffi::c_uint)
 }

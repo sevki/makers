@@ -1,3 +1,4 @@
+use libc::{__errno_location, exit, printf, puts, strchr, strcmp, strstr, unlink};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -6,13 +7,8 @@ extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn signal(__sig: ::core::ffi::c_int, __handler: __sighandler_t) -> __sighandler_t;
     fn kill(__pid: __pid_t, __sig: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn unlink(__name: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn puts(__s: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn exit(__status: ::core::ffi::c_int) -> !;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -23,16 +19,6 @@ extern "C" {
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strstr(
-        __haystack: *const ::core::ffi::c_char,
-        __needle: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -456,7 +442,7 @@ pub unsafe extern "C" fn dep_hash_1(mut key: *const ::core::ffi::c_void) -> ::co
         (*(*d).file).name
     }) as *const ::core::ffi::c_uchar;
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
-    return _result_;
+    _result_
 }
 #[no_mangle]
 pub unsafe extern "C" fn dep_hash_2(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
@@ -465,7 +451,7 @@ pub unsafe extern "C" fn dep_hash_2(mut key: *const ::core::ffi::c_void) -> ::co
     if !(*d).name.is_null() {
     } else {
     };
-    return _result_;
+    _result_
 }
 unsafe extern "C" fn dep_hash_cmp(
     mut x: *const ::core::ffi::c_void,
@@ -473,7 +459,7 @@ unsafe extern "C" fn dep_hash_cmp(
 ) -> ::core::ffi::c_int {
     let mut dx: *const dep = x as *const dep;
     let mut dy: *const dep = y as *const dep;
-    return strcmp(
+    strcmp(
         if !(*dx).name.is_null() {
             (*dx).name
         } else {
@@ -484,7 +470,7 @@ unsafe extern "C" fn dep_hash_cmp(
         } else {
             (*(*dy).file).name
         },
-    );
+    )
 }
 #[no_mangle]
 pub unsafe extern "C" fn set_file_variables(
@@ -669,22 +655,22 @@ pub unsafe extern "C" fn set_file_variables(
             if (*d).ignore_mtime() != 0 {
                 bar_len = bar_len.wrapping_add(
                     strlen(
-                        (if !(*d).name.is_null() {
+                        if !(*d).name.is_null() {
                             (*d).name
                         } else {
                             (*(*d).file).name
-                        }),
+                        },
                     )
                     .wrapping_add(1 as size_t) as size_t,
                 );
             } else {
                 plus_len = plus_len.wrapping_add(
                     strlen(
-                        (if !(*d).name.is_null() {
+                        if !(*d).name.is_null() {
                             (*d).name
                         } else {
                             (*(*d).file).name
-                        }),
+                        },
                     )
                     .wrapping_add(1 as size_t) as size_t,
                 );

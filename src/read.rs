@@ -1,3 +1,4 @@
+use libc::{__errno_location, free, getenv, getlogin, printf, puts, strchr, strcmp, strcpy, strerror, strpbrk};
 use ::c2rust_bitfields;
 extern "C" {
     pub type _IO_wide_data;
@@ -5,7 +6,6 @@ extern "C" {
     pub type _IO_marker;
     pub type dirent;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
-    fn getlogin() -> *mut ::core::ffi::c_char;
     static mut stdout: *mut FILE;
     fn fclose(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -13,18 +13,13 @@ extern "C" {
         __filename: *const ::core::ffi::c_char,
         __modes: *const ::core::ffi::c_char,
     ) -> *mut FILE;
-    fn printf(__format: *const ::core::ffi::c_char, ...) -> ::core::ffi::c_int;
     fn fgets(
         __s: *mut ::core::ffi::c_char,
         __n: ::core::ffi::c_int,
         __stream: *mut FILE,
     ) -> *mut ::core::ffi::c_char;
-    fn puts(__s: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn ferror(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn fileno(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn __errno_location() -> *mut ::core::ffi::c_int;
-    fn free(__ptr: *mut ::core::ffi::c_void);
-    fn getenv(__name: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -45,27 +40,12 @@ extern "C" {
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strcpy(
-        __dest: *mut ::core::ffi::c_char,
-        __src: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn strcmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strchr(__s: *const ::core::ffi::c_char, __c: ::core::ffi::c_int)
-        -> *mut ::core::ffi::c_char;
-    fn strpbrk(
-        __s: *const ::core::ffi::c_char,
-        __accept: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn strerror(__errnum: ::core::ffi::c_int) -> *mut ::core::ffi::c_char;
     fn glob(
         __pattern: *const ::core::ffi::c_char,
         __flags: ::core::ffi::c_int,
@@ -675,12 +655,12 @@ pub const PARSEFS_NONE: ::core::ffi::c_int = 0 as ::core::ffi::c_int;
 #[inline]
 
 unsafe extern "C" fn alloc_dep() -> *mut dep {
-    return xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep;
+    xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
 }
 #[inline]
 
 unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
-    return xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep;
+    xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
 }
 #[inline]
 
@@ -803,7 +783,7 @@ pub unsafe extern "C" fn read_all_makefiles(
             }
         }
     }
-    return read_files;
+    read_files
 }
 #[no_mangle]
 pub unsafe extern "C" fn install_conditionals(mut new: *mut conditionals) -> *mut conditionals {
@@ -814,7 +794,7 @@ pub unsafe extern "C" fn install_conditionals(mut new: *mut conditionals) -> *mu
         ::core::mem::size_of::<conditionals>() as size_t,
     );
     conditionals = new;
-    return save;
+    save
 }
 #[no_mangle]
 pub unsafe extern "C" fn restore_conditionals(mut saved: *mut conditionals) {
@@ -978,7 +958,7 @@ unsafe extern "C" fn eval_makefile(
     fclose(ebuf.fp);
     free(ebuf.bufstart as *mut ::core::ffi::c_void);
     *__errno_location() = 0 as ::core::ffi::c_int;
-    return deps;
+    deps
 }
 #[no_mangle]
 pub unsafe extern "C" fn eval_buffer(mut buffer: *mut ::core::ffi::c_char, mut flocp: *const floc) {
@@ -1178,7 +1158,7 @@ unsafe extern "C" fn parse_var_assignment(
         }
     }
     (*vmod).set_assign_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    return p as *mut ::core::ffi::c_char;
+    p as *mut ::core::ffi::c_char
 }
 #[no_mangle]
 pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::ffi::c_int) {
@@ -2609,7 +2589,7 @@ unsafe extern "C" fn do_define(
     );
     free(definition as *mut ::core::ffi::c_void);
     free(n as *mut ::core::ffi::c_void);
-    return v;
+    v
 }
 unsafe extern "C" fn conditional_line(
     mut line: *mut ::core::ffi::c_char,
@@ -3029,7 +3009,7 @@ unsafe extern "C" fn conditional_line(
         }
         i = i.wrapping_add(1);
     }
-    return 0 as ::core::ffi::c_int;
+    0 as ::core::ffi::c_int
 }
 unsafe extern "C" fn record_target_var(
     mut filenames: *mut nameseq,
@@ -3278,11 +3258,11 @@ pub unsafe extern "C" fn check_specials(mut files: *mut nameseq, mut set_default
                             }) as size_t;
                             if strncmp(
                                 nm,
-                                (if !(*d2).name.is_null() {
+                                if !(*d2).name.is_null() {
                                     (*d2).name
                                 } else {
                                     (*(*d2).file).name
-                                }),
+                                },
                                 l as size_t,
                             ) == 0 as ::core::ffi::c_int
                             {
@@ -3361,7 +3341,6 @@ pub unsafe extern "C" fn check_special_file(mut file: *mut file, mut flocp: *con
             );
             wcmd = 1 as ::core::ffi::c_uint;
         }
-        return;
     }
 }
 unsafe extern "C" fn record_files(
@@ -3731,7 +3710,7 @@ unsafe extern "C" fn find_map_unquote(
             return p;
         }
     }
-    return ::core::ptr::null_mut::<::core::ffi::c_char>();
+    ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
 unsafe extern "C" fn find_char_unquote(
     mut string: *mut ::core::ffi::c_char,
@@ -3818,13 +3797,13 @@ unsafe extern "C" fn unescape_char(
         *fresh22 = *fresh21;
     }
     *p = '\0' as i32 as ::core::ffi::c_char;
-    return string;
+    string
 }
 #[no_mangle]
 pub unsafe extern "C" fn find_percent(
     mut pattern: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    return find_char_unquote(pattern, '%' as i32);
+    find_char_unquote(pattern, '%' as i32)
 }
 #[no_mangle]
 pub unsafe extern "C" fn find_percent_cached(
@@ -3886,11 +3865,11 @@ pub unsafe extern "C" fn find_percent_cached(
         }
     }
     *string = strcache_add(new);
-    return if !np.is_null() {
+    if !np.is_null() {
         (*string).offset(np.offset_from(new) as ::core::ffi::c_long as isize)
     } else {
         ::core::ptr::null::<::core::ffi::c_char>()
-    };
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn readstring(mut ebuf: *mut ebuffer) -> ::core::ffi::c_long {
@@ -3926,7 +3905,7 @@ pub unsafe extern "C" fn readstring(mut ebuf: *mut ebuffer) -> ::core::ffi::c_lo
     }
     *eol = '\0' as i32 as ::core::ffi::c_char;
     (*ebuf).bufnext = eol.offset(1 as ::core::ffi::c_int as isize);
-    return 0 as ::core::ffi::c_long;
+    0 as ::core::ffi::c_long
 }
 #[no_mangle]
 pub unsafe extern "C" fn readline(mut ebuf: *mut ebuffer) -> ::core::ffi::c_long {
@@ -4005,7 +3984,7 @@ pub unsafe extern "C" fn readline(mut ebuf: *mut ebuffer) -> ::core::ffi::c_long
     if ferror((*ebuf).fp) != 0 {
         pfatal_with_name((*ebuf).floc.filenm);
     }
-    return if nlines != 0 {
+    if nlines != 0 {
         nlines
     } else {
         (if p == (*ebuf).bufstart {
@@ -4013,7 +3992,7 @@ pub unsafe extern "C" fn readline(mut ebuf: *mut ebuffer) -> ::core::ffi::c_long
         } else {
             1 as ::core::ffi::c_int
         }) as ::core::ffi::c_long
-    };
+    }
 }
 unsafe extern "C" fn get_next_mword(
     mut buffer: *mut ::core::ffi::c_char,
@@ -4125,7 +4104,7 @@ unsafe extern "C" fn get_next_mword(
     if !length.is_null() {
         *length = p.offset_from(beg) as ::core::ffi::c_long as size_t;
     }
-    return wtype;
+    wtype
 }
 #[no_mangle]
 pub unsafe extern "C" fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_char) {
@@ -4357,7 +4336,7 @@ pub unsafe extern "C" fn tilde_expand(
             *userend = '/' as i32 as ::core::ffi::c_char;
         }
     }
-    return ::core::ptr::null_mut::<::core::ffi::c_char>();
+    ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
 #[no_mangle]
 pub unsafe extern "C" fn parse_file_seq(
@@ -4691,5 +4670,5 @@ pub unsafe extern "C" fn parse_file_seq(
         }
     }
     *stringp = p;
-    return new as *mut ::core::ffi::c_void;
+    new as *mut ::core::ffi::c_void
 }
