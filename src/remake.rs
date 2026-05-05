@@ -1,5 +1,6 @@
 use libc::{__errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror, strrchr};
 use ::c2rust_bitfields;
+use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 extern "C" {
     pub type _IO_wide_data;
     pub type _IO_codecvt;
@@ -174,60 +175,7 @@ pub struct _IO_FILE {
 pub type _IO_lock_t = ();
 pub type FILE = _IO_FILE;
 pub type uintmax_t = ::libc::uintmax_t;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct file {
-    pub name: *const ::core::ffi::c_char,
-    pub hname: *const ::core::ffi::c_char,
-    pub vpath: *const ::core::ffi::c_char,
-    pub deps: *mut dep,
-    pub cmds: *mut commands,
-    pub stem: *const ::core::ffi::c_char,
-    pub also_make: *mut dep,
-    pub prev: *mut file,
-    pub last: *mut file,
-    pub renamed: *mut file,
-    pub variables: *mut variable_set_list,
-    pub pat_variables: *mut variable_set_list,
-    pub parent: *mut file,
-    pub double_colon: *mut file,
-    pub last_mtime: uintmax_t,
-    pub mtime_before_update: uintmax_t,
-    pub considered: ::core::ffi::c_uint,
-    pub command_flags: ::core::ffi::c_int,
-    #[bitfield(name = "update_status", ty = "update_status", bits = "0..=1")]
-    #[bitfield(name = "command_state", ty = "cmd_state", bits = "2..=3")]
-    #[bitfield(name = "builtin", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "precious", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "loaded", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "unloaded", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(
-        name = "low_resolution_time",
-        ty = "::core::ffi::c_uint",
-        bits = "8..=8"
-    )]
-    #[bitfield(name = "tried_implicit", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "updating", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(name = "updated", ty = "::core::ffi::c_uint", bits = "11..=11")]
-    #[bitfield(name = "is_target", ty = "::core::ffi::c_uint", bits = "12..=12")]
-    #[bitfield(name = "cmd_target", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "phony", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    #[bitfield(name = "intermediate", ty = "::core::ffi::c_uint", bits = "15..=15")]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "16..=16")]
-    #[bitfield(name = "secondary", ty = "::core::ffi::c_uint", bits = "17..=17")]
-    #[bitfield(name = "notintermediate", ty = "::core::ffi::c_uint", bits = "18..=18")]
-    #[bitfield(name = "dontcare", ty = "::core::ffi::c_uint", bits = "19..=19")]
-    #[bitfield(name = "ignore_vpath", ty = "::core::ffi::c_uint", bits = "20..=20")]
-    #[bitfield(name = "pat_searched", ty = "::core::ffi::c_uint", bits = "21..=21")]
-    #[bitfield(name = "no_diag", ty = "::core::ffi::c_uint", bits = "22..=22")]
-    #[bitfield(name = "was_shuffled", ty = "::core::ffi::c_uint", bits = "23..=23")]
-    #[bitfield(name = "snapped", ty = "::core::ffi::c_uint", bits = "24..=24")]
-    #[bitfield(name = "suffix", ty = "::core::ffi::c_uint", bits = "25..=25")]
-    pub update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix:
-        [u8; 4],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 4],
-}
+pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
 pub const cs_running: cmd_state = 2;
@@ -239,88 +187,13 @@ pub const us_failed: update_status_0 = 3;
 pub const us_question: update_status_0 = 2;
 pub const us_none: update_status_0 = 1;
 pub const us_success: update_status_0 = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct variable_set_list {
-    pub next: *mut variable_set_list,
-    pub set: *mut variable_set,
-    pub next_is_parent: ::core::ffi::c_int,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct variable_set {
-    pub table: hash_table,
-}
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct hash_table {
-    pub ht_vec: *mut *mut ::core::ffi::c_void,
-    pub ht_hash_1: hash_func_t,
-    pub ht_hash_2: hash_func_t,
-    pub ht_compare: hash_cmp_func_t,
-    pub ht_size: ::core::ffi::c_ulong,
-    pub ht_capacity: ::core::ffi::c_ulong,
-    pub ht_fill: ::core::ffi::c_ulong,
-    pub ht_empty_slots: ::core::ffi::c_ulong,
-    pub ht_collisions: ::core::ffi::c_ulong,
-    pub ht_lookups: ::core::ffi::c_ulong,
-    pub ht_rehashes: ::core::ffi::c_uint,
-    #[bitfield(name = "ht_in_map", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub ht_in_map: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
-}
-pub type hash_cmp_func_t = Option<
-    unsafe extern "C" fn(
-        *const ::core::ffi::c_void,
-        *const ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int,
->;
-pub type hash_func_t =
-    Option<unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong>;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct dep {
-    pub next: *mut dep,
-    pub name: *const ::core::ffi::c_char,
-    pub file: *mut file,
-    pub shuf: *mut dep,
-    pub stem: *const ::core::ffi::c_char,
-    #[bitfield(name = "flags", ty = "::core::ffi::c_uint", bits = "0..=7")]
-    #[bitfield(name = "changed", ty = "::core::ffi::c_uint", bits = "8..=8")]
-    #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "staticpattern", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(
-        name = "need_2nd_expansion",
-        ty = "::core::ffi::c_uint",
-        bits = "11..=11"
-    )]
-    #[bitfield(
-        name = "ignore_automatic_vars",
-        ty = "::core::ffi::c_uint",
-        bits = "12..=12"
-    )]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "wait_here", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    pub flags_changed_ignore_mtime_staticpattern_need_2nd_expansion_ignore_automatic_vars_is_explicit_wait_here:
-        [u8; 2],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 6],
-}
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct commands {
-    pub fileinfo: Floc,
-    pub commands: *mut ::core::ffi::c_char,
-    pub command_lines: *mut *mut ::core::ffi::c_char,
-    pub lines_flags: *mut ::core::ffi::c_uchar,
-    pub ncommand_lines: ::core::ffi::c_ushort,
-    pub recipe_prefix: ::core::ffi::c_char,
-    #[bitfield(name = "any_recurse", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub any_recurse: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 4],
-}
+pub type variable_set_list = VariableSetList;
+pub type variable_set = VariableSet;
+pub type hash_table = crate::file::hash_table;
+pub type hash_cmp_func_t = crate::file::hash_cmp_func_t;
+pub type hash_func_t = crate::file::hash_func_t;
+pub type dep = Dep;
+pub type commands = Commands;
 use crate::floc::Floc;
 
 #[derive(Copy, Clone, BitfieldStruct)]
