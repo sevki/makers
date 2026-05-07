@@ -33,7 +33,6 @@ extern "C" {
         __n: size_t,
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn make_toui(
         _: *const ::core::ffi::c_char,
         _: *mut *const ::core::ffi::c_char,
@@ -43,7 +42,6 @@ extern "C" {
 }
 pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
-use crate::floc::Floc;
 
 pub type ar_member_func_t = Option<
     unsafe extern "C" fn(
