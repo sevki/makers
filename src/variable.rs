@@ -992,8 +992,13 @@ pub unsafe extern "C" fn pop_variable_scope() {
     '_c2rust_label: {
         if !(*current_variable_set_list).next.is_null() {
         } else {
-            make_assert_fail ! ( b"current_variable_set_list->next != NULL\0" as *const u8
-                    as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"current_variable_set_list->next != NULL\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
+                788,
+                b"void pop_variable_scope(void)\0" as *const u8 as *const ::core::ffi::c_char,
+            );
         }
     };
     if current_variable_set_list != &raw mut global_setlist {
@@ -1910,7 +1915,13 @@ pub unsafe extern "C" fn do_variable_definition(
             '_c2rust_label: {
                 if !newval.is_null() {
                 } else {
-                    make_assert_fail ! ( b"newval\0" as *const u8 as *const ::core::ffi::c_char ) ;
+                    __assert_fail(
+                        b"newval\0" as *const u8 as *const ::core::ffi::c_char,
+                        b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
+                        1545 as ::core::ffi::c_uint,
+                        b"struct variable *do_variable_definition(const Floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
+                            as *const u8 as *const ::core::ffi::c_char,
+                    );
                 }
             };
             v = define_variable_in_set(

@@ -12,24 +12,6 @@
 extern crate c2rust_bitfields;
 extern crate libc;
 
-/// Idiomatic-Rust replacement for the c2rust-translated `__assert_fail(...)`
-/// call. Takes the assertion-text expression that c2rust emitted (a
-/// `b"...\0" as *const u8 as *const c_char` chain), prints the message in
-/// glibc's format using the Rust source location, and aborts.
-#[macro_export]
-macro_rules! make_assert_fail {
-    ($text:expr) => {{
-        let text = unsafe { ::core::ffi::CStr::from_ptr($text) };
-        ::std::eprintln!(
-            "{}:{}: Assertion `{}' failed.",
-            ::core::file!(),
-            ::core::line!(),
-            text.to_string_lossy(),
-        );
-        ::std::process::abort();
-    }};
-}
-
 pub mod ar;
 pub mod arscan;
 pub mod commands;

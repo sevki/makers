@@ -1,10 +1,7 @@
-use libc::{
-    __errno_location, free, getenv, mkstemp, putchar, sleep, sprintf, stpcpy, strchr, strcmp,
-    strcpy, strdup, strerror, strtoul, unlink,
-};
+use libc::{__errno_location, free, getenv, mkstemp, putchar, sleep, sprintf, stpcpy, strchr, strcmp, strcpy, strdup, strerror, strtoul, unlink};
 
+use crate::stdio::{FILE};
 use crate::file::{Dep, File};
-use crate::stdio::FILE;
 extern "C" {
     pub type variable_set_list;
     pub type commands;
@@ -87,8 +84,8 @@ pub type mode_t = __mode_t;
 pub type pid_t = __pid_t;
 pub type ssize_t = isize;
 pub type time_t = __time_t;
-pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
+pub use crate::sys_stat::stat;
 pub type __gnuc_va_list = __builtin_va_list;
 pub type va_list = __gnuc_va_list;
 pub type uintmax_t = ::libc::uintmax_t;
@@ -212,8 +209,7 @@ pub unsafe extern "C" fn collapse_continuations(mut line: *mut ::core::ffi::c_ch
         let mut i: ::core::ffi::c_int = 0;
         let mut out_line_length: size_t = 0;
         if q > line
-            && *q.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '\\' as i32
-        {
+            && *q.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '\\' as i32 {
             i = -(2 as ::core::ffi::c_int);
             while p.offset(i as isize) as *mut ::core::ffi::c_char >= line
                 && *p.offset(i as isize) as ::core::ffi::c_int == '\\' as i32
@@ -225,7 +221,8 @@ pub unsafe extern "C" fn collapse_continuations(mut line: *mut ::core::ffi::c_ch
             i = 0;
         }
         out_line_length = (p.offset_from(in_0) as ::core::ffi::c_long + i as ::core::ffi::c_long
-            - (i / 2) as ::core::ffi::c_long) as size_t;
+            - (i / 2) as ::core::ffi::c_long)
+            as size_t;
         if out != in_0 {
             memmove(
                 out as *mut ::core::ffi::c_void,
@@ -247,20 +244,19 @@ pub unsafe extern "C" fn collapse_continuations(mut line: *mut ::core::ffi::c_ch
             }
             let mut dp: *const ::core::ffi::c_char = out;
             while dp > line as *const ::core::ffi::c_char
-                && *dp.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
-                    == '$' as i32
+                && *dp.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '$' as i32
             {
                 dp = dp.offset(-(1 as ::core::ffi::c_int) as isize);
             }
-            dollar = (out.offset_from(dp) as ::core::ffi::c_long % 2) as ::core::ffi::c_uint;
+            dollar = (out.offset_from(dp) as ::core::ffi::c_long % 2)
+                as ::core::ffi::c_uint;
             if dollar != 0 {
                 out = out.offset(-(1 as ::core::ffi::c_int) as isize);
             }
             if posix_pedantic == 0 {
                 while out > line
                     && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                        .offset(*out.offset(-(1 as ::core::ffi::c_int) as isize)
-                            as ::core::ffi::c_uchar as isize)
+                        .offset(*out.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize)
                         as ::core::ffi::c_int
                         & 0x2 as ::core::ffi::c_int
                         != 0
@@ -318,7 +314,11 @@ pub unsafe extern "C" fn concat(
             break;
         }
         let mut s: *const ::core::ffi::c_char = args_0.arg::<*const ::core::ffi::c_char>();
-        let mut l: size_t = if s.is_null() { 0 } else { strlen(s) as size_t };
+        let mut l: size_t = if s.is_null() {
+            0
+        } else {
+            strlen(s) as size_t
+        };
         if l == 0 {
             continue;
         }
@@ -348,7 +348,11 @@ pub unsafe extern "C" fn make_pid() -> pid_t {
 }
 #[no_mangle]
 pub unsafe extern "C" fn xmalloc(mut size: size_t) -> *mut ::core::ffi::c_void {
-    let mut result: *mut ::core::ffi::c_void = malloc(if size != 0 { size as size_t } else { 1 });
+    let mut result: *mut ::core::ffi::c_void = malloc(if size != 0 {
+        size as size_t
+    } else {
+        1
+    });
     if result.is_null() {
         out_of_memory();
     }
@@ -356,8 +360,14 @@ pub unsafe extern "C" fn xmalloc(mut size: size_t) -> *mut ::core::ffi::c_void {
 }
 #[no_mangle]
 pub unsafe extern "C" fn xcalloc(mut size: size_t) -> *mut ::core::ffi::c_void {
-    let mut result: *mut ::core::ffi::c_void =
-        calloc(if size != 0 { size as size_t } else { 1 }, 1);
+    let mut result: *mut ::core::ffi::c_void = calloc(
+        if size != 0 {
+            size as size_t
+        } else {
+            1
+        },
+        1,
+    );
     if result.is_null() {
         out_of_memory();
     }
@@ -627,7 +637,8 @@ pub unsafe fn spin(mut type_0: *const ::core::ffi::c_char) {
         b".make-spin-%s\0" as *const u8 as *const ::core::ffi::c_char,
         type_0,
     );
-    if stat(&raw mut filenm as *mut ::core::ffi::c_char, &raw mut dummy) == 0 {
+    if stat(&raw mut filenm as *mut ::core::ffi::c_char, &raw mut dummy) == 0
+    {
         fprintf(
             stderr,
             b"SPIN on %s\n\0" as *const u8 as *const ::core::ffi::c_char,
@@ -635,7 +646,9 @@ pub unsafe fn spin(mut type_0: *const ::core::ffi::c_char) {
         );
         loop {
             sleep(1);
-            if !(stat(&raw mut filenm as *mut ::core::ffi::c_char, &raw mut dummy) == 0) {
+            if !(stat(&raw mut filenm as *mut ::core::ffi::c_char, &raw mut dummy)
+                == 0)
+            {
                 break;
             }
         }
@@ -763,14 +776,14 @@ pub unsafe extern "C" fn get_tmptemplate() -> *mut ::core::ffi::c_char {
     template = xmalloc(
         (strlen(tmpdir) as size_t)
             .wrapping_add(
-                (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
+                (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
+                    .wrapping_sub(1),
             )
             .wrapping_add(2),
     ) as *mut ::core::ffi::c_char;
     cp = stpcpy(template, tmpdir);
     if !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-        .offset(*cp.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize)
-        as ::core::ffi::c_int
+        .offset(*cp.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & 0x8000 as ::core::ffi::c_int
         != 0)
     {
@@ -847,7 +860,12 @@ pub unsafe extern "C" fn get_tmpfile(mut name: *mut *mut ::core::ffi::c_char) ->
     '_c2rust_label: {
         if !name.is_null() {
         } else {
-            make_assert_fail!(b"name\0" as *const u8 as *const ::core::ffi::c_char);
+            __assert_fail(
+                b"name\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/misc.c\0" as *const u8 as *const ::core::ffi::c_char,
+                827,
+                __ASSERT_FUNCTION.as_ptr(),
+            );
         }
     };
     fd = get_tmpfd(name);
@@ -857,7 +875,12 @@ pub unsafe extern "C" fn get_tmpfile(mut name: *mut *mut ::core::ffi::c_char) ->
     '_c2rust_label_0: {
         if !(*name).is_null() {
         } else {
-            make_assert_fail!(b"*name\0" as *const u8 as *const ::core::ffi::c_char);
+            __assert_fail(
+                b"*name\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/misc.c\0" as *const u8 as *const ::core::ffi::c_char,
+                831,
+                __ASSERT_FUNCTION.as_ptr(),
+            );
         }
     };
     loop {

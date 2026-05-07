@@ -494,7 +494,13 @@ pub unsafe extern "C" fn message(
             == 0
         {
         } else {
-            make_assert_fail ! ( b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
+                440,
+                b"void message(int, size_t, const char *, ...)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            );
         }
     };
     outputs(0, start);
@@ -557,7 +563,13 @@ pub unsafe extern "C" fn error(
             == 0
         {
         } else {
-            make_assert_fail ! ( b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
+                470,
+                b"void error(const Floc *, size_t, const char *, ...)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            );
         }
     };
     outputs(1, start);
@@ -622,7 +634,13 @@ pub unsafe extern "C" fn fatal(
             == 0
         {
         } else {
-            make_assert_fail ! ( b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
+                502,
+                b"void fatal(const Floc *, size_t, const char *, ...)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            );
         }
     };
     outputs(1, start);

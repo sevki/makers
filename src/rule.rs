@@ -809,7 +809,13 @@ pub unsafe extern "C" fn install_pattern_rule(
     '_c2rust_label: {
         if !(*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize)).is_null() {
         } else {
-            make_assert_fail ! ( b"r->suffixes[0] != NULL\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"r->suffixes[0] != NULL\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/rule.c\0" as *const u8 as *const ::core::ffi::c_char,
+                492,
+                b"void install_pattern_rule(const struct pspec *, int)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            );
         }
     };
     let ref mut fresh3 = *(*r).suffixes.offset(0 as ::core::ffi::c_int as isize);
@@ -886,8 +892,14 @@ pub unsafe extern "C" fn create_pattern_rule(
         '_c2rust_label: {
             if !(*(*r).suffixes.offset(i as isize)).is_null() {
             } else {
-                make_assert_fail ! ( b"r->suffixes[i] != NULL\0" as *const u8
-                        as *const ::core::ffi::c_char ) ;
+                __assert_fail(
+                    b"r->suffixes[i] != NULL\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    b"src/rule.c\0" as *const u8 as *const ::core::ffi::c_char,
+                    584,
+                    b"void create_pattern_rule(const char **, const char **, unsigned short, int, struct dep *, struct commands *, int)\0"
+                        as *const u8 as *const ::core::ffi::c_char,
+                );
             }
         };
         let ref mut fresh0 = *(*r).suffixes.offset(i as isize);

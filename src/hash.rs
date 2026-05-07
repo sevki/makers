@@ -220,7 +220,13 @@ pub unsafe extern "C" fn hash_insert_at(
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
         } else {
-            make_assert_fail ! ( b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
+                144,
+                b"void *hash_insert_at(struct hash_table *, const void *, const void *)\0"
+                    as *const u8 as *const ::core::ffi::c_char,
+            );
         }
     };
     if old_item.is_null()
@@ -272,7 +278,13 @@ pub unsafe extern "C" fn hash_free_items(mut ht: *mut hash_table) {
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
         } else {
-            make_assert_fail ! ( b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
+                191,
+                b"void hash_free_items(struct hash_table *)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            );
         }
     };
     while vec < end {
@@ -294,7 +306,13 @@ pub unsafe extern "C" fn hash_delete_items(mut ht: *mut hash_table) {
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
         } else {
-            make_assert_fail ! ( b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
+                211,
+                b"void hash_delete_items(struct hash_table *)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            );
         }
     };
     while vec < end {
@@ -312,7 +330,13 @@ pub unsafe extern "C" fn hash_free(mut ht: *mut hash_table, mut free_items: ::co
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
         } else {
-            make_assert_fail ! ( b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
+                226,
+                b"void hash_free(struct hash_table *, int)\0" as *const u8
+                    as *const ::core::ffi::c_char,
+            );
         }
     };
     if free_items != 0 {
@@ -649,7 +673,13 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         '_c2rust_label: {
             if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
             } else {
-                make_assert_fail ! ( b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char ) ;
+                __assert_fail(
+                    b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
+                    b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
+                    506,
+                    b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                );
             }
         };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
@@ -692,7 +722,13 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         '_c2rust_label_0: {
             if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
             } else {
-                make_assert_fail ! ( b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char ) ;
+                __assert_fail(
+                    b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
+                    b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
+                    513,
+                    b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                );
             }
         };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
@@ -735,7 +771,13 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         '_c2rust_label_1: {
             if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
             } else {
-                make_assert_fail ! ( b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char ) ;
+                __assert_fail(
+                    b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
+                    b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
+                    520,
+                    b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                );
             }
         };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t

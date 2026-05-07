@@ -379,7 +379,12 @@ pub unsafe fn strcache_print_stats(mut prefix: *const ::core::ffi::c_char) {
     '_c2rust_label: {
         if total_buffers == numbuffs.wrapping_add(1) {
         } else {
-            make_assert_fail ! ( b"total_buffers == numbuffs + 1\0" as *const u8 as *const ::core::ffi::c_char ) ;
+            __assert_fail(
+                b"total_buffers == numbuffs + 1\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/strcache.c\0" as *const u8 as *const ::core::ffi::c_char,
+                302,
+                __ASSERT_FUNCTION.as_ptr(),
+            );
         }
     };
     printf(

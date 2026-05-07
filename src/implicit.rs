@@ -881,8 +881,14 @@ unsafe extern "C" fn pattern_search(
                                                 '_c2rust_label: {
                                                     if o_0.offset(i as isize) < dend {
                                                     } else {
-                                                        make_assert_fail ! ( b"o + i < dend\0" as *const u8
-                                                                as *const ::core::ffi::c_char ) ;
+                                                        __assert_fail(
+                                                            b"o + i < dend\0" as *const u8
+                                                                as *const ::core::ffi::c_char,
+                                                            b"src/implicit.c\0" as *const u8
+                                                                as *const ::core::ffi::c_char,
+                                                            632,
+                                                            __ASSERT_FUNCTION.as_ptr(),
+                                                        );
                                                     }
                                                 };
                                                 o_0 = mempcpy(
@@ -899,8 +905,14 @@ unsafe extern "C" fn pattern_search(
                                                         ) < dend
                                                         {
                                                         } else {
-                                                            make_assert_fail ! ( b"o + 5 < dend\0" as *const u8
-                                                                    as *const ::core::ffi::c_char ) ;
+                                                            __assert_fail(
+                                                                b"o + 5 < dend\0" as *const u8
+                                                                    as *const ::core::ffi::c_char,
+                                                                b"src/implicit.c\0" as *const u8
+                                                                    as *const ::core::ffi::c_char,
+                                                                637,
+                                                                __ASSERT_FUNCTION.as_ptr(),
+                                                            );
                                                         }
                                                     };
                                                     o_0 = mempcpy(
@@ -918,8 +930,14 @@ unsafe extern "C" fn pattern_search(
                                                         ) < dend
                                                         {
                                                         } else {
-                                                            make_assert_fail ! ( b"o + 2 < dend\0" as *const u8
-                                                                    as *const ::core::ffi::c_char ) ;
+                                                            __assert_fail(
+                                                                b"o + 2 < dend\0" as *const u8
+                                                                    as *const ::core::ffi::c_char,
+                                                                b"src/implicit.c\0" as *const u8
+                                                                    as *const ::core::ffi::c_char,
+                                                                642,
+                                                                __ASSERT_FUNCTION.as_ptr(),
+                                                            );
                                                         }
                                                     };
                                                     o_0 = mempcpy(
@@ -934,16 +952,28 @@ unsafe extern "C" fn pattern_search(
                                                 '_c2rust_label_2: {
                                                     if o_0 < dend {
                                                     } else {
-                                                        make_assert_fail ! ( b"o < dend\0" as *const u8
-                                                                as *const ::core::ffi::c_char ) ;
+                                                        __assert_fail(
+                                                            b"o < dend\0" as *const u8
+                                                                as *const ::core::ffi::c_char,
+                                                            b"src/implicit.c\0" as *const u8
+                                                                as *const ::core::ffi::c_char,
+                                                            645,
+                                                            __ASSERT_FUNCTION.as_ptr(),
+                                                        );
                                                     }
                                                 };
                                                 cp_0 = cp_0.offset(1 as ::core::ffi::c_int as isize);
                                                 '_c2rust_label_3: {
                                                     if cp_0 <= end {
                                                     } else {
-                                                        make_assert_fail ! ( b"cp <= end\0" as *const u8
-                                                                as *const ::core::ffi::c_char ) ;
+                                                        __assert_fail(
+                                                            b"cp <= end\0" as *const u8
+                                                                as *const ::core::ffi::c_char,
+                                                            b"src/implicit.c\0" as *const u8
+                                                                as *const ::core::ffi::c_char,
+                                                            647,
+                                                            __ASSERT_FUNCTION.as_ptr(),
+                                                        );
                                                     }
                                                 };
                                                 nptr = cp_0;
@@ -1620,7 +1650,12 @@ unsafe extern "C" fn pattern_search(
         '_c2rust_label_4: {
             if allow_compat_rules == 0 {
             } else {
-                make_assert_fail ! ( b"allow_compat_rules == 0\0" as *const u8 as *const ::core::ffi::c_char ) ;
+                __assert_fail(
+                    b"allow_compat_rules == 0\0" as *const u8 as *const ::core::ffi::c_char,
+                    b"src/implicit.c\0" as *const u8 as *const ::core::ffi::c_char,
+                    1134 as ::core::ffi::c_uint,
+                    __ASSERT_FUNCTION.as_ptr(),
+                );
             }
         };
         return pattern_search(file, archive, depth, recursions, 1);
