@@ -58,6 +58,64 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang m4 perl \
+            automake autopoint gettext gperf texinfo \
+            git wget xz-utils
+
+      - name: Install autoconf 2.72 from source
+        run: |
+          AC_VER=2.72
+          cd /tmp
+          curl -fsSLO https://ftp.gnu.org/gnu/autoconf/autoconf-${AC_VER}.tar.xz
+          tar xJf autoconf-${AC_VER}.tar.xz
+          cd autoconf-${AC_VER}
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          autoconf --version | head -1
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Bootstrap gnulib and build libgnu.a
+        run: |
+          if [ ! -x configure ]; then ./bootstrap; fi
+          if [ ! -f config.status ]; then ./configure --quiet; fi
+          ./build.sh
+
+      - name: Build C oracle binary
+        run: make -j"$(nproc)" MAKE_CFLAGS=
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Collect coverage
+        run: cargo llvm-cov --tests --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+
   kernel-build:
     name: rust make builds Linux kernel (okLinux)
     needs: rust-make-builds-c-make
