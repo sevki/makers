@@ -138,7 +138,7 @@ pub unsafe extern "C" fn ar_scan(
         return -(1 as ::core::ffi::c_int) as intmax_t;
     }
     let mut buf: [::core::ffi::c_char; 8] = [0; 8];
-    let mut nread: ::core::ffi::c_int = 0;
+    let nread: ::core::ffi::c_int;
     nread = readbuf(
         desc,
         &raw mut buf as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
@@ -153,7 +153,7 @@ pub unsafe extern "C" fn ar_scan(
     {
         let mut member_offset: ::core::ffi::c_long = SARMAG as ::core::ffi::c_long;
         loop {
-            let mut nread_0: ssize_t = 0;
+            let mut nread_0: ssize_t;
             let mut member_header: ar_hdr = ar_hdr {
                 ar_name: [0; 16],
                 ar_date: [0; 12],
@@ -164,16 +164,16 @@ pub unsafe extern "C" fn ar_scan(
                 ar_fmag: [0; 2],
             };
             let mut namebuf: [::core::ffi::c_char; 17] = [0; 17];
-            let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-            let mut is_namemap: ::core::ffi::c_int = 0;
+            let mut name: *mut ::core::ffi::c_char;
+            let is_namemap: ::core::ffi::c_int;
             let mut long_name: ::core::ffi::c_int = 0;
-            let mut eltsize: ::core::ffi::c_long = 0;
-            let mut eltmode: ::core::ffi::c_uint = 0;
-            let mut eltdate: intmax_t = 0;
-            let mut eltuid: ::core::ffi::c_int = 0;
-            let mut eltgid: ::core::ffi::c_int = 0;
-            let mut fnval: intmax_t = 0;
-            let mut o: off_t = 0;
+            let eltsize: ::core::ffi::c_long;
+            let eltmode: ::core::ffi::c_uint;
+            let eltdate: intmax_t;
+            let eltuid: ::core::ffi::c_int;
+            let eltgid: ::core::ffi::c_int;
+            let fnval: intmax_t;
+            let mut o: off_t;
             memset(
                 &raw mut member_header as *mut ::core::ffi::c_void,
                 0,
@@ -245,7 +245,7 @@ pub unsafe extern "C" fn ar_scan(
                     ::core::ptr::null::<::core::ffi::c_char>();
                 let name_off: ::core::ffi::c_uint =
                     make_toui(name.offset(1 as ::core::ffi::c_int as isize), &raw mut err);
-                let mut name_len: size_t = 0;
+                let name_len: size_t;
                 if !err.is_null() || name_off >= namemap_size {
                     current_block = 13383231232214443762;
                     break;
@@ -382,10 +382,8 @@ pub unsafe extern "C" fn ar_scan(
                 return fnval;
             }
             if is_namemap != 0 {
-                let mut clear: *mut ::core::ffi::c_char =
-                    ::core::ptr::null_mut::<::core::ffi::c_char>();
-                let mut limit: *mut ::core::ffi::c_char =
-                    ::core::ptr::null_mut::<::core::ffi::c_char>();
+                let mut clear: *mut ::core::ffi::c_char;
+                let limit: *mut ::core::ffi::c_char;
                 if eltsize > INT_MAX as ::core::ffi::c_long {
                     current_block = 13383231232214443762;
                     break;
@@ -415,7 +413,6 @@ pub unsafe extern "C" fn ar_scan(
                     clear = clear.offset(1 as ::core::ffi::c_int as isize);
                 }
                 *limit = 0;
-                is_namemap = 0;
             }
             member_offset = (member_offset as ::core::ffi::c_ulong)
                 .wrapping_add(AR_HDR_SIZE.wrapping_add(eltsize as usize) as ::core::ffi::c_ulong)
@@ -441,7 +438,7 @@ pub unsafe extern "C" fn ar_name_equal(
     mem: *const ::core::ffi::c_char,
     truncated: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
-    let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let p: *const ::core::ffi::c_char;
     if *name as ::core::ffi::c_int == *mem as ::core::ffi::c_int
         && (*name as ::core::ffi::c_int == 0
             || strcmp(name.offset(1 as ::core::ffi::c_int as isize), mem.offset(1 as ::core::ffi::c_int as isize), ) == 0)
@@ -514,8 +511,8 @@ pub unsafe extern "C" fn ar_member_touch(
         ),
         memname as *const ::core::ffi::c_void,
     );
-    let mut opos: off_t = 0;
-    let mut fd: ::core::ffi::c_int = 0;
+    let opos: off_t;
+    let mut fd: ::core::ffi::c_int;
     let mut ar_hdr: ar_hdr = ar_hdr {
         ar_name: [0; 16],
         ar_date: [0; 12],
@@ -525,9 +522,9 @@ pub unsafe extern "C" fn ar_member_touch(
         ar_size: [0; 10],
         ar_fmag: [0; 2],
     };
-    let mut o: off_t = 0;
-    let mut r: ::core::ffi::c_int = 0;
-    let mut datelen: ::core::ffi::c_int = 0;
+    let mut o: off_t;
+    let mut r: ::core::ffi::c_int;
+    let datelen: ::core::ffi::c_int;
     let mut statbuf: stat = stat {
         st_dev: 0,
         st_ino: 0,

@@ -225,7 +225,7 @@ pub unsafe extern "C" fn create_pattern_var(
             (*p).next = (*last_pattern_vars[len as usize]).next;
             (*last_pattern_vars[len as usize]).next = p;
         } else {
-            let mut v: *mut *mut pattern_var = ::core::ptr::null_mut::<*mut pattern_var>();
+            let mut v: *mut *mut pattern_var;
             v = &raw mut pattern_vars;
             loop {
                 if (*v).is_null() || (**v).len > len {
@@ -254,15 +254,15 @@ unsafe extern "C" fn lookup_pattern_var(
     target: *const ::core::ffi::c_char,
     targlen: size_t,
 ) -> *mut pattern_var {
-    let mut p: *mut pattern_var = ::core::ptr::null_mut::<pattern_var>();
+    let mut p: *mut pattern_var;
     p = if !start.is_null() {
         (*start).next
     } else {
         pattern_vars
     };
     while !p.is_null() {
-        let mut stem: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-        let mut stemlen: size_t = 0;
+        let stem: *const ::core::ffi::c_char;
+        let stemlen: size_t;
         if !((*p).len > targlen) {
             stem = target.offset(
                 ((*p).suffix.offset_from((*p).target) as ::core::ffi::c_long
@@ -371,8 +371,8 @@ unsafe extern "C" fn check_valid_name(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) {
-    let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let mut cp: *const ::core::ffi::c_char;
+    let end: *const ::core::ffi::c_char;
     if !(warning::is_active(Type::InvalidVar))
     {
         return;
@@ -455,8 +455,8 @@ pub unsafe extern "C" fn define_variable_in_set(
     mut set: *mut variable_set,
     flocp: *const Floc,
 ) -> *mut variable {
-    let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
-    let mut var_slot: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
+    let mut v: *mut variable;
+    let var_slot: *mut *mut variable;
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -576,8 +576,8 @@ pub unsafe extern "C" fn undefine_variable_in_set(
     mut origin: variable_origin,
     mut set: *mut variable_set,
 ) {
-    let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
-    let mut var_slot: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
+    let v: *mut variable;
+    let var_slot: *mut *mut variable;
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -641,8 +641,8 @@ pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut vari
             .wrapping_div(500)
             .wrapping_add(1)
             .wrapping_mul(500);
-        let mut len: size_t = 0;
-        let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut len: size_t;
+        let mut p: *mut ::core::ffi::c_char;
         let mut vp: *mut *mut variable = global_variable_set.table.ht_vec as *mut *mut variable;
         let end: *mut *mut variable =
             vp.offset(global_variable_set.table.ht_size as isize) as *mut *mut variable;
@@ -689,8 +689,8 @@ unsafe extern "C" fn check_variable_reference(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) {
-    let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let mut cp: *const ::core::ffi::c_char;
+    let end: *const ::core::ffi::c_char;
     if !(warning::is_active(Type::InvalidRef))
     {
         return;
@@ -746,7 +746,7 @@ pub unsafe extern "C" fn lookup_variable(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut variable {
-    let mut setlist: *const variable_set_list = ::core::ptr::null::<variable_set_list>();
+    let mut setlist: *const variable_set_list;
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -765,7 +765,7 @@ pub unsafe extern "C" fn lookup_variable(
     setlist = current_variable_set_list;
     while !setlist.is_null() {
         let set: *const variable_set = (*setlist).set;
-        let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
+        let v: *mut variable;
         v = hash_find_item(
             &raw const (*set).table as *mut hash_table,
             &raw mut var_key as *const ::core::ffi::c_void,
@@ -788,7 +788,7 @@ pub unsafe extern "C" fn lookup_variable_for_file(
     length: size_t,
     file: *mut file,
 ) -> *mut variable {
-    let mut var: *mut variable = ::core::ptr::null_mut::<variable>();
+    let var: *mut variable;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     if file.is_null() {
         return lookup_variable(name, length);
@@ -868,7 +868,7 @@ pub unsafe extern "C" fn initialize_file_variables(
     }
     (*l).next_is_parent = 1;
     if reading == 0 && (*file).pat_searched() == 0 {
-        let mut p: *mut pattern_var = ::core::ptr::null_mut::<pattern_var>();
+        let mut p: *mut pattern_var;
         let targlen: size_t = strlen((*file).name) as size_t;
         p = lookup_pattern_var(
             ::core::ptr::null_mut::<pattern_var>(),
@@ -880,7 +880,7 @@ pub unsafe extern "C" fn initialize_file_variables(
             (*file).pat_variables = create_new_variable_set();
             current_variable_set_list = (*file).pat_variables;
             loop {
-                let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
+                let v: *mut variable;
                 if (*p).variable.flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
                     v = define_variable_in_set(
                         (*p).variable.name,
@@ -924,8 +924,8 @@ pub unsafe extern "C" fn initialize_file_variables(
 }
 #[no_mangle]
 pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
-    let mut setlist: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut set: *mut variable_set = ::core::ptr::null_mut::<variable_set>();
+    let mut setlist: *mut variable_set_list;
+    let set: *mut variable_set;
     set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
         &raw mut (*set).table,
@@ -968,8 +968,8 @@ pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
 }
 #[no_mangle]
 pub unsafe extern "C" fn pop_variable_scope() {
-    let mut setlist: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut set: *mut variable_set = ::core::ptr::null_mut::<variable_set>();
+    let setlist: *mut variable_set_list;
+    let set: *mut variable_set;
     '_c2rust_label: {
         if !(*current_variable_set_list).next.is_null() {
         } else {
@@ -1106,7 +1106,7 @@ pub unsafe extern "C" fn merge_variable_set_lists(
 }
 #[no_mangle]
 pub unsafe extern "C" fn define_automatic_variables() {
-    let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
+    let mut v: *mut variable;
     let mut buf: [::core::ffi::c_char; 200] = [0; 200];
     sprintf(
         &raw mut buf as *mut ::core::ffi::c_char,
@@ -1348,8 +1348,8 @@ pub unsafe extern "C" fn target_environment(
     file: *mut file,
     recursive: ::core::ffi::c_int,
 ) -> *mut *mut ::core::ffi::c_char {
-    let mut set_list: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut s: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
+    let set_list: *mut variable_set_list;
+    let mut s: *mut variable_set_list;
     let mut table: hash_table = hash_table {
         ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
         ht_hash_1: None,
@@ -1365,12 +1365,10 @@ pub unsafe extern "C" fn target_environment(
         ht_in_map: [0; 1],
         c2rust_padding: [0; 3],
     };
-    let mut v_slot: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
-    let mut v_end: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
-    let mut result_0: *mut *mut ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
-    let mut result: *mut *mut ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+    let mut v_slot: *mut *mut variable;
+    let mut v_end: *mut *mut variable;
+    let result_0: *mut *mut ::core::ffi::c_char;
+    let mut result: *mut *mut ::core::ffi::c_char;
     let mut invalid: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut added_SHELL: ::core::ffi::c_int =
         (shell_var.value == ::core::ptr::null_mut::<::core::ffi::c_char>()) as ::core::ffi::c_int;
@@ -1420,7 +1418,7 @@ pub unsafe extern "C" fn target_environment(
                 || *v_slot as *mut ::core::ffi::c_void
                     == hash_deleted_item as *mut ::core::ffi::c_void)
             {
-                let mut evslot: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
+                let evslot: *mut *mut variable;
                 let v: *mut variable = *v_slot;
                 if !(islocal == 0 && (*v).private_var() as ::core::ffi::c_int != 0) {
                     evslot = hash_find_slot(&raw mut table, v as *const ::core::ffi::c_void)
@@ -1524,10 +1522,8 @@ pub unsafe extern "C" fn target_environment(
                                         .offset(1 as ::core::ffi::c_int as isize),
                                 ) == 0))
                     {
-                        let mut mf: *mut ::core::ffi::c_char =
-                            ::core::ptr::null_mut::<::core::ffi::c_char>();
-                        let mut vars: *mut ::core::ffi::c_char =
-                            ::core::ptr::null_mut::<::core::ffi::c_char>();
+                        let mf: *mut ::core::ffi::c_char;
+                        let vars: *mut ::core::ffi::c_char;
                         found_makeflags = 1;
                         if !strstr(
                             value,
@@ -1580,8 +1576,7 @@ pub unsafe extern "C" fn target_environment(
                                         .offset(1 as ::core::ffi::c_int as isize),
                                 ) == 0))
                     {
-                        let mut mf_0: *const ::core::ffi::c_char =
-                            ::core::ptr::null::<::core::ffi::c_char>();
+                        let mf_0: *const ::core::ffi::c_char;
                         found_mflags = 1;
                         if !strstr(
                             value,
@@ -1811,13 +1806,11 @@ pub unsafe extern "C" fn do_variable_definition(
                 flavor = f_recursive;
                 current_block = 5159818223158340697;
             } else {
-                let mut oldlen: size_t = 0;
-                let mut vallen: size_t = 0;
-                let mut alloclen: size_t = 0;
-                let mut val: *const ::core::ffi::c_char =
-                    ::core::ptr::null::<::core::ffi::c_char>();
-                let mut cp: *mut ::core::ffi::c_char =
-                    ::core::ptr::null_mut::<::core::ffi::c_char>();
+                let oldlen: size_t;
+                let vallen: size_t;
+                let alloclen: size_t;
+                let mut val: *const ::core::ffi::c_char;
+                let mut cp: *mut ::core::ffi::c_char;
                 let mut tp: *mut ::core::ffi::c_char =
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
                 val = value;
@@ -1956,7 +1949,7 @@ pub unsafe extern "C" fn parse_variable_definition(
     (*var).set_conditional(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     let current_block_37: u64;
     loop {
-        let mut start: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+        let start: *const ::core::ffi::c_char;
         let fresh5 = p;
         p = p.offset(1 as ::core::ffi::c_int as isize);
         let mut c: ::core::ffi::c_int = *fresh5 as ::core::ffi::c_int;
@@ -2084,7 +2077,7 @@ pub unsafe extern "C" fn assign_variable_definition(
     line: *const ::core::ffi::c_char,
 ) -> *mut variable {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let name: *mut ::core::ffi::c_char;
     if parse_variable_definition(line, v).is_null() {
         return ::core::ptr::null_mut::<variable>();
     }
@@ -2127,7 +2120,7 @@ pub unsafe extern "C" fn try_variable_definition(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    let mut vp: *mut variable = ::core::ptr::null_mut::<variable>();
+    let vp: *mut variable;
     if !flocp.is_null() {
         v.fileinfo = *flocp;
     } else {
@@ -2156,7 +2149,7 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
 pub unsafe extern "C" fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
     if warning::is_active(Type::UndefinedVar)
     {
-        let mut dp: *const defined_vars = ::core::ptr::null::<defined_vars>();
+        let mut dp: *const defined_vars;
         dp = &raw const defined_vars as *const defined_vars;
         while !(*dp).name.is_null() {
             if (*dp).len == len
@@ -2291,7 +2284,7 @@ unsafe extern "C" fn print_variable(
             (*v).value,
         );
     } else {
-        let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut p: *mut ::core::ffi::c_char;
         printf(
             b"%s %s= \0" as *const u8 as *const ::core::ffi::c_char,
             (*v).name,
@@ -2387,7 +2380,7 @@ pub unsafe fn print_variable_data_base() {
         0,
     );
     puts(b"\n# Pattern-specific Variable Values\0" as *const u8 as *const ::core::ffi::c_char);
-    let mut p: *mut pattern_var = ::core::ptr::null_mut::<pattern_var>();
+    let mut p: *mut pattern_var;
     let mut rules: ::core::ffi::c_uint = 0;
     p = pattern_vars;
     while !p.is_null() {

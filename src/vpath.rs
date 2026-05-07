@@ -96,9 +96,9 @@ static mut gpaths: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
 #[no_mangle]
 pub unsafe fn build_vpath_lists() {
     let mut new: *mut vpath = ::core::ptr::null_mut::<vpath>();
-    let mut old: *mut vpath = ::core::ptr::null_mut::<vpath>();
-    let mut nexto: *mut vpath = ::core::ptr::null_mut::<vpath>();
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut old: *mut vpath;
+    let mut nexto: *mut vpath;
+    let mut p: *mut ::core::ffi::c_char;
     old = vpaths;
     while !old.is_null() {
         nexto = (*old).next;
@@ -155,19 +155,18 @@ pub unsafe extern "C" fn construct_vpath_list(
     pattern: *mut ::core::ffi::c_char,
     mut dirpath: *mut ::core::ffi::c_char,
 ) {
-    let mut elem: ::core::ffi::c_uint = 0;
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut vpath: *mut *const ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
-    let mut maxvpath: size_t = 0;
-    let mut maxelem: ::core::ffi::c_uint = 0;
+    let mut elem: ::core::ffi::c_uint;
+    let mut p: *mut ::core::ffi::c_char;
+    let mut vpath: *mut *const ::core::ffi::c_char;
+    let mut maxvpath: size_t;
+    let mut maxelem: ::core::ffi::c_uint;
     let mut percent: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     if !pattern.is_null() {
         percent = find_percent(pattern);
     }
     if dirpath.is_null() {
-        let mut path: *mut vpath = ::core::ptr::null_mut::<vpath>();
-        let mut lastpath: *mut vpath = ::core::ptr::null_mut::<vpath>();
+        let mut path: *mut vpath;
+        let mut lastpath: *mut vpath;
         lastpath = ::core::ptr::null_mut::<vpath>();
         path = vpaths;
         while !path.is_null() {
@@ -222,8 +221,8 @@ pub unsafe extern "C" fn construct_vpath_list(
     elem = 0;
     p = dirpath;
     while *p as ::core::ffi::c_int != 0 {
-        let mut v: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut len: size_t = 0;
+        let v: *mut ::core::ffi::c_char;
+        let mut len: size_t;
         v = p;
         while *p as ::core::ffi::c_int != 0
             && *p as ::core::ffi::c_int != PATH_SEPARATOR_CHAR
@@ -257,7 +256,7 @@ pub unsafe extern "C" fn construct_vpath_list(
         }
     }
     if elem > 0 {
-        let mut path_0: *mut vpath = ::core::ptr::null_mut::<vpath>();
+        let mut path_0: *mut vpath;
         if elem < maxelem.wrapping_sub(1) {
             vpath = xrealloc(
                 vpath as *mut ::core::ffi::c_void,
@@ -291,8 +290,7 @@ pub unsafe extern "C" fn gpath_search(
     len: size_t,
 ) -> ::core::ffi::c_int {
     if !gpaths.is_null() && len <= (*gpaths).maxlen {
-        let mut gp: *mut *const ::core::ffi::c_char =
-            ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
+        let mut gp: *mut *const ::core::ffi::c_char;
         gp = (*gpaths).searchpath;
         while !(*gp).is_null() {
             if strncmp(*gp, file, len as size_t) == 0
@@ -312,15 +310,15 @@ unsafe extern "C" fn selective_vpath_search(
     path_index: *mut ::core::ffi::c_uint,
 ) -> *const ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut not_target: ::core::ffi::c_int = 0;
-    let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut n: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut filename: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let not_target: ::core::ffi::c_int;
+    let name: *mut ::core::ffi::c_char;
+    let n: *const ::core::ffi::c_char;
+    let filename: *const ::core::ffi::c_char;
     let vpath: *mut *const ::core::ffi::c_char = (*path).searchpath;
     let maxvpath: size_t = (*path).maxlen;
-    let mut i: ::core::ffi::c_uint = 0;
-    let mut flen: size_t = 0;
-    let mut name_dplen: size_t = 0;
+    let mut i: ::core::ffi::c_uint;
+    let mut flen: size_t;
+    let name_dplen: size_t;
     let mut exists: ::core::ffi::c_int = 0;
     let f: *mut file = lookup_file(file);
     not_target = (f.is_null() || (*f).is_target() == 0) as ::core::ffi::c_int;
@@ -439,7 +437,7 @@ unsafe extern "C" fn selective_vpath_search(
             };
             *p = '/' as i32 as ::core::ffi::c_char;
             if exists_in_cache != 0 {
-                let mut e: ::core::ffi::c_int = 0;
+                let mut e: ::core::ffi::c_int;
                 loop {
                     e = stat(name, &raw mut st);
                     if !(e == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
@@ -491,7 +489,7 @@ pub unsafe extern "C" fn vpath_search(
     vpath_index: *mut ::core::ffi::c_uint,
     path_index: *mut ::core::ffi::c_uint,
 ) -> *const ::core::ffi::c_char {
-    let mut v: *mut vpath = ::core::ptr::null_mut::<vpath>();
+    let mut v: *mut vpath;
     if *file.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32
         || vpaths.is_null() && general_vpath.is_null()
     {
@@ -526,13 +524,13 @@ pub unsafe extern "C" fn vpath_search(
 }
 #[no_mangle]
 pub unsafe fn print_vpath_data_base() {
-    let mut nvpaths: ::core::ffi::c_uint = 0;
-    let mut v: *mut vpath = ::core::ptr::null_mut::<vpath>();
+    let mut nvpaths: ::core::ffi::c_uint;
+    let mut v: *mut vpath;
     puts(b"\n# VPATH Search Paths\n\0" as *const u8 as *const ::core::ffi::c_char);
     nvpaths = 0;
     v = vpaths;
     while !v.is_null() {
-        let mut i: ::core::ffi::c_uint = 0;
+        let mut i: ::core::ffi::c_uint;
         nvpaths = nvpaths.wrapping_add(1);
         printf(
             b"vpath %s \0" as *const u8 as *const ::core::ffi::c_char,
@@ -572,7 +570,7 @@ pub unsafe fn print_vpath_data_base() {
         );
     } else {
         let path: *mut *const ::core::ffi::c_char = (*general_vpath).searchpath;
-        let mut i_0: ::core::ffi::c_uint = 0;
+        let mut i_0: ::core::ffi::c_uint;
         fputs(
             b"\n# General ('VPATH' variable) search path:\n# \0" as *const u8
                 as *const ::core::ffi::c_char,

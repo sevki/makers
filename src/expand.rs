@@ -248,16 +248,15 @@ pub unsafe extern "C" fn recursively_expand_for_file(
     v: *mut variable,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
-    let mut value: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut this_var: *const Floc = ::core::ptr::null::<Floc>();
-    let mut saved_varp: *mut *const Floc = ::core::ptr::null_mut::<*const Floc>();
+    let value: *mut ::core::ffi::c_char;
+    let mut this_var: *const Floc;
+    let saved_varp: *mut *const Floc;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut set_reading: ::core::ffi::c_int = 0;
     let nl: size_t = strlen((*v).name) as size_t;
     let mut parent: *mut variable = ::core::ptr::null_mut::<variable>();
     if (*v).expanding() as ::core::ffi::c_int != 0 && env_recursion != 0 {
-        let mut ep: *mut *mut ::core::ffi::c_char =
-            ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+        let mut ep: *mut *mut ::core::ffi::c_char;
         if 0x2 as ::core::ffi::c_int & db_level != 0 {
             printf(
                 b"%s:%lu: not recursively expanding %s to export to shell function\n\0" as *const u8
@@ -306,7 +305,7 @@ pub unsafe extern "C" fn recursively_expand_for_file(
     }
     (*v).set_expanding(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if (*v).append() != 0 {
-        let mut sl: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
+        let mut sl: *mut variable_set_list;
         sl = current_variable_set_list;
         while !sl.is_null() && parent.is_null() {
             let vp: *mut variable = lookup_variable_in_set((*v).name, nl, (*sl).set);
@@ -350,9 +349,9 @@ pub unsafe extern "C" fn expand_variable_output(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
-    let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
-    let mut recursive: ::core::ffi::c_uint = 0;
-    let mut value: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let v: *mut variable;
+    let recursive: ::core::ffi::c_uint;
+    let value: *mut ::core::ffi::c_char;
     v = lookup_variable(name, length);
     if v.is_null() {
         warn_undefined(name, length);
@@ -380,7 +379,7 @@ pub unsafe extern "C" fn expand_variable_buf(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
-    let mut offs: size_t = 0;
+    let offs: size_t;
     if buf.is_null() {
         buf = initialize_variable_output();
     }
@@ -430,7 +429,7 @@ pub unsafe extern "C" fn allocated_expand_variable_for_file(
     length: size_t,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
-    let mut result: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let result: *mut ::core::ffi::c_char;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
@@ -448,12 +447,12 @@ pub unsafe extern "C" fn expand_string_buf(
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
-    let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut p1: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut save: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut o: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut line_offset: size_t = 0;
+    let mut v: *mut variable;
+    let mut p: *const ::core::ffi::c_char;
+    let mut p1: *const ::core::ffi::c_char;
+    let save: *mut ::core::ffi::c_char;
+    let mut o: *mut ::core::ffi::c_char;
+    let line_offset: size_t;
     if buf.is_null() {
         buf = initialize_variable_output();
     }
@@ -499,10 +498,8 @@ pub unsafe extern "C" fn expand_string_buf(
                     p.offset(1 as ::core::ffi::c_int as isize);
                 let mut abeg: *mut ::core::ffi::c_char =
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
-                let mut end: *const ::core::ffi::c_char =
-                    ::core::ptr::null::<::core::ffi::c_char>();
-                let mut colon: *const ::core::ffi::c_char =
-                    ::core::ptr::null::<::core::ffi::c_char>();
+                let mut end: *const ::core::ffi::c_char;
+                let mut colon: *const ::core::ffi::c_char;
                 if !(handle_function(&raw mut o, &raw mut p) != 0) {
                     end = strchr(beg, closeparen as ::core::ffi::c_int);
                     if end.is_null() {
@@ -561,14 +558,10 @@ pub unsafe extern "C" fn expand_string_buf(
                                 );
                             }
                             if !v.is_null() && *(*v).value as ::core::ffi::c_int != 0 {
-                                let mut pattern: *mut ::core::ffi::c_char =
-                                    ::core::ptr::null_mut::<::core::ffi::c_char>();
-                                let mut replace: *mut ::core::ffi::c_char =
-                                    ::core::ptr::null_mut::<::core::ffi::c_char>();
-                                let mut ppercent: *mut ::core::ffi::c_char =
-                                    ::core::ptr::null_mut::<::core::ffi::c_char>();
-                                let mut rpercent: *mut ::core::ffi::c_char =
-                                    ::core::ptr::null_mut::<::core::ffi::c_char>();
+                                let mut pattern: *mut ::core::ffi::c_char;
+                                let mut replace: *mut ::core::ffi::c_char;
+                                let mut ppercent: *mut ::core::ffi::c_char;
+                                let mut rpercent: *mut ::core::ffi::c_char;
                                 let value: *mut ::core::ffi::c_char = if (*v).recursive()
                                     as ::core::ffi::c_int
                                     != 0
@@ -676,9 +669,9 @@ pub unsafe extern "C" fn expand_argument(
     end: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut tmp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let tmp: *mut ::core::ffi::c_char;
     let mut alloc: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut r: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let r: *mut ::core::ffi::c_char;
     if str == end {
         return xstrdup(b"\0" as *const u8 as *const ::core::ffi::c_char);
     }
@@ -716,7 +709,7 @@ pub unsafe extern "C" fn expand_string_for_file(
     string: *const ::core::ffi::c_char,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
-    let mut result: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let result: *mut ::core::ffi::c_char;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
@@ -752,9 +745,9 @@ unsafe extern "C" fn variable_append(
     set: *const variable_set_list,
     local: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
-    let mut v: *const variable = ::core::ptr::null::<variable>();
-    let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut nextlocal: ::core::ffi::c_int = 0;
+    let v: *const variable;
+    let mut buf: *mut ::core::ffi::c_char;
+    let nextlocal: ::core::ffi::c_int;
     if set.is_null() {
         return initialize_variable_output();
     }

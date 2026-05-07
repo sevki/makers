@@ -72,13 +72,13 @@ pub unsafe extern "C" fn gmk_eval(
 ) {
     let mut pbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut plen: size_t = 0;
-    let mut s: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let s: *mut ::core::ffi::c_char;
     let mut fl: Floc = Floc {
         filenm: ::core::ptr::null::<::core::ffi::c_char>(),
         lineno: 0,
         offset: 0,
     };
-    let mut flp: *mut Floc = ::core::ptr::null_mut::<Floc>();
+    let flp: *mut Floc;
     if !gfloc.is_null() {
         fl.filenm = (*gfloc).filenm;
         fl.lineno = (*gfloc).lineno;

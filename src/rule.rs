@@ -180,10 +180,10 @@ pub static mut suffix_file: *mut file = ::core::ptr::null::<file>() as *mut file
 pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::c_char {
     if (*r)._defn.is_null() {
         let mut len: size_t = 8;
-        let mut k: ::core::ffi::c_uint = 0;
-        let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut k: ::core::ffi::c_uint;
+        let mut p: *mut ::core::ffi::c_char;
         let mut sep: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
-        let mut dep: *const dep = ::core::ptr::null::<dep>();
+        let mut dep: *const dep;
         let mut ood: *const dep = ::core::ptr::null::<dep>();
         k = 0;
         while k < (*r).num as ::core::ffi::c_uint {
@@ -315,8 +315,8 @@ pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::
 pub unsafe extern "C" fn snap_implicit_rules() {
     let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut namelen: size_t = 0;
-    let mut rule: *mut rule = ::core::ptr::null_mut::<rule>();
-    let mut dep: *mut dep = ::core::ptr::null_mut::<dep>();
+    let mut rule: *mut rule;
+    let mut dep: *mut dep;
     let prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
         b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
@@ -434,11 +434,9 @@ unsafe extern "C" fn convert_suffix_rule(
     cmds: *mut commands,
 ) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut names: *mut *const ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
-    let mut percents: *mut *const ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
-    let mut deps: *mut dep = ::core::ptr::null_mut::<dep>();
+    let names: *mut *const ::core::ffi::c_char;
+    let percents: *mut *const ::core::ffi::c_char;
+    let mut deps: *mut dep;
     names = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
         as *mut *const ::core::ffi::c_char;
     percents = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
@@ -498,9 +496,9 @@ unsafe extern "C" fn convert_suffix_rule(
 #[no_mangle]
 pub unsafe extern "C" fn convert_to_pattern() {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
-    let mut d2: *mut dep = ::core::ptr::null_mut::<dep>();
-    let mut rulename: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut d: *mut dep;
+    let mut d2: *mut dep;
+    let rulename: *mut ::core::ffi::c_char;
     let mut maxsuffix: size_t = 0;
     d = (*suffix_file).deps;
     while !d.is_null() {
@@ -523,8 +521,8 @@ pub unsafe extern "C" fn convert_to_pattern() {
     rulename = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
     d = (*suffix_file).deps;
     while !d.is_null() {
-        let mut f: *mut file = ::core::ptr::null_mut::<file>();
-        let mut slen: size_t = 0;
+        let mut f: *mut file;
+        let slen: size_t;
         convert_suffix_rule(
             if !(*d).name.is_null() {
                 (*d).name
@@ -576,7 +574,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
         let mut current_block_29: u64;
         d2 = (*suffix_file).deps;
         while !d2.is_null() {
-            let mut s2len: size_t = 0;
+            let s2len: size_t;
             s2len = strlen(if !(*d2).name.is_null() {
                 (*d2).name
             } else {
@@ -686,10 +684,10 @@ unsafe extern "C" fn new_pattern_rule(
     mut rule: *mut rule,
     override_0: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
-    let mut r: *mut rule = ::core::ptr::null_mut::<rule>();
-    let mut lastrule: *mut rule = ::core::ptr::null_mut::<rule>();
-    let mut i: ::core::ffi::c_uint = 0;
-    let mut j: ::core::ffi::c_uint = 0;
+    let mut r: *mut rule;
+    let mut lastrule: *mut rule;
+    let mut i: ::core::ffi::c_uint;
+    let mut j: ::core::ffi::c_uint;
     (*rule).in_use = 0;
     (*rule).terminal = 0;
     (*rule).next = ::core::ptr::null_mut::<rule>();
@@ -713,8 +711,8 @@ unsafe extern "C" fn new_pattern_rule(
                 j = j.wrapping_add(1);
             }
             if j == (*r).num as ::core::ffi::c_uint {
-                let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
-                let mut d2: *mut dep = ::core::ptr::null_mut::<dep>();
+                let mut d: *mut dep;
+                let mut d2: *mut dep;
                 d = (*rule).deps as *mut dep;
                 d2 = (*r).deps as *mut dep;
                 while !d.is_null() && !d2.is_null() {
@@ -788,8 +786,8 @@ pub unsafe extern "C" fn install_pattern_rule(
     p: *const pspec,
     terminal: ::core::ffi::c_int,
 ) {
-    let mut r: *mut rule = ::core::ptr::null_mut::<rule>();
-    let mut ptr: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let mut r: *mut rule;
+    let mut ptr: *const ::core::ffi::c_char;
     r = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
     (*r).num = 1;
     (*r).targets = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
@@ -874,7 +872,7 @@ pub unsafe extern "C" fn create_pattern_rule(
     commands: *mut commands,
     override_0: ::core::ffi::c_int,
 ) {
-    let mut i: ::core::ffi::c_uint = 0;
+    let mut i: ::core::ffi::c_uint;
     let mut r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
     (*r).num = n;
     (*r).cmds = commands as *mut commands;
@@ -923,9 +921,9 @@ pub unsafe extern "C" fn print_rule(r: *mut rule) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn print_rule_data_base() {
-    let mut rules: ::core::ffi::c_uint = 0;
-    let mut terminal: ::core::ffi::c_uint = 0;
-    let mut r: *mut rule = ::core::ptr::null_mut::<rule>();
+    let mut rules: ::core::ffi::c_uint;
+    let mut terminal: ::core::ffi::c_uint;
+    let mut r: *mut rule;
     puts(b"\n# Implicit Rules\0" as *const u8 as *const ::core::ffi::c_char);
     terminal = 0;
     rules = terminal;

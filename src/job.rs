@@ -459,8 +459,7 @@ pub unsafe extern "C" fn is_bourne_compatible_shell(
         b"ash\0" as *const u8 as *const ::core::ffi::c_char,
         ::core::ptr::null::<::core::ffi::c_char>(),
     ];
-    let mut s: *mut *const ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
+    let mut s: *mut *const ::core::ffi::c_char;
     let mut cp: *const ::core::ffi::c_char = path.offset(strlen(path) as isize);
     while cp > path
         && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(*cp.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize,
@@ -518,9 +517,9 @@ unsafe extern "C" fn child_error(
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let f: *const file = (*child).file;
     let flocp: *const Floc = &raw mut (*(*f).cmds).fileinfo;
-    let mut nm: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let nm: *const ::core::ffi::c_char;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut l: size_t = 0;
+    let mut l: size_t;
     if ignored != 0 && run_silent != 0 {
         return;
     }
@@ -622,16 +621,16 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
         && (block != 0 || reap_more != 0)
     {
         let mut remote: ::core::ffi::c_uint = 0;
-        let mut pid: pid_t = 0;
+        let mut pid: pid_t;
         let mut exit_code: ::core::ffi::c_int = 0;
         let mut exit_sig: ::core::ffi::c_int = 0;
         let mut coredump: ::core::ffi::c_int = 0;
-        let mut lastc: *mut child = ::core::ptr::null_mut::<child>();
-        let mut c: *mut child = ::core::ptr::null_mut::<child>();
-        let mut child_failed: ::core::ffi::c_int = 0;
-        let mut any_remote: ::core::ffi::c_int = 0;
-        let mut any_local: ::core::ffi::c_int = 0;
-        let mut dontcare: ::core::ffi::c_int = 0;
+        let mut lastc: *mut child;
+        let mut c: *mut child;
+        let mut child_failed: ::core::ffi::c_int;
+        let mut any_remote: ::core::ffi::c_int;
+        let mut any_local: ::core::ffi::c_int;
+        let dontcare: ::core::ffi::c_int;
         if err != 0 && block != 0 {
             static mut printed: ::core::ffi::c_int = 0;
             fflush(stdout);
@@ -833,7 +832,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
                 },
                 __glibc_reserved: [0; 3],
             };
-            let mut r: ::core::ffi::c_int = 0;
+            let mut r: ::core::ffi::c_int;
             loop {
                 r = stat((*c).cmd_name, &raw mut st);
                 if !(r == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
@@ -871,7 +870,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
             child_failed = MAKE_FAILURE;
         }
         if !(*c).sh_batch_file.is_null() {
-            let mut rm_status: ::core::ffi::c_int = 0;
+            let rm_status: ::core::ffi::c_int;
             if 0x4 as ::core::ffi::c_int & db_level != 0 {
                 printf(
                     b"Cleaning up temp batch file %s\n\0" as *const u8
@@ -1037,7 +1036,7 @@ pub unsafe extern "C" fn free_child(child: *mut child) {
         return;
     }
     if !(*child).command_lines.is_null() {
-        let mut i: ::core::ffi::c_uint = 0;
+        let mut i: ::core::ffi::c_uint;
         i = 0;
         while i < (*(*(*child).file).cmds).ncommand_lines as ::core::ffi::c_uint {
             free(*(*child).command_lines.offset(i as isize) as *mut ::core::ffi::c_void);
@@ -1050,10 +1049,9 @@ pub unsafe extern "C" fn free_child(child: *mut child) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
-    let mut flags: ::core::ffi::c_int = 0;
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut argv: *mut *mut ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+    let mut flags: ::core::ffi::c_int;
+    let mut p: *mut ::core::ffi::c_char;
+    let mut argv: *mut *mut ::core::ffi::c_char;
     if !(*child).command_ptr.is_null() {
         flags = (*(*child).file).command_flags
             | *(*(*(*child).file).cmds)
@@ -1092,8 +1090,8 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
         *fresh10 =
             (*fresh10 as ::core::ffi::c_int | flags & COMMANDS_RECURSE) as ::core::ffi::c_uchar;
         let prefix: ::core::ffi::c_char = (*(*(*child).file).cmds).recipe_prefix;
-        let mut p1: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut p2: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut p1: *mut ::core::ffi::c_char;
+        let mut p2: *mut ::core::ffi::c_char;
         p2 = p;
         p1 = p2;
         while *p1 as ::core::ffi::c_int != 0 {
@@ -1396,10 +1394,9 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
 pub unsafe extern "C" fn new_job(file: *mut file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut cmds: *mut commands = (*file).cmds;
-    let mut c: *mut child = ::core::ptr::null_mut::<child>();
-    let mut lines: *mut *mut ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
-    let mut i: ::core::ffi::c_uint = 0;
+    let mut c: *mut child;
+    let lines: *mut *mut ::core::ffi::c_char;
+    let mut i: ::core::ffi::c_uint;
     start_waiting_jobs();
     reap_children(0, 0);
     chop_commands(cmds);
@@ -1419,9 +1416,9 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
     ) as *mut *mut ::core::ffi::c_char;
     i = 0;
     while i < (*cmds).ncommand_lines as ::core::ffi::c_uint {
-        let mut in_0: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut out: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut ref_0: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut in_0: *mut ::core::ffi::c_char;
+        let mut out: *mut ::core::ffi::c_char;
+        let mut ref_0: *mut ::core::ffi::c_char;
         out = *(*cmds).command_lines.offset(i as isize);
         in_0 = out;
         loop {
@@ -1449,11 +1446,9 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
                     } else {
                         '}' as i32
                     }) as ::core::ffi::c_char;
-                let mut outref: *mut ::core::ffi::c_char =
-                    ::core::ptr::null_mut::<::core::ffi::c_char>();
-                let mut count: ::core::ffi::c_int = 0;
-                let mut p: *mut ::core::ffi::c_char =
-                    ::core::ptr::null_mut::<::core::ffi::c_char>();
+                let outref: *mut ::core::ffi::c_char;
+                let mut count: ::core::ffi::c_int;
+                let mut p: *mut ::core::ffi::c_char;
                 let fresh0 = in_0;
                 in_0 = in_0.offset(1 as ::core::ffi::c_int as isize);
                 let fresh1 = out;
@@ -1540,7 +1535,7 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
         }
     } else if jobserver_enabled() != 0 {
         loop {
-            let mut got_token: ::core::ffi::c_int = 0;
+            let got_token: ::core::ffi::c_int;
             if 0x4 as ::core::ffi::c_int & db_level != 0 {
                 printf(
                     b"Need a job token; we %shave children\n\0" as *const u8
@@ -1591,8 +1586,8 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
     jobserver_tokens = jobserver_tokens.wrapping_add(1);
     if 0x20 as ::core::ffi::c_int & db_level != 0 {
         let mut nmbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut nm: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-        let mut tp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+        let nm: *const ::core::ffi::c_char;
+        let tp: *const ::core::ffi::c_char;
         if (*cmds).fileinfo.filenm.is_null() {
             nm = b"<builtin>\0" as *const u8 as *const ::core::ffi::c_char;
         } else {
@@ -1616,8 +1611,8 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
         if (*(*c).file).also_make.is_null() {
             tp = (*(*c).file).name;
         } else {
-            let mut dp: *const dep = ::core::ptr::null::<dep>();
-            let mut cp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+            let mut dp: *const dep;
+            let mut cp: *mut ::core::ffi::c_char;
             let mut len: size_t = strlen((*(*c).file).name) as size_t;
             dp = (*(*c).file).also_make;
             while !dp.is_null() {
@@ -1677,7 +1672,7 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
                 free(newer as *mut ::core::ffi::c_void);
             } else {
                 let mut len_0: size_t = 0;
-                let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
+                let mut d: *mut dep;
                 d = (*(*c).file).deps;
                 while !d.is_null() {
                     if (*(*d).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
@@ -1764,8 +1759,8 @@ pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
     static mut last_now: time_t = 0;
     static mut proc_fd: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
     let mut load: ::core::ffi::c_double = 0.;
-    let mut guess: ::core::ffi::c_double = 0.;
-    let mut now: time_t = 0;
+    let guess: ::core::ffi::c_double;
+    let now: time_t;
     if max_load_average < 0 as ::core::ffi::c_int as ::core::ffi::c_double {
         return 0;
     }
@@ -1799,7 +1794,7 @@ pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
         }
     }
     if proc_fd >= 0 {
-        let mut r: ::core::ffi::c_int = 0;
+        let mut r: ::core::ffi::c_int;
         loop {
             r = lseek(proc_fd, 0 as __off_t, 0) as ::core::ffi::c_int;
             if !(r == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
@@ -1819,7 +1814,7 @@ pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
                 }
             }
             if r >= 0 {
-                let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+                let mut p: *const ::core::ffi::c_char;
                 avg[r as usize] = 0;
                 p = strchr(&raw mut avg as *mut ::core::ffi::c_char, ' ' as i32);
                 if !p.is_null() {
@@ -1919,7 +1914,7 @@ pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
 }
 #[no_mangle]
 pub unsafe extern "C" fn start_waiting_jobs() {
-    let mut job: *mut child = ::core::ptr::null_mut::<child>();
+    let mut job: *mut child;
     if waiting_jobs.is_null() {
         return;
     }
@@ -1948,8 +1943,8 @@ pub unsafe extern "C" fn child_execute_job(
     let mut fdout: ::core::ffi::c_int = fileno(stdout);
     let mut fderr: ::core::ffi::c_int = fileno(stderr);
     let mut pid: pid_t = -(1 as pid_t);
-    let mut r: ::core::ffi::c_int = 0;
-    let mut cmd: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut r: ::core::ffi::c_int;
+    let cmd: *mut ::core::ffi::c_char;
     let mut attr: posix_spawnattr_t = posix_spawnattr_t {
         __flags: 0,
         __pgrp: 0,
@@ -2040,8 +2035,7 @@ pub unsafe extern "C" fn child_execute_job(
                                         if !(r != 0) {
                                             let mut p: *const ::core::ffi::c_char =
                                                 ::core::ptr::null::<::core::ffi::c_char>();
-                                            let mut pp: *mut *mut ::core::ffi::c_char =
-                                                ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+                                            let mut pp: *mut *mut ::core::ffi::c_char;
                                             pp = (*child).environment;
                                             while !(*pp).is_null() {
                                                 if *(*pp).offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
@@ -2116,16 +2110,8 @@ pub unsafe extern "C" fn child_execute_job(
                                                     }
                                                 }
                                                 if r == ENOEXEC {
-                                                    let mut nargv: *mut *mut ::core::ffi::c_char =
-                                                        ::core::ptr::null_mut::<
-                                                            *mut ::core::ffi::c_char,
-                                                        >(
-                                                        );
-                                                    let mut pp_0: *mut *mut ::core::ffi::c_char =
-                                                        ::core::ptr::null_mut::<
-                                                            *mut ::core::ffi::c_char,
-                                                        >(
-                                                        );
+                                                    let nargv: *mut *mut ::core::ffi::c_char;
+                                                    let mut pp_0: *mut *mut ::core::ffi::c_char;
                                                     let mut l_0: size_t = 0;
                                                     pp_0 = argv;
                                                     while !(*pp_0).is_null() {
@@ -2247,10 +2233,9 @@ pub unsafe extern "C" fn exec_command(
             );
         }
         ENOEXEC => {
-            let mut shell: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-            let mut new_argv: *mut *mut ::core::ffi::c_char =
-                ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
-            let mut argc: ::core::ffi::c_int = 0;
+            let mut shell: *const ::core::ffi::c_char;
+            let new_argv: *mut *mut ::core::ffi::c_char;
+            let mut argc: ::core::ffi::c_int;
             let i: ::core::ffi::c_int = 1;
             shell = getenv(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char);
             if shell.is_null() {
@@ -2353,16 +2338,16 @@ unsafe extern "C" fn construct_command_argv_internal(
         b"while\0" as *const u8 as *const ::core::ffi::c_char,
         ::core::ptr::null::<::core::ffi::c_char>(),
     ];
-    let mut i: size_t = 0;
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut end: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut ap: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut cap: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut instring: ::core::ffi::c_int = 0;
-    let mut word_has_equals: ::core::ffi::c_int = 0;
-    let mut seen_nonequals: ::core::ffi::c_int = 0;
-    let mut last_argument_was_empty: ::core::ffi::c_int = 0;
+    let mut i: size_t;
+    let mut p: *mut ::core::ffi::c_char;
+    let end: *mut ::core::ffi::c_char;
+    let mut ap: *mut ::core::ffi::c_char;
+    let mut cap: *const ::core::ffi::c_char;
+    let mut cp: *const ::core::ffi::c_char;
+    let mut instring: ::core::ffi::c_int;
+    let mut word_has_equals: ::core::ffi::c_int;
+    let mut seen_nonequals: ::core::ffi::c_int;
+    let mut last_argument_was_empty: ::core::ffi::c_int;
     let mut new_argv: *mut *mut ::core::ffi::c_char =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     let mut argstr: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2596,7 +2581,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                                             }
                                             word_has_equals = 0;
                                             if i == 1 {
-                                                let mut j: ::core::ffi::c_int = 0;
+                                                let mut j: ::core::ffi::c_int;
                                                 j = 0;
                                                 while !sh_cmds[j as usize].is_null() {
                                                     if *sh_cmds[j as usize] as ::core::ffi::c_int
@@ -2662,7 +2647,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                                         let ref mut fresh27 = *new_argv.offset(i as isize);
                                         *fresh27 = ::core::ptr::null_mut::<::core::ffi::c_char>();
                                         if i == 1 {
-                                            let mut j_0: ::core::ffi::c_int = 0;
+                                            let mut j_0: ::core::ffi::c_int;
                                             j_0 = 0;
                                             loop {
                                                 if sh_cmds[j_0 as usize].is_null() {
@@ -2723,7 +2708,7 @@ unsafe extern "C" fn construct_command_argv_internal(
         free(argstr as *mut ::core::ffi::c_void);
         free(new_argv as *mut ::core::ffi::c_void);
     }
-    let mut new_line: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let new_line: *mut ::core::ffi::c_char;
     let shell_len: size_t = strlen(shell) as size_t;
     let line_len: size_t = strlen(line) as size_t;
     let sflags_len: size_t = if !shellflags.is_null() {
@@ -2770,7 +2755,7 @@ unsafe extern "C" fn construct_command_argv_internal(
             *t = 0;
         }
         let mut n: ::core::ffi::c_int = 1;
-        let mut nextp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut nextp: *mut ::core::ffi::c_char;
         new_argv = xmalloc(
             (4 as size_t)
                 .wrapping_add(sflags_len.wrapping_div(2))
@@ -2798,8 +2783,7 @@ unsafe extern "C" fn construct_command_argv_internal(
             nextp = nextp.offset(1 as ::core::ffi::c_int as isize);
             *fresh33 = 0;
         } else {
-            let mut argv: *mut *mut ::core::ffi::c_char =
-                ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+            let argv: *mut *mut ::core::ffi::c_char;
             alloca_allocations.push(::std::vec::from_elem(
                 0,
                 sflags_len.wrapping_add(1) as usize,
@@ -2821,8 +2805,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                 ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
             );
             if !argv.is_null() {
-                let mut a: *mut *mut ::core::ffi::c_char =
-                    ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+                let mut a: *mut *mut ::core::ffi::c_char;
                 a = argv;
                 while !(*a).is_null() {
                     let fresh34 = n;
@@ -2846,7 +2829,6 @@ unsafe extern "C" fn construct_command_argv_internal(
             (line_len as size_t).wrapping_add(1),
         );
         let fresh38 = n;
-        n = n + 1;
         let ref mut fresh39 = *new_argv.offset(fresh38 as isize);
         *fresh39 = ::core::ptr::null_mut::<::core::ffi::c_char>();
         return new_argv;
@@ -2975,13 +2957,12 @@ pub unsafe extern "C" fn construct_command_argv(
     cmd_flags: ::core::ffi::c_int,
     batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {
-    let mut shell: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut ifs: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let shell: *mut ::core::ffi::c_char;
+    let ifs: *mut ::core::ffi::c_char;
     let mut allocflags: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut shellflags: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut argv: *mut *mut ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
-    let mut var: *mut variable = ::core::ptr::null_mut::<variable>();
+    let shellflags: *const ::core::ffi::c_char;
+    let argv: *mut *mut ::core::ffi::c_char;
+    let var: *mut variable;
     let save: Action = warning::action(Type::UndefinedVar);
     warning::set_action(Type::UndefinedVar, Action::Ignore);
     shell = allocated_expand_variable_for_file(

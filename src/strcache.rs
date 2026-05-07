@@ -119,8 +119,8 @@ unsafe extern "C" fn add_string(
     str: *const ::core::ffi::c_char,
     len: sc_buflen_t,
 ) -> *const ::core::ffi::c_char {
-    let mut res: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut sp: *mut strcache = ::core::ptr::null_mut::<strcache>();
+    let res: *const ::core::ffi::c_char;
+    let mut sp: *mut strcache;
     let mut spp: *mut *mut strcache = &raw mut strcache;
     let sz: sc_buflen_t = (len as ::core::ffi::c_int + 1) as sc_buflen_t;
     total_strings = total_strings.wrapping_add(1);
@@ -216,8 +216,8 @@ unsafe extern "C" fn add_hash(
     str: *const ::core::ffi::c_char,
     len: size_t,
 ) -> *const ::core::ffi::c_char {
-    let mut slot: *const *mut ::core::ffi::c_char = ::core::ptr::null::<*mut ::core::ffi::c_char>();
-    let mut key: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let slot: *const *mut ::core::ffi::c_char;
+    let mut key: *const ::core::ffi::c_char;
     if len > (USHRT_MAX - 1) as size_t {
         return add_hugestring(str, len);
     }
@@ -242,7 +242,7 @@ unsafe extern "C" fn add_hash(
 pub unsafe extern "C" fn strcache_iscached(
     str: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
-    let mut sp: *mut strcache = ::core::ptr::null_mut::<strcache>();
+    let mut sp: *mut strcache;
     sp = strcache;
     while !sp.is_null() {
         if str >= &raw mut (*sp).buffer as *mut ::core::ffi::c_char as *const ::core::ffi::c_char
@@ -267,7 +267,7 @@ pub unsafe extern "C" fn strcache_iscached(
         }
         sp = (*sp).next;
     }
-    let mut hp: *mut hugestring = ::core::ptr::null_mut::<hugestring>();
+    let mut hp: *mut hugestring;
     hp = hugestrings;
     while !hp.is_null() {
         if str == &raw mut (*hp).buffer as *mut ::core::ffi::c_char as *const ::core::ffi::c_char {
@@ -328,7 +328,7 @@ pub unsafe fn strcache_init() {
 }
 #[no_mangle]
 pub unsafe fn strcache_print_stats(prefix: *const ::core::ffi::c_char) {
-    let mut sp: *const strcache = ::core::ptr::null::<strcache>();
+    let mut sp: *const strcache;
     let mut numbuffs: ::core::ffi::c_ulong = 0;
     let mut fullbuffs: ::core::ffi::c_ulong = 0;
     let mut totfree: ::core::ffi::c_ulong = 0;

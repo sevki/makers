@@ -194,8 +194,8 @@ pub unsafe extern "C" fn jobserver_setup(
     slots: ::core::ffi::c_int,
     style: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_uint {
-    let mut r: ::core::ffi::c_int = 0;
-    let mut k: ::core::ffi::c_int = 0;
+    let mut r: ::core::ffi::c_int;
+    let mut k: ::core::ffi::c_int;
     job_root = 1;
     if style.is_null()
         || strcmp(style, b"fifo\0" as *const u8 as *const ::core::ffi::c_char)
@@ -444,7 +444,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
 }
 #[no_mangle]
 pub unsafe extern "C" fn jobserver_get_auth() -> *mut ::core::ffi::c_char {
-    let mut auth: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let auth: *mut ::core::ffi::c_char;
     if js_type as ::core::ffi::c_uint == js_fifo as ::core::ffi::c_int as ::core::ffi::c_uint {
         auth = xmalloc(
             (strlen(fifo_name) as size_t)
@@ -502,7 +502,7 @@ pub unsafe extern "C" fn jobserver_clear() {
     job_fds[0 as usize] = job_fds[1 as usize];
     if !fifo_name.is_null() {
         if job_root != 0 {
-            let mut r: ::core::ffi::c_int = 0;
+            let mut r: ::core::ffi::c_int;
             loop {
                 r = unlink(fifo_name);
                 if !(r == -1 && *__errno_location() == EINTR) {
@@ -519,7 +519,7 @@ pub unsafe extern "C" fn jobserver_clear() {
 }
 #[no_mangle]
 pub unsafe extern "C" fn jobserver_release(is_fatal: ::core::ffi::c_int) {
-    let mut r: ::core::ffi::c_int = 0;
+    let mut r: ::core::ffi::c_int;
     loop {
         r = write(
             job_fds[1 as usize],
@@ -542,7 +542,7 @@ pub unsafe extern "C" fn jobserver_release(is_fatal: ::core::ffi::c_int) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn jobserver_acquire_all() -> ::core::ffi::c_uint {
-    let mut r: ::core::ffi::c_int = 0;
+    let mut r: ::core::ffi::c_int;
     let mut tokens: ::core::ffi::c_uint = 0;
     set_blocking(
         job_fds[0 as usize],
@@ -627,7 +627,7 @@ pub unsafe extern "C" fn jobserver_acquire(timeout: ::core::ffi::c_int) -> ::cor
     }
     loop {
         let mut readfds: fd_set = fd_set { fds_bits: [0; 16] };
-        let mut r: ::core::ffi::c_int = 0;
+        let mut r: ::core::ffi::c_int;
         let mut intake: ::core::ffi::c_char = 0;
         let mut __i: ::core::ffi::c_uint = 0;
         let mut __arr: *mut fd_set = &raw mut readfds;
@@ -775,7 +775,7 @@ pub unsafe extern "C" fn osync_clear() {
         osync_handle = -1;
     }
     if sync_root != 0 && !osync_tmpfile.is_null() {
-        let mut r: ::core::ffi::c_int = 0;
+        let mut r: ::core::ffi::c_int;
         loop {
             r = unlink(osync_tmpfile);
             if !(r == -1 && *__errno_location() == EINTR) {
@@ -841,7 +841,7 @@ pub unsafe extern "C" fn get_bad_stdin() -> ::core::ffi::c_int {
 }
 #[no_mangle]
 pub unsafe extern "C" fn fd_inherit(fd: ::core::ffi::c_int) {
-    let mut flags: ::core::ffi::c_int = 0;
+    let mut flags: ::core::ffi::c_int;
     loop {
         flags = fcntl(fd, 1);
         if !(flags == -1 && *__errno_location() == EINTR) {
@@ -849,7 +849,7 @@ pub unsafe extern "C" fn fd_inherit(fd: ::core::ffi::c_int) {
         }
     }
     if flags >= 0 {
-        let mut r: ::core::ffi::c_int = 0;
+        let mut r: ::core::ffi::c_int;
         flags &= !FD_CLOEXEC;
         loop {
             r = fcntl(fd, 2, flags);
@@ -861,7 +861,7 @@ pub unsafe extern "C" fn fd_inherit(fd: ::core::ffi::c_int) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn fd_noinherit(fd: ::core::ffi::c_int) {
-    let mut flags: ::core::ffi::c_int = 0;
+    let mut flags: ::core::ffi::c_int;
     loop {
         flags = fcntl(fd, 1);
         if !(flags == -1 && *__errno_location() == EINTR) {
@@ -869,7 +869,7 @@ pub unsafe extern "C" fn fd_noinherit(fd: ::core::ffi::c_int) {
         }
     }
     if flags >= 0 {
-        let mut r: ::core::ffi::c_int = 0;
+        let mut r: ::core::ffi::c_int;
         flags |= FD_CLOEXEC;
         loop {
             r = fcntl(fd, 2, flags);
@@ -888,7 +888,7 @@ pub unsafe extern "C" fn fd_set_append(fd: ::core::ffi::c_int) -> ::core::ffi::c
     {
         flags = fcntl(fd, F_GETFL, 0);
         if flags >= 0 {
-            let mut r: ::core::ffi::c_int = 0;
+            let mut r: ::core::ffi::c_int;
             loop {
                 r = fcntl(
                     fd,
@@ -909,7 +909,7 @@ pub unsafe extern "C" fn fd_reset_append(
     flags: ::core::ffi::c_int,
 ) {
     if flags >= 0 {
-        let mut r: ::core::ffi::c_int = 0;
+        let mut r: ::core::ffi::c_int;
         loop {
             r = fcntl(fd, 4, flags);
             if !(r == -1 && *__errno_location() == EINTR) {
@@ -960,7 +960,7 @@ pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
             ) == 0)
     {
         let mask: mode_t = umask(0o77 as __mode_t) as mode_t;
-        let mut tfile: *mut FILE = ::core::ptr::null_mut::<FILE>();
+        let mut tfile: *mut FILE;
         loop {
             *__errno_location() = 0;
             tfile = tmpfile();

@@ -100,7 +100,7 @@ pub const FNM_PERIOD: ::core::ffi::c_int = (1) << 2;
 #[no_mangle]
 pub unsafe extern "C" fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let p: *const ::core::ffi::c_char = strchr(name, '(' as i32);
-    let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let end: *const ::core::ffi::c_char;
     if p.is_null() || p == name {
         return 0;
     }
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn ar_parse_name(
     arname_p: *mut *mut ::core::ffi::c_char,
     memname_p: *mut *mut ::core::ffi::c_char,
 ) {
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut p: *mut ::core::ffi::c_char;
     *arname_p = xstrdup(name);
     p = strchr(*arname_p, '(' as i32);
     if p.is_null() {
@@ -169,9 +169,9 @@ unsafe extern "C" fn ar_member_date_1(
 pub unsafe extern "C" fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut val: intmax_t = 0;
+    let val: intmax_t;
     ar_parse_name(name, &raw mut arname, &raw mut memname);
-    let mut arfile: *mut file = ::core::ptr::null_mut::<file>();
+    let mut arfile: *mut file;
     arfile = lookup_file(arname);
     if arfile.is_null() && file_exists_p(arname) != 0 {
         arfile = enter_file(strcache_add(arname));
@@ -223,9 +223,9 @@ pub unsafe extern "C" fn ar_member_date(name: *const ::core::ffi::c_char) -> tim
 pub unsafe extern "C" fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut val: ::core::ffi::c_int = 0;
+    let mut val: ::core::ffi::c_int;
     ar_parse_name(name, &raw mut arname, &raw mut memname);
-    let mut arfile: *mut file = ::core::ptr::null_mut::<file>();
+    let arfile: *mut file;
     arfile = enter_file(strcache_add(arname));
     f_mtime(arfile, 0);
     val = 1;
@@ -311,7 +311,7 @@ unsafe extern "C" fn ar_glob_pattern_p(
     pattern: *const ::core::ffi::c_char,
     quote: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
-    let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let mut p: *const ::core::ffi::c_char;
     let mut opened: ::core::ffi::c_int = 0;
     p = pattern;
     while *p as ::core::ffi::c_int != 0 {
@@ -350,10 +350,9 @@ pub unsafe extern "C" fn ar_glob(
         chain: ::core::ptr::null_mut::<nameseq>(),
         n: 0,
     };
-    let mut n: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
-    let mut names: *mut *const ::core::ffi::c_char =
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
-    let mut i: ::core::ffi::c_uint = 0;
+    let mut n: *mut nameseq;
+    let names: *mut *const ::core::ffi::c_char;
+    let mut i: ::core::ffi::c_uint;
     if ar_glob_pattern_p(member_pattern, 1) == 0 {
         return ::core::ptr::null_mut::<nameseq>();
     }

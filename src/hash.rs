@@ -137,8 +137,7 @@ pub unsafe extern "C" fn hash_find_slot(
     mut ht: *mut hash_table,
     key: *const ::core::ffi::c_void,
 ) -> *mut *mut ::core::ffi::c_void {
-    let mut slot: *mut *mut ::core::ffi::c_void =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
+    let mut slot: *mut *mut ::core::ffi::c_void;
     let mut deleted_slot: *mut *mut ::core::ffi::c_void =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     let mut hash_2: ::core::ffi::c_uint = 0;
@@ -216,7 +215,7 @@ pub unsafe extern "C" fn hash_insert_at(
     item: *const ::core::ffi::c_void,
     slot: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
-    let mut old_item: *const ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
+    let old_item: *const ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
         } else {
@@ -236,7 +235,6 @@ pub unsafe extern "C" fn hash_insert_at(
         if old_item.is_null() {
             (*ht).ht_empty_slots = (*ht).ht_empty_slots.wrapping_sub(1);
         }
-        old_item = item;
     }
     let ref mut fresh1 = *(slot as *mut *const ::core::ffi::c_void);
     *fresh1 = item;
@@ -351,8 +349,7 @@ pub unsafe extern "C" fn hash_free(mut ht: *mut hash_table, free_items: ::core::
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
-    let mut slot: *mut *mut ::core::ffi::c_void =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
+    let mut slot: *mut *mut ::core::ffi::c_void;
     let end: *mut *mut ::core::ffi::c_void =
         (*ht).ht_vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     (*ht).set_ht_in_map(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -373,8 +370,7 @@ pub unsafe extern "C" fn hash_map_arg(
     map: hash_map_arg_func_t,
     arg: *mut ::core::ffi::c_void,
 ) {
-    let mut slot: *mut *mut ::core::ffi::c_void =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
+    let mut slot: *mut *mut ::core::ffi::c_void;
     let end: *mut *mut ::core::ffi::c_void =
         (*ht).ht_vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     (*ht).set_ht_in_map(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -393,8 +389,7 @@ pub unsafe extern "C" fn hash_map_arg(
 pub unsafe extern "C" fn hash_rehash(mut ht: *mut hash_table) {
     let old_ht_size: ::core::ffi::c_ulong = (*ht).ht_size;
     let old_vec: *mut *mut ::core::ffi::c_void = (*ht).ht_vec;
-    let mut ovp: *mut *mut ::core::ffi::c_void =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
+    let mut ovp: *mut *mut ::core::ffi::c_void;
     if (*ht).ht_fill >= (*ht).ht_capacity {
         (*ht).ht_size = (*ht).ht_size.wrapping_mul(2);
         (*ht).ht_capacity = (*ht)
@@ -450,10 +445,8 @@ pub unsafe extern "C" fn hash_dump(
     mut vector_0: *mut *mut ::core::ffi::c_void,
     compare: qsort_cmp_t,
 ) -> *mut *mut ::core::ffi::c_void {
-    let mut vector: *mut *mut ::core::ffi::c_void =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    let mut slot: *mut *mut ::core::ffi::c_void =
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
+    let mut vector: *mut *mut ::core::ffi::c_void;
+    let mut slot: *mut *mut ::core::ffi::c_void;
     let end: *mut *mut ::core::ffi::c_void =
         (*ht).ht_vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     if vector_0.is_null() {
@@ -499,9 +492,9 @@ pub unsafe extern "C" fn jhash(
     mut k: *const ::core::ffi::c_uchar,
     mut length: ::core::ffi::c_int,
 ) -> ::core::ffi::c_uint {
-    let mut a: ::core::ffi::c_uint = 0;
-    let mut b: ::core::ffi::c_uint = 0;
-    let mut c: ::core::ffi::c_uint = 0;
+    let mut a: ::core::ffi::c_uint;
+    let mut b: ::core::ffi::c_uint;
+    let mut c: ::core::ffi::c_uint;
     c = JHASH_INITVAL.wrapping_add(length as ::core::ffi::c_uint);
     b = c;
     a = b;
@@ -625,10 +618,10 @@ pub unsafe extern "C" fn jhash(
 pub const UINTSZ: usize = ::core::mem::size_of::<::core::ffi::c_uint>();
 #[no_mangle]
 pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint {
-    let mut a: ::core::ffi::c_uint = 0;
-    let mut b: ::core::ffi::c_uint = 0;
-    let mut c: ::core::ffi::c_uint = 0;
-    let mut have_nul: ::core::ffi::c_uint = 0;
+    let mut a: ::core::ffi::c_uint;
+    let mut b: ::core::ffi::c_uint;
+    let mut c: ::core::ffi::c_uint;
+    let mut have_nul: ::core::ffi::c_uint;
     let start: *const ::core::ffi::c_uchar = k;
     let mut klen: size_t = strlen(k as *const ::core::ffi::c_char) as size_t;
     c = JHASH_INITVAL;

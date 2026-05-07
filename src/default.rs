@@ -452,7 +452,7 @@ pub unsafe fn set_default_suffixes() {
             NILF,
         );
     } else {
-        let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
+        let mut d: *mut dep;
         let mut p: *const ::core::ffi::c_char =
             &raw const default_suffixes as *const ::core::ffi::c_char;
         (*suffix_file).deps = enter_prereqs(
@@ -484,8 +484,7 @@ pub unsafe fn set_default_suffixes() {
 }
 #[no_mangle]
 pub unsafe fn install_default_suffix_rules() {
-    let mut s: *const *const ::core::ffi::c_char =
-        ::core::ptr::null::<*const ::core::ffi::c_char>();
+    let mut s: *const *const ::core::ffi::c_char;
     if no_builtin_rules_flag != 0 {
         return;
     }
@@ -505,7 +504,7 @@ pub unsafe fn install_default_suffix_rules() {
 }
 #[no_mangle]
 pub unsafe fn install_default_implicit_rules() {
-    let mut p: *const pspec = ::core::ptr::null::<pspec>();
+    let mut p: *const pspec;
     if no_builtin_rules_flag != 0 {
         return;
     }
@@ -522,8 +521,7 @@ pub unsafe fn install_default_implicit_rules() {
 }
 #[no_mangle]
 pub unsafe fn define_default_variables() {
-    let mut s: *const *const ::core::ffi::c_char =
-        ::core::ptr::null::<*const ::core::ffi::c_char>();
+    let mut s: *const *const ::core::ffi::c_char;
     if no_builtin_variables_flag != 0 {
         return;
     }
@@ -543,8 +541,7 @@ pub unsafe fn define_default_variables() {
 }
 #[no_mangle]
 pub unsafe fn undefine_default_variables() {
-    let mut s: *const *const ::core::ffi::c_char =
-        ::core::ptr::null::<*const ::core::ffi::c_char>();
+    let mut s: *const *const ::core::ffi::c_char;
     s = &raw const default_variables as *const *const ::core::ffi::c_char;
     while !(*s).is_null() {
         undefine_variable_in_set(

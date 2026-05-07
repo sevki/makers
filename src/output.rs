@@ -103,12 +103,12 @@ unsafe extern "C" fn _outputs(
     is_err: ::core::ffi::c_int,
     msg: *const ::core::ffi::c_char,
 ) {
-    let mut f: *mut FILE = ::core::ptr::null_mut::<FILE>();
+    let f: *mut FILE;
     if !out.is_null() && (*out).syncout() as ::core::ffi::c_int != 0 {
         let fd: ::core::ffi::c_int = if is_err != 0 { (*out).err } else { (*out).out };
         if fd != OUTPUT_NONE {
             let len: size_t = strlen(msg) as size_t;
-            let mut r: ::core::ffi::c_int = 0;
+            let mut r: ::core::ffi::c_int;
             loop {
                 r = lseek(fd, 0 as __off_t, 2) as ::core::ffi::c_int;
                 if !(r == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
@@ -128,9 +128,9 @@ pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> 
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut len: size_t = 0;
-    let mut need: size_t = 0;
-    let mut fmt: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut need: size_t;
+    let fmt: *const ::core::ffi::c_char;
+    let mut p: *mut ::core::ffi::c_char;
     need = strlen(program)
         .wrapping_add(INTSTR_LENGTH)
         .wrapping_add(2)
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) 
         perror(b"lseek()\0" as *const u8 as *const ::core::ffi::c_char);
     }
     loop {
-        let mut len: ::core::ffi::c_int = 0;
+        let mut len: ::core::ffi::c_int;
         loop {
             len = read(
                 from,
@@ -245,7 +245,7 @@ pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
 pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
     let mut current_block: u64;
     static mut in_setup: ::core::ffi::c_uint = 0;
-    let mut io_state: ::core::ffi::c_uint = 0;
+    let io_state: ::core::ffi::c_uint;
     if in_setup != 0 {
         return;
     }
@@ -347,7 +347,7 @@ pub unsafe extern "C" fn output_dump(out: *mut output) {
         }
         osync_release();
         if (*out).out != OUTPUT_NONE {
-            let mut e: ::core::ffi::c_int = 0;
+            let mut e: ::core::ffi::c_int;
             lseek((*out).out, 0 as __off_t, SEEK_SET);
             loop {
                 e = ftruncate((*out).out, 0 as __off_t);
@@ -357,7 +357,7 @@ pub unsafe extern "C" fn output_dump(out: *mut output) {
             }
         }
         if (*out).err != OUTPUT_NONE && (*out).err != (*out).out {
-            let mut e_0: ::core::ffi::c_int = 0;
+            let mut e_0: ::core::ffi::c_int;
             lseek((*out).err, 0 as __off_t, SEEK_SET);
             loop {
                 e_0 = ftruncate((*out).err, 0 as __off_t);
@@ -452,8 +452,8 @@ pub unsafe extern "C" fn message(
     args: ...
 ) {
     let mut args_0: ::core::ffi::VaListImpl;
-    let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let start: *mut ::core::ffi::c_char;
+    let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -509,8 +509,8 @@ pub unsafe extern "C" fn error(
     args: ...
 ) {
     let mut args_0: ::core::ffi::VaListImpl;
-    let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let start: *mut ::core::ffi::c_char;
+    let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -580,8 +580,8 @@ pub unsafe extern "C" fn fatal(
     let stop: *const ::core::ffi::c_char =
         b".  Stop.\n\0" as *const u8 as *const ::core::ffi::c_char;
     let mut args_0: ::core::ffi::VaListImpl;
-    let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let start: *mut ::core::ffi::c_char;
+    let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -655,8 +655,8 @@ pub unsafe extern "C" fn format(
     } else {
         0
     };
-    let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let start: *mut ::core::ffi::c_char;
+    let mut p: *mut ::core::ffi::c_char;
     len = len.wrapping_add(
         strlen(fmt)
             .wrapping_add(plen as size_t)
