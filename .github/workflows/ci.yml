@@ -21,9 +21,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential clang \
-            autoconf automake autopoint gettext gperf texinfo \
-            git wget
+            build-essential clang m4 perl \
+            automake autopoint gettext gperf texinfo \
+            git wget xz-utils
+
+      # bootstrap.conf requires autoconf >= 2.72; ubuntu-latest still ships 2.71.
+      - name: Install autoconf 2.72 from source
+        run: |
+          AC_VER=2.72
+          cd /tmp
+          curl -fsSLO https://ftp.gnu.org/gnu/autoconf/autoconf-${AC_VER}.tar.xz
+          tar xJf autoconf-${AC_VER}.tar.xz
+          cd autoconf-${AC_VER}
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          autoconf --version | head -1
 
       - name: Cache cargo registry
         uses: actions/cache@v4
