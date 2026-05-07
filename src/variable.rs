@@ -113,7 +113,7 @@ extern "C" {
     ) -> !;
     fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
 }
-use crate::warning::{self, Action, Type, warnings};
+use crate::warning::{self, Action, Type};
 pub type size_t = usize;
 pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
@@ -374,7 +374,7 @@ unsafe extern "C" fn check_valid_name(
 ) {
     let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    if !(matches!(warnings[Type::InvalidVar as usize], Action::Warn | Action::Error))
+    if !(warning::is_active(Type::InvalidVar))
     {
         return;
     }
@@ -393,7 +393,7 @@ unsafe extern "C" fn check_valid_name(
     if cp == end {
         return;
     }
-    if matches!(warnings[Type::InvalidVar as usize], Action::Warn | Action::Error)
+    if warning::is_active(Type::InvalidVar)
     {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
             ::core::ptr::null::<::core::ffi::c_char>(),
@@ -406,7 +406,7 @@ unsafe extern "C" fn check_valid_name(
             length as ::core::ffi::c_int,
             name,
         ));
-        if warnings[Type::InvalidVar as usize] == Action::Error
+        if warning::action(Type::InvalidVar) == Action::Error
         {
             fatal(
                 flocp,
@@ -692,7 +692,7 @@ unsafe extern "C" fn check_variable_reference(
 ) {
     let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    if !(matches!(warnings[Type::InvalidRef as usize], Action::Warn | Action::Error))
+    if !(warning::is_active(Type::InvalidRef))
     {
         return;
     }
@@ -711,7 +711,7 @@ unsafe extern "C" fn check_variable_reference(
     if cp == end {
         return;
     }
-    if matches!(warnings[Type::InvalidRef as usize], Action::Warn | Action::Error)
+    if warning::is_active(Type::InvalidRef)
     {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
             ::core::ptr::null::<::core::ffi::c_char>(),
@@ -724,7 +724,7 @@ unsafe extern "C" fn check_variable_reference(
             length as ::core::ffi::c_int,
             name,
         ));
-        if warnings[Type::InvalidRef as usize] == Action::Error
+        if warning::action(Type::InvalidRef) == Action::Error
         {
             fatal(
                 *expanding_var,
@@ -1687,7 +1687,7 @@ unsafe extern "C" fn set_special_var(
                 .wrapping_sub(1),
         );
         let arg = ::core::ffi::CStr::from_ptr(actions).to_str().unwrap_or("");
-        warning::decode_actions(arg, Some(&raw const (*var).fileinfo));
+        warning::decode_actions(arg, Some(&(*var).fileinfo));
         free(actions as *mut ::core::ffi::c_void);
     }
     var
@@ -2155,7 +2155,7 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
 }; 13];
 #[no_mangle]
 pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mut len: size_t) {
-    if matches!(warnings[Type::UndefinedVar as usize], Action::Warn | Action::Error)
+    if warning::is_active(Type::UndefinedVar)
     {
         let mut dp: *const defined_vars = ::core::ptr::null::<defined_vars>();
         dp = &raw const defined_vars as *const defined_vars;
@@ -2171,7 +2171,7 @@ pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mu
             }
             dp = dp.offset(1 as ::core::ffi::c_int as isize);
         }
-        if matches!(warnings[Type::UndefinedVar as usize], Action::Warn | Action::Error)
+        if warning::is_active(Type::UndefinedVar)
         {
             let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
                 ::core::ptr::null::<::core::ffi::c_char>(),
@@ -2185,7 +2185,7 @@ pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mu
                 len as ::core::ffi::c_int,
                 name,
             ));
-            if warnings[Type::UndefinedVar as usize] == Action::Error
+            if warning::action(Type::UndefinedVar) == Action::Error
             {
                 fatal(
                     reading_file,

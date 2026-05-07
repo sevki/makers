@@ -216,7 +216,7 @@ extern "C" {
         suffix: *const ::core::ffi::c_char,
     ) -> *mut pattern_var;
 }
-use crate::warning::{Action, Type, warnings};
+use crate::warning::{self, Action, Type};
 pub type size_t = usize;
 pub type __dev_t = ::core::ffi::c_ulong;
 pub type __uid_t = ::core::ffi::c_uint;
@@ -4038,14 +4038,14 @@ pub unsafe extern "C" fn tilde_expand(
     {
         let mut home_dir: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut is_variable: ::core::ffi::c_int = 0;
-        let save: Action = warnings[Type::UndefinedVar as usize];
-        warnings[Type::UndefinedVar as usize] = Action::Ignore;
+        let save: Action = warning::action(Type::UndefinedVar);
+        warning::set_action(Type::UndefinedVar, Action::Ignore);
         home_dir = allocated_expand_variable(
             b"HOME\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
                 .wrapping_sub(1),
         );
-        warnings[Type::UndefinedVar as usize] = save;
+        warning::set_action(Type::UndefinedVar, save);
         is_variable = (*home_dir.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0) as ::core::ffi::c_int;
         if is_variable == 0 {
             free(home_dir as *mut ::core::ffi::c_void);

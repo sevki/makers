@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use crate::floc::Floc;
 use crate::output::msg;
 
@@ -45,7 +47,9 @@ impl Type {
         }
     }
     fn from_name(s: &str) -> Option<Type> {
-        Self::ALL.into_iter().find(|t| t.name().eq_ignore_ascii_case(s))
+        Self::ALL
+            .into_iter()
+            .find(|t| t.name().eq_ignore_ascii_case(s))
     }
 }
 
@@ -74,125 +78,152 @@ pub struct Data {
     pub actions: [Action; Type::COUNT],
 }
 
-/// Active per-warning action, indexed by `Type as usize`. Callers index into
-/// this directly when checking whether a warning is enabled.
-#[no_mangle]
-pub static mut warnings: [Action; Type::COUNT] = [Action::Unset; Type::COUNT];
+#[derive(Default, Copy, Clone)]
+struct State {
+    /// Active per-warning action, indexed by `Type as usize`.
+    warnings: [Action; Type::COUNT],
+    default: Data,
+    variable: Data,
+    flag: Data,
+}
 
-static mut WARN_DEFAULT: Data = Data {
+const EMPTY_DATA: Data = Data {
     global: Action::Unset,
     actions: [Action::Unset; Type::COUNT],
 };
-static mut WARN_VARIABLE: Data = Data {
-    global: Action::Unset,
-    actions: [Action::Unset; Type::COUNT],
-};
-static mut WARN_FLAG: Data = Data {
-    global: Action::Unset,
-    actions: [Action::Unset; Type::COUNT],
-};
+
+static STATE: Mutex<State> = Mutex::new(State {
+    warnings: [Action::Unset; Type::COUNT],
+    default: EMPTY_DATA,
+    variable: EMPTY_DATA,
+    flag: EMPTY_DATA,
+});
+
+/// Active action for the given warning type.
+pub fn action(t: Type) -> Action {
+    STATE.lock().unwrap().warnings[t as usize]
+}
+
+/// Override the active action for `t`. Used by sites that temporarily
+/// silence a warning around a known-noisy call (e.g. `~` expansion in
+/// `read.rs`, `$SHELL` lookup in `job.rs`).
+pub fn set_action(t: Type, a: Action) {
+    STATE.lock().unwrap().warnings[t as usize] = a;
+}
+
+/// True if the warning is currently configured to emit (warn or error).
+pub fn is_active(t: Type) -> bool {
+    matches!(action(t), Action::Warn | Action::Error)
+}
 
 /// Resolve the active per-warning action by walking the precedence chain:
 /// per-flag → flag-global → per-variable → variable-global → default.
-fn refresh_warnings() {
-    unsafe {
-        for t in Type::ALL {
-            let i = t as usize;
-            warnings[i] = if WARN_FLAG.actions[i] != Action::Unset {
-                WARN_FLAG.actions[i]
-            } else if WARN_FLAG.global != Action::Unset {
-                WARN_FLAG.global
-            } else if WARN_VARIABLE.actions[i] != Action::Unset {
-                WARN_VARIABLE.actions[i]
-            } else if WARN_VARIABLE.global != Action::Unset {
-                WARN_VARIABLE.global
-            } else {
-                WARN_DEFAULT.actions[i]
-            };
-        }
+fn refresh(state: &mut State) {
+    for t in Type::ALL {
+        let i = t as usize;
+        state.warnings[i] = if state.flag.actions[i] != Action::Unset {
+            state.flag.actions[i]
+        } else if state.flag.global != Action::Unset {
+            state.flag.global
+        } else if state.variable.actions[i] != Action::Unset {
+            state.variable.actions[i]
+        } else if state.variable.global != Action::Unset {
+            state.variable.global
+        } else {
+            state.default.actions[i]
+        };
     }
 }
 
 pub fn init() {
-    unsafe {
-        WARN_DEFAULT = Data::default();
-        WARN_VARIABLE = Data::default();
-        WARN_FLAG = Data::default();
-
-        WARN_DEFAULT.global = Action::Warn;
-        WARN_DEFAULT.actions[Type::CircularDep as usize] = Action::Warn;
-        WARN_DEFAULT.actions[Type::InvalidRef as usize] = Action::Warn;
-        WARN_DEFAULT.actions[Type::InvalidVar as usize] = Action::Warn;
-        WARN_DEFAULT.actions[Type::UndefinedVar as usize] = Action::Ignore;
-    }
-    refresh_warnings();
+    let mut s = STATE.lock().unwrap();
+    *s = State::default();
+    s.default.global = Action::Warn;
+    s.default.actions[Type::CircularDep as usize] = Action::Warn;
+    s.default.actions[Type::InvalidRef as usize] = Action::Warn;
+    s.default.actions[Type::InvalidVar as usize] = Action::Warn;
+    s.default.actions[Type::UndefinedVar as usize] = Action::Ignore;
+    refresh(&mut s);
 }
 
 /// Parse a `--warn=...` value (or a `.WARNINGS` variable value) and update
 /// either the flag-level data (`flocp == None`) or the variable-level data
 /// (`flocp == Some(...)`).
-pub fn decode_actions(value: &str, flocp: Option<*const Floc>) {
+pub fn decode_actions(value: &str, flocp: Option<&Floc>) {
     let target_flag = flocp.is_none();
     let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
 
-    // Updating .WARNINGS with an empty value resets variable-level data.
-    if !target_flag && value.is_empty() {
-        unsafe {
-            WARN_VARIABLE = Data::default();
-        }
+    enum ReportKind {
+        Unknown,
+        UnknownAction,
     }
+    let mut errors: Vec<(ReportKind, String)> = Vec::new();
 
-    for token in value.split(|c: char| c.is_ascii_whitespace() || c == ',') {
-        if token.is_empty() {
-            continue;
+    {
+        let mut s = STATE.lock().unwrap();
+
+        // Updating .WARNINGS with an empty value resets variable-level data.
+        if !target_flag && value.is_empty() {
+            s.variable = Data::default();
         }
-        if let Some(action) = Action::from_name(token) {
-            unsafe {
-                if target_flag {
-                    WARN_FLAG.global = action;
-                } else {
-                    WARN_VARIABLE.global = action;
-                }
-            }
-            continue;
-        }
-        let (name, action_part) = match token.split_once(':') {
-            Some((n, a)) => (n, Some(a)),
-            None => (token, None),
-        };
-        let ty = match Type::from_name(name) {
-            Some(t) => t,
-            None => {
-                report_error(flocp, format!("unknown warning '{name}'"));
+
+        for token in value.split(|c: char| c.is_ascii_whitespace() || c == ',') {
+            if token.is_empty() {
                 continue;
             }
-        };
-        let action = match action_part {
-            None => Action::Warn,
-            Some(s) => match Action::from_name(s) {
-                Some(a) => a,
+            if let Some(action) = Action::from_name(token) {
+                if target_flag {
+                    s.flag.global = action;
+                } else {
+                    s.variable.global = action;
+                }
+                continue;
+            }
+            let (name, action_part) = match token.split_once(':') {
+                Some((n, a)) => (n, Some(a)),
+                None => (token, None),
+            };
+            let ty = match Type::from_name(name) {
+                Some(t) => t,
                 None => {
-                    report_error(flocp, format!("unknown warning action '{s}'"));
+                    errors.push((ReportKind::Unknown, name.to_string()));
                     continue;
                 }
-            },
-        };
-        unsafe {
+            };
+            let action = match action_part {
+                None => Action::Warn,
+                Some(s) => match Action::from_name(s) {
+                    Some(a) => a,
+                    None => {
+                        errors.push((ReportKind::UnknownAction, s.to_string()));
+                        continue;
+                    }
+                },
+            };
             if target_flag {
-                WARN_FLAG.actions[ty as usize] = action;
+                s.flag.actions[ty as usize] = action;
             } else {
-                WARN_VARIABLE.actions[ty as usize] = action;
+                s.variable.actions[ty as usize] = action;
             }
         }
+        refresh(&mut s);
     }
-    refresh_warnings();
+
+    // `report_error` may not return (`fatal` path), so we drop the lock
+    // before invoking it.
+    for (kind, name) in errors {
+        let body = match kind {
+            ReportKind::Unknown => format!("unknown warning '{name}'"),
+            ReportKind::UnknownAction => format!("unknown warning action '{name}'"),
+        };
+        report_error(flocp, body);
+    }
 }
 
-fn report_error(flocp: Option<*const Floc>, message: String) {
+fn report_error(flocp: Option<&Floc>, message: String) {
     match flocp {
         None => msg::fatal(None, &message),
-        // SAFETY: caller passes a live Floc pointer (parsing context).
-        Some(fp) => msg::error(Some(unsafe { &*fp }), &format!("{message}: ignored")),
+        Some(fp) => msg::error(Some(fp), &format!("{message}: ignored")),
     }
 }
 
@@ -204,19 +235,20 @@ fn report_error(flocp: Option<*const Floc>, message: String) {
 /// `fp` must point into a valid variable_buffer location; the underlying
 /// buffer is grown as needed by `variable_buffer_output`.
 pub unsafe fn encode_flag(mut fp: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
-    let any_per_warning = WARN_FLAG.actions.iter().any(|a| *a != Action::Unset);
-    if !any_per_warning && WARN_FLAG.global == Action::Unset {
+    let flag = STATE.lock().unwrap().flag;
+    let any_per_warning = flag.actions.iter().any(|a| *a != Action::Unset);
+    if !any_per_warning && flag.global == Action::Unset {
         return fp;
     }
 
     fp = append(fp, " --warn");
 
-    if !any_per_warning && WARN_FLAG.global == Action::Warn {
+    if !any_per_warning && flag.global == Action::Warn {
         return fp;
     }
 
     let mut sep = '=';
-    if let Some(name) = WARN_FLAG.global.name() {
+    if let Some(name) = flag.global.name() {
         fp = append_char(fp, sep);
         sep = ',';
         fp = append(fp, name);
@@ -224,7 +256,7 @@ pub unsafe fn encode_flag(mut fp: *mut ::core::ffi::c_char) -> *mut ::core::ffi:
 
     if any_per_warning {
         for t in Type::ALL {
-            let act = WARN_FLAG.actions[t as usize];
+            let act = flag.actions[t as usize];
             if act == Action::Unset {
                 continue;
             }

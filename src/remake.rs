@@ -95,7 +95,7 @@ extern "C" {
         length: size_t,
     ) -> *mut ::core::ffi::c_char;
 }
-use crate::warning::{Action, Type, warnings};
+use crate::warning::{self, Action, Type};
 pub type size_t = usize;
 pub type __dev_t = ::core::ffi::c_ulong;
 pub type __uid_t = ::core::ffi::c_uint;
@@ -916,7 +916,7 @@ unsafe extern "C" fn update_file_1(
             .updating()
                 != 0
             {
-                if warnings[Type::CircularDep as usize] == Action::Error {
+                if warning::action(Type::CircularDep) == Action::Error {
                     fatal(
                         ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)
@@ -927,7 +927,7 @@ unsafe extern "C" fn update_file_1(
                         (*(*d).file).name,
                     );
                 }
-                if matches!(warnings[Type::CircularDep as usize], Action::Warn | Action::Error) {
+                if warning::is_active(Type::CircularDep) {
                     error(
                         ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)

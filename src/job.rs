@@ -404,7 +404,7 @@ pub struct posix_spawn_file_actions_t {
     pub __actions: *mut __spawn_action,
     pub __pad: [::core::ffi::c_int; 16],
 }
-use crate::warning::{Action, Type, warnings};
+use crate::warning::{self, Action, Type};
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const __S_IEXEC: ::core::ffi::c_int = 0o100 as ::core::ffi::c_int;
 pub const SIG_BLOCK: ::core::ffi::c_int = 0;
@@ -2997,8 +2997,8 @@ pub unsafe extern "C" fn construct_command_argv(
     let mut argv: *mut *mut ::core::ffi::c_char =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     let mut var: *mut variable = ::core::ptr::null_mut::<variable>();
-    let save: Action = warnings[Type::UndefinedVar as usize];
-    warnings[Type::UndefinedVar as usize] = Action::Ignore;
+    let save: Action = warning::action(Type::UndefinedVar);
+    warning::set_action(Type::UndefinedVar, Action::Ignore);
     shell = allocated_expand_variable_for_file(
         b"SHELL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
@@ -3027,7 +3027,7 @@ pub unsafe extern "C" fn construct_command_argv(
         (::core::mem::size_of::<[::core::ffi::c_char; 4]>() as size_t).wrapping_sub(1),
         file,
     );
-    warnings[Type::UndefinedVar as usize] = save;
+    warning::set_action(Type::UndefinedVar, save);
     argv = construct_command_argv_internal(
         line,
         restp,
