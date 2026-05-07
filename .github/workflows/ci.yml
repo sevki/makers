@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-make-builds-c-make:
+    name: rust make builds C make
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang autoconf automake gettext
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Configure
+        run: ./configure --quiet
+
+      - name: Run ci-test.sh (rust make + C make)
+        run: ./scripts/ci-test.sh --skip-kernel
+
+      - name: Upload rust make binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-make-${{ github.sha }}
+          path: target/install/bin/make
+          if-no-files-found: error
+          retention-days: 7
+
+  kernel-build:
+    name: rust make builds Linux kernel (okLinux)
+    needs: rust-make-builds-c-make
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download rust make artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-make-${{ github.sha }}
+          path: rust-make
+
+      - name: Put rust make first on PATH as `make`
+        run: |
+          chmod +x rust-make/make
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$PWD/rust-make/make" "$HOME/.local/bin/make"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify
+        run: |
+          which make
+          make --version | head -2
+
+      - name: Build Linux kernel via okLinux build.sh
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/sevki/okLinux/refs/heads/main/build.sh \
+            -o build.sh
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Upload kernel tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: oklinux-kernel-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/oklinux-kernel-*.tar.gz
+            ${{ runner.temp }}/oklinux-kernel-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
