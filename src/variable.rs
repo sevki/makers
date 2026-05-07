@@ -112,9 +112,8 @@ extern "C" {
         __function: *const ::core::ffi::c_char,
     ) -> !;
     fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
-    static mut warnings: [warning_action; 4];
-    fn decode_warn_actions(value: *const ::core::ffi::c_char, flocp: *const Floc);
 }
+use crate::warning::{self, Action, Type, warnings};
 pub type size_t = usize;
 pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
@@ -197,23 +196,12 @@ pub type variable_scope = ::core::ffi::c_uint;
 pub const s_pattern: variable_scope = 2;
 pub const s_target: variable_scope = 1;
 pub const s_global: variable_scope = 0;
-pub const w_error: warning_action = 3;
-pub type warning_action = ::core::ffi::c_uint;
-pub const w_warn: warning_action = 2;
-pub const w_ignore: warning_action = 1;
-pub const w_unset: warning_action = 0;
-pub const wt_invalid_var: warning_type = 2;
-pub const wt_invalid_ref: warning_type = 1;
-pub const wt_undefined_var: warning_type = 3;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct defined_vars {
     pub name: *const ::core::ffi::c_char,
     pub len: size_t,
 }
-pub type warning_type = ::core::ffi::c_uint;
-pub const wt_max: warning_type = 4;
-pub const wt_circular_dep: warning_type = 0;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
@@ -386,8 +374,7 @@ unsafe extern "C" fn check_valid_name(
 ) {
     let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    if !(warnings[wt_invalid_var as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-        > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint)
+    if !(matches!(warnings[Type::InvalidVar as usize], Action::Warn | Action::Error))
     {
         return;
     }
@@ -406,8 +393,7 @@ unsafe extern "C" fn check_valid_name(
     if cp == end {
         return;
     }
-    if warnings[wt_invalid_var as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-        > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint
+    if matches!(warnings[Type::InvalidVar as usize], Action::Warn | Action::Error)
     {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
             ::core::ptr::null::<::core::ffi::c_char>(),
@@ -420,8 +406,7 @@ unsafe extern "C" fn check_valid_name(
             length as ::core::ffi::c_int,
             name,
         ));
-        if warnings[wt_invalid_var as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-            == w_error as ::core::ffi::c_int as ::core::ffi::c_uint
+        if warnings[Type::InvalidVar as usize] == Action::Error
         {
             fatal(
                 flocp,
@@ -707,8 +692,7 @@ unsafe extern "C" fn check_variable_reference(
 ) {
     let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    if !(warnings[wt_invalid_ref as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-        > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint)
+    if !(matches!(warnings[Type::InvalidRef as usize], Action::Warn | Action::Error))
     {
         return;
     }
@@ -727,8 +711,7 @@ unsafe extern "C" fn check_variable_reference(
     if cp == end {
         return;
     }
-    if warnings[wt_invalid_ref as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-        > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint
+    if matches!(warnings[Type::InvalidRef as usize], Action::Warn | Action::Error)
     {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
             ::core::ptr::null::<::core::ffi::c_char>(),
@@ -741,8 +724,7 @@ unsafe extern "C" fn check_variable_reference(
             length as ::core::ffi::c_int,
             name,
         ));
-        if warnings[wt_invalid_ref as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-            == w_error as ::core::ffi::c_int as ::core::ffi::c_uint
+        if warnings[Type::InvalidRef as usize] == Action::Error
         {
             fatal(
                 *expanding_var,
@@ -1704,7 +1686,8 @@ unsafe extern "C" fn set_special_var(
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
                 .wrapping_sub(1),
         );
-        decode_warn_actions(actions, &raw mut (*var).fileinfo);
+        let arg = ::core::ffi::CStr::from_ptr(actions).to_str().unwrap_or("");
+        warning::decode_actions(arg, Some(&raw const (*var).fileinfo));
         free(actions as *mut ::core::ffi::c_void);
     }
     var
@@ -2172,8 +2155,7 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
 }; 13];
 #[no_mangle]
 pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mut len: size_t) {
-    if warnings[wt_undefined_var as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-        > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint
+    if matches!(warnings[Type::UndefinedVar as usize], Action::Warn | Action::Error)
     {
         let mut dp: *const defined_vars = ::core::ptr::null::<defined_vars>();
         dp = &raw const defined_vars as *const defined_vars;
@@ -2189,8 +2171,7 @@ pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mu
             }
             dp = dp.offset(1 as ::core::ffi::c_int as isize);
         }
-        if warnings[wt_undefined_var as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-            > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint
+        if matches!(warnings[Type::UndefinedVar as usize], Action::Warn | Action::Error)
         {
             let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
                 ::core::ptr::null::<::core::ffi::c_char>(),
@@ -2204,8 +2185,7 @@ pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mu
                 len as ::core::ffi::c_int,
                 name,
             ));
-            if warnings[wt_undefined_var as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-                == w_error as ::core::ffi::c_int as ::core::ffi::c_uint
+            if warnings[Type::UndefinedVar as usize] == Action::Error
             {
                 fatal(
                     reading_file,

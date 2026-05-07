@@ -215,9 +215,6 @@ extern "C" {
         flocp: *const Floc,
     ) -> *mut variable;
     fn reset_env_override();
-    fn warn_init();
-    fn decode_warn_actions(value: *const ::core::ffi::c_char, flocp: *const Floc);
-    fn encode_warn_flag(fp: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
 }
 pub type size_t = usize;
 pub type __uint32_t = u32;
@@ -1508,7 +1505,7 @@ unsafe fn main_0(
     }
     output_init(&raw mut make_sync);
     initialize_stopchar_map();
-    warn_init();
+    crate::warning::init();
     verify_flag = 1;
     setlocale(LC_ALL, b"\0" as *const u8 as *const ::core::ffi::c_char);
     sigemptyset(&raw mut fatal_signal_set);
@@ -3678,16 +3675,14 @@ unsafe extern "C" fn decode_switches(
     decode_debug_flags();
     decode_output_sync_flags();
     if warn_undefined_variables_flag != 0 {
-        decode_warn_actions(
-            b"undefined-var\0" as *const u8 as *const ::core::ffi::c_char,
-            ::core::ptr::null::<Floc>(),
-        );
+        crate::warning::decode_actions("undefined-var", None);
         warn_undefined_variables_flag = 0;
     }
     if !warn_flags.is_null() {
         let mut pp: *mut *const ::core::ffi::c_char = (*warn_flags).list;
         while !(*pp).is_null() {
-            decode_warn_actions(*pp, ::core::ptr::null::<Floc>());
+            let arg = ::core::ffi::CStr::from_ptr(*pp).to_str().unwrap_or("");
+            crate::warning::decode_actions(arg, None);
             pp = pp.offset(1 as ::core::ffi::c_int as isize);
         }
     }
@@ -4075,7 +4070,7 @@ pub unsafe extern "C" fn define_makeflags(mut makefile: ::core::ffi::c_int) -> *
                 }
                 4 | 3 => {
                     if (*cs).c == WARN_OPT {
-                        fp = encode_warn_flag(fp);
+                        fp = crate::warning::encode_flag(fp);
                     } else {
                         let mut sl: *mut stringlist = *((*cs).value_ptr as *mut *mut stringlist);
                         if !sl.is_null() {

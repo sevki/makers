@@ -177,7 +177,6 @@ extern "C" {
         file: *mut file,
         recursive: ::core::ffi::c_int,
     ) -> *mut *mut ::core::ffi::c_char;
-    static mut warnings: [warning_action; 4];
     static mut fatal_signal_set: sigset_t;
     static mut shell_function_pid: pid_t;
 }
@@ -405,17 +404,7 @@ pub struct posix_spawn_file_actions_t {
     pub __actions: *mut __spawn_action,
     pub __pad: [::core::ffi::c_int; 16],
 }
-pub type warning_action = ::core::ffi::c_uint;
-pub const w_error: warning_action = 3;
-pub const w_warn: warning_action = 2;
-pub const w_ignore: warning_action = 1;
-pub const w_unset: warning_action = 0;
-pub const wt_undefined_var: warning_type = 3;
-pub type warning_type = ::core::ffi::c_uint;
-pub const wt_max: warning_type = 4;
-pub const wt_invalid_var: warning_type = 2;
-pub const wt_invalid_ref: warning_type = 1;
-pub const wt_circular_dep: warning_type = 0;
+use crate::warning::{Action, Type, warnings};
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const __S_IEXEC: ::core::ffi::c_int = 0o100 as ::core::ffi::c_int;
 pub const SIG_BLOCK: ::core::ffi::c_int = 0;
@@ -3008,8 +2997,8 @@ pub unsafe extern "C" fn construct_command_argv(
     let mut argv: *mut *mut ::core::ffi::c_char =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     let mut var: *mut variable = ::core::ptr::null_mut::<variable>();
-    let mut save: warning_action = warnings[wt_undefined_var as ::core::ffi::c_int as usize];
-    warnings[wt_undefined_var as ::core::ffi::c_int as usize] = w_ignore;
+    let save: Action = warnings[Type::UndefinedVar as usize];
+    warnings[Type::UndefinedVar as usize] = Action::Ignore;
     shell = allocated_expand_variable_for_file(
         b"SHELL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
@@ -3038,7 +3027,7 @@ pub unsafe extern "C" fn construct_command_argv(
         (::core::mem::size_of::<[::core::ffi::c_char; 4]>() as size_t).wrapping_sub(1),
         file,
     );
-    warnings[wt_undefined_var as ::core::ffi::c_int as usize] = save;
+    warnings[Type::UndefinedVar as usize] = save;
     argv = construct_command_argv_internal(
         line,
         restp,

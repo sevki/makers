@@ -94,8 +94,8 @@ extern "C" {
         name: *const ::core::ffi::c_char,
         length: size_t,
     ) -> *mut ::core::ffi::c_char;
-    static mut warnings: [warning_action; 4];
 }
+use crate::warning::{Action, Type, warnings};
 pub type size_t = usize;
 pub type __dev_t = ::core::ffi::c_ulong;
 pub type __uid_t = ::core::ffi::c_uint;
@@ -173,17 +173,6 @@ pub struct nameseq {
     pub next: *mut nameseq,
     pub name: *const ::core::ffi::c_char,
 }
-pub const w_ignore: warning_action = 1;
-pub type warning_action = ::core::ffi::c_uint;
-pub const w_error: warning_action = 3;
-pub const w_warn: warning_action = 2;
-pub const w_unset: warning_action = 0;
-pub const wt_circular_dep: warning_type = 0;
-pub type warning_type = ::core::ffi::c_uint;
-pub const wt_max: warning_type = 4;
-pub const wt_undefined_var: warning_type = 3;
-pub const wt_invalid_var: warning_type = 2;
-pub const wt_invalid_ref: warning_type = 1;
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const ENOENT: ::core::ffi::c_int = 2;
 pub const EINTR: ::core::ffi::c_int = 4;
@@ -927,9 +916,7 @@ unsafe extern "C" fn update_file_1(
             .updating()
                 != 0
             {
-                if warnings[wt_circular_dep as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-                    == w_error as ::core::ffi::c_int as ::core::ffi::c_uint
-                {
+                if warnings[Type::CircularDep as usize] == Action::Error {
                     fatal(
                         ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)
@@ -940,9 +927,7 @@ unsafe extern "C" fn update_file_1(
                         (*(*d).file).name,
                     );
                 }
-                if warnings[wt_circular_dep as ::core::ffi::c_int as usize] as ::core::ffi::c_uint
-                    > w_ignore as ::core::ffi::c_int as ::core::ffi::c_uint
-                {
+                if matches!(warnings[Type::CircularDep as usize], Action::Warn | Action::Error) {
                     error(
                         ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)

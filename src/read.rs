@@ -215,8 +215,8 @@ extern "C" {
         target: *const ::core::ffi::c_char,
         suffix: *const ::core::ffi::c_char,
     ) -> *mut pattern_var;
-    static mut warnings: [warning_action; 4];
 }
+use crate::warning::{Action, Type, warnings};
 pub type size_t = usize;
 pub type __dev_t = ::core::ffi::c_ulong;
 pub type __uid_t = ::core::ffi::c_uint;
@@ -330,12 +330,6 @@ pub struct passwd {
     pub pw_dir: *mut ::core::ffi::c_char,
     pub pw_shell: *mut ::core::ffi::c_char,
 }
-pub type warning_action = ::core::ffi::c_uint;
-pub const w_error: warning_action = 3;
-pub const w_warn: warning_action = 2;
-pub const w_ignore: warning_action = 1;
-pub const w_unset: warning_action = 0;
-pub const wt_undefined_var: warning_type = 3;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct nameseq {
@@ -430,11 +424,6 @@ pub const c_else: C2RustUnnamed = 4;
 pub const c_ifeq: C2RustUnnamed = 2;
 pub const c_ifndef: C2RustUnnamed = 1;
 pub const c_ifdef: C2RustUnnamed = 0;
-pub type warning_type = ::core::ffi::c_uint;
-pub const wt_max: warning_type = 4;
-pub const wt_invalid_var: warning_type = 2;
-pub const wt_invalid_ref: warning_type = 1;
-pub const wt_circular_dep: warning_type = 0;
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const ENOENT: ::core::ffi::c_int = 2;
 pub const EINTR: ::core::ffi::c_int = 4;
@@ -4049,14 +4038,14 @@ pub unsafe extern "C" fn tilde_expand(
     {
         let mut home_dir: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut is_variable: ::core::ffi::c_int = 0;
-        let mut save: warning_action = warnings[wt_undefined_var as ::core::ffi::c_int as usize];
-        warnings[wt_undefined_var as ::core::ffi::c_int as usize] = w_ignore;
+        let save: Action = warnings[Type::UndefinedVar as usize];
+        warnings[Type::UndefinedVar as usize] = Action::Ignore;
         home_dir = allocated_expand_variable(
             b"HOME\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
                 .wrapping_sub(1),
         );
-        warnings[wt_undefined_var as ::core::ffi::c_int as usize] = save;
+        warnings[Type::UndefinedVar as usize] = save;
         is_variable = (*home_dir.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0) as ::core::ffi::c_int;
         if is_variable == 0 {
             free(home_dir as *mut ::core::ffi::c_void);
