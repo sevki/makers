@@ -1,10 +1,10 @@
 use crate::floc::Floc;
+pub use crate::ffi_types::size_t;
 
 extern "C" {
     pub type file;
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
 }
-pub type size_t = usize;
 #[no_mangle]
 pub unsafe extern "C" fn load_file(
     mut flocp: *const Floc,

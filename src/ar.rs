@@ -1,6 +1,7 @@
 use libc::{fnmatch, free, strchr};
 
 use crate::file::{Dep, File};
+pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
 extern "C" {
     pub type variable_set_list;
     pub type commands;
@@ -41,17 +42,12 @@ extern "C" {
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t;
 }
-pub type size_t = usize;
-pub type __time_t = ::core::ffi::c_long;
-pub type time_t = __time_t;
 pub type __compar_fn_t = Option<
     unsafe extern "C" fn(
         *const ::core::ffi::c_void,
         *const ::core::ffi::c_void,
     ) -> ::core::ffi::c_int,
 >;
-pub type intmax_t = ::libc::intmax_t;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;

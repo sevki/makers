@@ -2,6 +2,10 @@ use libc::{__errno_location, abort, close, free, open, printf, puts, sprintf, st
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+pub use crate::ffi_types::{
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
+};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -96,25 +100,8 @@ extern "C" {
     ) -> *mut ::core::ffi::c_char;
 }
 use crate::warning::{self, Action, Type};
-pub type size_t = usize;
-pub type __dev_t = ::core::ffi::c_ulong;
-pub type __uid_t = ::core::ffi::c_uint;
-pub type __gid_t = ::core::ffi::c_uint;
-pub type __ino_t = ::core::ffi::c_ulong;
-pub type __mode_t = ::core::ffi::c_uint;
-pub type __nlink_t = ::core::ffi::c_ulong;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type __time_t = ::core::ffi::c_long;
-pub type __blksize_t = ::core::ffi::c_long;
-pub type __blkcnt_t = ::core::ffi::c_long;
-pub type __syscall_slong_t = ::core::ffi::c_long;
-pub type off_t = __off_t;
-pub type ssize_t = isize;
-pub type time_t = __time_t;
 pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;

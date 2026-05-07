@@ -4,9 +4,7 @@ extern "C" {
     pub type _IO_marker;
 }
 
-pub type size_t = usize;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
+pub use crate::ffi_types::{__off64_t, __off_t, size_t};
 
 #[derive(Copy, Clone)]
 #[repr(C)]

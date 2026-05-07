@@ -1,4 +1,5 @@
 use ::c2rust_bitfields;
+pub use crate::ffi_types::{size_t, uintmax_t};
 extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
@@ -35,8 +36,6 @@ extern "C" {
         set: *mut variable_set,
     );
 }
-pub type size_t = usize;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;

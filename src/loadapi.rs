@@ -1,6 +1,7 @@
 use libc::{free};
 
 use crate::file::{Dep, File, VariableSet, VariableSetList};
+pub use crate::ffi_types::{size_t, uintmax_t};
 extern "C" {
     pub type commands;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
@@ -22,7 +23,6 @@ extern "C" {
         func: gmk_func_ptr,
     );
 }
-pub type size_t = usize;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct gmk_floc {
@@ -50,7 +50,6 @@ pub const us_failed: update_status_0 = 3;
 pub const us_question: update_status_0 = 2;
 pub const us_none: update_status_0 = 1;
 pub const us_success: update_status_0 = 0;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
 pub type hash_table = crate::hash::hash_table;

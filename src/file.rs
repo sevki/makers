@@ -1,6 +1,10 @@
 use libc::{__errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink};
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
+pub use crate::ffi_types::{
+    __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
+    intmax_t, size_t, time_t, uintmax_t,
+};
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
@@ -140,15 +144,6 @@ extern "C" {
         set: *const variable_set,
     ) -> *mut variable;
 }
-pub type size_t = usize;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type __time_t = ::core::ffi::c_long;
-pub type __suseconds_t = ::core::ffi::c_long;
-pub type __clockid_t = ::core::ffi::c_int;
-pub type __syscall_slong_t = ::core::ffi::c_long;
-pub type clockid_t = __clockid_t;
-pub type time_t = __time_t;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct timeval {
@@ -184,8 +179,6 @@ pub struct tm {
     pub tm_gmtoff: ::core::ffi::c_long,
     pub tm_zone: *const ::core::ffi::c_char,
 }
-pub type intmax_t = ::libc::intmax_t;
-pub type uintmax_t = ::libc::uintmax_t;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct File {

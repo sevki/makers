@@ -1,6 +1,5 @@
 use libc::{__errno_location};
-pub type __pid_t = ::core::ffi::c_int;
-pub type pid_t = __pid_t;
+pub use crate::ffi_types::{__pid_t, pid_t};
 pub const ECHILD: ::core::ffi::c_int = 10;
 #[no_mangle]
 pub static mut remote_description: *mut ::core::ffi::c_char =

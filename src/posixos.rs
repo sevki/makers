@@ -1,5 +1,10 @@
 use libc::{__errno_location, close, dup, fcntl, free, open, perror, pipe, printf, sprintf, sscanf, strcmp, strerror, unlink};
 use crate::stdio::{FILE};
+pub use crate::ffi_types::{
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, mode_t, pid_t, sig_atomic_t,
+    size_t, ssize_t, uintmax_t,
+};
 extern "C" {
     fn pselect(
         __nfds: ::core::ffi::c_int,
@@ -41,24 +46,6 @@ extern "C" {
     static mut handling_fatal_signal: sig_atomic_t;
     static mut db_level: ::core::ffi::c_int;
 }
-pub type size_t = usize;
-pub type __dev_t = ::core::ffi::c_ulong;
-pub type __uid_t = ::core::ffi::c_uint;
-pub type __gid_t = ::core::ffi::c_uint;
-pub type __ino_t = ::core::ffi::c_ulong;
-pub type __mode_t = ::core::ffi::c_uint;
-pub type __nlink_t = ::core::ffi::c_ulong;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type __pid_t = ::core::ffi::c_int;
-pub type __time_t = ::core::ffi::c_long;
-pub type __blksize_t = ::core::ffi::c_long;
-pub type __blkcnt_t = ::core::ffi::c_long;
-pub type __syscall_slong_t = ::core::ffi::c_long;
-pub type __sig_atomic_t = ::core::ffi::c_int;
-pub type mode_t = __mode_t;
-pub type pid_t = __pid_t;
-pub type ssize_t = isize;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct __sigset_t {
@@ -73,8 +60,6 @@ pub struct fd_set {
     pub fds_bits: [__fd_mask; 16],
 }
 pub use crate::sys_stat::stat;
-pub type sig_atomic_t = __sig_atomic_t;
-pub type uintmax_t = ::libc::uintmax_t;
 use crate::floc::Floc;
 
 #[derive(Copy, Clone)]

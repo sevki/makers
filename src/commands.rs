@@ -2,6 +2,11 @@ use libc::{__errno_location, exit, printf, puts, strchr, strcmp, strstr, unlink}
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+pub use crate::ffi_types::{
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
+    time_t, uintmax_t,
+};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn signal(__sig: ::core::ffi::c_int, __handler: __sighandler_t) -> __sighandler_t;
@@ -95,28 +100,9 @@ extern "C" {
         flocp: *const Floc,
     ) -> *mut variable;
 }
-pub type size_t = usize;
-pub type __dev_t = ::core::ffi::c_ulong;
-pub type __uid_t = ::core::ffi::c_uint;
-pub type __gid_t = ::core::ffi::c_uint;
-pub type __ino_t = ::core::ffi::c_ulong;
-pub type __mode_t = ::core::ffi::c_uint;
-pub type __nlink_t = ::core::ffi::c_ulong;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type __pid_t = ::core::ffi::c_int;
-pub type __time_t = ::core::ffi::c_long;
-pub type __blksize_t = ::core::ffi::c_long;
-pub type __blkcnt_t = ::core::ffi::c_long;
-pub type __syscall_slong_t = ::core::ffi::c_long;
-pub type __sig_atomic_t = ::core::ffi::c_int;
-pub type pid_t = __pid_t;
-pub type time_t = __time_t;
 pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
-pub type sig_atomic_t = __sig_atomic_t;
 pub type __sighandler_t = Option<unsafe extern "C" fn(::core::ffi::c_int) -> ()>;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;

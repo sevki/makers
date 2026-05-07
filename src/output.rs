@@ -1,6 +1,7 @@
 use libc::{__errno_location, close, exit, perror, sprintf, strcat, strerror};
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
+pub use crate::ffi_types::{__off64_t, __off_t, size_t, ssize_t, uintmax_t};
 extern "C" {
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
@@ -61,13 +62,8 @@ pub struct __va_list_tag {
     pub overflow_arg_area: *mut ::core::ffi::c_void,
     pub reg_save_area: *mut ::core::ffi::c_void,
 }
-pub type size_t = usize;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type ssize_t = isize;
 pub type __gnuc_va_list = __builtin_va_list;
 pub type va_list = __gnuc_va_list;
-pub type uintmax_t = ::libc::uintmax_t;
 use crate::floc::Floc;
 
 #[derive(Copy, Clone, BitfieldStruct)]

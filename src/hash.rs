@@ -1,6 +1,7 @@
 use libc::{exit, free};
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
+pub use crate::ffi_types::size_t;
 extern "C" {
     static mut stderr: *mut FILE;
     fn fprintf(
@@ -29,7 +30,6 @@ extern "C" {
         __function: *const ::core::ffi::c_char,
     ) -> !;
 }
-pub type size_t = usize;
 pub type __compar_fn_t = Option<
     unsafe extern "C" fn(
         *const ::core::ffi::c_void,

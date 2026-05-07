@@ -2,6 +2,11 @@ use libc::{__errno_location, close, free, getenv, getloadavg, open, printf, remo
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+pub use crate::ffi_types::{
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
+    ssize_t, time_t, uintmax_t,
+};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -180,24 +185,6 @@ extern "C" {
     static mut fatal_signal_set: sigset_t;
     static mut shell_function_pid: pid_t;
 }
-pub type size_t = usize;
-pub type __dev_t = ::core::ffi::c_ulong;
-pub type __uid_t = ::core::ffi::c_uint;
-pub type __gid_t = ::core::ffi::c_uint;
-pub type __ino_t = ::core::ffi::c_ulong;
-pub type __mode_t = ::core::ffi::c_uint;
-pub type __nlink_t = ::core::ffi::c_ulong;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type __pid_t = ::core::ffi::c_int;
-pub type __time_t = ::core::ffi::c_long;
-pub type __blksize_t = ::core::ffi::c_long;
-pub type __blkcnt_t = ::core::ffi::c_long;
-pub type __syscall_slong_t = ::core::ffi::c_long;
-pub type __sig_atomic_t = ::core::ffi::c_int;
-pub type pid_t = __pid_t;
-pub type ssize_t = isize;
-pub type time_t = __time_t;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct __sigset_t {
@@ -206,7 +193,6 @@ pub struct __sigset_t {
 pub type sigset_t = __sigset_t;
 pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
-pub type sig_atomic_t = __sig_atomic_t;
 pub type C2RustUnnamed = ::core::ffi::c_uint;
 pub const _CS_V7_ENV: C2RustUnnamed = 1149;
 pub const _CS_V6_ENV: C2RustUnnamed = 1148;
@@ -272,7 +258,6 @@ pub const _CS_GNU_LIBPTHREAD_VERSION: C2RustUnnamed = 3;
 pub const _CS_GNU_LIBC_VERSION: C2RustUnnamed = 2;
 pub const _CS_V6_WIDTH_RESTRICTED_ENVS: C2RustUnnamed = 1;
 pub const _CS_PATH: C2RustUnnamed = 0;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;

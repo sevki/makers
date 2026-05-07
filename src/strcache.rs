@@ -1,6 +1,7 @@
 use libc::{printf, strcmp};
 
 use crate::stdio::{FILE};
+pub use crate::ffi_types::size_t;
 extern "C" {
     static mut stdout: *mut FILE;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
@@ -42,7 +43,6 @@ extern "C" {
     fn jhash_string(key: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint;
     static mut hash_deleted_item: *const ::core::ffi::c_void;
 }
-pub type size_t = usize;
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;

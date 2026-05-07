@@ -1,6 +1,10 @@
 use libc::{__errno_location, free, printf, puts, strcmp, strerror, strrchr};
 
 use crate::stdio::{FILE};
+pub use crate::ffi_types::{
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __size_t, __syscall_slong_t, __time_t, __uid_t, dev_t, ino_t, size_t, time_t,
+};
 extern "C" {
     pub type __dirstream;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -60,25 +64,8 @@ extern "C" {
     fn jhash_string(key: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint;
     static mut hash_deleted_item: *const ::core::ffi::c_void;
 }
-pub type size_t = usize;
-pub type __dev_t = ::core::ffi::c_ulong;
-pub type __uid_t = ::core::ffi::c_uint;
-pub type __gid_t = ::core::ffi::c_uint;
-pub type __ino_t = ::core::ffi::c_ulong;
-pub type __mode_t = ::core::ffi::c_uint;
-pub type __nlink_t = ::core::ffi::c_ulong;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type __time_t = ::core::ffi::c_long;
-pub type __blksize_t = ::core::ffi::c_long;
-pub type __blkcnt_t = ::core::ffi::c_long;
-pub type __syscall_slong_t = ::core::ffi::c_long;
-pub type ino_t = __ino_t;
-pub type dev_t = __dev_t;
-pub type time_t = __time_t;
 pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
-pub type __size_t = usize;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct glob_t {

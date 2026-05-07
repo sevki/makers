@@ -2,6 +2,7 @@ use libc::{abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, 
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+pub use crate::ffi_types::{size_t, uintmax_t};
 extern "C" {
     static mut stdout: *mut FILE;
     fn putc(__c: ::core::ffi::c_int, __stream: *mut FILE) -> ::core::ffi::c_int;
@@ -114,8 +115,6 @@ extern "C" {
     fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
 }
 use crate::warning::{self, Action, Type};
-pub type size_t = usize;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;

@@ -1,3 +1,3 @@
 fn main() {
-    make_sys::main::main();
+    make_sys::make_main::main();
 }

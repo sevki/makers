@@ -2,6 +2,10 @@ use libc::{__errno_location, abort, close, free, pipe, printf, realpath, remove,
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+pub use crate::ffi_types::{
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
+};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
@@ -174,8 +178,6 @@ extern "C" {
         recursive: ::core::ffi::c_int,
     ) -> *mut *mut ::core::ffi::c_char;
 }
-pub type ptrdiff_t = isize;
-pub type size_t = usize;
 pub type gmk_func_ptr = Option<
     unsafe extern "C" fn(
         *const ::core::ffi::c_char,
@@ -183,21 +185,6 @@ pub type gmk_func_ptr = Option<
         *mut *mut ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char,
 >;
-pub type __dev_t = ::core::ffi::c_ulong;
-pub type __uid_t = ::core::ffi::c_uint;
-pub type __gid_t = ::core::ffi::c_uint;
-pub type __ino_t = ::core::ffi::c_ulong;
-pub type __mode_t = ::core::ffi::c_uint;
-pub type __nlink_t = ::core::ffi::c_ulong;
-pub type __off_t = ::core::ffi::c_long;
-pub type __off64_t = ::core::ffi::c_long;
-pub type __pid_t = ::core::ffi::c_int;
-pub type __time_t = ::core::ffi::c_long;
-pub type __blksize_t = ::core::ffi::c_long;
-pub type __blkcnt_t = ::core::ffi::c_long;
-pub type __syscall_slong_t = ::core::ffi::c_long;
-pub type pid_t = __pid_t;
-pub type ssize_t = isize;
 pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
 pub type __compar_fn_t = Option<
@@ -206,7 +193,6 @@ pub type __compar_fn_t = Option<
         *const ::core::ffi::c_void,
     ) -> ::core::ffi::c_int,
 >;
-pub type uintmax_t = ::libc::uintmax_t;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
@@ -3195,4 +3181,33 @@ pub unsafe extern "C" fn hash_init_function_table() {
             .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong),
         ::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong,
     );
+}
+
+#[cfg(test)]
+mod ft_init_tests {
+    use super::*;
+
+    /// Verify that the bitfield byte we wrote in `ft_entry` round-trips
+    /// through the `BitfieldStruct`-generated getters. This catches any
+    /// drift between our hand-packed byte layout and the c2rust_bitfields
+    /// crate's expected encoding.
+    #[test]
+    fn bitfield_byte_matches_getters() {
+        let entries = unsafe { &function_table_init };
+        for (i, e) in entries.iter().enumerate() {
+            let byte = e.expand_args_alloc_fn_adds_command[0];
+            let exp = e.expand_args();
+            let alloc = e.alloc_fn();
+            let adds = e.adds_command();
+            let reconstructed = (exp & 1) | ((alloc & 1) << 1) | ((adds & 1) << 2);
+            assert_eq!(
+                byte as u32, reconstructed,
+                "idx {i}: byte {byte:#04x} != getters(exp={exp}, alloc={alloc}, adds={adds})"
+            );
+            assert!(
+                alloc == 0 && adds == 0,
+                "idx {i}: alloc/adds expected zero in static table"
+            );
+        }
+    }
 }
