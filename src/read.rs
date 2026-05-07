@@ -1152,13 +1152,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                     '_c2rust_label: {
                         if !v.is_null() {
                         } else {
-                            __assert_fail(
-                                b"v != NULL\0" as *const u8 as *const ::core::ffi::c_char,
-                                b"src/read.c\0" as *const u8 as *const ::core::ffi::c_char,
-                                762,
-                                b"void eval(struct ebuffer *, int)\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                            );
+                            make_assert_fail ! ( b"v != NULL\0" as *const u8 as *const ::core::ffi::c_char ) ;
                         }
                     };
                     if vmod.export_v() as ::core::ffi::c_int != v_default as ::core::ffi::c_int {
@@ -1922,16 +1916,8 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                         '_c2rust_label_0: {
                                             if *p2 as ::core::ffi::c_int != 0 {
                                             } else {
-                                                __assert_fail(
-                                                    b"*p2 != '\\0'\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    b"src/read.c\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    1215 as ::core::ffi::c_uint,
-                                                    b"void eval(struct ebuffer *, int)\0"
-                                                        as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                );
+                                                make_assert_fail ! ( b"*p2 != '\\0'\0" as *const u8
+                                                        as *const ::core::ffi::c_char ) ;
                                             }
                                         };
                                         p2 = p2.offset(1 as ::core::ffi::c_int as isize);
@@ -2826,13 +2812,7 @@ unsafe extern "C" fn record_target_var(
             '_c2rust_label: {
                 if !v.is_null() {
                 } else {
-                    __assert_fail(
-                        b"v != 0\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"src/read.c\0" as *const u8 as *const ::core::ffi::c_char,
-                        1840 as ::core::ffi::c_uint,
-                        b"void record_target_var(struct nameseq *, char *, enum variable_origin, struct vmodifiers *, const Floc *)\0"
-                            as *const u8 as *const ::core::ffi::c_char,
-                    );
+                    make_assert_fail ! ( b"v != 0\0" as *const u8 as *const ::core::ffi::c_char ) ;
                 }
             };
             (*v).set_origin(origin as variable_origin);

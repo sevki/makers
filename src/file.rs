@@ -476,13 +476,7 @@ pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *m
     '_c2rust_label: {
         if *name as ::core::ffi::c_int != 0 {
         } else {
-            __assert_fail(
-                b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-                92,
-                b"struct file *lookup_file(const char *)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            make_assert_fail ! ( b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char ) ;
         }
     };
     while *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '.' as i32
@@ -542,26 +536,14 @@ pub unsafe extern "C" fn enter_file(mut name: *const ::core::ffi::c_char) -> *mu
     '_c2rust_label: {
         if *name as ::core::ffi::c_int != 0 {
         } else {
-            __assert_fail(
-                b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-                158,
-                b"struct file *enter_file(const char *)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            make_assert_fail ! ( b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char ) ;
         }
     };
     '_c2rust_label_0: {
         if verify_flag == 0 || strcache_iscached(name) != 0 {
         } else {
-            __assert_fail(
-                b"! verify_flag || strcache_iscached (name)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-                159,
-                b"struct file *enter_file(const char *)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            make_assert_fail ! ( b"! verify_flag || strcache_iscached (name)\0" as *const u8
+                    as *const ::core::ffi::c_char ) ;
         }
     };
     file_key.hname = name;
@@ -1942,13 +1924,7 @@ pub unsafe extern "C" fn print_file(mut item: *const ::core::ffi::c_void) {
                 '_c2rust_label: {
                     if question_flag != 0 {
                     } else {
-                        __assert_fail(
-                            b"question_flag\0" as *const u8 as *const ::core::ffi::c_char,
-                            b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-                            1181 as ::core::ffi::c_uint,
-                            b"void print_file(const void *)\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                        );
+                        make_assert_fail ! ( b"question_flag\0" as *const u8 as *const ::core::ffi::c_char ) ;
                     }
                 };
                 puts(

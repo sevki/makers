@@ -1370,13 +1370,7 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
                 '_c2rust_label: {
                     if (*c).jobslot() as ::core::ffi::c_int == 0 {
                     } else {
-                        __assert_fail(
-                            b"c->jobslot == 0\0" as *const u8 as *const ::core::ffi::c_char,
-                            b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char,
-                            1625 as ::core::ffi::c_uint,
-                            b"int start_waiting_job(struct child *)\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                        );
+                        make_assert_fail ! ( b"c->jobslot == 0\0" as *const u8 as *const ::core::ffi::c_char ) ;
                     }
                 };
                 (*c).set_jobslot(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -1396,14 +1390,8 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
             '_c2rust_label_0: {
                 if (*f).command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int {
                 } else {
-                    __assert_fail(
-                        b"f->command_state == cs_finished\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char,
-                        1643 as ::core::ffi::c_uint,
-                        b"int start_waiting_job(struct child *)\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    make_assert_fail ! ( b"f->command_state == cs_finished\0" as *const u8
+                            as *const ::core::ffi::c_char ) ;
                 }
             };
             current_block_25 = 15089075282327824602;
@@ -2488,13 +2476,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                                 '_c2rust_label: {
                                     if ap <= end {
                                     } else {
-                                        __assert_fail(
-                                            b"ap <= end\0" as *const u8 as *const ::core::ffi::c_char,
-                                            b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char,
-                                            2938 as ::core::ffi::c_uint,
-                                            b"char **construct_command_argv_internal(char *, char **, const char *, const char *, const char *, int, char **)\0"
-                                                as *const u8 as *const ::core::ffi::c_char,
-                                        );
+                                        make_assert_fail ! ( b"ap <= end\0" as *const u8 as *const ::core::ffi::c_char ) ;
                                     }
                                 };
                                 if instring != 0 {

@@ -2695,13 +2695,7 @@ unsafe fn main_0(
                         '_c2rust_label: {
                             if strlen(a) > 0 {
                             } else {
-                                __assert_fail(
-                                    b"strlen (a) > 0\0" as *const u8 as *const ::core::ffi::c_char,
-                                    b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
-                                    2602 as ::core::ffi::c_uint,
-                                    b"int main(int, char **, char **)\0" as *const u8
-                                        as *const ::core::ffi::c_char,
-                                );
+                                make_assert_fail ! ( b"strlen (a) > 0\0" as *const u8 as *const ::core::ffi::c_char ) ;
                             }
                         };
                         *nv = a;
@@ -3311,13 +3305,7 @@ unsafe extern "C" fn decode_switches(
     '_c2rust_label: {
         if using_getopt == 0 {
         } else {
-            __assert_fail(
-                b"using_getopt == 0\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
-                3125 as ::core::ffi::c_uint,
-                b"void decode_switches(int, const char **, enum variable_origin)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            make_assert_fail ! ( b"using_getopt == 0\0" as *const u8 as *const ::core::ffi::c_char ) ;
         }
     };
     using_getopt = 1;
@@ -3773,13 +3761,7 @@ unsafe extern "C" fn decode_env_switches(
             .offset(2 as ::core::ffi::c_int as isize)
         {
         } else {
-            __assert_fail(
-                b"p < buf + len + 2\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
-                3451 as ::core::ffi::c_uint,
-                b"void decode_env_switches(const char *, size_t, enum variable_origin)\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-            );
+            make_assert_fail ! ( b"p < buf + len + 2\0" as *const u8 as *const ::core::ffi::c_char ) ;
         }
     };
     if *(*argv.offset(1 as ::core::ffi::c_int as isize)).offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != '-' as i32
