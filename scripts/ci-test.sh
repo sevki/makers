@@ -41,6 +41,11 @@ INSTALL_BIN="$INSTALL_ROOT/bin"
 # the repo root is sacrificial and gets overwritten in stage 3.
 # ---------------------------------------------------------------------------
 group "Stage 0: bootstrap lib/libgnu.a via ./build.sh (sh+cc only)"
+# A fresh checkout has no `configure` (autotools-generated, not tracked).
+# `./bootstrap` clones gnulib at the pinned revision and runs autoreconf.
+if [ ! -x configure ]; then
+  ./bootstrap
+fi
 if [ ! -f config.status ] || [ ! -f build.cfg ]; then
   ./configure --quiet
 fi
