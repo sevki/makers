@@ -96,6 +96,12 @@ extern "C" {
     fn output_close(out: *mut output);
     fn output_start();
     fn output_dump(out: *mut output);
+    fn __assert_fail(
+        __assertion: *const ::core::ffi::c_char,
+        __file: *const ::core::ffi::c_char,
+        __line: ::core::ffi::c_uint,
+        __function: *const ::core::ffi::c_char,
+    ) -> !;
     fn wait(__stat_loc: *mut ::core::ffi::c_int) -> __pid_t;
     fn waitpid(
         __pid: __pid_t,

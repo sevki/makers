@@ -31,6 +31,12 @@ extern "C" {
         -> *const ::core::ffi::c_char;
     static mut posix_pedantic: ::core::ffi::c_int;
     static mut second_expansion: ::core::ffi::c_int;
+    fn __assert_fail(
+        __assertion: *const ::core::ffi::c_char,
+        __file: *const ::core::ffi::c_char,
+        __line: ::core::ffi::c_uint,
+        __function: *const ::core::ffi::c_char,
+    ) -> !;
     fn print_commands(cmds: *const commands);
     fn parse_file_seq(
         stringp: *mut *mut ::core::ffi::c_char,

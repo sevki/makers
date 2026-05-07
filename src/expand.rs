@@ -36,6 +36,12 @@ extern "C" {
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut reading_file: *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
+    fn __assert_fail(
+        __assertion: *const ::core::ffi::c_char,
+        __file: *const ::core::ffi::c_char,
+        __line: ::core::ffi::c_uint,
+        __function: *const ::core::ffi::c_char,
+    ) -> !;
     static mut db_level: ::core::ffi::c_int;
     static mut env_recursion: ::core::ffi::c_ulonglong;
     static mut current_variable_set_list: *mut variable_set_list;

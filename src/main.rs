@@ -105,6 +105,12 @@ extern "C" {
     static mut make_host: *mut ::core::ffi::c_char;
     static mut version_string: *mut ::core::ffi::c_char;
     static mut handling_fatal_signal: sig_atomic_t;
+    fn __assert_fail(
+        __assertion: *const ::core::ffi::c_char,
+        __file: *const ::core::ffi::c_char,
+        __line: ::core::ffi::c_uint,
+        __function: *const ::core::ffi::c_char,
+    ) -> !;
     fn fatal_error_signal(sig: ::core::ffi::c_int);
     fn parse_file_seq(
         stringp: *mut *mut ::core::ffi::c_char,

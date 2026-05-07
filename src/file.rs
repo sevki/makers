@@ -52,6 +52,12 @@ extern "C" {
     static mut export_all_variables: ::core::ffi::c_int;
     static mut cmd_prefix: ::core::ffi::c_char;
     static mut no_intermediates: ::core::ffi::c_uint;
+    fn __assert_fail(
+        __assertion: *const ::core::ffi::c_char,
+        __file: *const ::core::ffi::c_char,
+        __line: ::core::ffi::c_uint,
+        __function: *const ::core::ffi::c_char,
+    ) -> !;
     fn print_commands(cmds: *const commands);
     fn set_file_variables(file: *mut file, stem: *const ::core::ffi::c_char);
     static mut db_level: ::core::ffi::c_int;

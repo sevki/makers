@@ -16,6 +16,12 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
+    fn __assert_fail(
+        __assertion: *const ::core::ffi::c_char,
+        __file: *const ::core::ffi::c_char,
+        __line: ::core::ffi::c_uint,
+        __function: *const ::core::ffi::c_char,
+    ) -> !;
     fn hash_init(
         ht: *mut hash_table,
         size: ::core::ffi::c_ulong,
