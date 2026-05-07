@@ -98,8 +98,8 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const FNM_PATHNAME: ::core::ffi::c_int = (1) << 0;
 pub const FNM_PERIOD: ::core::ffi::c_int = (1) << 2;
 #[no_mangle]
-pub unsafe extern "C" fn ar_name(mut name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
-    let mut p: *const ::core::ffi::c_char = strchr(name, '(' as i32);
+pub unsafe extern "C" fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+    let p: *const ::core::ffi::c_char = strchr(name, '(' as i32);
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     if p.is_null() || p == name {
         return 0;
@@ -125,9 +125,9 @@ pub unsafe extern "C" fn ar_name(mut name: *const ::core::ffi::c_char) -> ::core
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_parse_name(
-    mut name: *const ::core::ffi::c_char,
-    mut arname_p: *mut *mut ::core::ffi::c_char,
-    mut memname_p: *mut *mut ::core::ffi::c_char,
+    name: *const ::core::ffi::c_char,
+    arname_p: *mut *mut ::core::ffi::c_char,
+    memname_p: *mut *mut ::core::ffi::c_char,
 ) {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     *arname_p = xstrdup(name);
@@ -148,16 +148,16 @@ pub unsafe extern "C" fn ar_parse_name(
 }
 unsafe extern "C" fn ar_member_date_1(
     mut _desc: ::core::ffi::c_int,
-    mut mem: *const ::core::ffi::c_char,
-    mut truncated: ::core::ffi::c_int,
+    mem: *const ::core::ffi::c_char,
+    truncated: ::core::ffi::c_int,
     mut _hdrpos: ::core::ffi::c_long,
     mut _datapos: ::core::ffi::c_long,
     mut _size: ::core::ffi::c_long,
-    mut date: intmax_t,
+    date: intmax_t,
     mut _uid: ::core::ffi::c_int,
     mut _gid: ::core::ffi::c_int,
     mut _mode: ::core::ffi::c_uint,
-    mut name: *const ::core::ffi::c_void,
+    name: *const ::core::ffi::c_void,
 ) -> intmax_t {
     if ar_name_equal(name as *const ::core::ffi::c_char, mem, truncated) != 0 {
         date
@@ -166,7 +166,7 @@ unsafe extern "C" fn ar_member_date_1(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn ar_member_date(mut name: *const ::core::ffi::c_char) -> time_t {
+pub unsafe extern "C" fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut val: intmax_t = 0;
@@ -220,7 +220,7 @@ pub unsafe extern "C" fn ar_member_date(mut name: *const ::core::ffi::c_char) ->
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut val: ::core::ffi::c_int = 0;
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn ar_touch(mut name: *const ::core::ffi::c_char) -> ::cor
 }
 unsafe extern "C" fn ar_glob_match(
     mut _desc: ::core::ffi::c_int,
-    mut mem: *const ::core::ffi::c_char,
+    mem: *const ::core::ffi::c_char,
     mut _truncated: ::core::ffi::c_int,
     mut _hdrpos: ::core::ffi::c_long,
     mut _datapos: ::core::ffi::c_long,
@@ -289,7 +289,7 @@ unsafe extern "C" fn ar_glob_match(
     mut _uid: ::core::ffi::c_int,
     mut _gid: ::core::ffi::c_int,
     mut _mode: ::core::ffi::c_uint,
-    mut arg: *const ::core::ffi::c_void,
+    arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
     let mut state: *mut ar_glob_state = arg as *mut ar_glob_state;
     if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
@@ -308,8 +308,8 @@ unsafe extern "C" fn ar_glob_match(
     0 as intmax_t
 }
 unsafe extern "C" fn ar_glob_pattern_p(
-    mut pattern: *const ::core::ffi::c_char,
-    mut quote: ::core::ffi::c_int,
+    pattern: *const ::core::ffi::c_char,
+    quote: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut opened: ::core::ffi::c_int = 0;
@@ -338,9 +338,9 @@ unsafe extern "C" fn ar_glob_pattern_p(
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_glob(
-    mut arname: *const ::core::ffi::c_char,
-    mut member_pattern: *const ::core::ffi::c_char,
-    mut size: size_t,
+    arname: *const ::core::ffi::c_char,
+    member_pattern: *const ::core::ffi::c_char,
+    size: size_t,
 ) -> *mut nameseq {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut state: ar_glob_state = ar_glob_state {

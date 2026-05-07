@@ -125,15 +125,15 @@ fn parse_int(field: &[u8], base: u32, max: u64, what: &str, archive: &str, name:
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_scan(
-    mut archive: *const ::core::ffi::c_char,
-    mut function: ar_member_func_t,
-    mut arg: *const ::core::ffi::c_void,
+    archive: *const ::core::ffi::c_char,
+    function: ar_member_func_t,
+    arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut current_block: u64;
+    let current_block: u64;
     let mut namemap: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut namemap_size: ::core::ffi::c_uint = 0;
-    let mut desc: ::core::ffi::c_int = open(archive, O_RDONLY, 0);
+    let desc: ::core::ffi::c_int = open(archive, O_RDONLY, 0);
     if desc < 0 {
         return -(1 as ::core::ffi::c_int) as intmax_t;
     }
@@ -243,7 +243,7 @@ pub unsafe extern "C" fn ar_scan(
             {
                 let mut err: *const ::core::ffi::c_char =
                     ::core::ptr::null::<::core::ffi::c_char>();
-                let mut name_off: ::core::ffi::c_uint =
+                let name_off: ::core::ffi::c_uint =
                     make_toui(name.offset(1 as ::core::ffi::c_int as isize), &raw mut err);
                 let mut name_len: size_t = 0;
                 if !err.is_null() || name_off >= namemap_size {
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn ar_scan(
             {
                 let mut err_0: *const ::core::ffi::c_char =
                     ::core::ptr::null::<::core::ffi::c_char>();
-                let mut name_len_0: ::core::ffi::c_uint = make_toui(
+                let name_len_0: ::core::ffi::c_uint = make_toui(
                     name.offset(3 as ::core::ffi::c_int as isize),
                     &raw mut err_0,
                 );
@@ -438,8 +438,8 @@ pub unsafe extern "C" fn ar_scan(
 #[no_mangle]
 pub unsafe extern "C" fn ar_name_equal(
     mut name: *const ::core::ffi::c_char,
-    mut mem: *const ::core::ffi::c_char,
-    mut truncated: ::core::ffi::c_int,
+    mem: *const ::core::ffi::c_char,
+    truncated: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     if *name as ::core::ffi::c_int == *mem as ::core::ffi::c_int
@@ -473,16 +473,16 @@ pub unsafe extern "C" fn ar_name_equal(
 }
 unsafe extern "C" fn ar_member_pos(
     mut _desc: ::core::ffi::c_int,
-    mut mem: *const ::core::ffi::c_char,
-    mut truncated: ::core::ffi::c_int,
-    mut hdrpos: ::core::ffi::c_long,
+    mem: *const ::core::ffi::c_char,
+    truncated: ::core::ffi::c_int,
+    hdrpos: ::core::ffi::c_long,
     mut _datapos: ::core::ffi::c_long,
     mut _size: ::core::ffi::c_long,
     mut _date: intmax_t,
     mut _uid: ::core::ffi::c_int,
     mut _gid: ::core::ffi::c_int,
     mut _mode: ::core::ffi::c_uint,
-    mut name: *const ::core::ffi::c_void,
+    name: *const ::core::ffi::c_void,
 ) -> intmax_t {
     if ar_name_equal(name as *const ::core::ffi::c_char, mem, truncated) == 0 {
         return 0 as intmax_t;
@@ -491,10 +491,10 @@ unsafe extern "C" fn ar_member_pos(
 }
 #[no_mangle]
 pub unsafe extern "C" fn ar_member_touch(
-    mut arname: *const ::core::ffi::c_char,
-    mut memname: *const ::core::ffi::c_char,
+    arname: *const ::core::ffi::c_char,
+    memname: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
-    let mut pos: intmax_t = ar_scan(
+    let pos: intmax_t = ar_scan(
         arname,
         Some(
             ar_member_pos

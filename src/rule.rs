@@ -159,7 +159,7 @@ unsafe extern "C" fn alloc_dep() -> *mut dep {
 }
 #[inline]
 
-unsafe extern "C" fn free_dep_chain(mut d: *mut dep) {
+unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
 #[no_mangle]
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn snap_implicit_rules() {
     let mut namelen: size_t = 0;
     let mut rule: *mut rule = ::core::ptr::null_mut::<rule>();
     let mut dep: *mut dep = ::core::ptr::null_mut::<dep>();
-    let mut prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
+    let prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
         b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
     ));
@@ -366,14 +366,14 @@ pub unsafe extern "C" fn snap_implicit_rules() {
         }
         dep = (*rule).deps as *mut dep;
         while !dep.is_null() {
-            let mut dname: *const ::core::ffi::c_char = if !(*dep).name.is_null() {
+            let dname: *const ::core::ffi::c_char = if !(*dep).name.is_null() {
                 (*dep).name
             } else {
                 (*(*dep).file).name
             };
-            let mut len: size_t = strlen(dname) as size_t;
+            let len: size_t = strlen(dname) as size_t;
             let mut p: *const ::core::ffi::c_char = strrchr(dname, '/' as i32);
-            let mut p2: *const ::core::ffi::c_char = if !p.is_null() {
+            let p2: *const ::core::ffi::c_char = if !p.is_null() {
                 strchr(p, '%' as i32)
             } else {
                 ::core::ptr::null_mut::<::core::ffi::c_char>()
@@ -429,9 +429,9 @@ pub unsafe extern "C" fn snap_implicit_rules() {
     free_dep_chain(prereqs);
 }
 unsafe extern "C" fn convert_suffix_rule(
-    mut target: *const ::core::ffi::c_char,
-    mut source: *const ::core::ffi::c_char,
-    mut cmds: *mut commands,
+    target: *const ::core::ffi::c_char,
+    source: *const ::core::ffi::c_char,
+    cmds: *mut commands,
 ) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut names: *mut *const ::core::ffi::c_char =
@@ -450,12 +450,12 @@ unsafe extern "C" fn convert_suffix_rule(
         );
         *percents = (*names).offset(1 as ::core::ffi::c_int as isize);
     } else {
-        let mut len: size_t = strlen(target) as size_t;
+        let len: size_t = strlen(target) as size_t;
         alloca_allocations.push(::std::vec::from_elem(
             0,
             (1 as size_t).wrapping_add(len).wrapping_add(1) as usize,
         ));
-        let mut p: *mut ::core::ffi::c_char =
+        let p: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         *p.offset(0 as ::core::ffi::c_int as isize) = '%' as i32 as ::core::ffi::c_char;
         memcpy(
@@ -469,12 +469,12 @@ unsafe extern "C" fn convert_suffix_rule(
     if source.is_null() {
         deps = ::core::ptr::null_mut::<dep>();
     } else {
-        let mut len_0: size_t = strlen(source) as size_t;
+        let len_0: size_t = strlen(source) as size_t;
         alloca_allocations.push(::std::vec::from_elem(
             0,
             (1 as size_t).wrapping_add(len_0).wrapping_add(1) as usize,
         ));
-        let mut p_0: *mut ::core::ffi::c_char =
+        let p_0: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         *p_0.offset(0 as ::core::ffi::c_int as isize) = '%' as i32 as ::core::ffi::c_char;
         memcpy(
@@ -504,7 +504,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
     let mut maxsuffix: size_t = 0;
     d = (*suffix_file).deps;
     while !d.is_null() {
-        let mut l: size_t = strlen(if !(*d).name.is_null() {
+        let l: size_t = strlen(if !(*d).name.is_null() {
             (*d).name
         } else {
             (*(*d).file).name
@@ -684,7 +684,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
 }
 unsafe extern "C" fn new_pattern_rule(
     mut rule: *mut rule,
-    mut override_0: ::core::ffi::c_int,
+    override_0: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     let mut r: *mut rule = ::core::ptr::null_mut::<rule>();
     let mut lastrule: *mut rule = ::core::ptr::null_mut::<rule>();
@@ -785,8 +785,8 @@ unsafe extern "C" fn new_pattern_rule(
 }
 #[no_mangle]
 pub unsafe extern "C" fn install_pattern_rule(
-    mut p: *const pspec,
-    mut terminal: ::core::ffi::c_int,
+    p: *const pspec,
+    terminal: ::core::ffi::c_int,
 ) {
     let mut r: *mut rule = ::core::ptr::null_mut::<rule>();
     let mut ptr: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -843,8 +843,8 @@ pub unsafe extern "C" fn install_pattern_rule(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn freerule(mut rule: *mut rule, mut lastrule: *mut rule) {
-    let mut next: *mut rule = (*rule).next;
+pub unsafe extern "C" fn freerule(rule: *mut rule, mut lastrule: *mut rule) {
+    let next: *mut rule = (*rule).next;
     free_dep_chain((*rule).deps as *mut dep);
     free((*rule).targets as *mut ::core::ffi::c_void);
     free((*rule).suffixes as *mut ::core::ffi::c_void);
@@ -866,13 +866,13 @@ pub unsafe extern "C" fn freerule(mut rule: *mut rule, mut lastrule: *mut rule) 
 }
 #[no_mangle]
 pub unsafe extern "C" fn create_pattern_rule(
-    mut targets: *mut *const ::core::ffi::c_char,
-    mut target_percents: *mut *const ::core::ffi::c_char,
-    mut n: ::core::ffi::c_ushort,
-    mut terminal: ::core::ffi::c_int,
-    mut deps: *mut dep,
-    mut commands: *mut commands,
-    mut override_0: ::core::ffi::c_int,
+    targets: *mut *const ::core::ffi::c_char,
+    target_percents: *mut *const ::core::ffi::c_char,
+    n: ::core::ffi::c_ushort,
+    terminal: ::core::ffi::c_int,
+    deps: *mut dep,
+    commands: *mut commands,
+    override_0: ::core::ffi::c_int,
 ) {
     let mut i: ::core::ffi::c_uint = 0;
     let mut r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
@@ -914,7 +914,7 @@ pub unsafe extern "C" fn create_pattern_rule(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_rule(mut r: *mut rule) {
+pub unsafe extern "C" fn print_rule(r: *mut rule) {
     fputs(get_rule_defn(r), stdout);
     putchar('\n' as i32);
     if !(*r).cmds.is_null() {

@@ -80,8 +80,8 @@ static mut total_buffers: ::core::ffi::c_ulong = 0;
 static mut total_strings: ::core::ffi::c_ulong = 0;
 static mut total_size: ::core::ffi::c_ulong = 0;
 unsafe extern "C" fn new_cache(
-    mut head: *mut *mut strcache,
-    mut buflen: sc_buflen_t,
+    head: *mut *mut strcache,
+    buflen: sc_buflen_t,
 ) -> *mut strcache {
     let mut new: *mut strcache =
         xmalloc((buflen as size_t).wrapping_add(CACHE_BUFFER_OFFSET as size_t)) as *mut strcache;
@@ -95,10 +95,10 @@ unsafe extern "C" fn new_cache(
 }
 unsafe extern "C" fn copy_string(
     mut sp: *mut strcache,
-    mut str: *const ::core::ffi::c_char,
+    str: *const ::core::ffi::c_char,
     mut len: sc_buflen_t,
 ) -> *const ::core::ffi::c_char {
-    let mut res: *mut ::core::ffi::c_char = (&raw mut (*sp).buffer as *mut ::core::ffi::c_char)
+    let res: *mut ::core::ffi::c_char = (&raw mut (*sp).buffer as *mut ::core::ffi::c_char)
         .offset((*sp).end as isize)
         as *mut ::core::ffi::c_char;
     memmove(
@@ -116,13 +116,13 @@ unsafe extern "C" fn copy_string(
     res
 }
 unsafe extern "C" fn add_string(
-    mut str: *const ::core::ffi::c_char,
-    mut len: sc_buflen_t,
+    str: *const ::core::ffi::c_char,
+    len: sc_buflen_t,
 ) -> *const ::core::ffi::c_char {
     let mut res: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut sp: *mut strcache = ::core::ptr::null_mut::<strcache>();
     let mut spp: *mut *mut strcache = &raw mut strcache;
-    let mut sz: sc_buflen_t = (len as ::core::ffi::c_int + 1) as sc_buflen_t;
+    let sz: sc_buflen_t = (len as ::core::ffi::c_int + 1) as sc_buflen_t;
     total_strings = total_strings.wrapping_add(1);
     total_size = total_size.wrapping_add(sz as ::core::ffi::c_ulong);
     if sz as usize > BUFSIZE {
@@ -155,8 +155,8 @@ unsafe extern "C" fn add_string(
 }
 static mut hugestrings: *mut hugestring = ::core::ptr::null::<hugestring>() as *mut hugestring;
 unsafe extern "C" fn add_hugestring(
-    mut str: *const ::core::ffi::c_char,
-    mut len: size_t,
+    str: *const ::core::ffi::c_char,
+    len: size_t,
 ) -> *const ::core::ffi::c_char {
     let mut new: *mut hugestring =
         xmalloc((::core::mem::size_of::<hugestring>() as size_t).wrapping_add(len))
@@ -173,7 +173,7 @@ unsafe extern "C" fn add_hugestring(
     &raw mut (*new).buffer as *mut ::core::ffi::c_char
 }
 #[no_mangle]
-pub unsafe extern "C" fn str_hash_1(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn str_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         key as *const ::core::ffi::c_char as *const ::core::ffi::c_uchar;
@@ -184,8 +184,8 @@ extern "C" fn str_hash_2(_key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulo
     0
 }
 unsafe extern "C" fn str_hash_cmp(
-    mut x: *const ::core::ffi::c_void,
-    mut y: *const ::core::ffi::c_void,
+    x: *const ::core::ffi::c_void,
+    y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
     if x as *const ::core::ffi::c_char == y as *const ::core::ffi::c_char {
         0
@@ -213,8 +213,8 @@ static mut strings: hash_table = hash_table {
 };
 static mut total_adds: ::core::ffi::c_ulong = 0;
 unsafe extern "C" fn add_hash(
-    mut str: *const ::core::ffi::c_char,
-    mut len: size_t,
+    str: *const ::core::ffi::c_char,
+    len: size_t,
 ) -> *const ::core::ffi::c_char {
     let mut slot: *const *mut ::core::ffi::c_char = ::core::ptr::null::<*mut ::core::ffi::c_char>();
     let mut key: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -240,7 +240,7 @@ unsafe extern "C" fn add_hash(
 }
 #[no_mangle]
 pub unsafe extern "C" fn strcache_iscached(
-    mut str: *const ::core::ffi::c_char,
+    str: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     let mut sp: *mut strcache = ::core::ptr::null_mut::<strcache>();
     sp = strcache;
@@ -279,14 +279,14 @@ pub unsafe extern "C" fn strcache_iscached(
 }
 #[no_mangle]
 pub unsafe extern "C" fn strcache_add(
-    mut str: *const ::core::ffi::c_char,
+    str: *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
     add_hash(str, strlen(str) as size_t)
 }
 #[no_mangle]
 pub unsafe extern "C" fn strcache_add_len(
     mut str: *const ::core::ffi::c_char,
-    mut len: size_t,
+    len: size_t,
 ) -> *const ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     if *str.offset(len as isize) as ::core::ffi::c_int != 0 {
@@ -294,7 +294,7 @@ pub unsafe extern "C" fn strcache_add_len(
             0,
             len.wrapping_add(1) as usize,
         ));
-        let mut key: *mut ::core::ffi::c_char =
+        let key: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         memcpy(
             key as *mut ::core::ffi::c_void,
@@ -327,7 +327,7 @@ pub unsafe fn strcache_init() {
     );
 }
 #[no_mangle]
-pub unsafe fn strcache_print_stats(mut prefix: *const ::core::ffi::c_char) {
+pub unsafe fn strcache_print_stats(prefix: *const ::core::ffi::c_char) {
     let mut sp: *const strcache = ::core::ptr::null::<strcache>();
     let mut numbuffs: ::core::ffi::c_ulong = 0;
     let mut fullbuffs: ::core::ffi::c_ulong = 0;
@@ -343,7 +343,7 @@ pub unsafe fn strcache_print_stats(mut prefix: *const ::core::ffi::c_char) {
     }
     sp = (*strcache).next;
     while !sp.is_null() {
-        let mut bf: sc_buflen_t = (*sp).bytesfree;
+        let bf: sc_buflen_t = (*sp).bytesfree;
         totfree = totfree.wrapping_add(bf as ::core::ffi::c_ulong);
         maxfree = if bf as ::core::ffi::c_ulong > maxfree {
             bf as ::core::ffi::c_ulong
@@ -360,7 +360,7 @@ pub unsafe fn strcache_print_stats(mut prefix: *const ::core::ffi::c_char) {
     }
     sp = fullcache;
     while !sp.is_null() {
-        let mut bf_0: sc_buflen_t = (*sp).bytesfree;
+        let bf_0: sc_buflen_t = (*sp).bytesfree;
         totfree = totfree.wrapping_add(bf_0 as ::core::ffi::c_ulong);
         maxfree = if bf_0 as ::core::ffi::c_ulong > maxfree {
             bf_0 as ::core::ffi::c_ulong
@@ -408,11 +408,11 @@ pub unsafe fn strcache_print_stats(mut prefix: *const ::core::ffi::c_char) {
             as ::core::ffi::c_uint,
     );
     if numbuffs != 0 {
-        let mut sz: ::core::ffi::c_ulong =
+        let sz: ::core::ffi::c_ulong =
             total_size.wrapping_sub((*strcache).end as ::core::ffi::c_ulong);
-        let mut cnt: ::core::ffi::c_ulong =
+        let cnt: ::core::ffi::c_ulong =
             total_strings.wrapping_sub((*strcache).count as ::core::ffi::c_ulong);
-        let mut avgfree: sc_buflen_t = totfree.wrapping_div(numbuffs) as sc_buflen_t;
+        let avgfree: sc_buflen_t = totfree.wrapping_div(numbuffs) as sc_buflen_t;
         printf(
             b"%s other used: total = %lu B / count = %lu / avg = %lu B\n\0" as *const u8
                 as *const ::core::ffi::c_char,

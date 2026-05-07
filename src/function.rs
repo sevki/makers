@@ -343,9 +343,9 @@ pub const EXP_COUNT_BITS: ::core::ffi::c_int = 15;
 pub const EXP_COUNT_MAX: ::core::ffi::c_int =
     ((1) << EXP_COUNT_BITS) - 1;
 unsafe extern "C" fn function_table_entry_hash_1(
-    mut keyv: *const ::core::ffi::c_void,
+    keyv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_ulong {
-    let mut key: *const function_table_entry = keyv as *const function_table_entry;
+    let key: *const function_table_entry = keyv as *const function_table_entry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
     _result_ = _result_
@@ -353,19 +353,19 @@ unsafe extern "C" fn function_table_entry_hash_1(
     _result_
 }
 unsafe extern "C" fn function_table_entry_hash_2(
-    mut keyv: *const ::core::ffi::c_void,
+    keyv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_ulong {
     let mut _key: *const function_table_entry = keyv as *const function_table_entry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
 unsafe extern "C" fn function_table_entry_hash_cmp(
-    mut xv: *const ::core::ffi::c_void,
-    mut yv: *const ::core::ffi::c_void,
+    xv: *const ::core::ffi::c_void,
+    yv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let mut x: *const function_table_entry = xv as *const function_table_entry;
-    let mut y: *const function_table_entry = yv as *const function_table_entry;
-    let mut result: ::core::ffi::c_int =
+    let x: *const function_table_entry = xv as *const function_table_entry;
+    let y: *const function_table_entry = yv as *const function_table_entry;
+    let result: ::core::ffi::c_int =
         (*x).len as ::core::ffi::c_int - (*y).len as ::core::ffi::c_int;
     if result != 0 {
         return result;
@@ -398,12 +398,12 @@ static mut function_table: hash_table = hash_table {
 #[no_mangle]
 pub unsafe extern "C" fn subst_expand(
     mut o: *mut ::core::ffi::c_char,
-    mut text: *const ::core::ffi::c_char,
-    mut subst: *const ::core::ffi::c_char,
-    mut replace: *const ::core::ffi::c_char,
-    mut slen: size_t,
-    mut rlen: size_t,
-    mut by_word: ::core::ffi::c_int,
+    text: *const ::core::ffi::c_char,
+    subst: *const ::core::ffi::c_char,
+    replace: *const ::core::ffi::c_char,
+    slen: size_t,
+    rlen: size_t,
+    by_word: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
     let mut t: *const ::core::ffi::c_char = text;
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -456,10 +456,10 @@ pub unsafe extern "C" fn subst_expand(
 pub unsafe extern "C" fn patsubst_expand_pat(
     mut o: *mut ::core::ffi::c_char,
     mut text: *const ::core::ffi::c_char,
-    mut pattern: *const ::core::ffi::c_char,
-    mut replace: *const ::core::ffi::c_char,
-    mut pattern_percent: *const ::core::ffi::c_char,
-    mut replace_percent: *const ::core::ffi::c_char,
+    pattern: *const ::core::ffi::c_char,
+    replace: *const ::core::ffi::c_char,
+    pattern_percent: *const ::core::ffi::c_char,
+    replace_percent: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut pattern_prepercent_len: size_t = 0;
     let mut pattern_postpercent_len: size_t = 0;
@@ -564,10 +564,10 @@ pub unsafe extern "C" fn patsubst_expand_pat(
 }
 #[no_mangle]
 pub unsafe extern "C" fn patsubst_expand(
-    mut o: *mut ::core::ffi::c_char,
-    mut text: *const ::core::ffi::c_char,
-    mut pattern: *mut ::core::ffi::c_char,
-    mut replace: *mut ::core::ffi::c_char,
+    o: *mut ::core::ffi::c_char,
+    text: *const ::core::ffi::c_char,
+    pattern: *mut ::core::ffi::c_char,
+    replace: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut pattern_percent: *const ::core::ffi::c_char = find_percent(pattern);
     let mut replace_percent: *const ::core::ffi::c_char = find_percent(replace);
@@ -580,7 +580,7 @@ pub unsafe extern "C" fn patsubst_expand(
     patsubst_expand_pat(o, text, pattern, replace, pattern_percent, replace_percent)
 }
 unsafe extern "C" fn lookup_function(
-    mut s: *const ::core::ffi::c_char,
+    s: *const ::core::ffi::c_char,
 ) -> *const function_table_entry {
     let mut function_table_entry_key: function_table_entry = function_table_entry {
         fptr: C2RustUnnamed { func_ptr: None },
@@ -618,15 +618,15 @@ unsafe extern "C" fn lookup_function(
 pub unsafe extern "C" fn pattern_matches(
     mut pattern: *const ::core::ffi::c_char,
     mut percent: *const ::core::ffi::c_char,
-    mut str: *const ::core::ffi::c_char,
+    str: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut sfxlen: size_t = 0;
     let mut strlength: size_t = 0;
     if percent.is_null() {
-        let mut len: size_t = (strlen(pattern) as size_t).wrapping_add(1);
+        let len: size_t = (strlen(pattern) as size_t).wrapping_add(1);
         alloca_allocations.push(::std::vec::from_elem(0, len as usize));
-        let mut new_chars: *mut ::core::ffi::c_char =
+        let new_chars: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         memcpy(
             new_chars as *mut ::core::ffi::c_void,
@@ -659,10 +659,10 @@ pub unsafe extern "C" fn pattern_matches(
     ) == 0) as ::core::ffi::c_int
 }
 unsafe extern "C" fn find_next_argument(
-    mut startparen: ::core::ffi::c_char,
-    mut endparen: ::core::ffi::c_char,
+    startparen: ::core::ffi::c_char,
+    endparen: ::core::ffi::c_char,
     mut ptr: *const ::core::ffi::c_char,
-    mut end: *const ::core::ffi::c_char,
+    end: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut count: ::core::ffi::c_int = 0;
     while ptr < end {
@@ -706,8 +706,8 @@ pub unsafe extern "C" fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut
     }
     idx = 0;
     while !chain.is_null() {
-        let mut next: *mut nameseq = (*chain).next;
-        let mut len: size_t = strlen((*chain).name) as size_t;
+        let next: *mut nameseq = (*chain).next;
+        let len: size_t = strlen((*chain).name) as size_t;
         if idx.wrapping_add(len).wrapping_add(1) > length {
             length = length.wrapping_add(len.wrapping_add(1 as size_t).wrapping_mul(2));
             result =
@@ -735,7 +735,7 @@ pub unsafe extern "C" fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut
 }
 unsafe extern "C" fn func_patsubst(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     o = patsubst_expand(
@@ -748,7 +748,7 @@ unsafe extern "C" fn func_patsubst(
 }
 unsafe extern "C" fn func_join(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut doneany: ::core::ffi::c_int = 0;
@@ -787,10 +787,10 @@ unsafe extern "C" fn func_join(
 }
 unsafe extern "C" fn func_origin(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut v: *mut variable = lookup_variable(*argv.offset(0 as ::core::ffi::c_int as isize), strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,);
+    let v: *mut variable = lookup_variable(*argv.offset(0 as ::core::ffi::c_int as isize), strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,);
     if v.is_null() {
         o = variable_buffer_output(
             o,
@@ -858,10 +858,10 @@ unsafe extern "C" fn func_origin(
 }
 unsafe extern "C" fn func_flavor(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut v: *mut variable = lookup_variable(*argv.offset(0 as ::core::ffi::c_int as isize), strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,);
+    let v: *mut variable = lookup_variable(*argv.offset(0 as ::core::ffi::c_int as isize), strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,);
     if v.is_null() {
         o = variable_buffer_output(
             o,
@@ -885,16 +885,16 @@ unsafe extern "C" fn func_flavor(
 }
 unsafe extern "C" fn func_notdir_suffix(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
-    mut funcname: *const ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
+    funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut list_iterator: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
     let mut p2: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut doneany: ::core::ffi::c_int = 0;
     let mut len: size_t = 0;
-    let mut is_suffix: ::core::ffi::c_int = (*funcname.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 's' as i32) as ::core::ffi::c_int;
-    let mut is_notdir: ::core::ffi::c_int = (is_suffix == 0) as ::core::ffi::c_int;
-    let mut stop: ::core::ffi::c_int = MAP_DIRSEP
+    let is_suffix: ::core::ffi::c_int = (*funcname.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 's' as i32) as ::core::ffi::c_int;
+    let is_notdir: ::core::ffi::c_int = (is_suffix == 0) as ::core::ffi::c_int;
+    let stop: ::core::ffi::c_int = MAP_DIRSEP
         | (if is_suffix != 0 {
             MAP_DOT
         } else {
@@ -946,16 +946,16 @@ unsafe extern "C" fn func_notdir_suffix(
 }
 unsafe extern "C" fn func_basename_dir(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
-    mut funcname: *const ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
+    funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut p3: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
     let mut p2: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut doneany: ::core::ffi::c_int = 0;
     let mut len: size_t = 0;
-    let mut is_basename: ::core::ffi::c_int = (*funcname.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 'b' as i32) as ::core::ffi::c_int;
-    let mut is_dir: ::core::ffi::c_int = (is_basename == 0) as ::core::ffi::c_int;
-    let mut stop: ::core::ffi::c_int = MAP_DIRSEP
+    let is_basename: ::core::ffi::c_int = (*funcname.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 'b' as i32) as ::core::ffi::c_int;
+    let is_dir: ::core::ffi::c_int = (is_basename == 0) as ::core::ffi::c_int;
+    let stop: ::core::ffi::c_int = MAP_DIRSEP
         | (if is_basename != 0 {
             MAP_DOT
         } else {
@@ -1006,16 +1006,16 @@ unsafe extern "C" fn func_basename_dir(
 }
 unsafe extern "C" fn func_addsuffix_addprefix(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
-    mut funcname: *const ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
+    funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut fixlen: size_t = strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t;
+    let fixlen: size_t = strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t;
     let mut list_iterator: *const ::core::ffi::c_char =
         *argv.offset(1 as ::core::ffi::c_int as isize);
-    let mut is_addprefix: ::core::ffi::c_int = (*funcname.offset(3 as ::core::ffi::c_int as isize)
+    let is_addprefix: ::core::ffi::c_int = (*funcname.offset(3 as ::core::ffi::c_int as isize)
         as ::core::ffi::c_int
         == 'p' as i32) as ::core::ffi::c_int;
-    let mut is_addsuffix: ::core::ffi::c_int = (is_addprefix == 0) as ::core::ffi::c_int;
+    let is_addsuffix: ::core::ffi::c_int = (is_addprefix == 0) as ::core::ffi::c_int;
     let mut doneany: ::core::ffi::c_int = 0;
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut len: size_t = 0;
@@ -1045,7 +1045,7 @@ unsafe extern "C" fn func_addsuffix_addprefix(
 }
 unsafe extern "C" fn func_subst(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     o = subst_expand(
@@ -1061,12 +1061,12 @@ unsafe extern "C" fn func_subst(
 }
 unsafe extern "C" fn func_firstword(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut i: size_t = 0;
     let mut words: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
-    let mut p: *const ::core::ffi::c_char = find_next_token(&raw mut words, &raw mut i);
+    let p: *const ::core::ffi::c_char = find_next_token(&raw mut words, &raw mut i);
     if !p.is_null() {
         o = variable_buffer_output(o, p, i);
     }
@@ -1074,7 +1074,7 @@ unsafe extern "C" fn func_firstword(
 }
 unsafe extern "C" fn func_lastword(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut i: size_t = 0;
@@ -1095,7 +1095,7 @@ unsafe extern "C" fn func_lastword(
 }
 unsafe extern "C" fn func_words(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut i: ::core::ffi::c_uint = 0;
@@ -1117,8 +1117,8 @@ unsafe extern "C" fn func_words(
 }
 #[no_mangle]
 pub unsafe extern "C" fn strip_whitespace(
-    mut begpp: *mut *const ::core::ffi::c_char,
-    mut endpp: *mut *const ::core::ffi::c_char,
+    begpp: *mut *const ::core::ffi::c_char,
+    endpp: *mut *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     while *begpp <= *endpp
         && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
@@ -1139,8 +1139,8 @@ pub unsafe extern "C" fn strip_whitespace(
     *begpp as *mut ::core::ffi::c_char
 }
 unsafe extern "C" fn parse_numeric(
-    mut s: *const ::core::ffi::c_char,
-    mut msg: *const ::core::ffi::c_char,
+    s: *const ::core::ffi::c_char,
+    msg: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_longlong {
     let mut beg: *const ::core::ffi::c_char = s;
     let mut end: *const ::core::ffi::c_char = s
@@ -1180,7 +1180,7 @@ unsafe extern "C" fn parse_numeric(
 }
 unsafe extern "C" fn func_word(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut end_p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -1216,17 +1216,17 @@ unsafe extern "C" fn func_word(
 }
 unsafe extern "C" fn func_wordlist(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut buf: [::core::ffi::c_char; 23] = [0; 23];
     let mut start: ::core::ffi::c_longlong = 0;
     let mut stop: ::core::ffi::c_longlong = 0;
     let mut count: ::core::ffi::c_longlong = 0;
-    let mut badfirst: *const ::core::ffi::c_char =
+    let badfirst: *const ::core::ffi::c_char =
         b"invalid first argument to 'wordlist' function\0" as *const u8
             as *const ::core::ffi::c_char;
-    let mut badsecond: *const ::core::ffi::c_char =
+    let badsecond: *const ::core::ffi::c_char =
         b"invalid second argument to 'wordlist' function\0" as *const u8
             as *const ::core::ffi::c_char;
     start = parse_numeric(*argv.offset(0 as ::core::ffi::c_int as isize), badfirst);
@@ -1285,7 +1285,7 @@ unsafe extern "C" fn func_wordlist(
 }
 unsafe extern "C" fn func_findstring(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     if !strstr(*argv.offset(1 as ::core::ffi::c_int as isize), *argv.offset(0 as ::core::ffi::c_int as isize),)
@@ -1299,22 +1299,22 @@ unsafe extern "C" fn func_findstring(
 }
 unsafe extern "C" fn func_foreach(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut varname: *mut ::core::ffi::c_char =
+    let varname: *mut ::core::ffi::c_char =
         expand_argument(*argv.offset(0 as ::core::ffi::c_int as isize), ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let mut list: *mut ::core::ffi::c_char = expand_argument(
+    let list: *mut ::core::ffi::c_char = expand_argument(
         *argv.offset(1 as ::core::ffi::c_int as isize), ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let mut body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
+    let body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
     let mut doneany: ::core::ffi::c_int = 0;
     let mut list_iterator: *const ::core::ffi::c_char = list;
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     let mut var: *mut variable = ::core::ptr::null_mut::<variable>();
-    let mut vp: *mut ::core::ffi::c_char = next_token(varname);
+    let vp: *mut ::core::ffi::c_char = next_token(varname);
     *end_of_token(vp).offset(0 as ::core::ffi::c_int as isize) = 0;
     push_new_variable_scope();
     var = define_variable_in_set(
@@ -1354,16 +1354,16 @@ unsafe extern "C" fn func_foreach(
 }
 unsafe extern "C" fn func_let(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut varnames: *mut ::core::ffi::c_char =
+    let varnames: *mut ::core::ffi::c_char =
         expand_argument(*argv.offset(0 as ::core::ffi::c_int as isize), ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let mut list: *mut ::core::ffi::c_char = expand_argument(
+    let list: *mut ::core::ffi::c_char = expand_argument(
         *argv.offset(1 as ::core::ffi::c_int as isize), ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let mut body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
+    let body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
     let mut vp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut vp_next: *const ::core::ffi::c_char = varnames;
     let mut list_iterator: *const ::core::ffi::c_char = list;
@@ -1379,7 +1379,7 @@ unsafe extern "C" fn func_let(
     }
     while *vp_next as ::core::ffi::c_int != 0 {
         let mut len: size_t = 0;
-        let mut p: *mut ::core::ffi::c_char = find_next_token(&raw mut list_iterator, &raw mut len);
+        let p: *mut ::core::ffi::c_char = find_next_token(&raw mut list_iterator, &raw mut len);
         if !p.is_null() && *list_iterator as ::core::ffi::c_int != 0 {
             list_iterator = list_iterator.offset(1 as ::core::ffi::c_int as isize);
             *p.offset(len as isize) = 0;
@@ -1424,7 +1424,7 @@ unsafe extern "C" fn func_let(
     o.offset(strlen(o) as isize)
 }
 #[no_mangle]
-pub unsafe extern "C" fn a_word_hash_1(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn a_word_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const a_word)).str_0 as *const ::core::ffi::c_uchar;
@@ -1437,11 +1437,11 @@ pub unsafe extern "C" fn a_word_hash_2(mut _key: *const ::core::ffi::c_void) -> 
     _result_
 }
 unsafe extern "C" fn a_word_hash_cmp(
-    mut x: *const ::core::ffi::c_void,
-    mut y: *const ::core::ffi::c_void,
+    x: *const ::core::ffi::c_void,
+    y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let mut ax: *const a_word = x as *const a_word;
-    let mut ay: *const a_word = y as *const a_word;
+    let ax: *const a_word = x as *const a_word;
+    let ay: *const a_word = y as *const a_word;
     if (*ax).length != (*ay).length {
         return if (*ax).length > (*ay).length {
             1
@@ -1461,8 +1461,8 @@ unsafe extern "C" fn a_word_hash_cmp(
 }
 unsafe extern "C" fn func_filter_filterout(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
-    mut funcname: *const ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
+    funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut words: *mut a_word = ::core::ptr::null_mut::<a_word>();
     let mut word_end: *mut a_word = ::core::ptr::null_mut::<a_word>();
@@ -1487,7 +1487,7 @@ unsafe extern "C" fn func_filter_filterout(
         ht_in_map: [0; 1],
         c2rust_padding: [0; 3],
     };
-    let mut is_filter: ::core::ffi::c_int = (*funcname.offset(
+    let is_filter: ::core::ffi::c_int = (*funcname.offset(
         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize).wrapping_sub(1 as usize)
             as isize,
     ) as ::core::ffi::c_int
@@ -1583,7 +1583,7 @@ unsafe extern "C" fn func_filter_filterout(
         );
         wp = words;
         while wp < word_end {
-            let mut owp: *mut a_word =
+            let owp: *mut a_word =
                 hash_insert(&raw mut a_word_table, wp as *const ::core::ffi::c_void) as *mut a_word;
             if !owp.is_null() {
                 (*wp).chain = owp;
@@ -1661,7 +1661,7 @@ unsafe extern "C" fn func_filter_filterout(
 }
 unsafe extern "C" fn func_strip(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
@@ -1704,9 +1704,9 @@ unsafe extern "C" fn func_strip(
     o
 }
 unsafe extern "C" fn func_error(
-    mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
-    mut funcname: *const ::core::ffi::c_char,
+    o: *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
+    funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     match *funcname as ::core::ffi::c_int {
         101 => {
@@ -1726,8 +1726,8 @@ unsafe extern "C" fn func_error(
             );
         }
         105 => {
-            let mut len: size_t = strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t;
-            let mut msg: *mut ::core::ffi::c_char =
+            let len: size_t = strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t;
+            let msg: *mut ::core::ffi::c_char =
                 xmalloc(len.wrapping_add(2)) as *mut ::core::ffi::c_char;
             memcpy(
                 msg as *mut ::core::ffi::c_void,
@@ -1753,7 +1753,7 @@ unsafe extern "C" fn func_error(
 }
 unsafe extern "C" fn func_sort(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut t: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -1835,15 +1835,15 @@ unsafe extern "C" fn func_sort(
     o
 }
 unsafe extern "C" fn parse_textint(
-    mut number: *const ::core::ffi::c_char,
-    mut msg: *const ::core::ffi::c_char,
-    mut sign: *mut ::core::ffi::c_int,
-    mut numstart: *mut *const ::core::ffi::c_char,
+    number: *const ::core::ffi::c_char,
+    msg: *const ::core::ffi::c_char,
+    sign: *mut ::core::ffi::c_int,
+    numstart: *mut *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
     let mut after_sign: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut after_number: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut p: *const ::core::ffi::c_char = next_token(number);
-    let mut negative: ::core::ffi::c_int =
+    let negative: ::core::ffi::c_int =
         (*p as ::core::ffi::c_int == '-' as i32) as ::core::ffi::c_int;
     let mut nonzero: ::core::ffi::c_int = 0;
     if *p as ::core::ffi::c_int == 0 {
@@ -1890,28 +1890,28 @@ unsafe extern "C" fn func_intcmp(
     let mut rsign: ::core::ffi::c_int = 0;
     let mut lnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut rnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut lhs_str: *mut ::core::ffi::c_char =
+    let lhs_str: *mut ::core::ffi::c_char =
         expand_argument(*argv.offset(0 as ::core::ffi::c_int as isize), ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let mut rhs_str: *mut ::core::ffi::c_char = expand_argument(
+    let rhs_str: *mut ::core::ffi::c_char = expand_argument(
         *argv.offset(1 as ::core::ffi::c_int as isize), ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let mut llim: *const ::core::ffi::c_char = parse_textint(
+    let llim: *const ::core::ffi::c_char = parse_textint(
         lhs_str,
         b"non-numeric first argument to 'intcmp' function\0" as *const u8
             as *const ::core::ffi::c_char,
         &raw mut lsign,
         &raw mut lnum,
     );
-    let mut rlim: *const ::core::ffi::c_char = parse_textint(
+    let rlim: *const ::core::ffi::c_char = parse_textint(
         rhs_str,
         b"non-numeric second argument to 'intcmp' function\0" as *const u8
             as *const ::core::ffi::c_char,
         &raw mut rsign,
         &raw mut rnum,
     );
-    let mut llen: ptrdiff_t = llim.offset_from(lnum) as ptrdiff_t;
-    let mut rlen: ptrdiff_t = rlim.offset_from(rnum) as ptrdiff_t;
+    let llen: ptrdiff_t = llim.offset_from(lnum) as ptrdiff_t;
+    let rlen: ptrdiff_t = rlim.offset_from(rnum) as ptrdiff_t;
     let mut cmp: ::core::ffi::c_int = lsign - rsign;
     if cmp == 0 {
         cmp = (llen > rlen) as ::core::ffi::c_int - (llen < rlen) as ::core::ffi::c_int;
@@ -1952,7 +1952,7 @@ unsafe extern "C" fn func_intcmp(
         }
     }
     if !(*argv).is_null() {
-        let mut expansion: *mut ::core::ffi::c_char =
+        let expansion: *mut ::core::ffi::c_char =
             expand_argument(*argv, ::core::ptr::null::<::core::ffi::c_char>());
         o = variable_buffer_output(o, expansion, strlen(expansion) as size_t);
         free(expansion as *mut ::core::ffi::c_void);
@@ -1971,14 +1971,14 @@ unsafe extern "C" fn func_if(
     let mut result: ::core::ffi::c_int = 0;
     strip_whitespace(&raw mut begp, &raw mut endp);
     if begp <= endp {
-        let mut expansion: *mut ::core::ffi::c_char =
+        let expansion: *mut ::core::ffi::c_char =
             expand_argument(begp, endp.offset(1 as ::core::ffi::c_int as isize));
         result = (*expansion.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0) as ::core::ffi::c_int;
         free(expansion as *mut ::core::ffi::c_void);
     }
     argv = argv.offset((1 + (result == 0) as ::core::ffi::c_int) as isize);
     if !(*argv).is_null() {
-        let mut expansion_0: *mut ::core::ffi::c_char =
+        let expansion_0: *mut ::core::ffi::c_char =
             expand_argument(*argv, ::core::ptr::null::<::core::ffi::c_char>());
         o = variable_buffer_output(o, expansion_0, strlen(expansion_0) as size_t);
         free(expansion_0 as *mut ::core::ffi::c_void);
@@ -2048,16 +2048,16 @@ unsafe extern "C" fn func_and(
 }
 unsafe extern "C" fn func_wildcard(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *mut ::core::ffi::c_char = string_glob(*argv.offset(0 as ::core::ffi::c_int as isize));
+    let p: *mut ::core::ffi::c_char = string_glob(*argv.offset(0 as ::core::ffi::c_int as isize));
     o = variable_buffer_output(o, p, strlen(p) as size_t);
     o
 }
 unsafe extern "C" fn func_eval(
-    mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    o: *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2070,19 +2070,19 @@ unsafe extern "C" fn func_eval(
 }
 unsafe extern "C" fn func_value(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut v: *mut variable = lookup_variable(*argv.offset(0 as ::core::ffi::c_int as isize), strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,);
+    let v: *mut variable = lookup_variable(*argv.offset(0 as ::core::ffi::c_int as isize), strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,);
     if !v.is_null() {
         o = variable_buffer_output(o, (*v).value, strlen((*v).value) as size_t);
     }
     o
 }
 unsafe extern "C" fn fold_newlines(
-    mut buffer: *mut ::core::ffi::c_char,
-    mut length: *mut size_t,
-    mut trim_newlines: ::core::ffi::c_int,
+    buffer: *mut ::core::ffi::c_char,
+    length: *mut size_t,
+    trim_newlines: ::core::ffi::c_int,
 ) {
     let mut dst: *mut ::core::ffi::c_char = buffer;
     let mut src: *mut ::core::ffi::c_char = buffer;
@@ -2119,7 +2119,7 @@ static mut shell_function_completed: ::core::ffi::c_int = 0;
 #[no_mangle]
 pub unsafe extern "C" fn shell_completed(
     mut exit_code: ::core::ffi::c_int,
-    mut exit_sig: ::core::ffi::c_int,
+    exit_sig: ::core::ffi::c_int,
 ) {
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     shell_function_pid = 0 as ::core::ffi::c_int as pid_t;
@@ -2149,8 +2149,8 @@ pub unsafe extern "C" fn shell_completed(
 #[no_mangle]
 pub unsafe extern "C" fn func_shell_base(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
-    mut trim_newlines: ::core::ffi::c_int,
+    argv: *mut *mut ::core::ffi::c_char,
+    trim_newlines: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
     let mut child: childbase = childbase {
         cmd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -2275,8 +2275,8 @@ pub unsafe extern "C" fn func_shell_base(
     o
 }
 unsafe extern "C" fn func_shell(
-    mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    o: *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     func_shell_base(o, argv, 1)
@@ -2284,13 +2284,13 @@ unsafe extern "C" fn func_shell(
 pub const ROOT_LEN: ::core::ffi::c_int = 1;
 unsafe extern "C" fn abspath(
     mut name: *const ::core::ffi::c_char,
-    mut apath: *mut ::core::ffi::c_char,
+    apath: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut dest: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut start: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut apath_limit: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut root_len: ::core::ffi::c_ulong = ROOT_LEN as ::core::ffi::c_ulong;
+    let root_len: ::core::ffi::c_ulong = ROOT_LEN as ::core::ffi::c_ulong;
     if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
         return ::core::ptr::null_mut::<::core::ffi::c_char>();
     }
@@ -2389,7 +2389,7 @@ unsafe extern "C" fn abspath(
 }
 unsafe extern "C" fn func_realpath(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
@@ -2480,7 +2480,7 @@ unsafe extern "C" fn func_realpath(
 }
 unsafe extern "C" fn func_file(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
@@ -2538,8 +2538,8 @@ unsafe extern "C" fn func_file(
         }
         command_count = command_count.wrapping_add(1);
         if !(*argv.offset(1 as ::core::ffi::c_int as isize)).is_null() {
-            let mut l: size_t = strlen(*argv.offset(1 as ::core::ffi::c_int as isize)) as size_t;
-            let mut nl: ::core::ffi::c_int = (l == 0
+            let l: size_t = strlen(*argv.offset(1 as ::core::ffi::c_int as isize)) as size_t;
+            let nl: ::core::ffi::c_int = (l == 0
                 || *(*argv.offset(1 as ::core::ffi::c_int as isize)).offset(l.wrapping_sub(1) as isize)
                     as ::core::ffi::c_int
                     != '\n' as i32)
@@ -2632,7 +2632,7 @@ unsafe extern "C" fn func_file(
         }
         loop {
             let mut buf: [::core::ffi::c_char; 1024] = [0; 1024];
-            let mut l_0: size_t = fread(
+            let l_0: size_t = fread(
                 &raw mut buf as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
                 1,
                 ::core::mem::size_of::<[::core::ffi::c_char; 1024]>() as size_t,
@@ -2689,7 +2689,7 @@ unsafe extern "C" fn func_file(
 }
 unsafe extern "C" fn func_abspath(
     mut o: *mut ::core::ffi::c_char,
-    mut argv: *mut *mut ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
@@ -2704,7 +2704,7 @@ unsafe extern "C" fn func_abspath(
         if len < GET_PATH_MAX as size_t {
             let mut in_0: [::core::ffi::c_char; 4097] = [0; 4097];
             let mut out: [::core::ffi::c_char; 4097] = [0; 4097];
-            let mut inend: *mut ::core::ffi::c_char = mempcpy(
+            let inend: *mut ::core::ffi::c_char = mempcpy(
                 &raw mut in_0 as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
                 path as *const ::core::ffi::c_void,
                 len as size_t,
@@ -2805,9 +2805,9 @@ static mut function_table_init: [function_table_entry; 38] = [
 ];
 unsafe extern "C" fn expand_builtin_function(
     mut o: *mut ::core::ffi::c_char,
-    mut argc: ::core::ffi::c_uint,
-    mut argv: *mut *mut ::core::ffi::c_char,
-    mut entry_p: *const function_table_entry,
+    argc: ::core::ffi::c_uint,
+    argv: *mut *mut ::core::ffi::c_char,
+    entry_p: *const function_table_entry,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if argc < (*entry_p).minimum_args as ::core::ffi::c_uint {
@@ -2854,13 +2854,13 @@ unsafe extern "C" fn expand_builtin_function(
 }
 #[no_mangle]
 pub unsafe extern "C" fn handle_function(
-    mut op: *mut *mut ::core::ffi::c_char,
-    mut stringp: *mut *const ::core::ffi::c_char,
+    op: *mut *mut ::core::ffi::c_char,
+    stringp: *mut *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut entry_p: *const function_table_entry = ::core::ptr::null::<function_table_entry>();
-    let mut openparen: ::core::ffi::c_char = *(*stringp).offset(0 as ::core::ffi::c_int as isize);
-    let mut closeparen: ::core::ffi::c_char = (if openparen as ::core::ffi::c_int == '(' as i32 {
+    let openparen: ::core::ffi::c_char = *(*stringp).offset(0 as ::core::ffi::c_int as isize);
+    let closeparen: ::core::ffi::c_char = (if openparen as ::core::ffi::c_int == '(' as i32 {
         ')' as i32
     } else {
         '}' as i32
@@ -2944,7 +2944,7 @@ pub unsafe extern "C" fn handle_function(
             argvp = argvp.offset(1 as ::core::ffi::c_int as isize);
         }
     } else {
-        let mut len: size_t = end.offset_from(beg) as ::core::ffi::c_long as size_t;
+        let len: size_t = end.offset_from(beg) as ::core::ffi::c_long as size_t;
         let mut p_0: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut aend: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         abeg = xmalloc(len.wrapping_add(1)) as *mut ::core::ffi::c_char;
@@ -3070,12 +3070,12 @@ unsafe extern "C" fn func_call(
 }
 #[no_mangle]
 pub unsafe extern "C" fn define_new_function(
-    mut flocp: *const Floc,
-    mut name: *const ::core::ffi::c_char,
-    mut min: ::core::ffi::c_uint,
-    mut max: ::core::ffi::c_uint,
-    mut flags: ::core::ffi::c_uint,
-    mut func: gmk_func_ptr,
+    flocp: *const Floc,
+    name: *const ::core::ffi::c_char,
+    min: ::core::ffi::c_uint,
+    max: ::core::ffi::c_uint,
+    flags: ::core::ffi::c_uint,
+    func: gmk_func_ptr,
 ) {
     let mut e: *const ::core::ffi::c_char = name;
     let mut ent: *mut function_table_entry = ::core::ptr::null_mut::<function_table_entry>();

@@ -191,8 +191,8 @@ unsafe fn set_blocking(fd: ::core::ffi::c_int, blocking: ::core::ffi::c_int) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn jobserver_setup(
-    mut slots: ::core::ffi::c_int,
-    mut style: *const ::core::ffi::c_char,
+    slots: ::core::ffi::c_int,
+    style: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_uint {
     let mut r: ::core::ffi::c_int = 0;
     let mut k: ::core::ffi::c_int = 0;
@@ -201,7 +201,7 @@ pub unsafe extern "C" fn jobserver_setup(
         || strcmp(style, b"fifo\0" as *const u8 as *const ::core::ffi::c_char)
             == 0
     {
-        let mut tmpdir: *const ::core::ffi::c_char = get_tmpdir();
+        let tmpdir: *const ::core::ffi::c_char = get_tmpdir();
         fifo_name = xmalloc(
             (strlen(tmpdir) as size_t)
                 .wrapping_add(
@@ -347,7 +347,7 @@ pub unsafe extern "C" fn jobserver_setup(
 }
 #[no_mangle]
 pub unsafe extern "C" fn jobserver_parse_auth(
-    mut auth: *const ::core::ffi::c_char,
+    auth: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_uint {
     let mut rfd: ::core::ffi::c_int = 0;
     let mut wfd: ::core::ffi::c_int = 0;
@@ -518,7 +518,7 @@ pub unsafe extern "C" fn jobserver_clear() {
     js_type = js_none;
 }
 #[no_mangle]
-pub unsafe extern "C" fn jobserver_release(mut is_fatal: ::core::ffi::c_int) {
+pub unsafe extern "C" fn jobserver_release(is_fatal: ::core::ffi::c_int) {
     let mut r: ::core::ffi::c_int = 0;
     loop {
         r = write(
@@ -578,7 +578,7 @@ pub unsafe extern "C" fn jobserver_acquire_all() -> ::core::ffi::c_uint {
     tokens
 }
 #[no_mangle]
-pub unsafe extern "C" fn jobserver_pre_child(mut recursive: ::core::ffi::c_int) {
+pub unsafe extern "C" fn jobserver_pre_child(recursive: ::core::ffi::c_int) {
     if recursive != 0
         && js_type as ::core::ffi::c_uint == js_pipe as ::core::ffi::c_int as ::core::ffi::c_uint
     {
@@ -587,7 +587,7 @@ pub unsafe extern "C" fn jobserver_pre_child(mut recursive: ::core::ffi::c_int) 
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn jobserver_post_child(mut recursive: ::core::ffi::c_int) {
+pub unsafe extern "C" fn jobserver_post_child(recursive: ::core::ffi::c_int) {
     if recursive != 0
         && js_type as ::core::ffi::c_uint == js_pipe as ::core::ffi::c_int as ::core::ffi::c_uint
     {
@@ -612,7 +612,7 @@ pub unsafe extern "C" fn jobserver_pre_acquire() {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn jobserver_acquire(mut timeout: ::core::ffi::c_int) -> ::core::ffi::c_uint {
+pub unsafe extern "C" fn jobserver_acquire(timeout: ::core::ffi::c_int) -> ::core::ffi::c_uint {
     let mut spec: timespec = timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -728,7 +728,7 @@ pub unsafe extern "C" fn osync_get_mutex() -> *mut ::core::ffi::c_char {
 }
 #[no_mangle]
 pub unsafe extern "C" fn osync_parse_mutex(
-    mut mutex: *const ::core::ffi::c_char,
+    mutex: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_uint {
     if strncmp(
         mutex,
@@ -840,7 +840,7 @@ pub unsafe extern "C" fn get_bad_stdin() -> ::core::ffi::c_int {
     bad_stdin
 }
 #[no_mangle]
-pub unsafe extern "C" fn fd_inherit(mut fd: ::core::ffi::c_int) {
+pub unsafe extern "C" fn fd_inherit(fd: ::core::ffi::c_int) {
     let mut flags: ::core::ffi::c_int = 0;
     loop {
         flags = fcntl(fd, 1);
@@ -860,7 +860,7 @@ pub unsafe extern "C" fn fd_inherit(mut fd: ::core::ffi::c_int) {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn fd_noinherit(mut fd: ::core::ffi::c_int) {
+pub unsafe extern "C" fn fd_noinherit(fd: ::core::ffi::c_int) {
     let mut flags: ::core::ffi::c_int = 0;
     loop {
         flags = fcntl(fd, 1);
@@ -880,7 +880,7 @@ pub unsafe extern "C" fn fd_noinherit(mut fd: ::core::ffi::c_int) {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn fd_set_append(mut fd: ::core::ffi::c_int) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn fd_set_append(fd: ::core::ffi::c_int) -> ::core::ffi::c_int {
     let mut flags: ::core::ffi::c_int = -1;
     let mut stbuf: stat = unsafe { ::core::mem::zeroed() };
     if fstat(fd, &raw mut stbuf) == 0
@@ -905,8 +905,8 @@ pub unsafe extern "C" fn fd_set_append(mut fd: ::core::ffi::c_int) -> ::core::ff
 }
 #[no_mangle]
 pub unsafe extern "C" fn fd_reset_append(
-    mut fd: ::core::ffi::c_int,
-    mut flags: ::core::ffi::c_int,
+    fd: ::core::ffi::c_int,
+    flags: ::core::ffi::c_int,
 ) {
     if flags >= 0 {
         let mut r: ::core::ffi::c_int = 0;
@@ -920,7 +920,7 @@ pub unsafe extern "C" fn fd_reset_append(
 }
 #[no_mangle]
 pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
-    let mut tdir: *const ::core::ffi::c_char = get_tmpdir();
+    let tdir: *const ::core::ffi::c_char = get_tmpdir();
     let mut fd: ::core::ffi::c_int = -1;
     static mut tmpfile_works: ::core::ffi::c_uint = 1;
     if tmpfile_works != 0 {
@@ -959,7 +959,7 @@ pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
                     .offset(1 as isize),
             ) == 0)
     {
-        let mut mask: mode_t = umask(0o77 as __mode_t) as mode_t;
+        let mask: mode_t = umask(0o77 as __mode_t) as mode_t;
         let mut tfile: *mut FILE = ::core::ptr::null_mut::<FILE>();
         loop {
             *__errno_location() = 0;

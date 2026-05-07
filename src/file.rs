@@ -380,17 +380,17 @@ pub const COMMANDS_SILENT: ::core::ffi::c_int = 2;
 pub const COMMANDS_NOERROR: ::core::ffi::c_int = 4;
 #[inline]
 #[no_mangle]
-pub unsafe extern "C" fn free_ns(mut n: *mut nameseq) {
+pub unsafe extern "C" fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
 #[inline]
 #[no_mangle]
-pub unsafe extern "C" fn free_dep(mut d: *mut dep) {
+pub unsafe extern "C" fn free_dep(d: *mut dep) {
     free_ns(d as *mut nameseq);
 }
 #[inline]
 #[no_mangle]
-pub unsafe extern "C" fn free_dep_chain(mut d: *mut dep) {
+pub unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
 pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
@@ -400,7 +400,7 @@ pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
 #[no_mangle]
 pub static mut snapped_deps: ::core::ffi::c_int = 0;
 #[no_mangle]
-pub unsafe extern "C" fn file_hash_1(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const file)).hname as *const ::core::ffi::c_uchar;
@@ -413,8 +413,8 @@ pub unsafe extern "C" fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::
     _result_
 }
 unsafe extern "C" fn file_hash_cmp(
-    mut x: *const ::core::ffi::c_void,
-    mut y: *const ::core::ffi::c_void,
+    x: *const ::core::ffi::c_void,
+    y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
     if (*(x as *const file)).hname == (*(y as *const file)).hname {
         0
@@ -506,7 +506,7 @@ pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *m
     f
 }
 #[no_mangle]
-pub unsafe extern "C" fn enter_file(mut name: *const ::core::ffi::c_char) -> *mut file {
+pub unsafe extern "C" fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     let mut f: *mut file = ::core::ptr::null_mut::<file>();
     let mut new: *mut file = ::core::ptr::null_mut::<file>();
     let mut file_slot: *mut *mut file = ::core::ptr::null_mut::<*mut file>();
@@ -592,7 +592,7 @@ pub unsafe extern "C" fn enter_file(mut name: *const ::core::ffi::c_char) -> *mu
 #[no_mangle]
 pub unsafe extern "C" fn rehash_file(
     mut from_file: *mut file,
-    mut to_hname: *const ::core::ffi::c_char,
+    to_hname: *const ::core::ffi::c_char,
 ) {
     let mut file_key: file = file {
         name: ::core::ptr::null::<::core::ffi::c_char>(),
@@ -820,7 +820,7 @@ pub unsafe extern "C" fn rehash_file(
 #[no_mangle]
 pub unsafe extern "C" fn rename_file(
     mut from_file: *mut file,
-    mut to_hname: *const ::core::ffi::c_char,
+    to_hname: *const ::core::ffi::c_char,
 ) {
     rehash_file(from_file, to_hname);
     while !from_file.is_null() {
@@ -829,7 +829,7 @@ pub unsafe extern "C" fn rename_file(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn remove_intermediates(mut sig: ::core::ffi::c_int) {
+pub unsafe extern "C" fn remove_intermediates(sig: ::core::ffi::c_int) {
     let mut file_slot: *mut *mut file = ::core::ptr::null_mut::<*mut file>();
     let mut file_end: *mut *mut file = ::core::ptr::null_mut::<*mut file>();
     let mut doneany: ::core::ffi::c_int = 0;
@@ -847,7 +847,7 @@ pub unsafe extern "C" fn remove_intermediates(mut sig: ::core::ffi::c_int) {
             || *file_slot as *mut ::core::ffi::c_void
                 == hash_deleted_item as *mut ::core::ffi::c_void)
         {
-            let mut f: *mut file = *file_slot;
+            let f: *mut file = *file_slot;
             if (*f).intermediate() as ::core::ffi::c_int != 0
                 && ((*f).dontcare() as ::core::ffi::c_int != 0 || (*f).precious() == 0)
                 && (*f).secondary() == 0
@@ -969,7 +969,7 @@ pub unsafe extern "C" fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut 
 #[no_mangle]
 pub unsafe extern "C" fn enter_prereqs(
     mut deps: *mut dep,
-    mut stem: *const ::core::ffi::c_char,
+    stem: *const ::core::ffi::c_char,
 ) -> *mut dep {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut d1: *mut dep = ::core::ptr::null_mut::<dep>();
@@ -977,16 +977,16 @@ pub unsafe extern "C" fn enter_prereqs(
         return ::core::ptr::null_mut::<dep>();
     }
     if !stem.is_null() {
-        let mut pattern: *const ::core::ffi::c_char =
+        let pattern: *const ::core::ffi::c_char =
             b"%\0" as *const u8 as *const ::core::ffi::c_char;
         let mut dp: *mut dep = deps;
         let mut dl: *mut dep = ::core::ptr::null_mut::<dep>();
         while !dp.is_null() {
             let mut percent: *mut ::core::ffi::c_char =
                 ::core::ptr::null_mut::<::core::ffi::c_char>();
-            let mut nl: size_t = (strlen((*dp).name) as size_t).wrapping_add(1);
+            let nl: size_t = (strlen((*dp).name) as size_t).wrapping_add(1);
             alloca_allocations.push(::std::vec::from_elem(0, nl as usize));
-            let mut nm: *mut ::core::ffi::c_char =
+            let nm: *mut ::core::ffi::c_char =
                 alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
                 nm as *mut ::core::ffi::c_void,
@@ -1021,7 +1021,7 @@ pub unsafe extern "C" fn enter_prereqs(
                 }
                 if *variable_buffer.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
                 {
-                    let mut df: *mut dep = dp;
+                    let df: *mut dep = dp;
                     if dp == deps {
                         deps = (*deps).next;
                         dp = deps;
@@ -1062,7 +1062,7 @@ pub unsafe extern "C" fn enter_prereqs(
     deps
 }
 #[no_mangle]
-pub unsafe extern "C" fn expand_deps(mut f: *mut file) {
+pub unsafe extern "C" fn expand_deps(f: *mut file) {
     let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut dp: *mut *mut dep = ::core::ptr::null_mut::<*mut dep>();
     let mut fstem: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -1094,11 +1094,11 @@ pub unsafe extern "C" fn expand_deps(mut f: *mut file) {
                     cs = cs.offset(1 as ::core::ffi::c_int as isize);
                 }
                 if nperc != 0 {
-                    let mut slen: size_t = (strlen((*d).name) as size_t)
+                    let slen: size_t = (strlen((*d).name) as size_t)
                         .wrapping_add(nperc)
                         .wrapping_add(1);
                     let mut pcs: *const ::core::ffi::c_char = (*d).name;
-                    let mut name: *mut ::core::ffi::c_char =
+                    let name: *mut ::core::ffi::c_char =
                         xmalloc(slen) as *mut ::core::ffi::c_char;
                     let mut s: *mut ::core::ffi::c_char = name;
                     cs = strchr(pcs, '%' as i32);
@@ -1175,9 +1175,9 @@ pub unsafe extern "C" fn expand_deps(mut f: *mut file) {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn expand_extra_prereqs(mut extra: *const variable) -> *mut dep {
+pub unsafe extern "C" fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
     let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
-    let mut prereqs: *mut dep = if !extra.is_null() {
+    let prereqs: *mut dep = if !extra.is_null() {
         split_prereqs(expand_string_buf(
             ::core::ptr::null_mut::<::core::ffi::c_char>(),
             (*extra).value,
@@ -1199,7 +1199,7 @@ pub unsafe extern "C" fn expand_extra_prereqs(mut extra: *const variable) -> *mu
     prereqs
 }
 #[no_mangle]
-pub unsafe extern "C" fn snap_file(mut f: *mut file, mut deps: *const dep) {
+pub unsafe extern "C" fn snap_file(mut f: *mut file, deps: *const dep) {
     let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
     if second_expansion == 0 {
@@ -1371,7 +1371,7 @@ pub unsafe extern "C" fn snap_deps() {
                             (*f2).name,
                         );
                     } else {
-                        let mut rhs = {
+                        let rhs = {
                             (*f2).set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                             (*f2).secondary()
                         } as ::core::ffi::c_uint;
@@ -1453,11 +1453,11 @@ pub unsafe extern "C" fn snap_deps() {
             }
         }
     }
-    let mut prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
+    let prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
         b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
     ));
-    let mut filedump: *mut *mut ::core::ffi::c_void = hash_dump(
+    let filedump: *mut *mut ::core::ffi::c_void = hash_dump(
         &raw mut files,
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>(),
         None,
@@ -1471,7 +1471,7 @@ pub unsafe extern "C" fn snap_deps() {
     free_dep_chain(prereqs);
 }
 #[no_mangle]
-pub unsafe extern "C" fn set_command_state(mut file: *mut file, mut state: cmd_state) {
+pub unsafe extern "C" fn set_command_state(file: *mut file, state: cmd_state) {
     let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
     (*file).set_command_state(state as cmd_state as cmd_state);
     d = (*file).also_make;
@@ -1484,18 +1484,18 @@ pub unsafe extern "C" fn set_command_state(mut file: *mut file, mut state: cmd_s
 }
 #[no_mangle]
 pub unsafe extern "C" fn file_timestamp_cons(
-    mut fname: *const ::core::ffi::c_char,
-    mut stamp: time_t,
-    mut ns: ::core::ffi::c_long,
+    fname: *const ::core::ffi::c_char,
+    stamp: time_t,
+    ns: ::core::ffi::c_long,
 ) -> uintmax_t {
-    let mut offset: ::core::ffi::c_int = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
+    let offset: ::core::ffi::c_int = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
         + (if FILE_TIMESTAMP_HI_RES != 0 {
             ns
         } else {
             0
         })) as ::core::ffi::c_int;
-    let mut s: uintmax_t = stamp as uintmax_t;
-    let mut product: uintmax_t = s
+    let s: uintmax_t = stamp as uintmax_t;
+    let product: uintmax_t = s
         << (if FILE_TIMESTAMP_HI_RES != 0 {
             30
         } else {
@@ -1575,7 +1575,7 @@ pub unsafe extern "C" fn file_timestamp_cons(
             .wrapping_sub(1 as uintmax_t))
     {
         let mut buf: [::core::ffi::c_char; 43] = [0; 43];
-        let mut f: *const ::core::ffi::c_char = if !fname.is_null() {
+        let f: *const ::core::ffi::c_char = if !fname.is_null() {
             fname
         } else {
             b"Current time\0" as *const u8 as *const ::core::ffi::c_char
@@ -1629,7 +1629,7 @@ pub unsafe extern "C" fn file_timestamp_cons(
     ts
 }
 #[no_mangle]
-pub unsafe extern "C" fn file_timestamp_now(mut resolution: *mut ::core::ffi::c_int) -> uintmax_t {
+pub unsafe extern "C" fn file_timestamp_now(resolution: *mut ::core::ffi::c_int) -> uintmax_t {
     let mut r: ::core::ffi::c_int = 0;
     let mut s: time_t = 0;
     let mut ns: ::core::ffi::c_int = 0;
@@ -1670,7 +1670,7 @@ pub unsafe extern "C" fn file_timestamp_now(mut resolution: *mut ::core::ffi::c_
 #[no_mangle]
 pub unsafe extern "C" fn file_timestamp_sprintf(
     mut p: *mut ::core::ffi::c_char,
-    mut ts: uintmax_t,
+    ts: uintmax_t,
 ) {
     let mut t: time_t = (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
         >> (if FILE_TIMESTAMP_HI_RES != 0 {
@@ -1678,9 +1678,9 @@ pub unsafe extern "C" fn file_timestamp_sprintf(
         } else {
             0
         })) as time_t;
-    let mut tm: *mut tm = localtime(&raw mut t);
+    let tm: *mut tm = localtime(&raw mut t);
     if !tm.is_null() {
-        let mut year: intmax_t = (*tm).tm_year as intmax_t;
+        let year: intmax_t = (*tm).tm_year as intmax_t;
         p = p.offset(sprintf(
             p,
             b"%04ld-%02d-%02d %02d:%02d:%02d\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1784,8 +1784,8 @@ pub unsafe extern "C" fn print_prereqs(mut deps: *const dep) {
     putchar('\n' as i32);
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_file(mut item: *const ::core::ffi::c_void) {
-    let mut f: *const file = item as *const file;
+pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
+    let f: *const file = item as *const file;
     if no_builtin_rules_flag != 0 && (*f).builtin() as ::core::ffi::c_int != 0 {
         return;
     }
@@ -1988,8 +1988,8 @@ pub unsafe extern "C" fn print_file_data_base() {
     hash_print_stats(&raw mut files, stdout);
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_target(mut item: *const ::core::ffi::c_void) {
-    let mut f: *const file = item as *const file;
+pub unsafe extern "C" fn print_target(item: *const ::core::ffi::c_void) {
+    let f: *const file = item as *const file;
     if (*f).is_target() == 0 || (*f).suffix() as ::core::ffi::c_int != 0 {
         return;
     }
@@ -2027,8 +2027,8 @@ pub unsafe extern "C" fn print_targets() {
     );
 }
 #[no_mangle]
-pub unsafe extern "C" fn verify_file(mut item: *const ::core::ffi::c_void) {
-    let mut f: *const file = item as *const file;
+pub unsafe extern "C" fn verify_file(item: *const ::core::ffi::c_void) {
+    let f: *const file = item as *const file;
     let mut d: *const dep = ::core::ptr::null::<dep>();
     if !(*f).name.is_null()
         && *(*f).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
@@ -2165,7 +2165,7 @@ pub unsafe extern "C" fn build_target_list(
         let mut len: size_t = 0;
         let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut fp: *mut *mut file = files.ht_vec as *mut *mut file;
-        let mut end: *mut *mut file = fp.offset(files.ht_size as isize) as *mut *mut file;
+        let end: *mut *mut file = fp.offset(files.ht_size as isize) as *mut *mut file;
         value = xrealloc(value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
         p = value;
         len = 0;
@@ -2174,11 +2174,11 @@ pub unsafe extern "C" fn build_target_list(
                 || *fp as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
                 && (**fp).is_target() as ::core::ffi::c_int != 0
             {
-                let mut f: *mut file = *fp;
-                let mut l: size_t = strlen((*f).name) as size_t;
+                let f: *mut file = *fp;
+                let l: size_t = strlen((*f).name) as size_t;
                 len = len.wrapping_add(l.wrapping_add(1));
                 if len > max {
-                    let mut off: size_t = p.offset_from(value) as ::core::ffi::c_long as size_t;
+                    let off: size_t = p.offset_from(value) as ::core::ffi::c_long as size_t;
                     max = max.wrapping_add(
                         l.wrapping_add(1)
                             .wrapping_div(500)

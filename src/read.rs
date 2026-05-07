@@ -450,12 +450,12 @@ unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
 }
 #[inline]
 
-unsafe extern "C" fn free_ns(mut n: *mut nameseq) {
+unsafe extern "C" fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
 #[inline]
 
-unsafe extern "C" fn free_dep_chain(mut d: *mut dep) {
+unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
@@ -527,7 +527,7 @@ pub unsafe extern "C" fn read_all_makefiles(
     free(value as *mut ::core::ffi::c_void);
     if !makefiles.is_null() {
         while !(*makefiles).is_null() {
-            let mut d: *mut goaldep = eval_makefile(*makefiles, 0);
+            let d: *mut goaldep = eval_makefile(*makefiles, 0);
             if *__errno_location() != 0 {
                 perror_with_name(b"\0" as *const u8 as *const ::core::ffi::c_char, *makefiles);
             }
@@ -572,8 +572,8 @@ pub unsafe extern "C" fn read_all_makefiles(
     read_files
 }
 #[no_mangle]
-pub unsafe extern "C" fn install_conditionals(mut new: *mut conditionals) -> *mut conditionals {
-    let mut save: *mut conditionals = conditionals;
+pub unsafe extern "C" fn install_conditionals(new: *mut conditionals) -> *mut conditionals {
+    let save: *mut conditionals = conditionals;
     memset(
         new as *mut ::core::ffi::c_void,
         0,
@@ -583,14 +583,14 @@ pub unsafe extern "C" fn install_conditionals(mut new: *mut conditionals) -> *mu
     save
 }
 #[no_mangle]
-pub unsafe extern "C" fn restore_conditionals(mut saved: *mut conditionals) {
+pub unsafe extern "C" fn restore_conditionals(saved: *mut conditionals) {
     free((*conditionals).ignoring as *mut ::core::ffi::c_void);
     free((*conditionals).seen_else as *mut ::core::ffi::c_void);
     conditionals = saved;
 }
 unsafe extern "C" fn eval_makefile(
     mut filename: *const ::core::ffi::c_char,
-    mut flags: ::core::ffi::c_ushort,
+    flags: ::core::ffi::c_ushort,
 ) -> *mut goaldep {
     let mut deps: *mut goaldep = ::core::ptr::null_mut::<goaldep>();
     let mut ebuf: ebuffer = ebuffer {
@@ -651,7 +651,7 @@ unsafe extern "C" fn eval_makefile(
     (*deps).error = *__errno_location();
     match (*deps).error {
         EMFILE | ENFILE | ENOMEM => {
-            let mut err: *const ::core::ffi::c_char = strerror((*deps).error);
+            let err: *const ::core::ffi::c_char = strerror((*deps).error);
             fatal(
                 reading_file,
                 strlen(err) as size_t,
@@ -676,7 +676,7 @@ unsafe extern "C" fn eval_makefile(
             ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
         dir = include_directories;
         while !(*dir).is_null() {
-            let mut included: *const ::core::ffi::c_char = concat(
+            let included: *const ::core::ffi::c_char = concat(
                 3,
                 *dir,
                 b"/\0" as *const u8 as *const ::core::ffi::c_char,
@@ -747,7 +747,7 @@ unsafe extern "C" fn eval_makefile(
     deps
 }
 #[no_mangle]
-pub unsafe extern "C" fn eval_buffer(mut buffer: *mut ::core::ffi::c_char, mut flocp: *const Floc) {
+pub unsafe extern "C" fn eval_buffer(buffer: *mut ::core::ffi::c_char, flocp: *const Floc) {
     let mut ebuf: ebuffer = ebuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -791,9 +791,9 @@ pub unsafe extern "C" fn eval_buffer(mut buffer: *mut ::core::ffi::c_char, mut f
 }
 unsafe extern "C" fn parse_var_assignment(
     mut line: *const ::core::ffi::c_char,
-    mut targvar: ::core::ffi::c_int,
+    targvar: ::core::ffi::c_int,
     mut flocp: *const Floc,
-    mut vmod: *mut vmodifiers,
+    vmod: *mut vmodifiers,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     memset(
@@ -947,7 +947,7 @@ unsafe extern "C" fn parse_var_assignment(
     p as *mut ::core::ffi::c_char
 }
 #[no_mangle]
-pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::ffi::c_int) {
+pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
     let mut collapsed: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut collapsed_length: size_t = 0;
     let mut commands_len: size_t = 200;
@@ -1001,7 +1001,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
         }
         line = (*ebuf).buffer;
         if (*ebuf).floc.lineno == 1 {
-            let mut ul: *mut ::core::ffi::c_uchar = line as *mut ::core::ffi::c_uchar;
+            let ul: *mut ::core::ffi::c_uchar = line as *mut ::core::ffi::c_uchar;
             if *ul.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0xef as ::core::ffi::c_int
                 && *ul.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0xbb as ::core::ffi::c_int
                 && *ul.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
@@ -1087,7 +1087,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
         );
         if vmod.assign_v() != 0 {
             let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
-            let mut origin: variable_origin = (if vmod.override_v() as ::core::ffi::c_int != 0 {
+            let origin: variable_origin = (if vmod.override_v() as ::core::ffi::c_int != 0 {
                 o_override as ::core::ffi::c_int
             } else {
                 o_file as ::core::ffi::c_int
@@ -1186,7 +1186,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                     in_ignored_define = 0;
                 }
             } else {
-                let mut i: ::core::ffi::c_int = conditional_line(p, wlen, fstart, initial_tab);
+                let i: ::core::ffi::c_int = conditional_line(p, wlen, fstart, initial_tab);
                 if i != -(2 as ::core::ffi::c_int) {
                     if i == -(1 as ::core::ffi::c_int) {
                         fatal(
@@ -1222,7 +1222,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                     .wrapping_sub(1),
                             ) == 0
                     {
-                        let mut exporting: ::core::ffi::c_int =
+                        let exporting: ::core::ffi::c_int =
                             if *p as ::core::ffi::c_int == 'u' as i32 {
                                 0
                             } else {
@@ -1406,7 +1406,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                             seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
                         };
                         let mut files: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
-                        let mut noerror: ::core::ffi::c_int =
+                        let noerror: ::core::ffi::c_int =
                             (*p.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                             != 'i' as i32) as ::core::ffi::c_int;
                         if initial_tab != 0 {
@@ -1489,8 +1489,8 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                             pattern = ::core::ptr::null::<::core::ffi::c_char>();
                             also_make_targets = 0;
                             while !files.is_null() {
-                                let mut next: *mut nameseq = (*files).next;
-                                let mut flags: ::core::ffi::c_ushort = (RM_INCLUDED
+                                let next: *mut nameseq = (*files).next;
+                                let flags: ::core::ffi::c_ushort = (RM_INCLUDED
                                     | RM_NO_TILDE
                                     | (if noerror != 0 {
                                         RM_DONTCARE
@@ -1533,7 +1533,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                         && is_rule == 0
                     {
                         let mut files_0: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
-                        let mut noerror_0: ::core::ffi::c_int =
+                        let noerror_0: ::core::ffi::c_int =
                             (*p.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                             == '-' as i32) as ::core::ffi::c_int;
                         if initial_tab != 0 {
@@ -1589,7 +1589,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                             ) as *mut nameseq;
                             free(p as *mut ::core::ffi::c_void);
                             while !files_0.is_null() {
-                                let mut next_0: *mut nameseq = (*files_0).next;
+                                let next_0: *mut nameseq = (*files_0).next;
                                 let mut name: *const ::core::ffi::c_char = (*files_0).name;
                                 let mut deps: *mut goaldep = ::core::ptr::null_mut::<goaldep>();
                                 let mut f: *mut file = ::core::ptr::null_mut::<file>();
@@ -1757,14 +1757,14 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                     if cmdleft.is_null() {
                                         cmdleft = find_char_unquote(p2, ';' as i32);
                                         if !cmdleft.is_null() {
-                                            let mut p2_off: size_t = p2.offset_from(variable_buffer)
+                                            let p2_off: size_t = p2.offset_from(variable_buffer)
                                                 as ::core::ffi::c_long
                                                 as size_t;
-                                            let mut cmd_off: size_t = cmdleft
+                                            let cmd_off: size_t = cmdleft
                                                 .offset_from(variable_buffer)
                                                 as ::core::ffi::c_long
                                                 as size_t;
-                                            let mut pend: *mut ::core::ffi::c_char =
+                                            let pend: *mut ::core::ffi::c_char =
                                                 p2.offset(strlen(p2) as isize);
                                             *cmdleft = 0;
                                             expand_string_buf(pend, lb_next, SIZE_MAX as size_t);
@@ -1875,7 +1875,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                             as *const ::core::ffi::c_char,
                                     );
                                 } else {
-                                    let mut save_0: ::core::ffi::c_char = *colonp;
+                                    let save_0: ::core::ffi::c_char = *colonp;
                                     if save_0 as ::core::ffi::c_int == '&' as i32 {
                                         also_make_targets = 1;
                                     }
@@ -1919,7 +1919,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                             p2 = p2.offset(1 as ::core::ffi::c_int as isize);
                                         }
                                         if *lb_next as ::core::ffi::c_int != 0 {
-                                            let mut l_1: size_t = p2.offset_from(variable_buffer)
+                                            let l_1: size_t = p2.offset_from(variable_buffer)
                                                 as ::core::ffi::c_long
                                                 as size_t;
                                             plen = strlen(p2) as size_t;
@@ -1939,7 +1939,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                         );
                                         if vmod.assign_v() != 0 {
                                             if !semip.is_null() {
-                                                let mut l_2: size_t = p2
+                                                let l_2: size_t = p2
                                                     .offset_from(variable_buffer)
                                                     as ::core::ffi::c_long
                                                     as size_t;
@@ -1971,7 +1971,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                             prefix = cmd_prefix;
                                             no_targets = 0;
                                             if *lb_next as ::core::ffi::c_int != 0 {
-                                                let mut l_3: size_t = p2
+                                                let l_3: size_t = p2
                                                     .offset_from(variable_buffer)
                                                     as ::core::ffi::c_long
                                                     as size_t;
@@ -2081,7 +2081,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
                                             }
                                             commands_idx = 0;
                                             if !cmdleft.is_null() {
-                                                let mut l_4: size_t = strlen(cmdleft) as size_t;
+                                                let l_4: size_t = strlen(cmdleft) as size_t;
                                                 cmds_started =
                                                     (*fstart).lineno as ::core::ffi::c_uint;
                                                 if l_4.wrapping_add(2) > commands_len {
@@ -2149,7 +2149,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, mut set_default: ::core::f
     free(commands as *mut ::core::ffi::c_void);
 }
 #[no_mangle]
-pub unsafe extern "C" fn remove_comments(mut line: *mut ::core::ffi::c_char) {
+pub unsafe extern "C" fn remove_comments(line: *mut ::core::ffi::c_char) {
     let mut comment: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     comment = find_map_unquote(line, MAP_COMMENT | MAP_VARIABLE);
     if !comment.is_null() {
@@ -2158,8 +2158,8 @@ pub unsafe extern "C" fn remove_comments(mut line: *mut ::core::ffi::c_char) {
 }
 unsafe extern "C" fn do_undefine(
     mut name: *mut ::core::ffi::c_char,
-    mut origin: variable_origin,
-    mut ebuf: *mut ebuffer,
+    origin: variable_origin,
+    ebuf: *mut ebuffer,
 ) {
     let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut var: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2195,7 +2195,7 @@ unsafe extern "C" fn do_undefine(
 }
 unsafe extern "C" fn do_define(
     mut name: *mut ::core::ffi::c_char,
-    mut origin: variable_origin,
+    origin: variable_origin,
     mut ebuf: *mut ebuffer,
 ) -> *mut variable {
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
@@ -2261,7 +2261,7 @@ unsafe extern "C" fn do_define(
     loop {
         let mut len: size_t = 0;
         let mut line: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut nlines: ::core::ffi::c_long = readline(ebuf);
+        let nlines: ::core::ffi::c_long = readline(ebuf);
         if nlines < 0 {
             fatal(
                 &raw mut defstart,
@@ -2365,8 +2365,8 @@ unsafe extern "C" fn do_define(
 unsafe extern "C" fn conditional_line(
     mut line: *mut ::core::ffi::c_char,
     mut len: size_t,
-    mut flocp: *const Floc,
-    mut initial_tab: ::core::ffi::c_uint,
+    flocp: *const Floc,
+    initial_tab: ::core::ffi::c_uint,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut cmdname: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -2781,10 +2781,10 @@ unsafe extern "C" fn conditional_line(
 }
 unsafe extern "C" fn record_target_var(
     mut filenames: *mut nameseq,
-    mut defn: *mut ::core::ffi::c_char,
-    mut origin: variable_origin,
-    mut vmod: *mut vmodifiers,
-    mut flocp: *const Floc,
+    defn: *mut ::core::ffi::c_char,
+    origin: variable_origin,
+    vmod: *mut vmodifiers,
+    flocp: *const Floc,
 ) {
     let mut nextf: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
     let mut global: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -2848,7 +2848,7 @@ unsafe extern "C" fn record_target_var(
         }
         if (*v).origin() as ::core::ffi::c_int != o_override as ::core::ffi::c_int {
             let mut gv: *mut variable = ::core::ptr::null_mut::<variable>();
-            let mut len: size_t = strlen((*v).name) as size_t;
+            let len: size_t = strlen((*v).name) as size_t;
             gv = lookup_variable((*v).name, len);
             if !gv.is_null()
                 && v != gv
@@ -2866,11 +2866,11 @@ unsafe extern "C" fn record_target_var(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn check_specials(mut files: *mut nameseq, mut set_default: ::core::ffi::c_int) {
+pub unsafe extern "C" fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_int) {
     let mut t: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
     t = files;
     while !t.is_null() {
-        let mut nm: *const ::core::ffi::c_char = (*t).name;
+        let nm: *const ::core::ffi::c_char = (*t).name;
         if posix_pedantic == 0
             && (*nm as ::core::ffi::c_int
                 == *(b".POSIX\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
@@ -3014,7 +3014,7 @@ pub unsafe extern "C" fn check_specials(mut files: *mut nameseq, mut set_default
                     } else {
                         d2 = (*suffix_file).deps;
                         while !d2.is_null() {
-                            let mut l: size_t = strlen(if !(*d2).name.is_null() {
+                            let l: size_t = strlen(if !(*d2).name.is_null() {
                                 (*d2).name
                             } else {
                                 (*(*d2).file).name
@@ -3074,7 +3074,7 @@ pub unsafe extern "C" fn check_specials(mut files: *mut nameseq, mut set_default
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn check_special_file(mut file: *mut file, mut flocp: *const Floc) {
+pub unsafe extern "C" fn check_special_file(file: *mut file, flocp: *const Floc) {
     if *(*file).name as ::core::ffi::c_int
         == *(b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
         && (*(*file).name as ::core::ffi::c_int == 0
@@ -3105,16 +3105,16 @@ pub unsafe extern "C" fn check_special_file(mut file: *mut file, mut flocp: *con
 }
 unsafe extern "C" fn record_files(
     mut filenames: *mut nameseq,
-    mut are_also_makes: ::core::ffi::c_int,
-    mut pattern: *const ::core::ffi::c_char,
-    mut pattern_percent: *const ::core::ffi::c_char,
+    are_also_makes: ::core::ffi::c_int,
+    pattern: *const ::core::ffi::c_char,
+    pattern_percent: *const ::core::ffi::c_char,
     mut depstr: *mut ::core::ffi::c_char,
-    mut cmds_started: ::core::ffi::c_uint,
-    mut commands: *mut ::core::ffi::c_char,
-    mut commands_idx: size_t,
-    mut two_colon: ::core::ffi::c_int,
-    mut prefix: ::core::ffi::c_char,
-    mut flocp: *const Floc,
+    cmds_started: ::core::ffi::c_uint,
+    commands: *mut ::core::ffi::c_char,
+    commands_idx: size_t,
+    two_colon: ::core::ffi::c_int,
+    prefix: ::core::ffi::c_char,
+    flocp: *const Floc,
 ) {
     let mut cmds: *mut commands = ::core::ptr::null_mut::<commands>();
     let mut deps: *mut dep = ::core::ptr::null_mut::<dep>();
@@ -3236,7 +3236,7 @@ unsafe extern "C" fn record_files(
         return;
     }
     loop {
-        let mut nextf_0: *mut nameseq = (*filenames).next;
+        let nextf_0: *mut nameseq = (*filenames).next;
         let mut f: *mut file = ::core::ptr::null_mut::<file>();
         let mut this: *mut dep = ::core::ptr::null_mut::<dep>();
         free_ns(filenames);
@@ -3278,7 +3278,7 @@ unsafe extern "C" fn record_files(
                 && !(*f).cmds.is_null()
                 && (*f).is_target() as ::core::ffi::c_int != 0
             {
-                let mut l: size_t = strlen((*f).name) as size_t;
+                let l: size_t = strlen((*f).name) as size_t;
                 error(
                     &raw mut (*cmds).fileinfo,
                     l,
@@ -3336,7 +3336,7 @@ unsafe extern "C" fn record_files(
         if !pattern.is_null() {
             static mut percent: *const ::core::ffi::c_char =
                 b"%\0" as *const u8 as *const ::core::ffi::c_char;
-            let mut o: *mut ::core::ffi::c_char = patsubst_expand_pat(
+            let o: *mut ::core::ffi::c_char = patsubst_expand_pat(
                 variable_buffer,
                 name,
                 pattern,
@@ -3420,7 +3420,7 @@ unsafe extern "C" fn record_files(
     free_dep_chain(also_make);
 }
 unsafe extern "C" fn find_map_unquote(
-    mut string: *mut ::core::ffi::c_char,
+    string: *mut ::core::ffi::c_char,
     mut stopmap: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
     let mut string_len: size_t = 0;
@@ -3451,7 +3451,7 @@ unsafe extern "C" fn find_map_unquote(
             if string_len == 0 {
                 string_len = strlen(string) as size_t;
             }
-            let mut hi: ::core::ffi::c_int = -(i / 2);
+            let hi: ::core::ffi::c_int = -(i / 2);
             memmove(
                 p.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
                 p.offset((i / 2) as isize) as *mut ::core::ffi::c_char
@@ -3472,8 +3472,8 @@ unsafe extern "C" fn find_map_unquote(
     ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
 unsafe extern "C" fn find_char_unquote(
-    mut string: *mut ::core::ffi::c_char,
-    mut stop: ::core::ffi::c_int,
+    string: *mut ::core::ffi::c_char,
+    stop: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
     let mut string_len: size_t = 0;
     let mut p: *mut ::core::ffi::c_char = string;
@@ -3494,7 +3494,7 @@ unsafe extern "C" fn find_char_unquote(
             if string_len == 0 {
                 string_len = strlen(string) as size_t;
             }
-            let mut hi: ::core::ffi::c_int = -(i / 2);
+            let hi: ::core::ffi::c_int = -(i / 2);
             memmove(
                 p.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
                 p.offset((i / 2) as isize) as *mut ::core::ffi::c_char
@@ -3514,8 +3514,8 @@ unsafe extern "C" fn find_char_unquote(
     }
 }
 unsafe extern "C" fn unescape_char(
-    mut string: *mut ::core::ffi::c_char,
-    mut c: ::core::ffi::c_int,
+    string: *mut ::core::ffi::c_char,
+    c: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *mut ::core::ffi::c_char = string;
     let mut s: *mut ::core::ffi::c_char = string;
@@ -3559,16 +3559,16 @@ unsafe extern "C" fn unescape_char(
 }
 #[no_mangle]
 pub unsafe extern "C" fn find_percent(
-    mut pattern: *mut ::core::ffi::c_char,
+    pattern: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     find_char_unquote(pattern, '%' as i32)
 }
 #[no_mangle]
 pub unsafe extern "C" fn find_percent_cached(
-    mut string: *mut *const ::core::ffi::c_char,
+    string: *mut *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut p: *const ::core::ffi::c_char = strchr(*string, '%' as i32);
+    let p: *const ::core::ffi::c_char = strchr(*string, '%' as i32);
     let mut new: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut np: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut slen: size_t = 0;
@@ -3590,7 +3590,7 @@ pub unsafe extern "C" fn find_percent_cached(
     );
     np = new.offset(p.offset_from(*string) as ::core::ffi::c_long as isize);
     loop {
-        let mut pp: *mut ::core::ffi::c_char = np;
+        let pp: *mut ::core::ffi::c_char = np;
         let mut i: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
         while np.offset(i as isize) as *mut ::core::ffi::c_char >= new
             && *np.offset(i as isize) as ::core::ffi::c_int == '\\' as i32
@@ -3598,7 +3598,7 @@ pub unsafe extern "C" fn find_percent_cached(
             i -= 1;
         }
         i += 1;
-        let mut hi: ::core::ffi::c_int = -(i / 2);
+        let hi: ::core::ffi::c_int = -(i / 2);
         memmove(
             pp.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
             pp.offset((i / 2) as isize) as *mut ::core::ffi::c_char
@@ -3637,7 +3637,7 @@ pub unsafe extern "C" fn readstring(mut ebuf: *mut ebuffer) -> ::core::ffi::c_lo
     eol = (*ebuf).buffer;
     loop {
         let mut backslash: ::core::ffi::c_int = 0;
-        let mut bol: *const ::core::ffi::c_char = eol;
+        let bol: *const ::core::ffi::c_char = eol;
         let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
         eol = strchr(eol, '\n' as i32);
         p = eol;
@@ -3725,7 +3725,7 @@ pub unsafe extern "C" fn readline(mut ebuf: *mut ebuffer) -> ::core::ffi::c_long
                 continue;
             }
         }
-        let mut off: size_t = p.offset_from(start) as ::core::ffi::c_long as size_t;
+        let off: size_t = p.offset_from(start) as ::core::ffi::c_long as size_t;
         (*ebuf).size = (*ebuf).size.wrapping_mul(2);
         (*ebuf).bufstart =
             xrealloc(start as *mut ::core::ffi::c_void, (*ebuf).size) as *mut ::core::ffi::c_char;
@@ -3749,11 +3749,11 @@ pub unsafe extern "C" fn readline(mut ebuf: *mut ebuffer) -> ::core::ffi::c_long
     }
 }
 unsafe extern "C" fn get_next_mword(
-    mut buffer: *mut ::core::ffi::c_char,
-    mut startp: *mut *mut ::core::ffi::c_char,
-    mut length: *mut size_t,
+    buffer: *mut ::core::ffi::c_char,
+    startp: *mut *mut ::core::ffi::c_char,
+    length: *mut size_t,
 ) -> make_word_type {
-    let mut current_block: u64;
+    let current_block: u64;
     let mut wtype: make_word_type = w_bogus;
     let mut p: *mut ::core::ffi::c_char = buffer;
     let mut beg: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -4020,7 +4020,7 @@ pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_ch
 }
 #[no_mangle]
 pub unsafe extern "C" fn tilde_expand(
-    mut name: *const ::core::ffi::c_char,
+    name: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     if *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32
         || *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
@@ -4043,17 +4043,17 @@ pub unsafe extern "C" fn tilde_expand(
         if home_dir.is_null()
             || *home_dir.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
         {
-            let mut logname: *mut ::core::ffi::c_char = getlogin();
+            let logname: *mut ::core::ffi::c_char = getlogin();
             home_dir = ::core::ptr::null_mut::<::core::ffi::c_char>();
             if !logname.is_null() {
-                let mut p: *mut passwd = getpwnam(logname);
+                let p: *mut passwd = getpwnam(logname);
                 if !p.is_null() {
                     home_dir = (*p).pw_dir;
                 }
             }
         }
         if !home_dir.is_null() {
-            let mut new: *mut ::core::ffi::c_char = xstrdup(concat(
+            let new: *mut ::core::ffi::c_char = xstrdup(concat(
                 2,
                 home_dir,
                 name.offset(1 as ::core::ffi::c_int as isize),));
@@ -4064,7 +4064,7 @@ pub unsafe extern "C" fn tilde_expand(
         }
     } else {
         let mut pwent: *mut passwd = ::core::ptr::null_mut::<passwd>();
-        let mut userend: *mut ::core::ffi::c_char =
+        let userend: *mut ::core::ffi::c_char =
             strchr(name.offset(1 as ::core::ffi::c_int as isize), '/' as i32);
         if !userend.is_null() {
             *userend = 0;
@@ -4089,15 +4089,15 @@ pub unsafe extern "C" fn tilde_expand(
 }
 #[no_mangle]
 pub unsafe extern "C" fn parse_file_seq(
-    mut stringp: *mut *mut ::core::ffi::c_char,
+    stringp: *mut *mut ::core::ffi::c_char,
     mut size: size_t,
     mut stopmap: ::core::ffi::c_int,
-    mut prefix: *const ::core::ffi::c_char,
-    mut flags: ::core::ffi::c_int,
+    prefix: *const ::core::ffi::c_char,
+    flags: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_void {
     static mut tmpbuf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-    let mut cachep: ::core::ffi::c_int =
+    let cachep: ::core::ffi::c_int =
         !(flags & 0x10 as ::core::ffi::c_int != 0) as ::core::ffi::c_int;
     let mut new: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
     let mut newp: *mut *mut nameseq = &raw mut new;
@@ -4127,7 +4127,7 @@ pub unsafe extern "C" fn parse_file_seq(
         dir_setup_glob(&raw mut gl);
     }
     static mut tmpbuf_len: size_t = 0;
-    let mut l: size_t = (strlen(*stringp) as size_t).wrapping_add(1);
+    let l: size_t = (strlen(*stringp) as size_t).wrapping_add(1);
     if l > tmpbuf_len {
         tmpbuf = xrealloc(tmpbuf as *mut ::core::ffi::c_void, l) as *mut ::core::ffi::c_char;
         tmpbuf_len = l;
@@ -4209,11 +4209,11 @@ pub unsafe extern "C" fn parse_file_seq(
                 && *tp.offset(nlen.wrapping_sub(1) as isize) as ::core::ffi::c_int
                     != ')' as i32
             {
-                let mut n: *mut ::core::ffi::c_char = strchr(tp, '(' as i32);
+                let n: *mut ::core::ffi::c_char = strchr(tp, '(' as i32);
                 if !n.is_null() {
                     let mut e: *const ::core::ffi::c_char = p;
                     loop {
-                        let mut o: *const ::core::ffi::c_char = e;
+                        let o: *const ::core::ffi::c_char = e;
                         while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
                             .offset(*e as ::core::ffi::c_uchar as isize)
                             as ::core::ffi::c_int
@@ -4304,7 +4304,7 @@ pub unsafe extern "C" fn parse_file_seq(
                     tot = 1;
                     nlist = &raw mut name;
                 } else {
-                    let mut current_block_77: u64;
+                    let current_block_77: u64;
                     match glob(name, GLOB_ALTDIRFUNC, None, &raw mut gl) {
                         GLOB_NOSPACE => {
                             out_of_memory();

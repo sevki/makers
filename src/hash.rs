@@ -80,10 +80,10 @@ pub static mut hash_deleted_item: *const ::core::ffi::c_void = unsafe {
 #[no_mangle]
 pub unsafe extern "C" fn hash_init(
     mut ht: *mut hash_table,
-    mut size: ::core::ffi::c_ulong,
-    mut hash_1: hash_func_t,
-    mut hash_2: hash_func_t,
-    mut hash_cmp: hash_cmp_func_t,
+    size: ::core::ffi::c_ulong,
+    hash_1: hash_func_t,
+    hash_2: hash_func_t,
+    hash_cmp: hash_cmp_func_t,
 ) {
     (*ht).ht_size = round_up_2(size);
     (*ht).ht_empty_slots = (*ht).ht_size;
@@ -116,10 +116,10 @@ pub unsafe extern "C" fn hash_init(
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_load(
-    mut ht: *mut hash_table,
-    mut item_table: *const ::core::ffi::c_void,
+    ht: *mut hash_table,
+    item_table: *const ::core::ffi::c_void,
     mut cardinality: ::core::ffi::c_ulong,
-    mut size: ::core::ffi::c_ulong,
+    size: ::core::ffi::c_ulong,
 ) {
     let mut items: *const ::core::ffi::c_char = item_table as *const ::core::ffi::c_char;
     loop {
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn hash_load(
 #[no_mangle]
 pub unsafe extern "C" fn hash_find_slot(
     mut ht: *mut hash_table,
-    mut key: *const ::core::ffi::c_void,
+    key: *const ::core::ffi::c_void,
 ) -> *mut *mut ::core::ffi::c_void {
     let mut slot: *mut *mut ::core::ffi::c_void =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
@@ -184,10 +184,10 @@ pub unsafe extern "C" fn hash_find_slot(
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_find_item(
-    mut ht: *mut hash_table,
-    mut key: *const ::core::ffi::c_void,
+    ht: *mut hash_table,
+    key: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
-    let mut slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, key);
+    let slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, key);
     if (*slot).is_null() || *slot == hash_deleted_item as *mut ::core::ffi::c_void {
         ::core::ptr::null_mut::<::core::ffi::c_void>()
     } else {
@@ -196,11 +196,11 @@ pub unsafe extern "C" fn hash_find_item(
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_insert(
-    mut ht: *mut hash_table,
-    mut item: *const ::core::ffi::c_void,
+    ht: *mut hash_table,
+    item: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
-    let mut slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, item);
-    let mut old_item: *const ::core::ffi::c_void = *slot;
+    let slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, item);
+    let old_item: *const ::core::ffi::c_void = *slot;
     hash_insert_at(ht, item, slot as *const ::core::ffi::c_void);
     (if old_item.is_null()
         || old_item as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
@@ -213,8 +213,8 @@ pub unsafe extern "C" fn hash_insert(
 #[no_mangle]
 pub unsafe extern "C" fn hash_insert_at(
     mut ht: *mut hash_table,
-    mut item: *const ::core::ffi::c_void,
-    mut slot: *const ::core::ffi::c_void,
+    item: *const ::core::ffi::c_void,
+    slot: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
     let mut old_item: *const ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
     '_c2rust_label: {
@@ -249,18 +249,18 @@ pub unsafe extern "C" fn hash_insert_at(
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_delete(
-    mut ht: *mut hash_table,
-    mut item: *const ::core::ffi::c_void,
+    ht: *mut hash_table,
+    item: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
-    let mut slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, item);
+    let slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, item);
     hash_delete_at(ht, slot as *const ::core::ffi::c_void)
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_delete_at(
     mut ht: *mut hash_table,
-    mut slot: *const ::core::ffi::c_void,
+    slot: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
-    let mut item: *mut ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
+    let item: *mut ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
     if !(item.is_null() || item == hash_deleted_item as *mut ::core::ffi::c_void) {
         let ref mut fresh2 = *(slot as *mut *const ::core::ffi::c_void);
         *fresh2 = hash_deleted_item;
@@ -273,7 +273,7 @@ pub unsafe extern "C" fn hash_delete_at(
 #[no_mangle]
 pub unsafe extern "C" fn hash_free_items(mut ht: *mut hash_table) {
     let mut vec: *mut *mut ::core::ffi::c_void = (*ht).ht_vec;
-    let mut end: *mut *mut ::core::ffi::c_void =
+    let end: *mut *mut ::core::ffi::c_void =
         vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
@@ -288,7 +288,7 @@ pub unsafe extern "C" fn hash_free_items(mut ht: *mut hash_table) {
         }
     };
     while vec < end {
-        let mut item: *mut ::core::ffi::c_void = *vec;
+        let item: *mut ::core::ffi::c_void = *vec;
         if !(item.is_null() || item == hash_deleted_item as *mut ::core::ffi::c_void) {
             free(item);
         }
@@ -301,7 +301,7 @@ pub unsafe extern "C" fn hash_free_items(mut ht: *mut hash_table) {
 #[no_mangle]
 pub unsafe extern "C" fn hash_delete_items(mut ht: *mut hash_table) {
     let mut vec: *mut *mut ::core::ffi::c_void = (*ht).ht_vec;
-    let mut end: *mut *mut ::core::ffi::c_void =
+    let end: *mut *mut ::core::ffi::c_void =
         vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
@@ -326,7 +326,7 @@ pub unsafe extern "C" fn hash_delete_items(mut ht: *mut hash_table) {
     (*ht).ht_empty_slots = (*ht).ht_size;
 }
 #[no_mangle]
-pub unsafe extern "C" fn hash_free(mut ht: *mut hash_table, mut free_items: ::core::ffi::c_int) {
+pub unsafe extern "C" fn hash_free(mut ht: *mut hash_table, free_items: ::core::ffi::c_int) {
     '_c2rust_label: {
         if (*ht).ht_in_map() == 0 {
         } else {
@@ -350,10 +350,10 @@ pub unsafe extern "C" fn hash_free(mut ht: *mut hash_table, mut free_items: ::co
     (*ht).ht_capacity = 0;
 }
 #[no_mangle]
-pub unsafe extern "C" fn hash_map(mut ht: *mut hash_table, mut map: hash_map_func_t) {
+pub unsafe extern "C" fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
     let mut slot: *mut *mut ::core::ffi::c_void =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    let mut end: *mut *mut ::core::ffi::c_void =
+    let end: *mut *mut ::core::ffi::c_void =
         (*ht).ht_vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     (*ht).set_ht_in_map(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     slot = (*ht).ht_vec;
@@ -369,13 +369,13 @@ pub unsafe extern "C" fn hash_map(mut ht: *mut hash_table, mut map: hash_map_fun
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_map_arg(
-    mut ht: *mut hash_table,
-    mut map: hash_map_arg_func_t,
-    mut arg: *mut ::core::ffi::c_void,
+    ht: *mut hash_table,
+    map: hash_map_arg_func_t,
+    arg: *mut ::core::ffi::c_void,
 ) {
     let mut slot: *mut *mut ::core::ffi::c_void =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    let mut end: *mut *mut ::core::ffi::c_void =
+    let end: *mut *mut ::core::ffi::c_void =
         (*ht).ht_vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     (*ht).set_ht_in_map(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     slot = (*ht).ht_vec;
@@ -391,8 +391,8 @@ pub unsafe extern "C" fn hash_map_arg(
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_rehash(mut ht: *mut hash_table) {
-    let mut old_ht_size: ::core::ffi::c_ulong = (*ht).ht_size;
-    let mut old_vec: *mut *mut ::core::ffi::c_void = (*ht).ht_vec;
+    let old_ht_size: ::core::ffi::c_ulong = (*ht).ht_size;
+    let old_vec: *mut *mut ::core::ffi::c_void = (*ht).ht_vec;
     let mut ovp: *mut *mut ::core::ffi::c_void =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     if (*ht).ht_fill >= (*ht).ht_capacity {
@@ -409,7 +409,7 @@ pub unsafe extern "C" fn hash_rehash(mut ht: *mut hash_table) {
     ovp = old_vec;
     while ovp < old_vec.offset(old_ht_size as isize) as *mut *mut ::core::ffi::c_void {
         if !((*ovp).is_null() || *ovp == hash_deleted_item as *mut ::core::ffi::c_void) {
-            let mut slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, *ovp);
+            let slot: *mut *mut ::core::ffi::c_void = hash_find_slot(ht, *ovp);
             *slot = *ovp;
         }
         ovp = ovp.offset(1 as ::core::ffi::c_int as isize);
@@ -418,7 +418,7 @@ pub unsafe extern "C" fn hash_rehash(mut ht: *mut hash_table) {
     free(old_vec as *mut ::core::ffi::c_void);
 }
 #[no_mangle]
-pub unsafe extern "C" fn hash_print_stats(mut ht: *mut hash_table, mut out_FILE: *mut FILE) {
+pub unsafe extern "C" fn hash_print_stats(ht: *mut hash_table, out_FILE: *mut FILE) {
     fprintf(
         out_FILE,
         b"Load=%lu/%lu=%.0f%%, \0" as *const u8 as *const ::core::ffi::c_char,
@@ -446,15 +446,15 @@ pub unsafe extern "C" fn hash_print_stats(mut ht: *mut hash_table, mut out_FILE:
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_dump(
-    mut ht: *mut hash_table,
+    ht: *mut hash_table,
     mut vector_0: *mut *mut ::core::ffi::c_void,
-    mut compare: qsort_cmp_t,
+    compare: qsort_cmp_t,
 ) -> *mut *mut ::core::ffi::c_void {
     let mut vector: *mut *mut ::core::ffi::c_void =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
     let mut slot: *mut *mut ::core::ffi::c_void =
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>();
-    let mut end: *mut *mut ::core::ffi::c_void =
+    let end: *mut *mut ::core::ffi::c_void =
         (*ht).ht_vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     if vector_0.is_null() {
         vector_0 = xmalloc(
@@ -629,14 +629,14 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
     let mut b: ::core::ffi::c_uint = 0;
     let mut c: ::core::ffi::c_uint = 0;
     let mut have_nul: ::core::ffi::c_uint = 0;
-    let mut start: *const ::core::ffi::c_uchar = k;
+    let start: *const ::core::ffi::c_uchar = k;
     let mut klen: size_t = strlen(k as *const ::core::ffi::c_char) as size_t;
     c = JHASH_INITVAL;
     b = c;
     a = b;
     loop {
         let mut val: ::core::ffi::c_uint = 0;
-        let mut pn: size_t = klen;
+        let pn: size_t = klen;
         if pn >= UINTSZ {
             memcpy(
                 &raw mut val as *mut ::core::ffi::c_void,
@@ -685,7 +685,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;
         let mut val_0: ::core::ffi::c_uint = 0;
-        let mut pn_0: size_t = klen;
+        let pn_0: size_t = klen;
         if pn_0 >= UINTSZ {
             memcpy(
                 &raw mut val_0 as *mut ::core::ffi::c_void,
@@ -734,7 +734,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;
         let mut val_1: ::core::ffi::c_uint = 0;
-        let mut pn_1: size_t = klen;
+        let pn_1: size_t = klen;
         if pn_1 >= UINTSZ {
             memcpy(
                 &raw mut val_1 as *mut ::core::ffi::c_void,

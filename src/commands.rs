@@ -227,8 +227,8 @@ pub const OLD_MTIME: ::core::ffi::c_int = 2;
 pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
 pub const FILE_LIST_SEPARATOR: ::core::ffi::c_int = ' ' as i32;
 #[no_mangle]
-pub unsafe extern "C" fn dep_hash_1(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut d: *const dep = key as *const dep;
+pub unsafe extern "C" fn dep_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+    let d: *const dep = key as *const dep;
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar = (if !(*d).name.is_null() {
         (*d).name
@@ -239,8 +239,8 @@ pub unsafe extern "C" fn dep_hash_1(mut key: *const ::core::ffi::c_void) -> ::co
     _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn dep_hash_2(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut d: *const dep = key as *const dep;
+pub unsafe extern "C" fn dep_hash_2(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+    let d: *const dep = key as *const dep;
     let mut _result_: ::core::ffi::c_ulong = 0;
     if !(*d).name.is_null() {
     } else {
@@ -248,11 +248,11 @@ pub unsafe extern "C" fn dep_hash_2(mut key: *const ::core::ffi::c_void) -> ::co
     _result_
 }
 unsafe extern "C" fn dep_hash_cmp(
-    mut x: *const ::core::ffi::c_void,
-    mut y: *const ::core::ffi::c_void,
+    x: *const ::core::ffi::c_void,
+    y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let mut dx: *const dep = x as *const dep;
-    let mut dy: *const dep = y as *const dep;
+    let dx: *const dep = x as *const dep;
+    let dy: *const dep = y as *const dep;
     strcmp(
         if !(*dx).name.is_null() {
             (*dx).name
@@ -325,12 +325,12 @@ pub unsafe extern "C" fn set_file_variables(
         )))
         .deps;
         while !d.is_null() {
-            let mut dn: *const ::core::ffi::c_char = if !(*d).name.is_null() {
+            let dn: *const ::core::ffi::c_char = if !(*d).name.is_null() {
                 (*d).name
             } else {
                 (*(*d).file).name
             };
-            let mut slen: size_t = strlen(dn) as size_t;
+            let slen: size_t = strlen(dn) as size_t;
             if len_0 > slen
                 && memcmp(
                     dn as *const ::core::ffi::c_void,
@@ -576,11 +576,11 @@ pub unsafe extern "C" fn set_file_variables(
                     slot as *const ::core::ffi::c_void,
                 );
             } else {
-                let mut hd: *mut dep = *slot as *mut dep;
+                let hd: *mut dep = *slot as *mut dep;
                 if (*d).ignore_mtime() as ::core::ffi::c_int
                     != (*hd).ignore_mtime() as ::core::ffi::c_int
                 {
-                    let mut rhs = {
+                    let rhs = {
                         (*hd).set_ignore_mtime(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                         (*hd).ignore_mtime()
                     } as ::core::ffi::c_uint;
@@ -701,7 +701,7 @@ pub unsafe extern "C" fn chop_commands(mut cmds: *mut commands) {
         return;
     }
     if one_shell != 0 {
-        let mut l: size_t = strlen((*cmds).commands) as size_t;
+        let l: size_t = strlen((*cmds).commands) as size_t;
         nlines = 1;
         lines = xmalloc(
             (nlines as size_t)
@@ -831,7 +831,7 @@ pub unsafe extern "C" fn chop_commands(mut cmds: *mut commands) {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn execute_file_commands(mut file: *mut file) {
+pub unsafe extern "C" fn execute_file_commands(file: *mut file) {
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     p = (*(*file).cmds).commands;
     while *p as ::core::ffi::c_int != 0 {
@@ -866,7 +866,7 @@ pub unsafe extern "C" fn execute_file_commands(mut file: *mut file) {
 #[no_mangle]
 pub static mut handling_fatal_signal: sig_atomic_t = 0 as sig_atomic_t;
 #[no_mangle]
-pub unsafe extern "C" fn fatal_error_signal(mut sig: ::core::ffi::c_int) {
+pub unsafe extern "C" fn fatal_error_signal(sig: ::core::ffi::c_int) {
     ::core::ptr::write_volatile(
         &mut handling_fatal_signal as *mut sig_atomic_t,
         1 as ::core::ffi::c_int as sig_atomic_t,
@@ -916,8 +916,8 @@ pub unsafe extern "C" fn fatal_error_signal(mut sig: ::core::ffi::c_int) {
     }
 }
 unsafe extern "C" fn delete_target(
-    mut file: *mut file,
-    mut on_behalf_of: *const ::core::ffi::c_char,
+    file: *mut file,
+    on_behalf_of: *const ::core::ffi::c_char,
 ) {
     let mut st: stat = stat {
         st_dev: 0,
@@ -950,7 +950,7 @@ unsafe extern "C" fn delete_target(
         return;
     }
     if ar_name((*file).name) != 0 {
-        let mut file_date: time_t = if (*file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
+        let file_date: time_t = if (*file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
             -(1 as ::core::ffi::c_int) as time_t
         } else {
             ((*file)
@@ -1023,7 +1023,7 @@ unsafe extern "C" fn delete_target(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn delete_child_targets(mut child: *mut child) {
+pub unsafe extern "C" fn delete_child_targets(child: *mut child) {
     let mut d: *mut dep = ::core::ptr::null_mut::<dep>();
     if (*child).deleted() as ::core::ffi::c_int != 0 || (*child).pid < 0 {
         return;
@@ -1037,7 +1037,7 @@ pub unsafe extern "C" fn delete_child_targets(mut child: *mut child) {
     (*child).set_deleted(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_commands(mut cmds: *const commands) {
+pub unsafe extern "C" fn print_commands(cmds: *const commands) {
     let mut s: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     fputs(
         b"#  recipe to execute\0" as *const u8 as *const ::core::ffi::c_char,

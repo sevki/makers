@@ -214,10 +214,10 @@ static mut last_pattern_vars: [*mut pattern_var; 256] =
     [::core::ptr::null::<pattern_var>() as *mut pattern_var; 256];
 #[no_mangle]
 pub unsafe extern "C" fn create_pattern_var(
-    mut target: *const ::core::ffi::c_char,
-    mut suffix: *const ::core::ffi::c_char,
+    target: *const ::core::ffi::c_char,
+    suffix: *const ::core::ffi::c_char,
 ) -> *mut pattern_var {
-    let mut len: size_t = strlen(target) as size_t;
+    let len: size_t = strlen(target) as size_t;
     let mut p: *mut pattern_var =
         xcalloc(::core::mem::size_of::<pattern_var>() as size_t) as *mut pattern_var;
     if !pattern_vars.is_null() {
@@ -250,9 +250,9 @@ pub unsafe extern "C" fn create_pattern_var(
     p
 }
 unsafe extern "C" fn lookup_pattern_var(
-    mut start: *mut pattern_var,
-    mut target: *const ::core::ffi::c_char,
-    mut targlen: size_t,
+    start: *mut pattern_var,
+    target: *const ::core::ffi::c_char,
+    targlen: size_t,
 ) -> *mut pattern_var {
     let mut p: *mut pattern_var = ::core::ptr::null_mut::<pattern_var>();
     p = if !start.is_null() {
@@ -301,8 +301,8 @@ unsafe extern "C" fn lookup_pattern_var(
     p
 }
 #[no_mangle]
-pub unsafe extern "C" fn variable_hash_1(mut keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut key: *const variable = keyv as *const variable;
+pub unsafe extern "C" fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+    let key: *const variable = keyv as *const variable;
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
     _result_ = _result_
@@ -310,18 +310,18 @@ pub unsafe extern "C" fn variable_hash_1(mut keyv: *const ::core::ffi::c_void) -
     _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn variable_hash_2(mut keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _key: *const variable = keyv as *const variable;
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
 unsafe extern "C" fn variable_hash_cmp(
-    mut xv: *const ::core::ffi::c_void,
-    mut yv: *const ::core::ffi::c_void,
+    xv: *const ::core::ffi::c_void,
+    yv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let mut x: *const variable = xv as *const variable;
-    let mut y: *const variable = yv as *const variable;
-    let mut result: ::core::ffi::c_int =
+    let x: *const variable = xv as *const variable;
+    let y: *const variable = yv as *const variable;
+    let result: ::core::ffi::c_int =
         (*x).length.wrapping_sub((*y).length) as ::core::ffi::c_int;
     if result != 0 {
         return result;
@@ -367,9 +367,9 @@ static mut global_setlist: variable_set_list = unsafe {
 pub static mut current_variable_set_list: *mut variable_set_list =
     unsafe { &raw const global_setlist as *mut variable_set_list };
 unsafe extern "C" fn check_valid_name(
-    mut flocp: *const Floc,
-    mut name: *const ::core::ffi::c_char,
-    mut length: size_t,
+    flocp: *const Floc,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
 ) {
     let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -448,12 +448,12 @@ pub unsafe extern "C" fn init_hash_global_variable_set() {
 #[no_mangle]
 pub unsafe extern "C" fn define_variable_in_set(
     mut name: *const ::core::ffi::c_char,
-    mut length: size_t,
-    mut value: *const ::core::ffi::c_char,
+    length: size_t,
+    value: *const ::core::ffi::c_char,
     mut origin: variable_origin,
-    mut recursive: ::core::ffi::c_int,
+    recursive: ::core::ffi::c_int,
     mut set: *mut variable_set,
-    mut flocp: *const Floc,
+    flocp: *const Floc,
 ) -> *mut variable {
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
     let mut var_slot: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
@@ -551,13 +551,13 @@ pub unsafe extern "C" fn define_variable_in_set(
     v
 }
 #[no_mangle]
-pub unsafe extern "C" fn free_variable_name_and_value(mut item: *const ::core::ffi::c_void) {
-    let mut v: *mut variable = item as *mut variable;
+pub unsafe extern "C" fn free_variable_name_and_value(item: *const ::core::ffi::c_void) {
+    let v: *mut variable = item as *mut variable;
     free((*v).name as *mut ::core::ffi::c_void);
     free((*v).value as *mut ::core::ffi::c_void);
 }
 #[no_mangle]
-pub unsafe extern "C" fn free_variable_set(mut list: *mut variable_set_list) {
+pub unsafe extern "C" fn free_variable_set(list: *mut variable_set_list) {
     hash_map(
         &raw mut (*(*list).set).table,
         Some(
@@ -570,9 +570,9 @@ pub unsafe extern "C" fn free_variable_set(mut list: *mut variable_set_list) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn undefine_variable_in_set(
-    mut flocp: *const Floc,
-    mut name: *const ::core::ffi::c_char,
-    mut length: size_t,
+    flocp: *const Floc,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
     mut origin: variable_origin,
     mut set: *mut variable_set,
 ) {
@@ -644,7 +644,7 @@ pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut vari
         let mut len: size_t = 0;
         let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut vp: *mut *mut variable = global_variable_set.table.ht_vec as *mut *mut variable;
-        let mut end: *mut *mut variable =
+        let end: *mut *mut variable =
             vp.offset(global_variable_set.table.ht_size as isize) as *mut *mut variable;
         (*var).value =
             xrealloc((*var).value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
@@ -654,11 +654,11 @@ pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut vari
             if !((*vp).is_null()
                 || *vp as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
             {
-                let mut v: *mut variable = *vp;
-                let mut l: ::core::ffi::c_int = (*v).length as ::core::ffi::c_int;
+                let v: *mut variable = *vp;
+                let l: ::core::ffi::c_int = (*v).length as ::core::ffi::c_int;
                 len = len.wrapping_add((l + 1) as size_t);
                 if len > max {
-                    let mut off: size_t =
+                    let off: size_t =
                         p.offset_from((*var).value) as ::core::ffi::c_long as size_t;
                     max = max.wrapping_add(
                         (((l + 1) / 500
@@ -686,8 +686,8 @@ pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut vari
     var
 }
 unsafe extern "C" fn check_variable_reference(
-    mut name: *const ::core::ffi::c_char,
-    mut length: size_t,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
 ) {
     let mut cp: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -743,8 +743,8 @@ unsafe extern "C" fn check_variable_reference(
 }
 #[no_mangle]
 pub unsafe extern "C" fn lookup_variable(
-    mut name: *const ::core::ffi::c_char,
-    mut length: size_t,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
 ) -> *mut variable {
     let mut setlist: *const variable_set_list = ::core::ptr::null::<variable_set_list>();
     let mut var_key: variable = variable {
@@ -764,7 +764,7 @@ pub unsafe extern "C" fn lookup_variable(
     var_key.length = length as ::core::ffi::c_uint;
     setlist = current_variable_set_list;
     while !setlist.is_null() {
-        let mut set: *const variable_set = (*setlist).set;
+        let set: *const variable_set = (*setlist).set;
         let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
         v = hash_find_item(
             &raw const (*set).table as *mut hash_table,
@@ -784,9 +784,9 @@ pub unsafe extern "C" fn lookup_variable(
 }
 #[no_mangle]
 pub unsafe extern "C" fn lookup_variable_for_file(
-    mut name: *const ::core::ffi::c_char,
-    mut length: size_t,
-    mut file: *mut file,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
+    file: *mut file,
 ) -> *mut variable {
     let mut var: *mut variable = ::core::ptr::null_mut::<variable>();
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -800,9 +800,9 @@ pub unsafe extern "C" fn lookup_variable_for_file(
 }
 #[no_mangle]
 pub unsafe extern "C" fn lookup_variable_in_set(
-    mut name: *const ::core::ffi::c_char,
-    mut length: size_t,
-    mut set: *const variable_set,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
+    set: *const variable_set,
 ) -> *mut variable {
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -826,7 +826,7 @@ pub unsafe extern "C" fn lookup_variable_in_set(
 #[no_mangle]
 pub unsafe extern "C" fn initialize_file_variables(
     mut file: *mut file,
-    mut reading: ::core::ffi::c_int,
+    reading: ::core::ffi::c_int,
 ) {
     let mut l: *mut variable_set_list = (*file).variables;
     if l.is_null() {
@@ -876,7 +876,7 @@ pub unsafe extern "C" fn initialize_file_variables(
             targlen,
         );
         if !p.is_null() {
-            let mut global: *mut variable_set_list = current_variable_set_list;
+            let global: *mut variable_set_list = current_variable_set_list;
             (*file).pat_variables = create_new_variable_set();
             current_variable_set_list = (*file).pat_variables;
             loop {
@@ -957,7 +957,7 @@ pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
 pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
     current_variable_set_list = create_new_variable_set();
     if (*current_variable_set_list).next == &raw mut global_setlist {
-        let mut set: *mut variable_set = (*current_variable_set_list).set;
+        let set: *mut variable_set = (*current_variable_set_list).set;
         (*current_variable_set_list).set = global_setlist.set;
         global_setlist.set = set;
         (*current_variable_set_list).next = global_setlist.next;
@@ -1005,9 +1005,9 @@ pub unsafe extern "C" fn pop_variable_scope() {
 }
 #[no_mangle]
 pub unsafe extern "C" fn install_file_context(
-    mut file: *mut file,
-    mut oldlist: *mut *mut variable_set_list,
-    mut oldfloc: *mut *const Floc,
+    file: *mut file,
+    oldlist: *mut *mut variable_set_list,
+    oldfloc: *mut *const Floc,
 ) {
     *oldlist = current_variable_set_list;
     current_variable_set_list = (*file).variables;
@@ -1022,8 +1022,8 @@ pub unsafe extern "C" fn install_file_context(
 }
 #[no_mangle]
 pub unsafe extern "C" fn restore_file_context(
-    mut oldlist: *mut variable_set_list,
-    mut oldfloc: *const Floc,
+    oldlist: *mut variable_set_list,
+    oldfloc: *const Floc,
 ) {
     current_variable_set_list = oldlist;
     if !oldfloc.is_null() {
@@ -1031,13 +1031,13 @@ pub unsafe extern "C" fn restore_file_context(
     }
 }
 unsafe extern "C" fn merge_variable_sets(
-    mut to_set: *mut variable_set,
-    mut from_set: *mut variable_set,
+    to_set: *mut variable_set,
+    from_set: *mut variable_set,
 ) {
     let mut from_var_slot: *mut *mut variable = (*from_set).table.ht_vec as *mut *mut variable;
-    let mut from_var_end: *mut *mut variable =
+    let from_var_end: *mut *mut variable =
         from_var_slot.offset((*from_set).table.ht_size as isize);
-    let mut inc: ::core::ffi::c_int = if to_set == &raw mut global_variable_set {
+    let inc: ::core::ffi::c_int = if to_set == &raw mut global_variable_set {
         1
     } else {
         0
@@ -1047,8 +1047,8 @@ unsafe extern "C" fn merge_variable_sets(
             || *from_var_slot as *mut ::core::ffi::c_void
                 == hash_deleted_item as *mut ::core::ffi::c_void)
         {
-            let mut from_var: *mut variable = *from_var_slot;
-            let mut to_var_slot: *mut *mut variable = hash_find_slot(
+            let from_var: *mut variable = *from_var_slot;
+            let to_var_slot: *mut *mut variable = hash_find_slot(
                 &raw mut (*to_set).table,
                 *from_var_slot as *const ::core::ffi::c_void,
             ) as *mut *mut variable;
@@ -1072,7 +1072,7 @@ unsafe extern "C" fn merge_variable_sets(
 }
 #[no_mangle]
 pub unsafe extern "C" fn merge_variable_set_lists(
-    mut setlist0: *mut *mut variable_set_list,
+    setlist0: *mut *mut variable_set_list,
     mut setlist1: *mut variable_set_list,
 ) {
     let mut to: *mut variable_set_list = *setlist0;
@@ -1089,7 +1089,7 @@ pub unsafe extern "C" fn merge_variable_set_lists(
         }
         to = *setlist0;
         while setlist1 != &raw mut global_setlist && to != &raw mut global_setlist {
-            let mut from: *mut variable_set_list = setlist1;
+            let from: *mut variable_set_list = setlist1;
             setlist1 = (*setlist1).next;
             merge_variable_sets((*to).set, (*from).set);
             last0 = to;
@@ -1314,7 +1314,7 @@ pub unsafe extern "C" fn define_automatic_variables() {
     );
 }
 #[no_mangle]
-pub unsafe extern "C" fn should_export(mut v: *const variable) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn should_export(v: *const variable) -> ::core::ffi::c_int {
     match (*v).export() as ::core::ffi::c_int {
         2 => return 0,
         3 => {
@@ -1345,8 +1345,8 @@ pub unsafe extern "C" fn should_export(mut v: *const variable) -> ::core::ffi::c
 }
 #[no_mangle]
 pub unsafe extern "C" fn target_environment(
-    mut file: *mut file,
-    mut recursive: ::core::ffi::c_int,
+    file: *mut file,
+    recursive: ::core::ffi::c_int,
 ) -> *mut *mut ::core::ffi::c_char {
     let mut set_list: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut s: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -1409,7 +1409,7 @@ pub unsafe extern "C" fn target_environment(
     );
     s = set_list;
     while !s.is_null() {
-        let mut set: *mut variable_set = (*s).set;
+        let set: *mut variable_set = (*s).set;
         let islocal: ::core::ffi::c_int = (s == set_list) as ::core::ffi::c_int;
         let isglobal: ::core::ffi::c_int =
             (set == &raw mut global_variable_set) as ::core::ffi::c_int;
@@ -1421,7 +1421,7 @@ pub unsafe extern "C" fn target_environment(
                     == hash_deleted_item as *mut ::core::ffi::c_void)
             {
                 let mut evslot: *mut *mut variable = ::core::ptr::null_mut::<*mut variable>();
-                let mut v: *mut variable = *v_slot;
+                let v: *mut variable = *v_slot;
                 if !(islocal == 0 && (*v).private_var() as ::core::ffi::c_int != 0) {
                     evslot = hash_find_slot(&raw mut table, v as *const ::core::ffi::c_void)
                         as *mut *mut variable;
@@ -1459,7 +1459,7 @@ pub unsafe extern "C" fn target_environment(
         if !((*v_slot).is_null()
             || *v_slot as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
         {
-            let mut v_0: *mut variable = *v_slot;
+            let v_0: *mut variable = *v_slot;
             let mut value: *mut ::core::ffi::c_char = (*v_0).value;
             let mut cp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
             if !(should_export(v_0) == 0) {
@@ -1540,9 +1540,9 @@ pub unsafe extern "C" fn target_environment(
                             if vars.is_null() {
                                 mf = xstrdup(concat(2, value, invalid));
                             } else {
-                                let mut lf: size_t =
+                                let lf: size_t =
                                     vars.offset_from(value) as ::core::ffi::c_long as size_t;
-                                let mut li: size_t = strlen(invalid) as size_t;
+                                let li: size_t = strlen(invalid) as size_t;
                                 mf = xmalloc(
                                     (strlen(value) as size_t)
                                         .wrapping_add(li)
@@ -1646,8 +1646,8 @@ pub unsafe extern "C" fn target_environment(
     result_0
 }
 unsafe extern "C" fn set_special_var(
-    mut var: *mut variable,
-    mut origin: variable_origin,
+    var: *mut variable,
+    origin: variable_origin,
 ) -> *mut variable {
     if *(*var).name as ::core::ffi::c_int
         == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
@@ -1680,7 +1680,7 @@ unsafe extern "C" fn set_special_var(
                 (b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
             ) == 0)
     {
-        let mut actions: *mut ::core::ffi::c_char = allocated_expand_variable(
+        let actions: *mut ::core::ffi::c_char = allocated_expand_variable(
             b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
                 .wrapping_sub(1),
@@ -1692,7 +1692,7 @@ unsafe extern "C" fn set_special_var(
     var
 }
 #[no_mangle]
-pub unsafe extern "C" fn shell_result(mut p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+pub unsafe extern "C" fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     let mut args: [*mut ::core::ffi::c_char; 2] =
@@ -1709,15 +1709,15 @@ pub unsafe extern "C" fn shell_result(mut p: *const ::core::ffi::c_char) -> *mut
 }
 #[no_mangle]
 pub unsafe extern "C" fn do_variable_definition(
-    mut flocp: *const Floc,
-    mut varname: *const ::core::ffi::c_char,
-    mut value: *const ::core::ffi::c_char,
-    mut origin: variable_origin,
+    flocp: *const Floc,
+    varname: *const ::core::ffi::c_char,
+    value: *const ::core::ffi::c_char,
+    origin: variable_origin,
     mut flavor: variable_flavor,
-    mut conditional: ::core::ffi::c_int,
-    mut scope: variable_scope,
+    conditional: ::core::ffi::c_int,
+    scope: variable_scope,
 ) -> *mut variable {
-    let mut current_block: u64;
+    let current_block: u64;
     let mut newval: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut alloc_value: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
@@ -1735,7 +1735,7 @@ pub unsafe extern "C" fn do_variable_definition(
             current_block = 5159818223158340697;
         }
         3 => {
-            let mut t: *mut ::core::ffi::c_char =
+            let t: *mut ::core::ffi::c_char =
                 allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
             alloc_value = xmalloc(
                 (strlen(t) as size_t)
@@ -1762,7 +1762,7 @@ pub unsafe extern "C" fn do_variable_definition(
             current_block = 5159818223158340697;
         }
         5 => {
-            let mut q: *mut ::core::ffi::c_char =
+            let q: *mut ::core::ffi::c_char =
                 allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
             alloc_value = shell_result(q);
             free(q as *mut ::core::ffi::c_void);
@@ -1939,7 +1939,7 @@ pub unsafe extern "C" fn do_variable_definition(
 }
 #[no_mangle]
 pub unsafe extern "C" fn parse_variable_definition(
-    mut str: *const ::core::ffi::c_char,
+    str: *const ::core::ffi::c_char,
     mut var: *mut variable,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = str;
@@ -1954,7 +1954,7 @@ pub unsafe extern "C" fn parse_variable_definition(
     (*var).name = p as *mut ::core::ffi::c_char;
     (*var).length = 0;
     (*var).set_conditional(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let mut current_block_37: u64;
+    let current_block_37: u64;
     loop {
         let mut start: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
         let fresh5 = p;
@@ -2081,7 +2081,7 @@ pub unsafe extern "C" fn parse_variable_definition(
 #[no_mangle]
 pub unsafe extern "C" fn assign_variable_definition(
     mut v: *mut variable,
-    mut line: *const ::core::ffi::c_char,
+    line: *const ::core::ffi::c_char,
 ) -> *mut variable {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2111,10 +2111,10 @@ pub unsafe extern "C" fn assign_variable_definition(
 }
 #[no_mangle]
 pub unsafe extern "C" fn try_variable_definition(
-    mut flocp: *const Floc,
-    mut line: *const ::core::ffi::c_char,
-    mut origin: variable_origin,
-    mut scope: variable_scope,
+    flocp: *const Floc,
+    line: *const ::core::ffi::c_char,
+    origin: variable_origin,
+    scope: variable_scope,
 ) -> *mut variable {
     let mut v: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -2153,7 +2153,7 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
     len: 0,
 }; 13];
 #[no_mangle]
-pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mut len: size_t) {
+pub unsafe extern "C" fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
     if warning::is_active(Type::UndefinedVar)
     {
         let mut dp: *const defined_vars = ::core::ptr::null::<defined_vars>();
@@ -2204,16 +2204,16 @@ pub unsafe extern "C" fn warn_undefined(mut name: *const ::core::ffi::c_char, mu
     }
 }
 unsafe extern "C" fn set_env_override(
-    mut item: *const ::core::ffi::c_void,
+    item: *const ::core::ffi::c_void,
     mut _arg: *mut ::core::ffi::c_void,
 ) {
-    let mut v: *mut variable = item as *mut variable;
-    let mut old: variable_origin = (if env_overrides != 0 {
+    let v: *mut variable = item as *mut variable;
+    let old: variable_origin = (if env_overrides != 0 {
         o_env as ::core::ffi::c_int
     } else {
         o_env_override as ::core::ffi::c_int
     }) as variable_origin;
-    let mut new: variable_origin = (if env_overrides != 0 {
+    let new: variable_origin = (if env_overrides != 0 {
         o_env_override as ::core::ffi::c_int
     } else {
         o_env as ::core::ffi::c_int
@@ -2234,11 +2234,11 @@ pub unsafe extern "C" fn reset_env_override() {
     );
 }
 unsafe extern "C" fn print_variable(
-    mut item: *const ::core::ffi::c_void,
-    mut arg: *mut ::core::ffi::c_void,
+    item: *const ::core::ffi::c_void,
+    arg: *mut ::core::ffi::c_void,
 ) {
-    let mut v: *const variable = item as *const variable;
-    let mut prefix: *const ::core::ffi::c_char = arg as *const ::core::ffi::c_char;
+    let v: *const variable = item as *const variable;
+    let prefix: *const ::core::ffi::c_char = arg as *const ::core::ffi::c_char;
     let mut origin: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     match (*v).origin() as ::core::ffi::c_int {
         6 => {
@@ -2327,27 +2327,27 @@ unsafe extern "C" fn print_variable(
     };
 }
 unsafe extern "C" fn print_auto_variable(
-    mut item: *const ::core::ffi::c_void,
-    mut arg: *mut ::core::ffi::c_void,
+    item: *const ::core::ffi::c_void,
+    arg: *mut ::core::ffi::c_void,
 ) {
-    let mut v: *const variable = item as *const variable;
+    let v: *const variable = item as *const variable;
     if (*v).origin() as ::core::ffi::c_int == o_automatic as ::core::ffi::c_int {
         print_variable(item, arg);
     }
 }
 unsafe extern "C" fn print_noauto_variable(
-    mut item: *const ::core::ffi::c_void,
-    mut arg: *mut ::core::ffi::c_void,
+    item: *const ::core::ffi::c_void,
+    arg: *mut ::core::ffi::c_void,
 ) {
-    let mut v: *const variable = item as *const variable;
+    let v: *const variable = item as *const variable;
     if (*v).origin() as ::core::ffi::c_int != o_automatic as ::core::ffi::c_int {
         print_variable(item, arg);
     }
 }
 unsafe extern "C" fn print_variable_set(
-    mut set: *mut variable_set,
-    mut prefix: *const ::core::ffi::c_char,
-    mut pauto: ::core::ffi::c_int,
+    set: *mut variable_set,
+    prefix: *const ::core::ffi::c_char,
+    pauto: ::core::ffi::c_int,
 ) {
     hash_map_arg(
         &raw mut (*set).table,
@@ -2415,7 +2415,7 @@ pub unsafe fn print_variable_data_base() {
     };
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_file_variables(mut file: *const file) {
+pub unsafe extern "C" fn print_file_variables(file: *const file) {
     if !(*file).variables.is_null() {
         print_variable_set(
             (*(*file).variables).set,
@@ -2425,15 +2425,15 @@ pub unsafe extern "C" fn print_file_variables(mut file: *const file) {
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn print_target_variables(mut file: *const file) {
+pub unsafe extern "C" fn print_target_variables(file: *const file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     if !(*file).variables.is_null() {
-        let mut l: size_t = strlen((*file).name) as size_t;
+        let l: size_t = strlen((*file).name) as size_t;
         alloca_allocations.push(::std::vec::from_elem(
             0,
             l.wrapping_add(3) as usize,
         ));
-        let mut t: *mut ::core::ffi::c_char =
+        let t: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         memcpy(
             t as *mut ::core::ffi::c_void,

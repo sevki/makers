@@ -7,9 +7,9 @@ extern "C" {
 }
 #[no_mangle]
 pub unsafe extern "C" fn load_file(
-    mut flocp: *const Floc,
+    flocp: *const Floc,
     mut _file: *mut file,
-    mut noerror: ::core::ffi::c_int,
+    noerror: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     if noerror == 0 {
         fatal(

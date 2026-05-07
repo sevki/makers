@@ -147,29 +147,29 @@ unsafe extern "C" fn clear_directory_contents(
     ::core::ptr::null_mut::<directory_contents>()
 }
 unsafe extern "C" fn directory_contents_hash_1(
-    mut key_0: *const ::core::ffi::c_void,
+    key_0: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_ulong {
-    let mut key: *const directory_contents = key_0 as *const directory_contents;
+    let key: *const directory_contents = key_0 as *const directory_contents;
     let mut hash: ::core::ffi::c_ulong = 0;
     hash = (((*key).dev as ::core::ffi::c_uint) << 4
         ^ (*key).ino as ::core::ffi::c_uint) as ::core::ffi::c_ulong;
     hash
 }
 unsafe extern "C" fn directory_contents_hash_2(
-    mut key_0: *const ::core::ffi::c_void,
+    key_0: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_ulong {
-    let mut key: *const directory_contents = key_0 as *const directory_contents;
+    let key: *const directory_contents = key_0 as *const directory_contents;
     let mut hash: ::core::ffi::c_ulong = 0;
     hash = (((*key).dev as ::core::ffi::c_uint) << 4
         ^ !(*key).ino as ::core::ffi::c_uint) as ::core::ffi::c_ulong;
     hash
 }
 unsafe extern "C" fn directory_contents_hash_cmp(
-    mut xv: *const ::core::ffi::c_void,
-    mut yv: *const ::core::ffi::c_void,
+    xv: *const ::core::ffi::c_void,
+    yv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let mut x: *const directory_contents = xv as *const directory_contents;
-    let mut y: *const directory_contents = yv as *const directory_contents;
+    let x: *const directory_contents = xv as *const directory_contents;
+    let y: *const directory_contents = yv as *const directory_contents;
     let mut result: ::core::ffi::c_int = 0;
     result = if (*x).ino < (*y).ino {
         -(1 as ::core::ffi::c_int)
@@ -205,7 +205,7 @@ static mut directory_contents: hash_table = hash_table {
     c2rust_padding: [0; 3],
 };
 #[no_mangle]
-pub unsafe extern "C" fn directory_hash_1(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn directory_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const directory)).name as *const ::core::ffi::c_uchar;
@@ -218,8 +218,8 @@ pub unsafe extern "C" fn directory_hash_2(mut _key: *const ::core::ffi::c_void) 
     _result_
 }
 unsafe extern "C" fn directory_hash_cmp(
-    mut x: *const ::core::ffi::c_void,
-    mut y: *const ::core::ffi::c_void,
+    x: *const ::core::ffi::c_void,
+    y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
     if (*(x as *const directory)).name == (*(y as *const directory)).name {
         0
@@ -246,7 +246,7 @@ static mut directories: hash_table = hash_table {
     c2rust_padding: [0; 3],
 };
 #[no_mangle]
-pub unsafe extern "C" fn dirfile_hash_1(mut key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn dirfile_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const dirfile)).name as *const ::core::ffi::c_uchar;
@@ -259,12 +259,12 @@ pub unsafe extern "C" fn dirfile_hash_2(mut _key: *const ::core::ffi::c_void) ->
     _result_
 }
 unsafe extern "C" fn dirfile_hash_cmp(
-    mut xv: *const ::core::ffi::c_void,
-    mut yv: *const ::core::ffi::c_void,
+    xv: *const ::core::ffi::c_void,
+    yv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let mut x: *const dirfile = xv as *const dirfile;
-    let mut y: *const dirfile = yv as *const dirfile;
-    let mut result: ::core::ffi::c_int =
+    let x: *const dirfile = xv as *const dirfile;
+    let y: *const dirfile = yv as *const dirfile;
+    let result: ::core::ffi::c_int =
         (*x).length.wrapping_sub((*y).length) as ::core::ffi::c_int;
     if result != 0 {
         return result;
@@ -277,7 +277,7 @@ unsafe extern "C" fn dirfile_hash_cmp(
 }
 pub const DIRFILE_BUCKETS: ::core::ffi::c_int = 107;
 #[no_mangle]
-pub unsafe extern "C" fn find_directory(mut name: *const ::core::ffi::c_char) -> *mut directory {
+pub unsafe extern "C" fn find_directory(name: *const ::core::ffi::c_char) -> *mut directory {
     let mut dir: *mut directory = ::core::ptr::null_mut::<directory>();
     let mut dir_slot: *mut *mut directory = ::core::ptr::null_mut::<*mut directory>();
     let mut dir_key: directory = directory {
@@ -345,7 +345,7 @@ pub unsafe extern "C" fn find_directory(mut name: *const ::core::ffi::c_char) ->
     if !(dir.is_null()
         || dir as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        let mut ctr: ::core::ffi::c_ulong = if !(*dir).contents.is_null() {
+        let ctr: ::core::ffi::c_ulong = if !(*dir).contents.is_null() {
             (*(*dir).contents).counter
         } else {
             (*dir).counter
@@ -367,7 +367,7 @@ pub unsafe extern "C" fn find_directory(mut name: *const ::core::ffi::c_char) ->
             clear_directory_contents((*dir).contents);
         }
     } else {
-        let mut len: size_t = strlen(name) as size_t;
+        let len: size_t = strlen(name) as size_t;
         dir = xmalloc(::core::mem::size_of::<directory>() as size_t) as *mut directory;
         (*dir).name = strcache_add_len(name, len);
         hash_insert_at(
@@ -455,8 +455,8 @@ pub unsafe extern "C" fn find_directory(mut name: *const ::core::ffi::c_char) ->
     dir
 }
 unsafe extern "C" fn dir_contents_file_exists_p(
-    mut dir: *mut directory,
-    mut filename: *const ::core::ffi::c_char,
+    dir: *mut directory,
+    filename: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     let mut df: *mut dirfile = ::core::ptr::null_mut::<dirfile>();
     let mut d: *mut dirent = ::core::ptr::null_mut::<dirent>();
@@ -559,13 +559,13 @@ unsafe extern "C" fn dir_contents_file_exists_p(
 }
 #[no_mangle]
 pub unsafe extern "C" fn dir_file_exists_p(
-    mut dirname: *const ::core::ffi::c_char,
-    mut filename: *const ::core::ffi::c_char,
+    dirname: *const ::core::ffi::c_char,
+    filename: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     dir_contents_file_exists_p(find_directory(dirname), filename)
 }
 #[no_mangle]
-pub unsafe extern "C" fn file_exists_p(mut name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn file_exists_p(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut dirend: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut dirname: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -613,7 +613,7 @@ pub unsafe extern "C" fn file_impossible(mut filename: *const ::core::ffi::c_cha
         dir = find_directory(b".\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
         let mut dirname: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-        let mut slash: *const ::core::ffi::c_char = dirend;
+        let slash: *const ::core::ffi::c_char = dirend;
         if dirend == p {
             dirname = b"/\0" as *const u8 as *const ::core::ffi::c_char;
         } else {
@@ -690,7 +690,7 @@ pub unsafe extern "C" fn file_impossible_p(
         dir = (*find_directory(b".\0" as *const u8 as *const ::core::ffi::c_char)).contents;
     } else {
         let mut dirname: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-        let mut slash: *const ::core::ffi::c_char = dirend;
+        let slash: *const ::core::ffi::c_char = dirend;
         if dirend == filename {
             dirname = b"/\0" as *const u8 as *const ::core::ffi::c_char;
         } else {
@@ -729,7 +729,7 @@ pub unsafe extern "C" fn file_impossible_p(
 }
 #[no_mangle]
 pub unsafe extern "C" fn dir_name(
-    mut dir: *const ::core::ffi::c_char,
+    dir: *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
     (*find_directory(dir)).name
 }
@@ -745,7 +745,7 @@ pub unsafe fn print_dir_data_base() {
     dir_slot = directories.ht_vec as *mut *mut directory;
     dir_end = dir_slot.offset(directories.ht_size as isize);
     while dir_slot < dir_end {
-        let mut dir: *mut directory = *dir_slot;
+        let dir: *mut directory = *dir_slot;
         if !(dir.is_null()
             || dir as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
         {
@@ -770,7 +770,7 @@ pub unsafe fn print_dir_data_base() {
                 files_slot = (*(*dir).contents).dirfiles.ht_vec as *mut *mut dirfile;
                 files_end = files_slot.offset((*(*dir).contents).dirfiles.ht_size as isize);
                 while files_slot < files_end {
-                    let mut df: *mut dirfile = *files_slot;
+                    let df: *mut dirfile = *files_slot;
                     if !(df.is_null()
                         || df as *mut ::core::ffi::c_void
                             == hash_deleted_item as *mut ::core::ffi::c_void)
@@ -842,10 +842,10 @@ pub unsafe fn print_dir_data_base() {
     );
 }
 unsafe extern "C" fn open_dirstream(
-    mut directory: *const ::core::ffi::c_char,
+    directory: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_void {
     let mut new: *mut dirstream = ::core::ptr::null_mut::<dirstream>();
-    let mut dir: *mut directory = find_directory(directory);
+    let dir: *mut directory = find_directory(directory);
     if (*dir).contents.is_null() || (*(*dir).contents).dirfiles.ht_vec.is_null() {
         return NULL;
     }
@@ -856,25 +856,25 @@ unsafe extern "C" fn open_dirstream(
     new as *mut ::core::ffi::c_void
 }
 #[no_mangle]
-pub unsafe extern "C" fn read_dirstream(mut stream: *mut ::core::ffi::c_void) -> *mut dirent {
+pub unsafe extern "C" fn read_dirstream(stream: *mut ::core::ffi::c_void) -> *mut dirent {
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut bufsz: size_t = 0;
     let ds: *mut dirstream = stream as *mut dirstream;
-    let mut dc: *mut directory_contents = (*ds).contents;
-    let mut dirfile_end: *mut *mut dirfile =
+    let dc: *mut directory_contents = (*ds).contents;
+    let dirfile_end: *mut *mut dirfile =
         ((*dc).dirfiles.ht_vec as *mut *mut dirfile).offset((*dc).dirfiles.ht_size as isize);
     while (*ds).dirfile_slot < dirfile_end {
         let fresh0 = (*ds).dirfile_slot;
         (*ds).dirfile_slot = (*ds).dirfile_slot.offset(1 as ::core::ffi::c_int as isize);
-        let mut df: *mut dirfile = *fresh0;
+        let df: *mut dirfile = *fresh0;
         if !(df.is_null()
             || df as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
             && (*df).impossible == 0
         {
             let mut d: *mut dirent = ::core::ptr::null_mut::<dirent>();
-            let mut len: size_t = (*df).length.wrapping_add(1);
-            let mut sz: size_t = (::core::mem::size_of::<dirent>() as size_t)
+            let len: size_t = (*df).length.wrapping_add(1);
+            let sz: size_t = (::core::mem::size_of::<dirent>() as size_t)
                 .wrapping_sub(::core::mem::size_of::<[::core::ffi::c_char; 256]>() as size_t)
                 .wrapping_add(len);
             if sz > bufsz {

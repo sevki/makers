@@ -241,13 +241,13 @@ pub unsafe extern "C" fn alloc_dep() -> *mut dep {
 }
 #[inline]
 
-unsafe extern "C" fn free_dep_chain(mut d: *mut dep) {
+unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
 #[no_mangle]
 pub unsafe extern "C" fn try_implicit_rule(
-    mut file: *mut file,
-    mut depth: ::core::ffi::c_uint,
+    file: *mut file,
+    depth: ::core::ffi::c_uint,
 ) -> ::core::ffi::c_int {
     if 0x8 as ::core::ffi::c_int & db_level != 0 {
         print_spaces(depth);
@@ -301,10 +301,10 @@ pub unsafe extern "C" fn try_implicit_rule(
     0
 }
 unsafe extern "C" fn get_next_word(
-    mut buffer: *const ::core::ffi::c_char,
-    mut length: *mut size_t,
+    buffer: *const ::core::ffi::c_char,
+    length: *mut size_t,
 ) -> *const ::core::ffi::c_char {
-    let mut current_block: u64;
+    let current_block: u64;
     let mut p: *const ::core::ffi::c_char = buffer;
     let mut beg: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut c: ::core::ffi::c_char = 0;
@@ -354,12 +354,12 @@ unsafe extern "C" fn get_next_word(
 }
 #[no_mangle]
 pub unsafe extern "C" fn stemlen_compare(
-    mut v1: *const ::core::ffi::c_void,
-    mut v2: *const ::core::ffi::c_void,
+    v1: *const ::core::ffi::c_void,
+    v2: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let mut r1: *const tryrule = v1 as *const tryrule;
-    let mut r2: *const tryrule = v2 as *const tryrule;
-    let mut r: ::core::ffi::c_int = (*r1).stemlen.wrapping_sub((*r2).stemlen) as ::core::ffi::c_int;
+    let r1: *const tryrule = v1 as *const tryrule;
+    let r2: *const tryrule = v2 as *const tryrule;
+    let r: ::core::ffi::c_int = (*r1).stemlen.wrapping_sub((*r2).stemlen) as ::core::ffi::c_int;
     if r != 0 {
         r
     } else {
@@ -368,18 +368,18 @@ pub unsafe extern "C" fn stemlen_compare(
 }
 unsafe extern "C" fn pattern_search(
     mut file: *mut file,
-    mut archive: ::core::ffi::c_int,
+    archive: ::core::ffi::c_int,
     mut depth: ::core::ffi::c_uint,
-    mut recursions: ::core::ffi::c_uint,
-    mut allow_compat_rules: ::core::ffi::c_int,
+    recursions: ::core::ffi::c_uint,
+    allow_compat_rules: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut filename: *const ::core::ffi::c_char = if archive != 0 {
+    let filename: *const ::core::ffi::c_char = if archive != 0 {
         strchr((*file).name, '(' as i32) as *const ::core::ffi::c_char
     } else {
         (*file).name
     };
-    let mut namelen: size_t = strlen(filename) as size_t;
+    let namelen: size_t = strlen(filename) as size_t;
     let mut lastslash: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut int_file: *mut file = ::core::ptr::null_mut::<file>();
     let mut max_deps: ::core::ffi::c_uint = max_pattern_deps;
@@ -387,17 +387,17 @@ unsafe extern "C" fn pattern_search(
         xmalloc((max_deps as size_t).wrapping_mul(::core::mem::size_of::<patdeps>() as size_t))
             as *mut patdeps;
     let mut pat: *mut patdeps = deplist;
-    let mut deplen: size_t = namelen
+    let deplen: size_t = namelen
         .wrapping_add(max_pattern_dep_length)
         .wrapping_add(4);
     alloca_allocations.push(::std::vec::from_elem(0, deplen as usize));
-    let mut depname: *mut ::core::ffi::c_char =
+    let depname: *mut ::core::ffi::c_char =
         alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    let mut dend: *mut ::core::ffi::c_char = depname.offset(deplen as isize);
+    let dend: *mut ::core::ffi::c_char = depname.offset(deplen as isize);
     let mut stem: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut stemlen: size_t = 0;
     let mut fullstemlen: size_t = 0;
-    let mut tryrules: *mut tryrule = xmalloc(
+    let tryrules: *mut tryrule = xmalloc(
         (num_pattern_rules.wrapping_mul(max_pattern_targets) as size_t)
             .wrapping_mul(::core::mem::size_of::<tryrule>() as size_t),
     ) as *mut tryrule;
@@ -446,9 +446,9 @@ unsafe extern "C" fn pattern_search(
                 let mut current_block_31: u64;
                 ti = 0;
                 while ti < (*rule).num as ::core::ffi::c_uint {
-                    let mut target: *const ::core::ffi::c_char =
+                    let target: *const ::core::ffi::c_char =
                         *(*rule).targets.offset(ti as isize);
-                    let mut suffix: *const ::core::ffi::c_char =
+                    let suffix: *const ::core::ffi::c_char =
                         *(*rule).suffixes.offset(ti as isize);
                     let mut check_lastslash: ::core::ffi::c_char = 0;
                     if !(recursions > 0
@@ -777,7 +777,7 @@ unsafe extern "C" fn pattern_search(
                                         ::core::ptr::null_mut::<::core::ffi::c_char>();
                                     let mut is_explicit: ::core::ffi::c_int =
                                         1;
-                                    let mut cp: *const ::core::ffi::c_char =
+                                    let cp: *const ::core::ffi::c_char =
                                         strchr(nptr, '%' as i32);
                                     if cp.is_null() {
                                         strcpy(depname, nptr);
@@ -874,7 +874,7 @@ unsafe extern "C" fn pattern_search(
                                             let mut o_0: *mut ::core::ffi::c_char = depname;
                                             is_explicit_0 = 0;
                                             loop {
-                                                let mut i: size_t = cp_0.offset_from(nptr)
+                                                let i: size_t = cp_0.offset_from(nptr)
                                                     as ::core::ffi::c_long
                                                     as size_t;
                                                 '_c2rust_label: {
@@ -1034,7 +1034,7 @@ unsafe extern "C" fn pattern_search(
                                         p_0 = expand_string_for_file(depname, file);
                                         dptr = &raw mut dl;
                                         loop {
-                                            let mut dp: *mut dep = parse_file_seq(
+                                            let dp: *mut dep = parse_file_seq(
                                                 &raw mut p_0,
                                                 ::core::mem::size_of::<dep>() as size_t,
                                                 if order_only != 0 {
@@ -1078,7 +1078,7 @@ unsafe extern "C" fn pattern_search(
                                     }
                                 }
                                 if deps_found > max_deps {
-                                    let mut l: size_t =
+                                    let l: size_t =
                                         pat.offset_from(deplist) as ::core::ffi::c_long as size_t;
                                     max_pattern_deps = if max_pattern_deps > deps_found {
                                         max_pattern_deps
@@ -1099,7 +1099,7 @@ unsafe extern "C" fn pattern_search(
                                 d = dl;
                                 while !d.is_null() {
                                     let mut df: *mut file = ::core::ptr::null_mut::<file>();
-                                    let mut is_rule: ::core::ffi::c_int = ((*d).name
+                                    let is_rule: ::core::ffi::c_int = ((*d).name
                                         == (if !(*dep).name.is_null() {
                                             (*dep).name
                                         } else {
@@ -1266,7 +1266,7 @@ unsafe extern "C" fn pattern_search(
                                                 }
                                                 found_compat_rule = 1;
                                             }
-                                            let mut vname: *const ::core::ffi::c_char =
+                                            let vname: *const ::core::ffi::c_char =
                                                 vpath_search(
                                                     (*d).name,
                                                     ::core::ptr::null_mut::<uintmax_t>(),
@@ -1543,7 +1543,7 @@ unsafe extern "C" fn pattern_search(
             }
             (*file).cmds = (*rule).cmds;
             (*file).set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            let mut f_0: *mut file = lookup_file(
+            let f_0: *mut file = lookup_file(
                 *(*rule)
                     .targets
                     .offset((*tryrules.offset(foundrule as isize)).matches as isize),
@@ -1566,7 +1566,7 @@ unsafe extern "C" fn pattern_search(
                                 .wrapping_add(fullstemlen)
                                 .wrapping_add(1) as usize,
                         ));
-                        let mut nm: *mut ::core::ffi::c_char =
+                        let nm: *mut ::core::ffi::c_char =
                             alloca_allocations.last_mut().unwrap().as_mut_ptr()
                                 as *mut ::core::ffi::c_char;
                         let mut p_1: *mut ::core::ffi::c_char = nm;

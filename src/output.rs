@@ -99,15 +99,15 @@ pub static mut output_context: *mut output = ::core::ptr::null::<output>() as *m
 pub static mut stdio_traced: ::core::ffi::c_uint = 0;
 pub const OUTPUT_NONE: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 unsafe extern "C" fn _outputs(
-    mut out: *mut output,
-    mut is_err: ::core::ffi::c_int,
-    mut msg: *const ::core::ffi::c_char,
+    out: *mut output,
+    is_err: ::core::ffi::c_int,
+    msg: *const ::core::ffi::c_char,
 ) {
     let mut f: *mut FILE = ::core::ptr::null_mut::<FILE>();
     if !out.is_null() && (*out).syncout() as ::core::ffi::c_int != 0 {
-        let mut fd: ::core::ffi::c_int = if is_err != 0 { (*out).err } else { (*out).out };
+        let fd: ::core::ffi::c_int = if is_err != 0 { (*out).err } else { (*out).out };
         if fd != OUTPUT_NONE {
-            let mut len: size_t = strlen(msg) as size_t;
+            let len: size_t = strlen(msg) as size_t;
             let mut r: ::core::ffi::c_int = 0;
             loop {
                 r = lseek(fd, 0 as __off_t, 2) as ::core::ffi::c_int;
@@ -124,7 +124,7 @@ unsafe extern "C" fn _outputs(
     fflush(f);
 }
 #[no_mangle]
-pub unsafe extern "C" fn log_working_directory(mut entering: ::core::ffi::c_int) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi::c_int {
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut len: size_t = 0;
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn log_working_directory(mut entering: ::core::ffi::c_int)
     1
 }
 #[no_mangle]
-pub unsafe extern "C" fn pump_from_tmp(mut from: ::core::ffi::c_int, mut to: *mut FILE) {
+pub unsafe extern "C" fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) {
     static mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
     if lseek(from, 0 as __off_t, SEEK_SET) == -(1 as ::core::ffi::c_int) as __off_t {
         perror(b"lseek()\0" as *const u8 as *const ::core::ffi::c_char);
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn pump_from_tmp(mut from: ::core::ffi::c_int, mut to: *mu
 }
 #[no_mangle]
 pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
-    let mut fd: ::core::ffi::c_int = get_tmpfd(::core::ptr::null_mut::<*mut ::core::ffi::c_char>());
+    let fd: ::core::ffi::c_int = get_tmpfd(::core::ptr::null_mut::<*mut ::core::ffi::c_char>());
     fd_set_append(fd);
     fd
 }
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
         );
     } else {
         if io_state & 0x8 as ::core::ffi::c_uint != 0 {
-            let mut fd: ::core::ffi::c_int = output_tmpfd();
+            let fd: ::core::ffi::c_int = output_tmpfd();
             if fd < 0 {
                 current_block = 2479664526570923066;
             } else {
@@ -281,7 +281,7 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
                         (*out).err = (*out).out;
                         current_block = 9606288038608642794;
                     } else {
-                        let mut fd_0: ::core::ffi::c_int = output_tmpfd();
+                        let fd_0: ::core::ffi::c_int = output_tmpfd();
                         if fd_0 < 0 {
                             current_block = 2479664526570923066;
                         } else {
@@ -315,11 +315,11 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
     in_setup = 0;
 }
 #[no_mangle]
-pub unsafe extern "C" fn output_dump(mut out: *mut output) {
-    let mut outfd_not_empty: ::core::ffi::c_int = ((*out).out != OUTPUT_NONE
+pub unsafe extern "C" fn output_dump(out: *mut output) {
+    let outfd_not_empty: ::core::ffi::c_int = ((*out).out != OUTPUT_NONE
         && lseek((*out).out, 0 as __off_t, SEEK_END) > 0 as __off_t)
         as ::core::ffi::c_int;
-    let mut errfd_not_empty: ::core::ffi::c_int = ((*out).err != OUTPUT_NONE
+    let errfd_not_empty: ::core::ffi::c_int = ((*out).err != OUTPUT_NONE
         && lseek((*out).err, 0 as __off_t, SEEK_END) > 0 as __off_t)
         as ::core::ffi::c_int;
     if outfd_not_empty != 0 || errfd_not_empty != 0 {
@@ -384,7 +384,7 @@ pub unsafe extern "C" fn output_init(mut out: *mut output) {
     stderr_flags = fd_set_append(fileno(stderr));
 }
 #[no_mangle]
-pub unsafe extern "C" fn output_close(mut out: *mut output) {
+pub unsafe extern "C" fn output_close(out: *mut output) {
     if out.is_null() {
         if stdio_traced != 0 {
             log_working_directory(0);
@@ -419,8 +419,8 @@ pub unsafe extern "C" fn output_start() {
 }
 #[no_mangle]
 pub unsafe extern "C" fn outputs(
-    mut is_err: ::core::ffi::c_int,
-    mut msg: *const ::core::ffi::c_char,
+    is_err: ::core::ffi::c_int,
+    msg: *const ::core::ffi::c_char,
 ) {
     if msg.is_null() || *msg as ::core::ffi::c_int == 0 {
         return;
@@ -433,7 +433,7 @@ static mut fmtbuf: fmtstring = fmtstring {
     size: 0,
 };
 #[no_mangle]
-pub unsafe extern "C" fn get_buffer(mut need: size_t) -> *mut ::core::ffi::c_char {
+pub unsafe extern "C" fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
     if need > fmtbuf.size {
         fmtbuf.size = fmtbuf.size.wrapping_add(need.wrapping_mul(2));
         fmtbuf.buffer = xrealloc(fmtbuf.buffer as *mut ::core::ffi::c_void, fmtbuf.size)
@@ -446,10 +446,10 @@ pub unsafe extern "C" fn get_buffer(mut need: size_t) -> *mut ::core::ffi::c_cha
 }
 #[no_mangle]
 pub unsafe extern "C" fn message(
-    mut prefix: ::core::ffi::c_int,
+    prefix: ::core::ffi::c_int,
     mut len: size_t,
-    mut fmt: *const ::core::ffi::c_char,
-    mut args: ...
+    fmt: *const ::core::ffi::c_char,
+    args: ...
 ) {
     let mut args_0: ::core::ffi::VaListImpl;
     let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -503,10 +503,10 @@ pub unsafe extern "C" fn message(
 }
 #[no_mangle]
 pub unsafe extern "C" fn error(
-    mut flocp: *const Floc,
+    flocp: *const Floc,
     mut len: size_t,
-    mut fmt: *const ::core::ffi::c_char,
-    mut args: ...
+    fmt: *const ::core::ffi::c_char,
+    args: ...
 ) {
     let mut args_0: ::core::ffi::VaListImpl;
     let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -572,12 +572,12 @@ pub unsafe extern "C" fn error(
 }
 #[no_mangle]
 pub unsafe extern "C" fn fatal(
-    mut flocp: *const Floc,
+    flocp: *const Floc,
     mut len: size_t,
-    mut fmt: *const ::core::ffi::c_char,
-    mut args: ...
+    fmt: *const ::core::ffi::c_char,
+    args: ...
 ) -> ! {
-    let mut stop: *const ::core::ffi::c_char =
+    let stop: *const ::core::ffi::c_char =
         b".  Stop.\n\0" as *const u8 as *const ::core::ffi::c_char;
     let mut args_0: ::core::ffi::VaListImpl;
     let mut start: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -644,13 +644,13 @@ pub unsafe extern "C" fn fatal(
 }
 #[no_mangle]
 pub unsafe extern "C" fn format(
-    mut prefix: *const ::core::ffi::c_char,
+    prefix: *const ::core::ffi::c_char,
     mut len: size_t,
-    mut fmt: *const ::core::ffi::c_char,
-    mut args: ...
+    fmt: *const ::core::ffi::c_char,
+    args: ...
 ) -> *mut ::core::ffi::c_char {
     let mut args_0: ::core::ffi::VaListImpl;
-    let mut plen: size_t = if !prefix.is_null() {
+    let plen: size_t = if !prefix.is_null() {
         strlen(prefix) as size_t
     } else {
         0
@@ -677,10 +677,10 @@ pub unsafe extern "C" fn format(
 }
 #[no_mangle]
 pub unsafe extern "C" fn perror_with_name(
-    mut str: *const ::core::ffi::c_char,
-    mut name: *const ::core::ffi::c_char,
+    str: *const ::core::ffi::c_char,
+    name: *const ::core::ffi::c_char,
 ) {
-    let mut err: *const ::core::ffi::c_char = strerror(*__errno_location());
+    let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     error(
         ::core::ptr::null_mut::<Floc>(),
         (strlen(str) as size_t)
@@ -693,8 +693,8 @@ pub unsafe extern "C" fn perror_with_name(
     );
 }
 #[no_mangle]
-pub unsafe extern "C" fn pfatal_with_name(mut name: *const ::core::ffi::c_char) -> ! {
-    let mut err: *const ::core::ffi::c_char = strerror(*__errno_location());
+pub unsafe extern "C" fn pfatal_with_name(name: *const ::core::ffi::c_char) -> ! {
+    let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     fatal(
         ::core::ptr::null_mut::<Floc>(),
         (strlen(name) as size_t).wrapping_add(strlen(err) as size_t),

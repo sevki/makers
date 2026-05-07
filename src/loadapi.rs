@@ -58,17 +58,17 @@ pub type hash_func_t = crate::hash::hash_func_t;
 pub type dep = Dep;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 #[no_mangle]
-pub unsafe extern "C" fn gmk_alloc(mut len: ::core::ffi::c_uint) -> *mut ::core::ffi::c_char {
+pub unsafe extern "C" fn gmk_alloc(len: ::core::ffi::c_uint) -> *mut ::core::ffi::c_char {
     xmalloc(len as size_t) as *mut ::core::ffi::c_char
 }
 #[no_mangle]
-pub unsafe extern "C" fn gmk_free(mut s: *mut ::core::ffi::c_char) {
+pub unsafe extern "C" fn gmk_free(s: *mut ::core::ffi::c_char) {
     free(s as *mut ::core::ffi::c_void);
 }
 #[no_mangle]
 pub unsafe extern "C" fn gmk_eval(
-    mut buffer: *const ::core::ffi::c_char,
-    mut gfloc: *const gmk_floc,
+    buffer: *const ::core::ffi::c_char,
+    gfloc: *const gmk_floc,
 ) {
     let mut pbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut plen: size_t = 0;
@@ -95,17 +95,17 @@ pub unsafe extern "C" fn gmk_eval(
 }
 #[no_mangle]
 pub unsafe extern "C" fn gmk_expand(
-    mut ref_0: *const ::core::ffi::c_char,
+    ref_0: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     allocated_expand_string_for_file(ref_0, ::core::ptr::null_mut::<file>())
 }
 #[no_mangle]
 pub unsafe extern "C" fn gmk_add_function(
-    mut name: *const ::core::ffi::c_char,
-    mut func: gmk_func_ptr,
-    mut min: ::core::ffi::c_uint,
-    mut max: ::core::ffi::c_uint,
-    mut flags: ::core::ffi::c_uint,
+    name: *const ::core::ffi::c_char,
+    func: gmk_func_ptr,
+    min: ::core::ffi::c_uint,
+    max: ::core::ffi::c_uint,
+    flags: ::core::ffi::c_uint,
 ) {
     define_new_function(reading_file, name, min, max, flags, func);
 }
