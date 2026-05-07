@@ -105,12 +105,6 @@ extern "C" {
         argv: *mut *mut ::core::ffi::c_char,
         trim_newlines: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_char;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
     static mut warnings: [warning_action; 4];
     fn decode_warn_actions(value: *const ::core::ffi::c_char, flocp: *const Floc);

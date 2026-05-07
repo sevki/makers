@@ -38,12 +38,6 @@ extern "C" {
     static mut program: *const ::core::ffi::c_char;
     static mut starting_directory: *mut ::core::ffi::c_char;
     static mut makelevel: ::core::ffi::c_uint;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn check_io_state() -> ::core::ffi::c_uint;
     fn fd_noinherit(fd: ::core::ffi::c_int);
     fn fd_set_append(fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
