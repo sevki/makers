@@ -722,3 +722,85 @@ pub unsafe extern "C" fn out_of_memory() -> ! {
     );
     exit(MAKE_FAILURE);
 }
+
+/// Native-Rust counterparts to the variadic C-ABI `message`/`error`/`fatal`
+/// in this module. Callers build their formatted message with `format!`
+/// (or any `Display` source) and hand a `&str` here; the prefix and suffix
+/// are added in idiomatic Rust.
+///
+/// Compatibility note: the variadic extern "C" versions still live above
+/// for legacy call sites; both produce identical output formats.
+pub mod msg {
+    use super::{die, makelevel, outputs, program, MAKE_FAILURE};
+    use crate::floc::Floc;
+
+    fn program_name() -> String {
+        // SAFETY: `program` is set during make startup and lives for the
+        // process lifetime; we read it as a NUL-terminated C string.
+        unsafe { ::core::ffi::CStr::from_ptr(program) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn build_prefix(loc: Option<&Floc>, fatal_marker: bool) -> String {
+        let marker = if fatal_marker { "*** " } else { "" };
+        // SAFETY: `(*flocp).filenm` is a NUL-terminated C string when non-null.
+        unsafe {
+            match loc {
+                Some(f) if !f.filenm.is_null() => {
+                    let fnm = ::core::ffi::CStr::from_ptr(f.filenm).to_string_lossy();
+                    format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
+                }
+                _ => {
+                    let lvl = makelevel;
+                    let prog = program_name();
+                    if lvl == 0 {
+                        format!("{prog}: {marker}")
+                    } else {
+                        format!("{prog}[{lvl}]: {marker}")
+                    }
+                }
+            }
+        }
+    }
+
+    fn write_line(line: String, is_err: bool) {
+        let mut bytes = line.into_bytes();
+        bytes.push(0);
+        // SAFETY: `outputs` reads up to the trailing NUL we just appended.
+        unsafe {
+            outputs(
+                if is_err { 1 } else { 0 },
+                bytes.as_ptr() as *const ::core::ffi::c_char,
+            );
+        }
+    }
+
+    /// Print `msg` to stdout with a trailing newline. If `with_prefix`,
+    /// prepend the make program name (and `[LEVEL]` when nested).
+    pub fn message(with_prefix: bool, msg: &str) {
+        let line = if with_prefix {
+            format!("{}{msg}\n", build_prefix(None, false))
+        } else {
+            format!("{msg}\n")
+        };
+        write_line(line, false);
+    }
+
+    /// Print `msg` to stderr with the make program/file:line prefix and a
+    /// trailing newline.
+    pub fn error(loc: Option<&Floc>, msg: &str) {
+        let line = format!("{}{msg}\n", build_prefix(loc, false));
+        write_line(line, true);
+    }
+
+    /// Print `msg` to stderr with the make program/file:line prefix plus
+    /// the `*** ` fatal marker, append `.  Stop.\n`, and exit with
+    /// `MAKE_FAILURE`.
+    pub fn fatal(loc: Option<&Floc>, msg: &str) -> ! {
+        let line = format!("{}{msg}.  Stop.\n", build_prefix(loc, true));
+        write_line(line, true);
+        // SAFETY: `die` is the make-process exit point and never returns.
+        unsafe { die(MAKE_FAILURE) }
+    }
+}

@@ -1,8 +1,7 @@
 use crate::floc::Floc;
+use crate::output::msg;
 
 extern "C" {
-    fn error(flocp: *const Floc, length: usize, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: usize, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn variable_buffer_output(
         ptr: *mut ::core::ffi::c_char,
         string: *const ::core::ffi::c_char,
@@ -189,24 +188,11 @@ pub fn decode_actions(value: &str, flocp: Option<*const Floc>) {
     refresh_warnings();
 }
 
-fn report_error(flocp: Option<*const Floc>, msg: String) {
-    let suffix = if flocp.is_none() { "" } else { ": ignored" };
-    let formatted = format!("{msg}{suffix}\0");
-    unsafe {
-        match flocp {
-            None => fatal(
-                ::core::ptr::null(),
-                formatted.len(),
-                b"%s\0".as_ptr() as *const ::core::ffi::c_char,
-                formatted.as_ptr() as *const ::core::ffi::c_char,
-            ),
-            Some(fp) => error(
-                fp,
-                formatted.len(),
-                b"%s\0".as_ptr() as *const ::core::ffi::c_char,
-                formatted.as_ptr() as *const ::core::ffi::c_char,
-            ),
-        }
+fn report_error(flocp: Option<*const Floc>, message: String) {
+    match flocp {
+        None => msg::fatal(None, &message),
+        // SAFETY: caller passes a live Floc pointer (parsing context).
+        Some(fp) => msg::error(Some(unsafe { &*fp }), &format!("{message}: ignored")),
     }
 }
 
