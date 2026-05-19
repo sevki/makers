@@ -413,21 +413,21 @@ pub unsafe extern "C" fn hash_rehash(mut ht: *mut hash_table) {
     free(old_vec as *mut ::core::ffi::c_void);
 }
 #[no_mangle]
-pub unsafe extern "C" fn hash_print_stats(ht: *mut hash_table, out_FILE: *mut FILE) {
+pub unsafe extern "C" fn hash_print_stats(ht: *mut hash_table, out_file: *mut FILE) {
     fprintf(
-        out_FILE,
+        out_file,
         b"Load=%lu/%lu=%.0f%%, \0" as *const u8 as *const ::core::ffi::c_char,
         (*ht).ht_fill,
         (*ht).ht_size,
         100.0f64 * (*ht).ht_fill as ::core::ffi::c_double / (*ht).ht_size as ::core::ffi::c_double,
     );
     fprintf(
-        out_FILE,
+        out_file,
         b"Rehash=%u, \0" as *const u8 as *const ::core::ffi::c_char,
         (*ht).ht_rehashes,
     );
     fprintf(
-        out_FILE,
+        out_file,
         b"Collisions=%lu/%lu=%.0f%%\0" as *const u8 as *const ::core::ffi::c_char,
         (*ht).ht_collisions,
         (*ht).ht_lookups,

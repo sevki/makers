@@ -84,7 +84,7 @@ extern "C" {
     fn hash_free(ht: *mut hash_table, free_items: ::core::ffi::c_int);
     fn hash_map(ht: *mut hash_table, map: hash_map_func_t);
     fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *mut ::core::ffi::c_void);
-    fn hash_print_stats(ht: *mut hash_table, out_FILE: *mut FILE);
+    fn hash_print_stats(ht: *mut hash_table, out_file: *mut FILE);
     fn jhash(key: *const ::core::ffi::c_uchar, n: ::core::ffi::c_int) -> ::core::ffi::c_uint;
     static mut hash_deleted_item: *const ::core::ffi::c_void;
     static mut variable_buffer: *mut ::core::ffi::c_char;
@@ -1370,7 +1370,7 @@ pub unsafe extern "C" fn target_environment(
     let result_0: *mut *mut ::core::ffi::c_char;
     let mut result: *mut *mut ::core::ffi::c_char;
     let mut invalid: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut added_SHELL: ::core::ffi::c_int =
+    let mut added_shell: ::core::ffi::c_int =
         (shell_var.value == ::core::ptr::null_mut::<::core::ffi::c_char>()) as ::core::ffi::c_int;
     let mut found_makelevel: ::core::ffi::c_int = 0;
     let mut found_mflags: ::core::ffi::c_int = 0;
@@ -1478,7 +1478,7 @@ pub unsafe extern "C" fn target_environment(
                     cp = recursively_expand_for_file(v_0, file);
                     value = cp;
                 }
-                if added_SHELL == 0
+                if added_shell == 0
                     && (*(*v_0).name as ::core::ffi::c_int
                         == *(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char)
                             as ::core::ffi::c_int
@@ -1488,7 +1488,7 @@ pub unsafe extern "C" fn target_environment(
                                 (b"SHELL\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
                             ) == 0))
                 {
-                    added_SHELL = 1;
+                    added_shell = 1;
                 } else if found_makelevel == 0
                     && (*(*v_0).name as ::core::ffi::c_int
                         == *(b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char)
@@ -1611,7 +1611,7 @@ pub unsafe extern "C" fn target_environment(
         }
         v_slot = v_slot.offset(1 as ::core::ffi::c_int as isize);
     }
-    if added_SHELL == 0 {
+    if added_shell == 0 {
         let fresh11 = result;
         result = result.offset(1 as ::core::ffi::c_int as isize);
         *fresh11 = xstrdup(concat(
