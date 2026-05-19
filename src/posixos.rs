@@ -1,4 +1,5 @@
 use libc::{__errno_location, close, dup, fcntl, free, open, perror, pipe, printf, sprintf, sscanf, strcmp, strerror, unlink};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::stdio::{FILE};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
@@ -102,7 +103,8 @@ pub const IO_STDOUT_OK: ::core::ffi::c_int = 0x8 as ::core::ffi::c_int;
 pub const IO_STDERR_OK: ::core::ffi::c_int = 0x10 as ::core::ffi::c_int;
 #[no_mangle]
 pub unsafe extern "C" fn check_io_state() -> ::core::ffi::c_uint {
-    static mut state: ::core::ffi::c_uint = IO_UNKNOWN as ::core::ffi::c_uint;
+    static IO_STATE: AtomicU32 = AtomicU32::new(IO_UNKNOWN as ::core::ffi::c_uint);
+    let mut state = IO_STATE.load(Ordering::Relaxed);
     if state != IO_UNKNOWN as ::core::ffi::c_uint {
         return state;
     }
@@ -130,6 +132,7 @@ pub unsafe extern "C" fn check_io_state() -> ::core::ffi::c_uint {
             state |= IO_COMBINED_OUTERR as ::core::ffi::c_uint;
         }
     }
+    IO_STATE.store(state, Ordering::Relaxed);
     state
 }
 pub const FIFO_PREFIX: [::core::ffi::c_char; 6] =
@@ -922,8 +925,8 @@ pub unsafe extern "C" fn fd_reset_append(
 pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
     let tdir: *const ::core::ffi::c_char = get_tmpdir();
     let mut fd: ::core::ffi::c_int = -1;
-    static mut tmpfile_works: ::core::ffi::c_uint = 1;
-    if tmpfile_works != 0 {
+    static TMPFILE_WORKS: AtomicBool = AtomicBool::new(true);
+    if TMPFILE_WORKS.load(Ordering::Relaxed) {
         loop {
             fd = open(
                 tdir,
@@ -948,7 +951,7 @@ pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
             );
             fflush(stdout);
         }
-        tmpfile_works = 0;
+        TMPFILE_WORKS.store(false, Ordering::Relaxed);
     }
     if *tdir as ::core::ffi::c_int
         == *(b"/tmp\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
