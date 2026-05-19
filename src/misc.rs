@@ -1,4 +1,5 @@
 use libc::{__errno_location, free, getenv, mkstemp, putchar, sleep, sprintf, stpcpy, strchr, strcmp, strcpy, strdup, strerror, strtoul, unlink};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::stdio::{FILE};
 use crate::file::{Dep, File};
@@ -152,22 +153,36 @@ pub unsafe extern "C" fn make_ulltoa(
     );
     buf
 }
-static mut mk_state: ::core::ffi::c_uint = 0;
+static MK_STATE: AtomicU32 = AtomicU32::new(0);
 #[no_mangle]
 pub unsafe extern "C" fn make_seed(seed: ::core::ffi::c_uint) {
-    mk_state = seed;
+    MK_STATE.store(seed, Ordering::Relaxed);
 }
 #[no_mangle]
 pub unsafe extern "C" fn make_rand() -> ::core::ffi::c_uint {
-    if mk_state == 0 {
-        mk_state = ((time(::core::ptr::null_mut::<time_t>()) ^ make_pid() as time_t)
-            as ::core::ffi::c_uint)
-            .wrapping_add(1);
+    let mut state = MK_STATE.load(Ordering::Relaxed);
+    loop {
+        let mut next = if state == 0 {
+            ((time(::core::ptr::null_mut::<time_t>()) ^ make_pid() as time_t)
+                as ::core::ffi::c_uint)
+                .wrapping_add(1)
+        } else {
+            state
+        };
+        next ^= next << 13;
+        next ^= next >> 17;
+        next ^= next << 5;
+
+        match MK_STATE.compare_exchange_weak(
+            state,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(observed) => state = observed,
+        }
     }
-    mk_state ^= mk_state << 13;
-    mk_state ^= mk_state >> 17;
-    mk_state ^= mk_state << 5;
-    mk_state
 }
 #[no_mangle]
 pub unsafe extern "C" fn alpha_compare(
