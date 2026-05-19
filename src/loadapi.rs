@@ -1,11 +1,10 @@
-use libc::{free};
+use libc::free;
 
 use crate::file::{Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
 extern "C" {
     pub type commands;
     fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut reading_file: *const Floc;
     fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
     fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);
@@ -72,7 +71,6 @@ pub unsafe extern "C" fn gmk_eval(
 ) {
     let mut pbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut plen: size_t = 0;
-    let s: *mut ::core::ffi::c_char;
     let mut fl: Floc = Floc {
         filenm: ::core::ptr::null::<::core::ffi::c_char>(),
         lineno: 0,
@@ -88,9 +86,10 @@ pub unsafe extern "C" fn gmk_eval(
         flp = ::core::ptr::null_mut::<Floc>();
     }
     install_variable_buffer(&raw mut pbuf, &raw mut plen);
-    s = xstrdup(buffer);
-    eval_buffer(s, flp);
-    free(s as *mut ::core::ffi::c_void);
+    let mut eval_input = ::std::ffi::CStr::from_ptr(buffer)
+        .to_bytes_with_nul()
+        .to_vec();
+    eval_buffer(eval_input.as_mut_ptr() as *mut ::core::ffi::c_char, flp);
     restore_variable_buffer(pbuf, plen);
 }
 #[no_mangle]
