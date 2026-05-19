@@ -137,7 +137,7 @@ pub unsafe extern "C" fn check_io_state() -> ::core::ffi::c_uint {
 }
 pub const FIFO_PREFIX: [::core::ffi::c_char; 6] =
     unsafe { ::core::mem::transmute::<[u8; 6], [::core::ffi::c_char; 6]>(*b"fifo:\0") };
-static mut job_root: ::core::ffi::c_uchar = 0;
+static JOB_ROOT: AtomicBool = AtomicBool::new(false);
 static mut job_fds: [::core::ffi::c_int; 2] =
     [-1, -1];
 static mut job_rfd: ::core::ffi::c_int = -1;
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn jobserver_setup(
 ) -> ::core::ffi::c_uint {
     let mut r: ::core::ffi::c_int;
     let mut k: ::core::ffi::c_int;
-    job_root = 1;
+    JOB_ROOT.store(true, Ordering::Relaxed);
     if style.is_null()
         || strcmp(style, b"fifo\0" as *const u8 as *const ::core::ffi::c_char)
             == 0
@@ -504,7 +504,7 @@ pub unsafe extern "C" fn jobserver_clear() {
     job_fds[1 as usize] = job_rfd;
     job_fds[0 as usize] = job_fds[1 as usize];
     if !fifo_name.is_null() {
-        if job_root != 0 {
+        if JOB_ROOT.load(Ordering::Relaxed) {
             let mut r: ::core::ffi::c_int;
             loop {
                 r = unlink(fifo_name);
@@ -698,7 +698,7 @@ pub const MUTEX_PREFIX: [::core::ffi::c_char; 5] =
 static mut osync_handle: ::core::ffi::c_int = -1;
 static mut osync_tmpfile: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-static mut sync_root: ::core::ffi::c_uint = 0;
+static SYNC_ROOT: AtomicBool = AtomicBool::new(false);
 #[no_mangle]
 pub unsafe extern "C" fn osync_enabled() -> ::core::ffi::c_uint {
     (osync_handle >= 0) as ::core::ffi::c_int as ::core::ffi::c_uint
@@ -707,7 +707,7 @@ pub unsafe extern "C" fn osync_enabled() -> ::core::ffi::c_uint {
 pub unsafe extern "C" fn osync_setup() {
     osync_handle = get_tmpfd(&raw mut osync_tmpfile);
     fd_noinherit(osync_handle);
-    sync_root = 1;
+    SYNC_ROOT.store(true, Ordering::Relaxed);
 }
 #[no_mangle]
 pub unsafe extern "C" fn osync_get_mutex() -> *mut ::core::ffi::c_char {
@@ -777,7 +777,7 @@ pub unsafe extern "C" fn osync_clear() {
         close(osync_handle);
         osync_handle = -1;
     }
-    if sync_root != 0 && !osync_tmpfile.is_null() {
+    if SYNC_ROOT.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
         let mut r: ::core::ffi::c_int;
         loop {
             r = unlink(osync_tmpfile);
