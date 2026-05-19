@@ -1,6 +1,3 @@
-use core::ffi::c_void;
-use libc::free;
-
 use crate::file::{Dep, File};
 use crate::floc::Floc;
 
@@ -8,7 +5,6 @@ extern "C" {
     fn fatal(flocp: *const Floc, length: usize, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn make_seed(_: ::core::ffi::c_uint);
     fn make_rand() -> ::core::ffi::c_uint;
-    fn xmalloc(_: usize) -> *mut c_void;
     static mut not_parallel: ::core::ffi::c_int;
 }
 
@@ -21,7 +17,7 @@ pub enum Mode {
     Identity,
 }
 
-type Shuffler = fn(&mut [*mut c_void]);
+type Shuffler = fn(&mut [*mut Dep]);
 
 struct Config {
     mode: Mode,
@@ -100,7 +96,7 @@ fn fatal_invalid(arg: &str) -> ! {
     }
 }
 
-fn random_shuffle(slice: &mut [*mut c_void]) {
+fn random_shuffle(slice: &mut [*mut Dep]) {
     let len = slice.len();
     if len <= 1 {
         return;
@@ -113,14 +109,14 @@ fn random_shuffle(slice: &mut [*mut c_void]) {
     }
 }
 
-fn reverse_shuffle(slice: &mut [*mut c_void]) {
+fn reverse_shuffle(slice: &mut [*mut Dep]) {
     let len = slice.len();
     for i in 0..len / 2 {
         slice.swap(i, len - 1 - i);
     }
 }
 
-fn identity_shuffle(_: &mut [*mut c_void]) {}
+fn identity_shuffle(_: &mut [*mut Dep]) {}
 
 /// Walk the deps linked list, shuffle the order, and write the new order back
 /// via the `shuf` field on each node.
@@ -138,25 +134,23 @@ unsafe fn shuffle_deps(deps: *mut Dep) {
         return;
     }
 
-    let da = xmalloc(::core::mem::size_of::<*mut Dep>() * ndeps) as *mut *mut c_void;
-    let slots = ::core::slice::from_raw_parts_mut(da, ndeps);
+    let mut deps_order = Vec::with_capacity(ndeps);
 
     d = deps;
-    for slot in slots.iter_mut() {
-        *slot = d as *mut c_void;
+    for _ in 0..ndeps {
+        deps_order.push(d);
         d = (*d).next;
     }
 
     if let Some(f) = config().shuffler {
-        f(slots);
+        f(&mut deps_order);
     }
 
     d = deps;
-    for slot in slots.iter() {
-        (*d).shuf = *slot as *mut Dep;
+    for dep in deps_order {
+        (*d).shuf = dep;
         d = (*d).next;
     }
-    free(da as *mut c_void);
 }
 
 unsafe fn shuffle_file_deps_recursive(f: *mut File) {
