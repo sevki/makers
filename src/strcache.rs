@@ -1,4 +1,5 @@
 use libc::{printf, strcmp};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::stdio::{FILE};
 pub use crate::ffi_types::size_t;
@@ -76,9 +77,9 @@ pub const BUFSIZE: usize = (8192 as usize)
     .wrapping_sub(CACHE_BUFFER_OFFSET as usize);
 static mut strcache: *mut strcache = ::core::ptr::null::<strcache>() as *mut strcache;
 static mut fullcache: *mut strcache = ::core::ptr::null::<strcache>() as *mut strcache;
-static mut total_buffers: ::core::ffi::c_ulong = 0;
-static mut total_strings: ::core::ffi::c_ulong = 0;
-static mut total_size: ::core::ffi::c_ulong = 0;
+static TOTAL_BUFFERS: AtomicU64 = AtomicU64::new(0);
+static TOTAL_STRINGS: AtomicU64 = AtomicU64::new(0);
+static TOTAL_SIZE: AtomicU64 = AtomicU64::new(0);
 unsafe extern "C" fn new_cache(
     head: *mut *mut strcache,
     buflen: sc_buflen_t,
@@ -90,7 +91,7 @@ unsafe extern "C" fn new_cache(
     (*new).bytesfree = buflen;
     (*new).next = *head;
     *head = new;
-    total_buffers = total_buffers.wrapping_add(1);
+    TOTAL_BUFFERS.fetch_add(1, Ordering::Relaxed);
     new
 }
 unsafe extern "C" fn copy_string(
@@ -123,8 +124,12 @@ unsafe extern "C" fn add_string(
     let mut sp: *mut strcache;
     let mut spp: *mut *mut strcache = &raw mut strcache;
     let sz: sc_buflen_t = (len as ::core::ffi::c_int + 1) as sc_buflen_t;
-    total_strings = total_strings.wrapping_add(1);
-    total_size = total_size.wrapping_add(sz as ::core::ffi::c_ulong);
+    let total_strings = TOTAL_STRINGS
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1);
+    let total_size = TOTAL_SIZE
+        .fetch_add(sz as ::core::ffi::c_ulong, Ordering::Relaxed)
+        .wrapping_add(sz as ::core::ffi::c_ulong);
     if sz as usize > BUFSIZE {
         sp = new_cache(&raw mut fullcache, sz);
         return copy_string(sp, str, len);
@@ -211,7 +216,7 @@ static mut strings: hash_table = hash_table {
     ht_in_map: [0; 1],
     c2rust_padding: [0; 3],
 };
-static mut total_adds: ::core::ffi::c_ulong = 0;
+static TOTAL_ADDS: AtomicU64 = AtomicU64::new(0);
 unsafe extern "C" fn add_hash(
     str: *const ::core::ffi::c_char,
     len: size_t,
@@ -224,7 +229,7 @@ unsafe extern "C" fn add_hash(
     slot = hash_find_slot(&raw mut strings, str as *const ::core::ffi::c_void)
         as *const *mut ::core::ffi::c_char;
     key = *slot;
-    total_adds = total_adds.wrapping_add(1);
+    TOTAL_ADDS.fetch_add(1, Ordering::Relaxed);
     if !(key.is_null()
         || key as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
@@ -376,6 +381,10 @@ pub unsafe fn strcache_print_stats(prefix: *const ::core::ffi::c_char) {
         fullbuffs = fullbuffs.wrapping_add(1);
         sp = (*sp).next;
     }
+    let total_buffers = TOTAL_BUFFERS.load(Ordering::Relaxed) as ::core::ffi::c_ulong;
+    let total_strings = TOTAL_STRINGS.load(Ordering::Relaxed) as ::core::ffi::c_ulong;
+    let total_size = TOTAL_SIZE.load(Ordering::Relaxed) as ::core::ffi::c_ulong;
+    let total_adds = TOTAL_ADDS.load(Ordering::Relaxed) as ::core::ffi::c_ulong;
     '_c2rust_label: {
         if total_buffers == numbuffs.wrapping_add(1) {
         } else {
