@@ -23,6 +23,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -4162,13 +4163,13 @@ pub unsafe extern "C" fn should_print_dir() -> ::core::ffi::c_int {
 }
 #[no_mangle]
 pub unsafe extern "C" fn print_version() {
-    static mut printed_version: ::core::ffi::c_int = 0;
+    static PRINTED_VERSION: AtomicBool = AtomicBool::new(false);
     let precede: *const ::core::ffi::c_char = if print_data_base_flag != 0 {
         b"# \0" as *const u8 as *const ::core::ffi::c_char
     } else {
         b"\0" as *const u8 as *const ::core::ffi::c_char
     };
-    if printed_version != 0 {
+    if PRINTED_VERSION.swap(true, Ordering::Relaxed) {
         return;
     }
     printf(
@@ -4202,7 +4203,6 @@ pub unsafe extern "C" fn print_version() {
         precede,
         precede,
     );
-    printed_version = 1;
 }
 #[no_mangle]
 pub unsafe extern "C" fn print_data_base() {
@@ -4271,10 +4271,9 @@ pub unsafe extern "C" fn clean_jobserver(status: ::core::ffi::c_int) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn die(status: ::core::ffi::c_int) -> ! {
-    static mut dying: ::core::ffi::c_char = 0;
-    if dying == 0 {
+    static DYING: AtomicBool = AtomicBool::new(false);
+    if !DYING.swap(true, Ordering::Relaxed) {
         let err: ::core::ffi::c_int;
-        dying = 1;
         if print_version_flag != 0 {
             print_version();
         }
