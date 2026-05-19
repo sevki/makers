@@ -79,21 +79,6 @@ extern "C" {
     static mut command_count: ::core::ffi::c_ulong;
     static mut job_slots: ::core::ffi::c_uint;
     static mut max_load_average: ::core::ffi::c_double;
-    fn start_remote_job_p(_: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn start_remote_job(
-        _: *mut *mut ::core::ffi::c_char,
-        _: *mut *mut ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-        _: *mut ::core::ffi::c_int,
-        _: *mut pid_t,
-        _: *mut ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
-    fn remote_status(
-        _: *mut ::core::ffi::c_int,
-        _: *mut ::core::ffi::c_int,
-        _: *mut ::core::ffi::c_int,
-        _: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
     static mut commands_started: ::core::ffi::c_uint;
     static mut handling_fatal_signal: sig_atomic_t;
     static mut output_context: *mut output;
@@ -687,7 +672,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
         match current_block_143 {
             17478428563724192186 => {
                 if any_remote != 0 {
-                    pid = remote_status(
+                    pid = crate::remote_stub::remote_status(
                         &raw mut exit_code,
                         &raw mut exit_sig,
                         &raw mut coredump,
@@ -739,7 +724,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
                         if block == 0 || any_remote == 0 {
                             break;
                         }
-                        pid = remote_status(
+                        pid = crate::remote_stub::remote_status(
                             &raw mut exit_code,
                             &raw mut exit_sig,
                             &raw mut coredump,
@@ -932,7 +917,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
                     if output_sync == OUTPUT_SYNC_LINE {
                         output_dump(&raw mut (*c).output);
                     }
-                    (*c).set_remote(start_remote_job_p(0)
+                    (*c).set_remote(crate::remote_stub::start_remote_job_p(0)
                         as ::core::ffi::c_uint
                         as ::core::ffi::c_uint);
                     start_job_command(c);
@@ -1235,7 +1220,7 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
                     let mut is_remote: ::core::ffi::c_int = 0;
                     let mut used_stdin: ::core::ffi::c_int = 0;
                     let mut id: pid_t = 0;
-                    if start_remote_job(
+                    if crate::remote_stub::start_remote_job(
                         argv,
                         (*child).environment,
                         if (*child).good_stdin() as ::core::ffi::c_int != 0 {
@@ -1309,7 +1294,7 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
 pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_int {
     let f: *mut file = (*c).file;
     (*c).set_remote(
-        start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
+        crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     if (*c).remote() == 0 && (job_slots_used > 0 && load_too_high() != 0) {
         set_command_state(f, cs_running);

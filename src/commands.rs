@@ -49,7 +49,6 @@ extern "C" {
     static mut always_make_flag: ::core::ffi::c_int;
     static mut one_shell: ::core::ffi::c_int;
     static mut cmd_prefix: ::core::ffi::c_char;
-    fn remote_kill(id: pid_t, sig: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn hash_init(
         ht: *mut hash_table,
         size: ::core::ffi::c_ulong,
@@ -887,7 +886,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: ::core::ffi::c_int) {
         c_0 = children;
         while !c_0.is_null() {
             if (*c_0).remote() as ::core::ffi::c_int != 0 && (*c_0).pid > 0 {
-                remote_kill((*c_0).pid, sig);
+                crate::remote_stub::remote_kill((*c_0).pid, sig);
             }
             c_0 = (*c_0).next;
         }
