@@ -191,16 +191,7 @@ pub struct child {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 7],
 }
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct output {
-    pub out: ::core::ffi::c_int,
-    pub err: ::core::ffi::c_int,
-    #[bitfield(name = "syncout", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub syncout: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
-}
+pub use crate::output::output;
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const SIG_DFL: __sighandler_t = None;
 pub const SIGINT: ::core::ffi::c_int = 2;

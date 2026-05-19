@@ -154,8 +154,6 @@ extern "C" {
     ) -> ::core::ffi::c_int;
     static mut output_context: *mut output;
     static mut stdio_traced: ::core::ffi::c_uint;
-    fn output_init(out: *mut output);
-    fn output_close(out: *mut output);
     fn child_handler(sig: ::core::ffi::c_int);
     fn reap_children(block: ::core::ffi::c_int, err: ::core::ffi::c_int);
     fn exec_command(
@@ -455,16 +453,7 @@ pub struct nameseq {
     pub next: *mut nameseq,
     pub name: *const ::core::ffi::c_char,
 }
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct output {
-    pub out: ::core::ffi::c_int,
-    pub err: ::core::ffi::c_int,
-    #[bitfield(name = "syncout", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub syncout: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
-}
+pub use crate::output::output;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct goaldep {
@@ -1500,7 +1489,7 @@ unsafe fn main_0(
     if check_io_state() & 0x8 as ::core::ffi::c_uint != 0 {
         atexit(Some(close_stdout as unsafe extern "C" fn() -> ()));
     }
-    output_init(&raw mut make_sync);
+    crate::output::output_init(&raw mut make_sync);
     initialize_stopchar_map();
     crate::warning::init();
     verify_flag = 1;
@@ -1612,7 +1601,7 @@ unsafe fn main_0(
         sigaddset(&raw mut fatal_signal_set, 25);
     }
     bsd_signal(SIGCHLD, SIG_DFL);
-    output_init(::core::ptr::null_mut::<output>());
+    crate::output::output_init(::core::ptr::null_mut::<output>());
     if (*argv.offset(0 as ::core::ffi::c_int as isize)).is_null() {
         let ref mut fresh33 = *argv.offset(0 as ::core::ffi::c_int as isize);
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
@@ -1896,7 +1885,7 @@ unsafe fn main_0(
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET)
         as ::core::ffi::c_int as ::core::ffi::c_uint;
     if make_sync.syncout() as ::core::ffi::c_int != 0 && syncing == 0 {
-        output_close(&raw mut make_sync);
+        crate::output::output_close(&raw mut make_sync);
     }
     make_sync.set_syncout(syncing as ::core::ffi::c_uint);
     output_context = if make_sync.syncout() as ::core::ffi::c_int != 0 {
@@ -2299,7 +2288,7 @@ unsafe fn main_0(
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET)
         as ::core::ffi::c_int as ::core::ffi::c_uint;
     if make_sync.syncout() as ::core::ffi::c_int != 0 && syncing == 0 {
-        output_close(&raw mut make_sync);
+        crate::output::output_close(&raw mut make_sync);
     }
     make_sync.set_syncout(syncing as ::core::ffi::c_uint);
     output_context = if make_sync.syncout() as ::core::ffi::c_int != 0 {
@@ -2329,7 +2318,7 @@ unsafe fn main_0(
     }
     if syncing != 0 && job_slots == 1 {
         output_context = ::core::ptr::null_mut::<output>();
-        output_close(&raw mut make_sync);
+        crate::output::output_close(&raw mut make_sync);
         syncing = 0;
         output_sync = OUTPUT_SYNC_NONE;
     }
@@ -2406,7 +2395,7 @@ unsafe fn main_0(
     }
     remote_setup();
     output_context = ::core::ptr::null_mut::<output>();
-    output_close(&raw mut make_sync);
+    crate::output::output_close(&raw mut make_sync);
     if !shuffle_mode.is_null() {
         if 0x1 as ::core::ffi::c_int & db_level != 0 {
             printf(
@@ -4305,13 +4294,13 @@ pub unsafe extern "C" fn die(status: ::core::ffi::c_int) -> ! {
         unload_all();
         clean_jobserver(status);
         if !output_context.is_null() {
-            output_close(output_context);
+            crate::output::output_close(output_context);
             if output_context != &raw mut make_sync {
-                output_close(&raw mut make_sync);
+                crate::output::output_close(&raw mut make_sync);
             }
             output_context = ::core::ptr::null_mut::<output>();
         }
-        output_close(::core::ptr::null_mut::<output>());
+        crate::output::output_close(::core::ptr::null_mut::<output>());
         osync_clear();
         if !directory_before_chdir.is_null() {
             let mut _x: ::core::ffi::c_int = 0;

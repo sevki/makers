@@ -82,10 +82,6 @@ extern "C" {
     static mut commands_started: ::core::ffi::c_uint;
     static mut handling_fatal_signal: sig_atomic_t;
     static mut output_context: *mut output;
-    fn output_init(out: *mut output);
-    fn output_close(out: *mut output);
-    fn output_start();
-    fn output_dump(out: *mut output);
     fn __assert_fail(
         __assertion: *const ::core::ffi::c_char,
         __file: *const ::core::ffi::c_char,
@@ -308,16 +304,7 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct output {
-    pub out: ::core::ffi::c_int,
-    pub err: ::core::ffi::c_int,
-    #[bitfield(name = "syncout", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub syncout: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
-}
+pub use crate::output::output;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct childbase {
@@ -915,7 +902,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
                     (*(*c).file).set_update_status(us_failed as update_status);
                 } else {
                     if output_sync == OUTPUT_SYNC_LINE {
-                        output_dump(&raw mut (*c).output);
+                        crate::output::output_dump(&raw mut (*c).output);
                     }
                     (*c).set_remote(crate::remote_stub::start_remote_job_p(0)
                         as ::core::ffi::c_uint
@@ -937,7 +924,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
                 (*(*c).file).set_update_status(us_success as update_status);
             }
         }
-        output_dump(&raw mut (*c).output);
+        crate::output::output_dump(&raw mut (*c).output);
         if handling_fatal_signal == 0 {
             notice_finished_file((*c).file);
         }
@@ -994,7 +981,7 @@ pub unsafe extern "C" fn free_childbase(child: *mut childbase) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn free_child(child: *mut child) {
-    output_close(&raw mut (*child).output);
+    crate::output::output_close(&raw mut (*child).output);
     if jobserver_tokens == 0 {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
@@ -1144,7 +1131,7 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
                 ::core::ptr::null_mut::<output>()
             };
             if (*child).output.syncout() == 0 {
-                output_dump(&raw mut (*child).output);
+                crate::output::output_dump(&raw mut (*child).output);
             }
             if just_print_flag != 0
                 || 0x10 as ::core::ffi::c_int & db_level != 0
@@ -1198,7 +1185,7 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
                     free(argv as *mut ::core::ffi::c_void);
                 }
             } else {
-                output_start();
+                crate::output::output_start();
                 fflush(stdout);
                 fflush(stderr);
                 (*child).set_good_stdin(
@@ -1386,7 +1373,7 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
     reap_children(0, 0);
     chop_commands(cmds);
     c = xcalloc(::core::mem::size_of::<child>() as size_t) as *mut child;
-    output_init(&raw mut (*c).output);
+    crate::output::output_init(&raw mut (*c).output);
     (*c).file = file;
     (*c).sh_batch_file = ::core::ptr::null_mut::<::core::ffi::c_char>();
     (*c).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);

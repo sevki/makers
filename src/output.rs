@@ -314,8 +314,7 @@ pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
     osync_clear();
     in_setup = 0;
 }
-#[no_mangle]
-pub unsafe extern "C" fn output_dump(out: *mut output) {
+pub unsafe fn output_dump(out: *mut output) {
     let outfd_not_empty: ::core::ffi::c_int = ((*out).out != OUTPUT_NONE
         && lseek((*out).out, 0 as __off_t, SEEK_END) > 0 as __off_t)
         as ::core::ffi::c_int;
@@ -370,8 +369,7 @@ pub unsafe extern "C" fn output_dump(out: *mut output) {
 }
 static mut stdout_flags: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut stderr_flags: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-#[no_mangle]
-pub unsafe extern "C" fn output_init(mut out: *mut output) {
+pub unsafe fn output_init(mut out: *mut output) {
     if !out.is_null() {
         (*out).err = OUTPUT_NONE;
         (*out).out = (*out).err;
@@ -383,8 +381,7 @@ pub unsafe extern "C" fn output_init(mut out: *mut output) {
     stdout_flags = fd_set_append(fileno(stdout));
     stderr_flags = fd_set_append(fileno(stderr));
 }
-#[no_mangle]
-pub unsafe extern "C" fn output_close(out: *mut output) {
+pub unsafe fn output_close(out: *mut output) {
     if out.is_null() {
         if stdio_traced != 0 {
             log_working_directory(0);
@@ -402,8 +399,7 @@ pub unsafe extern "C" fn output_close(out: *mut output) {
     }
     output_init(out);
 }
-#[no_mangle]
-pub unsafe extern "C" fn output_start() {
+pub unsafe fn output_start() {
     if !output_context.is_null() && (*output_context).syncout() as ::core::ffi::c_int != 0 {
         if !((*output_context).out >= 0
             || (*output_context).err >= 0)

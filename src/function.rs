@@ -117,7 +117,6 @@ extern "C" {
     fn jhash(key: *const ::core::ffi::c_uchar, n: ::core::ffi::c_int) -> ::core::ffi::c_uint;
     fn jhash_string(key: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint;
     static mut output_context: *mut output;
-    fn output_start();
     fn outputs(is_err: ::core::ffi::c_int, msg: *const ::core::ffi::c_char);
     fn reap_children(block: ::core::ffi::c_int, err: ::core::ffi::c_int);
     fn free_childbase(child: *mut childbase);
@@ -258,16 +257,7 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct output {
-    pub out: ::core::ffi::c_int,
-    pub err: ::core::ffi::c_int,
-    #[bitfield(name = "syncout", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub syncout: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
-}
+pub use crate::output::output;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct nameseq {
@@ -2176,7 +2166,7 @@ pub unsafe extern "C" fn func_shell_base(
     if command_argv.is_null() {
         return o;
     }
-    output_start();
+    crate::output::output_start();
     errfd = if !output_context.is_null() && (*output_context).err >= 0 {
         (*output_context).err
     } else {
