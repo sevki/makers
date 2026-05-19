@@ -1,5 +1,5 @@
 use libc::{__errno_location, close, dup, fcntl, free, open, perror, pipe, printf, sprintf, sscanf, strcmp, strerror, unlink};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use crate::stdio::{FILE};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
@@ -831,16 +831,26 @@ pub unsafe extern "C" fn osync_release() {
 }
 #[no_mangle]
 pub unsafe extern "C" fn get_bad_stdin() -> ::core::ffi::c_int {
-    static mut bad_stdin: ::core::ffi::c_int = -1;
-    if bad_stdin == -1 {
-        let mut pd: [::core::ffi::c_int; 2] = [0; 2];
-        if pipe(&raw mut pd as *mut ::core::ffi::c_int) == 0 {
-            close(pd[1 as usize]);
-            bad_stdin = pd[0 as usize];
-            fd_noinherit(bad_stdin);
-        }
+    static BAD_STDIN: AtomicI32 = AtomicI32::new(-1);
+    let cached = BAD_STDIN.load(Ordering::Relaxed);
+    if cached != -1 {
+        return cached;
     }
-    bad_stdin
+
+    let mut pd: [::core::ffi::c_int; 2] = [0; 2];
+    if pipe(&raw mut pd as *mut ::core::ffi::c_int) == 0 {
+        close(pd[1 as usize]);
+        fd_noinherit(pd[0 as usize]);
+        match BAD_STDIN.compare_exchange(-1, pd[0 as usize], Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => pd[0 as usize],
+            Err(existing) => {
+                close(pd[0 as usize]);
+                existing
+            }
+        }
+    } else {
+        -1
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn fd_inherit(fd: ::core::ffi::c_int) {
