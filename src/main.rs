@@ -113,8 +113,6 @@ extern "C" {
         noerror: ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
     static mut remote_description: *mut ::core::ffi::c_char;
-    static mut make_host: *mut ::core::ffi::c_char;
-    static mut version_string: *mut ::core::ffi::c_char;
     static mut handling_fatal_signal: sig_atomic_t;
     fn __assert_fail(
         __assertion: *const ::core::ffi::c_char,
@@ -1430,13 +1428,13 @@ pub unsafe extern "C" fn print_usage(bad: ::core::ffi::c_int) -> ! {
         fprintf(
             usageto,
             b"\nThis program built for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            make_host,
+            crate::version::make_host(),
         );
     } else {
         fprintf(
             usageto,
             b"\nThis program built for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
-            make_host,
+            crate::version::make_host(),
             remote_description,
         );
     }
@@ -4175,19 +4173,19 @@ pub unsafe extern "C" fn print_version() {
     printf(
         b"%sGNU Make %s\n\0" as *const u8 as *const ::core::ffi::c_char,
         precede,
-        version_string,
+        crate::version::version_string(),
     );
     if remote_description.is_null() || *remote_description as ::core::ffi::c_int == 0 {
         printf(
             b"%sBuilt for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
             precede,
-            make_host,
+            crate::version::make_host(),
         );
     } else {
         printf(
             b"%sBuilt for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
             precede,
-            make_host,
+            crate::version::make_host(),
             remote_description,
         );
     }

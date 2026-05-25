@@ -4,7 +4,7 @@ members = [
 [package]
 name = "make-sys"
 authors = ["C2Rust"]
-version = "0.0.0"
+version = "4.4.90"
 publish = false
 edition = "2021"
 autobins = false

@@ -55,8 +55,6 @@ extern "C" {
     static mut jobserver_auth: *mut ::core::ffi::c_char;
     static mut makelevel: ::core::ffi::c_uint;
     static mut remote_description: *mut ::core::ffi::c_char;
-    static mut make_host: *mut ::core::ffi::c_char;
-    static mut version_string: *mut ::core::ffi::c_char;
     fn hash_init(
         ht: *mut hash_table,
         size: ::core::ffi::c_ulong,
@@ -1125,7 +1123,7 @@ pub unsafe extern "C" fn define_automatic_variables() {
     sprintf(
         &raw mut buf as *mut ::core::ffi::c_char,
         b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-        version_string,
+        crate::version::version_string(),
         if remote_description.is_null()
             || *remote_description.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
         {
@@ -1153,7 +1151,7 @@ pub unsafe extern "C" fn define_automatic_variables() {
     define_variable_in_set(
         b"MAKE_HOST\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        make_host,
+        crate::version::make_host(),
         o_default,
         0,
         (*current_variable_set_list).set,
