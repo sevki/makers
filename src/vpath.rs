@@ -344,7 +344,6 @@ unsafe extern "C" fn selective_vpath_search(
             .wrapping_add(1) as usize,
     ));
     name = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    let mut current_block_45: u64;
     i = 0;
     while !(*vpath.offset(i as isize)).is_null() {
         let mut exists_in_cache: ::core::ffi::c_int = 0;
@@ -436,6 +435,9 @@ unsafe extern "C" fn selective_vpath_search(
                 __glibc_reserved: [0; 3],
             };
             *p = '/' as i32 as ::core::ffi::c_char;
+            // A cached hit that no longer stat()s is treated as missing: keep
+            // searching the remaining vpath entries instead of returning it.
+            let mut do_return = true;
             if exists_in_cache != 0 {
                 let mut e: ::core::ffi::c_int;
                 loop {
@@ -446,36 +448,28 @@ unsafe extern "C" fn selective_vpath_search(
                 }
                 if e != 0 {
                     exists = 0;
-                    current_block_45 = 2868539653012386629;
-                } else {
-                    if !mtime_ptr.is_null() {
-                        *mtime_ptr = file_timestamp_cons(
-                            name,
-                            st.st_mtim.tv_sec as time_t,
-                            st.st_mtim.tv_nsec as ::core::ffi::c_long,
-                        );
-                        mtime_ptr = ::core::ptr::null_mut::<uintmax_t>();
-                    }
-                    current_block_45 = 7427571413727699167;
-                }
-            } else {
-                current_block_45 = 7427571413727699167;
-            }
-            match current_block_45 {
-                2868539653012386629 => {}
-                _ => {
-                    if !mtime_ptr.is_null() {
-                        *mtime_ptr = UNKNOWN_MTIME as uintmax_t;
-                    }
-                    if !path_index.is_null() {
-                        *path_index = i;
-                    }
-                    return strcache_add_len(
+                    do_return = false;
+                } else if !mtime_ptr.is_null() {
+                    *mtime_ptr = file_timestamp_cons(
                         name,
-                        (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name) as ::core::ffi::c_long as size_t)
-                            .wrapping_add(flen),
+                        st.st_mtim.tv_sec as time_t,
+                        st.st_mtim.tv_nsec as ::core::ffi::c_long,
                     );
+                    mtime_ptr = ::core::ptr::null_mut::<uintmax_t>();
                 }
+            }
+            if do_return {
+                if !mtime_ptr.is_null() {
+                    *mtime_ptr = UNKNOWN_MTIME as uintmax_t;
+                }
+                if !path_index.is_null() {
+                    *path_index = i;
+                }
+                return strcache_add_len(
+                    name,
+                    (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name) as ::core::ffi::c_long as size_t)
+                        .wrapping_add(flen),
+                );
             }
         }
         i = i.wrapping_add(1);

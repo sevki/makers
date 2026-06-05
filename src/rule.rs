@@ -571,7 +571,6 @@ pub unsafe extern "C" fn convert_to_pattern() {
                 (*f).set_suffix(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             }
         }
-        let mut current_block_29: u64;
         d2 = (*suffix_file).deps;
         while !d2.is_null() {
             let s2len: size_t;
@@ -621,9 +620,12 @@ pub unsafe extern "C" fn convert_to_pattern() {
                 );
                 f = lookup_file(rulename);
                 if !(f.is_null() || (*f).cmds.is_null()) {
+                    // Under --posix, prerequisites on a suffix rule are silently
+                    // ignored (skip); otherwise warn and still convert the rule.
+                    let mut skip = false;
                     if !(*f).deps.is_null() {
                         if posix_pedantic != 0 {
-                            current_block_29 = 11584701595673473500;
+                            skip = true;
                         } else {
                             error(
                                 &raw mut (*(*f).cmds).fileinfo,
@@ -632,38 +634,17 @@ pub unsafe extern "C" fn convert_to_pattern() {
                                     as *const u8
                                     as *const ::core::ffi::c_char,
                             );
-                            current_block_29 = 14359455889292382949;
                         }
-                    } else {
-                        current_block_29 = 14359455889292382949;
                     }
-                    match current_block_29 {
-                        11584701595673473500 => {}
-                        _ => {
-                            (*f).set_suffix(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            if s2len == 2
-                                && *rulename.offset(slen as isize) as ::core::ffi::c_int
-                                    == '.' as i32
-                                && *rulename.offset(slen.wrapping_add(1) as isize)
-                                    as ::core::ffi::c_int
-                                    == 'a' as i32
-                            {
-                                convert_suffix_rule(
-                                    ::core::ptr::null::<::core::ffi::c_char>(),
-                                    if !(*d).name.is_null() {
-                                        (*d).name
-                                    } else {
-                                        (*(*d).file).name
-                                    },
-                                    (*f).cmds,
-                                );
-                            }
+                    if !skip {
+                        (*f).set_suffix(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                        if s2len == 2
+                            && *rulename.offset(slen as isize) as ::core::ffi::c_int == '.' as i32
+                            && *rulename.offset(slen.wrapping_add(1) as isize) as ::core::ffi::c_int
+                                == 'a' as i32
+                        {
                             convert_suffix_rule(
-                                if !(*d2).name.is_null() {
-                                    (*d2).name
-                                } else {
-                                    (*(*d2).file).name
-                                },
+                                ::core::ptr::null::<::core::ffi::c_char>(),
                                 if !(*d).name.is_null() {
                                     (*d).name
                                 } else {
@@ -672,6 +653,19 @@ pub unsafe extern "C" fn convert_to_pattern() {
                                 (*f).cmds,
                             );
                         }
+                        convert_suffix_rule(
+                            if !(*d2).name.is_null() {
+                                (*d2).name
+                            } else {
+                                (*(*d2).file).name
+                            },
+                            if !(*d).name.is_null() {
+                                (*d).name
+                            } else {
+                                (*(*d).file).name
+                            },
+                            (*f).cmds,
+                        );
                     }
                 }
             }

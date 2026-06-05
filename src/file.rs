@@ -841,7 +841,6 @@ pub unsafe extern "C" fn remove_intermediates(sig: ::core::ffi::c_int) {
     }
     file_slot = files.ht_vec as *mut *mut file;
     file_end = file_slot.offset(files.ht_size as isize);
-    let mut current_block_35: u64;
     while file_slot < file_end {
         if !((*file_slot).is_null()
             || *file_slot as *mut ::core::ffi::c_void
@@ -855,68 +854,64 @@ pub unsafe extern "C" fn remove_intermediates(sig: ::core::ffi::c_int) {
                 && (*f).cmd_target() == 0
             {
                 let status: ::core::ffi::c_int;
-                if !((*f).update_status() as ::core::ffi::c_int == us_none as ::core::ffi::c_int) {
+                if (*f).update_status() as ::core::ffi::c_int != us_none as ::core::ffi::c_int {
+                    // ENOENT from unlink means the file was already gone: skip the
+                    // diagnostic/bookkeeping below (the C code `continue`d here).
+                    let skip: bool;
                     if just_print_flag != 0 {
                         status = 0;
-                        current_block_35 = 2979737022853876585;
+                        skip = false;
                     } else {
                         status = unlink((*f).name);
-                        if status < 0 && *__errno_location() == ENOENT {
-                            current_block_35 = 6873731126896040597;
-                        } else {
-                            current_block_35 = 2979737022853876585;
-                        }
+                        skip = status < 0 && *__errno_location() == ENOENT;
                     }
-                    match current_block_35 {
-                        6873731126896040597 => {}
-                        _ => {
-                            if (*f).dontcare() == 0 {
-                                if sig != 0 {
-                                    error(
-                                        ::core::ptr::null_mut::<Floc>(),
-                                        strlen((*f).name) as size_t,
-                                        b"*** deleting intermediate file '%s'\0" as *const u8
-                                            as *const ::core::ffi::c_char,
-                                        (*f).name,
-                                    );
-                                } else {
-                                    if doneany == 0 {
-                                        if 0x1 as ::core::ffi::c_int & db_level != 0 {
-                                            printf(
-                                                b"Removing intermediate files...\n\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                            );
-                                            fflush(stdout);
-                                        }
-                                    }
-                                    if run_silent == 0 {
-                                        if doneany == 0 {
-                                            fputs(
-                                                b"rm \0" as *const u8 as *const ::core::ffi::c_char,
-                                                stdout,
-                                            );
-                                            doneany = 1;
-                                        } else {
-                                            putchar(' ' as i32);
-                                        }
-                                        fputs((*f).name, stdout);
+                    if !skip {
+                        if (*f).dontcare() == 0 {
+                            if sig != 0 {
+                                error(
+                                    ::core::ptr::null_mut::<Floc>(),
+                                    strlen((*f).name) as size_t,
+                                    b"*** deleting intermediate file '%s'\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                    (*f).name,
+                                );
+                            } else {
+                                if doneany == 0 {
+                                    if 0x1 as ::core::ffi::c_int & db_level != 0 {
+                                        printf(
+                                            b"Removing intermediate files...\n\0" as *const u8
+                                                as *const ::core::ffi::c_char,
+                                        );
                                         fflush(stdout);
                                     }
                                 }
-                                if status < 0 {
-                                    if doneany != 0 {
+                                if run_silent == 0 {
+                                    if doneany == 0 {
                                         fputs(
-                                            b"\n\0" as *const u8 as *const ::core::ffi::c_char,
+                                            b"rm \0" as *const u8 as *const ::core::ffi::c_char,
                                             stdout,
                                         );
+                                        doneany = 1;
+                                    } else {
+                                        putchar(' ' as i32);
                                     }
+                                    fputs((*f).name, stdout);
                                     fflush(stdout);
-                                    perror_with_name(
-                                        b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
-                                        (*f).name,
-                                    );
-                                    doneany = 0;
                                 }
+                            }
+                            if status < 0 {
+                                if doneany != 0 {
+                                    fputs(
+                                        b"\n\0" as *const u8 as *const ::core::ffi::c_char,
+                                        stdout,
+                                    );
+                                }
+                                fflush(stdout);
+                                perror_with_name(
+                                    b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
+                                    (*f).name,
+                                );
+                                doneany = 0;
                             }
                         }
                     }
