@@ -23,6 +23,9 @@ env:
 jobs:
     rust-make-builds-c-make:
         name: rust make builds C make
+        # The weekly cron is for mutation testing only; don't run the heavy
+        # build/kernel/coverage jobs on it.
+        if: github.event_name != 'schedule'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -68,8 +71,22 @@ jobs:
                   if-no-files-found: error
                   retention-days: 7
 
-    kernel-build:
-        name: rust make builds Linux kernel (okLinux)
+            # The C make built by ci-test.sh stage 3 (the in-tree ./make) is the
+            # oracle for the differential kernel build below.
+            - name: Upload C make binary
+              uses: actions/upload-artifact@v4
+              with:
+                  name: c-make-${{ github.sha }}
+                  path: make
+                  if-no-files-found: error
+                  retention-days: 7
+
+    # Build the Linux kernel twice — once with the Rust make, once with the C
+    # make — in parallel, then diff their stdout/stderr to catch regressions
+    # where the Rust make drives the build differently from upstream make.
+    kernel-build-rust:
+        name: build Linux kernel (rust make)
+        if: github.event_name != 'schedule'
         needs: rust-make-builds-c-make
         runs-on: ubuntu-latest
         steps:
@@ -77,31 +94,125 @@ jobs:
               uses: actions/download-artifact@v4
               with:
                   name: rust-make-${{ github.sha }}
-                  path: rust-make
-
+                  path: make-bin
             - name: Put rust make first on PATH as `make`
               run: |
-                  chmod +x rust-make/make
+                  chmod +x make-bin/make
                   mkdir -p "$HOME/.local/bin"
-                  ln -sf "$PWD/rust-make/make" "$HOME/.local/bin/make"
+                  ln -sf "$PWD/make-bin/make" "$HOME/.local/bin/make"
                   echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
             - name: Verify
-              run: |
-                  which make
-                  make --version | head -2
-
+              run: make --version | head -2
             - name: Build Linux kernel via okLinux build.sh
               working-directory: ${{ runner.temp }}
               run: |
+                  mkdir -p rust-kernel && cd rust-kernel
                   curl -fsSL \
                     https://raw.githubusercontent.com/sevki/okLinux/refs/heads/main/build.sh \
                     -o build.sh
                   chmod +x build.sh
-                  ./build.sh
+                  # Capture stdout/stderr separately; record the exit code rather
+                  # than failing the job, so the kernel-diff job is the single
+                  # arbiter (and can compare even a failing build's output).
+                  set +e
+                  ./build.sh >kernel-stdout.log 2>kernel-stderr.log
+                  echo $? >kernel-exit.txt
+                  set -e
+                  echo "rust make kernel build exit: $(cat kernel-exit.txt)"
+                  tail -n 20 kernel-stderr.log || true
+            - name: Upload rust make kernel logs
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-logs-rust-${{ github.sha }}
+                  path: ${{ runner.temp }}/rust-kernel/kernel-*.log
+                  retention-days: 7
+            - name: Upload rust make kernel exit code
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-exit-rust-${{ github.sha }}
+                  path: ${{ runner.temp }}/rust-kernel/kernel-exit.txt
+
+    kernel-build-c:
+        name: build Linux kernel (C make)
+        if: github.event_name != 'schedule'
+        needs: rust-make-builds-c-make
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download C make artifact
+              uses: actions/download-artifact@v4
+              with:
+                  name: c-make-${{ github.sha }}
+                  path: make-bin
+            - name: Put C make first on PATH as `make`
+              run: |
+                  chmod +x make-bin/make
+                  mkdir -p "$HOME/.local/bin"
+                  ln -sf "$PWD/make-bin/make" "$HOME/.local/bin/make"
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            - name: Verify
+              run: make --version | head -2
+            - name: Build Linux kernel via okLinux build.sh
+              working-directory: ${{ runner.temp }}
+              run: |
+                  mkdir -p c-kernel && cd c-kernel
+                  curl -fsSL \
+                    https://raw.githubusercontent.com/sevki/okLinux/refs/heads/main/build.sh \
+                    -o build.sh
+                  chmod +x build.sh
+                  set +e
+                  ./build.sh >kernel-stdout.log 2>kernel-stderr.log
+                  echo $? >kernel-exit.txt
+                  set -e
+                  echo "C make kernel build exit: $(cat kernel-exit.txt)"
+                  tail -n 20 kernel-stderr.log || true
+            - name: Upload C make kernel logs
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-logs-c-${{ github.sha }}
+                  path: ${{ runner.temp }}/c-kernel/kernel-*.log
+                  retention-days: 7
+            - name: Upload C make kernel exit code
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-exit-c-${{ github.sha }}
+                  path: ${{ runner.temp }}/c-kernel/kernel-exit.txt
+
+    kernel-diff:
+        name: diff kernel builds (rust make vs C make)
+        if: github.event_name != 'schedule'
+        needs: [kernel-build-rust, kernel-build-c]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - name: Download rust make kernel logs
+              uses: actions/download-artifact@v4
+              with:
+                  pattern: kernel-*-rust-${{ github.sha }}
+                  path: rust-logs
+                  merge-multiple: true
+            - name: Download C make kernel logs
+              uses: actions/download-artifact@v4
+              with:
+                  pattern: kernel-*-c-${{ github.sha }}
+                  path: c-logs
+                  merge-multiple: true
+            - name: Compare stdout/stderr
+              run: ./scripts/kernel-diff.sh c-logs rust-logs
+            - name: Upload normalized diffs
+              if: always() && hashFiles('*.diff') != ''
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-diff-${{ github.sha }}
+                  path: "*.diff"
 
     coverage:
         name: coverage (cargo-llvm-cov)
+        # The weekly cron is for mutation testing only.
+        if: github.event_name != 'schedule'
         runs-on: ubuntu-latest
         # Informational for now: the report is uploaded as an artifact, printed
         # to the run summary, and posted as a PR comment, but a failure here
