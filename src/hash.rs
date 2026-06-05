@@ -216,8 +216,7 @@ pub unsafe extern "C" fn hash_insert_at(
     slot: *const ::core::ffi::c_void,
 ) -> *mut ::core::ffi::c_void {
     let old_item: *const ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
-    '_c2rust_label: {
-        if (*ht).ht_in_map() == 0 {
+    if (*ht).ht_in_map() == 0 {
         } else {
             __assert_fail(
                 b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
@@ -226,8 +225,7 @@ pub unsafe extern "C" fn hash_insert_at(
                 b"void *hash_insert_at(struct hash_table *, const void *, const void *)\0"
                     as *const u8 as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     if old_item.is_null()
         || old_item as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
     {
@@ -236,7 +234,7 @@ pub unsafe extern "C" fn hash_insert_at(
             (*ht).ht_empty_slots = (*ht).ht_empty_slots.wrapping_sub(1);
         }
     }
-    let ref mut fresh1 = *(slot as *mut *const ::core::ffi::c_void);
+    let fresh1 = &mut (*(slot as *mut *const ::core::ffi::c_void));
     *fresh1 = item;
     if (*ht).ht_empty_slots < (*ht).ht_size.wrapping_sub((*ht).ht_capacity) {
         hash_rehash(ht);
@@ -260,7 +258,7 @@ pub unsafe extern "C" fn hash_delete_at(
 ) -> *mut ::core::ffi::c_void {
     let item: *mut ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
     if !(item.is_null() || item == hash_deleted_item as *mut ::core::ffi::c_void) {
-        let ref mut fresh2 = *(slot as *mut *const ::core::ffi::c_void);
+        let fresh2 = &mut (*(slot as *mut *const ::core::ffi::c_void));
         *fresh2 = hash_deleted_item;
         (*ht).ht_fill = (*ht).ht_fill.wrapping_sub(1);
         item
@@ -273,8 +271,7 @@ pub unsafe extern "C" fn hash_free_items(mut ht: *mut hash_table) {
     let mut vec: *mut *mut ::core::ffi::c_void = (*ht).ht_vec;
     let end: *mut *mut ::core::ffi::c_void =
         vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
-    '_c2rust_label: {
-        if (*ht).ht_in_map() == 0 {
+    if (*ht).ht_in_map() == 0 {
         } else {
             __assert_fail(
                 b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
@@ -283,8 +280,7 @@ pub unsafe extern "C" fn hash_free_items(mut ht: *mut hash_table) {
                 b"void hash_free_items(struct hash_table *)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     while vec < end {
         let item: *mut ::core::ffi::c_void = *vec;
         if !(item.is_null() || item == hash_deleted_item as *mut ::core::ffi::c_void) {
@@ -301,8 +297,7 @@ pub unsafe extern "C" fn hash_delete_items(mut ht: *mut hash_table) {
     let mut vec: *mut *mut ::core::ffi::c_void = (*ht).ht_vec;
     let end: *mut *mut ::core::ffi::c_void =
         vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
-    '_c2rust_label: {
-        if (*ht).ht_in_map() == 0 {
+    if (*ht).ht_in_map() == 0 {
         } else {
             __assert_fail(
                 b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
@@ -311,8 +306,7 @@ pub unsafe extern "C" fn hash_delete_items(mut ht: *mut hash_table) {
                 b"void hash_delete_items(struct hash_table *)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     while vec < end {
         *vec = ::core::ptr::null_mut::<::core::ffi::c_void>();
         vec = vec.offset(1 as ::core::ffi::c_int as isize);
@@ -325,8 +319,7 @@ pub unsafe extern "C" fn hash_delete_items(mut ht: *mut hash_table) {
 }
 #[no_mangle]
 pub unsafe extern "C" fn hash_free(mut ht: *mut hash_table, free_items: ::core::ffi::c_int) {
-    '_c2rust_label: {
-        if (*ht).ht_in_map() == 0 {
+    if (*ht).ht_in_map() == 0 {
         } else {
             __assert_fail(
                 b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
@@ -335,8 +328,7 @@ pub unsafe extern "C" fn hash_free(mut ht: *mut hash_table, free_items: ::core::
                 b"void hash_free(struct hash_table *, int)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     if free_items != 0 {
         hash_free_items(ht);
     } else {
@@ -521,24 +513,24 @@ pub unsafe extern "C" fn jhash(
         );
         c = c.wrapping_add(val_1);
         a = a.wrapping_sub(c);
-        a ^= c << 4 | c >> 32 - 4;
+        a ^= c << 4 | c >> (32 - 4);
         c = c.wrapping_add(b);
         b = b.wrapping_sub(a);
-        b ^= a << 6 | a >> 32 - 6;
+        b ^= a << 6 | a >> (32 - 6);
         a = a.wrapping_add(c);
         c = c.wrapping_sub(b);
-        c ^= b << 8 | b >> 32 - 8;
+        c ^= b << 8 | b >> (32 - 8);
         b = b.wrapping_add(a);
         a = a.wrapping_sub(c);
         a ^= c << 16
-            | c >> 32 - 16;
+            | c >> (32 - 16);
         c = c.wrapping_add(b);
         b = b.wrapping_sub(a);
         b ^= a << 19
-            | a >> 32 - 19;
+            | a >> (32 - 19);
         a = a.wrapping_add(c);
         c = c.wrapping_sub(b);
-        c ^= b << 4 | b >> 32 - 4;
+        c ^= b << 4 | b >> (32 - 4);
         b = b.wrapping_add(a);
         length -= 12;
         k = k.offset(12 as ::core::ffi::c_int as isize);
@@ -587,31 +579,31 @@ pub unsafe extern "C" fn jhash(
     c = c.wrapping_add(*k.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_uint);
     c ^= b;
     c = c.wrapping_sub(
-        b << 14 | b >> 32 - 14,
+        b << 14 | b >> (32 - 14),
     );
     a ^= c;
     a = a.wrapping_sub(
-        c << 11 | c >> 32 - 11,
+        c << 11 | c >> (32 - 11),
     );
     b ^= a;
     b = b.wrapping_sub(
-        a << 25 | a >> 32 - 25,
+        a << 25 | a >> (32 - 25),
     );
     c ^= b;
     c = c.wrapping_sub(
-        b << 16 | b >> 32 - 16,
+        b << 16 | b >> (32 - 16),
     );
     a ^= c;
     a = a.wrapping_sub(
-        c << 4 | c >> 32 - 4,
+        c << 4 | c >> (32 - 4),
     );
     b ^= a;
     b = b.wrapping_sub(
-        a << 14 | a >> 32 - 14,
+        a << 14 | a >> (32 - 14),
     );
     c ^= b;
     c = c.wrapping_sub(
-        b << 24 | b >> 32 - 24,
+        b << 24 | b >> (32 - 24),
     );
     c
 }
@@ -663,8 +655,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
             break;
         }
         k = k.offset(UINTSZ as isize);
-        '_c2rust_label: {
-            if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
+        if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
             } else {
                 __assert_fail(
                     b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
@@ -673,8 +664,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
                     b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
                         as *const ::core::ffi::c_char,
                 );
-            }
-        };
+            };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;
         let mut val_0: ::core::ffi::c_uint = 0;
@@ -712,8 +702,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
             break;
         }
         k = k.offset(UINTSZ as isize);
-        '_c2rust_label_0: {
-            if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
+        if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
             } else {
                 __assert_fail(
                     b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
@@ -722,8 +711,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
                     b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
                         as *const ::core::ffi::c_char,
                 );
-            }
-        };
+            };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;
         let mut val_1: ::core::ffi::c_uint = 0;
@@ -761,8 +749,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
             break;
         }
         k = k.offset(UINTSZ as isize);
-        '_c2rust_label_1: {
-            if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
+        if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
             } else {
                 __assert_fail(
                     b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
@@ -771,58 +758,57 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
                     b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
                         as *const ::core::ffi::c_char,
                 );
-            }
-        };
+            };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;
         a = a.wrapping_sub(c);
-        a ^= c << 4 | c >> 32 - 4;
+        a ^= c << 4 | c >> (32 - 4);
         c = c.wrapping_add(b);
         b = b.wrapping_sub(a);
-        b ^= a << 6 | a >> 32 - 6;
+        b ^= a << 6 | a >> (32 - 6);
         a = a.wrapping_add(c);
         c = c.wrapping_sub(b);
-        c ^= b << 8 | b >> 32 - 8;
+        c ^= b << 8 | b >> (32 - 8);
         b = b.wrapping_add(a);
         a = a.wrapping_sub(c);
         a ^= c << 16
-            | c >> 32 - 16;
+            | c >> (32 - 16);
         c = c.wrapping_add(b);
         b = b.wrapping_sub(a);
         b ^= a << 19
-            | a >> 32 - 19;
+            | a >> (32 - 19);
         a = a.wrapping_add(c);
         c = c.wrapping_sub(b);
-        c ^= b << 4 | b >> 32 - 4;
+        c ^= b << 4 | b >> (32 - 4);
         b = b.wrapping_add(a);
     }
     c ^= b;
     c = c.wrapping_sub(
-        b << 14 | b >> 32 - 14,
+        b << 14 | b >> (32 - 14),
     );
     a ^= c;
     a = a.wrapping_sub(
-        c << 11 | c >> 32 - 11,
+        c << 11 | c >> (32 - 11),
     );
     b ^= a;
     b = b.wrapping_sub(
-        a << 25 | a >> 32 - 25,
+        a << 25 | a >> (32 - 25),
     );
     c ^= b;
     c = c.wrapping_sub(
-        b << 16 | b >> 32 - 16,
+        b << 16 | b >> (32 - 16),
     );
     a ^= c;
     a = a.wrapping_sub(
-        c << 4 | c >> 32 - 4,
+        c << 4 | c >> (32 - 4),
     );
     b ^= a;
     b = b.wrapping_sub(
-        a << 14 | a >> 32 - 14,
+        a << 14 | a >> (32 - 14),
     );
     c ^= b;
     c = c.wrapping_sub(
-        b << 24 | b >> 32 - 24,
+        b << 24 | b >> (32 - 24),
     );
     c.wrapping_add(k.offset_from(start) as ::core::ffi::c_long as ::core::ffi::c_uint)
 }

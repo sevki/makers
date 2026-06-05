@@ -36,7 +36,7 @@ static mut CONFIG: Config = Config {
 fn config() -> &'static mut Config {
     // make's runtime state is single-threaded; matches the existing convention
     // for static mut globals throughout this codebase.
-    unsafe { &mut *(&raw mut CONFIG) }
+    unsafe { &mut CONFIG }
 }
 
 /// Returns the canonical label for the active shuffle mode (e.g. `"reverse"`,

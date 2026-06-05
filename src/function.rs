@@ -1779,8 +1779,8 @@ unsafe extern "C" fn func_sort(
         t = t.offset(1 as ::core::ffi::c_int as isize);
         *p.offset(len as isize) = 0;
         let fresh3 = wordi;
-        wordi = wordi + 1;
-        let ref mut fresh4 = *words.offset(fresh3 as isize);
+        wordi += 1;
+        let fresh4 = &mut (*words.offset(fresh3 as isize));
         *fresh4 = p;
     }
     if wordi != 0 {
@@ -2626,17 +2626,15 @@ unsafe extern "C" fn func_file(
                 o = variable_buffer_output(o, &raw mut buf as *mut ::core::ffi::c_char, l_0);
                 n = n.wrapping_add(l_0);
             }
-            if ferror(fp_0) != 0 {
-                if *__errno_location() != EINTR {
-                    fatal(
-                        reading_file,
-                        (strlen(nm_0) as size_t)
-                            .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                        b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                        nm_0,
-                        strerror(*__errno_location()),
-                    );
-                }
+            if ferror(fp_0) != 0 && *__errno_location() != EINTR {
+                fatal(
+                    reading_file,
+                    (strlen(nm_0) as size_t)
+                        .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
+                    b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    nm_0,
+                    strerror(*__errno_location()),
+                );
             }
             if feof(fp_0) != 0 {
                 break;

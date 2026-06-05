@@ -241,7 +241,7 @@ pub unsafe extern "C" fn construct_vpath_list(
         if len > 1 || *v as ::core::ffi::c_int != '.' as i32 {
             let fresh1 = elem;
             elem = elem.wrapping_add(1);
-            let ref mut fresh2 = *vpath.offset(fresh1 as isize);
+            let fresh2 = &mut (*vpath.offset(fresh1 as isize));
             *fresh2 = dir_name(strcache_add_len(v, len));
             if len > maxvpath {
                 maxvpath = len;
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn construct_vpath_list(
                     .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
             ) as *mut *const ::core::ffi::c_char;
         }
-        let ref mut fresh3 = *vpath.offset(elem as isize);
+        let fresh3 = &mut (*vpath.offset(elem as isize));
         *fresh3 = ::core::ptr::null::<::core::ffi::c_char>();
         path_0 = xmalloc(::core::mem::size_of::<vpath>() as size_t) as *mut vpath;
         (*path_0).searchpath = vpath;

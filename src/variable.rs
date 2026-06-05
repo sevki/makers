@@ -272,11 +272,8 @@ unsafe extern "C" fn lookup_pattern_var(
                     (*p).target,
                     target,
                     stem.offset_from(target) as ::core::ffi::c_long as size_t,
-                ) == 0))
-            {
-                if *(*p).suffix as ::core::ffi::c_int
-                    == *stem.offset(stemlen as isize) as ::core::ffi::c_int
-                    && (*(*p).suffix as ::core::ffi::c_int == 0
+                ) == 0)) && *(*p).suffix as ::core::ffi::c_int
+                    == *stem.offset(stemlen as isize) as ::core::ffi::c_int && (*(*p).suffix as ::core::ffi::c_int == 0
                         || *(*p).suffix.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                             == *stem.offset(stemlen.wrapping_add(1) as isize)
                                 as ::core::ffi::c_int
@@ -288,10 +285,8 @@ unsafe extern "C" fn lookup_pattern_var(
                                     (stem.offset(stemlen.wrapping_add(1) as isize)
                                         as *const ::core::ffi::c_char)
                                         .offset(1 as ::core::ffi::c_int as isize),
-                                ) == 0))
-                {
-                    break;
-                }
+                                ) == 0)) {
+                break;
             }
         }
         p = (*p).next;
@@ -955,9 +950,7 @@ pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
 pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
     current_variable_set_list = create_new_variable_set();
     if (*current_variable_set_list).next == &raw mut global_setlist {
-        let set: *mut variable_set = (*current_variable_set_list).set;
-        (*current_variable_set_list).set = global_setlist.set;
-        global_setlist.set = set;
+        std::mem::swap(&mut (*current_variable_set_list).set, &mut global_setlist.set);
         (*current_variable_set_list).next = global_setlist.next;
         global_setlist.next = current_variable_set_list;
         current_variable_set_list = &raw mut global_setlist;
@@ -968,8 +961,7 @@ pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
 pub unsafe extern "C" fn pop_variable_scope() {
     let setlist: *mut variable_set_list;
     let set: *mut variable_set;
-    '_c2rust_label: {
-        if !(*current_variable_set_list).next.is_null() {
+    if !(*current_variable_set_list).next.is_null() {
         } else {
             __assert_fail(
                 b"current_variable_set_list->next != NULL\0" as *const u8
@@ -978,8 +970,7 @@ pub unsafe extern "C" fn pop_variable_scope() {
                 788,
                 b"void pop_variable_scope(void)\0" as *const u8 as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     if current_variable_set_list != &raw mut global_setlist {
         setlist = current_variable_set_list;
         set = (*setlist).set;
@@ -1580,18 +1571,14 @@ pub unsafe extern "C" fn target_environment(
                             value,
                             b" --jobserver-auth=\0" as *const u8 as *const ::core::ffi::c_char,
                         )
-                        .is_null()
-                        {
-                            if !((*v_0).origin() as ::core::ffi::c_int
-                                != o_env as ::core::ffi::c_int)
-                            {
-                                mf_0 = concat(2, value, invalid);
-                                free(cp as *mut ::core::ffi::c_void);
-                                cp = xstrdup(mf_0);
-                                value = cp;
-                                if found_makeflags != 0 {
-                                    invalid = ::core::ptr::null::<::core::ffi::c_char>();
-                                }
+                        .is_null() && !((*v_0).origin() as ::core::ffi::c_int
+                                != o_env as ::core::ffi::c_int) {
+                            mf_0 = concat(2, value, invalid);
+                            free(cp as *mut ::core::ffi::c_void);
+                            cp = xstrdup(mf_0);
+                            value = cp;
+                            if found_makeflags != 0 {
+                                invalid = ::core::ptr::null::<::core::ffi::c_char>();
                             }
                         }
                     }
@@ -1885,8 +1872,7 @@ pub unsafe extern "C" fn do_variable_definition(
     }
     match current_block {
         5159818223158340697 => {
-            '_c2rust_label: {
-                if !newval.is_null() {
+            if !newval.is_null() {
                 } else {
                     __assert_fail(
                         b"newval\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1895,8 +1881,7 @@ pub unsafe extern "C" fn do_variable_definition(
                         b"struct variable *do_variable_definition(const Floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
                             as *const u8 as *const ::core::ffi::c_char,
                     );
-                }
-            };
+                };
             v = define_variable_in_set(
                 varname,
                 strlen(varname) as size_t,

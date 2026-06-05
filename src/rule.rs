@@ -792,13 +792,12 @@ pub unsafe extern "C" fn install_pattern_rule(
         as *mut ::core::ffi::c_uint;
     (*r)._defn = ::core::ptr::null_mut::<::core::ffi::c_char>();
     *(*r).lens.offset(0 as ::core::ffi::c_int as isize) = strlen((*p).target) as ::core::ffi::c_uint;
-    let ref mut fresh1 = *(*r).targets.offset(0 as ::core::ffi::c_int as isize);
+    let fresh1 = &mut (*(*r).targets.offset(0 as ::core::ffi::c_int as isize));
     *fresh1 = (*p).target;
-    let ref mut fresh2 = *(*r).suffixes.offset(0 as ::core::ffi::c_int as isize);
+    let fresh2 = &mut (*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize));
     *fresh2 =
         find_percent_cached((*r).targets.offset(0 as ::core::ffi::c_int as isize) as *mut *const ::core::ffi::c_char);
-    '_c2rust_label: {
-        if !(*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize)).is_null() {
+    if !(*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize)).is_null() {
         } else {
             __assert_fail(
                 b"r->suffixes[0] != NULL\0" as *const u8 as *const ::core::ffi::c_char,
@@ -807,9 +806,8 @@ pub unsafe extern "C" fn install_pattern_rule(
                 b"void install_pattern_rule(const struct pspec *, int)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
-    let ref mut fresh3 = *(*r).suffixes.offset(0 as ::core::ffi::c_int as isize);
+        };
+    let fresh3 = &mut (*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize));
     *fresh3 = (*fresh3).offset(1 as ::core::ffi::c_int as isize);
     ptr = (*p).dep;
     (*r).deps = parse_file_seq(
@@ -880,8 +878,7 @@ pub unsafe extern "C" fn create_pattern_rule(
     i = 0;
     while i < n as ::core::ffi::c_uint {
         *(*r).lens.offset(i as isize) = strlen(*targets.offset(i as isize)) as ::core::ffi::c_uint;
-        '_c2rust_label: {
-            if !(*(*r).suffixes.offset(i as isize)).is_null() {
+        if !(*(*r).suffixes.offset(i as isize)).is_null() {
             } else {
                 __assert_fail(
                     b"r->suffixes[i] != NULL\0" as *const u8
@@ -891,9 +888,8 @@ pub unsafe extern "C" fn create_pattern_rule(
                     b"void create_pattern_rule(const char **, const char **, unsigned short, int, struct dep *, struct commands *, int)\0"
                         as *const u8 as *const ::core::ffi::c_char,
                 );
-            }
-        };
-        let ref mut fresh0 = *(*r).suffixes.offset(i as isize);
+            };
+        let fresh0 = &mut (*(*r).suffixes.offset(i as isize));
         *fresh0 = (*fresh0).offset(1 as ::core::ffi::c_int as isize);
         i = i.wrapping_add(1);
     }
@@ -942,16 +938,14 @@ pub unsafe extern "C" fn print_rule_data_base() {
             terminal as ::core::ffi::c_double / rules as ::core::ffi::c_double * 100.0f64,
         );
     }
-    if num_pattern_rules != rules {
-        if num_pattern_rules != 0 {
-            fatal(
-                ::core::ptr::null_mut::<Floc>(),
-                INTSTR_LENGTH.wrapping_mul(2),
-                b"INTERNAL: num_pattern_rules is wrong!  %u != %u\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                num_pattern_rules,
-                rules,
-            );
-        }
+    if num_pattern_rules != rules && num_pattern_rules != 0 {
+        fatal(
+            ::core::ptr::null_mut::<Floc>(),
+            INTSTR_LENGTH.wrapping_mul(2),
+            b"INTERNAL: num_pattern_rules is wrong!  %u != %u\0" as *const u8
+                as *const ::core::ffi::c_char,
+            num_pattern_rules,
+            rules,
+        );
     }
 }

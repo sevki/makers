@@ -857,8 +857,7 @@ pub unsafe extern "C" fn get_tmpfile(name: *mut *mut ::core::ffi::c_char) -> *mu
         b"wb+\0" as *const u8 as *const ::core::ffi::c_char;
     let mut file: *mut FILE;
     let fd: ::core::ffi::c_int;
-    '_c2rust_label: {
-        if !name.is_null() {
+    if !name.is_null() {
         } else {
             __assert_fail(
                 b"name\0" as *const u8 as *const ::core::ffi::c_char,
@@ -866,14 +865,12 @@ pub unsafe extern "C" fn get_tmpfile(name: *mut *mut ::core::ffi::c_char) -> *mu
                 827,
                 __ASSERT_FUNCTION.as_ptr(),
             );
-        }
-    };
+        };
     fd = get_tmpfd(name);
     if fd < 0 {
         return ::core::ptr::null_mut::<FILE>();
     }
-    '_c2rust_label_0: {
-        if !(*name).is_null() {
+    if !(*name).is_null() {
         } else {
             __assert_fail(
                 b"*name\0" as *const u8 as *const ::core::ffi::c_char,
@@ -881,8 +878,7 @@ pub unsafe extern "C" fn get_tmpfile(name: *mut *mut ::core::ffi::c_char) -> *mu
                 831,
                 __ASSERT_FUNCTION.as_ptr(),
             );
-        }
-    };
+        };
     loop {
         *__errno_location() = 0;
         file = fdopen(fd, tmpfile_mode);

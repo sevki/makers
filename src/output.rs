@@ -400,17 +400,12 @@ pub unsafe fn output_close(out: *mut output) {
     output_init(out);
 }
 pub unsafe fn output_start() {
-    if !output_context.is_null() && (*output_context).syncout() as ::core::ffi::c_int != 0 {
-        if !((*output_context).out >= 0
-            || (*output_context).err >= 0)
-        {
-            setup_tmpfile(output_context);
-        }
+    if !output_context.is_null() && (*output_context).syncout() as ::core::ffi::c_int != 0 && !((*output_context).out >= 0
+            || (*output_context).err >= 0) {
+        setup_tmpfile(output_context);
     }
-    if output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE {
-        if stdio_traced == 0 && should_print_dir() != 0 {
-            stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
-        }
+    if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE) && stdio_traced == 0 && should_print_dir() != 0 {
+        stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
     }
 }
 #[no_mangle]
@@ -481,8 +476,7 @@ pub unsafe extern "C" fn message(
     args_0 = args.clone();
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
             == 0
         {
         } else {
@@ -493,8 +487,7 @@ pub unsafe extern "C" fn message(
                 b"void message(int, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     outputs(0, start);
 }
 #[no_mangle]
@@ -550,8 +543,7 @@ pub unsafe extern "C" fn error(
     args_0 = args.clone();
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
             == 0
         {
         } else {
@@ -562,8 +554,7 @@ pub unsafe extern "C" fn error(
                 b"void error(const Floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     outputs(1, start);
 }
 #[no_mangle]
@@ -621,8 +612,7 @@ pub unsafe extern "C" fn fatal(
     args_0 = args.clone();
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, stop);
-    '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
             == 0
         {
         } else {
@@ -633,8 +623,7 @@ pub unsafe extern "C" fn fatal(
                 b"void fatal(const Floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     outputs(1, start);
     die(MAKE_FAILURE);
 }

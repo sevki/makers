@@ -153,8 +153,7 @@ pub unsafe extern "C" fn variable_buffer_output(
 ) -> *mut ::core::ffi::c_char {
     let newlen: size_t =
         length.wrapping_add(ptr.offset_from(variable_buffer) as ::core::ffi::c_long as size_t);
-    '_c2rust_label: {
-        if ptr >= variable_buffer {
+    if ptr >= variable_buffer {
         } else {
             __assert_fail(
                 b"ptr >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
@@ -163,10 +162,8 @@ pub unsafe extern "C" fn variable_buffer_output(
                 b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
-    '_c2rust_label_0: {
-        if ptr < variable_buffer.offset(variable_buffer_length as isize) {
+        };
+    if ptr < variable_buffer.offset(variable_buffer_length as isize) {
         } else {
             __assert_fail(
                 b"ptr < variable_buffer + variable_buffer_length\0" as *const u8
@@ -176,8 +173,7 @@ pub unsafe extern "C" fn variable_buffer_output(
                 b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     if newlen
         .wrapping_add(VARIABLE_BUFFER_ZONE as size_t)
         .wrapping_add(1)
@@ -383,8 +379,7 @@ pub unsafe extern "C" fn expand_variable_buf(
     if buf.is_null() {
         buf = initialize_variable_output();
     }
-    '_c2rust_label: {
-        if buf >= variable_buffer {
+    if buf >= variable_buffer {
         } else {
             __assert_fail(
                 b"buf >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
@@ -393,10 +388,8 @@ pub unsafe extern "C" fn expand_variable_buf(
                 b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
-    '_c2rust_label_0: {
-        if buf < variable_buffer.offset(variable_buffer_length as isize) {
+        };
+    if buf < variable_buffer.offset(variable_buffer_length as isize) {
         } else {
             __assert_fail(
                 b"buf < variable_buffer + variable_buffer_length\0" as *const u8
@@ -406,8 +399,7 @@ pub unsafe extern "C" fn expand_variable_buf(
                 b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     offs = buf.offset_from(variable_buffer) as ::core::ffi::c_long as size_t;
     expand_variable_output(buf, name, length);
     variable_buffer.offset(offs as isize)

@@ -1125,8 +1125,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, set_default: ::core::ffi::
                     } else {
                         v = try_variable_definition(fstart, p, origin, s_global);
                     }
-                    '_c2rust_label: {
-                        if !v.is_null() {
+                    if !v.is_null() {
                         } else {
                             __assert_fail(
                                 b"v != NULL\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1135,8 +1134,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, set_default: ::core::ffi::
                                 b"void eval(struct ebuffer *, int)\0" as *const u8
                                     as *const ::core::ffi::c_char,
                             );
-                        }
-                    };
+                        };
                     if vmod.export_v() as ::core::ffi::c_int != v_default as ::core::ffi::c_int {
                         (*v).set_export(vmod.export_v() as variable_export);
                     }
@@ -1887,8 +1885,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, set_default: ::core::ffi::
                                     if filenames.is_null() {
                                         no_targets = 1;
                                     } else {
-                                        '_c2rust_label_0: {
-                                            if *p2 as ::core::ffi::c_int != 0 {
+                                        if *p2 as ::core::ffi::c_int != 0 {
                                             } else {
                                                 __assert_fail(
                                                     b"*p2 != '\\0'\0" as *const u8
@@ -1900,8 +1897,7 @@ pub unsafe extern "C" fn eval(mut ebuf: *mut ebuffer, set_default: ::core::ffi::
                                                         as *const u8
                                                         as *const ::core::ffi::c_char,
                                                 );
-                                            }
-                                        };
+                                            };
                                         p2 = p2.offset(1 as ::core::ffi::c_int as isize);
                                         two_colon = (*p2 as ::core::ffi::c_int == ':' as i32)
                                             as ::core::ffi::c_int;
@@ -2781,8 +2777,7 @@ unsafe extern "C" fn record_target_var(
             p = create_pattern_var(name, percent);
             (*p).variable.fileinfo = *flocp;
             v = assign_variable_definition(&raw mut (*p).variable, defn);
-            '_c2rust_label: {
-                if !v.is_null() {
+            if !v.is_null() {
                 } else {
                     __assert_fail(
                         b"v != 0\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2791,8 +2786,7 @@ unsafe extern "C" fn record_target_var(
                         b"void record_target_var(struct nameseq *, char *, enum variable_origin, struct vmodifiers *, const Floc *)\0"
                             as *const u8 as *const ::core::ffi::c_char,
                     );
-                }
-            };
+                };
             (*v).set_origin(origin as variable_origin);
             if (*v).flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
                 (*v).value =
@@ -3007,15 +3001,12 @@ pub unsafe extern "C" fn check_specials(files: *mut nameseq, set_default: ::core
                                     (*(*d2).file).name
                                 },
                                 l as size_t,
-                            ) == 0
-                            {
-                                if *nm.offset(l as isize) as ::core::ffi::c_int
+                            ) == 0 && *nm.offset(l as isize) as ::core::ffi::c_int
                                     == *(if !(*d).name.is_null() {
                                         (*d).name
                                     } else {
                                         (*(*d).file).name
-                                    }) as ::core::ffi::c_int
-                                    && (*nm.offset(l as isize) as ::core::ffi::c_int == 0
+                                    }) as ::core::ffi::c_int && (*nm.offset(l as isize) as ::core::ffi::c_int == 0
                                         || strcmp(
                                             nm.offset(l as isize).offset(1 as ::core::ffi::c_int as isize),
                                             (if !(*d).name.is_null() {
@@ -3023,11 +3014,9 @@ pub unsafe extern "C" fn check_specials(files: *mut nameseq, set_default: ::core
                                             } else {
                                                 (*(*d).file).name
                                             }) . offset ( 1 ) ,
-                                        ) == 0)
-                                {
-                                    reject = 1;
-                                    break;
-                                }
+                                        ) == 0) {
+                                reject = 1;
+                                break;
                             }
                             d2 = (*d2).next;
                         }
@@ -3177,9 +3166,9 @@ unsafe extern "C" fn record_files(
             (c as size_t)
                 .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
         ) as *mut *const ::core::ffi::c_char;
-        let ref mut fresh17 = *targets.offset(0 as ::core::ffi::c_int as isize);
+        let fresh17 = &mut (*targets.offset(0 as ::core::ffi::c_int as isize));
         *fresh17 = name;
-        let ref mut fresh18 = *target_pats.offset(0 as ::core::ffi::c_int as isize);
+        let fresh18 = &mut (*target_pats.offset(0 as ::core::ffi::c_int as isize));
         *fresh18 = implicit_percent;
         c = 1;
         while !filenames.is_null() {
@@ -3192,9 +3181,9 @@ unsafe extern "C" fn record_files(
                     b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
                 );
             }
-            let ref mut fresh19 = *targets.offset(c as isize);
+            let fresh19 = &mut (*targets.offset(c as isize));
             *fresh19 = name;
-            let ref mut fresh20 = *target_pats.offset(c as isize);
+            let fresh20 = &mut (*target_pats.offset(c as isize));
             *fresh20 = implicit_percent;
             c = c.wrapping_add(1);
             nextf = (*filenames).next;
@@ -3924,7 +3913,7 @@ pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_ch
                     }
                     let fresh1 = idx;
                     idx = idx.wrapping_add(1);
-                    let ref mut fresh2 = *dirs.offset(fresh1 as isize);
+                    let fresh2 = &mut (*dirs.offset(fresh1 as isize));
                     *fresh2 = strcache_add_len(dir, len);
                 }
                 free(expanded as *mut ::core::ffi::c_void);
@@ -3958,13 +3947,13 @@ pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_ch
                 }
                 let fresh3 = idx;
                 idx = idx.wrapping_add(1);
-                let ref mut fresh4 = *dirs.offset(fresh3 as isize);
+                let fresh4 = &mut (*dirs.offset(fresh3 as isize));
                 *fresh4 = strcache_add_len(*ccpp, len_0);
             }
             ccpp = ccpp.offset(1 as ::core::ffi::c_int as isize);
         }
     }
-    let ref mut fresh5 = *dirs.offset(idx as isize);
+    let fresh5 = &mut (*dirs.offset(idx as isize));
     *fresh5 = ::core::ptr::null::<::core::ffi::c_char>();
     do_variable_definition(
         NILF,
@@ -4249,7 +4238,7 @@ pub unsafe extern "C" fn parse_file_seq(
                     xstrdup(__n) as *const ::core::ffi::c_char
                 };
                 if found_wait != 0 {
-                    let ref mut fresh7 = *(_ns as *mut dep);
+                    let fresh7 = &mut (*(_ns as *mut dep));
                     (*fresh7).set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                     found_wait = 0;
                 }
@@ -4328,7 +4317,7 @@ pub unsafe extern "C" fn parse_file_seq(
                                 xstrdup(__n_0) as *const ::core::ffi::c_char
                             };
                             if found_wait != 0 {
-                                let ref mut fresh8 = *(_ns_0 as *mut dep);
+                                let fresh8 = &mut (*(_ns_0 as *mut dep));
                                 (*fresh8)
                                     .set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                                 found_wait = 0;
@@ -4369,7 +4358,7 @@ pub unsafe extern "C" fn parse_file_seq(
                             xstrdup(__n_1) as *const ::core::ffi::c_char
                         };
                         if found_wait != 0 {
-                            let ref mut fresh9 = *(_ns_1 as *mut dep);
+                            let fresh9 = &mut (*(_ns_1 as *mut dep));
                             (*fresh9)
                                 .set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                             found_wait = 0;
