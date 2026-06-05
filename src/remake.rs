@@ -8,8 +8,8 @@ pub use crate::ffi_types::{
 };
 use crate::strcache::strcache_add;
 use crate::misc::{copy_dep_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::misc::free_ns_chain;
 extern "C" {
-    fn free_ns_chain(n: *mut nameseq);
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
     fn lstat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -147,12 +147,7 @@ pub struct goaldep {
     pub error: ::core::ffi::c_int,
     pub floc: Floc,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const ENOENT: ::core::ffi::c_int = 2;
 pub const EINTR: ::core::ffi::c_int = 4;

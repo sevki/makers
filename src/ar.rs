@@ -77,12 +77,7 @@ pub type ar_member_func_t = Option<
         *const ::core::ffi::c_void,
     ) -> intmax_t,
 >;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ar_glob_state {

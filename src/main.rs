@@ -26,8 +26,8 @@ use libc::{
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::strcache::strcache_add;
 use crate::misc::{make_toui, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::misc::free_ns_chain;
 extern "C" {
-    fn free_ns_chain(n: *mut nameseq);
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn sigprocmask(
@@ -439,12 +439,7 @@ pub const strlist: C2RustUnnamed_11 = 3;
 pub const string: C2RustUnnamed_11 = 2;
 pub const flag_off: C2RustUnnamed_11 = 1;
 pub const flag: C2RustUnnamed_11 = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 pub use crate::output::output;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]

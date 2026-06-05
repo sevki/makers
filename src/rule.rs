@@ -5,8 +5,8 @@ use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::strcache::strcache_add_len;
 use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::misc::free_ns_chain;
 extern "C" {
-    fn free_ns_chain(n: *mut nameseq);
     static mut stdout: *mut FILE;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
     fn memcpy(
@@ -133,12 +133,7 @@ pub struct pspec {
     pub dep: *const ::core::ffi::c_char,
     pub commands: *const ::core::ffi::c_char,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const INTSTR_LENGTH: usize = (53 as usize)

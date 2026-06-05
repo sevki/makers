@@ -8,8 +8,8 @@ pub use crate::ffi_types::{
 };
 use crate::strcache::{strcache_add, strcache_add_len};
 use crate::misc::{collapse_continuations, copy_dep, copy_dep_chain, end_of_token, find_next_token, next_token, skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::misc::free_ns_chain;
 extern "C" {
-    fn free_ns_chain(n: *mut nameseq);
     pub type dirent;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
@@ -303,12 +303,7 @@ pub struct passwd {
     pub pw_dir: *mut ::core::ffi::c_char,
     pub pw_shell: *mut ::core::ffi::c_char,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct goaldep {

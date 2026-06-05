@@ -91,12 +91,7 @@ pub const us_success: update_status_0 = 0;
 pub type dep = Dep;
 use crate::floc::Floc;
 
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const P_tmpdir: [::core::ffi::c_char; 5] =
     unsafe { ::core::mem::transmute::<[u8; 5], [::core::ffi::c_char; 5]>(*b"/tmp\0") };
@@ -108,7 +103,7 @@ pub const __ASSERT_FUNCTION: [::core::ffi::c_char; 27] = unsafe {
 };
 #[inline]
 
-unsafe extern "C" fn free_ns(n: *mut nameseq) {
+unsafe fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
 pub unsafe fn make_toui(
@@ -574,8 +569,7 @@ pub unsafe fn copy_dep_chain(mut d: *const dep) -> *mut dep {
     }
     firstnew
 }
-#[no_mangle]
-pub unsafe extern "C" fn free_ns_chain(mut ns: *mut nameseq) {
+pub unsafe fn free_ns_chain(mut ns: *mut nameseq) {
     while !ns.is_null() {
         let t: *mut nameseq = ns;
         ns = (*ns).next;

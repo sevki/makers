@@ -5,8 +5,8 @@ use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::strcache::{strcache_add, strcache_add_len};
 use crate::misc::{lindex, print_spaces, skip_reference, xcalloc, xmalloc, xrealloc};
+use crate::misc::free_ns_chain;
 extern "C" {
-    fn free_ns_chain(n: *mut nameseq);
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn qsort(
@@ -167,12 +167,7 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct rule {

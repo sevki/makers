@@ -7,8 +7,8 @@ pub use crate::ffi_types::{
 };
 use crate::strcache::{strcache_add_len, strcache_iscached};
 use crate::misc::{copy_dep_chain, end_of_token, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::misc::free_ns_chain;
 extern "C" {
-    fn free_ns_chain(n: *mut nameseq);
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
