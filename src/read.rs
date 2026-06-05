@@ -3718,7 +3718,9 @@ unsafe extern "C" fn get_next_mword(
     startp: *mut *mut ::core::ffi::c_char,
     length: *mut size_t,
 ) -> make_word_type {
-    let current_block: u64;
+    // True for words that need the static-text scan below; the special
+    // separators (eol, ';', ':', '&:') set their type directly and skip it.
+    let mut scan_static = false;
     let mut wtype: make_word_type = w_bogus;
     let mut p: *mut ::core::ffi::c_char = buffer;
     let beg: *mut ::core::ffi::c_char;
@@ -3737,11 +3739,9 @@ unsafe extern "C" fn get_next_mword(
     match c as ::core::ffi::c_int {
         0 => {
             wtype = w_eol;
-            current_block = 9224535653824134035;
         }
         59 => {
             wtype = w_semicolon;
-            current_block = 9224535653824134035;
         }
         58 => {
             wtype = w_colon;
@@ -3749,7 +3749,6 @@ unsafe extern "C" fn get_next_mword(
                 p = p.offset(1 as ::core::ffi::c_int as isize);
                 wtype = w_dcolon;
             }
-            current_block = 9224535653824134035;
         }
         38 => {
             if *p as ::core::ffi::c_int == ':' as i32 {
@@ -3760,62 +3759,55 @@ unsafe extern "C" fn get_next_mword(
                     p = p.offset(1 as ::core::ffi::c_int as isize);
                     wtype = w_ampdcolon;
                 }
-                current_block = 9224535653824134035;
             } else {
-                current_block = 7175849428784450219;
+                scan_static = true;
             }
         }
         _ => {
-            current_block = 7175849428784450219;
+            scan_static = true;
         }
     }
-    match current_block {
-        7175849428784450219 => {
-            wtype = w_static;
-            while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                .offset(c as ::core::ffi::c_uchar as isize)
-                as ::core::ffi::c_int
-                & (0x2 as ::core::ffi::c_int
-                    | 0x4 as ::core::ffi::c_int
-                    | 0x1 as ::core::ffi::c_int)
-                != 0)
-            {
-                match c as ::core::ffi::c_int {
-                    58 => {
-                        break;
-                    }
-                    36 => {
-                        let fresh24 = p;
-                        p = p.offset(1 as ::core::ffi::c_int as isize);
-                        c = *fresh24;
-                        if !(c as ::core::ffi::c_int == '$' as i32) {
-                            if c as ::core::ffi::c_int == 0 {
-                                break;
-                            }
-                            wtype = w_variable;
-                            p = skip_reference(p.offset(-(1 as ::core::ffi::c_int as isize)));
-                        }
-                    }
-                    92 => match *p as ::core::ffi::c_int {
-                        58 | 59 | 61 | 92 => {
-                            p = p.offset(1 as ::core::ffi::c_int as isize);
-                        }
-                        _ => {}
-                    },
-                    38 => {
-                        if *p as ::core::ffi::c_int == ':' as i32 {
+    if scan_static {
+        wtype = w_static;
+        while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+            .offset(c as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
+            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
+            != 0)
+        {
+            match c as ::core::ffi::c_int {
+                58 => {
+                    break;
+                }
+                36 => {
+                    let fresh24 = p;
+                    p = p.offset(1 as ::core::ffi::c_int as isize);
+                    c = *fresh24;
+                    if !(c as ::core::ffi::c_int == '$' as i32) {
+                        if c as ::core::ffi::c_int == 0 {
                             break;
                         }
+                        wtype = w_variable;
+                        p = skip_reference(p.offset(-(1 as ::core::ffi::c_int as isize)));
+                    }
+                }
+                92 => match *p as ::core::ffi::c_int {
+                    58 | 59 | 61 | 92 => {
+                        p = p.offset(1 as ::core::ffi::c_int as isize);
                     }
                     _ => {}
+                },
+                38 => {
+                    if *p as ::core::ffi::c_int == ':' as i32 {
+                        break;
+                    }
                 }
-                let fresh25 = p;
-                p = p.offset(1 as ::core::ffi::c_int as isize);
-                c = *fresh25;
+                _ => {}
             }
-            p = p.offset(-(1 as ::core::ffi::c_int) as isize);
+            let fresh25 = p;
+            p = p.offset(1 as ::core::ffi::c_int as isize);
+            c = *fresh25;
         }
-        _ => {}
+        p = p.offset(-(1 as ::core::ffi::c_int) as isize);
     }
     if !startp.is_null() {
         *startp = beg;
@@ -4266,7 +4258,9 @@ pub unsafe extern "C" fn parse_file_seq(
                     tot = 1;
                     nlist = &raw mut name;
                 } else {
-                    let current_block_77: u64;
+                    // On any glob failure other than NOMATCH-without-NULL-glob,
+                    // fall back to using the literal name.
+                    let mut use_literal = false;
                     match glob(name, GLOB_ALTDIRFUNC, None, &raw mut gl) {
                         GLOB_NOSPACE => {
                             out_of_memory();
@@ -4274,26 +4268,21 @@ pub unsafe extern "C" fn parse_file_seq(
                         0 => {
                             tot = gl.gl_pathc as ::core::ffi::c_int;
                             nlist = gl.gl_pathv as *mut *const ::core::ffi::c_char;
-                            current_block_77 = 1209030638129645089;
                         }
                         GLOB_NOMATCH => {
                             if flags & 0x8 as ::core::ffi::c_int != 0 {
                                 tot = 0;
-                                current_block_77 = 1209030638129645089;
                             } else {
-                                current_block_77 = 4900559648241656877;
+                                use_literal = true;
                             }
                         }
                         _ => {
-                            current_block_77 = 4900559648241656877;
+                            use_literal = true;
                         }
                     }
-                    match current_block_77 {
-                        4900559648241656877 => {
-                            tot = 1;
-                            nlist = &raw mut name;
-                        }
-                        _ => {}
+                    if use_literal {
+                        tot = 1;
+                        nlist = &raw mut name;
                     }
                 }
                 i = 0;
