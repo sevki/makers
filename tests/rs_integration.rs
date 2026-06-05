@@ -244,6 +244,45 @@ fn jobserver_parallel() {
     assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
 }
 
+/// Regression test for a known bug: when a static pattern rule's targets are
+/// the prerequisites of the default goal, only the *first* target gets built.
+///
+/// `make x1.o x2.o x3.o` (naming them explicitly) builds all three, and
+/// ordinary pattern rules (`%.o: %.c`) as goal prerequisites work fine — but
+/// reaching static-pattern targets through the default goal stops after the
+/// first. GNU make (and `make x1.o x2.o x3.o` here) builds all three.
+///
+/// Self-contained: it asserts the expected behaviour directly rather than
+/// diffing against the C oracle, so it documents the bug even where `./make`
+/// is unavailable. Remove `#[ignore]` once the remaking logic is fixed; run it
+/// meanwhile with `cargo test -- --ignored static_pattern_default_goal`.
+#[test]
+#[ignore = "known bug: static-pattern default-goal prerequisites build only the first target"]
+fn static_pattern_default_goal() {
+    let workdir = tempdir();
+    for stem in ["x1", "x2", "x3"] {
+        std::fs::write(workdir.join(format!("{stem}.c")), b"").unwrap();
+    }
+    let fixture = fixtures_dir().join("11_static_pattern.mk");
+    let out = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .arg("-f")
+        .arg(&fixture)
+        .current_dir(&workdir)
+        .output()
+        .expect("failed to spawn make");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for obj in ["x1.o", "x2.o", "x3.o"] {
+        assert!(
+            stdout.contains(&format!("build {obj}")),
+            "expected '{obj}' to be built via the static-pattern default goal, \
+             but it was not. exit={:?}\n--- stdout ---\n{stdout}\n--- stderr ---\n{}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+}
+
 #[test]
 fn warn_unknown_warning_is_error() {
     // unknown warning names trigger fatal() — exit code != 0; the diff harness
