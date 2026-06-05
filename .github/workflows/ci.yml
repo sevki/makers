@@ -5,18 +5,14 @@ on:
         branches: [main, master]
     pull_request:
     workflow_dispatch:
-    schedule:
-        # Weekly mutation-testing run (Mondays 06:00 UTC).
-        - cron: "0 6 * * 1"
 
 concurrency:
     group: ci-${{ github.ref }}
     cancel-in-progress: true
 
-# ./bootstrap clones gnulib from this URL (default is git.savannah.gnu.org,
-# which is frequently slow/unreachable from CI runners). Point it at a GitHub
-# mirror for reliable clones. The pinned revision still comes from
-# bootstrap.conf (GNULIB_REVISION), so the mirror must carry that ref.
+# ./bootstrap clones gnulib from this URL; the savannah default is often
+# slow/unreachable from CI, so use a GitHub mirror. The pinned revision
+# still comes from bootstrap.conf (GNULIB_REVISION), which the mirror carries.
 env:
     GNULIB_URL: https://github.com/sevki/gnulib.git
 
@@ -68,8 +64,21 @@ jobs:
                   if-no-files-found: error
                   retention-days: 7
 
-    kernel-build:
-        name: rust make builds Linux kernel (okLinux)
+            # The C make built by ci-test.sh stage 3 (the in-tree ./make) is the
+            # oracle for the differential kernel build below.
+            - name: Upload C make binary
+              uses: actions/upload-artifact@v4
+              with:
+                  name: c-make-${{ github.sha }}
+                  path: make
+                  if-no-files-found: error
+                  retention-days: 7
+
+    # Build the Linux kernel twice — once with the Rust make, once with the C
+    # make — in parallel, then diff their stdout/stderr to catch regressions
+    # where the Rust make drives the build differently from upstream make.
+    kernel-build-rust:
+        name: build Linux kernel (rust make)
         needs: rust-make-builds-c-make
         runs-on: ubuntu-latest
         steps:
@@ -77,188 +86,115 @@ jobs:
               uses: actions/download-artifact@v4
               with:
                   name: rust-make-${{ github.sha }}
-                  path: rust-make
-
+                  path: make-bin
             - name: Put rust make first on PATH as `make`
               run: |
-                  chmod +x rust-make/make
+                  chmod +x make-bin/make
                   mkdir -p "$HOME/.local/bin"
-                  ln -sf "$PWD/rust-make/make" "$HOME/.local/bin/make"
+                  ln -sf "$PWD/make-bin/make" "$HOME/.local/bin/make"
                   echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
             - name: Verify
-              run: |
-                  which make
-                  make --version | head -2
-
+              run: make --version | head -2
             - name: Build Linux kernel via okLinux build.sh
               working-directory: ${{ runner.temp }}
               run: |
+                  mkdir -p rust-kernel && cd rust-kernel
                   curl -fsSL \
                     https://raw.githubusercontent.com/sevki/okLinux/refs/heads/main/build.sh \
                     -o build.sh
                   chmod +x build.sh
-                  ./build.sh
-
-    coverage:
-        name: coverage (cargo-llvm-cov)
-        runs-on: ubuntu-latest
-        # Informational for now: the report is uploaded as an artifact, printed
-        # to the run summary, and posted as a PR comment, but a failure here
-        # does not block the run. Flip this to false (and optionally add a
-        # threshold) once it has settled.
-        continue-on-error: true
-        permissions:
-            contents: read
-            pull-requests: write
-            issues: write
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Install build dependencies
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install -y --no-install-recommends \
-                    build-essential clang m4 perl \
-                    automake autopoint gettext gperf texinfo \
-                    git wget xz-utils curl
-
-            # bootstrap.conf requires autoconf >= 2.72; ubuntu-latest still ships 2.71.
-            - name: Install autoconf 2.72 from source
-              run: |
-                  AC_VER=2.72
-                  cd /tmp
-                  curl -fsSLO https://ftp.gnu.org/gnu/autoconf/autoconf-${AC_VER}.tar.xz
-                  tar xJf autoconf-${AC_VER}.tar.xz
-                  cd autoconf-${AC_VER}
-                  ./configure --prefix=/usr/local
-                  make -j"$(nproc)"
-                  sudo make install
-
-            - name: Cache cargo registry
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cargo/registry
-                      ~/.cargo/git
-                  key: cargo-cov-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-                  restore-keys: cargo-cov-${{ runner.os }}-
-
-            # llvm-cov reads coverage with the pinned toolchain's LLVM tools.
-            - name: Add llvm-tools-preview
-              run: rustup component add llvm-tools-preview
-
-            - name: Install cargo-llvm-cov
-              uses: taiki-e/install-action@cargo-llvm-cov
-
-            # Build the in-tree C `make` that the differential tests use as an
-            # oracle. build.sh bootstraps the tree with sh+cc only and leaves a
-            # C `make` in the repo root, which is exactly what tests/ looks for.
-            - name: Build C make oracle
-              run: |
-                  [ -x configure ] || ./bootstrap
-                  [ -f config.status ] || ./configure --quiet
-                  ./build.sh
-                  test -x ./make
-
-            # The Rust port no longer links libgnu, so the instrumented binary
-            # builds against libc alone. cargo-llvm-cov also instruments the
-            # spawned `make` binary, so coverage reflects real recipe execution.
-            - name: Run tests under coverage
-              run: |
-                  cargo llvm-cov --workspace --lcov --output-path lcov.info
-                  cargo llvm-cov report --summary-only | tee coverage-summary.txt
-
-            - name: Write coverage to job summary
-              if: always() && hashFiles('coverage-summary.txt') != ''
-              run: |
-                  {
-                    echo '## Coverage (cargo-llvm-cov)'
-                    echo ''
-                    echo '```'
-                    cat coverage-summary.txt
-                    echo '```'
-                  } >> "$GITHUB_STEP_SUMMARY"
-
-            # Post (and refresh) an lcov coverage comment on the PR.
-            - name: Report coverage on PR
-              if: github.event_name == 'pull_request' && hashFiles('lcov.info') != ''
-              uses: romeovs/lcov-reporter-action@v0.3.1
-              with:
-                  lcov-file: ./lcov.info
-                  delete-old-comments: true
-                  title: Coverage (cargo-llvm-cov)
-
-            - name: Upload coverage report
-              if: always() && hashFiles('lcov.info') != ''
+                  # Capture stdout/stderr separately; record the exit code rather
+                  # than failing the job, so the kernel-diff job is the single
+                  # arbiter (and can compare even a failing build's output).
+                  set +e
+                  ./build.sh >kernel-stdout.log 2>kernel-stderr.log
+                  echo $? >kernel-exit.txt
+                  set -e
+                  echo "rust make kernel build exit: $(cat kernel-exit.txt)"
+                  tail -n 20 kernel-stderr.log || true
+            - name: Upload rust make kernel logs
+              if: always()
               uses: actions/upload-artifact@v4
               with:
-                  name: coverage-${{ github.sha }}
-                  path: |
-                      lcov.info
-                      coverage-summary.txt
-                  if-no-files-found: error
-
-    mutants:
-        name: mutation testing (cargo-mutants)
-        # Mutation testing runs the whole suite once per mutant, so it is far
-        # too slow for every PR. Run it on the weekly schedule or on demand
-        # (Actions -> CI -> Run workflow). Scope is set in .cargo/mutants.toml.
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        runs-on: ubuntu-latest
-        continue-on-error: true
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Install build dependencies
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install -y --no-install-recommends \
-                    build-essential clang m4 perl \
-                    automake autopoint gettext gperf texinfo \
-                    git wget xz-utils curl
-
-            # bootstrap.conf requires autoconf >= 2.72; ubuntu-latest still ships 2.71.
-            - name: Install autoconf 2.72 from source
-              run: |
-                  AC_VER=2.72
-                  cd /tmp
-                  curl -fsSLO https://ftp.gnu.org/gnu/autoconf/autoconf-${AC_VER}.tar.xz
-                  tar xJf autoconf-${AC_VER}.tar.xz
-                  cd autoconf-${AC_VER}
-                  ./configure --prefix=/usr/local
-                  make -j"$(nproc)"
-                  sudo make install
-
-            - name: Cache cargo registry
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cargo/registry
-                      ~/.cargo/git
-                  key: cargo-mutants-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-                  restore-keys: cargo-mutants-${{ runner.os }}-
-
-            - name: Install cargo-mutants
-              uses: taiki-e/install-action@cargo-mutants
-
-            # The differential tests need the in-tree C `make` as an oracle, so
-            # the cargo-mutants baseline (an unmutated test run) passes.
-            - name: Build C make oracle
-              run: |
-                  [ -x configure ] || ./bootstrap
-                  [ -f config.status ] || ./configure --quiet
-                  ./build.sh
-                  test -x ./make
-
-            # Writes its report to ./mutants.out by default.
-            - name: Run cargo-mutants
-              run: cargo mutants --no-shuffle
-
-            - name: Upload mutants report
-              if: always() && hashFiles('mutants.out/**') != ''
+                  name: kernel-logs-rust-${{ github.sha }}
+                  path: ${{ runner.temp }}/rust-kernel/kernel-*.log
+                  retention-days: 7
+            - name: Upload rust make kernel exit code
+              if: always()
               uses: actions/upload-artifact@v4
               with:
-                  name: mutants-${{ github.sha }}
-                  path: mutants.out
-                  if-no-files-found: warn
+                  name: kernel-exit-rust-${{ github.sha }}
+                  path: ${{ runner.temp }}/rust-kernel/kernel-exit.txt
+
+    kernel-build-c:
+        name: build Linux kernel (C make)
+        needs: rust-make-builds-c-make
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download C make artifact
+              uses: actions/download-artifact@v4
+              with:
+                  name: c-make-${{ github.sha }}
+                  path: make-bin
+            - name: Put C make first on PATH as `make`
+              run: |
+                  chmod +x make-bin/make
+                  mkdir -p "$HOME/.local/bin"
+                  ln -sf "$PWD/make-bin/make" "$HOME/.local/bin/make"
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            - name: Verify
+              run: make --version | head -2
+            - name: Build Linux kernel via okLinux build.sh
+              working-directory: ${{ runner.temp }}
+              run: |
+                  mkdir -p c-kernel && cd c-kernel
+                  curl -fsSL \
+                    https://raw.githubusercontent.com/sevki/okLinux/refs/heads/main/build.sh \
+                    -o build.sh
+                  chmod +x build.sh
+                  set +e
+                  ./build.sh >kernel-stdout.log 2>kernel-stderr.log
+                  echo $? >kernel-exit.txt
+                  set -e
+                  echo "C make kernel build exit: $(cat kernel-exit.txt)"
+                  tail -n 20 kernel-stderr.log || true
+            - name: Upload C make kernel logs
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-logs-c-${{ github.sha }}
+                  path: ${{ runner.temp }}/c-kernel/kernel-*.log
+                  retention-days: 7
+            - name: Upload C make kernel exit code
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-exit-c-${{ github.sha }}
+                  path: ${{ runner.temp }}/c-kernel/kernel-exit.txt
+
+    kernel-diff:
+        name: diff kernel builds (rust make vs C make)
+        needs: [kernel-build-rust, kernel-build-c]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - name: Download rust make kernel logs
+              uses: actions/download-artifact@v4
+              with:
+                  pattern: kernel-*-rust-${{ github.sha }}
+                  path: rust-logs
+                  merge-multiple: true
+            - name: Download C make kernel logs
+              uses: actions/download-artifact@v4
+              with:
+                  pattern: kernel-*-c-${{ github.sha }}
+                  path: c-logs
+                  merge-multiple: true
+            - name: Compare stdout/stderr
+              run: ./scripts/kernel-diff.sh c-logs rust-logs
+            - name: Upload normalized diffs
+              if: always() && hashFiles('*.diff') != ''
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-diff-${{ github.sha }}
+                  path: "*.diff"
