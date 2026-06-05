@@ -5,6 +5,7 @@ pub use crate::ffi_types::{
     __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
     intmax_t, size_t, time_t, uintmax_t,
 };
+use crate::strcache::{strcache_add_len, strcache_iscached};
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
@@ -40,9 +41,6 @@ extern "C" {
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn end_of_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn strcache_iscached(str: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
-        -> *const ::core::ffi::c_char;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut just_print_flag: ::core::ffi::c_int;
     static mut run_silent: ::core::ffi::c_int;

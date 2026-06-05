@@ -3,6 +3,7 @@ use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::strcache::{strcache_add, strcache_add_len};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -58,9 +59,6 @@ extern "C" {
         vpath_index: *mut ::core::ffi::c_uint,
         path_index: *mut ::core::ffi::c_uint,
     ) -> *const ::core::ffi::c_char;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
-        -> *const ::core::ffi::c_char;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut no_intermediates: ::core::ffi::c_uint;
     fn __assert_fail(

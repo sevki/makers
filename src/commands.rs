@@ -7,6 +7,7 @@ pub use crate::ffi_types::{
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
     time_t, uintmax_t,
 };
+use crate::strcache::{strcache_add, strcache_add_len};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn signal(__sig: ::core::ffi::c_int, __handler: __sighandler_t) -> __sighandler_t;
@@ -41,9 +42,6 @@ extern "C" {
     fn xstrndup(_: *const ::core::ffi::c_char, _: size_t) -> *mut ::core::ffi::c_char;
     fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn ar_member_date(_: *const ::core::ffi::c_char) -> time_t;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
-        -> *const ::core::ffi::c_char;
     fn unload_file(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut always_make_flag: ::core::ffi::c_int;

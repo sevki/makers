@@ -80,7 +80,7 @@ static mut fullcache: *mut strcache = ::core::ptr::null::<strcache>() as *mut st
 static TOTAL_BUFFERS: AtomicU64 = AtomicU64::new(0);
 static TOTAL_STRINGS: AtomicU64 = AtomicU64::new(0);
 static TOTAL_SIZE: AtomicU64 = AtomicU64::new(0);
-unsafe extern "C" fn new_cache(
+unsafe fn new_cache(
     head: *mut *mut strcache,
     buflen: sc_buflen_t,
 ) -> *mut strcache {
@@ -94,7 +94,7 @@ unsafe extern "C" fn new_cache(
     TOTAL_BUFFERS.fetch_add(1, Ordering::Relaxed);
     new
 }
-unsafe extern "C" fn copy_string(
+unsafe fn copy_string(
     mut sp: *mut strcache,
     str: *const ::core::ffi::c_char,
     mut len: sc_buflen_t,
@@ -116,7 +116,7 @@ unsafe extern "C" fn copy_string(
     (*sp).count = (*sp).count.wrapping_add(1);
     res
 }
-unsafe extern "C" fn add_string(
+unsafe fn add_string(
     str: *const ::core::ffi::c_char,
     len: sc_buflen_t,
 ) -> *const ::core::ffi::c_char {
@@ -159,7 +159,7 @@ unsafe extern "C" fn add_string(
     res
 }
 static mut hugestrings: *mut hugestring = ::core::ptr::null::<hugestring>() as *mut hugestring;
-unsafe extern "C" fn add_hugestring(
+unsafe fn add_hugestring(
     str: *const ::core::ffi::c_char,
     len: size_t,
 ) -> *const ::core::ffi::c_char {
@@ -177,7 +177,8 @@ unsafe extern "C" fn add_hugestring(
     hugestrings = new;
     &raw mut (*new).buffer as *mut ::core::ffi::c_char
 }
-#[no_mangle]
+// Kept as `extern "C"` because it is installed as a `hash_func_t` callback
+// (a C-ABI function pointer) in `strcache_init`.
 pub unsafe extern "C" fn str_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
@@ -217,7 +218,7 @@ static mut strings: hash_table = hash_table {
     c2rust_padding: [0; 3],
 };
 static TOTAL_ADDS: AtomicU64 = AtomicU64::new(0);
-unsafe extern "C" fn add_hash(
+unsafe fn add_hash(
     str: *const ::core::ffi::c_char,
     len: size_t,
 ) -> *const ::core::ffi::c_char {
@@ -243,10 +244,7 @@ unsafe extern "C" fn add_hash(
     );
     key
 }
-#[no_mangle]
-pub unsafe extern "C" fn strcache_iscached(
-    str: *const ::core::ffi::c_char,
-) -> ::core::ffi::c_int {
+pub unsafe fn strcache_iscached(str: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut sp: *mut strcache;
     sp = strcache;
     while !sp.is_null() {
@@ -282,14 +280,10 @@ pub unsafe extern "C" fn strcache_iscached(
     }
     0
 }
-#[no_mangle]
-pub unsafe extern "C" fn strcache_add(
-    str: *const ::core::ffi::c_char,
-) -> *const ::core::ffi::c_char {
+pub unsafe fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char {
     add_hash(str, strlen(str) as size_t)
 }
-#[no_mangle]
-pub unsafe extern "C" fn strcache_add_len(
+pub unsafe fn strcache_add_len(
     mut str: *const ::core::ffi::c_char,
     len: size_t,
 ) -> *const ::core::ffi::c_char {
@@ -311,7 +305,6 @@ pub unsafe extern "C" fn strcache_add_len(
     }
     add_hash(str, len)
 }
-#[no_mangle]
 pub unsafe fn strcache_init() {
     hash_init(
         &raw mut strings,
@@ -331,7 +324,6 @@ pub unsafe fn strcache_init() {
         ),
     );
 }
-#[no_mangle]
 pub unsafe fn strcache_print_stats(prefix: *const ::core::ffi::c_char) {
     let mut sp: *const strcache;
     let mut numbuffs: ::core::ffi::c_ulong = 0;

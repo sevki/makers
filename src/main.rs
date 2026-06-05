@@ -24,6 +24,7 @@ use libc::{
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
+use crate::strcache::strcache_add;
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -105,7 +106,6 @@ extern "C" {
     fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
     fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     fn guile_gmake_setup(flocp: *const Floc) -> ::core::ffi::c_int;
     fn load_file(
         flocp: *const Floc,

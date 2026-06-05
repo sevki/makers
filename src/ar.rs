@@ -2,6 +2,7 @@ use libc::{fnmatch, free, strchr};
 
 use crate::file::{Dep, File};
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
+use crate::strcache::strcache_add;
 extern "C" {
     pub type variable_set_list;
     pub type commands;
@@ -37,7 +38,6 @@ extern "C" {
         memname: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
     fn file_exists_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t;

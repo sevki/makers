@@ -6,6 +6,7 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
+use crate::strcache::strcache_add;
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -54,7 +55,6 @@ extern "C" {
         path_index: *mut ::core::ffi::c_uint,
     ) -> *const ::core::ffi::c_char;
     fn gpath_search(file: *const ::core::ffi::c_char, len: size_t) -> ::core::ffi::c_int;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     static mut just_print_flag: ::core::ffi::c_int;
     static mut keep_going_flag: ::core::ffi::c_int;
     static mut run_silent: ::core::ffi::c_int;

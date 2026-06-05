@@ -6,6 +6,7 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __size_t, __syscall_slong_t, __time_t, __uid_t, size_t, uintmax_t,
 };
+use crate::strcache::{strcache_add, strcache_add_len};
 extern "C" {
     pub type dirent;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -93,9 +94,6 @@ extern "C" {
         begpp: *mut *const ::core::ffi::c_char,
         endpp: *mut *const ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
-        -> *const ::core::ffi::c_char;
     fn load_file(
         flocp: *const Floc,
         file: *mut file,
