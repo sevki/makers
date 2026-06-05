@@ -1198,7 +1198,9 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
                         (*(*(*child).file).cmds).any_recurse() as ::core::ffi::c_int,
                     );
                 }
-                let current_block_97: u64;
+                // Run the job locally unless it is successfully handed off to a
+                // remote executor.
+                let mut run_local = true;
                 if (*child).remote() != 0 {
                     let mut is_remote: ::core::ffi::c_int = 0;
                     let mut used_stdin: ::core::ffi::c_int = 0;
@@ -1214,42 +1216,27 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
                         &raw mut is_remote,
                         &raw mut id,
                         &raw mut used_stdin,
-                    ) != 0
+                    ) == 0
                     {
-                        current_block_97 = 12028934943190175431;
-                    } else {
                         if (*child).good_stdin() as ::core::ffi::c_int != 0 && used_stdin == 0 {
-                            (*child)
-                                .set_good_stdin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                            (*child).set_good_stdin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                             good_stdin_used = 0;
                         }
-                        (*child)
-                            .set_remote(is_remote as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                        (*child).set_remote(is_remote as ::core::ffi::c_uint as ::core::ffi::c_uint);
                         (*child).pid = id;
-                        current_block_97 = 10261677128829721533;
+                        run_local = false;
                     }
-                } else {
-                    current_block_97 = 12028934943190175431;
                 }
-                match current_block_97 {
-                    12028934943190175431 => {
-                        block_sigs();
-                        (*child).set_remote(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                        jobserver_pre_child(
-                            (flags & 1 != 0)
-                                as ::core::ffi::c_int,
-                        );
-                        (*child).pid = child_execute_job(
-                            child as *mut childbase,
-                            (*child).good_stdin() as ::core::ffi::c_int,
-                            argv,
-                        );
-                        jobserver_post_child(
-                            (flags & 1 != 0)
-                                as ::core::ffi::c_int,
-                        );
-                    }
-                    _ => {}
+                if run_local {
+                    block_sigs();
+                    (*child).set_remote(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    jobserver_pre_child((flags & 1 != 0) as ::core::ffi::c_int);
+                    (*child).pid = child_execute_job(
+                        child as *mut childbase,
+                        (*child).good_stdin() as ::core::ffi::c_int,
+                        argv,
+                    );
+                    jobserver_post_child((flags & 1 != 0) as ::core::ffi::c_int);
                 }
                 if (*child).pid >= 0 {
                     job_counter = job_counter.wrapping_add(1);
@@ -1286,7 +1273,9 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
         return 0;
     }
     start_job_command(c);
-    let current_block_25: u64;
+    // Finished states (cs_not_started reset to success, cs_finished) need the
+    // file noticed and the child freed; a still-running job does not.
+    let mut finish = false;
     match (*f).command_state() as ::core::ffi::c_int {
         2 => {
             (*c).next = children;
@@ -1321,14 +1310,13 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
             }
             children = c;
             unblock_sigs();
-            current_block_25 = 15089075282327824602;
         }
         0 => {
             (*f).set_update_status(us_success as update_status);
-            current_block_25 = 7521823557899848657;
+            finish = true;
         }
         3 => {
-            current_block_25 = 7521823557899848657;
+            finish = true;
         }
         _ => {
             if (*f).command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int {
@@ -1342,15 +1330,11 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
                             as *const ::core::ffi::c_char,
                     );
                 };
-            current_block_25 = 15089075282327824602;
         }
     }
-    match current_block_25 {
-        7521823557899848657 => {
-            notice_finished_file(f);
-            free_child(c);
-        }
-        _ => {}
+    if finish {
+        notice_finished_file(f);
+        free_child(c);
     }
     1
 }
