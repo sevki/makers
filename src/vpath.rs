@@ -7,6 +7,7 @@ pub use crate::ffi_types::{
     __syscall_slong_t, __time_t, __uid_t, size_t, time_t, uintmax_t,
 };
 use crate::strcache::{strcache_add, strcache_add_len};
+use crate::misc::{xmalloc, xrealloc};
 extern "C" {
     pub type dep;
     pub type commands;
@@ -29,8 +30,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn dir_file_exists_p(
         _: *const ::core::ffi::c_char,

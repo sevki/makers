@@ -8,6 +8,7 @@ pub use crate::ffi_types::{
     time_t, uintmax_t,
 };
 use crate::strcache::{strcache_add, strcache_add_len};
+use crate::misc::{make_pid, xmalloc, xrealloc, xstrdup, xstrndup};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn signal(__sig: ::core::ffi::c_int, __handler: __sighandler_t) -> __sighandler_t;
@@ -35,11 +36,6 @@ extern "C" {
     fn temp_stdin_unlink();
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn make_pid() -> pid_t;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn xstrndup(_: *const ::core::ffi::c_char, _: size_t) -> *mut ::core::ffi::c_char;
     fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn ar_member_date(_: *const ::core::ffi::c_char) -> time_t;
     fn unload_file(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int;

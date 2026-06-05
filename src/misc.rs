@@ -111,8 +111,7 @@ pub const __ASSERT_FUNCTION: [::core::ffi::c_char; 27] = unsafe {
 unsafe extern "C" fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn make_toui(
+pub unsafe fn make_toui(
     str: *const ::core::ffi::c_char,
     error_0: *mut *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_uint {
@@ -129,8 +128,7 @@ pub unsafe extern "C" fn make_toui(
     }
     val as ::core::ffi::c_uint
 }
-#[no_mangle]
-pub unsafe extern "C" fn make_lltoa(
+pub unsafe fn make_lltoa(
     val: ::core::ffi::c_longlong,
     buf: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
@@ -141,8 +139,7 @@ pub unsafe extern "C" fn make_lltoa(
     );
     buf
 }
-#[no_mangle]
-pub unsafe extern "C" fn make_ulltoa(
+pub unsafe fn make_ulltoa(
     val: ::core::ffi::c_ulonglong,
     buf: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
@@ -154,12 +151,10 @@ pub unsafe extern "C" fn make_ulltoa(
     buf
 }
 static MK_STATE: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
-pub unsafe extern "C" fn make_seed(seed: ::core::ffi::c_uint) {
+pub unsafe fn make_seed(seed: ::core::ffi::c_uint) {
     MK_STATE.store(seed, Ordering::Relaxed);
 }
-#[no_mangle]
-pub unsafe extern "C" fn make_rand() -> ::core::ffi::c_uint {
+pub unsafe fn make_rand() -> ::core::ffi::c_uint {
     let mut state = MK_STATE.load(Ordering::Relaxed);
     loop {
         let mut next = if state == 0 {
@@ -196,8 +191,7 @@ pub unsafe extern "C" fn alpha_compare(
     }
     strcmp(s1, s2)
 }
-#[no_mangle]
-pub unsafe extern "C" fn collapse_continuations(line: *mut ::core::ffi::c_char) {
+pub unsafe fn collapse_continuations(line: *mut ::core::ffi::c_char) {
     let mut out: *mut ::core::ffi::c_char = line;
     let mut in_0: *mut ::core::ffi::c_char = line;
     let mut q: *mut ::core::ffi::c_char;
@@ -286,8 +280,7 @@ pub unsafe extern "C" fn collapse_continuations(line: *mut ::core::ffi::c_char) 
         strlen(in_0).wrapping_add(1),
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_spaces(mut n: ::core::ffi::c_uint) {
+pub unsafe fn print_spaces(mut n: ::core::ffi::c_uint) {
     loop {
         let fresh4 = n;
         n = n.wrapping_sub(1);
@@ -343,12 +336,10 @@ pub unsafe extern "C" fn concat(
     *result.offset(ri as isize) = 0;
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn make_pid() -> pid_t {
+pub unsafe fn make_pid() -> pid_t {
     getpid() as pid_t
 }
-#[no_mangle]
-pub unsafe extern "C" fn xmalloc(size: size_t) -> *mut ::core::ffi::c_void {
+pub unsafe fn xmalloc(size: size_t) -> *mut ::core::ffi::c_void {
     let result: *mut ::core::ffi::c_void = malloc(if size != 0 {
         size as size_t
     } else {
@@ -359,8 +350,7 @@ pub unsafe extern "C" fn xmalloc(size: size_t) -> *mut ::core::ffi::c_void {
     }
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn xcalloc(size: size_t) -> *mut ::core::ffi::c_void {
+pub unsafe fn xcalloc(size: size_t) -> *mut ::core::ffi::c_void {
     let result: *mut ::core::ffi::c_void = calloc(
         if size != 0 {
             size as size_t
@@ -374,8 +364,7 @@ pub unsafe extern "C" fn xcalloc(size: size_t) -> *mut ::core::ffi::c_void {
     }
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn xrealloc(
+pub unsafe fn xrealloc(
     ptr: *mut ::core::ffi::c_void,
     mut size: size_t,
 ) -> *mut ::core::ffi::c_void {
@@ -393,8 +382,7 @@ pub unsafe extern "C" fn xrealloc(
     }
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn xstrdup(ptr: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+pub unsafe fn xstrdup(ptr: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     let result: *mut ::core::ffi::c_char;
     result = strdup(ptr);
     if result.is_null() {
@@ -402,8 +390,7 @@ pub unsafe extern "C" fn xstrdup(ptr: *const ::core::ffi::c_char) -> *mut ::core
     }
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn xstrndup(
+pub unsafe fn xstrndup(
     str: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
@@ -414,8 +401,7 @@ pub unsafe extern "C" fn xstrndup(
     }
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn lindex(
+pub unsafe fn lindex(
     mut s: *const ::core::ffi::c_char,
     limit: *const ::core::ffi::c_char,
     c: ::core::ffi::c_int,
@@ -429,8 +415,7 @@ pub unsafe extern "C" fn lindex(
     }
     ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
-#[no_mangle]
-pub unsafe extern "C" fn end_of_token(
+pub unsafe fn end_of_token(
     mut s: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
@@ -442,8 +427,7 @@ pub unsafe extern "C" fn end_of_token(
     }
     s as *mut ::core::ffi::c_char
 }
-#[no_mangle]
-pub unsafe extern "C" fn next_token(mut s: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+pub unsafe fn next_token(mut s: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
         .offset(*s as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
@@ -453,8 +437,7 @@ pub unsafe extern "C" fn next_token(mut s: *const ::core::ffi::c_char) -> *mut :
     }
     s as *mut ::core::ffi::c_char
 }
-#[no_mangle]
-pub unsafe extern "C" fn skip_reference(
+pub unsafe fn skip_reference(
     mut p: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let openparen: ::core::ffi::c_char = *p;
@@ -497,8 +480,7 @@ pub unsafe extern "C" fn skip_reference(
     }
     p as *mut ::core::ffi::c_char
 }
-#[no_mangle]
-pub unsafe extern "C" fn find_next_token(
+pub unsafe fn find_next_token(
     ptr: *mut *const ::core::ffi::c_char,
     lengthptr: *mut size_t,
 ) -> *mut ::core::ffi::c_char {
@@ -512,8 +494,7 @@ pub unsafe extern "C" fn find_next_token(
     }
     p as *mut ::core::ffi::c_char
 }
-#[no_mangle]
-pub unsafe extern "C" fn writebuf(
+pub unsafe fn writebuf(
     fd: ::core::ffi::c_int,
     buffer: *const ::core::ffi::c_void,
     len: size_t,
@@ -536,8 +517,7 @@ pub unsafe extern "C" fn writebuf(
     }
     len as ssize_t
 }
-#[no_mangle]
-pub unsafe extern "C" fn readbuf(
+pub unsafe fn readbuf(
     fd: ::core::ffi::c_int,
     buffer: *mut ::core::ffi::c_void,
     mut len: size_t,
@@ -562,8 +542,7 @@ pub unsafe extern "C" fn readbuf(
     }
     msg.offset_from(buffer as *mut ::core::ffi::c_char) as ::core::ffi::c_long as ssize_t
 }
-#[no_mangle]
-pub unsafe extern "C" fn copy_dep(d: *const dep) -> *mut dep {
+pub unsafe fn copy_dep(d: *const dep) -> *mut dep {
     let mut new: *mut dep = ::core::ptr::null_mut::<dep>();
     if !d.is_null() {
         new = xmalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep;
@@ -579,8 +558,7 @@ pub unsafe extern "C" fn copy_dep(d: *const dep) -> *mut dep {
     }
     new
 }
-#[no_mangle]
-pub unsafe extern "C" fn copy_dep_chain(mut d: *const dep) -> *mut dep {
+pub unsafe fn copy_dep_chain(mut d: *const dep) -> *mut dep {
     let mut firstnew: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut lastnew: *mut dep = ::core::ptr::null_mut::<dep>();
     while !d.is_null() {
@@ -768,8 +746,7 @@ pub unsafe fn get_tmpdir() -> *const ::core::ffi::c_char {
     }
     tmpdir
 }
-#[no_mangle]
-pub unsafe extern "C" fn get_tmptemplate() -> *mut ::core::ffi::c_char {
+pub unsafe fn get_tmptemplate() -> *mut ::core::ffi::c_char {
     let tmpdir: *const ::core::ffi::c_char = get_tmpdir();
     let template: *mut ::core::ffi::c_char;
     let mut cp: *mut ::core::ffi::c_char;
@@ -794,8 +771,7 @@ pub unsafe extern "C" fn get_tmptemplate() -> *mut ::core::ffi::c_char {
     strcpy(cp, DEFAULT_TMPFILE.as_ptr());
     template
 }
-#[no_mangle]
-pub unsafe extern "C" fn get_tmpfd(name: *mut *mut ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub unsafe fn get_tmpfd(name: *mut *mut ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut fd: ::core::ffi::c_int;
     let tmpnm: *mut ::core::ffi::c_char;
     let mask: mode_t;
@@ -851,8 +827,7 @@ pub unsafe extern "C" fn get_tmpfd(name: *mut *mut ::core::ffi::c_char) -> ::cor
     umask(mask as __mode_t);
     fd
 }
-#[no_mangle]
-pub unsafe extern "C" fn get_tmpfile(name: *mut *mut ::core::ffi::c_char) -> *mut FILE {
+pub unsafe fn get_tmpfile(name: *mut *mut ::core::ffi::c_char) -> *mut FILE {
     let tmpfile_mode: *const ::core::ffi::c_char =
         b"wb+\0" as *const u8 as *const ::core::ffi::c_char;
     let mut file: *mut FILE;

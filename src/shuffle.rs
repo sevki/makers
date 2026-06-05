@@ -1,10 +1,9 @@
 use crate::file::{Dep, File};
 use crate::floc::Floc;
 
+use crate::misc::{make_rand, make_seed};
 extern "C" {
     fn fatal(flocp: *const Floc, length: usize, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn make_seed(_: ::core::ffi::c_uint);
-    fn make_rand() -> ::core::ffi::c_uint;
     static mut not_parallel: ::core::ffi::c_int;
 }
 

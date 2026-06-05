@@ -25,7 +25,9 @@ use libc::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::strcache::strcache_add;
+use crate::misc::{make_toui, xcalloc, xmalloc, xrealloc, xstrdup};
 extern "C" {
+    fn free_ns_chain(n: *mut nameseq);
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
     fn sigprocmask(
@@ -98,14 +100,6 @@ extern "C" {
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn make_toui(
-        _: *const ::core::ffi::c_char,
-        _: *mut *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_uint;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn guile_gmake_setup(flocp: *const Floc) -> ::core::ffi::c_int;
     fn load_file(
         flocp: *const Floc,
@@ -129,7 +123,6 @@ extern "C" {
         flags: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_void;
     fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn free_ns_chain(n: *mut nameseq);
     fn read_all_makefiles(makefiles_0: *mut *const ::core::ffi::c_char) -> *mut goaldep;
     fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
     fn update_goal_chain(goals_0: *mut goaldep) -> update_status;

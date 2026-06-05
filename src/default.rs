@@ -1,10 +1,9 @@
 use ::c2rust_bitfields;
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::strcache::strcache_add;
+use crate::misc::{xmalloc, xstrdup};
 extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut no_builtin_rules_flag: ::core::ffi::c_int;
     static mut no_builtin_variables_flag: ::core::ffi::c_int;
     fn parse_file_seq(

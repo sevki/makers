@@ -3,6 +3,7 @@ use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::misc::{next_token, skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 extern "C" {
     static mut stdout: *mut FILE;
     fn putc(__c: ::core::ffi::c_int, __stream: *mut FILE) -> ::core::ffi::c_int;
@@ -38,13 +39,6 @@ extern "C" {
         ...
     ) -> *mut ::core::ffi::c_char;
     fn reset_makeflags(origin: variable_origin);
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn xstrndup(_: *const ::core::ffi::c_char, _: size_t) -> *mut ::core::ffi::c_char;
-    fn next_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn skip_reference(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut reading_file: *const Floc;
     static mut expanding_var: *mut *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];

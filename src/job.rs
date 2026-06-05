@@ -7,6 +7,7 @@ pub use crate::ffi_types::{
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
     ssize_t, time_t, uintmax_t,
 };
+use crate::misc::{make_toui, xcalloc, xmalloc, xstrdup};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -57,13 +58,6 @@ extern "C" {
     fn die(_: ::core::ffi::c_int) -> !;
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn make_toui(
-        _: *const ::core::ffi::c_char,
-        _: *mut *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_uint;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn show_goal_error();
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut just_print_flag: ::core::ffi::c_int;

@@ -6,7 +6,9 @@ pub use crate::ffi_types::{
     intmax_t, size_t, time_t, uintmax_t,
 };
 use crate::strcache::{strcache_add_len, strcache_iscached};
+use crate::misc::{copy_dep_chain, end_of_token, xcalloc, xmalloc, xrealloc, xstrdup};
 extern "C" {
+    fn free_ns_chain(n: *mut nameseq);
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -35,11 +37,6 @@ extern "C" {
     fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn end_of_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut just_print_flag: ::core::ffi::c_int;
@@ -70,8 +67,6 @@ extern "C" {
         prefix: *const ::core::ffi::c_char,
         flags: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_void;
-    fn free_ns_chain(n: *mut nameseq);
-    fn copy_dep_chain(d: *const dep) -> *mut dep;
     fn hash_init(
         ht: *mut hash_table,
         size: ::core::ffi::c_ulong,

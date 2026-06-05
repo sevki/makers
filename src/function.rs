@@ -7,6 +7,7 @@ pub use crate::ffi_types::{
     __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
 };
 use crate::strcache::strcache_add;
+use crate::misc::{end_of_token, find_next_token, make_lltoa, next_token, xcalloc, xmalloc, xrealloc, xstrndup};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
@@ -59,20 +60,6 @@ extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn make_lltoa(
-        _: ::core::ffi::c_longlong,
-        _: *mut ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrndup(_: *const ::core::ffi::c_char, _: size_t) -> *mut ::core::ffi::c_char;
-    fn find_next_token(
-        _: *mut *const ::core::ffi::c_char,
-        _: *mut size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn next_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn end_of_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn alpha_compare(
         _: *const ::core::ffi::c_void,
         _: *const ::core::ffi::c_void,

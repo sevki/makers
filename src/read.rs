@@ -7,7 +7,9 @@ pub use crate::ffi_types::{
     __size_t, __syscall_slong_t, __time_t, __uid_t, size_t, uintmax_t,
 };
 use crate::strcache::{strcache_add, strcache_add_len};
+use crate::misc::{collapse_continuations, copy_dep, copy_dep_chain, end_of_token, find_next_token, next_token, skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 extern "C" {
+    fn free_ns_chain(n: *mut nameseq);
     pub type dirent;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
@@ -68,19 +70,6 @@ extern "C" {
     fn out_of_memory() -> !;
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn xstrndup(_: *const ::core::ffi::c_char, _: size_t) -> *mut ::core::ffi::c_char;
-    fn find_next_token(
-        _: *mut *const ::core::ffi::c_char,
-        _: *mut size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn next_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn end_of_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn skip_reference(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn collapse_continuations(_: *mut ::core::ffi::c_char);
     fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn ar_parse_name(
         _: *const ::core::ffi::c_char,
@@ -118,9 +107,6 @@ extern "C" {
         member_pattern: *const ::core::ffi::c_char,
         size: size_t,
     ) -> *mut nameseq;
-    fn free_ns_chain(n: *mut nameseq);
-    fn copy_dep(d: *const dep) -> *mut dep;
-    fn copy_dep_chain(d: *const dep) -> *mut dep;
     static mut default_file: *mut file;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
