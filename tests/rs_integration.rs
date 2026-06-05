@@ -244,6 +244,63 @@ fn jobserver_parallel() {
     assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
 }
 
+/// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
+/// *first* target becomes the default goal, exactly like any other explicit
+/// rule (pattern rules, by contrast, never set the default goal). With
+///
+///     OBJS = x1.o x2.o x3.o
+///     $(OBJS): %.o: %.c
+///     all: $(OBJS)
+///
+/// a bare `make` builds only `x1.o` (default goal == x1.o), while `make all`
+/// builds all three. Verified identical against GNU Make 4.3. This guards the
+/// port against regressing to "static-pattern targets don't set the default
+/// goal" (which would wrongly make `all` the default).
+///
+/// Self-contained: asserts the behaviour directly, so it needs no C oracle.
+fn run_static_pattern(extra: &[&str]) -> String {
+    let workdir = tempdir();
+    for stem in ["x1", "x2", "x3"] {
+        std::fs::write(workdir.join(format!("{stem}.c")), b"").unwrap();
+    }
+    let fixture = fixtures_dir().join("11_static_pattern.mk");
+    let out = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .arg("-f")
+        .arg(&fixture)
+        .args(extra)
+        .current_dir(&workdir)
+        .output()
+        .expect("failed to spawn make");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn static_pattern_sets_default_goal() {
+    // Bare `make`: the default goal is the first static-pattern target only.
+    let default_out = run_static_pattern(&[]);
+    assert!(
+        default_out.contains("build x1.o"),
+        "default goal should build x1.o:\n{default_out}"
+    );
+    assert!(
+        !default_out.contains("build x2.o") && !default_out.contains("build x3.o"),
+        "default goal should build ONLY x1.o (GNU make gotcha), got:\n{default_out}"
+    );
+}
+
+#[test]
+fn static_pattern_explicit_all_builds_every_target() {
+    // `make all`: every static-pattern target is built.
+    let all_out = run_static_pattern(&["all"]);
+    for obj in ["x1.o", "x2.o", "x3.o"] {
+        assert!(
+            all_out.contains(&format!("build {obj}")),
+            "`make all` should build {obj}:\n{all_out}"
+        );
+    }
+}
+
 #[test]
 fn warn_unknown_warning_is_error() {
     // unknown warning names trigger fatal() — exit code != 0; the diff harness
@@ -254,4 +311,210 @@ fn warn_unknown_warning_is_error() {
         "all",
         &["--warn=no-such-warning"],
     );
+}
+
+// ---------------------------------------------------------------------------
+// Self-contained behavioural tests (no C oracle required).
+//
+// These pin behaviour of code paths reworked during the c2rust -> idiomatic
+// cleanup: recipe execution (child_execute_job / start_job_command), child
+// reaping (reap_children), variable flavors (do_variable_definition), and
+// word/glob parsing (get_next_mword / get_next_word / parse_file_seq). Each
+// runs the Rust make on an inline makefile and asserts on its output, so they
+// work even where the differential `./make` oracle is unavailable.
+// ---------------------------------------------------------------------------
+
+/// Run the Rust make on an inline makefile in a fresh working directory, with
+/// optional auxiliary files written alongside it. Returns (stdout, exit code).
+fn run_make(makefile: &str, files: &[(&str, &str)], args: &[&str]) -> (String, Option<i32>) {
+    let dir = tempdir();
+    std::fs::write(dir.join("Makefile"), makefile).unwrap();
+    for (name, contents) in files {
+        std::fs::write(dir.join(name), contents).unwrap();
+    }
+    let out = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .args(args)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to spawn make");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code(),
+    )
+}
+
+#[test]
+fn variable_flavors() {
+    // Exercises do_variable_definition / parse_variable_definition: =, :=, ::=,
+    // +=, !=, ?=, and recursive append (which leaves a trailing space).
+    let mk = "\
+EMPTY =
+REC = a$(EMPTY)b
+SIM := simple-$(REC)
+EXPND ::= expanded-$(REC)
+APP = first
+APP += second
+APP += $(EMPTY)
+SHL != echo from-shell
+COND ?= conditional
+COND ?= should-not-override
+all: ; @printf 'REC=[%s] SIM=[%s] EXPND=[%s] APP=[%s] SHL=[%s] COND=[%s]\\n' '$(REC)' '$(SIM)' '$(EXPND)' '$(APP)' '$(SHL)' '$(COND)'
+";
+    let (out, code) = run_make(mk, &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(
+        out.trim_end(),
+        "REC=[ab] SIM=[simple-ab] EXPND=[expanded-ab] APP=[first second ] SHL=[from-shell] COND=[conditional]"
+    );
+}
+
+#[test]
+fn recipe_runs_path_and_absolute_commands() {
+    // child_execute_job fast path: a simple command is resolved on PATH, and an
+    // absolute path is exec'd directly. Separate recipe lines so each is its own
+    // (shell-free) command.
+    let mk = "\
+all: t1 t2
+t1: ; @echo via-path
+t2: ; @/bin/echo via-abs
+";
+    let (out, code) = run_make(mk, &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "via-path\nvia-abs\n");
+}
+
+#[test]
+fn recipe_command_not_found_is_error_127() {
+    // reap_children: a child that fails to exec reports exit 127 -> make errors.
+    let (out, code) = run_make("all: ; @no_such_command_zz\n", &[], &[]);
+    assert_eq!(code, Some(2), "stdout: {out}");
+}
+
+#[test]
+fn recipe_enoexec_falls_back_to_shell() {
+    // child_execute_job ENOEXEC path: an executable file with no shebang fails
+    // execve with ENOEXEC and is retried via the shell. The `chmod` step makes
+    // it executable; the second `;` command then runs it directly.
+    let mk = "all: ; @chmod +x ./script; ./script\n";
+    let (out, code) = run_make(mk, &[("script", "echo from-noshebang\n")], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "from-noshebang\n");
+}
+
+#[test]
+fn parallel_jobs_all_run() {
+    // start_waiting_job / reap_children under -j.
+    let mk = "\
+all: j1 j2 j3 j4
+j1: ; @echo done-j1
+j2: ; @echo done-j2
+j3: ; @echo done-j3
+j4: ; @echo done-j4
+";
+    let (out, code) = run_make(mk, &[], &["-j4"]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec!["done-j1", "done-j2", "done-j3", "done-j4"]);
+}
+
+#[test]
+fn keep_going_continues_after_failure() {
+    // reap_children + keep_going: independent targets still build after a
+    // failing one; make still exits non-zero.
+    let mk = "\
+all: a b c
+a: ; @echo A
+b: ; @echo B; false
+c: ; @echo C
+";
+    let (out, code) = run_make(mk, &[], &["-k", "-j1"]);
+    assert_eq!(code, Some(2), "stdout: {out}");
+    assert!(out.contains("A") && out.contains("C"), "stdout: {out}");
+}
+
+#[test]
+fn order_only_prereqs_and_var_refs() {
+    // get_next_word: '|' order-only separator and $ references in a pattern
+    // rule's prerequisite list.
+    let mk = "\
+DEPS = dep1 dep2
+%.o: %.c | $(DEPS)
+\t@echo \"build $@ orderonly=$|\"
+all: foo.o
+";
+    let (out, code) = run_make(mk, &[("foo.c", ""), ("dep1", ""), ("dep2", "")], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "build foo.o orderonly=dep1 dep2\n");
+}
+
+#[test]
+fn static_pattern_double_colon_tokens() {
+    // get_next_mword parses ':' / '::' tokens; static pattern uses two colons.
+    let mk = "\
+OBJS = a.o b.o
+$(OBJS): %.o: %.c
+\t@echo build $@
+both: $(OBJS)
+";
+    let (out, code) = run_make(mk, &[("a.c", ""), ("b.c", "")], &["both"]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec!["build a.o", "build b.o"]);
+}
+
+#[test]
+fn wildcard_function_and_nomatch() {
+    // parse_file_seq glob handling: $(wildcard) matches existing files and
+    // yields empty on no match.
+    let mk = "all: ; @echo \"got=[$(sort $(wildcard *.in))] none=[$(wildcard *.nope)]\"\n";
+    let (out, code) = run_make(mk, &[("a.in", ""), ("b.in", "")], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "got=[a.in b.in] none=[]\n");
+}
+
+// construct_command_argv_internal: fast-path (exec directly) vs. shell decision
+// and argv splitting. Behaviour verified to match GNU Make 4.3.
+
+#[test]
+fn recipe_fast_path_simple_and_words() {
+    // No shell metacharacters -> argv split + direct exec; multiple args.
+    let (out, code) = run_make("all: ; @echo one two   three\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "one two three\n");
+}
+
+#[test]
+fn recipe_shell_metachars_use_shell() {
+    // Pipe and semicolon force the shell path; output must still be correct.
+    let (out, code) = run_make("all: ; @echo hi | tr a-z A-Z; echo done\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "HI\ndone\n");
+}
+
+#[test]
+fn recipe_quotes_preserved() {
+    // Quoted whitespace is kept as a single argument.
+    let (out, code) = run_make("all: ; @printf '[%s]\\n' \"a   b\"\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "[a   b]\n");
+}
+
+#[test]
+fn recipe_shell_builtin_uses_shell() {
+    // A lone shell builtin (cd) can't be exec'd directly; must go via the shell.
+    let (out, code) = run_make("all: ; @cd / && pwd\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "/\n");
+}
+
+#[test]
+fn recipe_var_assignment_prefix_uses_shell() {
+    // A leading VAR=value word is shell syntax, not an argv[0]. ($$ -> $ so the
+    // shell, not make, expands FOO.)
+    let (out, code) = run_make("all: ; @FOO=bar sh -c 'echo $$FOO'\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "bar\n");
 }

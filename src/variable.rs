@@ -272,11 +272,8 @@ unsafe extern "C" fn lookup_pattern_var(
                     (*p).target,
                     target,
                     stem.offset_from(target) as ::core::ffi::c_long as size_t,
-                ) == 0))
-            {
-                if *(*p).suffix as ::core::ffi::c_int
-                    == *stem.offset(stemlen as isize) as ::core::ffi::c_int
-                    && (*(*p).suffix as ::core::ffi::c_int == 0
+                ) == 0)) && *(*p).suffix as ::core::ffi::c_int
+                    == *stem.offset(stemlen as isize) as ::core::ffi::c_int && (*(*p).suffix as ::core::ffi::c_int == 0
                         || *(*p).suffix.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                             == *stem.offset(stemlen.wrapping_add(1) as isize)
                                 as ::core::ffi::c_int
@@ -288,10 +285,8 @@ unsafe extern "C" fn lookup_pattern_var(
                                     (stem.offset(stemlen.wrapping_add(1) as isize)
                                         as *const ::core::ffi::c_char)
                                         .offset(1 as ::core::ffi::c_int as isize),
-                                ) == 0))
-                {
-                    break;
-                }
+                                ) == 0)) {
+                break;
             }
         }
         p = (*p).next;
@@ -955,9 +950,7 @@ pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
 pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
     current_variable_set_list = create_new_variable_set();
     if (*current_variable_set_list).next == &raw mut global_setlist {
-        let set: *mut variable_set = (*current_variable_set_list).set;
-        (*current_variable_set_list).set = global_setlist.set;
-        global_setlist.set = set;
+        std::mem::swap(&mut (*current_variable_set_list).set, &mut global_setlist.set);
         (*current_variable_set_list).next = global_setlist.next;
         global_setlist.next = current_variable_set_list;
         current_variable_set_list = &raw mut global_setlist;
@@ -968,8 +961,7 @@ pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
 pub unsafe extern "C" fn pop_variable_scope() {
     let setlist: *mut variable_set_list;
     let set: *mut variable_set;
-    '_c2rust_label: {
-        if !(*current_variable_set_list).next.is_null() {
+    if !(*current_variable_set_list).next.is_null() {
         } else {
             __assert_fail(
                 b"current_variable_set_list->next != NULL\0" as *const u8
@@ -978,8 +970,7 @@ pub unsafe extern "C" fn pop_variable_scope() {
                 788,
                 b"void pop_variable_scope(void)\0" as *const u8 as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     if current_variable_set_list != &raw mut global_setlist {
         setlist = current_variable_set_list;
         set = (*setlist).set;
@@ -1580,18 +1571,14 @@ pub unsafe extern "C" fn target_environment(
                             value,
                             b" --jobserver-auth=\0" as *const u8 as *const ::core::ffi::c_char,
                         )
-                        .is_null()
-                        {
-                            if !((*v_0).origin() as ::core::ffi::c_int
-                                != o_env as ::core::ffi::c_int)
-                            {
-                                mf_0 = concat(2, value, invalid);
-                                free(cp as *mut ::core::ffi::c_void);
-                                cp = xstrdup(mf_0);
-                                value = cp;
-                                if found_makeflags != 0 {
-                                    invalid = ::core::ptr::null::<::core::ffi::c_char>();
-                                }
+                        .is_null() && !((*v_0).origin() as ::core::ffi::c_int
+                                != o_env as ::core::ffi::c_int) {
+                            mf_0 = concat(2, value, invalid);
+                            free(cp as *mut ::core::ffi::c_void);
+                            cp = xstrdup(mf_0);
+                            value = cp;
+                            if found_makeflags != 0 {
+                                invalid = ::core::ptr::null::<::core::ffi::c_char>();
                             }
                         }
                     }
@@ -1710,7 +1697,9 @@ pub unsafe extern "C" fn do_variable_definition(
     conditional: ::core::ffi::c_int,
     scope: variable_scope,
 ) -> *mut variable {
-    let current_block: u64;
+    // Set to false by the one branch that must keep the existing value
+    // (appending an empty string); every other branch defines the variable.
+    let mut do_define = true;
     let mut newval: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut alloc_value: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
@@ -1725,7 +1714,6 @@ pub unsafe extern "C" fn do_variable_definition(
         1 => {
             alloc_value = allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
             newval = alloc_value;
-            current_block = 5159818223158340697;
         }
         3 => {
             let t: *mut ::core::ffi::c_char =
@@ -1752,7 +1740,6 @@ pub unsafe extern "C" fn do_variable_definition(
             *np = 0;
             free(t as *mut ::core::ffi::c_void);
             newval = alloc_value;
-            current_block = 5159818223158340697;
         }
         5 => {
             let q: *mut ::core::ffi::c_char =
@@ -1761,11 +1748,9 @@ pub unsafe extern "C" fn do_variable_definition(
             free(q as *mut ::core::ffi::c_void);
             flavor = f_recursive;
             newval = alloc_value;
-            current_block = 5159818223158340697;
         }
         2 => {
             newval = value;
-            current_block = 5159818223158340697;
         }
         4 | 6 => {
             let mut override_0: ::core::ffi::c_int = 0;
@@ -1798,11 +1783,9 @@ pub unsafe extern "C" fn do_variable_definition(
             if v.is_null() {
                 newval = value;
                 flavor = f_recursive;
-                current_block = 5159818223158340697;
             } else if override_0 != 0 {
                 newval = value;
                 flavor = f_recursive;
-                current_block = 5159818223158340697;
             } else {
                 let oldlen: size_t;
                 let vallen: size_t;
@@ -1823,7 +1806,7 @@ pub unsafe extern "C" fn do_variable_definition(
                 vallen = strlen(val) as size_t;
                 if vallen == 0 {
                     alloc_value = tp;
-                    current_block = 3071571992406269834;
+                    do_define = false;
                 } else {
                     oldlen = strlen((*v).value) as size_t;
                     alloclen = oldlen
@@ -1875,7 +1858,6 @@ pub unsafe extern "C" fn do_variable_definition(
                     );
                     free(tp as *mut ::core::ffi::c_void);
                     newval = alloc_value;
-                    current_block = 5159818223158340697;
                 }
             }
         }
@@ -1883,43 +1865,34 @@ pub unsafe extern "C" fn do_variable_definition(
             abort();
         }
     }
-    match current_block {
-        5159818223158340697 => {
-            '_c2rust_label: {
-                if !newval.is_null() {
-                } else {
-                    __assert_fail(
-                        b"newval\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
-                        1545 as ::core::ffi::c_uint,
-                        b"struct variable *do_variable_definition(const Floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
-                            as *const u8 as *const ::core::ffi::c_char,
-                    );
-                }
-            };
-            v = define_variable_in_set(
-                varname,
-                strlen(varname) as size_t,
-                newval,
-                origin,
-                (flavor as ::core::ffi::c_uint
-                    == f_recursive as ::core::ffi::c_int as ::core::ffi::c_uint
-                    || flavor as ::core::ffi::c_uint
-                        == f_expand as ::core::ffi::c_int as ::core::ffi::c_uint)
-                    as ::core::ffi::c_int,
-                if scope as ::core::ffi::c_uint
-                    == s_global as ::core::ffi::c_int as ::core::ffi::c_uint
-                {
-                    ::core::ptr::null_mut::<variable_set>()
-                } else {
-                    (*current_variable_set_list).set
-                },
-                flocp,
+    if do_define {
+        if newval.is_null() {
+            __assert_fail(
+                b"newval\0" as *const u8 as *const ::core::ffi::c_char,
+                b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
+                1545 as ::core::ffi::c_uint,
+                b"struct variable *do_variable_definition(const Floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
+                    as *const u8 as *const ::core::ffi::c_char,
             );
-            (*v).set_append(append as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            (*v).set_conditional(conditional as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
-        _ => {}
+        v = define_variable_in_set(
+            varname,
+            strlen(varname) as size_t,
+            newval,
+            origin,
+            (flavor as ::core::ffi::c_uint == f_recursive as ::core::ffi::c_int as ::core::ffi::c_uint
+                || flavor as ::core::ffi::c_uint
+                    == f_expand as ::core::ffi::c_int as ::core::ffi::c_uint)
+                as ::core::ffi::c_int,
+            if scope as ::core::ffi::c_uint == s_global as ::core::ffi::c_int as ::core::ffi::c_uint {
+                ::core::ptr::null_mut::<variable_set>()
+            } else {
+                (*current_variable_set_list).set
+            },
+            flocp,
+        );
+        (*v).set_append(append as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        (*v).set_conditional(conditional as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     free(alloc_value as *mut ::core::ffi::c_void);
     if (*v).special() as ::core::ffi::c_int != 0 {
@@ -1945,7 +1918,6 @@ pub unsafe extern "C" fn parse_variable_definition(
     (*var).name = p as *mut ::core::ffi::c_char;
     (*var).length = 0;
     (*var).set_conditional(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let current_block_37: u64;
     loop {
         let start: *const ::core::ffi::c_char;
         let fresh5 = p;
@@ -2021,15 +1993,8 @@ pub unsafe extern "C" fn parse_variable_definition(
                 if *p as ::core::ffi::c_int == '=' as i32 {
                     match c {
                         43 => {
-                            current_block_37 = 11856292385005058703;
-                            match current_block_37 {
-                                5736403253062402380 => {
-                                    (*var).set_flavor(f_shell as variable_flavor);
-                                }
-                                _ => {
-                                    (*var).set_flavor(f_append as variable_flavor);
-                                }
-                            }
+                            // '+=' : append
+                            (*var).set_flavor(f_append as variable_flavor);
                             if end.is_null() {
                                 end = start;
                             }
@@ -2037,15 +2002,8 @@ pub unsafe extern "C" fn parse_variable_definition(
                             break;
                         }
                         33 => {
-                            current_block_37 = 5736403253062402380;
-                            match current_block_37 {
-                                5736403253062402380 => {
-                                    (*var).set_flavor(f_shell as variable_flavor);
-                                }
-                                _ => {
-                                    (*var).set_flavor(f_append as variable_flavor);
-                                }
-                            }
+                            // '!=' : shell-assignment
+                            (*var).set_flavor(f_shell as variable_flavor);
                             if end.is_null() {
                                 end = start;
                             }

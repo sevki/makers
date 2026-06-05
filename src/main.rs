@@ -1476,7 +1476,6 @@ unsafe fn main_0(
     envp: *mut *mut ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let current_block: u64;
     let mut makefile_status: ::core::ffi::c_int = MAKE_SUCCESS;
     let mut read_files: *mut goaldep;
     let mut current_directory: [::core::ffi::c_char; 4097] = [0; 4097];
@@ -1602,7 +1601,7 @@ unsafe fn main_0(
     bsd_signal(SIGCHLD, SIG_DFL);
     crate::output::output_init(::core::ptr::null_mut::<output>());
     if (*argv.offset(0 as ::core::ffi::c_int as isize)).is_null() {
-        let ref mut fresh33 = *argv.offset(0 as ::core::ffi::c_int as isize);
+        let fresh33 = &mut (*argv.offset(0 as ::core::ffi::c_int as isize));
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
     }
     if *(*argv.offset(0 as ::core::ffi::c_int as isize)).offset(0 as ::core::ffi::c_int as isize)
@@ -1635,7 +1634,7 @@ unsafe fn main_0(
     } else {
         directory_before_chdir = xstrdup(&raw mut current_directory as *mut ::core::ffi::c_char);
     }
-    let ref mut fresh34 = *define_variable_in_set(
+    let fresh34 = &mut (*define_variable_in_set(
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1643,9 +1642,9 @@ unsafe fn main_0(
         0,
         (*current_variable_set_list).set,
         NILF,
-    );
+    ));
     (*fresh34).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let ref mut fresh35 = *define_variable_in_set(
+    let fresh35 = &mut (*define_variable_in_set(
         b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 11]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1653,9 +1652,9 @@ unsafe fn main_0(
         0,
         (*current_variable_set_list).set,
         NILF,
-    );
+    ));
     (*fresh35).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let ref mut fresh36 = *define_variable_in_set(
+    let fresh36 = &mut (*define_variable_in_set(
         b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1663,9 +1662,9 @@ unsafe fn main_0(
         0,
         (*current_variable_set_list).set,
         NILF,
-    );
+    ));
     (*fresh36).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let ref mut fresh37 = *define_variable_in_set(
+    let fresh37 = &mut (*define_variable_in_set(
         b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1673,7 +1672,7 @@ unsafe fn main_0(
         0,
         (*current_variable_set_list).set,
         NILF,
-    );
+    ));
     (*fresh37).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     define_variable_in_set(
         b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1833,53 +1832,47 @@ unsafe fn main_0(
             None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
         };
     }
-    if isatty(fileno(stdout)) != 0 {
-        if lookup_variable(
+    if isatty(fileno(stdout)) != 0 && lookup_variable(
             b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         )
-        .is_null()
-        {
-            let tty: *const ::core::ffi::c_char = ttyname(fileno(stdout));
-            let ref mut fresh39 = *define_variable_in_set(
-                b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-                if !tty.is_null() {
-                    tty
-                } else {
-                    b"true\0" as *const u8 as *const ::core::ffi::c_char
-                },
-                o_default,
-                0,
-                (*current_variable_set_list).set,
-                NILF,
-            );
-            (*fresh39).set_export(v_export as variable_export);
-        }
+        .is_null() {
+        let tty: *const ::core::ffi::c_char = ttyname(fileno(stdout));
+        let fresh39 = &mut (*define_variable_in_set(
+            b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
+            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+            if !tty.is_null() {
+                tty
+            } else {
+                b"true\0" as *const u8 as *const ::core::ffi::c_char
+            },
+            o_default,
+            0,
+            (*current_variable_set_list).set,
+            NILF,
+        ));
+        (*fresh39).set_export(v_export as variable_export);
     }
-    if isatty(fileno(stderr)) != 0 {
-        if lookup_variable(
+    if isatty(fileno(stderr)) != 0 && lookup_variable(
             b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         )
-        .is_null()
-        {
-            let tty_0: *const ::core::ffi::c_char = ttyname(fileno(stderr));
-            let ref mut fresh40 = *define_variable_in_set(
-                b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-                if !tty_0.is_null() {
-                    tty_0
-                } else {
-                    b"true\0" as *const u8 as *const ::core::ffi::c_char
-                },
-                o_default,
-                0,
-                (*current_variable_set_list).set,
-                NILF,
-            );
-            (*fresh40).set_export(v_export as variable_export);
-        }
+        .is_null() {
+        let tty_0: *const ::core::ffi::c_char = ttyname(fileno(stderr));
+        let fresh40 = &mut (*define_variable_in_set(
+            b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
+            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+            if !tty_0.is_null() {
+                tty_0
+            } else {
+                b"true\0" as *const u8 as *const ::core::ffi::c_char
+            },
+            o_default,
+            0,
+            (*current_variable_set_list).set,
+            NILF,
+        ));
+        (*fresh40).set_export(v_export as variable_export);
     }
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET)
         as ::core::ffi::c_int as ::core::ffi::c_uint;
@@ -1923,7 +1916,7 @@ unsafe fn main_0(
             != '/' as i32
         && !strchr(*argv.offset(0 as ::core::ffi::c_int as isize), '/' as i32).is_null()
     {
-        let ref mut fresh41 = *argv.offset(0 as ::core::ffi::c_int as isize);
+        let fresh41 = &mut (*argv.offset(0 as ::core::ffi::c_int as isize));
         *fresh41 = xstrdup(concat(
             3,
             &raw mut current_directory as *mut ::core::ffi::c_char,
@@ -1974,9 +1967,11 @@ unsafe fn main_0(
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
     });
     if !jobserver_auth.is_null() {
+        // Reset the jobserver unless we successfully inherited the parent's.
+        let mut do_reset = true;
         if argv_slots == INVALID_JOB_SLOTS {
             if jobserver_parse_auth(jobserver_auth) != 0 {
-                current_block = 6702893977082974455;
+                do_reset = false;
             } else {
                 error(
                     ::core::ptr::null_mut::<Floc>(),
@@ -1985,25 +1980,18 @@ unsafe fn main_0(
                         as *const u8 as *const ::core::ffi::c_char,
                 );
                 arg_job_slots = 1;
-                current_block = 2473505634946569239;
             }
-        } else {
-            if restarts == 0 && argv_slots != 1 {
-                error(
-                    ::core::ptr::null_mut::<Floc>(),
-                    INTSTR_LENGTH,
-                    b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    argv_slots,
-                );
-            }
-            current_block = 2473505634946569239;
+        } else if restarts == 0 && argv_slots != 1 {
+            error(
+                ::core::ptr::null_mut::<Floc>(),
+                INTSTR_LENGTH,
+                b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                argv_slots,
+            );
         }
-        match current_block {
-            6702893977082974455 => {}
-            _ => {
-                reset_jobserver();
-            }
+        if do_reset {
+            reset_jobserver();
         }
     }
     define_variable_in_set(
@@ -2144,7 +2132,7 @@ unsafe fn main_0(
                     }
                 }
                 fclose(outfile);
-                let ref mut fresh45 = *(*makefiles).list.offset(i_1 as isize);
+                let fresh45 = &mut (*(*makefiles).list.offset(i_1 as isize));
                 *fresh45 = strcache_add(newnm);
                 stdin_offset = i_1 as ::core::ffi::c_int;
                 free(newnm as *mut ::core::ffi::c_void);
@@ -2185,7 +2173,7 @@ unsafe fn main_0(
     );
     set_default_suffixes();
     define_automatic_variables();
-    let ref mut fresh46 = *define_makeflags(0);
+    let fresh46 = &mut (*define_makeflags(0));
     (*fresh46).set_export(v_export as variable_export);
     define_default_variables();
     default_file = enter_file(strcache_add(
@@ -2331,23 +2319,19 @@ unsafe fn main_0(
             sync_mutex = ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
     }
-    if !jobserver_auth.is_null() {
-        if (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int) & db_level != 0 {
-            printf(
-                b"Using jobserver controller %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                jobserver_auth,
-            );
-            fflush(stdout);
-        }
+    if !jobserver_auth.is_null() && (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int) & db_level != 0 {
+        printf(
+            b"Using jobserver controller %s\n\0" as *const u8 as *const ::core::ffi::c_char,
+            jobserver_auth,
+        );
+        fflush(stdout);
     }
-    if !sync_mutex.is_null() {
-        if 0x2 as ::core::ffi::c_int & db_level != 0 {
-            printf(
-                b"Using output-sync mutex %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                sync_mutex,
-            );
-            fflush(stdout);
-        }
+    if !sync_mutex.is_null() && 0x2 as ::core::ffi::c_int & db_level != 0 {
+        printf(
+            b"Using output-sync mutex %s\n\0" as *const u8 as *const ::core::ffi::c_char,
+            sync_mutex,
+        );
+        fflush(stdout);
     }
     define_makeflags(0);
     snap_deps();
@@ -2395,14 +2379,12 @@ unsafe fn main_0(
     remote_setup();
     output_context = ::core::ptr::null_mut::<output>();
     crate::output::output_close(&raw mut make_sync);
-    if !shuffle_mode.is_null() {
-        if 0x1 as ::core::ffi::c_int & db_level != 0 {
-            printf(
-                b"Enabled shuffle mode: %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                shuffle_mode,
-            );
-            fflush(stdout);
-        }
+    if !shuffle_mode.is_null() && 0x1 as ::core::ffi::c_int & db_level != 0 {
+        printf(
+            b"Enabled shuffle mode: %s\n\0" as *const u8 as *const ::core::ffi::c_char,
+            shuffle_mode,
+        );
+        fflush(stdout);
     }
     if !read_files.is_null() {
         let makefile_mtimes: *mut uintmax_t;
@@ -2658,8 +2640,7 @@ unsafe fn main_0(
                         let a: *mut ::core::ffi::c_char = *av;
                         let mf: *const ::core::ffi::c_char =
                             *(*makefiles).list.offset(mfidx as isize);
-                        '_c2rust_label: {
-                            if strlen(a) > 0 {
+                        if strlen(a) > 0 {
                             } else {
                                 __assert_fail(
                                     b"strlen (a) > 0\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2668,8 +2649,7 @@ unsafe fn main_0(
                                     b"int main(int, char **, char **)\0" as *const u8
                                         as *const ::core::ffi::c_char,
                                 );
-                            }
-                        };
+                            };
                         *nv = a;
                         if !(*a.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                             != '-' as i32)
@@ -3264,8 +3244,7 @@ unsafe extern "C" fn decode_switches(
     let mut found_wait: ::core::ffi::c_uint = 0;
     let mut a: *mut *const ::core::ffi::c_char;
     static mut using_getopt: ::core::ffi::c_int = 0;
-    '_c2rust_label: {
-        if using_getopt == 0 {
+    if using_getopt == 0 {
         } else {
             __assert_fail(
                 b"using_getopt == 0\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3274,8 +3253,7 @@ unsafe extern "C" fn decode_switches(
                 b"void decode_switches(int, const char **, enum variable_origin)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     using_getopt = 1;
     targets.max = (argc + 1) as ::core::ffi::c_uint;
     alloca_allocations.push(::std::vec::from_elem(
@@ -3310,7 +3288,7 @@ unsafe extern "C" fn decode_switches(
         } else if c == 1 {
             let fresh8 = targets.idx;
             targets.idx = targets.idx.wrapping_add(1);
-            let ref mut fresh9 = *targets.list.offset(fresh8 as isize);
+            let fresh9 = &mut (*targets.list.offset(fresh8 as isize));
             *fresh9 = coptarg;
         } else {
             cs = &raw mut switches as *mut command_switch;
@@ -3409,8 +3387,7 @@ unsafe extern "C" fn decode_switches(
                                                             as size_t,
                                                     ))
                                                         as *mut *const ::core::ffi::c_char;
-                                                let ref mut fresh10 =
-                                                    *((*cs).value_ptr as *mut *mut stringlist);
+                                                let fresh10 = &mut (*((*cs).value_ptr as *mut *mut stringlist));
                                                 *fresh10 = sl;
                                             } else if (*sl).idx == (*sl).max.wrapping_sub(1) {
                                                 (*sl).max = (*sl).max.wrapping_add(5);
@@ -3469,8 +3446,7 @@ unsafe extern "C" fn decode_switches(
                                                     {
                                                         let fresh11 = (*sl).idx;
                                                         (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let ref mut fresh12 =
-                                                            *(*sl).list.offset(fresh11 as isize);
+                                                        let fresh12 = &mut (*(*sl).list.offset(fresh11 as isize));
                                                         *fresh12 = xstrdup(coptarg);
                                                         if !(*cs).origin.is_null() {
                                                             *(*cs).origin = origin;
@@ -3488,8 +3464,7 @@ unsafe extern "C" fn decode_switches(
                                                             (*sl).idx as ::core::ffi::c_int;
                                                         let fresh13 = (*sl).idx;
                                                         (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let ref mut fresh14 =
-                                                            *(*sl).list.offset(fresh13 as isize);
+                                                        let fresh14 = &mut (*(*sl).list.offset(fresh13 as isize));
                                                         *fresh14 = strcache_add(coptarg);
                                                         if !(*cs).origin.is_null() {
                                                             *(*cs).origin = origin;
@@ -3497,16 +3472,14 @@ unsafe extern "C" fn decode_switches(
                                                     } else {
                                                         let fresh15 = (*sl).idx;
                                                         (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let ref mut fresh16 =
-                                                            *(*sl).list.offset(fresh15 as isize);
+                                                        let fresh16 = &mut (*(*sl).list.offset(fresh15 as isize));
                                                         *fresh16 =
                                                             expand_command_line_file(coptarg);
                                                         if !(*cs).origin.is_null() {
                                                             *(*cs).origin = origin;
                                                         }
                                                     }
-                                                    let ref mut fresh17 =
-                                                        *(*sl).list.offset((*sl).idx as isize);
+                                                    let fresh17 = &mut (*(*sl).list.offset((*sl).idx as isize));
                                                     *fresh17 =
                                                         ::core::ptr::null::<::core::ffi::c_char>();
                                                 }
@@ -3532,7 +3505,7 @@ unsafe extern "C" fn decode_switches(
                                     == 0
                                 {
                                     let fresh18 = optind;
-                                    optind = optind + 1;
+                                    optind += 1;
                                     coptarg = *argv.offset(fresh18 as isize);
                                 }
                             }
@@ -3580,7 +3553,7 @@ unsafe extern "C" fn decode_switches(
                                         == '.' as i32)
                             {
                                 let fresh19 = optind;
-                                optind = optind + 1;
+                                optind += 1;
                                 coptarg = *argv.offset(fresh19 as isize);
                             }
                             if doit != 0 {
@@ -3608,13 +3581,13 @@ unsafe extern "C" fn decode_switches(
     }
     while optind < argc {
         let fresh20 = optind;
-        optind = optind + 1;
+        optind += 1;
         let fresh21 = targets.idx;
         targets.idx = targets.idx.wrapping_add(1);
-        let ref mut fresh22 = *targets.list.offset(fresh21 as isize);
+        let fresh22 = &mut (*targets.list.offset(fresh21 as isize));
         *fresh22 = *argv.offset(fresh20 as isize);
     }
-    let ref mut fresh23 = *targets.list.offset(targets.idx as isize);
+    let fresh23 = &mut (*targets.list.offset(targets.idx as isize));
     *fresh23 = ::core::ptr::null::<::core::ffi::c_char>();
     using_getopt = 0;
     a = targets.list;
@@ -3675,13 +3648,13 @@ unsafe extern "C" fn decode_env_switches(
             .wrapping_add(1)
             .wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
     ) as *mut *const ::core::ffi::c_char;
-    let ref mut fresh0 = *argv.offset(0 as ::core::ffi::c_int as isize);
+    let fresh0 = &mut (*argv.offset(0 as ::core::ffi::c_int as isize));
     *fresh0 = b"\0" as *const u8 as *const ::core::ffi::c_char;
     argc = 1;
     buf = xmalloc((1 as size_t).wrapping_add(len).wrapping_add(1)) as *mut ::core::ffi::c_char;
     *buf.offset(0 as ::core::ffi::c_int as isize) = '-' as i32 as ::core::ffi::c_char;
     p = buf.offset(1 as ::core::ffi::c_int as isize);
-    let ref mut fresh1 = *argv.offset(argc as isize);
+    let fresh1 = &mut (*argv.offset(argc as isize));
     *fresh1 = p;
     while *value as ::core::ffi::c_int != 0 {
         if *value as ::core::ffi::c_int == '\\' as i32
@@ -3696,7 +3669,7 @@ unsafe extern "C" fn decode_env_switches(
             p = p.offset(1 as ::core::ffi::c_int as isize);
             *fresh2 = 0;
             argc += 1;
-            let ref mut fresh3 = *argv.offset(argc as isize);
+            let fresh3 = &mut (*argv.offset(argc as isize));
             *fresh3 = p;
             loop {
                 value = value.offset(1 as ::core::ffi::c_int as isize);
@@ -3717,10 +3690,9 @@ unsafe extern "C" fn decode_env_switches(
     }
     *p = 0;
     argc += 1;
-    let ref mut fresh6 = *argv.offset(argc as isize);
+    let fresh6 = &mut (*argv.offset(argc as isize));
     *fresh6 = ::core::ptr::null::<::core::ffi::c_char>();
-    '_c2rust_label: {
-        if p < buf
+    if p < buf
             .offset(len as isize)
             .offset(2 as ::core::ffi::c_int as isize)
         {
@@ -3732,14 +3704,13 @@ unsafe extern "C" fn decode_env_switches(
                 b"void decode_env_switches(const char *, size_t, enum variable_origin)\0"
                     as *const u8 as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     if *(*argv.offset(1 as ::core::ffi::c_int as isize)).offset(0 as ::core::ffi::c_int as isize)
         as ::core::ffi::c_int
         != '-' as i32
         && strchr(*argv.offset(1 as ::core::ffi::c_int as isize), '=' as i32).is_null()
     {
-        let ref mut fresh7 = *argv.offset(1 as ::core::ffi::c_int as isize);
+        let fresh7 = &mut (*argv.offset(1 as ::core::ffi::c_int as isize));
         *fresh7 = buf;
     }
     decode_switches(argc, argv, origin);

@@ -396,7 +396,7 @@ pub unsafe extern "C" fn ar_glob(
     while !n.is_null() {
         let fresh1 = i;
         i = i.wrapping_add(1);
-        let ref mut fresh2 = *names.offset(fresh1 as isize);
+        let fresh2 = &mut (*names.offset(fresh1 as isize));
         *fresh2 = (*n).name;
         n = (*n).next;
     }

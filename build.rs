@@ -1,12 +1,5 @@
-#[cfg(all(unix, not(target_os = "macos")))]
-fn main() {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:rustc-link-search=native={manifest}/lib");
-    println!("cargo:rustc-link-lib=static=gnu");
-}
-
-#[cfg(target_os = "macos")]
-fn main() {
-    // add macos dependencies below
-    // println!("cargo:rustc-flags=-l edit");
-}
+// The Rust port no longer links gnulib's lib/libgnu.a. Every gnulib symbol the
+// translated code references (glob, globfree, fnmatch, getloadavg, ...) is
+// provided by the C library, and the one remaining gnulib-only symbol,
+// find_in_given_path, is reimplemented in src/findprog.rs.
+fn main() {}
