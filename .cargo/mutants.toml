@@ -1,0 +1,20 @@
+# cargo-mutants configuration — https://mutants.rs/
+#
+# Most of src/ is still c2rust output whose behaviour is pinned only by the
+# differential tests against the C oracle; mutating all ~35k lines would be
+# enormous and largely uncaught, drowning out the signal. Scope mutation
+# testing to the hand-written / idiomatic Rust introduced during the cleanup,
+# so a surviving mutant points at a gap in *our* tests.
+#
+# Widen `examine_globs` as more modules are rewritten idiomatically.
+examine_globs = [
+    "src/findprog.rs",
+    "src/shuffle.rs",
+    "src/warning.rs",
+]
+
+# Give each mutant a generous timeout: the integration tests spawn the freshly
+# rebuilt `make` binary, so a build + a handful of process spawns sit under the
+# baseline time.
+timeout_multiplier = 3.0
+minimum_test_timeout = 120
