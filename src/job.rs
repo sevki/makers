@@ -1873,14 +1873,35 @@ pub unsafe extern "C" fn start_waiting_jobs() {
         }
     }
 }
+/// RAII guard that runs `posix_spawnattr_destroy` on drop. Created only after a
+/// successful `posix_spawnattr_init`, so cleanup happens automatically on every
+/// exit path (replacing the C `goto`-to-cleanup dance).
+struct SpawnAttr(*mut posix_spawnattr_t);
+impl Drop for SpawnAttr {
+    fn drop(&mut self) {
+        unsafe {
+            posix_spawnattr_destroy(self.0);
+        }
+    }
+}
+/// RAII guard that runs `posix_spawn_file_actions_destroy` on drop. Declared
+/// after `SpawnAttr` so it drops first, matching the C cleanup order (file
+/// actions before attributes).
+struct SpawnFileActions(*mut posix_spawn_file_actions_t);
+impl Drop for SpawnFileActions {
+    fn drop(&mut self) {
+        unsafe {
+            posix_spawn_file_actions_destroy(self.0);
+        }
+    }
+}
 #[no_mangle]
 pub unsafe extern "C" fn child_execute_job(
-    mut child: *mut childbase,
+    child: *mut childbase,
     good_stdin: ::core::ffi::c_int,
     argv: *mut *mut ::core::ffi::c_char,
 ) -> pid_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut current_block: u64;
     let fdin: ::core::ffi::c_int = if good_stdin != 0 {
         fileno(stdin) as ::core::ffi::c_int
     } else {
@@ -1888,9 +1909,44 @@ pub unsafe extern "C" fn child_execute_job(
     };
     let mut fdout: ::core::ffi::c_int = fileno(stdout);
     let mut fderr: ::core::ffi::c_int = fileno(stderr);
+    if (*child).output.syncout() != 0 {
+        if (*child).output.out >= 0 {
+            fdout = (*child).output.out;
+        }
+        if (*child).output.err >= 0 {
+            fderr = (*child).output.err;
+        }
+    }
     let mut pid: pid_t = -(1 as pid_t);
-    let mut r: ::core::ffi::c_int;
-    let cmd: *mut ::core::ffi::c_char;
+    let r = spawn_child(child, argv, fdin, fdout, fderr, &raw mut pid, &mut alloca_allocations);
+    if r != 0 {
+        pid = -(1 as ::core::ffi::c_int) as pid_t;
+    }
+    if pid < 0 {
+        error(
+            ::core::ptr::null_mut::<Floc>(),
+            (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
+                .wrapping_add(strlen(strerror(r)) as size_t),
+            b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            *argv.offset(0 as ::core::ffi::c_int as isize),
+            strerror(r),
+        );
+    }
+    pid
+}
+/// Configure a `posix_spawn` and launch `argv[0]`, looking it up on the child's
+/// PATH. Returns the spawn `errno` (0 on success) and writes the new pid into
+/// `*pid`. The attribute and file-action objects are released automatically by
+/// their RAII guards on every return path.
+unsafe fn spawn_child(
+    child: *mut childbase,
+    argv: *mut *mut ::core::ffi::c_char,
+    fdin: ::core::ffi::c_int,
+    fdout: ::core::ffi::c_int,
+    fderr: ::core::ffi::c_int,
+    pid: *mut pid_t,
+    alloca_allocations: &mut Vec<Vec<u8>>,
+) -> ::core::ffi::c_int {
     let mut attr: posix_spawnattr_t = posix_spawnattr_t {
         __flags: 0,
         __pgrp: 0,
@@ -1901,261 +1957,137 @@ pub unsafe extern "C" fn child_execute_job(
         __cgroup: 0,
         __pad: [0; 15],
     };
+    let mut r = posix_spawnattr_init(&raw mut attr);
+    if r != 0 {
+        return r;
+    }
+    let _attr_guard = SpawnAttr(&raw mut attr);
     let mut fa: posix_spawn_file_actions_t = posix_spawn_file_actions_t {
         __allocated: 0,
         __used: 0,
         __actions: ::core::ptr::null_mut::<__spawn_action>(),
         __pad: [0; 16],
     };
-    let mut flags: ::core::ffi::c_short = 0;
-    if (*child).output.syncout() != 0 {
-        if (*child).output.out >= 0 {
-            fdout = (*child).output.out;
-        }
-        if (*child).output.err >= 0 {
-            fderr = (*child).output.err;
-        }
-    }
-    r = posix_spawnattr_init(&raw mut attr);
-    if !(r != 0) {
-        r = posix_spawn_file_actions_init(&raw mut fa);
-        if r != 0 {
-            posix_spawnattr_destroy(&raw mut attr);
-        } else {
-            let mut mask: sigset_t = __sigset_t { __val: [0; 16] };
-            sigemptyset(&raw mut mask);
-            r = posix_spawnattr_setsigmask(&raw mut attr, &raw mut mask);
-            if !(r != 0) {
-                flags =
-                    (flags as ::core::ffi::c_int | POSIX_SPAWN_SETSIGMASK) as ::core::ffi::c_short;
-                flags =
-                    (flags as ::core::ffi::c_int | POSIX_SPAWN_USEVFORK) as ::core::ffi::c_short;
-                if fdin >= 0 && fdin != fileno(stdin) {
-                    r = posix_spawn_file_actions_adddup2(&raw mut fa, fdin, fileno(stdin));
-                    if r != 0 {
-                        current_block = 3484691573457448143;
-                    } else {
-                        current_block = 17833034027772472439;
-                    }
-                } else {
-                    current_block = 17833034027772472439;
-                }
-                match current_block {
-                    3484691573457448143 => {}
-                    _ => {
-                        if fdout != fileno(stdout) {
-                            r = posix_spawn_file_actions_adddup2(
-                                &raw mut fa,
-                                fdout,
-                                fileno(stdout),
-                            );
-                            if r != 0 {
-                                current_block = 3484691573457448143;
-                            } else {
-                                current_block = 7175849428784450219;
-                            }
-                        } else {
-                            current_block = 7175849428784450219;
-                        }
-                        match current_block {
-                            3484691573457448143 => {}
-                            _ => {
-                                if fderr != fileno(stderr) {
-                                    r = posix_spawn_file_actions_adddup2(
-                                        &raw mut fa,
-                                        fderr,
-                                        fileno(stderr),
-                                    );
-                                    if r != 0 {
-                                        current_block = 3484691573457448143;
-                                    } else {
-                                        current_block = 5601891728916014340;
-                                    }
-                                } else {
-                                    current_block = 5601891728916014340;
-                                }
-                                match current_block {
-                                    3484691573457448143 => {}
-                                    _ => {
-                                        r = posix_spawnattr_setflags(&raw mut attr, flags);
-                                        if !(r != 0) {
-                                            let mut p: *const ::core::ffi::c_char =
-                                                ::core::ptr::null::<::core::ffi::c_char>();
-                                            let mut pp: *mut *mut ::core::ffi::c_char;
-                                            pp = (*child).environment;
-                                            while !(*pp).is_null() {
-                                                if *(*pp).offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                                                    == 'P' as i32
-                                                    && *(*pp).offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                                                        == 'A' as i32
-                                                    && *(*pp)
-                                                        .offset(2 as ::core::ffi::c_int as isize)
-                                                        as ::core::ffi::c_int
-                                                        == 'T' as i32
-                                                    && *(*pp)
-                                                        .offset(3 as ::core::ffi::c_int as isize)
-                                                        as ::core::ffi::c_int
-                                                        == 'H' as i32
-                                                    && *(*pp)
-                                                        .offset(4 as ::core::ffi::c_int as isize)
-                                                        as ::core::ffi::c_int
-                                                        == '=' as i32
-                                                {
-                                                    p = (*pp)
-                                                        .offset(5 as ::core::ffi::c_int as isize);
-                                                    break;
-                                                } else {
-                                                    pp = pp.offset(1 as ::core::ffi::c_int as isize);
-                                                }
-                                            }
-                                            if p.is_null() {
-                                                let l: size_t = confstr(
-                                                    _CS_PATH as ::core::ffi::c_int,
-                                                    ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                                                    0,
-                                                )
-                                                    as size_t;
-                                                if l != 0 {
-                                                    alloca_allocations
-                                                        .push(::std::vec::from_elem(0, l as usize));
-                                                    let dp: *mut ::core::ffi::c_char =
-                                                        alloca_allocations
-                                                            .last_mut()
-                                                            .unwrap()
-                                                            .as_mut_ptr()
-                                                            as *mut ::core::ffi::c_char;
-                                                    confstr(
-                                                        _CS_PATH as ::core::ffi::c_int,
-                                                        dp,
-                                                        l as size_t,
-                                                    );
-                                                    p = dp;
-                                                }
-                                            }
-                                            cmd = find_in_given_path(
-                                                *argv.offset(0 as ::core::ffi::c_int as isize),
-                                                p,
-                                                ::core::ptr::null::<::core::ffi::c_char>(),
-                                                0 != 0,
-                                            )
-                                                as *mut ::core::ffi::c_char;
-                                            if cmd.is_null() {
-                                                r = *__errno_location();
-                                            } else {
-                                                loop {
-                                                    r = posix_spawn(
-                                                        &raw mut pid,
-                                                        cmd,
-                                                        &raw mut fa,
-                                                        &raw mut attr,
-                                                        argv,
-                                                        (*child).environment,
-                                                    );
-                                                    if !(r == EINTR) {
-                                                        break;
-                                                    }
-                                                }
-                                                if r == ENOEXEC {
-                                                    let nargv: *mut *mut ::core::ffi::c_char;
-                                                    let mut pp_0: *mut *mut ::core::ffi::c_char;
-                                                    let mut l_0: size_t = 0;
-                                                    pp_0 = argv;
-                                                    while !(*pp_0).is_null() {
-                                                        l_0 = l_0.wrapping_add(1);
-                                                        pp_0 = pp_0.offset(1 as ::core::ffi::c_int as isize);
-                                                    }
-                                                    nargv = xmalloc(
-                                                        (::core::mem::size_of::<
-                                                            *mut ::core::ffi::c_char,
-                                                        >(
-                                                        )
-                                                            as size_t)
-                                                            .wrapping_mul(
-                                                                l_0.wrapping_add(3),
-                                                            ),
-                                                    )
-                                                        as *mut *mut ::core::ffi::c_char;
-                                                    let fresh13 = &mut (*nargv.offset(0 as ::core::ffi::c_int as isize));
-                                                    *fresh13 =
-                                                        default_shell as *mut ::core::ffi::c_char;
-                                                    let fresh14 = &mut (*nargv.offset(1 as ::core::ffi::c_int as isize));
-                                                    *fresh14 = cmd;
-                                                    memcpy(
-                                                        nargv.offset(
-                                                            2 as ::core::ffi::c_int as isize,
-                                                        )
-                                                            as *mut *mut ::core::ffi::c_char
-                                                            as *mut ::core::ffi::c_void,
-                                                        argv.offset(
-                                                            1 as ::core::ffi::c_int as isize,
-                                                        )
-                                                            as *mut *mut ::core::ffi::c_char
-                                                            as *const ::core::ffi::c_void,
-                                                        (::core::mem::size_of::<
-                                                            *mut ::core::ffi::c_char,
-                                                        >(
-                                                        )
-                                                            as size_t)
-                                                            .wrapping_mul(l_0 as size_t),
-                                                    );
-                                                    loop {
-                                                        r = posix_spawn(
-                                                            &raw mut pid,
-                                                            *nargv.offset(
-                                                                0 as ::core::ffi::c_int as isize,
-                                                            ),
-                                                            &raw mut fa,
-                                                            &raw mut attr,
-                                                            nargv,
-                                                            (*child).environment,
-                                                        );
-                                                        if !(r == EINTR) {
-                                                            break;
-                                                        }
-                                                    }
-                                                    free(nargv as *mut ::core::ffi::c_void);
-                                                }
-                                                if r == 0 {
-                                                    free(
-                                                        (*child).cmd_name
-                                                            as *mut ::core::ffi::c_void,
-                                                    );
-                                                    if cmd
-                                                        != *argv.offset(
-                                                            0 as ::core::ffi::c_int as isize,
-                                                        )
-                                                    {
-                                                        (*child).cmd_name = cmd;
-                                                    } else {
-                                                        (*child).cmd_name = xstrdup(cmd);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            posix_spawn_file_actions_destroy(&raw mut fa);
-            posix_spawnattr_destroy(&raw mut attr);
-        }
-    }
+    r = posix_spawn_file_actions_init(&raw mut fa);
     if r != 0 {
-        pid = -(1 as ::core::ffi::c_int) as pid_t;
+        return r;
     }
-    if pid < 0 {
-        error(
-            ::core::ptr::null_mut::<Floc>(),
-            (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t).wrapping_add(strlen(strerror(r)) as size_t),
-            b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            *argv.offset(0 as ::core::ffi::c_int as isize),
-            strerror(r),
+    let _fa_guard = SpawnFileActions(&raw mut fa);
+    let mut mask: sigset_t = __sigset_t { __val: [0; 16] };
+    sigemptyset(&raw mut mask);
+    r = posix_spawnattr_setsigmask(&raw mut attr, &raw mut mask);
+    if r != 0 {
+        return r;
+    }
+    let flags: ::core::ffi::c_short =
+        (POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_USEVFORK) as ::core::ffi::c_short;
+    if fdin >= 0 && fdin != fileno(stdin) {
+        r = posix_spawn_file_actions_adddup2(&raw mut fa, fdin, fileno(stdin));
+        if r != 0 {
+            return r;
+        }
+    }
+    if fdout != fileno(stdout) {
+        r = posix_spawn_file_actions_adddup2(&raw mut fa, fdout, fileno(stdout));
+        if r != 0 {
+            return r;
+        }
+    }
+    if fderr != fileno(stderr) {
+        r = posix_spawn_file_actions_adddup2(&raw mut fa, fderr, fileno(stderr));
+        if r != 0 {
+            return r;
+        }
+    }
+    r = posix_spawnattr_setflags(&raw mut attr, flags);
+    if r != 0 {
+        return r;
+    }
+    // Find PATH in the child's environment (falling back to confstr), then
+    // resolve and spawn argv[0].
+    let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let mut pp: *mut *mut ::core::ffi::c_char = (*child).environment;
+    while !(*pp).is_null() {
+        if *(*pp).offset(0) as ::core::ffi::c_int == 'P' as i32
+            && *(*pp).offset(1) as ::core::ffi::c_int == 'A' as i32
+            && *(*pp).offset(2) as ::core::ffi::c_int == 'T' as i32
+            && *(*pp).offset(3) as ::core::ffi::c_int == 'H' as i32
+            && *(*pp).offset(4) as ::core::ffi::c_int == '=' as i32
+        {
+            p = (*pp).offset(5);
+            break;
+        }
+        pp = pp.offset(1);
+    }
+    if p.is_null() {
+        let l: size_t = confstr(
+            _CS_PATH as ::core::ffi::c_int,
+            ::core::ptr::null_mut::<::core::ffi::c_char>(),
+            0,
+        ) as size_t;
+        if l != 0 {
+            alloca_allocations.push(::std::vec::from_elem(0, l as usize));
+            let dp: *mut ::core::ffi::c_char =
+                alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
+            confstr(_CS_PATH as ::core::ffi::c_int, dp, l as size_t);
+            p = dp;
+        }
+    }
+    let cmd: *mut ::core::ffi::c_char =
+        find_in_given_path(*argv.offset(0), p, ::core::ptr::null::<::core::ffi::c_char>(), false)
+            as *mut ::core::ffi::c_char;
+    if cmd.is_null() {
+        return *__errno_location();
+    }
+    loop {
+        r = posix_spawn(pid, cmd, &raw mut fa, &raw mut attr, argv, (*child).environment);
+        if r != EINTR {
+            break;
+        }
+    }
+    if r == ENOEXEC {
+        // Not a directly executable file: retry it as an argument to the shell.
+        let mut l_0: size_t = 0;
+        let mut pp_0: *mut *mut ::core::ffi::c_char = argv;
+        while !(*pp_0).is_null() {
+            l_0 = l_0.wrapping_add(1);
+            pp_0 = pp_0.offset(1);
+        }
+        let nargv: *mut *mut ::core::ffi::c_char = xmalloc(
+            (::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t)
+                .wrapping_mul(l_0.wrapping_add(3)),
+        ) as *mut *mut ::core::ffi::c_char;
+        *nargv.offset(0) = default_shell as *mut ::core::ffi::c_char;
+        *nargv.offset(1) = cmd;
+        memcpy(
+            nargv.offset(2) as *mut ::core::ffi::c_void,
+            argv.offset(1) as *const ::core::ffi::c_void,
+            (::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t).wrapping_mul(l_0 as size_t),
         );
+        loop {
+            r = posix_spawn(
+                pid,
+                *nargv.offset(0),
+                &raw mut fa,
+                &raw mut attr,
+                nargv,
+                (*child).environment,
+            );
+            if r != EINTR {
+                break;
+            }
+        }
+        free(nargv as *mut ::core::ffi::c_void);
     }
-    pid
+    if r == 0 {
+        free((*child).cmd_name as *mut ::core::ffi::c_void);
+        (*child).cmd_name = if cmd != *argv.offset(0) {
+            cmd
+        } else {
+            xstrdup(cmd)
+        };
+    }
+    r
 }
 #[no_mangle]
 pub unsafe extern "C" fn exec_command(
