@@ -244,21 +244,21 @@ fn jobserver_parallel() {
     assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
 }
 
-/// Regression test for a known bug: when a static pattern rule's targets are
-/// the prerequisites of the default goal, only the *first* target gets built.
+/// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
+/// *first* target becomes the default goal, exactly like any other explicit
+/// rule (pattern rules, by contrast, never set the default goal). With
 ///
-/// `make x1.o x2.o x3.o` (naming them explicitly) builds all three, and
-/// ordinary pattern rules (`%.o: %.c`) as goal prerequisites work fine — but
-/// reaching static-pattern targets through the default goal stops after the
-/// first. GNU make (and `make x1.o x2.o x3.o` here) builds all three.
+///     OBJS = x1.o x2.o x3.o
+///     $(OBJS): %.o: %.c
+///     all: $(OBJS)
 ///
-/// Self-contained: it asserts the expected behaviour directly rather than
-/// diffing against the C oracle, so it documents the bug even where `./make`
-/// is unavailable. Remove `#[ignore]` once the remaking logic is fixed; run it
-/// meanwhile with `cargo test -- --ignored static_pattern_default_goal`.
-#[test]
-#[ignore = "known bug: static-pattern default-goal prerequisites build only the first target"]
-fn static_pattern_default_goal() {
+/// a bare `make` builds only `x1.o` (default goal == x1.o), while `make all`
+/// builds all three. Verified identical against GNU Make 4.3. This guards the
+/// port against regressing to "static-pattern targets don't set the default
+/// goal" (which would wrongly make `all` the default).
+///
+/// Self-contained: asserts the behaviour directly, so it needs no C oracle.
+fn run_static_pattern(extra: &[&str]) -> String {
     let workdir = tempdir();
     for stem in ["x1", "x2", "x3"] {
         std::fs::write(workdir.join(format!("{stem}.c")), b"").unwrap();
@@ -268,17 +268,35 @@ fn static_pattern_default_goal() {
         .arg("--no-print-directory")
         .arg("-f")
         .arg(&fixture)
+        .args(extra)
         .current_dir(&workdir)
         .output()
         .expect("failed to spawn make");
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn static_pattern_sets_default_goal() {
+    // Bare `make`: the default goal is the first static-pattern target only.
+    let default_out = run_static_pattern(&[]);
+    assert!(
+        default_out.contains("build x1.o"),
+        "default goal should build x1.o:\n{default_out}"
+    );
+    assert!(
+        !default_out.contains("build x2.o") && !default_out.contains("build x3.o"),
+        "default goal should build ONLY x1.o (GNU make gotcha), got:\n{default_out}"
+    );
+}
+
+#[test]
+fn static_pattern_explicit_all_builds_every_target() {
+    // `make all`: every static-pattern target is built.
+    let all_out = run_static_pattern(&["all"]);
     for obj in ["x1.o", "x2.o", "x3.o"] {
         assert!(
-            stdout.contains(&format!("build {obj}")),
-            "expected '{obj}' to be built via the static-pattern default goal, \
-             but it was not. exit={:?}\n--- stdout ---\n{stdout}\n--- stderr ---\n{}",
-            out.status.code(),
-            String::from_utf8_lossy(&out.stderr),
+            all_out.contains(&format!("build {obj}")),
+            "`make all` should build {obj}:\n{all_out}"
         );
     }
 }

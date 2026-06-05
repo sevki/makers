@@ -1,6 +1,7 @@
-# Regression fixture: a static pattern rule whose targets ($(OBJS)) are the
-# prerequisites of the default goal. GNU make builds all of them; see the
-# `static_pattern_default_goal` test in tests/rs_integration.rs.
+# Static pattern rule whose targets ($(OBJS)) are also the prerequisites of a
+# later `all` rule. Note the GNU make gotcha exercised by the tests in
+# tests/rs_integration.rs: the first static-pattern target (x1.o) becomes the
+# default goal, so a bare `make` builds only x1.o; `make all` builds all three.
 OBJS = x1.o x2.o x3.o
 
 $(OBJS): %.o: %.c
