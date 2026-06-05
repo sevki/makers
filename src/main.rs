@@ -1476,7 +1476,6 @@ unsafe fn main_0(
     envp: *mut *mut ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let current_block: u64;
     let mut makefile_status: ::core::ffi::c_int = MAKE_SUCCESS;
     let mut read_files: *mut goaldep;
     let mut current_directory: [::core::ffi::c_char; 4097] = [0; 4097];
@@ -1968,9 +1967,11 @@ unsafe fn main_0(
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
     });
     if !jobserver_auth.is_null() {
+        // Reset the jobserver unless we successfully inherited the parent's.
+        let mut do_reset = true;
         if argv_slots == INVALID_JOB_SLOTS {
             if jobserver_parse_auth(jobserver_auth) != 0 {
-                current_block = 6702893977082974455;
+                do_reset = false;
             } else {
                 error(
                     ::core::ptr::null_mut::<Floc>(),
@@ -1979,25 +1980,18 @@ unsafe fn main_0(
                         as *const u8 as *const ::core::ffi::c_char,
                 );
                 arg_job_slots = 1;
-                current_block = 2473505634946569239;
             }
-        } else {
-            if restarts == 0 && argv_slots != 1 {
-                error(
-                    ::core::ptr::null_mut::<Floc>(),
-                    INTSTR_LENGTH,
-                    b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    argv_slots,
-                );
-            }
-            current_block = 2473505634946569239;
+        } else if restarts == 0 && argv_slots != 1 {
+            error(
+                ::core::ptr::null_mut::<Floc>(),
+                INTSTR_LENGTH,
+                b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                argv_slots,
+            );
         }
-        match current_block {
-            6702893977082974455 => {}
-            _ => {
-                reset_jobserver();
-            }
+        if do_reset {
+            reset_jobserver();
         }
     }
     define_variable_in_set(

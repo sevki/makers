@@ -304,7 +304,6 @@ unsafe extern "C" fn get_next_word(
     buffer: *const ::core::ffi::c_char,
     length: *mut size_t,
 ) -> *const ::core::ffi::c_char {
-    let current_block: u64;
     let mut p: *const ::core::ffi::c_char = buffer;
     let beg: *const ::core::ffi::c_char;
     let mut c: ::core::ffi::c_char;
@@ -325,14 +324,14 @@ unsafe extern "C" fn get_next_word(
     loop {
         match c as ::core::ffi::c_int {
             0 | 32 | 9 => {
-                current_block = 1785022817647621871;
+                // back up over the terminating whitespace/EOL
+                p = p.offset(-(1 as ::core::ffi::c_int) as isize);
                 break;
             }
             36 => {
                 p = skip_reference(p);
             }
             124 => {
-                current_block = 12230172844548880253;
                 break;
             }
             _ => {}
@@ -340,12 +339,6 @@ unsafe extern "C" fn get_next_word(
         let fresh10 = p;
         p = p.offset(1 as ::core::ffi::c_int as isize);
         c = *fresh10;
-    }
-    match current_block {
-        1785022817647621871 => {
-            p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-        }
-        _ => {}
     }
     if !length.is_null() {
         *length = p.offset_from(beg) as ::core::ffi::c_long as size_t;
