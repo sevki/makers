@@ -4,82 +4,89 @@
 //! that equal strings share a single stable, NUL-terminated buffer and can be
 //! compared by pointer identity. The original C implementation — faithfully
 //! reproduced by the c2rust port — hand-rolled a linked list of fixed-size
-//! buffers (`struct strcache` / `struct hugestring`) plus a separate
-//! open-addressed `hash_table`, driven by `xmalloc` and raw pointer
-//! arithmetic.
+//! buffers plus a separate open-addressed `hash_table`.
 //!
-//! This is a from-scratch Rust reimplementation: a [`HashSet`] keyed on the
-//! string bytes, backed by leaked allocations. make never frees interned
-//! strings — they live for the whole process — so leaking each buffer is the
-//! intended ownership model, and it gives us the stable address the rest of
-//! the program relies on.
+//! This implementation is backed by the [`ustr`] global string interner, which
+//! stores each unique string once in a leaked, NUL-terminated, address-stable
+//! buffer — exactly make's ownership model (interned strings live for the whole
+//! process). [`Ustr::as_char_ptr`] hands back the `*const c_char` callers want.
+//!
+//! Two things `ustr` doesn't cover, handled here:
+//!
+//! * **Non-UTF-8 names.** `ustr` only interns `&str`, and its C constructor
+//!   lossily replaces invalid bytes with U+FFFD — unacceptable for make, whose
+//!   file names are arbitrary OS bytes. Valid UTF-8 goes through `ustr`; the
+//!   rare non-UTF-8 string is interned faithfully into a local byte set instead.
+//! * **`strcache_iscached`.** It asks whether a *raw pointer* came from the
+//!   cache without dereferencing it; `ustr` has no such query, so every pointer
+//!   we hand out is recorded in an address set.
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ::core::ffi::{c_char, c_int, CStr};
 
+use ustr::Ustr;
+
 use crate::ffi_types::size_t;
 
-/// Interns byte strings into stable, NUL-terminated, never-freed buffers.
+/// Intern `bytes`, returning the canonical NUL-terminated pointer.
 ///
-/// `table` maps a string's bytes (without the trailing NUL) to the leaked
-/// buffer holding them, so identical inputs resolve to the same pointer.
-/// `addrs` records every pointer handed out so [`strcache_iscached`] can answer
-/// membership queries without dereferencing a possibly-foreign pointer.
-#[derive(Default)]
-struct Interner {
-    table: HashSet<&'static [u8]>,
-    addrs: HashSet<usize>,
-    /// Total interning requests (cache hits + misses) — a hit-rate numerator.
-    adds: u64,
-    /// Bytes of backing storage allocated, including each trailing NUL.
-    bytes: u64,
+/// `addrs` accumulates every pointer handed out (for [`strcache_iscached`]).
+/// `non_utf8` faithfully interns byte strings that aren't valid UTF-8 and so
+/// can't be passed to `ustr` without corruption. Taking both by reference keeps
+/// this core testable on local state, independent of the process globals.
+fn intern_into(
+    addrs: &mut HashSet<usize>,
+    non_utf8: &mut HashSet<&'static [u8]>,
+    bytes: &[u8],
+) -> *const c_char {
+    let ptr = match ::core::str::from_utf8(bytes) {
+        Ok(s) => Ustr::from(s).as_char_ptr(),
+        Err(_) => intern_bytes(non_utf8, bytes),
+    };
+    addrs.insert(ptr as usize);
+    ptr
 }
 
-impl Interner {
-    /// Return the canonical pointer for `s`, allocating a stable copy on first
-    /// sight. The returned pointer addresses a NUL-terminated buffer valid for
-    /// the rest of the process.
-    fn intern(&mut self, s: &[u8]) -> *const c_char {
-        self.adds += 1;
-        if let Some(&existing) = self.table.get(s) {
-            return existing.as_ptr().cast();
-        }
-        // Stable storage: a NUL-terminated buffer we deliberately leak so the
-        // pointer stays valid forever. The key borrows the leaked bytes minus
-        // that trailing NUL; leaking means the heap allocation never moves, so
-        // the address we hand out is stable even as the HashSet rehashes.
-        let mut buf = Vec::with_capacity(s.len() + 1);
-        buf.extend_from_slice(s);
-        buf.push(0);
-        let leaked: &'static [u8] = Vec::leak(buf);
-        let key = &leaked[..s.len()];
-        self.bytes += leaked.len() as u64;
-        self.table.insert(key);
-        self.addrs.insert(key.as_ptr() as usize);
-        key.as_ptr().cast()
+/// Fallback interner for non-UTF-8 byte strings: stable, leaked, NUL-terminated
+/// storage with the same one-pointer-per-distinct-string guarantee as `ustr`.
+fn intern_bytes(set: &mut HashSet<&'static [u8]>, bytes: &[u8]) -> *const c_char {
+    if let Some(&existing) = set.get(bytes) {
+        return existing.as_ptr().cast();
     }
-
-    /// True if `p` is a pointer this interner previously returned.
-    fn contains(&self, p: *const c_char) -> bool {
-        self.addrs.contains(&(p as usize))
-    }
+    let mut buf = Vec::with_capacity(bytes.len() + 1);
+    buf.extend_from_slice(bytes);
+    buf.push(0);
+    let leaked: &'static [u8] = Vec::leak(buf);
+    let key = &leaked[..bytes.len()];
+    set.insert(key);
+    key.as_ptr().cast()
 }
 
-/// Process-wide interner. make's runtime state is single-threaded, so a
-/// `static mut` accessed through one helper matches the convention used for
-/// the other global caches in this crate (see `shuffle::config`).
-static mut INTERNER: Option<Interner> = None;
+// Process globals. make's runtime state is single-threaded, so `static mut`
+// accessed through one helper matches the convention used for the crate's other
+// global caches (see `shuffle::config`). `ustr`'s own cache is global already.
+static mut ADDRS: Option<HashSet<usize>> = None;
+static mut NON_UTF8: Option<HashSet<&'static [u8]>> = None;
+/// Total interning requests (hits + misses) — the hit-rate numerator.
+static ADDS: AtomicU64 = AtomicU64::new(0);
 
-fn interner() -> &'static mut Interner {
-    unsafe { INTERNER.get_or_insert_with(Interner::default) }
+fn addrs() -> &'static mut HashSet<usize> {
+    unsafe { ADDRS.get_or_insert_with(HashSet::new) }
 }
 
-/// Pre-create the cache and reserve room, mirroring the original 8000-slot
-/// hash table. Interning is lazy, so this is only an optimization.
-pub fn strcache_init() {
-    interner().table.reserve(8000);
+fn non_utf8() -> &'static mut HashSet<&'static [u8]> {
+    unsafe { NON_UTF8.get_or_insert_with(HashSet::new) }
 }
+
+fn intern(bytes: &[u8]) -> *const c_char {
+    ADDS.fetch_add(1, Ordering::Relaxed);
+    intern_into(addrs(), non_utf8(), bytes)
+}
+
+/// Nothing to set up — `ustr`'s cache initializes lazily on first use.
+pub fn strcache_init() {}
 
 /// Intern the NUL-terminated C string `str` and return the canonical pointer.
 ///
@@ -87,7 +94,7 @@ pub fn strcache_init() {
 ///
 /// `str` must point to a valid NUL-terminated C string.
 pub unsafe fn strcache_add(str: *const c_char) -> *const c_char {
-    interner().intern(CStr::from_ptr(str).to_bytes())
+    intern(CStr::from_ptr(str).to_bytes())
 }
 
 /// Intern the first `len` bytes of `str` and return the canonical pointer. The
@@ -97,17 +104,16 @@ pub unsafe fn strcache_add(str: *const c_char) -> *const c_char {
 ///
 /// `str` must be valid for reads of `len` bytes.
 pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char {
-    let bytes = ::core::slice::from_raw_parts(str.cast::<u8>(), len as usize);
-    interner().intern(bytes)
+    intern(::core::slice::from_raw_parts(str.cast::<u8>(), len as usize))
 }
 
 /// Returns nonzero if `str` is a pointer previously handed out by the cache.
 ///
 /// Does not dereference `str`, so it is sound to call on any pointer value
-/// (matching the original, which compared pointer ranges rather than reading
-/// the string).
+/// (matching the original, which compared pointer ranges rather than reading the
+/// string).
 pub fn strcache_iscached(str: *const c_char) -> c_int {
-    interner().contains(str) as c_int
+    addrs().contains(&(str as usize)) as c_int
 }
 
 /// Print cache statistics, prefixed with `prefix`. Used by `make -p`.
@@ -117,11 +123,12 @@ pub fn strcache_iscached(str: *const c_char) -> c_int {
 /// `prefix` must point to a valid NUL-terminated C string.
 pub unsafe fn strcache_print_stats(prefix: *const c_char) {
     let prefix = CStr::from_ptr(prefix).to_string_lossy();
-    let it = interner();
-    let strings = it.table.len() as u64;
-    let avg = if strings > 0 { it.bytes / strings } else { 0 };
-    let hit_rate = if it.adds > 0 {
-        100 * it.adds.saturating_sub(strings) / it.adds
+    let strings = (ustr::num_entries() + non_utf8().len()) as u64;
+    let bytes = ustr::total_allocated() as u64;
+    let adds = ADDS.load(Ordering::Relaxed);
+    let avg = if strings > 0 { bytes / strings } else { 0 };
+    let hit_rate = if adds > 0 {
+        100 * adds.saturating_sub(strings) / adds
     } else {
         0
     };
@@ -130,8 +137,6 @@ pub unsafe fn strcache_print_stats(prefix: *const c_char) {
     let out = format!(
         "\n{prefix} strcache: strings = {strings} / storage = {bytes} B / avg = {avg} B\n\
          {prefix} strcache performance: lookups = {adds} / hit rate = {hit_rate}%\n\0",
-        bytes = it.bytes,
-        adds = it.adds,
     );
     libc::printf(b"%s\0".as_ptr().cast(), out.as_ptr());
 }
@@ -140,53 +145,61 @@ pub unsafe fn strcache_print_stats(prefix: *const c_char) {
 mod tests {
     use super::*;
 
+    fn fresh() -> (HashSet<usize>, HashSet<&'static [u8]>) {
+        (HashSet::new(), HashSet::new())
+    }
+
     #[test]
     fn interns_equal_strings_to_one_pointer() {
-        let mut it = Interner::default();
-        let a = it.intern(b"foo");
-        let b = it.intern(b"foo");
-        assert_eq!(a, b, "equal strings must share a pointer");
+        let (mut a, mut n) = fresh();
+        let p = intern_into(&mut a, &mut n, b"strcache-test-foo");
+        let q = intern_into(&mut a, &mut n, b"strcache-test-foo");
+        assert_eq!(p, q, "equal strings must share a pointer");
 
-        let c = it.intern(b"bar");
-        assert_ne!(a, c, "distinct strings get distinct pointers");
+        let r = intern_into(&mut a, &mut n, b"strcache-test-bar");
+        assert_ne!(p, r, "distinct strings get distinct pointers");
 
-        // The returned pointer is a NUL-terminated copy of the input.
         unsafe {
-            assert_eq!(CStr::from_ptr(a).to_bytes(), b"foo");
-            assert_eq!(CStr::from_ptr(c).to_bytes(), b"bar");
+            assert_eq!(CStr::from_ptr(p).to_bytes(), b"strcache-test-foo");
+            assert_eq!(CStr::from_ptr(r).to_bytes(), b"strcache-test-bar");
         }
+        assert!(a.contains(&(p as usize)) && a.contains(&(r as usize)));
     }
 
     #[test]
     fn add_len_ignores_trailing_bytes() {
-        let mut it = Interner::default();
+        let (mut a, mut n) = fresh();
         // Intern only the first 3 bytes of a longer, non-terminated buffer.
-        let p = it.intern(&b"foobar"[..3]);
+        let p = intern_into(&mut a, &mut n, &b"foobar"[..3]);
         unsafe {
             assert_eq!(CStr::from_ptr(p).to_bytes(), b"foo");
         }
-        // Must collide with the canonical "foo".
-        assert_eq!(p, it.intern(b"foo"));
+        assert_eq!(p, intern_into(&mut a, &mut n, b"foo"));
     }
 
     #[test]
-    fn iscached_matches_only_returned_pointers() {
-        let mut it = Interner::default();
-        let p = it.intern(b"cached");
-        assert!(it.contains(p));
-        // A foreign pointer is never reported as cached.
-        let foreign = b"cached\0".as_ptr().cast::<c_char>();
-        assert!(!it.contains(foreign));
+    fn non_utf8_is_interned_faithfully() {
+        // The whole reason for the byte fallback: ustr's C constructor would
+        // lossily mangle these bytes into U+FFFD. We must store them verbatim.
+        let (mut a, mut n) = fresh();
+        let raw: &[u8] = b"bad\xff\xfename";
+        let p = intern_into(&mut a, &mut n, raw);
+        unsafe {
+            assert_eq!(CStr::from_ptr(p).to_bytes(), raw, "bytes must survive intact");
+        }
+        // Identity and membership hold for the non-UTF-8 path too.
+        assert_eq!(p, intern_into(&mut a, &mut n, raw));
+        assert!(a.contains(&(p as usize)));
+        assert!(!a.contains(&(b"other".as_ptr() as usize)));
     }
 
     #[test]
     fn empty_string_round_trips() {
-        let mut it = Interner::default();
-        let e = it.intern(b"");
+        let (mut a, mut n) = fresh();
+        let e = intern_into(&mut a, &mut n, b"");
         unsafe {
             assert_eq!(CStr::from_ptr(e).to_bytes(), b"");
         }
-        assert_eq!(e, it.intern(b""), "empty string is interned once");
-        assert!(it.contains(e));
+        assert_eq!(e, intern_into(&mut a, &mut n, b""));
     }
 }
