@@ -237,7 +237,7 @@ pub unsafe extern "C" fn jobserver_setup(
             loop {
                 job_fds[0 as usize] = open(
                     fifo_name,
-                    0 | 0o4000 as ::core::ffi::c_int,
+                    0o4000 as ::core::ffi::c_int,
                 );
                 if !(job_fds[0 as usize] == -1
                     && *__errno_location() == EINTR)
@@ -643,7 +643,7 @@ pub unsafe extern "C" fn jobserver_acquire(timeout: ::core::ffi::c_int) -> ::cor
             __i = __i.wrapping_add(1);
         }
         readfds.fds_bits[(job_fds[0 as usize] / __NFDBITS) as usize] |=
-            ((1) << job_fds[0 as usize] % __NFDBITS)
+            ((1) << (job_fds[0 as usize] % __NFDBITS))
                 as __fd_mask;
         r = pselect(
             job_fds[0 as usize] + 1,

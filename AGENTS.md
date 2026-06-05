@@ -62,7 +62,7 @@ Phase 4:
 - Use Miri on rewritten modules
 - Run Clippy with -D warnings
 
-MyCrush directory contains code generated with c2rust. 
+The `src/` directory contains code generated with c2rust. 
    Here are some common patterns for cleaning up the code base to achive a more idiomatic codebase.
    
 ### Pattern 1: Loop Simplification
@@ -363,7 +363,7 @@ Start with search-only patches, then promote them to rewrites once the matches a
 ### Workflow
 
 1. Write a search-only semantic patch.
-2. Run it across `MyCrush` and inspect all matches.
+2. Run it across `src/` and inspect all matches.
 3. Classify matches as:
    - safe mechanical rewrite
    - needs local review

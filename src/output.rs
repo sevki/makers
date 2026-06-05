@@ -242,66 +242,47 @@ pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
     fd
 }
 #[no_mangle]
-pub unsafe extern "C" fn setup_tmpfile(mut out: *mut output) {
-    let mut current_block: u64;
+pub unsafe extern "C" fn setup_tmpfile(out: *mut output) {
     static mut in_setup: ::core::ffi::c_uint = 0;
-    let io_state: ::core::ffi::c_uint;
     if in_setup != 0 {
         return;
     }
     in_setup = 1;
-    io_state = check_io_state();
-    if !(io_state & (0x8 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int) as ::core::ffi::c_uint
-        != 0)
-    {
-        perror_with_name(
-            b"output-sync suppressed: \0" as *const u8 as *const ::core::ffi::c_char,
-            b"stderr\0" as *const u8 as *const ::core::ffi::c_char,
-        );
-    } else {
+    let io_state: ::core::ffi::c_uint = check_io_state();
+    // The block falls through to the error handler below on any failure;
+    // reaching its end is the success path (the C code used `goto`).
+    'setup: {
+        if io_state & (0x8 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int) as ::core::ffi::c_uint
+            == 0
+        {
+            perror_with_name(
+                b"output-sync suppressed: \0" as *const u8 as *const ::core::ffi::c_char,
+                b"stderr\0" as *const u8 as *const ::core::ffi::c_char,
+            );
+            break 'setup;
+        }
         if io_state & 0x8 as ::core::ffi::c_uint != 0 {
             let fd: ::core::ffi::c_int = output_tmpfd();
             if fd < 0 {
-                current_block = 2479664526570923066;
+                break 'setup;
+            }
+            fd_noinherit(fd);
+            (*out).out = fd;
+        }
+        if io_state & 0x10 as ::core::ffi::c_uint != 0 {
+            if (*out).out != OUTPUT_NONE && io_state & 0x2 as ::core::ffi::c_uint != 0 {
+                (*out).err = (*out).out;
             } else {
-                fd_noinherit(fd);
-                (*out).out = fd;
-                current_block = 3276175668257526147;
-            }
-        } else {
-            current_block = 3276175668257526147;
-        }
-        match current_block {
-            2479664526570923066 => {}
-            _ => {
-                if io_state & 0x10 as ::core::ffi::c_uint != 0 {
-                    if (*out).out != OUTPUT_NONE
-                        && io_state & 0x2 as ::core::ffi::c_uint != 0
-                    {
-                        (*out).err = (*out).out;
-                        current_block = 9606288038608642794;
-                    } else {
-                        let fd_0: ::core::ffi::c_int = output_tmpfd();
-                        if fd_0 < 0 {
-                            current_block = 2479664526570923066;
-                        } else {
-                            fd_noinherit(fd_0);
-                            (*out).err = fd_0;
-                            current_block = 9606288038608642794;
-                        }
-                    }
-                } else {
-                    current_block = 9606288038608642794;
+                let fd_0: ::core::ffi::c_int = output_tmpfd();
+                if fd_0 < 0 {
+                    break 'setup;
                 }
-                match current_block {
-                    2479664526570923066 => {}
-                    _ => {
-                        in_setup = 0;
-                        return;
-                    }
-                }
+                fd_noinherit(fd_0);
+                (*out).err = fd_0;
             }
         }
+        in_setup = 0;
+        return;
     }
     error(
         ::core::ptr::null_mut::<Floc>(),
@@ -400,17 +381,12 @@ pub unsafe fn output_close(out: *mut output) {
     output_init(out);
 }
 pub unsafe fn output_start() {
-    if !output_context.is_null() && (*output_context).syncout() as ::core::ffi::c_int != 0 {
-        if !((*output_context).out >= 0
-            || (*output_context).err >= 0)
-        {
-            setup_tmpfile(output_context);
-        }
+    if !output_context.is_null() && (*output_context).syncout() as ::core::ffi::c_int != 0 && !((*output_context).out >= 0
+            || (*output_context).err >= 0) {
+        setup_tmpfile(output_context);
     }
-    if output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE {
-        if stdio_traced == 0 && should_print_dir() != 0 {
-            stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
-        }
+    if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE) && stdio_traced == 0 && should_print_dir() != 0 {
+        stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
     }
 }
 #[no_mangle]
@@ -481,8 +457,7 @@ pub unsafe extern "C" fn message(
     args_0 = args.clone();
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
             == 0
         {
         } else {
@@ -493,8 +468,7 @@ pub unsafe extern "C" fn message(
                 b"void message(int, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     outputs(0, start);
 }
 #[no_mangle]
@@ -550,8 +524,7 @@ pub unsafe extern "C" fn error(
     args_0 = args.clone();
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
             == 0
         {
         } else {
@@ -562,8 +535,7 @@ pub unsafe extern "C" fn error(
                 b"void error(const Floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     outputs(1, start);
 }
 #[no_mangle]
@@ -621,8 +593,7 @@ pub unsafe extern "C" fn fatal(
     args_0 = args.clone();
     vsprintf(p, fmt, args_0.as_va_list());
     strcat(p, stop);
-    '_c2rust_label: {
-        if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
             == 0
         {
         } else {
@@ -633,8 +604,7 @@ pub unsafe extern "C" fn fatal(
                 b"void fatal(const Floc *, size_t, const char *, ...)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     outputs(1, start);
     die(MAKE_FAILURE);
 }

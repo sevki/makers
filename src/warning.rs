@@ -63,12 +63,7 @@ impl Action {
         }
     }
     fn from_name(s: &str) -> Option<Action> {
-        for a in [Action::Ignore, Action::Warn, Action::Error] {
-            if a.name().unwrap().eq_ignore_ascii_case(s) {
-                return Some(a);
-            }
-        }
-        None
+        [Action::Ignore, Action::Warn, Action::Error].into_iter().find(|&a| a.name().unwrap().eq_ignore_ascii_case(s))
     }
 }
 

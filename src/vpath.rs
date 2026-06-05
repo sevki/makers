@@ -241,7 +241,7 @@ pub unsafe extern "C" fn construct_vpath_list(
         if len > 1 || *v as ::core::ffi::c_int != '.' as i32 {
             let fresh1 = elem;
             elem = elem.wrapping_add(1);
-            let ref mut fresh2 = *vpath.offset(fresh1 as isize);
+            let fresh2 = &mut (*vpath.offset(fresh1 as isize));
             *fresh2 = dir_name(strcache_add_len(v, len));
             if len > maxvpath {
                 maxvpath = len;
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn construct_vpath_list(
                     .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
             ) as *mut *const ::core::ffi::c_char;
         }
-        let ref mut fresh3 = *vpath.offset(elem as isize);
+        let fresh3 = &mut (*vpath.offset(elem as isize));
         *fresh3 = ::core::ptr::null::<::core::ffi::c_char>();
         path_0 = xmalloc(::core::mem::size_of::<vpath>() as size_t) as *mut vpath;
         (*path_0).searchpath = vpath;
@@ -344,7 +344,6 @@ unsafe extern "C" fn selective_vpath_search(
             .wrapping_add(1) as usize,
     ));
     name = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    let mut current_block_45: u64;
     i = 0;
     while !(*vpath.offset(i as isize)).is_null() {
         let mut exists_in_cache: ::core::ffi::c_int = 0;
@@ -436,6 +435,9 @@ unsafe extern "C" fn selective_vpath_search(
                 __glibc_reserved: [0; 3],
             };
             *p = '/' as i32 as ::core::ffi::c_char;
+            // A cached hit that no longer stat()s is treated as missing: keep
+            // searching the remaining vpath entries instead of returning it.
+            let mut do_return = true;
             if exists_in_cache != 0 {
                 let mut e: ::core::ffi::c_int;
                 loop {
@@ -446,36 +448,28 @@ unsafe extern "C" fn selective_vpath_search(
                 }
                 if e != 0 {
                     exists = 0;
-                    current_block_45 = 2868539653012386629;
-                } else {
-                    if !mtime_ptr.is_null() {
-                        *mtime_ptr = file_timestamp_cons(
-                            name,
-                            st.st_mtim.tv_sec as time_t,
-                            st.st_mtim.tv_nsec as ::core::ffi::c_long,
-                        );
-                        mtime_ptr = ::core::ptr::null_mut::<uintmax_t>();
-                    }
-                    current_block_45 = 7427571413727699167;
-                }
-            } else {
-                current_block_45 = 7427571413727699167;
-            }
-            match current_block_45 {
-                2868539653012386629 => {}
-                _ => {
-                    if !mtime_ptr.is_null() {
-                        *mtime_ptr = UNKNOWN_MTIME as uintmax_t;
-                    }
-                    if !path_index.is_null() {
-                        *path_index = i;
-                    }
-                    return strcache_add_len(
+                    do_return = false;
+                } else if !mtime_ptr.is_null() {
+                    *mtime_ptr = file_timestamp_cons(
                         name,
-                        (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name) as ::core::ffi::c_long as size_t)
-                            .wrapping_add(flen),
+                        st.st_mtim.tv_sec as time_t,
+                        st.st_mtim.tv_nsec as ::core::ffi::c_long,
                     );
+                    mtime_ptr = ::core::ptr::null_mut::<uintmax_t>();
                 }
+            }
+            if do_return {
+                if !mtime_ptr.is_null() {
+                    *mtime_ptr = UNKNOWN_MTIME as uintmax_t;
+                }
+                if !path_index.is_null() {
+                    *path_index = i;
+                }
+                return strcache_add_len(
+                    name,
+                    (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name) as ::core::ffi::c_long as size_t)
+                        .wrapping_add(flen),
+                );
             }
         }
         i = i.wrapping_add(1);

@@ -385,8 +385,7 @@ pub unsafe fn strcache_print_stats(prefix: *const ::core::ffi::c_char) {
     let total_strings = TOTAL_STRINGS.load(Ordering::Relaxed) as ::core::ffi::c_ulong;
     let total_size = TOTAL_SIZE.load(Ordering::Relaxed) as ::core::ffi::c_ulong;
     let total_adds = TOTAL_ADDS.load(Ordering::Relaxed) as ::core::ffi::c_ulong;
-    '_c2rust_label: {
-        if total_buffers == numbuffs.wrapping_add(1) {
+    if total_buffers == numbuffs.wrapping_add(1) {
         } else {
             __assert_fail(
                 b"total_buffers == numbuffs + 1\0" as *const u8 as *const ::core::ffi::c_char,
@@ -394,8 +393,7 @@ pub unsafe fn strcache_print_stats(prefix: *const ::core::ffi::c_char) {
                 302,
                 __ASSERT_FUNCTION.as_ptr(),
             );
-        }
-    };
+        };
     printf(
         b"\n%s strcache buffers: %lu (%lu) / strings = %lu / storage = %lu B / avg = %lu B\n\0"
             as *const u8 as *const ::core::ffi::c_char,

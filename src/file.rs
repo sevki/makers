@@ -466,8 +466,7 @@ pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *m
         update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
         c2rust_padding: [0; 4],
     };
-    '_c2rust_label: {
-        if *name as ::core::ffi::c_int != 0 {
+    if *name as ::core::ffi::c_int != 0 {
         } else {
             __assert_fail(
                 b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -476,8 +475,7 @@ pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *m
                 b"struct file *lookup_file(const char *)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     while *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '.' as i32
         && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
             .offset(*name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar as isize)
@@ -532,8 +530,7 @@ pub unsafe extern "C" fn enter_file(name: *const ::core::ffi::c_char) -> *mut fi
         update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
         c2rust_padding: [0; 4],
     };
-    '_c2rust_label: {
-        if *name as ::core::ffi::c_int != 0 {
+    if *name as ::core::ffi::c_int != 0 {
         } else {
             __assert_fail(
                 b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -542,10 +539,8 @@ pub unsafe extern "C" fn enter_file(name: *const ::core::ffi::c_char) -> *mut fi
                 b"struct file *enter_file(const char *)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
-    '_c2rust_label_0: {
-        if verify_flag == 0 || strcache_iscached(name) != 0 {
+        };
+    if verify_flag == 0 || strcache_iscached(name) != 0 {
         } else {
             __assert_fail(
                 b"! verify_flag || strcache_iscached (name)\0" as *const u8
@@ -555,8 +550,7 @@ pub unsafe extern "C" fn enter_file(name: *const ::core::ffi::c_char) -> *mut fi
                 b"struct file *enter_file(const char *)\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-        }
-    };
+        };
     file_key.hname = name;
     file_slot = hash_find_slot(
         &raw mut files,
@@ -814,7 +808,7 @@ pub unsafe extern "C" fn rehash_file(
     }
     let fresh2 = rehashed_files_len;
     rehashed_files_len = rehashed_files_len.wrapping_add(1);
-    let ref mut fresh3 = *rehashed_files.offset(fresh2 as isize);
+    let fresh3 = &mut (*rehashed_files.offset(fresh2 as isize));
     *fresh3 = from_file;
 }
 #[no_mangle]
@@ -841,7 +835,6 @@ pub unsafe extern "C" fn remove_intermediates(sig: ::core::ffi::c_int) {
     }
     file_slot = files.ht_vec as *mut *mut file;
     file_end = file_slot.offset(files.ht_size as isize);
-    let mut current_block_35: u64;
     while file_slot < file_end {
         if !((*file_slot).is_null()
             || *file_slot as *mut ::core::ffi::c_void
@@ -855,69 +848,61 @@ pub unsafe extern "C" fn remove_intermediates(sig: ::core::ffi::c_int) {
                 && (*f).cmd_target() == 0
             {
                 let status: ::core::ffi::c_int;
-                if !((*f).update_status() as ::core::ffi::c_int == us_none as ::core::ffi::c_int) {
+                if (*f).update_status() as ::core::ffi::c_int != us_none as ::core::ffi::c_int {
+                    // ENOENT from unlink means the file was already gone: skip the
+                    // diagnostic/bookkeeping below (the C code `continue`d here).
+                    let skip: bool;
                     if just_print_flag != 0 {
                         status = 0;
-                        current_block_35 = 2979737022853876585;
+                        skip = false;
                     } else {
                         status = unlink((*f).name);
-                        if status < 0 && *__errno_location() == ENOENT {
-                            current_block_35 = 6873731126896040597;
-                        } else {
-                            current_block_35 = 2979737022853876585;
-                        }
+                        skip = status < 0 && *__errno_location() == ENOENT;
                     }
-                    match current_block_35 {
-                        6873731126896040597 => {}
-                        _ => {
-                            if (*f).dontcare() == 0 {
-                                if sig != 0 {
-                                    error(
-                                        ::core::ptr::null_mut::<Floc>(),
-                                        strlen((*f).name) as size_t,
-                                        b"*** deleting intermediate file '%s'\0" as *const u8
-                                            as *const ::core::ffi::c_char,
-                                        (*f).name,
-                                    );
-                                } else {
-                                    if doneany == 0 {
-                                        if 0x1 as ::core::ffi::c_int & db_level != 0 {
-                                            printf(
-                                                b"Removing intermediate files...\n\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                            );
-                                            fflush(stdout);
-                                        }
-                                    }
-                                    if run_silent == 0 {
-                                        if doneany == 0 {
-                                            fputs(
-                                                b"rm \0" as *const u8 as *const ::core::ffi::c_char,
-                                                stdout,
-                                            );
-                                            doneany = 1;
-                                        } else {
-                                            putchar(' ' as i32);
-                                        }
-                                        fputs((*f).name, stdout);
-                                        fflush(stdout);
-                                    }
-                                }
-                                if status < 0 {
-                                    if doneany != 0 {
-                                        fputs(
-                                            b"\n\0" as *const u8 as *const ::core::ffi::c_char,
-                                            stdout,
-                                        );
-                                    }
-                                    fflush(stdout);
-                                    perror_with_name(
-                                        b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
-                                        (*f).name,
-                                    );
-                                    doneany = 0;
-                                }
+                    if !skip && (*f).dontcare() == 0 {
+                        if sig != 0 {
+                            error(
+                                ::core::ptr::null_mut::<Floc>(),
+                                strlen((*f).name) as size_t,
+                                b"*** deleting intermediate file '%s'\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                (*f).name,
+                            );
+                        } else {
+                            if doneany == 0 && 0x1 as ::core::ffi::c_int & db_level != 0 {
+                                printf(
+                                    b"Removing intermediate files...\n\0" as *const u8
+                                        as *const ::core::ffi::c_char,
+                                );
+                                fflush(stdout);
                             }
+                            if run_silent == 0 {
+                                if doneany == 0 {
+                                    fputs(
+                                        b"rm \0" as *const u8 as *const ::core::ffi::c_char,
+                                        stdout,
+                                    );
+                                    doneany = 1;
+                                } else {
+                                    putchar(' ' as i32);
+                                }
+                                fputs((*f).name, stdout);
+                                fflush(stdout);
+                            }
+                        }
+                        if status < 0 {
+                            if doneany != 0 {
+                                fputs(
+                                    b"\n\0" as *const u8 as *const ::core::ffi::c_char,
+                                    stdout,
+                                );
+                            }
+                            fflush(stdout);
+                            perror_with_name(
+                                b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
+                                (*f).name,
+                            );
+                            doneany = 0;
                         }
                     }
                 }
@@ -1930,8 +1915,7 @@ pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
                 puts(b"#  Successfully updated.\0" as *const u8 as *const ::core::ffi::c_char);
             }
             2 => {
-                '_c2rust_label: {
-                    if question_flag != 0 {
+                if question_flag != 0 {
                     } else {
                         __assert_fail(
                             b"question_flag\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1940,8 +1924,7 @@ pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
                             b"void print_file(const void *)\0" as *const u8
                                 as *const ::core::ffi::c_char,
                         );
-                    }
-                };
+                    };
                 puts(
                     b"#  Needs to be updated (-q is set).\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -2102,25 +2085,21 @@ pub unsafe extern "C" fn verify_file(item: *const ::core::ffi::c_void) {
     }
     d = (*f).deps;
     while !d.is_null() {
-        if (*d).need_2nd_expansion() == 0 {
-            if !(*d).name.is_null()
-                && *(*d).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
-                && strcache_iscached((*d).name) == 0
-            {
-                error(
-                    ::core::ptr::null::<Floc>(),
-                    (strlen((*d).name) as size_t)
-                        .wrapping_add(
-                            (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
-                                .wrapping_sub(1),
-                        )
-                        .wrapping_add(strlen((*d).name) as size_t),
-                    b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*d).name,
-                    b"name\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*d).name,
-                );
-            }
+        if (*d).need_2nd_expansion() == 0 && !(*d).name.is_null()
+                && *(*d).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 && strcache_iscached((*d).name) == 0 {
+            error(
+                ::core::ptr::null::<Floc>(),
+                (strlen((*d).name) as size_t)
+                    .wrapping_add(
+                        (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
+                            .wrapping_sub(1),
+                    )
+                    .wrapping_add(strlen((*d).name) as size_t),
+                b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                (*d).name,
+                b"name\0" as *const u8 as *const ::core::ffi::c_char,
+                (*d).name,
+            );
         }
         if !(*d).stem.is_null()
             && *(*d).stem.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0

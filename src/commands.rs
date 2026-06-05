@@ -695,7 +695,7 @@ pub unsafe extern "C" fn chop_commands(mut cmds: *mut commands) {
             (nlines as size_t)
                 .wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
         ) as *mut *mut ::core::ffi::c_char;
-        let ref mut fresh4 = *lines.offset(0 as ::core::ffi::c_int as isize);
+        let fresh4 = &mut (*lines.offset(0 as ::core::ffi::c_int as isize));
         *fresh4 = xstrdup((*cmds).commands);
         if l > 0
             && *(*lines.offset(0 as ::core::ffi::c_int as isize)).offset(l.wrapping_sub(1) as isize) as ::core::ffi::c_int
@@ -756,7 +756,7 @@ pub unsafe extern "C" fn chop_commands(mut cmds: *mut commands) {
             }
             let fresh5 = nlines;
             nlines = nlines.wrapping_add(1);
-            let ref mut fresh6 = *lines.offset(fresh5 as isize);
+            let fresh6 = &mut (*lines.offset(fresh5 as isize));
             *fresh6 = xstrndup(p, end.offset_from(p) as ::core::ffi::c_long as size_t);
             p = end;
             if *p as ::core::ffi::c_int != 0 {

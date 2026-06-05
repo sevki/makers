@@ -500,32 +500,28 @@ unsafe extern "C" fn update_file(
     } else {
         file
     };
-    if (*f).considered == considered {
-        if !((*f).updated() as ::core::ffi::c_int != 0
+    if (*f).considered == considered && !((*f).updated() as ::core::ffi::c_int != 0
             && (*f).update_status() as ::core::ffi::c_int > us_none as ::core::ffi::c_int
             && (*f).dontcare() == 0
-            && (*f).no_diag() as ::core::ffi::c_int != 0)
-            && !(!(*file).double_colon.is_null()
+            && (*f).no_diag() as ::core::ffi::c_int != 0) && !(!(*file).double_colon.is_null()
                 && (*file).command_state() as ::core::ffi::c_int
                     == cs_finished as ::core::ffi::c_int
-                && !(*f).prev.is_null())
-        {
-            if 0x2 as ::core::ffi::c_int & db_level != 0 {
-                print_spaces(depth);
-                printf(
-                    b"Pruning file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*file).name,
-                );
-                fflush(stdout);
-            }
-            return (if (*f).command_state() as ::core::ffi::c_int
-                == cs_finished as ::core::ffi::c_int
-            {
-                (*f).update_status() as ::core::ffi::c_int
-            } else {
-                us_success as ::core::ffi::c_int
-            }) as update_status;
+                && !(*f).prev.is_null()) {
+        if 0x2 as ::core::ffi::c_int & db_level != 0 {
+            print_spaces(depth);
+            printf(
+                b"Pruning file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
+                (*file).name,
+            );
+            fflush(stdout);
         }
+        return (if (*f).command_state() as ::core::ffi::c_int
+            == cs_finished as ::core::ffi::c_int
+        {
+            (*f).update_status() as ::core::ffi::c_int
+        } else {
+            us_success as ::core::ffi::c_int
+        }) as update_status;
     }
     while !f.is_null() {
         let new: update_status;
@@ -705,11 +701,11 @@ unsafe extern "C" fn update_file_1(
         }
     }
     (*file).set_no_diag((*file).dontcare() as ::core::ffi::c_uint);
-    let ref mut fresh0 = *if !(*file).double_colon.is_null() {
+    let fresh0 = &mut (*if !(*file).double_colon.is_null() {
         (*file).double_colon
     } else {
         file
-    };
+    });
     (*fresh0).set_updating(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     ofile = file;
     depth = depth.wrapping_add(1);
@@ -941,7 +937,7 @@ unsafe extern "C" fn update_file_1(
                 }
                 let fresh1 = dropped_list_len;
                 dropped_list_len = dropped_list_len.wrapping_add(1);
-                let ref mut fresh2 = *dropped_list.offset(fresh1 as isize);
+                let fresh2 = &mut (*dropped_list.offset(fresh1 as isize));
                 *fresh2 = d;
             } else {
                 (*(*d).file).parent = file;
@@ -1072,17 +1068,17 @@ unsafe extern "C" fn update_file_1(
             du = (*du).next;
         }
     }
-    let ref mut fresh3 = *if !(*file).double_colon.is_null() {
+    let fresh3 = &mut (*if !(*file).double_colon.is_null() {
         (*file).double_colon
     } else {
         file
-    };
+    });
     (*fresh3).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let ref mut fresh4 = *if !(*ofile).double_colon.is_null() {
+    let fresh4 = &mut (*if !(*ofile).double_colon.is_null() {
         (*ofile).double_colon
     } else {
         ofile
-    };
+    });
     (*fresh4).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     depth = depth.wrapping_sub(1);
     if running != 0 {
@@ -1361,38 +1357,30 @@ pub unsafe extern "C" fn notice_finished_file(mut file: *mut file) {
     if touch_flag != 0
         && (*file).update_status() as ::core::ffi::c_int == us_success as ::core::ffi::c_int
     {
-        let current_block_9: u64;
+        // Touch the file unless every command line is recursive (flagged
+        // COMMANDS_RECURSE); a single non-recursive line means we touch.
+        let mut should_touch = true;
         if !(*file).cmds.is_null() && (*(*file).cmds).any_recurse() as ::core::ffi::c_int != 0 {
-            let mut i: ::core::ffi::c_uint;
-            i = 0;
-            loop {
-                if !(i < (*(*file).cmds).ncommand_lines as ::core::ffi::c_uint) {
-                    current_block_9 = 3512920355445576850;
-                    break;
-                }
-                if !(*(*(*file).cmds).lines_flags.offset(i as isize) as ::core::ffi::c_int
-                    & 1
-                    != 0)
+            should_touch = false;
+            let n: ::core::ffi::c_uint = (*(*file).cmds).ncommand_lines as ::core::ffi::c_uint;
+            let mut i: ::core::ffi::c_uint = 0;
+            while i < n {
+                if (*(*(*file).cmds).lines_flags.offset(i as isize) as ::core::ffi::c_int & 1) == 0
                 {
-                    current_block_9 = 13372790590450788500;
+                    should_touch = true;
                     break;
                 }
                 i = i.wrapping_add(1);
             }
-        } else {
-            current_block_9 = 13372790590450788500;
         }
-        match current_block_9 {
-            13372790590450788500 => {
-                if (*file).phony() != 0 {
-                    (*file).set_update_status(us_success as update_status);
-                } else if !(*file).cmds.is_null() {
-                    (*file).set_update_status(touch_file(file) as update_status as update_status);
-                    commands_started = commands_started.wrapping_add(1);
-                    touched = 1;
-                }
+        if should_touch {
+            if (*file).phony() != 0 {
+                (*file).set_update_status(us_success as update_status);
+            } else if !(*file).cmds.is_null() {
+                (*file).set_update_status(touch_file(file) as update_status as update_status);
+                commands_started = commands_started.wrapping_add(1);
+                touched = 1;
             }
-            _ => {}
         }
     }
     if (*file).mtime_before_update == UNKNOWN_MTIME as uintmax_t {
@@ -1494,11 +1482,11 @@ unsafe extern "C" fn check_dep(
     let ofile: *mut file;
     let mut d: *mut dep;
     let mut dep_status: update_status = us_success;
-    let ref mut fresh5 = *if !(*file).double_colon.is_null() {
+    let fresh5 = &mut (*if !(*file).double_colon.is_null() {
         (*file).double_colon
     } else {
         file
-    };
+    });
     (*fresh5).set_updating(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     ofile = file;
     if (*file).phony() as ::core::ffi::c_int != 0 || (*file).intermediate() == 0 {
@@ -1635,17 +1623,17 @@ unsafe extern "C" fn check_dep(
             }
         }
     }
-    let ref mut fresh6 = *if !(*file).double_colon.is_null() {
+    let fresh6 = &mut (*if !(*file).double_colon.is_null() {
         (*file).double_colon
     } else {
         file
-    };
+    });
     (*fresh6).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let ref mut fresh7 = *if !(*ofile).double_colon.is_null() {
+    let fresh7 = &mut (*if !(*ofile).double_colon.is_null() {
         (*ofile).double_colon
     } else {
         ofile
-    };
+    });
     (*fresh7).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     dep_status
 }
@@ -2282,17 +2270,13 @@ unsafe extern "C" fn library_search(
                     &raw mut vpath_index,
                     &raw mut path_index,
                 );
-                if !f.is_null() {
-                    if file.is_null()
-                        || vpath_index < best_vpath
-                        || vpath_index == best_vpath && path_index < best_path
-                    {
-                        file = f;
-                        best_vpath = vpath_index;
-                        best_path = path_index;
-                        if !mtime_ptr.is_null() {
-                            *mtime_ptr = mtime;
-                        }
+                if !f.is_null() && (file.is_null()
+                        || vpath_index < best_vpath || vpath_index == best_vpath && path_index < best_path) {
+                    file = f;
+                    best_vpath = vpath_index;
+                    best_path = path_index;
+                    if !mtime_ptr.is_null() {
+                        *mtime_ptr = mtime;
                     }
                 }
                 if buflen == 0 {
@@ -2326,13 +2310,11 @@ unsafe extern "C" fn library_search(
                         libbuf,
                     );
                     mtime = name_mtime(buf);
-                    if mtime != NONEXISTENT_MTIME as uintmax_t {
-                        if file.is_null() || vpath_index_0 < best_vpath {
-                            file = strcache_add(buf);
-                            best_vpath = vpath_index_0;
-                            if !mtime_ptr.is_null() {
-                                *mtime_ptr = mtime;
-                            }
+                    if mtime != NONEXISTENT_MTIME as uintmax_t && (file.is_null() || vpath_index_0 < best_vpath) {
+                        file = strcache_add(buf);
+                        best_vpath = vpath_index_0;
+                        if !mtime_ptr.is_null() {
+                            *mtime_ptr = mtime;
                         }
                     }
                     vpath_index_0 = vpath_index_0.wrapping_add(1);
