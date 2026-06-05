@@ -474,3 +474,47 @@ fn wildcard_function_and_nomatch() {
     assert_eq!(code, Some(0), "stdout: {out}");
     assert_eq!(out, "got=[a.in b.in] none=[]\n");
 }
+
+// construct_command_argv_internal: fast-path (exec directly) vs. shell decision
+// and argv splitting. Behaviour verified to match GNU Make 4.3.
+
+#[test]
+fn recipe_fast_path_simple_and_words() {
+    // No shell metacharacters -> argv split + direct exec; multiple args.
+    let (out, code) = run_make("all: ; @echo one two   three\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "one two three\n");
+}
+
+#[test]
+fn recipe_shell_metachars_use_shell() {
+    // Pipe and semicolon force the shell path; output must still be correct.
+    let (out, code) = run_make("all: ; @echo hi | tr a-z A-Z; echo done\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "HI\ndone\n");
+}
+
+#[test]
+fn recipe_quotes_preserved() {
+    // Quoted whitespace is kept as a single argument.
+    let (out, code) = run_make("all: ; @printf '[%s]\\n' \"a   b\"\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "[a   b]\n");
+}
+
+#[test]
+fn recipe_shell_builtin_uses_shell() {
+    // A lone shell builtin (cd) can't be exec'd directly; must go via the shell.
+    let (out, code) = run_make("all: ; @cd / && pwd\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "/\n");
+}
+
+#[test]
+fn recipe_var_assignment_prefix_uses_shell() {
+    // A leading VAR=value word is shell syntax, not an argv[0]. ($$ -> $ so the
+    // shell, not make, expands FOO.)
+    let (out, code) = run_make("all: ; @FOO=bar sh -c 'echo $$FOO'\n", &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "bar\n");
+}
