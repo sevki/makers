@@ -19,22 +19,30 @@ echo "Rust make build exit code: $r_exit"
 [ "$c_exit" = 0 ] || { echo "::error::C make kernel build did not succeed (exit $c_exit)"; fail=1; }
 [ "$r_exit" = 0 ] || { echo "::error::Rust make kernel build did not succeed (exit $r_exit)"; fail=1; }
 
-# Normalize a build log so the two makes' outputs are comparable:
+# Normalize a build log down to make-relevant lines so the two makes' outputs
+# are comparable:
+#   - okLinux build.sh first runs `git clone` and `sudo apt-get update/install`,
+#     whose output (fetch timings, mirror chatter, package-manager messages) is
+#     run-specific and unrelated to make. So we *allowlist* only kbuild's recipe
+#     echoes ("  CC  foo.o", "  LD  vmlinux", ...) — an UPPERCASE verb at line
+#     start — and make's own program/status lines ("make:" / "make[N]:"),
+#     dropping everything else.
 #   - strip the per-build working-directory prefixes (the two builds run in
-#     different temp dirs),
-#   - drop make's own directory-tracking chatter,
-#   - trim leading whitespace from kbuild's "  CC  foo.o" echoes,
-#   - sort uniquely, since `make -j` interleaves output non-deterministically —
-#     so we compare the *set* of build actions/messages, not their order.
-# Tunable: widen the path stripping if real runs show spurious diffs.
+#     different temp dirs), and drop make's directory-recursion chatter.
+#   - sort to tolerate `make -j` non-deterministic interleaving, but DO NOT
+#     dedupe: multiplicity matters — a make that runs a recipe twice, or skips
+#     one of two identical actions, is exactly the kind of regression this is
+#     meant to catch.
+# Tunable: widen the path stripping / allowlist if real runs show spurious diffs.
 normalize() {
     sed -E \
         -e 's#/[^[:space:]]*/(rust|c)-kernel/##g' \
         -e 's#/(home|tmp|mnt|runner)/[^[:space:]]*/kernel/#kernel/#g' \
         "$1" 2>/dev/null \
+        | grep -E '^[[:space:]]*([A-Z][A-Z0-9_]+([[:space:]]|$)|make(\[[0-9]+\])?:)' \
         | grep -vE "make\[[0-9]+\]: (Entering|Leaving) directory" \
         | sed -E 's/^[[:space:]]+//' \
-        | sort -u
+        | sort
 }
 
 for stream in stdout stderr; do
