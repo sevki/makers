@@ -312,3 +312,165 @@ fn warn_unknown_warning_is_error() {
         &["--warn=no-such-warning"],
     );
 }
+
+// ---------------------------------------------------------------------------
+// Self-contained behavioural tests (no C oracle required).
+//
+// These pin behaviour of code paths reworked during the c2rust -> idiomatic
+// cleanup: recipe execution (child_execute_job / start_job_command), child
+// reaping (reap_children), variable flavors (do_variable_definition), and
+// word/glob parsing (get_next_mword / get_next_word / parse_file_seq). Each
+// runs the Rust make on an inline makefile and asserts on its output, so they
+// work even where the differential `./make` oracle is unavailable.
+// ---------------------------------------------------------------------------
+
+/// Run the Rust make on an inline makefile in a fresh working directory, with
+/// optional auxiliary files written alongside it. Returns (stdout, exit code).
+fn run_make(makefile: &str, files: &[(&str, &str)], args: &[&str]) -> (String, Option<i32>) {
+    let dir = tempdir();
+    std::fs::write(dir.join("Makefile"), makefile).unwrap();
+    for (name, contents) in files {
+        std::fs::write(dir.join(name), contents).unwrap();
+    }
+    let out = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .args(args)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to spawn make");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code(),
+    )
+}
+
+#[test]
+fn variable_flavors() {
+    // Exercises do_variable_definition / parse_variable_definition: =, :=, ::=,
+    // +=, !=, ?=, and recursive append (which leaves a trailing space).
+    let mk = "\
+EMPTY =
+REC = a$(EMPTY)b
+SIM := simple-$(REC)
+EXPND ::= expanded-$(REC)
+APP = first
+APP += second
+APP += $(EMPTY)
+SHL != echo from-shell
+COND ?= conditional
+COND ?= should-not-override
+all: ; @printf 'REC=[%s] SIM=[%s] EXPND=[%s] APP=[%s] SHL=[%s] COND=[%s]\\n' '$(REC)' '$(SIM)' '$(EXPND)' '$(APP)' '$(SHL)' '$(COND)'
+";
+    let (out, code) = run_make(mk, &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(
+        out.trim_end(),
+        "REC=[ab] SIM=[simple-ab] EXPND=[expanded-ab] APP=[first second ] SHL=[from-shell] COND=[conditional]"
+    );
+}
+
+#[test]
+fn recipe_runs_path_and_absolute_commands() {
+    // child_execute_job fast path: a simple command is resolved on PATH, and an
+    // absolute path is exec'd directly. Separate recipe lines so each is its own
+    // (shell-free) command.
+    let mk = "\
+all: t1 t2
+t1: ; @echo via-path
+t2: ; @/bin/echo via-abs
+";
+    let (out, code) = run_make(mk, &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "via-path\nvia-abs\n");
+}
+
+#[test]
+fn recipe_command_not_found_is_error_127() {
+    // reap_children: a child that fails to exec reports exit 127 -> make errors.
+    let (out, code) = run_make("all: ; @no_such_command_zz\n", &[], &[]);
+    assert_eq!(code, Some(2), "stdout: {out}");
+}
+
+#[test]
+fn recipe_enoexec_falls_back_to_shell() {
+    // child_execute_job ENOEXEC path: an executable file with no shebang fails
+    // execve with ENOEXEC and is retried via the shell. The `chmod` step makes
+    // it executable; the second `;` command then runs it directly.
+    let mk = "all: ; @chmod +x ./script; ./script\n";
+    let (out, code) = run_make(mk, &[("script", "echo from-noshebang\n")], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "from-noshebang\n");
+}
+
+#[test]
+fn parallel_jobs_all_run() {
+    // start_waiting_job / reap_children under -j.
+    let mk = "\
+all: j1 j2 j3 j4
+j1: ; @echo done-j1
+j2: ; @echo done-j2
+j3: ; @echo done-j3
+j4: ; @echo done-j4
+";
+    let (out, code) = run_make(mk, &[], &["-j4"]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec!["done-j1", "done-j2", "done-j3", "done-j4"]);
+}
+
+#[test]
+fn keep_going_continues_after_failure() {
+    // reap_children + keep_going: independent targets still build after a
+    // failing one; make still exits non-zero.
+    let mk = "\
+all: a b c
+a: ; @echo A
+b: ; @echo B; false
+c: ; @echo C
+";
+    let (out, code) = run_make(mk, &[], &["-k", "-j1"]);
+    assert_eq!(code, Some(2), "stdout: {out}");
+    assert!(out.contains("A") && out.contains("C"), "stdout: {out}");
+}
+
+#[test]
+fn order_only_prereqs_and_var_refs() {
+    // get_next_word: '|' order-only separator and $ references in a pattern
+    // rule's prerequisite list.
+    let mk = "\
+DEPS = dep1 dep2
+%.o: %.c | $(DEPS)
+\t@echo \"build $@ orderonly=$|\"
+all: foo.o
+";
+    let (out, code) = run_make(mk, &[("foo.c", ""), ("dep1", ""), ("dep2", "")], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "build foo.o orderonly=dep1 dep2\n");
+}
+
+#[test]
+fn static_pattern_double_colon_tokens() {
+    // get_next_mword parses ':' / '::' tokens; static pattern uses two colons.
+    let mk = "\
+OBJS = a.o b.o
+$(OBJS): %.o: %.c
+\t@echo build $@
+both: $(OBJS)
+";
+    let (out, code) = run_make(mk, &[("a.c", ""), ("b.c", "")], &["both"]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort_unstable();
+    assert_eq!(lines, vec!["build a.o", "build b.o"]);
+}
+
+#[test]
+fn wildcard_function_and_nomatch() {
+    // parse_file_seq glob handling: $(wildcard) matches existing files and
+    // yields empty on no match.
+    let mk = "all: ; @echo \"got=[$(sort $(wildcard *.in))] none=[$(wildcard *.nope)]\"\n";
+    let (out, code) = run_make(mk, &[("a.in", ""), ("b.in", "")], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out, "got=[a.in b.in] none=[]\n");
+}
