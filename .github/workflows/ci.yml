@@ -13,6 +13,13 @@ concurrency:
     group: ci-${{ github.ref }}
     cancel-in-progress: true
 
+# ./bootstrap clones gnulib from this URL (default is git.savannah.gnu.org,
+# which is frequently slow/unreachable from CI runners). Point it at a GitHub
+# mirror for reliable clones. The pinned revision still comes from
+# bootstrap.conf (GNULIB_REVISION), so the mirror must carry that ref.
+env:
+    GNULIB_URL: https://github.com/sevki/gnulib.git
+
 jobs:
     rust-make-builds-c-make:
         name: rust make builds C make
