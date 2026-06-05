@@ -436,7 +436,6 @@ unsafe extern "C" fn pattern_search(
                     fflush(stdout);
                 }
             } else {
-                let mut current_block_31: u64;
                 ti = 0;
                 while ti < (*rule).num as ::core::ffi::c_uint {
                     let target: *const ::core::ffi::c_char =
@@ -462,116 +461,100 @@ unsafe extern "C" fn pattern_search(
                                 as ::core::ffi::c_int
                                 as ::core::ffi::c_char;
                         }
+                        let mut matched = true;
                         if check_lastslash != 0 {
                             if pathlen > stemlen {
-                                current_block_31 = 18386322304582297246;
+                                matched = false;
                             } else {
                                 stemlen = stemlen.wrapping_sub(pathlen);
                                 stem = stem.offset(pathlen as isize);
-                                current_block_31 = 14832935472441733737;
                             }
-                        } else {
-                            current_block_31 = 14832935472441733737;
                         }
-                        match current_block_31 {
-                            18386322304582297246 => {}
-                            _ => {
-                                if check_lastslash != 0 {
-                                    if stem > lastslash.offset(1 as ::core::ffi::c_int as isize)
-                                        && !(strncmp(
-                                            target,
-                                            lastslash.offset(1 as ::core::ffi::c_int as isize),
-                                            (stem.offset_from(lastslash) as ::core::ffi::c_long
-                                                - 1)
-                                                as size_t,
-                                        ) == 0)
-                                    {
-                                        current_block_31 = 18386322304582297246;
-                                    } else {
-                                        current_block_31 = 17784502470059252271;
-                                    }
-                                } else if stem > filename
-                                    && !(strncmp(
+                        if matched {
+                            // The target text before the stem must match the name
+                            // (relative to the last slash when the target has none).
+                            let prefix_ok = if check_lastslash != 0 {
+                                !(stem > lastslash.offset(1 as ::core::ffi::c_int as isize)
+                                    && strncmp(
+                                        target,
+                                        lastslash.offset(1 as ::core::ffi::c_int as isize),
+                                        (stem.offset_from(lastslash) as ::core::ffi::c_long - 1)
+                                            as size_t,
+                                    ) != 0)
+                            } else {
+                                !(stem > filename
+                                    && strncmp(
                                         target,
                                         filename,
-                                        stem.offset_from(filename) as ::core::ffi::c_long
-                                            as size_t,
-                                    ) == 0)
-                                {
-                                    current_block_31 = 18386322304582297246;
-                                } else {
-                                    current_block_31 = 17784502470059252271;
-                                }
-                                match current_block_31 {
-                                    18386322304582297246 => {}
-                                    _ => {
-                                        if !(*suffix as ::core::ffi::c_int
-                                            != *stem.offset(stemlen as isize)
+                                        stem.offset_from(filename) as ::core::ffi::c_long as size_t,
+                                    ) != 0)
+                            };
+                            if prefix_ok {
+                                if !(*suffix as ::core::ffi::c_int
+                                    != *stem.offset(stemlen as isize)
+                                        as ::core::ffi::c_int
+                                    || *suffix as ::core::ffi::c_int != 0
+                                        && !(*suffix . offset ( 1 ) as ::core::ffi::c_int
+                                            == *stem.offset(
+                                                stemlen.wrapping_add(1)
+                                                    as isize,
+                                            )
                                                 as ::core::ffi::c_int
-                                            || *suffix as ::core::ffi::c_int != 0
-                                                && !(*suffix . offset ( 1 ) as ::core::ffi::c_int
-                                                    == *stem.offset(
-                                                        stemlen.wrapping_add(1)
+                                            && (*suffix.offset(
+                                                1 as ::core::ffi::c_int as isize,
+                                            )
+                                                as ::core::ffi::c_int
+                                                == 0
+                                                || strcmp(
+                                                    (suffix.offset(
+                                                        1 as ::core::ffi::c_int
                                                             as isize,
                                                     )
-                                                        as ::core::ffi::c_int
-                                                    && (*suffix.offset(
-                                                        1 as ::core::ffi::c_int as isize,
+                                                        as *const ::core::ffi::c_char)
+                                                        .offset(
+                                                            1 as ::core::ffi::c_int
+                                                                as isize,
+                                                        ),
+                                                    (stem.offset(
+                                                        stemlen
+                                                            .wrapping_add(1)
+                                                            as isize,
                                                     )
-                                                        as ::core::ffi::c_int
-                                                        == 0
-                                                        || strcmp(
-                                                            (suffix.offset(
-                                                                1 as ::core::ffi::c_int
-                                                                    as isize,
-                                                            )
-                                                                as *const ::core::ffi::c_char)
-                                                                .offset(
-                                                                    1 as ::core::ffi::c_int
-                                                                        as isize,
-                                                                ),
-                                                            (stem.offset(
-                                                                stemlen
-                                                                    .wrapping_add(1)
-                                                                    as isize,
-                                                            )
-                                                                as *const ::core::ffi::c_char)
-                                                                .offset(
-                                                                    1 as ::core::ffi::c_int
-                                                                        as isize,
-                                                                ),
-                                                        ) == 0)))
-                                        {
-                                            if *target . offset ( 1 ) as ::core::ffi::c_int
-                                                != 0
-                                            {
-                                                specific_rule_matched = 1;
-                                            }
-                                            if !((*rule).deps.is_null()
-                                                && (*rule).cmds.is_null())
-                                            {
-                                                let fresh0 = &mut (*tryrules.offset(nrules as isize)).rule;
-                                                *fresh0 = rule;
-                                                (*tryrules.offset(nrules as isize)).matches =
-                                                    ti;
-                                                (*tryrules.offset(nrules as isize)).stemlen =
-                                                    stemlen.wrapping_add(
-                                                        if check_lastslash
-                                                            as ::core::ffi::c_int
-                                                            != 0
-                                                        {
-                                                            pathlen
-                                                        } else {
-                                                            0
-                                                        },
-                                                    );
-                                                (*tryrules.offset(nrules as isize)).order =
-                                                    nrules;
-                                                (*tryrules.offset(nrules as isize))
-                                                    .checked_lastslash = check_lastslash;
-                                                nrules = nrules.wrapping_add(1);
-                                            }
-                                        }
+                                                        as *const ::core::ffi::c_char)
+                                                        .offset(
+                                                            1 as ::core::ffi::c_int
+                                                                as isize,
+                                                        ),
+                                                ) == 0)))
+                                {
+                                    if *target . offset ( 1 ) as ::core::ffi::c_int
+                                        != 0
+                                    {
+                                        specific_rule_matched = 1;
+                                    }
+                                    if !((*rule).deps.is_null()
+                                        && (*rule).cmds.is_null())
+                                    {
+                                        let fresh0 = &mut (*tryrules.offset(nrules as isize)).rule;
+                                        *fresh0 = rule;
+                                        (*tryrules.offset(nrules as isize)).matches =
+                                            ti;
+                                        (*tryrules.offset(nrules as isize)).stemlen =
+                                            stemlen.wrapping_add(
+                                                if check_lastslash
+                                                    as ::core::ffi::c_int
+                                                    != 0
+                                                {
+                                                    pathlen
+                                                } else {
+                                                    0
+                                                },
+                                            );
+                                        (*tryrules.offset(nrules as isize)).order =
+                                            nrules;
+                                        (*tryrules.offset(nrules as isize))
+                                            .checked_lastslash = check_lastslash;
+                                        nrules = nrules.wrapping_add(1);
                                     }
                                 }
                             }
