@@ -1357,38 +1357,30 @@ pub unsafe extern "C" fn notice_finished_file(mut file: *mut file) {
     if touch_flag != 0
         && (*file).update_status() as ::core::ffi::c_int == us_success as ::core::ffi::c_int
     {
-        let current_block_9: u64;
+        // Touch the file unless every command line is recursive (flagged
+        // COMMANDS_RECURSE); a single non-recursive line means we touch.
+        let mut should_touch = true;
         if !(*file).cmds.is_null() && (*(*file).cmds).any_recurse() as ::core::ffi::c_int != 0 {
-            let mut i: ::core::ffi::c_uint;
-            i = 0;
-            loop {
-                if !(i < (*(*file).cmds).ncommand_lines as ::core::ffi::c_uint) {
-                    current_block_9 = 3512920355445576850;
-                    break;
-                }
-                if !(*(*(*file).cmds).lines_flags.offset(i as isize) as ::core::ffi::c_int
-                    & 1
-                    != 0)
+            should_touch = false;
+            let n: ::core::ffi::c_uint = (*(*file).cmds).ncommand_lines as ::core::ffi::c_uint;
+            let mut i: ::core::ffi::c_uint = 0;
+            while i < n {
+                if (*(*(*file).cmds).lines_flags.offset(i as isize) as ::core::ffi::c_int & 1) == 0
                 {
-                    current_block_9 = 13372790590450788500;
+                    should_touch = true;
                     break;
                 }
                 i = i.wrapping_add(1);
             }
-        } else {
-            current_block_9 = 13372790590450788500;
         }
-        match current_block_9 {
-            13372790590450788500 => {
-                if (*file).phony() != 0 {
-                    (*file).set_update_status(us_success as update_status);
-                } else if !(*file).cmds.is_null() {
-                    (*file).set_update_status(touch_file(file) as update_status as update_status);
-                    commands_started = commands_started.wrapping_add(1);
-                    touched = 1;
-                }
+        if should_touch {
+            if (*file).phony() != 0 {
+                (*file).set_update_status(us_success as update_status);
+            } else if !(*file).cmds.is_null() {
+                (*file).set_update_status(touch_file(file) as update_status as update_status);
+                commands_started = commands_started.wrapping_add(1);
+                touched = 1;
             }
-            _ => {}
         }
     }
     if (*file).mtime_before_update == UNKNOWN_MTIME as uintmax_t {
