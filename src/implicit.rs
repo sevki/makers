@@ -1065,7 +1065,6 @@ unsafe extern "C" fn pattern_search(
                                     ) as *mut patdeps;
                                 pat = deplist.offset(l as isize);
                             }
-                            let mut current_block_294: u64;
                             d = dl;
                             while !d.is_null() {
                                 let df: *mut file;
@@ -1258,6 +1257,7 @@ unsafe extern "C" fn pattern_search(
                                             pat = pat.offset(1 as ::core::ffi::c_int as isize);
                                             (*fresh6).name = (*d).name;
                                         } else {
+                                            let mut found_intermediate = false;
                                             if intermed_ok != 0 {
                                                 if 0x8 as ::core::ffi::c_int & db_level != 0 {
                                                     print_spaces(depth);
@@ -1316,7 +1316,7 @@ unsafe extern "C" fn pattern_search(
                                                     let fresh7 = pat;
                                                     pat = pat.offset(1 as ::core::ffi::c_int as isize);
                                                     (*fresh7).name = (*d).name;
-                                                    current_block_294 = 3620302738604709257;
+                                                    found_intermediate = true;
                                                 } else {
                                                     if !(*int_file).variables.is_null() {
                                                         free_variable_set(
@@ -1331,42 +1331,36 @@ unsafe extern "C" fn pattern_search(
                                                     if df.is_null() {
                                                         file_impossible((*d).name);
                                                     }
-                                                    current_block_294 = 8298116646536739282;
                                                 }
-                                            } else {
-                                                current_block_294 = 8298116646536739282;
                                             }
-                                            match current_block_294 {
-                                                3620302738604709257 => {}
-                                                _ => {
-                                                    if intermed_ok != 0 {
-                                                        if 0x8 as ::core::ffi::c_int & db_level
-                                                            != 0
-                                                        {
-                                                            print_spaces(depth);
-                                                            printf(
-                                                                b"Rejecting rule '%s' due to impossible prerequisite '%s'.\n\0"
-                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                                get_rule_defn(rule),
-                                                                (*d).name,
-                                                            );
-                                                            fflush(stdout);
-                                                        }
-                                                    } else if 0x8 as ::core::ffi::c_int
-                                                        & db_level
+                                            if !found_intermediate {
+                                                if intermed_ok != 0 {
+                                                    if 0x8 as ::core::ffi::c_int & db_level
                                                         != 0
                                                     {
                                                         print_spaces(depth);
                                                         printf(
-                                                            b"Not found '%s'.\n\0" as *const u8
-                                                                as *const ::core::ffi::c_char,
+                                                            b"Rejecting rule '%s' due to impossible prerequisite '%s'.\n\0"
+                                                                as *const u8 as *const ::core::ffi::c_char,
+                                                            get_rule_defn(rule),
                                                             (*d).name,
                                                         );
                                                         fflush(stdout);
                                                     }
-                                                    failed = 1;
-                                                    break;
+                                                } else if 0x8 as ::core::ffi::c_int
+                                                    & db_level
+                                                    != 0
+                                                {
+                                                    print_spaces(depth);
+                                                    printf(
+                                                        b"Not found '%s'.\n\0" as *const u8
+                                                            as *const ::core::ffi::c_char,
+                                                        (*d).name,
+                                                    );
+                                                    fflush(stdout);
                                                 }
+                                                failed = 1;
+                                                break;
                                             }
                                         }
                                     }
