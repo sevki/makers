@@ -588,7 +588,6 @@ pub unsafe extern "C" fn child_handler(mut _sig: ::core::ffi::c_int) {
 pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_int) {
     let mut status: ::core::ffi::c_int = 0;
     let mut reap_more: ::core::ffi::c_int = 1;
-    let mut current_block_143: u64;
     while (!children.is_null() || shell_function_pid != 0)
         && (block != 0 || reap_more != 0)
     {
@@ -623,9 +622,11 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
         any_local = (shell_function_pid != 0) as ::core::ffi::c_int;
         lastc = ::core::ptr::null_mut::<child>();
         c = children;
+        // Set when we find a child that already failed to launch (pid < 0);
+        // otherwise we walk to the end of the list and must wait() for one.
+        let mut found_bad: ::core::ffi::c_int = 0;
         loop {
             if c.is_null() {
-                current_block_143 = 17478428563724192186;
                 break;
             }
             any_remote |= (*c).remote() as ::core::ffi::c_int;
@@ -634,7 +635,7 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
                 exit_sig = 0;
                 coredump = 0;
                 exit_code = 127;
-                current_block_143 = 16201671960271928402;
+                found_bad = 1;
                 break;
             } else {
                 if 0x4 as ::core::ffi::c_int & db_level != 0 {
@@ -656,122 +657,119 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
                 c = (*c).next;
             }
         }
-        match current_block_143 {
-            17478428563724192186 => {
-                if any_remote != 0 {
+        if found_bad == 0 {
+            if any_remote != 0 {
+                pid = crate::remote_stub::remote_status(
+                    &raw mut exit_code,
+                    &raw mut exit_sig,
+                    &raw mut coredump,
+                    0,
+                ) as pid_t;
+            } else {
+                pid = 0 as ::core::ffi::c_int as pid_t;
+            }
+            if pid > 0 {
+                remote = 1;
+            } else if pid < 0 {
+                pfatal_with_name(b"remote_status\0" as *const u8 as *const ::core::ffi::c_char);
+            } else {
+                if any_local != 0 {
+                    if block == 0 {
+                        pid = waitpid(-(1 as __pid_t), &raw mut status, WNOHANG) as pid_t;
+                    } else {
+                        loop {
+                            pid = wait(&raw mut status) as pid_t;
+                            if !(pid == -(1 as ::core::ffi::c_int)
+                                && *__errno_location() == EINTR)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    pid = 0 as ::core::ffi::c_int as pid_t;
+                }
+                if pid < 0 {
+                    pfatal_with_name(b"wait\0" as *const u8 as *const ::core::ffi::c_char);
+                } else if pid > 0 {
+                    exit_code =
+                        (status & 0xff00 as ::core::ffi::c_int) >> 8;
+                    exit_sig = if ((status & 0x7f as ::core::ffi::c_int)
+                        + 1)
+                        as ::core::ffi::c_schar
+                        as ::core::ffi::c_int
+                        >> 1
+                        > 0
+                    {
+                        status & 0x7f as ::core::ffi::c_int
+                    } else {
+                        0
+                    };
+                    coredump = status & __WCOREFLAG;
+                } else {
+                    reap_more = 0;
+                    if block == 0 || any_remote == 0 {
+                        break;
+                    }
                     pid = crate::remote_stub::remote_status(
                         &raw mut exit_code,
                         &raw mut exit_sig,
                         &raw mut coredump,
-                        0,
+                        1,
                     ) as pid_t;
-                } else {
-                    pid = 0 as ::core::ffi::c_int as pid_t;
-                }
-                if pid > 0 {
-                    remote = 1;
-                } else if pid < 0 {
-                    pfatal_with_name(b"remote_status\0" as *const u8 as *const ::core::ffi::c_char);
-                } else {
-                    if any_local != 0 {
-                        if block == 0 {
-                            pid = waitpid(-(1 as __pid_t), &raw mut status, WNOHANG) as pid_t;
-                        } else {
-                            loop {
-                                pid = wait(&raw mut status) as pid_t;
-                                if !(pid == -(1 as ::core::ffi::c_int)
-                                    && *__errno_location() == EINTR)
-                                {
-                                    break;
-                                }
-                            }
-                        }
-                    } else {
-                        pid = 0 as ::core::ffi::c_int as pid_t;
-                    }
                     if pid < 0 {
-                        pfatal_with_name(b"wait\0" as *const u8 as *const ::core::ffi::c_char);
-                    } else if pid > 0 {
-                        exit_code =
-                            (status & 0xff00 as ::core::ffi::c_int) >> 8;
-                        exit_sig = if ((status & 0x7f as ::core::ffi::c_int)
-                            + 1)
-                            as ::core::ffi::c_schar
-                            as ::core::ffi::c_int
-                            >> 1
-                            > 0
-                        {
-                            status & 0x7f as ::core::ffi::c_int
-                        } else {
-                            0
-                        };
-                        coredump = status & __WCOREFLAG;
-                    } else {
-                        reap_more = 0;
-                        if block == 0 || any_remote == 0 {
-                            break;
-                        }
-                        pid = crate::remote_stub::remote_status(
-                            &raw mut exit_code,
-                            &raw mut exit_sig,
-                            &raw mut coredump,
-                            1,
-                        ) as pid_t;
-                        if pid < 0 {
-                            pfatal_with_name(
-                                b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
-                            );
-                        }
-                        if pid == 0 {
-                            break;
-                        }
-                        remote = 1;
-                    }
-                }
-                command_count = command_count.wrapping_add(1);
-                if remote == 0 && pid == shell_function_pid {
-                    shell_completed(exit_code, exit_sig);
-                    break;
-                } else {
-                    lastc = ::core::ptr::null_mut::<child>();
-                    c = children;
-                    while !c.is_null() {
-                        if (*c).pid == pid && (*c).remote() == remote {
-                            break;
-                        }
-                        lastc = c;
-                        c = (*c).next;
-                    }
-                    if c.is_null() {
-                        continue;
-                    }
-                    if 0x4 as ::core::ffi::c_int & db_level != 0 {
-                        printf(
-                            if exit_sig == 0
-                                && exit_code == 0
-                            {
-                                b"Reaping winning child %p PID %s %s\n\0" as *const u8
-                                    as *const ::core::ffi::c_char
-                            } else {
-                                b"Reaping losing child %p PID %s %s\n\0" as *const u8
-                                    as *const ::core::ffi::c_char
-                            },
-                            c,
-                            pid2str((*c).pid),
-                            if (*c).remote() as ::core::ffi::c_int != 0 {
-                                b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
-                            } else {
-                                b"\0" as *const u8 as *const ::core::ffi::c_char
-                            },
+                        pfatal_with_name(
+                            b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
                         );
-                        fflush(stdout);
                     }
-                    if job_counter != 0 {
-                        job_counter = job_counter.wrapping_sub(1);
+                    if pid == 0 {
+                        break;
                     }
+                    remote = 1;
                 }
             }
-            _ => {}
+            command_count = command_count.wrapping_add(1);
+            if remote == 0 && pid == shell_function_pid {
+                shell_completed(exit_code, exit_sig);
+                break;
+            } else {
+                lastc = ::core::ptr::null_mut::<child>();
+                c = children;
+                while !c.is_null() {
+                    if (*c).pid == pid && (*c).remote() == remote {
+                        break;
+                    }
+                    lastc = c;
+                    c = (*c).next;
+                }
+                if c.is_null() {
+                    continue;
+                }
+                if 0x4 as ::core::ffi::c_int & db_level != 0 {
+                    printf(
+                        if exit_sig == 0
+                            && exit_code == 0
+                        {
+                            b"Reaping winning child %p PID %s %s\n\0" as *const u8
+                                as *const ::core::ffi::c_char
+                        } else {
+                            b"Reaping losing child %p PID %s %s\n\0" as *const u8
+                                as *const ::core::ffi::c_char
+                        },
+                        c,
+                        pid2str((*c).pid),
+                        if (*c).remote() as ::core::ffi::c_int != 0 {
+                            b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
+                        } else {
+                            b"\0" as *const u8 as *const ::core::ffi::c_char
+                        },
+                    );
+                    fflush(stdout);
+                }
+                if job_counter != 0 {
+                    job_counter = job_counter.wrapping_sub(1);
+                }
+            }
         }
         if exit_sig == 0
             && exit_code == 127
