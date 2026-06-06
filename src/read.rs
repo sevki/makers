@@ -2166,7 +2166,10 @@ unsafe extern "C" fn do_define(
     let mut defstart: Floc;
     let mut nlevels: ::core::ffi::c_int = 1;
     let mut length: size_t = 100;
-    let mut definition: *mut ::core::ffi::c_char = xmalloc(length) as *mut ::core::ffi::c_char;
+    // Owned accumulation buffer for the `define` body (was xmalloc/xrealloc/
+    // free); `length` tracks capacity and `idx` the fill position as before.
+    let mut def_buf: Vec<u8> = Vec::with_capacity(length as usize);
+    let mut definition: *mut ::core::ffi::c_char = def_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
     let mut idx: size_t = 0;
     let mut p: *mut ::core::ffi::c_char;
     let n: *mut ::core::ffi::c_char;
@@ -2270,10 +2273,8 @@ unsafe extern "C" fn do_define(
         len = strlen(line) as size_t;
         if idx.wrapping_add(len).wrapping_add(1) > length {
             length = idx.wrapping_add(len).wrapping_mul(2);
-            definition = xrealloc(
-                definition as *mut ::core::ffi::c_void,
-                length.wrapping_add(1),
-            ) as *mut ::core::ffi::c_char;
+            def_buf.reserve_exact(length.wrapping_add(1) as usize);
+            definition = def_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
         }
         memcpy(
             definition.offset(idx as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
@@ -2299,7 +2300,6 @@ unsafe extern "C" fn do_define(
         var.conditional() as ::core::ffi::c_int,
         s_global,
     );
-    free(definition as *mut ::core::ffi::c_void);
     free(n as *mut ::core::ffi::c_void);
     v
 }
