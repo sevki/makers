@@ -2,9 +2,9 @@ use libc::free;
 
 use crate::file::{Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::misc::xmalloc;
 extern "C" {
     pub type commands;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
     static mut reading_file: *const Floc;
     fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
     fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);

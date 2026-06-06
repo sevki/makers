@@ -6,6 +6,8 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
 };
+use crate::strcache::strcache_add;
+use crate::misc::{end_of_token, find_next_token, make_lltoa, next_token, xcalloc, xmalloc, xrealloc, xstrndup};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
@@ -58,26 +60,11 @@ extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn make_lltoa(
-        _: ::core::ffi::c_longlong,
-        _: *mut ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrndup(_: *const ::core::ffi::c_char, _: size_t) -> *mut ::core::ffi::c_char;
-    fn find_next_token(
-        _: *mut *const ::core::ffi::c_char,
-        _: *mut size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn next_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn end_of_token(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn alpha_compare(
         _: *const ::core::ffi::c_void,
         _: *const ::core::ffi::c_void,
     ) -> ::core::ffi::c_int;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     static mut reading_file: *const Floc;
     static mut expanding_var: *mut *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
@@ -258,12 +245,7 @@ pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
 pub use crate::output::output;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct childbase {

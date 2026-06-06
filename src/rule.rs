@@ -3,6 +3,9 @@ use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::strcache::strcache_add_len;
+use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::misc::free_ns_chain;
 extern "C" {
     static mut stdout: *mut FILE;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
@@ -19,17 +22,11 @@ extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn find_percent_cached(_: *mut *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     fn dir_file_exists_p(
         _: *const ::core::ffi::c_char,
         _: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
-    fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
-        -> *const ::core::ffi::c_char;
     static mut posix_pedantic: ::core::ffi::c_int;
     static mut second_expansion: ::core::ffi::c_int;
     fn __assert_fail(
@@ -46,8 +43,6 @@ extern "C" {
         prefix: *const ::core::ffi::c_char,
         flags: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_void;
-    fn free_ns_chain(n: *mut nameseq);
-    fn copy_dep_chain(d: *const dep) -> *mut dep;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn expand_extra_prereqs(extra: *const variable) -> *mut dep;
     fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
@@ -138,12 +133,7 @@ pub struct pspec {
     pub dep: *const ::core::ffi::c_char,
     pub commands: *const ::core::ffi::c_char,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const INTSTR_LENGTH: usize = (53 as usize)
