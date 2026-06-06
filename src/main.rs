@@ -558,12 +558,10 @@ pub unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
     xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
 }
 #[inline]
-
 unsafe extern "C" fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
 #[inline]
-
 unsafe extern "C" fn free_dep(d: *mut dep) {
     free_ns(d as *mut nameseq);
 }
@@ -572,7 +570,6 @@ pub unsafe extern "C" fn free_goaldep(g: *mut goaldep) {
     free_dep(g as *mut dep);
 }
 #[inline]
-
 unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }

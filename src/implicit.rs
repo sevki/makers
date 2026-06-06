@@ -223,7 +223,6 @@ pub unsafe extern "C" fn alloc_dep() -> *mut dep {
     xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
 }
 #[inline]
-
 unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }

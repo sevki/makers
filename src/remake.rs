@@ -166,17 +166,14 @@ pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const RM_INCLUDED: ::core::ffi::c_int = (1) << 1;
 pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
 #[inline]
-
 unsafe extern "C" fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
 #[inline]
-
 unsafe extern "C" fn free_dep(d: *mut dep) {
     free_ns(d as *mut nameseq);
 }
 #[inline]
-
 unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }

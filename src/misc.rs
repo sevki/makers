@@ -102,7 +102,6 @@ pub const __ASSERT_FUNCTION: [::core::ffi::c_char; 27] = unsafe {
     ::core::mem::transmute::<[u8; 27], [::core::ffi::c_char; 27]>(*b"FILE *get_tmpfile(char **)\0")
 };
 #[inline]
-
 unsafe fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }

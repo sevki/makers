@@ -221,14 +221,15 @@ pub unsafe extern "C" fn dep_hash_1(key: *const ::core::ffi::c_void) -> ::core::
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
     _result_
 }
+/// # Safety
+///
+/// This is a C hash-table callback. The raw key pointer is accepted to match the
+/// callback ABI, but this secondary hash intentionally does not inspect it.
 #[no_mangle]
-pub unsafe extern "C" fn dep_hash_2(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let d: *const dep = key as *const dep;
-    let mut _result_: ::core::ffi::c_ulong = 0;
-    if !(*d).name.is_null() {
-    } else {
-    };
-    _result_
+pub unsafe extern "C" fn dep_hash_2(_key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+    // SAFETY: No raw memory is accessed here; the pointer is ignored because the
+    // old secondary hash always returned zero.
+    0
 }
 unsafe extern "C" fn dep_hash_cmp(
     x: *const ::core::ffi::c_void,
