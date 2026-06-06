@@ -2,6 +2,7 @@ use libc::{exit, free};
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 pub use crate::ffi_types::size_t;
+use crate::misc::{xcalloc, xmalloc};
 extern "C" {
     static mut stderr: *mut FILE;
     fn fprintf(
@@ -21,8 +22,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
     fn __assert_fail(
         __assertion: *const ::core::ffi::c_char,
         __file: *const ::core::ffi::c_char,

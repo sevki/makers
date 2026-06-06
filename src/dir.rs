@@ -5,6 +5,8 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __size_t, __syscall_slong_t, __time_t, __uid_t, dev_t, ino_t, size_t, time_t,
 };
+use crate::strcache::strcache_add_len;
+use crate::misc::{xcalloc, xmalloc, xrealloc};
 extern "C" {
     pub type __dirstream;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -24,13 +26,8 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
     fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn ar_member_date(_: *const ::core::ffi::c_char) -> time_t;
-    fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
-        -> *const ::core::ffi::c_char;
     static mut command_count: ::core::ffi::c_ulong;
     fn closedir(__dirp: *mut DIR) -> ::core::ffi::c_int;
     fn opendir(__name: *const ::core::ffi::c_char) -> *mut DIR;

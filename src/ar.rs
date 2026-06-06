@@ -2,6 +2,8 @@ use libc::{fnmatch, free, strchr};
 
 use crate::file::{Dep, File};
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
+use crate::strcache::strcache_add;
+use crate::misc::{xcalloc, xstrdup};
 extern "C" {
     pub type variable_set_list;
     pub type commands;
@@ -16,8 +18,6 @@ extern "C" {
     fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn alpha_compare(
         _: *const ::core::ffi::c_void,
         _: *const ::core::ffi::c_void,
@@ -37,7 +37,6 @@ extern "C" {
         memname: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
     fn file_exists_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t;
@@ -78,12 +77,7 @@ pub type ar_member_func_t = Option<
         *const ::core::ffi::c_void,
     ) -> intmax_t,
 >;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ar_glob_state {

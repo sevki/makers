@@ -3,6 +3,9 @@ use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::strcache::{strcache_add, strcache_add_len};
+use crate::misc::{lindex, print_spaces, skip_reference, xcalloc, xmalloc, xrealloc};
+use crate::misc::free_ns_chain;
 extern "C" {
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -38,16 +41,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xcalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn skip_reference(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn lindex(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-        _: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
-    fn print_spaces(_: ::core::ffi::c_uint);
     fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn file_exists_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn file_impossible_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
@@ -58,9 +51,6 @@ extern "C" {
         vpath_index: *mut ::core::ffi::c_uint,
         path_index: *mut ::core::ffi::c_uint,
     ) -> *const ::core::ffi::c_char;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    fn strcache_add_len(str: *const ::core::ffi::c_char, len: size_t)
-        -> *const ::core::ffi::c_char;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut no_intermediates: ::core::ffi::c_uint;
     fn __assert_fail(
@@ -78,7 +68,6 @@ extern "C" {
         prefix: *const ::core::ffi::c_char,
         flags: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_void;
-    fn free_ns_chain(n: *mut nameseq);
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
     static mut pattern_rules: *mut rule;
@@ -178,12 +167,7 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct rule {

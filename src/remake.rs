@@ -6,6 +6,9 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
+use crate::strcache::strcache_add;
+use crate::misc::{copy_dep_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::misc::free_ns_chain;
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -31,13 +34,6 @@ extern "C" {
     fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn find_next_token(
-        _: *mut *const ::core::ffi::c_char,
-        _: *mut size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn print_spaces(_: ::core::ffi::c_uint);
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn ar_parse_name(
@@ -54,7 +50,6 @@ extern "C" {
         path_index: *mut ::core::ffi::c_uint,
     ) -> *const ::core::ffi::c_char;
     fn gpath_search(file: *const ::core::ffi::c_char, len: size_t) -> ::core::ffi::c_int;
-    fn strcache_add(str: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
     static mut just_print_flag: ::core::ffi::c_int;
     static mut keep_going_flag: ::core::ffi::c_int;
     static mut run_silent: ::core::ffi::c_int;
@@ -70,8 +65,6 @@ extern "C" {
     fn execute_file_commands(file: *mut file);
     fn chop_commands(cmds: *mut commands);
     static mut db_level: ::core::ffi::c_int;
-    fn free_ns_chain(n: *mut nameseq);
-    fn copy_dep_chain(d: *const dep) -> *mut dep;
     static mut default_file: *mut file;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
@@ -154,12 +147,7 @@ pub struct goaldep {
     pub error: ::core::ffi::c_int,
     pub floc: Floc,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
-    pub next: *mut nameseq,
-    pub name: *const ::core::ffi::c_char,
-}
+pub use crate::file::nameseq;
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const ENOENT: ::core::ffi::c_int = 2;
 pub const EINTR: ::core::ffi::c_int = 4;

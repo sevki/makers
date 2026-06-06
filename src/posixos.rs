@@ -6,6 +6,7 @@ pub use crate::ffi_types::{
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, mode_t, pid_t, sig_atomic_t,
     size_t, ssize_t, uintmax_t,
 };
+use crate::misc::{get_tmpfd, make_pid, xmalloc, xstrdup};
 extern "C" {
     fn pselect(
         __nfds: ::core::ffi::c_int,
@@ -39,11 +40,7 @@ extern "C" {
     fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
     fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn make_pid() -> pid_t;
-    fn xmalloc(_: size_t) -> *mut ::core::ffi::c_void;
-    fn xstrdup(_: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     fn get_tmpdir() -> *const ::core::ffi::c_char;
-    fn get_tmpfd(_: *mut *mut ::core::ffi::c_char) -> ::core::ffi::c_int;
     static mut handling_fatal_signal: sig_atomic_t;
     static mut db_level: ::core::ffi::c_int;
 }

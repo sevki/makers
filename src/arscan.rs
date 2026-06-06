@@ -3,6 +3,7 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, intmax_t, off_t, size_t, ssize_t, uintmax_t,
 };
+use crate::misc::{make_toui, readbuf, writebuf};
 extern "C" {
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
@@ -33,12 +34,6 @@ extern "C" {
         __n: size_t,
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn make_toui(
-        _: *const ::core::ffi::c_char,
-        _: *mut *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_uint;
-    fn writebuf(_: ::core::ffi::c_int, _: *const ::core::ffi::c_void, _: size_t) -> ssize_t;
-    fn readbuf(_: ::core::ffi::c_int, _: *mut ::core::ffi::c_void, _: size_t) -> ssize_t;
 }
 pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;

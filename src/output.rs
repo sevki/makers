@@ -2,6 +2,7 @@ use libc::{__errno_location, close, exit, perror, sprintf, strcat, strerror};
 use ::c2rust_bitfields;
 use crate::stdio::{FILE};
 pub use crate::ffi_types::{__off64_t, __off_t, size_t, ssize_t, uintmax_t};
+use crate::misc::{get_tmpfd, writebuf, xrealloc};
 extern "C" {
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
@@ -31,9 +32,6 @@ extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn should_print_dir() -> ::core::ffi::c_int;
     fn die(_: ::core::ffi::c_int) -> !;
-    fn xrealloc(_: *mut ::core::ffi::c_void, _: size_t) -> *mut ::core::ffi::c_void;
-    fn get_tmpfd(_: *mut *mut ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn writebuf(_: ::core::ffi::c_int, _: *const ::core::ffi::c_void, _: size_t) -> ssize_t;
     static mut print_data_base_flag: ::core::ffi::c_int;
     static mut output_sync: ::core::ffi::c_int;
     static mut program: *const ::core::ffi::c_char;

@@ -19,3 +19,4 @@ name = "make"
 [dependencies]
 c2rust-bitfields = "0.22.1"
 libc = "0.2"
+ustr = "1.1.0"
