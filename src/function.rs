@@ -4,7 +4,7 @@ pub use crate::ffi_types::{
 };
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::{
-    end_of_token, find_next_token, make_lltoa, next_token, xcalloc, xmalloc, xrealloc, xstrndup,
+    end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
 };
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
@@ -1501,8 +1501,12 @@ unsafe extern "C" fn func_filter_filterout(
     if word_count == 0 {
         return o;
     }
-    words = xcalloc((word_count as size_t).wrapping_mul(::core::mem::size_of::<a_word>() as size_t))
-        as *mut a_word;
+    // Owned, zero-initialized word table (was an xcalloc'd array freed at
+    // the end). Fixed capacity keeps the backing pointer stable while the
+    // hash table below stores pointers into it.
+    let mut words_vec: Vec<a_word> = Vec::with_capacity(word_count as usize);
+    words_vec.resize_with(word_count as usize, || unsafe { ::core::mem::zeroed() });
+    words = words_vec.as_mut_ptr();
     word_end = words.offset(word_count as isize);
     cp = *argv.offset(0 as ::core::ffi::c_int as isize);
     loop {
@@ -1512,9 +1516,9 @@ unsafe extern "C" fn func_filter_filterout(
         }
         pat_count = pat_count.wrapping_add(1);
     }
-    patterns =
-        xcalloc((pat_count as size_t).wrapping_mul(::core::mem::size_of::<a_pattern>() as size_t))
-            as *mut a_pattern;
+    let mut patterns_vec: Vec<a_pattern> = Vec::with_capacity(pat_count as usize);
+    patterns_vec.resize_with(pat_count as usize, || unsafe { ::core::mem::zeroed() });
+    patterns = patterns_vec.as_mut_ptr();
     pat_end = patterns.offset(pat_count as isize);
     cp = *argv.offset(0 as ::core::ffi::c_int as isize);
     pp = patterns;
@@ -1641,8 +1645,6 @@ unsafe extern "C" fn func_filter_filterout(
     if hashing != 0 {
         hash_free(&raw mut a_word_table, 0);
     }
-    free(patterns as *mut ::core::ffi::c_void);
-    free(words as *mut ::core::ffi::c_void);
     o
 }
 unsafe extern "C" fn func_strip(
