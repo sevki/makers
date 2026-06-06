@@ -1,9 +1,9 @@
-use libc::{free, printf, strchr};
-use ::c2rust_bitfields;
-use crate::stdio::{FILE};
-use crate::file::{Commands, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::file::{Commands, File, VariableSet, VariableSetList};
 use crate::misc::{lindex, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::stdio::FILE;
+use c2rust_bitfields;
+use libc::{free, printf, strchr};
 extern "C" {
     pub type dep;
     static mut environ: *mut *mut ::core::ffi::c_char;
@@ -130,8 +130,7 @@ pub const f_bogus: variable_flavor = 0;
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 #[no_mangle]
-pub static mut expanding_var: *mut *const Floc =
-    unsafe { &raw const reading_file as *mut *const Floc };
+pub static mut expanding_var: *mut *const Floc = &raw const reading_file as *mut *const Floc;
 pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5;
 static mut variable_buffer_length: size_t = 0;
 #[no_mangle]
@@ -146,39 +145,38 @@ pub unsafe extern "C" fn variable_buffer_output(
     let newlen: size_t =
         length.wrapping_add(ptr.offset_from(variable_buffer) as ::core::ffi::c_long as size_t);
     if ptr >= variable_buffer {
-        } else {
-            __assert_fail(
-                b"ptr >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                61,
-                b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    } else {
+        __assert_fail(
+            b"ptr >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
+            61,
+            b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     if ptr < variable_buffer.offset(variable_buffer_length as isize) {
-        } else {
-            __assert_fail(
-                b"ptr < variable_buffer + variable_buffer_length\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                62,
-                b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    } else {
+        __assert_fail(
+            b"ptr < variable_buffer + variable_buffer_length\0" as *const u8
+                as *const ::core::ffi::c_char,
+            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
+            62,
+            b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     if newlen
         .wrapping_add(VARIABLE_BUFFER_ZONE as size_t)
         .wrapping_add(1)
         > variable_buffer_length
     {
         let offset: size_t = ptr.offset_from(variable_buffer) as ::core::ffi::c_long as size_t;
-        variable_buffer_length = if newlen.wrapping_add(100)
-            > (2 as size_t).wrapping_mul(variable_buffer_length)
-        {
-            newlen.wrapping_add(100)
-        } else {
-            (2 as size_t).wrapping_mul(variable_buffer_length)
-        };
+        variable_buffer_length =
+            if newlen.wrapping_add(100) > (2 as size_t).wrapping_mul(variable_buffer_length) {
+                newlen.wrapping_add(100)
+            } else {
+                (2 as size_t).wrapping_mul(variable_buffer_length)
+            };
         variable_buffer = xrealloc(
             variable_buffer as *mut ::core::ffi::c_void,
             variable_buffer_length.wrapping_add(1),
@@ -213,10 +211,7 @@ pub unsafe extern "C" fn install_variable_buffer(
     initialize_variable_output();
 }
 #[no_mangle]
-pub unsafe extern "C" fn restore_variable_buffer(
-    buf: *mut ::core::ffi::c_char,
-    len: size_t,
-) {
+pub unsafe extern "C" fn restore_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t) {
     free(variable_buffer as *mut ::core::ffi::c_void);
     variable_buffer = buf;
     variable_buffer_length = len;
@@ -260,8 +255,7 @@ pub unsafe extern "C" fn recursively_expand_for_file(
             if strncmp(*ep, (*v).name, nl as size_t) == 0
                 && *(*ep).offset(nl as isize) as ::core::ffi::c_int == '=' as i32
             {
-                return xstrdup((*ep).offset(nl as isize) . offset ( 1 ) ,
-                );
+                return xstrdup((*ep).offset(nl as isize).offset(1));
             }
             ep = ep.offset(1 as ::core::ffi::c_int as isize);
         }
@@ -345,7 +339,8 @@ pub unsafe extern "C" fn expand_variable_output(
         warn_undefined(name, length);
     }
     if v.is_null()
-        || *(*v).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 && (*v).append() == 0
+        || *(*v).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
+            && (*v).append() == 0
     {
         return ptr;
     }
@@ -372,26 +367,26 @@ pub unsafe extern "C" fn expand_variable_buf(
         buf = initialize_variable_output();
     }
     if buf >= variable_buffer {
-        } else {
-            __assert_fail(
-                b"buf >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                315,
-                b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    } else {
+        __assert_fail(
+            b"buf >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
+            315,
+            b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     if buf < variable_buffer.offset(variable_buffer_length as isize) {
-        } else {
-            __assert_fail(
-                b"buf < variable_buffer + variable_buffer_length\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-                316,
-                b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    } else {
+        __assert_fail(
+            b"buf < variable_buffer + variable_buffer_length\0" as *const u8
+                as *const ::core::ffi::c_char,
+            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
+            316,
+            b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     offs = buf.offset_from(variable_buffer) as ::core::ffi::c_long as size_t;
     expand_variable_output(buf, name, length);
     variable_buffer.offset(offs as isize)
@@ -556,8 +551,7 @@ pub unsafe extern "C" fn expand_string_buf(
                                 };
                                 alloca_allocations.push(::std::vec::from_elem(
                                     0,
-                                    (subst_end.offset_from(subst_beg) as ::core::ffi::c_long
-                                        + 2)
+                                    (subst_end.offset_from(subst_beg) as ::core::ffi::c_long + 2)
                                         as ::core::ffi::c_ulong
                                         as usize,
                                 ));
@@ -601,7 +595,8 @@ pub unsafe extern "C" fn expand_string_buf(
                                     ppercent = ppercent.offset(1 as ::core::ffi::c_int as isize);
                                     rpercent = find_percent(replace);
                                     if !rpercent.is_null() {
-                                        rpercent = rpercent.offset(1 as ::core::ffi::c_int as isize);
+                                        rpercent =
+                                            rpercent.offset(1 as ::core::ffi::c_int as isize);
                                     }
                                 } else {
                                     ppercent = pattern;
@@ -631,7 +626,7 @@ pub unsafe extern "C" fn expand_string_buf(
             _ => {
                 if !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
                     *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize,
-                    ) as ::core::ffi::c_int
+                ) as ::core::ffi::c_int
                     & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
                     != 0)
                 {
@@ -662,18 +657,14 @@ pub unsafe extern "C" fn expand_argument(
     if end.is_null() || *end as ::core::ffi::c_int == 0 {
         return allocated_expand_string_for_file(str, ::core::ptr::null_mut::<file>());
     }
-    if end.offset_from(str) as ::core::ffi::c_long + 1
-        > 1000 as ::core::ffi::c_long
-    {
-        alloc = xmalloc(
-            (end.offset_from(str) as ::core::ffi::c_long + 1) as size_t,
-        ) as *mut ::core::ffi::c_char;
+    if end.offset_from(str) as ::core::ffi::c_long + 1 > 1000 as ::core::ffi::c_long {
+        alloc = xmalloc((end.offset_from(str) as ::core::ffi::c_long + 1) as size_t)
+            as *mut ::core::ffi::c_char;
         tmp = alloc;
     } else {
         alloca_allocations.push(::std::vec::from_elem(
             0,
-            (end.offset_from(str) as ::core::ffi::c_long + 1)
-                as ::core::ffi::c_ulong as usize,
+            (end.offset_from(str) as ::core::ffi::c_long + 1) as ::core::ffi::c_ulong as usize,
         ));
         tmp = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
     }
@@ -682,8 +673,7 @@ pub unsafe extern "C" fn expand_argument(
         str as *const ::core::ffi::c_void,
         end.offset_from(str) as ::core::ffi::c_long as size_t,
     );
-    *tmp.offset(end.offset_from(str) as ::core::ffi::c_long as isize) =
-        0;
+    *tmp.offset(end.offset_from(str) as ::core::ffi::c_long as isize) = 0;
     r = allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>());
     free(alloc as *mut ::core::ffi::c_void);
     r
@@ -735,8 +725,7 @@ unsafe extern "C" fn variable_append(
     if set.is_null() {
         return initialize_variable_output();
     }
-    nextlocal =
-        (local != 0 && (*set).next_is_parent == 0) as ::core::ffi::c_int;
+    nextlocal = (local != 0 && (*set).next_is_parent == 0) as ::core::ffi::c_int;
     v = lookup_variable_in_set(name, length, (*set).set);
     if v.is_null() || local == 0 && (*v).private_var() as ::core::ffi::c_int != 0 {
         return variable_append(name, length, (*set).next, nextlocal);
@@ -747,11 +736,7 @@ unsafe extern "C" fn variable_append(
         buf = initialize_variable_output();
     }
     if buf > variable_buffer {
-        buf = variable_buffer_output(
-            buf,
-            b" \0" as *const u8 as *const ::core::ffi::c_char,
-            1,
-        );
+        buf = variable_buffer_output(buf, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
     }
     if (*v).recursive() == 0 {
         return variable_buffer_output(buf, (*v).value, strlen((*v).value) as size_t);

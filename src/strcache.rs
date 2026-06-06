@@ -23,8 +23,9 @@
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
-use ::core::ffi::{c_char, c_int, CStr};
+use core::ffi::{c_char, c_int, CStr};
 
 use ustr::Ustr;
 
@@ -64,25 +65,24 @@ fn intern_bytes(set: &mut HashSet<&'static [u8]>, bytes: &[u8]) -> *const c_char
     key.as_ptr().cast()
 }
 
-// Process globals. make's runtime state is single-threaded, so `static mut`
-// accessed through one helper matches the convention used for the crate's other
-// global caches (see `shuffle::config`). `ustr`'s own cache is global already.
-static mut ADDRS: Option<HashSet<usize>> = None;
-static mut NON_UTF8: Option<HashSet<&'static [u8]>> = None;
+static ADDRS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static NON_UTF8: OnceLock<Mutex<HashSet<&'static [u8]>>> = OnceLock::new();
 /// Total interning requests (hits + misses) — the hit-rate numerator.
 static ADDS: AtomicU64 = AtomicU64::new(0);
 
-fn addrs() -> &'static mut HashSet<usize> {
-    unsafe { ADDRS.get_or_insert_with(HashSet::new) }
+fn addrs() -> &'static Mutex<HashSet<usize>> {
+    ADDRS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn non_utf8() -> &'static mut HashSet<&'static [u8]> {
-    unsafe { NON_UTF8.get_or_insert_with(HashSet::new) }
+fn non_utf8() -> &'static Mutex<HashSet<&'static [u8]>> {
+    NON_UTF8.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn intern(bytes: &[u8]) -> *const c_char {
     ADDS.fetch_add(1, Ordering::Relaxed);
-    intern_into(addrs(), non_utf8(), bytes)
+    let mut addrs = addrs().lock().unwrap();
+    let mut non_utf8 = non_utf8().lock().unwrap();
+    intern_into(&mut addrs, &mut non_utf8, bytes)
 }
 
 /// Nothing to set up — `ustr`'s cache initializes lazily on first use.
@@ -104,7 +104,10 @@ pub unsafe fn strcache_add(str: *const c_char) -> *const c_char {
 ///
 /// `str` must be valid for reads of `len` bytes.
 pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char {
-    intern(::core::slice::from_raw_parts(str.cast::<u8>(), len as usize))
+    intern(::core::slice::from_raw_parts(
+        str.cast::<u8>(),
+        len as usize,
+    ))
 }
 
 /// Returns nonzero if `str` is a pointer previously handed out by the cache.
@@ -113,7 +116,7 @@ pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char
 /// (matching the original, which compared pointer ranges rather than reading the
 /// string).
 pub fn strcache_iscached(str: *const c_char) -> c_int {
-    addrs().contains(&(str as usize)) as c_int
+    addrs().lock().unwrap().contains(&(str as usize)) as c_int
 }
 
 /// Print cache statistics, prefixed with `prefix`. Used by `make -p`.
@@ -123,7 +126,7 @@ pub fn strcache_iscached(str: *const c_char) -> c_int {
 /// `prefix` must point to a valid NUL-terminated C string.
 pub unsafe fn strcache_print_stats(prefix: *const c_char) {
     let prefix = CStr::from_ptr(prefix).to_string_lossy();
-    let strings = (ustr::num_entries() + non_utf8().len()) as u64;
+    let strings = (ustr::num_entries() + non_utf8().lock().unwrap().len()) as u64;
     let bytes = ustr::total_allocated() as u64;
     let adds = ADDS.load(Ordering::Relaxed);
     let avg = if strings > 0 { bytes / strings } else { 0 };
@@ -185,7 +188,11 @@ mod tests {
         let raw: &[u8] = b"bad\xff\xfename";
         let p = intern_into(&mut a, &mut n, raw);
         unsafe {
-            assert_eq!(CStr::from_ptr(p).to_bytes(), raw, "bytes must survive intact");
+            assert_eq!(
+                CStr::from_ptr(p).to_bytes(),
+                raw,
+                "bytes must survive intact"
+            );
         }
         // Identity and membership hold for the non-UTF-8 path too.
         assert_eq!(p, intern_into(&mut a, &mut n, raw));

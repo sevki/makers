@@ -17,8 +17,8 @@ use crate::stdio::FILE;
 use crate::strcache::{strcache_init, strcache_print_stats};
 use crate::variable::print_variable_data_base;
 use crate::vpath::{build_vpath_lists, print_vpath_data_base};
-use ::c2rust_bitfields;
-use ::libc;
+use c2rust_bitfields;
+use libc;
 use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
@@ -553,7 +553,6 @@ pub const MAKE_FAILURE: ::core::ffi::c_int = 2;
 pub const RM_INCLUDED: ::core::ffi::c_int = (1) << 1;
 pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
 pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
-#[inline]
 #[no_mangle]
 pub unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
     xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
@@ -568,7 +567,6 @@ unsafe extern "C" fn free_ns(n: *mut nameseq) {
 unsafe extern "C" fn free_dep(d: *mut dep) {
     free_ns(d as *mut nameseq);
 }
-#[inline]
 #[no_mangle]
 pub unsafe extern "C" fn free_goaldep(g: *mut goaldep) {
     free_dep(g as *mut dep);
@@ -1122,6 +1120,14 @@ pub static mut make_sync: output = output {
     syncout: [0; 1],
     c2rust_padding: [0; 3],
 };
+unsafe fn make_sync_syncout() -> ::core::ffi::c_uint {
+    ((*(&raw const make_sync)).syncout[0] & 1) as ::core::ffi::c_uint
+}
+
+unsafe fn set_make_sync_syncout(value: ::core::ffi::c_uint) {
+    let make_sync_ptr = &raw mut make_sync;
+    (*make_sync_ptr).syncout[0] = ((*make_sync_ptr).syncout[0] & !1) | (value as u8 & 1);
+}
 #[no_mangle]
 pub static mut fatal_signal_set: sigset_t = __sigset_t { __val: [0; 16] };
 unsafe extern "C" fn bsd_signal(
@@ -1150,6 +1156,27 @@ unsafe extern "C" fn bsd_signal(
         );
     }
     oact.__sigaction_handler.sa_handler as bsd_signal_ret_t
+}
+unsafe fn signal_handler_addr(handler: bsd_signal_ret_t) -> usize {
+    handler.map_or(0, |handler| handler as usize)
+}
+
+unsafe fn sig_ign_handler() -> bsd_signal_ret_t {
+    ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
+        1 as ::core::ffi::c_int as ::libc::intptr_t,
+    )
+}
+
+unsafe fn install_fatal_signal(sig: ::core::ffi::c_int) {
+    let old_handler = bsd_signal(
+        sig,
+        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
+    );
+    if signal_handler_addr(old_handler) == 1 {
+        bsd_signal(sig, sig_ign_handler());
+    } else {
+        sigaddset(&raw mut fatal_signal_set, sig);
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn initialize_global_hash_tables() {
@@ -1481,111 +1508,13 @@ unsafe fn main_0(
     verify_flag = 1;
     setlocale(LC_ALL, b"\0" as *const u8 as *const ::core::ffi::c_char);
     sigemptyset(&raw mut fatal_signal_set);
-    if bsd_signal(
-        1,
-        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    ) == ::core::mem::transmute::<::libc::intptr_t, __sighandler_t>(
-        1 as ::core::ffi::c_int as ::libc::intptr_t,
-    ) {
-        bsd_signal(
-            1,
-            ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-                1 as ::core::ffi::c_int as ::libc::intptr_t,
-            ),
-        );
-    } else {
-        sigaddset(&raw mut fatal_signal_set, 1);
-    }
-    if bsd_signal(
-        3,
-        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    ) == ::core::mem::transmute::<::libc::intptr_t, __sighandler_t>(
-        1 as ::core::ffi::c_int as ::libc::intptr_t,
-    ) {
-        bsd_signal(
-            3,
-            ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-                1 as ::core::ffi::c_int as ::libc::intptr_t,
-            ),
-        );
-    } else {
-        sigaddset(&raw mut fatal_signal_set, 3);
-    }
-    if bsd_signal(
-        13,
-        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    ) == ::core::mem::transmute::<::libc::intptr_t, __sighandler_t>(
-        1 as ::core::ffi::c_int as ::libc::intptr_t,
-    ) {
-        bsd_signal(
-            13,
-            ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-                1 as ::core::ffi::c_int as ::libc::intptr_t,
-            ),
-        );
-    } else {
-        sigaddset(&raw mut fatal_signal_set, 13);
-    }
-    if bsd_signal(
-        2,
-        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    ) == ::core::mem::transmute::<::libc::intptr_t, __sighandler_t>(
-        1 as ::core::ffi::c_int as ::libc::intptr_t,
-    ) {
-        bsd_signal(
-            2,
-            ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-                1 as ::core::ffi::c_int as ::libc::intptr_t,
-            ),
-        );
-    } else {
-        sigaddset(&raw mut fatal_signal_set, 2);
-    }
-    if bsd_signal(
-        15,
-        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    ) == ::core::mem::transmute::<::libc::intptr_t, __sighandler_t>(
-        1 as ::core::ffi::c_int as ::libc::intptr_t,
-    ) {
-        bsd_signal(
-            15,
-            ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-                1 as ::core::ffi::c_int as ::libc::intptr_t,
-            ),
-        );
-    } else {
-        sigaddset(&raw mut fatal_signal_set, 15);
-    }
-    if bsd_signal(
-        24,
-        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    ) == ::core::mem::transmute::<::libc::intptr_t, __sighandler_t>(
-        1 as ::core::ffi::c_int as ::libc::intptr_t,
-    ) {
-        bsd_signal(
-            24,
-            ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-                1 as ::core::ffi::c_int as ::libc::intptr_t,
-            ),
-        );
-    } else {
-        sigaddset(&raw mut fatal_signal_set, 24);
-    }
-    if bsd_signal(
-        25,
-        Some(fatal_error_signal as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
-    ) == ::core::mem::transmute::<::libc::intptr_t, __sighandler_t>(
-        1 as ::core::ffi::c_int as ::libc::intptr_t,
-    ) {
-        bsd_signal(
-            25,
-            ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-                1 as ::core::ffi::c_int as ::libc::intptr_t,
-            ),
-        );
-    } else {
-        sigaddset(&raw mut fatal_signal_set, 25);
-    }
+    install_fatal_signal(1);
+    install_fatal_signal(3);
+    install_fatal_signal(13);
+    install_fatal_signal(2);
+    install_fatal_signal(15);
+    install_fatal_signal(24);
+    install_fatal_signal(25);
     bsd_signal(SIGCHLD, SIG_DFL);
     crate::output::output_init(::core::ptr::null_mut::<output>());
     if (*argv.offset(0 as ::core::ffi::c_int as isize)).is_null() {
@@ -1777,11 +1706,11 @@ unsafe fn main_0(
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         o_command,
     );
-    make_sync.set_syncout(
+    set_make_sync_syncout(
         (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET) as ::core::ffi::c_int
             as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
-    output_context = if make_sync.syncout() as ::core::ffi::c_int != 0 {
+    output_context = if make_sync_syncout() as ::core::ffi::c_int != 0 {
         &raw mut make_sync
     } else {
         ::core::ptr::null_mut::<output>()
@@ -1820,11 +1749,13 @@ unsafe fn main_0(
             None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
         };
     }
-    if isatty(fileno(stdout)) != 0 && lookup_variable(
+    if isatty(fileno(stdout)) != 0
+        && lookup_variable(
             b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         )
-        .is_null() {
+        .is_null()
+    {
         let tty: *const ::core::ffi::c_char = ttyname(fileno(stdout));
         let fresh39 = &mut (*define_variable_in_set(
             b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1841,11 +1772,13 @@ unsafe fn main_0(
         ));
         (*fresh39).set_export(v_export as variable_export);
     }
-    if isatty(fileno(stderr)) != 0 && lookup_variable(
+    if isatty(fileno(stderr)) != 0
+        && lookup_variable(
             b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         )
-        .is_null() {
+        .is_null()
+    {
         let tty_0: *const ::core::ffi::c_char = ttyname(fileno(stderr));
         let fresh40 = &mut (*define_variable_in_set(
             b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1864,11 +1797,11 @@ unsafe fn main_0(
     }
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET)
         as ::core::ffi::c_int as ::core::ffi::c_uint;
-    if make_sync.syncout() as ::core::ffi::c_int != 0 && syncing == 0 {
+    if make_sync_syncout() as ::core::ffi::c_int != 0 && syncing == 0 {
         crate::output::output_close(&raw mut make_sync);
     }
-    make_sync.set_syncout(syncing as ::core::ffi::c_uint);
-    output_context = if make_sync.syncout() as ::core::ffi::c_int != 0 {
+    set_make_sync_syncout(syncing as ::core::ffi::c_uint);
+    output_context = if make_sync_syncout() as ::core::ffi::c_int != 0 {
         &raw mut make_sync
     } else {
         ::core::ptr::null_mut::<output>()
@@ -2129,7 +2062,7 @@ unsafe fn main_0(
         }
     }
     if stdin_offset >= 0 {
-        let mut f: *mut file = enter_file(*(*makefiles).list.offset(stdin_offset as isize));
+        let f: *mut file = enter_file(*(*makefiles).list.offset(stdin_offset as isize));
         (*f).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         (*f).set_update_status(us_success as update_status);
         (*f).set_command_state(cs_finished as cmd_state);
@@ -2262,11 +2195,11 @@ unsafe fn main_0(
     }
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET)
         as ::core::ffi::c_int as ::core::ffi::c_uint;
-    if make_sync.syncout() as ::core::ffi::c_int != 0 && syncing == 0 {
+    if make_sync_syncout() as ::core::ffi::c_int != 0 && syncing == 0 {
         crate::output::output_close(&raw mut make_sync);
     }
-    make_sync.set_syncout(syncing as ::core::ffi::c_uint);
-    output_context = if make_sync.syncout() as ::core::ffi::c_int != 0 {
+    set_make_sync_syncout(syncing as ::core::ffi::c_uint);
+    output_context = if make_sync_syncout() as ::core::ffi::c_int != 0 {
         &raw mut make_sync
     } else {
         ::core::ptr::null_mut::<output>()
@@ -2307,7 +2240,9 @@ unsafe fn main_0(
             sync_mutex = ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
     }
-    if !jobserver_auth.is_null() && (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int) & db_level != 0 {
+    if !jobserver_auth.is_null()
+        && (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int) & db_level != 0
+    {
         printf(
             b"Using jobserver controller %s\n\0" as *const u8 as *const ::core::ffi::c_char,
             jobserver_auth,
@@ -2332,7 +2267,7 @@ unsafe fn main_0(
         let mut p_1: *mut *const ::core::ffi::c_char;
         p_1 = (*old_files).list;
         while !(*p_1).is_null() {
-            let mut f_0: *mut file = enter_file(*p_1);
+            let f_0: *mut file = enter_file(*p_1);
             (*f_0).mtime_before_update = OLD_MTIME as uintmax_t;
             (*f_0).last_mtime = (*f_0).mtime_before_update;
             (*f_0).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2349,7 +2284,7 @@ unsafe fn main_0(
         let mut p_2: *mut *const ::core::ffi::c_char;
         p_2 = (*new_files).list;
         while !(*p_2).is_null() {
-            let mut f_1: *mut file = enter_file(*p_2);
+            let f_1: *mut file = enter_file(*p_2);
             (*f_1).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
                 if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
@@ -2388,7 +2323,7 @@ unsafe fn main_0(
         let mut d: *mut goaldep = read_files;
         read_files = ::core::ptr::null_mut::<goaldep>();
         while !d.is_null() {
-            let mut t: *mut goaldep = d;
+            let t: *mut goaldep = d;
             d = (*d).next;
             (*t).next = read_files;
             read_files = t;
@@ -2617,15 +2552,15 @@ unsafe fn main_0(
                         let mf: *const ::core::ffi::c_char =
                             *(*makefiles).list.offset(mfidx as isize);
                         if strlen(a) > 0 {
-                            } else {
-                                __assert_fail(
-                                    b"strlen (a) > 0\0" as *const u8 as *const ::core::ffi::c_char,
-                                    b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
-                                    2602 as ::core::ffi::c_uint,
-                                    b"int main(int, char **, char **)\0" as *const u8
-                                        as *const ::core::ffi::c_char,
-                                );
-                            };
+                        } else {
+                            __assert_fail(
+                                b"strlen (a) > 0\0" as *const u8 as *const ::core::ffi::c_char,
+                                b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
+                                2602 as ::core::ffi::c_uint,
+                                b"int main(int, char **, char **)\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                            );
+                        };
                         *nv = a;
                         if !(*a.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                             != '-' as i32)
@@ -2910,7 +2845,7 @@ unsafe fn main_0(
         let mut p_5: *mut *const ::core::ffi::c_char;
         p_5 = (*new_files).list;
         while !(*p_5).is_null() {
-            let mut f_5: *mut file = enter_file(*p_5);
+            let f_5: *mut file = enter_file(*p_5);
             (*f_5).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
                 if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
@@ -2946,7 +2881,7 @@ unsafe fn main_0(
         if *p_6 as ::core::ffi::c_int != 0 {
             let mut f_6: *mut file = lookup_file(p_6);
             if f_6.is_null() {
-                let mut ns: *mut nameseq;
+                let ns: *mut nameseq;
                 ns = parse_file_seq(
                     &raw mut p_6,
                     ::core::mem::size_of::<nameseq>() as size_t,
@@ -3218,15 +3153,15 @@ unsafe extern "C" fn decode_switches(
     let mut a: *mut *const ::core::ffi::c_char;
     static mut using_getopt: ::core::ffi::c_int = 0;
     if using_getopt == 0 {
-        } else {
-            __assert_fail(
-                b"using_getopt == 0\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
-                3125 as ::core::ffi::c_uint,
-                b"void decode_switches(int, const char **, enum variable_origin)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    } else {
+        __assert_fail(
+            b"using_getopt == 0\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
+            3125 as ::core::ffi::c_uint,
+            b"void decode_switches(int, const char **, enum variable_origin)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     using_getopt = 1;
     targets.max = (argc + 1) as ::core::ffi::c_uint;
     alloca_allocations.push(::std::vec::from_elem(
@@ -3359,7 +3294,8 @@ unsafe extern "C" fn decode_switches(
                                                             as size_t,
                                                     ))
                                                         as *mut *const ::core::ffi::c_char;
-                                                let fresh10 = &mut (*((*cs).value_ptr as *mut *mut stringlist));
+                                                let fresh10 = &mut (*((*cs).value_ptr
+                                                    as *mut *mut stringlist));
                                                 *fresh10 = sl;
                                             } else if (*sl).idx == (*sl).max.wrapping_sub(1) {
                                                 (*sl).max = (*sl).max.wrapping_add(5);
@@ -3414,7 +3350,9 @@ unsafe extern "C" fn decode_switches(
                                                     {
                                                         let fresh11 = (*sl).idx;
                                                         (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let fresh12 = &mut (*(*sl).list.offset(fresh11 as isize));
+                                                        let fresh12 = &mut (*(*sl)
+                                                            .list
+                                                            .offset(fresh11 as isize));
                                                         *fresh12 = xstrdup(coptarg);
                                                         if !(*cs).origin.is_null() {
                                                             *(*cs).origin = origin;
@@ -3432,7 +3370,9 @@ unsafe extern "C" fn decode_switches(
                                                             (*sl).idx as ::core::ffi::c_int;
                                                         let fresh13 = (*sl).idx;
                                                         (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let fresh14 = &mut (*(*sl).list.offset(fresh13 as isize));
+                                                        let fresh14 = &mut (*(*sl)
+                                                            .list
+                                                            .offset(fresh13 as isize));
                                                         *fresh14 = strcache_add(coptarg);
                                                         if !(*cs).origin.is_null() {
                                                             *(*cs).origin = origin;
@@ -3440,14 +3380,18 @@ unsafe extern "C" fn decode_switches(
                                                     } else {
                                                         let fresh15 = (*sl).idx;
                                                         (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let fresh16 = &mut (*(*sl).list.offset(fresh15 as isize));
+                                                        let fresh16 = &mut (*(*sl)
+                                                            .list
+                                                            .offset(fresh15 as isize));
                                                         *fresh16 =
                                                             expand_command_line_file(coptarg);
                                                         if !(*cs).origin.is_null() {
                                                             *(*cs).origin = origin;
                                                         }
                                                     }
-                                                    let fresh17 = &mut (*(*sl).list.offset((*sl).idx as isize));
+                                                    let fresh17 = &mut (*(*sl)
+                                                        .list
+                                                        .offset((*sl).idx as isize));
                                                     *fresh17 =
                                                         ::core::ptr::null::<::core::ffi::c_char>();
                                             }
@@ -3479,8 +3423,7 @@ unsafe extern "C" fn decode_switches(
                                 if !coptarg.is_null() {
                                     let mut err: *const ::core::ffi::c_char =
                                         ::core::ptr::null::<::core::ffi::c_char>();
-                                    let i: ::core::ffi::c_uint =
-                                        make_toui(coptarg, &raw mut err);
+                                    let i: ::core::ffi::c_uint = make_toui(coptarg, &raw mut err);
                                     if !err.is_null() || i == 0 {
                                         error(
                                             NILF,
@@ -3659,18 +3602,18 @@ unsafe extern "C" fn decode_env_switches(
     let fresh6 = &mut (*argv.offset(argc as isize));
     *fresh6 = ::core::ptr::null::<::core::ffi::c_char>();
     if p < buf
-            .offset(len as isize)
-            .offset(2 as ::core::ffi::c_int as isize)
-        {
-        } else {
-            __assert_fail(
-                b"p < buf + len + 2\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
-                3451 as ::core::ffi::c_uint,
-                b"void decode_env_switches(const char *, size_t, enum variable_origin)\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-            );
-        };
+        .offset(len as isize)
+        .offset(2 as ::core::ffi::c_int as isize)
+    {
+    } else {
+        __assert_fail(
+            b"p < buf + len + 2\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
+            3451 as ::core::ffi::c_uint,
+            b"void decode_env_switches(const char *, size_t, enum variable_origin)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     if *(*argv.offset(1 as ::core::ffi::c_int as isize)).offset(0 as ::core::ffi::c_int as isize)
         as ::core::ffi::c_int
         != '-' as i32

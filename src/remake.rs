@@ -1,14 +1,17 @@
-use libc::{__errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror, strrchr};
-use ::c2rust_bitfields;
-use crate::stdio::{FILE};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
-use crate::strcache::strcache_add;
-use crate::misc::{copy_dep_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::free_ns_chain;
+use crate::misc::{copy_dep_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::stdio::FILE;
+use crate::strcache::strcache_add;
+use c2rust_bitfields;
+use libc::{
+    __errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror,
+    strrchr,
+};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -92,9 +95,9 @@ extern "C" {
         length: size_t,
     ) -> *mut ::core::ffi::c_char;
 }
-use crate::warning::{self, Action, Type};
-pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
+pub use crate::sys_stat::timespec;
+use crate::warning::{self, Action, Type};
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
@@ -210,16 +213,8 @@ pub unsafe extern "C" fn check_also_make(file: *const file) {
                     },
                 )
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                >> (if FILE_TIMESTAMP_HI_RES != 0 {
-                    30
-                } else {
-                    0
-                })
-                << (if FILE_TIMESTAMP_HI_RES != 0 {
-                    30
-                } else {
-                    0
-                }))
+                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
             .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
             .wrapping_add(
                 (if FILE_TIMESTAMP_HI_RES != 0 {
@@ -257,11 +252,8 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
     let q: ::core::ffi::c_int = question_flag;
     let n: ::core::ffi::c_int = just_print_flag;
     let mut status: update_status = us_none;
-    let depth: ::core::ffi::c_uint = (if rebuilding_makefiles != 0 {
-        1
-    } else {
-        0
-    }) as ::core::ffi::c_uint;
+    let depth: ::core::ffi::c_uint =
+        (if rebuilding_makefiles != 0 { 1 } else { 0 }) as ::core::ffi::c_uint;
     let goals_orig: *mut dep = copy_dep_chain(goaldeps as *mut dep);
     let mut goals: *mut dep = goals_orig;
     goal_list = if rebuilding_makefiles != 0 {
@@ -277,10 +269,7 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
         let mut running: ::core::ffi::c_int = 0;
         let mut wait: ::core::ffi::c_int = 0;
         start_waiting_jobs();
-        reap_children(
-            (last_cmd_count == command_count) as ::core::ffi::c_int,
-            0,
-        );
+        reap_children((last_cmd_count == command_count) as ::core::ffi::c_int, 0);
         last_cmd_count = command_count;
         lastgoal = ::core::ptr::null_mut::<dep>();
         gu = goals;
@@ -305,9 +294,7 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                 let ocommands_started: ::core::ffi::c_uint;
                 let fail: update_status;
                 (*file).set_dontcare(
-                    ((*g).flags() as ::core::ffi::c_int
-                        & (1) << 2
-                        != 0) as ::core::ffi::c_int
+                    ((*g).flags() as ::core::ffi::c_int & (1) << 2 != 0) as ::core::ffi::c_int
                         as ::core::ffi::c_uint as ::core::ffi::c_uint,
                 );
                 while !(*file).renamed.is_null() {
@@ -477,10 +464,7 @@ pub unsafe extern "C" fn show_goal_error() {
         goal = (*goal).next;
     }
 }
-unsafe extern "C" fn update_file(
-    file: *mut file,
-    depth: ::core::ffi::c_uint,
-) -> update_status {
+unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) -> update_status {
     let mut status: update_status = us_success;
     let mut f: *mut file;
     f = if !(*file).double_colon.is_null() {
@@ -488,13 +472,15 @@ unsafe extern "C" fn update_file(
     } else {
         file
     };
-    if (*f).considered == considered && !((*f).updated() as ::core::ffi::c_int != 0
+    if (*f).considered == considered
+        && !((*f).updated() as ::core::ffi::c_int != 0
             && (*f).update_status() as ::core::ffi::c_int > us_none as ::core::ffi::c_int
             && (*f).dontcare() == 0
-            && (*f).no_diag() as ::core::ffi::c_int != 0) && !(!(*file).double_colon.is_null()
-                && (*file).command_state() as ::core::ffi::c_int
-                    == cs_finished as ::core::ffi::c_int
-                && !(*f).prev.is_null()) {
+            && (*f).no_diag() as ::core::ffi::c_int != 0)
+        && !(!(*file).double_colon.is_null()
+            && (*file).command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int
+            && !(*f).prev.is_null())
+    {
         if 0x2 as ::core::ffi::c_int & db_level != 0 {
             print_spaces(depth);
             printf(
@@ -503,9 +489,7 @@ unsafe extern "C" fn update_file(
             );
             fflush(stdout);
         }
-        return (if (*f).command_state() as ::core::ffi::c_int
-            == cs_finished as ::core::ffi::c_int
-        {
+        return (if (*f).command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int {
             (*f).update_status() as ::core::ffi::c_int
         } else {
             us_success as ::core::ffi::c_int
@@ -554,9 +538,9 @@ pub unsafe extern "C" fn complain(file: *mut file) {
             let l: size_t = (strlen((*file).name) as size_t)
                 .wrapping_add(strlen((*(*file).parent).name) as size_t)
                 .wrapping_add(4);
-            let m: *const ::core::ffi::c_char =
-                b"%sNo rule to make target '%s', needed by '%s'%s\0" as *const u8
-                    as *const ::core::ffi::c_char;
+            let m: *const ::core::ffi::c_char = b"%sNo rule to make target '%s', needed by '%s'%s\0"
+                as *const u8
+                as *const ::core::ffi::c_char;
             if keep_going_flag == 0 {
                 fatal(
                     NILF,
@@ -738,16 +722,8 @@ unsafe extern "C" fn update_file_1(
                     },
                 )
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                >> (if FILE_TIMESTAMP_HI_RES != 0 {
-                    30
-                } else {
-                    0
-                })
-                << (if FILE_TIMESTAMP_HI_RES != 0 {
-                    30
-                } else {
-                    0
-                }))
+                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
             .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
             .wrapping_add(
                 (if FILE_TIMESTAMP_HI_RES != 0 {
@@ -760,13 +736,7 @@ unsafe extern "C" fn update_file_1(
         && (*file).low_resolution_time() as ::core::ffi::c_int != 0
     {
         let ns: ::core::ffi::c_int = (this_mtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-            & (((1)
-                << (if FILE_TIMESTAMP_HI_RES != 0 {
-                    30
-                } else {
-                    0
-                }))
-                - 1) as uintmax_t)
+            & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1) as uintmax_t)
             as ::core::ffi::c_int;
         if ns != 0 {
             error(
@@ -997,12 +967,11 @@ unsafe extern "C" fn update_file_1(
             if (*(*d).file).intermediate() != 0 {
                 let new_0: update_status;
                 let mut dontcare_0: ::core::ffi::c_int = 0;
-                let mtime_0: uintmax_t =
-                    if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime((*d).file, 1)
-                    } else {
-                        (*(*d).file).last_mtime
-                    };
+                let mtime_0: uintmax_t = if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
+                    f_mtime((*d).file, 1)
+                } else {
+                    (*(*d).file).last_mtime
+                };
                 while !(*(*d).file).renamed.is_null() {
                     (*d).file = (*(*d).file).renamed;
                 }
@@ -1110,11 +1079,7 @@ unsafe extern "C" fn update_file_1(
             );
             fflush(stdout);
         }
-        if depth == 0
-            && keep_going_flag != 0
-            && just_print_flag == 0
-            && question_flag == 0
-        {
+        if depth == 0 && keep_going_flag != 0 && just_print_flag == 0 && question_flag == 0 {
             error(
                 ::core::ptr::null_mut::<Floc>(),
                 strlen((*file).name) as size_t,
@@ -1240,7 +1205,10 @@ unsafe extern "C" fn update_file_1(
             );
             if !(*(*file).name as ::core::ffi::c_int == *(*file).hname as ::core::ffi::c_int
                 && (*(*file).name as ::core::ffi::c_int == 0
-                    || strcmp((*file).name.offset(1 as ::core::ffi::c_int as isize), (*file).hname.offset(1 as ::core::ffi::c_int as isize), ) == 0))
+                    || strcmp(
+                        (*file).name.offset(1 as ::core::ffi::c_int as isize),
+                        (*file).hname.offset(1 as ::core::ffi::c_int as isize),
+                    ) == 0))
             {
                 printf(
                     b"; using VPATH name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1271,7 +1239,9 @@ unsafe extern "C" fn update_file_1(
     if !(*(*file).name as ::core::ffi::c_int == *(*file).hname as ::core::ffi::c_int
         && (*(*file).name as ::core::ffi::c_int == 0
             || strcmp(
-                (*file).name.offset(1 as ::core::ffi::c_int as isize), (*file).hname.offset(1 as ::core::ffi::c_int as isize), ) == 0))
+                (*file).name.offset(1 as ::core::ffi::c_int as isize),
+                (*file).hname.offset(1 as ::core::ffi::c_int as isize),
+            ) == 0))
     {
         if 0x1 as ::core::ffi::c_int & db_level != 0 {
             printf(
@@ -1334,7 +1304,7 @@ unsafe extern "C" fn update_file_1(
     (*file).update_status() as update_status
 }
 #[no_mangle]
-pub unsafe extern "C" fn notice_finished_file(mut file: *mut file) {
+pub unsafe extern "C" fn notice_finished_file(file: *mut file) {
     let mut d: *mut dep;
     let ran: ::core::ffi::c_int = ((*file).command_state() as ::core::ffi::c_int
         == cs_running as ::core::ffi::c_int)
@@ -1381,10 +1351,7 @@ pub unsafe extern "C" fn notice_finished_file(mut file: *mut file) {
         {
             i_0 = (*(*file).cmds).ncommand_lines as ::core::ffi::c_int;
             while i_0 > 0 {
-                if !(*(*(*file).cmds)
-                    .lines_flags
-                    .offset((i_0 - 1) as isize)
-                    as ::core::ffi::c_int
+                if !(*(*(*file).cmds).lines_flags.offset((i_0 - 1) as isize) as ::core::ffi::c_int
                     & 1
                     != 0)
                 {
@@ -1705,8 +1672,7 @@ pub unsafe extern "C" fn touch_file(file: *mut file) -> update_status {
                 return us_failed;
             }
             loop {
-                e = read(fd, &raw mut buf as *mut ::core::ffi::c_void, 1)
-                    as ::core::ffi::c_int;
+                e = read(fd, &raw mut buf as *mut ::core::ffi::c_void, 1) as ::core::ffi::c_int;
                 if !(e == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
                     break;
                 }
@@ -1733,8 +1699,7 @@ pub unsafe extern "C" fn touch_file(file: *mut file) -> update_status {
                 return us_failed;
             }
             loop {
-                e = write(fd, &raw mut buf as *const ::core::ffi::c_void, 1)
-                    as ::core::ffi::c_int;
+                e = write(fd, &raw mut buf as *const ::core::ffi::c_void, 1) as ::core::ffi::c_int;
                 if !(e == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
                     break;
                 }
@@ -1823,10 +1788,7 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
             memlen = strlen(memname) as size_t;
             alloca_allocations.push(::std::vec::from_elem(
                 0,
-                arlen
-                    .wrapping_add(1)
-                    .wrapping_add(memlen)
-                    .wrapping_add(2) as usize,
+                arlen.wrapping_add(1).wrapping_add(memlen).wrapping_add(2) as usize,
             ));
             name = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
@@ -1836,18 +1798,15 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
             );
             *name.offset(arlen as isize) = '(' as i32 as ::core::ffi::c_char;
             memcpy(
-                name.offset(arlen as isize).offset(1 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void,
+                name.offset(arlen as isize)
+                    .offset(1 as ::core::ffi::c_int as isize)
+                    as *mut ::core::ffi::c_void,
                 memname as *const ::core::ffi::c_void,
                 memlen as size_t,
             );
             *name.offset(arlen.wrapping_add(1 as size_t).wrapping_add(memlen) as isize) =
                 ')' as i32 as ::core::ffi::c_char;
-            *name.offset(
-                arlen
-                    .wrapping_add(1)
-                    .wrapping_add(memlen)
-                    .wrapping_add(1) as isize,
-            ) = 0;
+            *name.offset(arlen.wrapping_add(1).wrapping_add(memlen).wrapping_add(1) as isize) = 0;
             if (*arfile).name == (*arfile).hname {
                 rename_file(file, strcache_add(name));
             } else {
@@ -1866,11 +1825,8 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
         if member_date == -(1 as ::core::ffi::c_int) as time_t
             || memmtime != NONEXISTENT_MTIME as uintmax_t
                 && (memmtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                    >> (if FILE_TIMESTAMP_HI_RES != 0 {
-                        30
-                    } else {
-                        0
-                    })) as time_t
+                    >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
+                    as time_t
                     > member_date
         {
             mtime = NONEXISTENT_MTIME as uintmax_t;
@@ -1887,8 +1843,10 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
                 ::core::ptr::null_mut::<::core::ffi::c_uint>(),
             );
             if !name_0.is_null()
-                || *(*file).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '-' as i32
-                    && *(*file).name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 'l' as i32
+                || *(*file).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                    == '-' as i32
+                    && *(*file).name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                        == 'l' as i32
                     && {
                         name_0 = library_search((*file).name, &raw mut mtime);
                         !name_0.is_null()
@@ -1958,37 +1916,16 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
             if adjusted_now < adjusted_mtime {
                 let from_now: ::core::ffi::c_double = (mtime
                     .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                    >> (if FILE_TIMESTAMP_HI_RES != 0 {
-                        30
-                    } else {
-                        0
-                    }))
+                    >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
                 .wrapping_sub(
                     now.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                        >> (if FILE_TIMESTAMP_HI_RES != 0 {
-                            30
-                        } else {
-                            0
-                        }),
-                )
-                    as ::core::ffi::c_double
+                        >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }),
+                ) as ::core::ffi::c_double
                     + ((mtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                        & (((1)
-                            << (if FILE_TIMESTAMP_HI_RES != 0 {
-                                30
-                            } else {
-                                0
-                            }))
-                            - 1) as uintmax_t)
-                        as ::core::ffi::c_int
+                        & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1)
+                            as uintmax_t) as ::core::ffi::c_int
                         - (now.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                            & (((1)
-                                << (if FILE_TIMESTAMP_HI_RES != 0 {
-                                    30
-                                } else {
-                                    0
-                                }))
-                                - 1)
+                            & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1)
                                 as uintmax_t) as ::core::ffi::c_int)
                         as ::core::ffi::c_double
                         / 1e9f64;
@@ -2097,7 +2034,7 @@ pub unsafe extern "C" fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax
             let ltime: uintmax_t;
             let mut lbuf: [::core::ffi::c_char; 4097] = [0; 4097];
             let mut llen: ::core::ffi::c_long;
-            let mut p: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+            let p: *mut ::core::ffi::c_char;
             loop {
                 e = lstat(&raw mut lpath as *mut ::core::ffi::c_char, &raw mut st);
                 if !(e == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
@@ -2163,7 +2100,9 @@ pub unsafe extern "C" fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax
                         {
                             break;
                         }
-                        strcpy(p.offset(1 as ::core::ffi::c_int as isize), &raw mut lbuf as *mut ::core::ffi::c_char,
+                        strcpy(
+                            p.offset(1 as ::core::ffi::c_int as isize),
+                            &raw mut lbuf as *mut ::core::ffi::c_char,
                         );
                     }
                 }
@@ -2258,8 +2197,11 @@ unsafe extern "C" fn library_search(
                     &raw mut vpath_index,
                     &raw mut path_index,
                 );
-                if !f.is_null() && (file.is_null()
-                        || vpath_index < best_vpath || vpath_index == best_vpath && path_index < best_path) {
+                if !f.is_null()
+                    && (file.is_null()
+                        || vpath_index < best_vpath
+                        || vpath_index == best_vpath && path_index < best_path)
+                {
                     file = f;
                     best_vpath = vpath_index;
                     best_path = path_index;
@@ -2298,7 +2240,9 @@ unsafe extern "C" fn library_search(
                         libbuf,
                     );
                     mtime = name_mtime(buf);
-                    if mtime != NONEXISTENT_MTIME as uintmax_t && (file.is_null() || vpath_index_0 < best_vpath) {
+                    if mtime != NONEXISTENT_MTIME as uintmax_t
+                        && (file.is_null() || vpath_index_0 < best_vpath)
+                    {
                         file = strcache_add(buf);
                         best_vpath = vpath_index_0;
                         if !mtime_ptr.is_null() {

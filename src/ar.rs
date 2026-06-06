@@ -285,9 +285,9 @@ unsafe extern "C" fn ar_glob_match(
     mut _mode: ::core::ffi::c_uint,
     arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
-    let mut state: *mut ar_glob_state = arg as *mut ar_glob_state;
+    let state: *mut ar_glob_state = arg as *mut ar_glob_state;
     if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
-        let mut new: *mut nameseq = xcalloc((*state).size) as *mut nameseq;
+        let new: *mut nameseq = xcalloc((*state).size) as *mut nameseq;
         (*new).name = strcache_add(concat(
             4,
             (*state).arname,
