@@ -2158,7 +2158,6 @@ pub unsafe extern "C" fn func_shell_base(
         if pid < 0 {
             shell_completed(127, 0);
         } else {
-            let mut buffer: *mut ::core::ffi::c_char;
             let mut maxlen: size_t;
             let mut i: size_t;
             let mut cc: ::core::ffi::c_int;
@@ -2168,19 +2167,20 @@ pub unsafe extern "C" fn func_shell_base(
                 close(pipedes[1 as ::core::ffi::c_int as usize]);
             }
             maxlen = 200;
-            buffer = xmalloc(maxlen.wrapping_add(1)) as *mut ::core::ffi::c_char;
+            // Owned read buffer (was xmalloc/xrealloc/free). The Vec is pure
+            // storage with a stable allocation; `i` tracks the filled length
+            // and `maxlen` the usable capacity, exactly as before.
+            let mut buffer: Vec<u8> = Vec::with_capacity(maxlen.wrapping_add(1) as usize);
             i = 0;
             loop {
                 if i == maxlen {
                     maxlen = maxlen.wrapping_add(512);
-                    buffer = xrealloc(buffer as *mut ::core::ffi::c_void, maxlen.wrapping_add(1))
-                        as *mut ::core::ffi::c_char;
+                    buffer.reserve_exact(maxlen.wrapping_add(1) as usize);
                 }
                 loop {
                     cc = read(
                         pipedes[0 as ::core::ffi::c_int as usize],
-                        buffer.offset(i as isize) as *mut ::core::ffi::c_char
-                            as *mut ::core::ffi::c_void,
+                        buffer.as_mut_ptr().add(i as usize) as *mut ::core::ffi::c_void,
                         (maxlen as size_t).wrapping_sub(i as size_t),
                     ) as ::core::ffi::c_int;
                     if !(cc == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
@@ -2192,7 +2192,7 @@ pub unsafe extern "C" fn func_shell_base(
                 }
                 i = i.wrapping_add(cc as size_t);
             }
-            *buffer.offset(i as isize) = 0;
+            *buffer.as_mut_ptr().add(i as usize) = 0;
             close(pipedes[0 as ::core::ffi::c_int as usize]);
             while shell_function_completed == 0 {
                 reap_children(1, 0);
@@ -2210,9 +2210,12 @@ pub unsafe extern "C" fn func_shell_base(
                 free(batch_filename as *mut ::core::ffi::c_void);
             }
             shell_function_pid = 0 as ::core::ffi::c_int as pid_t;
-            fold_newlines(buffer, &raw mut i, trim_newlines);
-            o = variable_buffer_output(o, buffer, i);
-            free(buffer as *mut ::core::ffi::c_void);
+            fold_newlines(
+                buffer.as_mut_ptr() as *mut ::core::ffi::c_char,
+                &raw mut i,
+                trim_newlines,
+            );
+            o = variable_buffer_output(o, buffer.as_mut_ptr() as *mut ::core::ffi::c_char, i);
         }
     }
     if !command_argv.is_null() {
