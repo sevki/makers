@@ -34,7 +34,7 @@ jobs:
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: nightly-2026-05-04
           components: clippy
           override: true
 
@@ -42,7 +42,8 @@ jobs:
         run: cargo install clippy-sarif sarif-fmt
 
       - name: Run rust-clippy
-        run:
+        run: |
+          set -o pipefail
           cargo clippy
           --all-features
           --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt

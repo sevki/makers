@@ -647,7 +647,6 @@ unsafe extern "C" fn eval_makefile(
         && (*deps).error == ENOENT
         && !include_directories.is_null()
         && flags as ::core::ffi::c_int & (1) << 1 != 0
-        && 0 == 0
         && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
             .offset(*filename as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & 0x8000 as ::core::ffi::c_int
