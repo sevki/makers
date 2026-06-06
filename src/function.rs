@@ -1285,21 +1285,21 @@ unsafe extern "C" fn func_foreach(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let varname: *mut ::core::ffi::c_char = expand_argument(
+    let varname = ExpandedArg::new(
         *argv.offset(0 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let list: *mut ::core::ffi::c_char = expand_argument(
+    let list = ExpandedArg::new(
         *argv.offset(1 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
     let mut doneany: ::core::ffi::c_int = 0;
-    let mut list_iterator: *const ::core::ffi::c_char = list;
+    let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
     let mut p: *const ::core::ffi::c_char;
     let mut len: size_t = 0;
     let var: *mut variable;
-    let vp: *mut ::core::ffi::c_char = next_token(varname);
+    let vp: *mut ::core::ffi::c_char = next_token(varname.as_ptr());
     *end_of_token(vp).offset(0 as ::core::ffi::c_int as isize) = 0;
     push_new_variable_scope();
     var = define_variable_in_set(
@@ -1329,8 +1329,6 @@ unsafe extern "C" fn func_foreach(
         o = o.offset(-(1 as ::core::ffi::c_int) as isize);
     }
     pop_variable_scope();
-    free(varname as *mut ::core::ffi::c_void);
-    free(list as *mut ::core::ffi::c_void);
     o
 }
 unsafe extern "C" fn func_let(
@@ -1338,18 +1336,18 @@ unsafe extern "C" fn func_let(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let varnames: *mut ::core::ffi::c_char = expand_argument(
+    let varnames = ExpandedArg::new(
         *argv.offset(0 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let list: *mut ::core::ffi::c_char = expand_argument(
+    let list = ExpandedArg::new(
         *argv.offset(1 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
     let mut vp: *const ::core::ffi::c_char;
-    let mut vp_next: *const ::core::ffi::c_char = varnames;
-    let mut list_iterator: *const ::core::ffi::c_char = list;
+    let mut vp_next: *const ::core::ffi::c_char = varnames.as_ptr();
+    let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
     let mut vlen: size_t = 0;
     push_new_variable_scope();
     vp = find_next_token(&raw mut vp_next, &raw mut vlen);
@@ -1402,8 +1400,6 @@ unsafe extern "C" fn func_let(
     }
     o = expand_string_buf(o, body, SIZE_MAX as size_t);
     pop_variable_scope();
-    free(varnames as *mut ::core::ffi::c_void);
-    free(list as *mut ::core::ffi::c_void);
     o.offset(strlen(o) as isize)
 }
 #[no_mangle]
