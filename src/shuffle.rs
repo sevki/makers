@@ -186,3 +186,58 @@ pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
         d = (*d).next;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static MODE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn lock_mode_tests() -> std::sync::MutexGuard<'static, ()> {
+        MODE_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("mode test lock must not be poisoned")
+    }
+
+    #[test]
+    fn set_mode_reverse_is_reported_by_get_mode() {
+        let _guard = lock_mode_tests();
+        set_mode("none");
+        set_mode("reverse");
+        assert_eq!(get_mode().as_deref(), Some("reverse"));
+    }
+
+    #[test]
+    fn set_mode_identity_is_reported_by_get_mode() {
+        let _guard = lock_mode_tests();
+        set_mode("none");
+        set_mode("identity");
+        assert_eq!(get_mode().as_deref(), Some("identity"));
+    }
+
+    #[test]
+    fn set_mode_none_clears_mode() {
+        let _guard = lock_mode_tests();
+        set_mode("reverse");
+        set_mode("none");
+        assert_eq!(get_mode(), None);
+    }
+
+    #[test]
+    fn set_mode_numeric_seed_is_reported_by_get_mode() {
+        let _guard = lock_mode_tests();
+        set_mode("none");
+        set_mode("1234");
+        assert_eq!(get_mode().as_deref(), Some("1234"));
+    }
+
+    #[test]
+    fn set_mode_random_produces_active_mode_label() {
+        let _guard = lock_mode_tests();
+        set_mode("none");
+        set_mode("random");
+        assert!(get_mode().is_some());
+    }
+}
