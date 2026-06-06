@@ -407,7 +407,6 @@ unsafe extern "C" fn pattern_search(
     nrules = 0;
     rule = pattern_rules;
     while !rule.is_null() {
-        let mut ti: ::core::ffi::c_uint;
         if !(!(*rule).deps.is_null() && (*rule).cmds.is_null()) {
             if (*rule).in_use != 0 {
                 if 0x8 as ::core::ffi::c_int & db_level != 0 {
@@ -420,131 +419,96 @@ unsafe extern "C" fn pattern_search(
                     fflush(stdout);
                 }
             } else {
-                ti = 0;
-                while ti < (*rule).num as ::core::ffi::c_uint {
+                for ti in 0..(*rule).num as ::core::ffi::c_uint {
                     let target: *const ::core::ffi::c_char =
                         *(*rule).targets.offset(ti as isize);
                     let suffix: *const ::core::ffi::c_char =
                         *(*rule).suffixes.offset(ti as isize);
-                    let mut check_lastslash: ::core::ffi::c_char;
-                    if !(recursions > 0
-                        && *target.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
-                        && (*rule).terminal == 0) && !(*(*rule).lens.offset(ti as isize) as size_t > namelen) {
-                        stem = filename.offset(
-                            (suffix.offset_from(target) as ::core::ffi::c_long
-                                - 1)
-                                as isize,
-                        );
-                        stemlen = namelen
-                            .wrapping_sub(*(*rule).lens.offset(ti as isize) as size_t)
-                            .wrapping_add(1);
-                        check_lastslash = 0;
-                        if !lastslash.is_null() {
-                            check_lastslash = (strchr(target, '/' as i32)
-                                == ::core::ptr::null_mut::<::core::ffi::c_char>())
-                                as ::core::ffi::c_int
-                                as ::core::ffi::c_char;
-                        }
-                        let mut matched = true;
-                        if check_lastslash != 0 {
-                            if pathlen > stemlen {
-                                matched = false;
-                            } else {
-                                stemlen = stemlen.wrapping_sub(pathlen);
-                                stem = stem.offset(pathlen as isize);
-                            }
-                        }
-                        if matched {
-                            // The target text before the stem must match the name
-                            // (relative to the last slash when the target has none).
-                            let prefix_ok = if check_lastslash != 0 {
-                                !(stem > lastslash.offset(1 as ::core::ffi::c_int as isize)
-                                    && strncmp(
-                                        target,
-                                        lastslash.offset(1 as ::core::ffi::c_int as isize),
-                                        (stem.offset_from(lastslash) as ::core::ffi::c_long - 1)
-                                            as size_t,
-                                    ) != 0)
-                            } else {
-                                !(stem > filename
-                                    && strncmp(
-                                        target,
-                                        filename,
-                                        stem.offset_from(filename) as ::core::ffi::c_long as size_t,
-                                    ) != 0)
-                            };
-                            if prefix_ok {
-                                if !(*suffix as ::core::ffi::c_int
-                                    != *stem.offset(stemlen as isize)
-                                        as ::core::ffi::c_int
-                                    || *suffix as ::core::ffi::c_int != 0
-                                        && !(*suffix . offset ( 1 ) as ::core::ffi::c_int
-                                            == *stem.offset(
-                                                stemlen.wrapping_add(1)
-                                                    as isize,
-                                            )
-                                                as ::core::ffi::c_int
-                                            && (*suffix.offset(
-                                                1 as ::core::ffi::c_int as isize,
-                                            )
-                                                as ::core::ffi::c_int
-                                                == 0
-                                                || strcmp(
-                                                    (suffix.offset(
-                                                        1 as ::core::ffi::c_int
-                                                            as isize,
-                                                    )
-                                                        as *const ::core::ffi::c_char)
-                                                        .offset(
-                                                            1 as ::core::ffi::c_int
-                                                                as isize,
-                                                        ),
-                                                    (stem.offset(
-                                                        stemlen
-                                                            .wrapping_add(1)
-                                                            as isize,
-                                                    )
-                                                        as *const ::core::ffi::c_char)
-                                                        .offset(
-                                                            1 as ::core::ffi::c_int
-                                                                as isize,
-                                                        ),
-                                                ) == 0)))
-                                {
-                                    if *target . offset ( 1 ) as ::core::ffi::c_int
-                                        != 0
-                                    {
-                                        specific_rule_matched = 1;
-                                    }
-                                    if !((*rule).deps.is_null()
-                                        && (*rule).cmds.is_null())
-                                    {
-                                        let fresh0 = &mut (*tryrules.offset(nrules as isize)).rule;
-                                        *fresh0 = rule;
-                                        (*tryrules.offset(nrules as isize)).matches =
-                                            ti;
-                                        (*tryrules.offset(nrules as isize)).stemlen =
-                                            stemlen.wrapping_add(
-                                                if check_lastslash
-                                                    as ::core::ffi::c_int
-                                                    != 0
-                                                {
-                                                    pathlen
-                                                } else {
-                                                    0
-                                                },
-                                            );
-                                        (*tryrules.offset(nrules as isize)).order =
-                                            nrules;
-                                        (*tryrules.offset(nrules as isize))
-                                            .checked_lastslash = check_lastslash;
-                                        nrules = nrules.wrapping_add(1);
-                                    }
-                                }
-                            }
-                        }
+                    // Skip non-terminal recursion guards and names too short to
+                    // hold the rule's fixed text.
+                    if recursions > 0
+                        && *target.offset(1) as ::core::ffi::c_int == 0
+                        && (*rule).terminal == 0
+                        || *(*rule).lens.offset(ti as isize) as size_t > namelen
+                    {
+                        continue;
                     }
-                    ti = ti.wrapping_add(1);
+                    stem = filename.offset(
+                        (suffix.offset_from(target) as ::core::ffi::c_long - 1) as isize,
+                    );
+                    stemlen = namelen
+                        .wrapping_sub(*(*rule).lens.offset(ti as isize) as size_t)
+                        .wrapping_add(1);
+                    let check_lastslash: ::core::ffi::c_char = if !lastslash.is_null() {
+                        (strchr(target, '/' as i32)
+                            == ::core::ptr::null_mut::<::core::ffi::c_char>())
+                            as ::core::ffi::c_int as ::core::ffi::c_char
+                    } else {
+                        0
+                    };
+                    if check_lastslash != 0 {
+                        if pathlen > stemlen {
+                            continue;
+                        }
+                        stemlen = stemlen.wrapping_sub(pathlen);
+                        stem = stem.offset(pathlen as isize);
+                    }
+                    // The target text before the stem must match the name
+                    // (relative to the last slash when the target has none).
+                    if check_lastslash != 0 {
+                        if stem > lastslash.offset(1)
+                            && strncmp(
+                                target,
+                                lastslash.offset(1),
+                                (stem.offset_from(lastslash) as ::core::ffi::c_long - 1) as size_t,
+                            ) != 0
+                        {
+                            continue;
+                        }
+                    } else if stem > filename
+                        && strncmp(
+                            target,
+                            filename,
+                            stem.offset_from(filename) as ::core::ffi::c_long as size_t,
+                        ) != 0
+                    {
+                        continue;
+                    }
+                    // The text after the stem (the suffix) must also match.
+                    if *suffix as ::core::ffi::c_int
+                        != *stem.offset(stemlen as isize) as ::core::ffi::c_int
+                        || *suffix as ::core::ffi::c_int != 0
+                            && !(*suffix.offset(1) as ::core::ffi::c_int
+                                == *stem.offset(stemlen.wrapping_add(1) as isize)
+                                    as ::core::ffi::c_int
+                                && (*suffix.offset(1) as ::core::ffi::c_int == 0
+                                    || strcmp(
+                                        (suffix.offset(1) as *const ::core::ffi::c_char).offset(1),
+                                        (stem.offset(stemlen.wrapping_add(1) as isize)
+                                            as *const ::core::ffi::c_char)
+                                            .offset(1),
+                                    ) == 0))
+                    {
+                        continue;
+                    }
+                    if *target.offset(1) as ::core::ffi::c_int != 0 {
+                        specific_rule_matched = 1;
+                    }
+                    if !((*rule).deps.is_null() && (*rule).cmds.is_null()) {
+                        let fresh0 = &mut (*tryrules.offset(nrules as isize)).rule;
+                        *fresh0 = rule;
+                        (*tryrules.offset(nrules as isize)).matches = ti;
+                        (*tryrules.offset(nrules as isize)).stemlen = stemlen.wrapping_add(
+                            if check_lastslash as ::core::ffi::c_int != 0 {
+                                pathlen
+                            } else {
+                                0
+                            },
+                        );
+                        (*tryrules.offset(nrules as isize)).order = nrules;
+                        (*tryrules.offset(nrules as isize)).checked_lastslash = check_lastslash;
+                        nrules = nrules.wrapping_add(1);
+                    }
                 }
             }
         }
