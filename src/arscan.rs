@@ -123,7 +123,6 @@ pub unsafe extern "C" fn ar_scan(
     arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let current_block: u64;
     let mut namemap: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut namemap_size: ::core::ffi::c_uint = 0;
     let desc: ::core::ffi::c_int = open(archive, O_RDONLY, 0);
@@ -179,7 +178,6 @@ pub unsafe extern "C" fn ar_scan(
                 }
             }
             if o < 0 as off_t {
-                current_block = 13383231232214443762;
                 break;
             }
             nread_0 = readbuf(
@@ -188,8 +186,8 @@ pub unsafe extern "C" fn ar_scan(
                 AR_HDR_SIZE,
             );
             if nread_0 == 0 as ssize_t {
-                current_block = 16203797167131938757;
-                break;
+                close(desc);
+                return 0 as intmax_t;
             }
             if nread_0 as usize != AR_HDR_SIZE
                 || memcmp(
@@ -200,7 +198,6 @@ pub unsafe extern "C" fn ar_scan(
                 ) != 0
                     && 1 != 0
             {
-                current_block = 13383231232214443762;
                 break;
             }
             name = &raw mut namebuf as *mut ::core::ffi::c_char;
@@ -240,13 +237,11 @@ pub unsafe extern "C" fn ar_scan(
                     make_toui(name.offset(1 as ::core::ffi::c_int as isize), &raw mut err);
                 let name_len: size_t;
                 if !err.is_null() || name_off >= namemap_size {
-                    current_block = 13383231232214443762;
                     break;
                 }
                 name = namemap.offset(name_off as isize);
                 name_len = strlen(name) as size_t;
                 if name_len < 1 {
-                    current_block = 13383231232214443762;
                     break;
                 }
                 long_name = 1;
@@ -270,7 +265,6 @@ pub unsafe extern "C" fn ar_scan(
                             2147483647 as ::core::ffi::c_int
                         }) as ::core::ffi::c_uint
                 {
-                    current_block = 13383231232214443762;
                     break;
                 }
                 alloca_allocations.push(::std::vec::from_elem(
@@ -282,7 +276,6 @@ pub unsafe extern "C" fn ar_scan(
                     alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
                 nread_0 = readbuf(desc, name as *mut ::core::ffi::c_void, name_len_0 as size_t);
                 if nread_0 < 0 as ssize_t || nread_0 as ::core::ffi::c_uint != name_len_0 {
-                    current_block = 13383231232214443762;
                     break;
                 }
                 *name.offset(name_len_0 as isize) = 0;
@@ -378,7 +371,6 @@ pub unsafe extern "C" fn ar_scan(
                 let mut clear: *mut ::core::ffi::c_char;
                 let limit: *mut ::core::ffi::c_char;
                 if eltsize > INT_MAX as ::core::ffi::c_long {
-                    current_block = 13383231232214443762;
                     break;
                 }
                 alloca_allocations.push(::std::vec::from_elem(
@@ -389,7 +381,6 @@ pub unsafe extern "C" fn ar_scan(
                     alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
                 nread_0 = readbuf(desc, namemap as *mut ::core::ffi::c_void, eltsize as size_t);
                 if nread_0 != eltsize as ssize_t {
-                    current_block = 13383231232214443762;
                     break;
                 }
                 namemap_size = eltsize as ::core::ffi::c_uint;
@@ -412,13 +403,6 @@ pub unsafe extern "C" fn ar_scan(
                 as ::core::ffi::c_long as ::core::ffi::c_long;
             if member_offset % 2 != 0 {
                 member_offset += 1;
-            }
-        }
-        match current_block {
-            13383231232214443762 => {}
-            _ => {
-                close(desc);
-                return 0 as intmax_t;
             }
         }
     }
