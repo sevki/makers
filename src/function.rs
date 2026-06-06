@@ -1735,7 +1735,6 @@ unsafe extern "C" fn func_sort(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut t: *const ::core::ffi::c_char;
-    let words: *mut *mut ::core::ffi::c_char;
     let mut wordi: ::core::ffi::c_int;
     let mut p: *mut ::core::ffi::c_char;
     let mut len: size_t = 0;
@@ -1749,10 +1748,9 @@ unsafe extern "C" fn func_sort(
         t = t.offset(1 as ::core::ffi::c_int as isize);
         wordi += 1;
     }
-    words = xmalloc(
-        ((if wordi == 0 { 1 } else { wordi }) as size_t)
-            .wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
-    ) as *mut *mut ::core::ffi::c_char;
+    // Owned word-pointer table (was an xmalloc'd array freed at the end).
+    let mut words: Vec<*mut ::core::ffi::c_char> =
+        Vec::with_capacity(if wordi == 0 { 1 } else { wordi as usize });
     t = *argv.offset(0 as ::core::ffi::c_int as isize);
     wordi = 0;
     loop {
@@ -1762,15 +1760,13 @@ unsafe extern "C" fn func_sort(
         }
         t = t.offset(1 as ::core::ffi::c_int as isize);
         *p.offset(len as isize) = 0;
-        let fresh3 = wordi;
         wordi += 1;
-        let fresh4 = &mut (*words.offset(fresh3 as isize));
-        *fresh4 = p;
+        words.push(p);
     }
     if wordi != 0 {
         let mut i: ::core::ffi::c_int;
         qsort(
-            words as *mut ::core::ffi::c_void,
+            words.as_mut_ptr() as *mut ::core::ffi::c_void,
             wordi as size_t,
             ::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t,
             Some(
@@ -1783,23 +1779,26 @@ unsafe extern "C" fn func_sort(
         );
         i = 0;
         while i < wordi {
-            len = strlen(*words.offset(i as isize)) as size_t;
+            len = strlen(words[i as usize]) as size_t;
             if i == wordi - 1
-                || strlen(*words.offset((i + 1) as isize)) != len
+                || strlen(words[(i + 1) as usize]) != len
                 || memcmp(
-                    *words.offset(i as isize) as *const ::core::ffi::c_void,
-                    *words.offset((i + 1) as isize) as *const ::core::ffi::c_void,
+                    words[i as usize] as *const ::core::ffi::c_void,
+                    words[(i + 1) as usize] as *const ::core::ffi::c_void,
                     len as size_t,
                 ) != 0
             {
-                o = variable_buffer_output(o, *words.offset(i as isize), len);
-                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+                o = variable_buffer_output(o, words[i as usize], len);
+                o = variable_buffer_output(
+                    o,
+                    b" \0" as *const u8 as *const ::core::ffi::c_char,
+                    1,
+                );
             }
             i += 1;
         }
         o = o.offset(-(1 as ::core::ffi::c_int) as isize);
     }
-    free(words as *mut ::core::ffi::c_void);
     o
 }
 unsafe extern "C" fn parse_textint(
