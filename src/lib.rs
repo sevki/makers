@@ -2,15 +2,16 @@
 #![allow(non_upper_case_globals)]
 #![feature(c_variadic)]
 #![feature(extern_types)]
-#![feature(raw_ref_op)]
 
 #[macro_use]
 extern crate c2rust_bitfields;
 extern crate libc;
+extern crate self as make_sys;
 
 pub mod ar;
 pub mod arscan;
 pub mod commands;
+pub mod content_hash;
 pub mod default;
 pub mod dir;
 pub mod expand;

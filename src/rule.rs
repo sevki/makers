@@ -167,7 +167,7 @@ pub static mut max_pattern_dep_length: size_t = 0;
 #[no_mangle]
 pub static mut suffix_file: *mut file = ::core::ptr::null::<file>() as *mut file;
 #[no_mangle]
-pub unsafe extern "C" fn get_rule_defn(mut r: *mut rule) -> *const ::core::ffi::c_char {
+pub unsafe extern "C" fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
     if (*r)._defn.is_null() {
         let mut len: size_t = 8;
         let mut k: ::core::ffi::c_uint;
@@ -426,7 +426,7 @@ unsafe extern "C" fn convert_suffix_rule(
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let names: *mut *const ::core::ffi::c_char;
     let percents: *mut *const ::core::ffi::c_char;
-    let mut deps: *mut dep;
+    let deps: *mut dep;
     names = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
         as *mut *const ::core::ffi::c_char;
     percents = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
@@ -665,7 +665,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
     }
 }
 unsafe extern "C" fn new_pattern_rule(
-    mut rule: *mut rule,
+    rule: *mut rule,
     override_0: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     let mut r: *mut rule;
@@ -770,7 +770,7 @@ pub unsafe extern "C" fn install_pattern_rule(
     p: *const pspec,
     terminal: ::core::ffi::c_int,
 ) {
-    let mut r: *mut rule;
+    let r: *mut rule;
     let mut ptr: *const ::core::ffi::c_char;
     r = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
     (*r).num = 1;
@@ -823,7 +823,7 @@ pub unsafe extern "C" fn install_pattern_rule(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn freerule(rule: *mut rule, mut lastrule: *mut rule) {
+pub unsafe extern "C" fn freerule(rule: *mut rule, lastrule: *mut rule) {
     let next: *mut rule = (*rule).next;
     free_dep_chain((*rule).deps as *mut dep);
     free((*rule).targets as *mut ::core::ffi::c_void);
@@ -855,7 +855,7 @@ pub unsafe extern "C" fn create_pattern_rule(
     override_0: ::core::ffi::c_int,
 ) {
     let mut i: ::core::ffi::c_uint;
-    let mut r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
+    let r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
     (*r).num = n;
     (*r).cmds = commands as *mut commands;
     (*r).deps = deps as *mut dep;

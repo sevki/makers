@@ -1,5 +1,6 @@
 use crate::file::{Dep, File};
 use crate::floc::Floc;
+use std::sync::{Mutex, OnceLock};
 
 use crate::misc::{make_rand, make_seed};
 extern "C" {
@@ -22,31 +23,37 @@ struct Config {
     mode: Mode,
     seed: u32,
     shuffler: Option<Shuffler>,
-    label: String,
 }
 
-static mut CONFIG: Config = Config {
-    mode: Mode::None,
-    seed: 0,
-    shuffler: None,
-    label: String::new(),
-};
+impl Config {
+    fn new() -> Self {
+        Self {
+            mode: Mode::None,
+            seed: 0,
+            shuffler: None,
+        }
+    }
+}
 
-fn config() -> &'static mut Config {
-    // make's runtime state is single-threaded; matches the existing convention
-    // for static mut globals throughout this codebase.
-    unsafe { &mut CONFIG }
+static CONFIG: OnceLock<Mutex<Config>> = OnceLock::new();
+
+fn config() -> std::sync::MutexGuard<'static, Config> {
+    CONFIG
+        .get_or_init(|| Mutex::new(Config::new()))
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
 }
 
 /// Returns the canonical label for the active shuffle mode (e.g. `"reverse"`,
 /// or the seed as a decimal string for `random`), or `None` when shuffling is
 /// disabled.
 pub fn get_mode() -> Option<String> {
-    let label = &config().label;
-    if label.is_empty() {
-        None
-    } else {
-        Some(label.clone())
+    let cfg = config();
+    match cfg.mode {
+        Mode::None => None,
+        Mode::Random => Some(cfg.seed.to_string()),
+        Mode::Reverse => Some("reverse".to_string()),
+        Mode::Identity => Some("identity".to_string()),
     }
 }
 
@@ -54,19 +61,16 @@ pub fn get_mode() -> Option<String> {
 /// the `--shuffle=` command-line flag). Aborts via `fatal` on a malformed
 /// numeric seed, matching the original C behavior.
 pub fn set_mode(arg: &str) {
-    let cfg = config();
+    let mut cfg = config();
     if arg.eq_ignore_ascii_case("reverse") {
         cfg.mode = Mode::Reverse;
         cfg.shuffler = Some(reverse_shuffle);
-        cfg.label = "reverse".to_string();
     } else if arg.eq_ignore_ascii_case("identity") {
         cfg.mode = Mode::Identity;
         cfg.shuffler = Some(identity_shuffle);
-        cfg.label = "identity".to_string();
     } else if arg.eq_ignore_ascii_case("none") {
         cfg.mode = Mode::None;
         cfg.shuffler = None;
-        cfg.label.clear();
     } else {
         let seed = if arg.eq_ignore_ascii_case("random") {
             unsafe { make_rand() }
@@ -79,7 +83,6 @@ pub fn set_mode(arg: &str) {
         cfg.mode = Mode::Random;
         cfg.seed = seed;
         cfg.shuffler = Some(random_shuffle);
-        cfg.label = seed.to_string();
     }
 }
 
@@ -141,7 +144,8 @@ unsafe fn shuffle_deps(deps: *mut Dep) {
         d = (*d).next;
     }
 
-    if let Some(f) = config().shuffler {
+    let shuffler = config().shuffler;
+    if let Some(f) = shuffler {
         f(&mut deps_order);
     }
 
@@ -172,12 +176,15 @@ unsafe fn shuffle_file_deps_recursive(f: *mut File) {
 /// `deps` must be a valid (possibly null) head of a properly-linked `Dep`
 /// chain, and the chain's `File` pointers must be valid.
 pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
-    let cfg = config();
-    if cfg.mode == Mode::None || not_parallel != 0 {
+    let (mode, seed) = {
+        let cfg = config();
+        (cfg.mode, cfg.seed)
+    };
+    if mode == Mode::None || not_parallel != 0 {
         return;
     }
-    if cfg.mode == Mode::Random {
-        make_seed(cfg.seed);
+    if mode == Mode::Random {
+        make_seed(seed);
     }
     shuffle_deps(deps);
     let mut d = deps;

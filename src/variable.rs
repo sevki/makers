@@ -1,9 +1,9 @@
-use libc::{abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, strstr};
-use ::c2rust_bitfields;
-use crate::stdio::{FILE};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::{next_token, skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::stdio::FILE;
+use c2rust_bitfields;
+use libc::{abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, strstr};
 extern "C" {
     static mut stdout: *mut FILE;
     fn putc(__c: ::core::ffi::c_int, __stream: *mut FILE) -> ::core::ffi::c_int;
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn create_pattern_var(
     suffix: *const ::core::ffi::c_char,
 ) -> *mut pattern_var {
     let len: size_t = strlen(target) as size_t;
-    let mut p: *mut pattern_var =
+    let p: *mut pattern_var =
         xcalloc(::core::mem::size_of::<pattern_var>() as size_t) as *mut pattern_var;
     if !pattern_vars.is_null() {
         if len < 256 && !last_pattern_vars[len as usize].is_null() {
@@ -256,30 +256,32 @@ unsafe extern "C" fn lookup_pattern_var(
         let stem: *const ::core::ffi::c_char;
         let stemlen: size_t;
         if !((*p).len > targlen) {
-            stem = target.offset(
-                ((*p).suffix.offset_from((*p).target) as ::core::ffi::c_long
-                    - 1) as isize,
-            );
+            stem = target
+                .offset(((*p).suffix.offset_from((*p).target) as ::core::ffi::c_long - 1) as isize);
             stemlen = targlen.wrapping_sub((*p).len).wrapping_add(1);
             if !(stem > target
                 && !(strncmp(
                     (*p).target,
                     target,
                     stem.offset_from(target) as ::core::ffi::c_long as size_t,
-                ) == 0)) && *(*p).suffix as ::core::ffi::c_int
-                    == *stem.offset(stemlen as isize) as ::core::ffi::c_int && (*(*p).suffix as ::core::ffi::c_int == 0
-                        || *(*p).suffix.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                            == *stem.offset(stemlen.wrapping_add(1) as isize)
-                                as ::core::ffi::c_int
-                            && (*(*p).suffix.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
-                                || strcmp(
-                                    ((*p).suffix.offset(1 as ::core::ffi::c_int as isize)
-                                        as *const ::core::ffi::c_char)
-                                        .offset(1 as ::core::ffi::c_int as isize),
-                                    (stem.offset(stemlen.wrapping_add(1) as isize)
-                                        as *const ::core::ffi::c_char)
-                                        .offset(1 as ::core::ffi::c_int as isize),
-                                ) == 0)) {
+                ) == 0))
+                && *(*p).suffix as ::core::ffi::c_int
+                    == *stem.offset(stemlen as isize) as ::core::ffi::c_int
+                && (*(*p).suffix as ::core::ffi::c_int == 0
+                    || *(*p).suffix.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                        == *stem.offset(stemlen.wrapping_add(1) as isize) as ::core::ffi::c_int
+                        && (*(*p).suffix.offset(1 as ::core::ffi::c_int as isize)
+                            as ::core::ffi::c_int
+                            == 0
+                            || strcmp(
+                                ((*p).suffix.offset(1 as ::core::ffi::c_int as isize)
+                                    as *const ::core::ffi::c_char)
+                                    .offset(1 as ::core::ffi::c_int as isize),
+                                (stem.offset(stemlen.wrapping_add(1) as isize)
+                                    as *const ::core::ffi::c_char)
+                                    .offset(1 as ::core::ffi::c_int as isize),
+                            ) == 0))
+            {
                 break;
             }
         }
@@ -308,8 +310,7 @@ unsafe extern "C" fn variable_hash_cmp(
 ) -> ::core::ffi::c_int {
     let x: *const variable = xv as *const variable;
     let y: *const variable = yv as *const variable;
-    let result: ::core::ffi::c_int =
-        (*x).length.wrapping_sub((*y).length) as ::core::ffi::c_int;
+    let result: ::core::ffi::c_int = (*x).length.wrapping_sub((*y).length) as ::core::ffi::c_int;
     if result != 0 {
         return result;
     }
@@ -343,16 +344,14 @@ static mut global_variable_set: variable_set = variable_set {
         c2rust_padding: [0; 3],
     },
 };
-static mut global_setlist: variable_set_list = unsafe {
-    variable_set_list {
-        next: ::core::ptr::null::<variable_set_list>() as *mut variable_set_list,
-        set: &raw const global_variable_set as *mut variable_set,
-        next_is_parent: 0,
-    }
+static mut global_setlist: variable_set_list = variable_set_list {
+    next: ::core::ptr::null::<variable_set_list>() as *mut variable_set_list,
+    set: &raw const global_variable_set as *mut variable_set,
+    next_is_parent: 0,
 };
 #[no_mangle]
 pub static mut current_variable_set_list: *mut variable_set_list =
-    unsafe { &raw const global_setlist as *mut variable_set_list };
+    &raw const global_setlist as *mut variable_set_list;
 unsafe extern "C" fn check_valid_name(
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
@@ -360,8 +359,7 @@ unsafe extern "C" fn check_valid_name(
 ) {
     let mut cp: *const ::core::ffi::c_char;
     let end: *const ::core::ffi::c_char;
-    if !(warning::is_active(Type::InvalidVar))
-    {
+    if !(warning::is_active(Type::InvalidVar)) {
         return;
     }
     cp = name;
@@ -379,8 +377,7 @@ unsafe extern "C" fn check_valid_name(
     if cp == end {
         return;
     }
-    if warning::is_active(Type::InvalidVar)
-    {
+    if warning::is_active(Type::InvalidVar) {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
             ::core::ptr::null::<::core::ffi::c_char>(),
             (53 as size_t)
@@ -392,8 +389,7 @@ unsafe extern "C" fn check_valid_name(
             length as ::core::ffi::c_int,
             name,
         ));
-        if warning::action(Type::InvalidVar) == Action::Error
-        {
+        if warning::action(Type::InvalidVar) == Action::Error {
             fatal(
                 flocp,
                 strlen(_a) as size_t,
@@ -613,7 +609,7 @@ pub unsafe extern "C" fn undefine_variable_in_set(
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut variable {
+pub unsafe extern "C" fn lookup_special_var(var: *mut variable) -> *mut variable {
     static mut last_changenum: ::core::ffi::c_ulong = 0;
     if variable_changenum != last_changenum
         && (*(*var).name as ::core::ffi::c_int
@@ -621,7 +617,8 @@ pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut vari
             && (*(*var).name as ::core::ffi::c_int == 0
                 || strcmp(
                     (*var).name.offset(1 as ::core::ffi::c_int as isize),
-                    (b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
+                    (b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char)
+                        .offset(1 as ::core::ffi::c_int as isize),
                 ) == 0))
     {
         let mut max: size_t = (strlen((*var).value) as size_t)
@@ -645,13 +642,8 @@ pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut vari
                 let l: ::core::ffi::c_int = (*v).length as ::core::ffi::c_int;
                 len = len.wrapping_add((l + 1) as size_t);
                 if len > max {
-                    let off: size_t =
-                        p.offset_from((*var).value) as ::core::ffi::c_long as size_t;
-                    max = max.wrapping_add(
-                        (((l + 1) / 500
-                            + 1)
-                            * 500) as size_t,
-                    );
+                    let off: size_t = p.offset_from((*var).value) as ::core::ffi::c_long as size_t;
+                    max = max.wrapping_add((((l + 1) / 500 + 1) * 500) as size_t);
                     (*var).value = xrealloc((*var).value as *mut ::core::ffi::c_void, max)
                         as *mut ::core::ffi::c_char;
                     p = (*var).value.offset(off as isize) as *mut ::core::ffi::c_char;
@@ -672,14 +664,10 @@ pub unsafe extern "C" fn lookup_special_var(mut var: *mut variable) -> *mut vari
     }
     var
 }
-unsafe extern "C" fn check_variable_reference(
-    name: *const ::core::ffi::c_char,
-    length: size_t,
-) {
+unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, length: size_t) {
     let mut cp: *const ::core::ffi::c_char;
     let end: *const ::core::ffi::c_char;
-    if !(warning::is_active(Type::InvalidRef))
-    {
+    if !(warning::is_active(Type::InvalidRef)) {
         return;
     }
     cp = name;
@@ -697,8 +685,7 @@ unsafe extern "C" fn check_variable_reference(
     if cp == end {
         return;
     }
-    if warning::is_active(Type::InvalidRef)
-    {
+    if warning::is_active(Type::InvalidRef) {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
             ::core::ptr::null::<::core::ffi::c_char>(),
             (53 as size_t)
@@ -710,8 +697,7 @@ unsafe extern "C" fn check_variable_reference(
             length as ::core::ffi::c_int,
             name,
         ));
-        if warning::action(Type::InvalidRef) == Action::Error
-        {
+        if warning::action(Type::InvalidRef) == Action::Error {
             fatal(
                 *expanding_var,
                 strlen(_a) as size_t,
@@ -811,10 +797,7 @@ pub unsafe extern "C" fn lookup_variable_in_set(
     ) as *mut variable
 }
 #[no_mangle]
-pub unsafe extern "C" fn initialize_file_variables(
-    mut file: *mut file,
-    reading: ::core::ffi::c_int,
-) {
+pub unsafe extern "C" fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int) {
     let mut l: *mut variable_set_list = (*file).variables;
     if l.is_null() {
         l = xmalloc(::core::mem::size_of::<variable_set_list>() as size_t)
@@ -911,7 +894,7 @@ pub unsafe extern "C" fn initialize_file_variables(
 }
 #[no_mangle]
 pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
-    let mut setlist: *mut variable_set_list;
+    let setlist: *mut variable_set_list;
     let set: *mut variable_set;
     set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
@@ -944,7 +927,10 @@ pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
 pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
     current_variable_set_list = create_new_variable_set();
     if (*current_variable_set_list).next == &raw mut global_setlist {
-        std::mem::swap(&mut (*current_variable_set_list).set, &mut global_setlist.set);
+        std::ptr::swap(
+            &raw mut (*current_variable_set_list).set,
+            &raw mut global_setlist.set,
+        );
         (*current_variable_set_list).next = global_setlist.next;
         global_setlist.next = current_variable_set_list;
         current_variable_set_list = &raw mut global_setlist;
@@ -956,15 +942,14 @@ pub unsafe extern "C" fn pop_variable_scope() {
     let setlist: *mut variable_set_list;
     let set: *mut variable_set;
     if !(*current_variable_set_list).next.is_null() {
-        } else {
-            __assert_fail(
-                b"current_variable_set_list->next != NULL\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
-                788,
-                b"void pop_variable_scope(void)\0" as *const u8 as *const ::core::ffi::c_char,
-            );
-        };
+    } else {
+        __assert_fail(
+            b"current_variable_set_list->next != NULL\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
+            788,
+            b"void pop_variable_scope(void)\0" as *const u8 as *const ::core::ffi::c_char,
+        );
+    };
     if current_variable_set_list != &raw mut global_setlist {
         setlist = current_variable_set_list;
         set = (*setlist).set;
@@ -1013,13 +998,9 @@ pub unsafe extern "C" fn restore_file_context(
         reading_file = oldfloc;
     }
 }
-unsafe extern "C" fn merge_variable_sets(
-    to_set: *mut variable_set,
-    from_set: *mut variable_set,
-) {
+unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *mut variable_set) {
     let mut from_var_slot: *mut *mut variable = (*from_set).table.ht_vec as *mut *mut variable;
-    let from_var_end: *mut *mut variable =
-        from_var_slot.offset((*from_set).table.ht_size as isize);
+    let from_var_end: *mut *mut variable = from_var_slot.offset((*from_set).table.ht_size as isize);
     let inc: ::core::ffi::c_int = if to_set == &raw mut global_variable_set {
         1
     } else {
@@ -1110,14 +1091,16 @@ pub unsafe extern "C" fn define_automatic_variables() {
         b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
         crate::version::version_string(),
         if remote_description.is_null()
-            || *remote_description.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
+            || *remote_description.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                == 0
         {
             b"\0" as *const u8 as *const ::core::ffi::c_char
         } else {
             b"-\0" as *const u8 as *const ::core::ffi::c_char
         },
         if remote_description.is_null()
-            || *remote_description.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
+            || *remote_description.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                == 0
         {
             b"\0" as *const u8 as *const ::core::ffi::c_char
         } else {
@@ -1468,7 +1451,8 @@ pub unsafe extern "C" fn target_environment(
                         && (*(*v_0).name as ::core::ffi::c_int == 0
                             || strcmp(
                                 (*v_0).name.offset(1 as ::core::ffi::c_int as isize),
-                                (b"SHELL\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
+                                (b"SHELL\0" as *const u8 as *const ::core::ffi::c_char)
+                                    .offset(1 as ::core::ffi::c_int as isize),
                             ) == 0))
                 {
                     added_shell = 1;
@@ -1523,9 +1507,7 @@ pub unsafe extern "C" fn target_environment(
                                     vars.offset_from(value) as ::core::ffi::c_long as size_t;
                                 let li: size_t = strlen(invalid) as size_t;
                                 mf = xmalloc(
-                                    (strlen(value) as size_t)
-                                        .wrapping_add(li)
-                                        .wrapping_add(1),
+                                    (strlen(value) as size_t).wrapping_add(li).wrapping_add(1),
                                 ) as *mut ::core::ffi::c_char;
                                 strcpy(
                                     mempcpy(
@@ -1565,8 +1547,10 @@ pub unsafe extern "C" fn target_environment(
                             value,
                             b" --jobserver-auth=\0" as *const u8 as *const ::core::ffi::c_char,
                         )
-                        .is_null() && !((*v_0).origin() as ::core::ffi::c_int
-                                != o_env as ::core::ffi::c_int) {
+                        .is_null()
+                            && !((*v_0).origin() as ::core::ffi::c_int
+                                != o_env as ::core::ffi::c_int)
+                        {
                             mf_0 = concat(2, value, invalid);
                             free(cp as *mut ::core::ffi::c_void);
                             cp = xstrdup(mf_0);
@@ -1619,16 +1603,14 @@ pub unsafe extern "C" fn target_environment(
     }
     result_0
 }
-unsafe extern "C" fn set_special_var(
-    var: *mut variable,
-    origin: variable_origin,
-) -> *mut variable {
+unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin) -> *mut variable {
     if *(*var).name as ::core::ffi::c_int
         == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
         && (*(*var).name as ::core::ffi::c_int == 0
             || strcmp(
                 (*var).name.offset(1 as ::core::ffi::c_int as isize),
-                (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
+                (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
+                    .offset(1 as ::core::ffi::c_int as isize),
             ) == 0)
     {
         reset_makeflags(origin);
@@ -1637,27 +1619,28 @@ unsafe extern "C" fn set_special_var(
         && (*(*var).name as ::core::ffi::c_int == 0
             || strcmp(
                 (*var).name.offset(1 as ::core::ffi::c_int as isize),
-                (b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
+                (b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char)
+                    .offset(1 as ::core::ffi::c_int as isize),
             ) == 0)
     {
-        cmd_prefix = (if *(*var).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
-        {
-            RECIPEPREFIX_DEFAULT
-        } else {
-            *(*var).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-        }) as ::core::ffi::c_char;
+        cmd_prefix =
+            (if *(*var).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
+                RECIPEPREFIX_DEFAULT
+            } else {
+                *(*var).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+            }) as ::core::ffi::c_char;
     } else if *(*var).name as ::core::ffi::c_int
         == *(b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
         && (*(*var).name as ::core::ffi::c_int == 0
             || strcmp(
                 (*var).name.offset(1 as ::core::ffi::c_int as isize),
-                (b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
+                (b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char)
+                    .offset(1 as ::core::ffi::c_int as isize),
             ) == 0)
     {
         let actions: *mut ::core::ffi::c_char = allocated_expand_variable(
             b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
-                .wrapping_sub(1),
+            (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         );
         let arg = ::core::ffi::CStr::from_ptr(actions).to_str().unwrap_or("");
         warning::decode_actions(arg, Some(&(*var).fileinfo));
@@ -1712,15 +1695,13 @@ pub unsafe extern "C" fn do_variable_definition(
         3 => {
             let t: *mut ::core::ffi::c_char =
                 allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
-            alloc_value = xmalloc(
-                (strlen(t) as size_t)
-                    .wrapping_mul(2)
-                    .wrapping_add(1),
-            ) as *mut ::core::ffi::c_char;
+            alloc_value = xmalloc((strlen(t) as size_t).wrapping_mul(2).wrapping_add(1))
+                as *mut ::core::ffi::c_char;
             let mut np: *mut ::core::ffi::c_char = alloc_value;
             let mut op: *mut ::core::ffi::c_char = t;
             while *op.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 {
-                if *op.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '$' as i32 {
+                if *op.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '$' as i32
+                {
                     let fresh0 = np;
                     np = np.offset(1 as ::core::ffi::c_int as isize);
                     *fresh0 = '$' as i32 as ::core::ffi::c_char;
@@ -1803,15 +1784,11 @@ pub unsafe extern "C" fn do_variable_definition(
                     do_define = false;
                 } else {
                     oldlen = strlen((*v).value) as size_t;
-                    alloclen = oldlen
-                        .wrapping_add(1)
-                        .wrapping_add(vallen)
-                        .wrapping_add(1);
+                    alloclen = oldlen.wrapping_add(1).wrapping_add(vallen).wrapping_add(1);
                     alloc_value = xmalloc(alloclen) as *mut ::core::ffi::c_char;
                     cp = alloc_value;
                     if oldlen != 0 {
-                        let mut s: *mut ::core::ffi::c_char =
-                            ::core::ptr::null_mut::<::core::ffi::c_char>();
+                        let s: *mut ::core::ffi::c_char;
                         if *varname as ::core::ffi::c_int
                             == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
                                 as ::core::ffi::c_int
@@ -1874,11 +1851,13 @@ pub unsafe extern "C" fn do_variable_definition(
             strlen(varname) as size_t,
             newval,
             origin,
-            (flavor as ::core::ffi::c_uint == f_recursive as ::core::ffi::c_int as ::core::ffi::c_uint
+            (flavor as ::core::ffi::c_uint
+                == f_recursive as ::core::ffi::c_int as ::core::ffi::c_uint
                 || flavor as ::core::ffi::c_uint
                     == f_expand as ::core::ffi::c_int as ::core::ffi::c_uint)
                 as ::core::ffi::c_int,
-            if scope as ::core::ffi::c_uint == s_global as ::core::ffi::c_int as ::core::ffi::c_uint {
+            if scope as ::core::ffi::c_uint == s_global as ::core::ffi::c_int as ::core::ffi::c_uint
+            {
                 ::core::ptr::null_mut::<variable_set>()
             } else {
                 (*current_variable_set_list).set
@@ -1898,7 +1877,7 @@ pub unsafe extern "C" fn do_variable_definition(
 #[no_mangle]
 pub unsafe extern "C" fn parse_variable_definition(
     str: *const ::core::ffi::c_char,
-    mut var: *mut variable,
+    var: *mut variable,
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = str;
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -2023,7 +2002,7 @@ pub unsafe extern "C" fn parse_variable_definition(
 }
 #[no_mangle]
 pub unsafe extern "C" fn assign_variable_definition(
-    mut v: *mut variable,
+    v: *mut variable,
     line: *const ::core::ffi::c_char,
 ) -> *mut variable {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
@@ -2097,8 +2076,7 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
 }; 13];
 #[no_mangle]
 pub unsafe extern "C" fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
-    if warning::is_active(Type::UndefinedVar)
-    {
+    if warning::is_active(Type::UndefinedVar) {
         let mut dp: *const defined_vars;
         dp = &raw const defined_vars as *const defined_vars;
         while !(*dp).name.is_null() {
@@ -2113,8 +2091,7 @@ pub unsafe extern "C" fn warn_undefined(name: *const ::core::ffi::c_char, len: s
             }
             dp = dp.offset(1 as ::core::ffi::c_int as isize);
         }
-        if warning::is_active(Type::UndefinedVar)
-        {
+        if warning::is_active(Type::UndefinedVar) {
             let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
                 ::core::ptr::null::<::core::ffi::c_char>(),
                 (53 as size_t)
@@ -2127,8 +2104,7 @@ pub unsafe extern "C" fn warn_undefined(name: *const ::core::ffi::c_char, len: s
                 len as ::core::ffi::c_int,
                 name,
             ));
-            if warning::action(Type::UndefinedVar) == Action::Error
-            {
+            if warning::action(Type::UndefinedVar) == Action::Error {
                 fatal(
                     reading_file,
                     strlen(_a) as size_t,
@@ -2372,10 +2348,7 @@ pub unsafe extern "C" fn print_target_variables(file: *const file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     if !(*file).variables.is_null() {
         let l: size_t = strlen((*file).name) as size_t;
-        alloca_allocations.push(::std::vec::from_elem(
-            0,
-            l.wrapping_add(3) as usize,
-        ));
+        alloca_allocations.push(::std::vec::from_elem(0, l.wrapping_add(3) as usize));
         let t: *mut ::core::ffi::c_char =
             alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         memcpy(
@@ -2403,63 +2376,51 @@ unsafe extern "C" fn run_static_initializers() {
     defined_vars = [
         defined_vars {
             name: b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"MAKE_RESTARTS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"MAKEOVERRIDES\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"-*-command-variables-*-\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"-*-eval-flags-*-\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 17]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 17]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"VPATH\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"GPATH\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t)
-                .wrapping_sub(1),
+            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         },
         defined_vars {
             name: ::core::ptr::null::<::core::ffi::c_char>(),

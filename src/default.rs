@@ -489,7 +489,7 @@ pub unsafe fn install_default_suffix_rules() {
     }
     s = &raw const default_suffix_rules as *const *const ::core::ffi::c_char;
     while !(*s).is_null() {
-        let mut f: *mut file = enter_file(strcache_add(*s.offset(0 as ::core::ffi::c_int as isize)));
+        let f: *mut file = enter_file(strcache_add(*s.offset(0 as ::core::ffi::c_int as isize)));
         if (*f).cmds.is_null() {
             (*f).cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
             (*(*f).cmds).fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();

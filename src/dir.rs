@@ -130,7 +130,7 @@ pub const MAX_OPEN_DIRECTORIES: ::core::ffi::c_int = 10;
 static mut open_directories: ::core::ffi::c_uint = 0;
 pub const DIRECTORY_BUCKETS: ::core::ffi::c_int = 199;
 unsafe extern "C" fn clear_directory_contents(
-    mut dc: *mut directory_contents,
+    dc: *mut directory_contents,
 ) -> *mut directory_contents {
     (*dc).counter = 0;
     if !(*dc).dirstream.is_null() {
@@ -456,7 +456,7 @@ unsafe extern "C" fn dir_contents_file_exists_p(
 ) -> ::core::ffi::c_int {
     let mut df: *mut dirfile;
     let mut d: *mut dirent;
-    let mut dc: *mut directory_contents = (*dir).contents;
+    let dc: *mut directory_contents = (*dir).contents;
     if dc.is_null() || (*dc).dirfiles.ht_vec.is_null() {
         return 0;
     }
@@ -602,8 +602,8 @@ pub unsafe extern "C" fn file_impossible(mut filename: *const ::core::ffi::c_cha
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let dirend: *const ::core::ffi::c_char;
     let mut p: *const ::core::ffi::c_char = filename;
-    let mut dir: *mut directory;
-    let mut new: *mut dirfile;
+    let dir: *mut directory;
+    let new: *mut dirfile;
     dirend = strrchr(p, '/' as i32);
     if dirend.is_null() {
         dir = find_directory(b".\0" as *const u8 as *const ::core::ffi::c_char);
@@ -840,7 +840,7 @@ pub unsafe fn print_dir_data_base() {
 unsafe extern "C" fn open_dirstream(
     directory: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_void {
-    let mut new: *mut dirstream;
+    let new: *mut dirstream;
     let dir: *mut directory = find_directory(directory);
     if (*dir).contents.is_null() || (*(*dir).contents).dirfiles.ht_vec.is_null() {
         return NULL;
@@ -868,7 +868,7 @@ pub unsafe extern "C" fn read_dirstream(stream: *mut ::core::ffi::c_void) -> *mu
             || df as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
             && (*df).impossible == 0
         {
-            let mut d: *mut dirent;
+            let d: *mut dirent;
             let len: size_t = (*df).length.wrapping_add(1);
             let sz: size_t = (::core::mem::size_of::<dirent>() as size_t)
                 .wrapping_sub(::core::mem::size_of::<[::core::ffi::c_char; 256]>() as size_t)
@@ -894,7 +894,7 @@ pub unsafe extern "C" fn read_dirstream(stream: *mut ::core::ffi::c_void) -> *mu
     ::core::ptr::null_mut::<dirent>()
 }
 #[no_mangle]
-pub unsafe extern "C" fn dir_setup_glob(mut gl: *mut glob_t) {
+pub unsafe extern "C" fn dir_setup_glob(gl: *mut glob_t) {
     (*gl).gl_offs = 0 as __size_t;
     (*gl).gl_opendir = Some(
         open_dirstream
