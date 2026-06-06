@@ -2495,8 +2495,7 @@ unsafe fn main_0(
         {
             status = us_none;
         }
-        let current_block_552: u64;
-        match status as ::core::ffi::c_uint {
+        let needs_restart = match status as ::core::ffi::c_uint {
             1 => {
                 let mut d_2: *mut goaldep;
                 d_2 = read_files;
@@ -2516,7 +2515,7 @@ unsafe fn main_0(
                     }
                     d_2 = (*d_2).next;
                 }
-                current_block_552 = 6015864261243718670;
+                false
             }
             3 => {
                 let mut any_remade: ::core::ffi::c_int = 0;
@@ -2584,22 +2583,12 @@ unsafe fn main_0(
                     i_3 = i_3.wrapping_add(1);
                     d_4 = (*d_4).next;
                 }
-                if any_remade != 0 {
-                    current_block_552 = 5019185999593908445;
-                } else {
-                    current_block_552 = 6015864261243718670;
-                }
+                any_remade != 0
             }
-            0 => {
-                current_block_552 = 5019185999593908445;
-            }
-            2 | _ => {
-                current_block_552 = 6015864261243718670;
-            }
-        }
-        match current_block_552 {
-            6015864261243718670 => {}
-            _ => {
+            0 => true,
+            2 | _ => false,
+        };
+        if needs_restart {
                 remove_intermediates(0);
                 if print_data_base_flag != 0 {
                     print_data_base();
@@ -2622,7 +2611,6 @@ unsafe fn main_0(
                     let fresh50 = nv;
                     nv = nv.offset(1 as ::core::ffi::c_int as isize);
                     *fresh50 = *fresh49;
-                    let mut current_block_505: u64;
                     while !(*av).is_null() {
                         let f_4: *mut ::core::ffi::c_char;
                         let a: *mut ::core::ffi::c_char = *av;
@@ -2645,33 +2633,32 @@ unsafe fn main_0(
                             if *a.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                                 == '-' as i32
                             {
-                                if strcmp(a, b"--file\0" as *const u8 as *const ::core::ffi::c_char)
-                                    == 0
+                                // Rewrite -f/--file long options so the restart
+                                // reads the makefile we just remade.
+                                let substitute = if strcmp(
+                                    a,
+                                    b"--file\0" as *const u8 as *const ::core::ffi::c_char,
+                                ) == 0
                                     || strcmp(
                                         a,
                                         b"--makefile\0" as *const u8 as *const ::core::ffi::c_char,
                                     ) == 0
                                 {
                                     av = av.offset(1 as ::core::ffi::c_int as isize);
-                                    current_block_505 = 11348189074185403949;
-                                } else if !(strncmp(
-                                    a,
-                                    b"--file=\0" as *const u8 as *const ::core::ffi::c_char,
-                                    7,
-                                ) == 0)
-                                    && !(strncmp(
-                                        a,
-                                        b"--makefile=\0" as *const u8 as *const ::core::ffi::c_char,
-                                        11,
-                                    ) == 0)
-                                {
-                                    current_block_505 = 7920992607899116551;
+                                    true
                                 } else {
-                                    current_block_505 = 11348189074185403949;
-                                }
-                                match current_block_505 {
-                                    7920992607899116551 => {}
-                                    _ => {
+                                    strncmp(
+                                        a,
+                                        b"--file=\0" as *const u8 as *const ::core::ffi::c_char,
+                                        7,
+                                    ) == 0
+                                        || strncmp(
+                                            a,
+                                            b"--makefile=\0" as *const u8 as *const ::core::ffi::c_char,
+                                            11,
+                                        ) == 0
+                                };
+                                if substitute {
                                         if mfidx == stdin_offset {
                                             alloca_allocations.push(::std::vec::from_elem(
                                                 0,
@@ -2709,7 +2696,6 @@ unsafe fn main_0(
                                             *nv = na_0;
                                         }
                                         mfidx += 1;
-                                    }
                                 }
                             } else {
                                 f_4 = strchr(a, 'f' as i32);
@@ -2913,7 +2899,6 @@ unsafe fn main_0(
                 jobserver_post_child(1);
                 temp_stdin_unlink();
                 _exit(127);
-            }
         }
         if any_failed != 0 {
             die(MAKE_FAILURE);
@@ -3292,7 +3277,6 @@ unsafe extern "C" fn decode_switches(
                     if doit != 0 {
                         (*cs).set_specified(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                     }
-                    let mut current_block_90: u64;
                     match (*cs).type_0 as ::core::ffi::c_uint {
                         7 => {}
                         0 | 1 => {
@@ -3308,9 +3292,11 @@ unsafe extern "C" fn decode_switches(
                         }
                         2 | 3 | 4 => {
                             if !(doit == 0) {
-                                if coptarg.is_null() {
+                                // Resolve the option argument; an empty value is an error
+                                // and the option is skipped.
+                                let arg_ok = if coptarg.is_null() {
                                     coptarg = (*cs).noarg_value as *const ::core::ffi::c_char;
-                                    current_block_90 = 9853141518545631134;
+                                    true
                                 } else if *coptarg as ::core::ffi::c_int == 0 {
                                     let mut opt: [::core::ffi::c_char; 2] = ::core::mem::transmute::<
                                         [u8; 2],
@@ -3340,13 +3326,11 @@ unsafe extern "C" fn decode_switches(
                                         op,
                                     );
                                     bad = 1;
-                                    current_block_90 = 6540614962658479183;
+                                    false
                                 } else {
-                                    current_block_90 = 9853141518545631134;
-                                }
-                                match current_block_90 {
-                                    6540614962658479183 => {}
-                                    _ => {
+                                    true
+                                };
+                                if arg_ok {
                                         if (*cs).type_0 as ::core::ffi::c_uint
                                             == string as ::core::ffi::c_int as ::core::ffi::c_uint
                                         {
@@ -3391,7 +3375,9 @@ unsafe extern "C" fn decode_switches(
                                                 )
                                                     as *mut *const ::core::ffi::c_char;
                                             }
-                                            if (*cs).c != 'f' as i32 && (*cs).c != WARN_OPT {
+                                            // Skip a value already present (but -f and --warn allow
+                                            // duplicates).
+                                            let duplicate = if (*cs).c != 'f' as i32 && (*cs).c != WARN_OPT {
                                                 let mut k: ::core::ffi::c_uint;
                                                 k = 0;
                                                 while k < (*sl).idx {
@@ -3417,17 +3403,11 @@ unsafe extern "C" fn decode_switches(
                                                     }
                                                     k = k.wrapping_add(1);
                                                 }
-                                                if k < (*sl).idx {
-                                                    current_block_90 = 6540614962658479183;
-                                                } else {
-                                                    current_block_90 = 2290177392965769716;
-                                                }
+                                                k < (*sl).idx
                                             } else {
-                                                current_block_90 = 2290177392965769716;
-                                            }
-                                            match current_block_90 {
-                                                6540614962658479183 => {}
-                                                _ => {
+                                                false
+                                            };
+                                            if !duplicate {
                                                     if (*cs).type_0 as ::core::ffi::c_uint
                                                         == strlist as ::core::ffi::c_int
                                                             as ::core::ffi::c_uint
@@ -3470,10 +3450,8 @@ unsafe extern "C" fn decode_switches(
                                                     let fresh17 = &mut (*(*sl).list.offset((*sl).idx as isize));
                                                     *fresh17 =
                                                         ::core::ptr::null::<::core::ffi::c_char>();
-                                                }
                                             }
                                         }
-                                    }
                                 }
                             }
                         }
