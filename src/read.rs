@@ -422,22 +422,18 @@ pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
 pub const RM_NO_TILDE: ::core::ffi::c_int = (1) << 3;
 pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
 #[inline]
-
 unsafe extern "C" fn alloc_dep() -> *mut dep {
     xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
 }
 #[inline]
-
 unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
     xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
 }
 #[inline]
-
 unsafe extern "C" fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
 #[inline]
-
 unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }

@@ -222,13 +222,8 @@ pub unsafe extern "C" fn dep_hash_1(key: *const ::core::ffi::c_void) -> ::core::
     _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn dep_hash_2(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let d: *const dep = key as *const dep;
-    let mut _result_: ::core::ffi::c_ulong = 0;
-    if !(*d).name.is_null() {
-    } else {
-    };
-    _result_
+pub unsafe extern "C" fn dep_hash_2(_key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+    0
 }
 unsafe extern "C" fn dep_hash_cmp(
     x: *const ::core::ffi::c_void,
