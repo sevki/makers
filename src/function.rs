@@ -184,6 +184,12 @@ impl ExpandedArg {
         ExpandedArg(expand_argument(arg, end))
     }
 
+    /// Take ownership of an already-expanded, `malloc`ed buffer (e.g. from
+    /// `allocated_expand_string_for_file`).
+    unsafe fn from_raw(ptr: *mut ::core::ffi::c_char) -> Self {
+        ExpandedArg(ptr)
+    }
+
     /// Borrow the underlying NUL-terminated buffer.
     fn as_ptr(&self) -> *mut ::core::ffi::c_char {
         self.0
@@ -1316,14 +1322,19 @@ unsafe extern "C" fn func_foreach(
         if p.is_null() {
             break;
         }
-        let result: *mut ::core::ffi::c_char;
         free((*var).value as *mut ::core::ffi::c_void);
         (*var).value = xstrndup(p, len);
-        result = allocated_expand_string_for_file(body, ::core::ptr::null_mut::<file>());
-        o = variable_buffer_output(o, result, strlen(result) as size_t);
-        o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+        let result = ExpandedArg::from_raw(allocated_expand_string_for_file(
+            body,
+            ::core::ptr::null_mut::<file>(),
+        ));
+        o = variable_buffer_output(o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
+        o = variable_buffer_output(
+            o,
+            b" \0" as *const u8 as *const ::core::ffi::c_char,
+            1,
+        );
         doneany = 1;
-        free(result as *mut ::core::ffi::c_void);
     }
     if doneany != 0 {
         o = o.offset(-(1 as ::core::ffi::c_int) as isize);
@@ -1697,18 +1708,15 @@ unsafe extern "C" fn func_error(
             );
         }
         105 => {
-            let len: size_t = strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t;
-            let msg: *mut ::core::ffi::c_char =
-                xmalloc(len.wrapping_add(2)) as *mut ::core::ffi::c_char;
-            memcpy(
-                msg as *mut ::core::ffi::c_void,
-                *argv.offset(0 as ::core::ffi::c_int as isize) as *const ::core::ffi::c_void,
-                len as size_t,
-            );
-            *msg.offset(len as isize) = '\n' as i32 as ::core::ffi::c_char;
-            *msg.offset(len.wrapping_add(1) as isize) = 0;
-            outputs(0, msg);
-            free(msg as *mut ::core::ffi::c_void);
+            // $(info ...): build "<arg>\n\0" in an owned buffer instead of a
+            // malloc/memcpy/free sequence.
+            let src = *argv.offset(0 as ::core::ffi::c_int as isize);
+            let len = strlen(src) as usize;
+            let mut msg = Vec::<u8>::with_capacity(len + 2);
+            msg.extend_from_slice(::core::slice::from_raw_parts(src as *const u8, len));
+            msg.push(b'\n');
+            msg.push(0);
+            outputs(0, msg.as_ptr() as *const ::core::ffi::c_char);
         }
         _ => {
             fatal(
