@@ -1934,7 +1934,6 @@ unsafe fn main_0(
         let mut cv: *mut command_variable;
         let mut v_1: *mut variable;
         let mut len_0: size_t = 0;
-        let value: *mut ::core::ffi::c_char;
         let mut p: *mut ::core::ffi::c_char;
         cv = command_variables;
         while !cv.is_null() {
@@ -1948,7 +1947,10 @@ unsafe fn main_0(
             len_0 = len_0.wrapping_add(1);
             cv = (*cv).next;
         }
-        value = xmalloc(len_0) as *mut ::core::ffi::c_char;
+        // Owned encoding scratch (was xmalloc + free); define_variable_in_set
+        // copies the value, so the buffer is only needed locally.
+        let mut value_buf: Vec<u8> = Vec::with_capacity(len_0 as usize);
+        let value = value_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
         p = value;
         cv = command_variables;
         while !cv.is_null() {
@@ -1978,7 +1980,7 @@ unsafe fn main_0(
             (*current_variable_set_list).set,
             NILF,
         );
-        free(value as *mut ::core::ffi::c_void);
+        drop(value_buf);
         define_variable_in_set(
             b"MAKEOVERRIDES\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
@@ -2109,7 +2111,6 @@ unsafe fn main_0(
     if !eval_strings.is_null() {
         let mut p_0: *mut ::core::ffi::c_char;
         let mut endp: *mut ::core::ffi::c_char;
-        let value_0: *mut ::core::ffi::c_char;
         let mut i_2: ::core::ffi::c_uint;
         let mut len_1: size_t = (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t)
             .wrapping_sub(1)
@@ -2123,7 +2124,8 @@ unsafe fn main_0(
             free(p_0 as *mut ::core::ffi::c_void);
             i_2 = i_2.wrapping_add(1);
         }
-        value_0 = xmalloc(len_1) as *mut ::core::ffi::c_char;
+        let mut value_0_buf: Vec<u8> = Vec::with_capacity(len_1 as usize);
+        let value_0 = value_0_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
         endp = value_0;
         p_0 = endp;
         i_2 = 0;
@@ -2146,7 +2148,7 @@ unsafe fn main_0(
             (*current_variable_set_list).set,
             NILF,
         );
-        free(value_0 as *mut ::core::ffi::c_void);
+        drop(value_0_buf);
     }
     let old_arg_job_slots: ::core::ffi::c_int = arg_job_slots;
     old_builtin_rules_flag = no_builtin_rules_flag;
