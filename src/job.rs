@@ -1525,7 +1525,9 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
     }
     jobserver_tokens = jobserver_tokens.wrapping_add(1);
     if 0x20 as ::core::ffi::c_int & db_level != 0 {
-        let mut nmbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        // Owns the concatenated also-make name list when one is built below;
+        // stays empty (no allocation) when the target has no also_make set.
+        let mut nmbuf_buf: Vec<u8> = Vec::new();
         let nm: *const ::core::ffi::c_char;
         let tp: *const ::core::ffi::c_char;
         if (*cmds).fileinfo.filenm.is_null() {
@@ -1560,7 +1562,8 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
                     .wrapping_add(strlen((*(*dp).file).name).wrapping_add(4) as size_t);
                 dp = (*dp).next;
             }
-            nmbuf = xmalloc(len.wrapping_add(1)) as *mut ::core::ffi::c_char;
+            nmbuf_buf = Vec::with_capacity(len.wrapping_add(1) as usize);
+            let nmbuf = nmbuf_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
             tp = nmbuf;
             cp = stpcpy(nmbuf, (*(*c).file).name);
             dp = (*(*c).file).also_make;
@@ -1662,7 +1665,7 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
                 }
             }
         }
-        free(nmbuf as *mut ::core::ffi::c_void);
+        drop(nmbuf_buf);
     }
     start_waiting_job(c);
     if job_slots == 1 || not_parallel != 0 {
