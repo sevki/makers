@@ -947,9 +947,11 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
     fstart = &raw mut (*ebuf).floc;
     fi.filenm = (*ebuf).floc.filenm;
     // Owned recipe accumulator, reused across rules and grown on demand (was
-    // xmalloc/xrealloc/free). `commands_len` tracks capacity, `commands_idx`
-    // the fill position; the raw pointer is re-fetched after each growth.
-    let mut cmd_buf: Vec<u8> = Vec::with_capacity(commands_len as usize);
+    // xmalloc/xrealloc/free). `commands_len` tracks the live length, `commands_idx`
+    // the fill position; the raw pointer is re-fetched after each growth. The
+    // Vec is kept fully initialized (len == capacity) so a growth preserves the
+    // already-written bytes rather than only the [0, len) prefix.
+    let mut cmd_buf: Vec<u8> = vec![0u8; commands_len as usize];
     commands = cmd_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
     loop {
         let linelen: size_t;
@@ -1019,7 +1021,7 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                 }
                 if linelen.wrapping_add(commands_idx) > commands_len {
                     commands_len = linelen.wrapping_add(commands_idx).wrapping_mul(2);
-                    cmd_buf.reserve_exact(commands_len as usize);
+                    cmd_buf.resize(commands_len as usize, 0);
                     commands = cmd_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
                 }
                 memcpy(
@@ -2051,7 +2053,7 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                                     commands_len = l_4
                                                         .wrapping_add(2)
                                                         .wrapping_mul(2);
-                                                    cmd_buf.reserve_exact(commands_len as usize);
+                                                    cmd_buf.resize(commands_len as usize, 0);
                                                     commands = cmd_buf.as_mut_ptr()
                                                         as *mut ::core::ffi::c_char;
                                                 }
@@ -2170,8 +2172,10 @@ unsafe extern "C" fn do_define(
     let mut nlevels: ::core::ffi::c_int = 1;
     let mut length: size_t = 100;
     // Owned accumulation buffer for the `define` body (was xmalloc/xrealloc/
-    // free); `length` tracks capacity and `idx` the fill position as before.
-    let mut def_buf: Vec<u8> = Vec::with_capacity(length as usize);
+    // free); `length` tracks the live length and `idx` the fill position as
+    // before. The Vec is kept fully initialized (len == capacity) so a growth
+    // preserves the already-written body rather than only the [0, len) prefix.
+    let mut def_buf: Vec<u8> = vec![0u8; length as usize];
     let mut definition: *mut ::core::ffi::c_char = def_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
     let mut idx: size_t = 0;
     let mut p: *mut ::core::ffi::c_char;
@@ -2276,7 +2280,7 @@ unsafe extern "C" fn do_define(
         len = strlen(line) as size_t;
         if idx.wrapping_add(len).wrapping_add(1) > length {
             length = idx.wrapping_add(len).wrapping_mul(2);
-            def_buf.reserve_exact(length.wrapping_add(1) as usize);
+            def_buf.resize(length.wrapping_add(1) as usize, 0);
             definition = def_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
         }
         memcpy(

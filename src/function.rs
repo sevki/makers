@@ -2167,15 +2167,16 @@ pub unsafe extern "C" fn func_shell_base(
                 close(pipedes[1 as ::core::ffi::c_int as usize]);
             }
             maxlen = 200;
-            // Owned read buffer (was xmalloc/xrealloc/free). The Vec is pure
-            // storage with a stable allocation; `i` tracks the filled length
-            // and `maxlen` the usable capacity, exactly as before.
-            let mut buffer: Vec<u8> = Vec::with_capacity(maxlen.wrapping_add(1) as usize);
+            // Owned read buffer (was xmalloc/xrealloc/free). `i` tracks the
+            // filled length and `maxlen` the usable size. The Vec is kept fully
+            // initialized (len == capacity) so a growth preserves the bytes
+            // already read rather than only the [0, len) prefix.
+            let mut buffer: Vec<u8> = vec![0u8; maxlen.wrapping_add(1) as usize];
             i = 0;
             loop {
                 if i == maxlen {
                     maxlen = maxlen.wrapping_add(512);
-                    buffer.reserve_exact(maxlen.wrapping_add(1) as usize);
+                    buffer.resize(maxlen.wrapping_add(1) as usize, 0);
                 }
                 loop {
                     cc = read(
