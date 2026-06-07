@@ -80,8 +80,8 @@ fn non_utf8() -> &'static Mutex<HashSet<&'static [u8]>> {
 
 fn intern(bytes: &[u8]) -> *const c_char {
     ADDS.fetch_add(1, Ordering::Relaxed);
-    let mut addrs = addrs().lock().unwrap();
-    let mut non_utf8 = non_utf8().lock().unwrap();
+    let mut addrs = addrs().lock().unwrap_or_else(|e| e.into_inner());
+    let mut non_utf8 = non_utf8().lock().unwrap_or_else(|e| e.into_inner());
     intern_into(&mut addrs, &mut non_utf8, bytes)
 }
 
@@ -116,7 +116,7 @@ pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char
 /// (matching the original, which compared pointer ranges rather than reading the
 /// string).
 pub fn strcache_iscached(str: *const c_char) -> c_int {
-    addrs().lock().unwrap().contains(&(str as usize)) as c_int
+    addrs().lock().unwrap_or_else(|e| e.into_inner()).contains(&(str as usize)) as c_int
 }
 
 /// Print cache statistics, prefixed with `prefix`. Used by `make -p`.
@@ -126,7 +126,7 @@ pub fn strcache_iscached(str: *const c_char) -> c_int {
 /// `prefix` must point to a valid NUL-terminated C string.
 pub unsafe fn strcache_print_stats(prefix: *const c_char) {
     let prefix = CStr::from_ptr(prefix).to_string_lossy();
-    let strings = (ustr::num_entries() + non_utf8().lock().unwrap().len()) as u64;
+    let strings = (ustr::num_entries() + non_utf8().lock().unwrap_or_else(|e| e.into_inner()).len()) as u64;
     let bytes = ustr::total_allocated() as u64;
     let adds = ADDS.load(Ordering::Relaxed);
     let avg = if strings > 0 { bytes / strings } else { 0 };

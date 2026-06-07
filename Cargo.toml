@@ -19,7 +19,7 @@ name = "make"
 
 [dependencies]
 blake2 = "0.10"
-blake3 = { version = "1.8.5", features = ["traits-preview"] }
+blake3 = "1.8.5"
 c2rust-bitfields = "0.22.1"
 digest = "0.10"
 itertools = "0.12"
