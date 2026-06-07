@@ -98,7 +98,15 @@ pub fn generate_hash_impl(data: &Data) -> TokenStream {
                 }
             }
         }
-        Data::Union(_) => unimplemented!("ContentHash cannot be derived for unions."),
+        Data::Union(data) => {
+            // Emit a normal compile error rather than panicking the proc-macro,
+            // which would surface as an opaque "proc macro panicked" message.
+            syn::Error::new_spanned(
+                data.union_token,
+                "ContentHash cannot be derived for unions.",
+            )
+            .to_compile_error()
+        }
     }
 }
 
