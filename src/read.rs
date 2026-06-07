@@ -1946,11 +1946,13 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                                 if cmdleft.is_null() {
                                                     cmdleft = find_char_unquote(p2, ';' as i32);
                                                     if !cmdleft.is_null() {
-                                                        let fresh14 = cmdleft;
+                                                        // NUL-terminate at the ';' before stepping
+                                                        // past it, so the write goes through the
+                                                        // just-null-checked pointer directly.
+                                                        *cmdleft = 0;
                                                         cmdleft = cmdleft.offset(
                                                             1 as ::core::ffi::c_int as isize,
                                                         );
-                                                        *fresh14 = 0;
                                                     }
                                                 }
                                             }
@@ -3304,10 +3306,9 @@ unsafe extern "C" fn record_files(
             );
         }
     }
-    let mut i: *mut dep;
-    i = also_make;
-    while !i.is_null() {
-        let f_0: *mut file = (*i).file;
+    let mut i: *mut dep = also_make;
+    while let Some(node) = i.as_ref() {
+        let f_0: *mut file = node.file;
         let mut dp: *mut dep;
         if !(*f_0).also_make.is_null() {
             error(
@@ -3329,7 +3330,7 @@ unsafe extern "C" fn record_files(
             }
             dp = (*dp).next;
         }
-        i = (*i).next;
+        i = node.next;
     }
     free_dep_chain(also_make);
 }
