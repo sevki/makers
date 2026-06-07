@@ -64,6 +64,24 @@ extern "C" {
     ) -> *mut variable;
     fn warn_undefined(name: *const ::core::ffi::c_char, length: size_t);
 }
+
+/// Owns a `malloc`ed C string and frees it on drop, replacing the manual
+/// `xstrdup`/`expand_argument` + `free` ownership pairs in this module.
+struct OwnedCStr(*mut ::core::ffi::c_char);
+
+impl OwnedCStr {
+    /// Borrow the underlying NUL-terminated buffer.
+    fn as_ptr(&self) -> *mut ::core::ffi::c_char {
+        self.0
+    }
+}
+
+impl Drop for OwnedCStr {
+    fn drop(&mut self) {
+        unsafe { free(self.0 as *mut ::core::ffi::c_void) }
+    }
+}
+
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
@@ -429,7 +447,6 @@ pub unsafe extern "C" fn expand_string_buf(
     let mut v: *mut variable;
     let mut p: *const ::core::ffi::c_char;
     let mut p1: *const ::core::ffi::c_char;
-    let save: *mut ::core::ffi::c_char;
     let mut o: *mut ::core::ffi::c_char;
     let line_offset: size_t;
     if buf.is_null() {
@@ -440,12 +457,12 @@ pub unsafe extern "C" fn expand_string_buf(
     if length == 0 {
         return variable_buffer;
     }
-    save = if length == SIZE_MAX as size_t {
+    let save = OwnedCStr(if length == SIZE_MAX as size_t {
         xstrdup(string)
     } else {
         xstrndup(string, length)
-    };
-    p = save;
+    });
+    p = save.as_ptr();
     loop {
         p1 = strchr(p, '$' as i32);
         o = variable_buffer_output(
@@ -475,8 +492,7 @@ pub unsafe extern "C" fn expand_string_buf(
                     }) as ::core::ffi::c_char;
                 let mut beg: *const ::core::ffi::c_char =
                     p.offset(1 as ::core::ffi::c_int as isize);
-                let mut abeg: *mut ::core::ffi::c_char =
-                    ::core::ptr::null_mut::<::core::ffi::c_char>();
+                let mut abeg: Option<OwnedCStr> = None;
                 let mut end: *const ::core::ffi::c_char;
                 let mut colon: *const ::core::ffi::c_char;
                 if !(handle_function(&raw mut o, &raw mut p) != 0) {
@@ -507,8 +523,9 @@ pub unsafe extern "C" fn expand_string_buf(
                             p = p.offset(1 as ::core::ffi::c_int as isize);
                         }
                         if count == 0 {
-                            abeg = expand_argument(beg, p);
-                            beg = abeg;
+                            let owned = OwnedCStr(expand_argument(beg, p));
+                            beg = owned.as_ptr();
+                            abeg = Some(owned);
                             end = strchr(beg, 0);
                         }
                     } else {
@@ -620,7 +637,8 @@ pub unsafe extern "C" fn expand_string_buf(
                             end.offset_from(beg) as ::core::ffi::c_long as size_t,
                         );
                     }
-                    free(abeg as *mut ::core::ffi::c_void);
+                    // Free the expanded reference here, as the C code did.
+                    drop(abeg);
                 }
             }
             _ => {
@@ -639,7 +657,6 @@ pub unsafe extern "C" fn expand_string_buf(
         }
         p = p.offset(1 as ::core::ffi::c_int as isize);
     }
-    free(save as *mut ::core::ffi::c_void);
     variable_buffer.offset(line_offset as isize)
 }
 #[no_mangle]
@@ -647,36 +664,20 @@ pub unsafe extern "C" fn expand_argument(
     str: *const ::core::ffi::c_char,
     end: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let tmp: *mut ::core::ffi::c_char;
-    let mut alloc: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let r: *mut ::core::ffi::c_char;
     if str == end {
         return xstrdup(b"\0" as *const u8 as *const ::core::ffi::c_char);
     }
     if end.is_null() || *end as ::core::ffi::c_int == 0 {
         return allocated_expand_string_for_file(str, ::core::ptr::null_mut::<file>());
     }
-    if end.offset_from(str) as ::core::ffi::c_long + 1 > 1000 as ::core::ffi::c_long {
-        alloc = xmalloc((end.offset_from(str) as ::core::ffi::c_long + 1) as size_t)
-            as *mut ::core::ffi::c_char;
-        tmp = alloc;
-    } else {
-        alloca_allocations.push(::std::vec::from_elem(
-            0,
-            (end.offset_from(str) as ::core::ffi::c_long + 1) as ::core::ffi::c_ulong as usize,
-        ));
-        tmp = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    }
-    memcpy(
-        tmp as *mut ::core::ffi::c_void,
-        str as *const ::core::ffi::c_void,
-        end.offset_from(str) as ::core::ffi::c_long as size_t,
-    );
-    *tmp.offset(end.offset_from(str) as ::core::ffi::c_long as isize) = 0;
-    r = allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>());
-    free(alloc as *mut ::core::ffi::c_void);
-    r
+    // Copy the [str, end) slice into an owned, NUL-terminated buffer (the C
+    // code chose alloca vs xmalloc by length; an owned Vec covers both).
+    let len = end.offset_from(str) as ::core::ffi::c_long as size_t;
+    let mut tmp_buf: Vec<u8> = ::std::vec::from_elem(0u8, (len as usize).wrapping_add(1));
+    let tmp = tmp_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
+    memcpy(tmp as *mut ::core::ffi::c_void, str as *const ::core::ffi::c_void, len);
+    *tmp.offset(len as isize) = 0;
+    allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>())
 }
 #[no_mangle]
 pub unsafe extern "C" fn expand_string_for_file(

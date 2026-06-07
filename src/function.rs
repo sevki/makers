@@ -4,7 +4,7 @@ pub use crate::ffi_types::{
 };
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::{
-    end_of_token, find_next_token, make_lltoa, next_token, xcalloc, xmalloc, xrealloc, xstrndup,
+    end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
 };
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
@@ -169,6 +169,39 @@ extern "C" {
         recursive: ::core::ffi::c_int,
     ) -> *mut *mut ::core::ffi::c_char;
 }
+
+/// RAII owner for a string produced by `expand_argument`.
+///
+/// `expand_argument` hands back a freshly `malloc`ed, NUL-terminated buffer
+/// that the caller must release. Wrapping it here lets `Drop` free the buffer
+/// on every exit path, replacing the hand-written `expand_argument(...) ...
+/// free(...)` ownership pairs the `$(if)`/`$(or)`/`$(and)` builtins used.
+struct ExpandedArg(*mut ::core::ffi::c_char);
+
+impl ExpandedArg {
+    /// Expand `arg`, stopping at `end` (or at the NUL when `end` is null).
+    unsafe fn new(arg: *const ::core::ffi::c_char, end: *const ::core::ffi::c_char) -> Self {
+        ExpandedArg(expand_argument(arg, end))
+    }
+
+    /// Take ownership of an already-expanded, `malloc`ed buffer (e.g. from
+    /// `allocated_expand_string_for_file`).
+    unsafe fn from_raw(ptr: *mut ::core::ffi::c_char) -> Self {
+        ExpandedArg(ptr)
+    }
+
+    /// Borrow the underlying NUL-terminated buffer.
+    fn as_ptr(&self) -> *mut ::core::ffi::c_char {
+        self.0
+    }
+}
+
+impl Drop for ExpandedArg {
+    fn drop(&mut self) {
+        unsafe { free(self.0 as *mut ::core::ffi::c_void) }
+    }
+}
+
 pub type gmk_func_ptr = Option<
     unsafe extern "C" fn(
         *const ::core::ffi::c_char,
@@ -1258,21 +1291,21 @@ unsafe extern "C" fn func_foreach(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let varname: *mut ::core::ffi::c_char = expand_argument(
+    let varname = ExpandedArg::new(
         *argv.offset(0 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let list: *mut ::core::ffi::c_char = expand_argument(
+    let list = ExpandedArg::new(
         *argv.offset(1 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
     let mut doneany: ::core::ffi::c_int = 0;
-    let mut list_iterator: *const ::core::ffi::c_char = list;
+    let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
     let mut p: *const ::core::ffi::c_char;
     let mut len: size_t = 0;
     let var: *mut variable;
-    let vp: *mut ::core::ffi::c_char = next_token(varname);
+    let vp: *mut ::core::ffi::c_char = next_token(varname.as_ptr());
     *end_of_token(vp).offset(0 as ::core::ffi::c_int as isize) = 0;
     push_new_variable_scope();
     var = define_variable_in_set(
@@ -1289,21 +1322,24 @@ unsafe extern "C" fn func_foreach(
         if p.is_null() {
             break;
         }
-        let result: *mut ::core::ffi::c_char;
         free((*var).value as *mut ::core::ffi::c_void);
         (*var).value = xstrndup(p, len);
-        result = allocated_expand_string_for_file(body, ::core::ptr::null_mut::<file>());
-        o = variable_buffer_output(o, result, strlen(result) as size_t);
-        o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+        let result = ExpandedArg::from_raw(allocated_expand_string_for_file(
+            body,
+            ::core::ptr::null_mut::<file>(),
+        ));
+        o = variable_buffer_output(o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
+        o = variable_buffer_output(
+            o,
+            b" \0" as *const u8 as *const ::core::ffi::c_char,
+            1,
+        );
         doneany = 1;
-        free(result as *mut ::core::ffi::c_void);
     }
     if doneany != 0 {
         o = o.offset(-(1 as ::core::ffi::c_int) as isize);
     }
     pop_variable_scope();
-    free(varname as *mut ::core::ffi::c_void);
-    free(list as *mut ::core::ffi::c_void);
     o
 }
 unsafe extern "C" fn func_let(
@@ -1311,18 +1347,18 @@ unsafe extern "C" fn func_let(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let varnames: *mut ::core::ffi::c_char = expand_argument(
+    let varnames = ExpandedArg::new(
         *argv.offset(0 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let list: *mut ::core::ffi::c_char = expand_argument(
+    let list = ExpandedArg::new(
         *argv.offset(1 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let body: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
     let mut vp: *const ::core::ffi::c_char;
-    let mut vp_next: *const ::core::ffi::c_char = varnames;
-    let mut list_iterator: *const ::core::ffi::c_char = list;
+    let mut vp_next: *const ::core::ffi::c_char = varnames.as_ptr();
+    let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
     let mut vlen: size_t = 0;
     push_new_variable_scope();
     vp = find_next_token(&raw mut vp_next, &raw mut vlen);
@@ -1375,8 +1411,6 @@ unsafe extern "C" fn func_let(
     }
     o = expand_string_buf(o, body, SIZE_MAX as size_t);
     pop_variable_scope();
-    free(varnames as *mut ::core::ffi::c_void);
-    free(list as *mut ::core::ffi::c_void);
     o.offset(strlen(o) as isize)
 }
 #[no_mangle]
@@ -1467,8 +1501,12 @@ unsafe extern "C" fn func_filter_filterout(
     if word_count == 0 {
         return o;
     }
-    words = xcalloc((word_count as size_t).wrapping_mul(::core::mem::size_of::<a_word>() as size_t))
-        as *mut a_word;
+    // Owned, zero-initialized word table (was an xcalloc'd array freed at
+    // the end). Fixed capacity keeps the backing pointer stable while the
+    // hash table below stores pointers into it.
+    let mut words_vec: Vec<a_word> = Vec::with_capacity(word_count as usize);
+    words_vec.resize_with(word_count as usize, || unsafe { ::core::mem::zeroed() });
+    words = words_vec.as_mut_ptr();
     word_end = words.offset(word_count as isize);
     cp = *argv.offset(0 as ::core::ffi::c_int as isize);
     loop {
@@ -1478,9 +1516,9 @@ unsafe extern "C" fn func_filter_filterout(
         }
         pat_count = pat_count.wrapping_add(1);
     }
-    patterns =
-        xcalloc((pat_count as size_t).wrapping_mul(::core::mem::size_of::<a_pattern>() as size_t))
-            as *mut a_pattern;
+    let mut patterns_vec: Vec<a_pattern> = Vec::with_capacity(pat_count as usize);
+    patterns_vec.resize_with(pat_count as usize, || unsafe { ::core::mem::zeroed() });
+    patterns = patterns_vec.as_mut_ptr();
     pat_end = patterns.offset(pat_count as isize);
     cp = *argv.offset(0 as ::core::ffi::c_int as isize);
     pp = patterns;
@@ -1607,8 +1645,6 @@ unsafe extern "C" fn func_filter_filterout(
     if hashing != 0 {
         hash_free(&raw mut a_word_table, 0);
     }
-    free(patterns as *mut ::core::ffi::c_void);
-    free(words as *mut ::core::ffi::c_void);
     o
 }
 unsafe extern "C" fn func_strip(
@@ -1674,18 +1710,15 @@ unsafe extern "C" fn func_error(
             );
         }
         105 => {
-            let len: size_t = strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t;
-            let msg: *mut ::core::ffi::c_char =
-                xmalloc(len.wrapping_add(2)) as *mut ::core::ffi::c_char;
-            memcpy(
-                msg as *mut ::core::ffi::c_void,
-                *argv.offset(0 as ::core::ffi::c_int as isize) as *const ::core::ffi::c_void,
-                len as size_t,
-            );
-            *msg.offset(len as isize) = '\n' as i32 as ::core::ffi::c_char;
-            *msg.offset(len.wrapping_add(1) as isize) = 0;
-            outputs(0, msg);
-            free(msg as *mut ::core::ffi::c_void);
+            // $(info ...): build "<arg>\n\0" in an owned buffer instead of a
+            // malloc/memcpy/free sequence.
+            let src = *argv.offset(0 as ::core::ffi::c_int as isize);
+            let len = strlen(src) as usize;
+            let mut msg = Vec::<u8>::with_capacity(len + 2);
+            msg.extend_from_slice(::core::slice::from_raw_parts(src as *const u8, len));
+            msg.push(b'\n');
+            msg.push(0);
+            outputs(0, msg.as_ptr() as *const ::core::ffi::c_char);
         }
         _ => {
             fatal(
@@ -1704,7 +1737,6 @@ unsafe extern "C" fn func_sort(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut t: *const ::core::ffi::c_char;
-    let words: *mut *mut ::core::ffi::c_char;
     let mut wordi: ::core::ffi::c_int;
     let mut p: *mut ::core::ffi::c_char;
     let mut len: size_t = 0;
@@ -1718,10 +1750,9 @@ unsafe extern "C" fn func_sort(
         t = t.offset(1 as ::core::ffi::c_int as isize);
         wordi += 1;
     }
-    words = xmalloc(
-        ((if wordi == 0 { 1 } else { wordi }) as size_t)
-            .wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
-    ) as *mut *mut ::core::ffi::c_char;
+    // Owned word-pointer table (was an xmalloc'd array freed at the end).
+    let mut words: Vec<*mut ::core::ffi::c_char> =
+        Vec::with_capacity(if wordi == 0 { 1 } else { wordi as usize });
     t = *argv.offset(0 as ::core::ffi::c_int as isize);
     wordi = 0;
     loop {
@@ -1731,15 +1762,13 @@ unsafe extern "C" fn func_sort(
         }
         t = t.offset(1 as ::core::ffi::c_int as isize);
         *p.offset(len as isize) = 0;
-        let fresh3 = wordi;
         wordi += 1;
-        let fresh4 = &mut (*words.offset(fresh3 as isize));
-        *fresh4 = p;
+        words.push(p);
     }
     if wordi != 0 {
         let mut i: ::core::ffi::c_int;
         qsort(
-            words as *mut ::core::ffi::c_void,
+            words.as_mut_ptr() as *mut ::core::ffi::c_void,
             wordi as size_t,
             ::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t,
             Some(
@@ -1752,23 +1781,26 @@ unsafe extern "C" fn func_sort(
         );
         i = 0;
         while i < wordi {
-            len = strlen(*words.offset(i as isize)) as size_t;
+            len = strlen(words[i as usize]) as size_t;
             if i == wordi - 1
-                || strlen(*words.offset((i + 1) as isize)) != len
+                || strlen(words[(i + 1) as usize]) != len
                 || memcmp(
-                    *words.offset(i as isize) as *const ::core::ffi::c_void,
-                    *words.offset((i + 1) as isize) as *const ::core::ffi::c_void,
+                    words[i as usize] as *const ::core::ffi::c_void,
+                    words[(i + 1) as usize] as *const ::core::ffi::c_void,
                     len as size_t,
                 ) != 0
             {
-                o = variable_buffer_output(o, *words.offset(i as isize), len);
-                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+                o = variable_buffer_output(o, words[i as usize], len);
+                o = variable_buffer_output(
+                    o,
+                    b" \0" as *const u8 as *const ::core::ffi::c_char,
+                    1,
+                );
             }
             i += 1;
         }
         o = o.offset(-(1 as ::core::ffi::c_int) as isize);
     }
-    free(words as *mut ::core::ffi::c_void);
     o
 }
 unsafe extern "C" fn parse_textint(
@@ -1825,23 +1857,23 @@ unsafe extern "C" fn func_intcmp(
     let mut rsign: ::core::ffi::c_int = 0;
     let mut lnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut rnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let lhs_str: *mut ::core::ffi::c_char = expand_argument(
+    let lhs_str = ExpandedArg::new(
         *argv.offset(0 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let rhs_str: *mut ::core::ffi::c_char = expand_argument(
+    let rhs_str = ExpandedArg::new(
         *argv.offset(1 as ::core::ffi::c_int as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let llim: *const ::core::ffi::c_char = parse_textint(
-        lhs_str,
+        lhs_str.as_ptr(),
         b"non-numeric first argument to 'intcmp' function\0" as *const u8
             as *const ::core::ffi::c_char,
         &raw mut lsign,
         &raw mut lnum,
     );
     let rlim: *const ::core::ffi::c_char = parse_textint(
-        rhs_str,
+        rhs_str.as_ptr(),
         b"non-numeric second argument to 'intcmp' function\0" as *const u8
             as *const ::core::ffi::c_char,
         &raw mut rsign,
@@ -1874,8 +1906,6 @@ unsafe extern "C" fn func_intcmp(
             (llen + (lsign == 0) as ::core::ffi::c_int as ptrdiff_t) as size_t,
         );
     }
-    free(lhs_str as *mut ::core::ffi::c_void);
-    free(rhs_str as *mut ::core::ffi::c_void);
     if !(*argv).is_null() && cmp >= 0 {
         argv = argv.offset(1 as ::core::ffi::c_int as isize);
         if cmp > 0
@@ -1886,10 +1916,8 @@ unsafe extern "C" fn func_intcmp(
         }
     }
     if !(*argv).is_null() {
-        let expansion: *mut ::core::ffi::c_char =
-            expand_argument(*argv, ::core::ptr::null::<::core::ffi::c_char>());
-        o = variable_buffer_output(o, expansion, strlen(expansion) as size_t);
-        free(expansion as *mut ::core::ffi::c_void);
+        let expansion = ExpandedArg::new(*argv, ::core::ptr::null::<::core::ffi::c_char>());
+        o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
     }
     o
 }
@@ -1905,18 +1933,14 @@ unsafe extern "C" fn func_if(
     let mut result: ::core::ffi::c_int = 0;
     strip_whitespace(&raw mut begp, &raw mut endp);
     if begp <= endp {
-        let expansion: *mut ::core::ffi::c_char =
-            expand_argument(begp, endp.offset(1 as ::core::ffi::c_int as isize));
-        result = (*expansion.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0)
-            as ::core::ffi::c_int;
-        free(expansion as *mut ::core::ffi::c_void);
+        let expansion = ExpandedArg::new(begp, endp.offset(1 as ::core::ffi::c_int as isize));
+        result = (*expansion.as_ptr().offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+            != 0) as ::core::ffi::c_int;
     }
     argv = argv.offset((1 + (result == 0) as ::core::ffi::c_int) as isize);
     if !(*argv).is_null() {
-        let expansion_0: *mut ::core::ffi::c_char =
-            expand_argument(*argv, ::core::ptr::null::<::core::ffi::c_char>());
-        o = variable_buffer_output(o, expansion_0, strlen(expansion_0) as size_t);
-        free(expansion_0 as *mut ::core::ffi::c_void);
+        let expansion = ExpandedArg::new(*argv, ::core::ptr::null::<::core::ffi::c_char>());
+        o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
     }
     o
 }
@@ -1930,17 +1954,12 @@ unsafe extern "C" fn func_or(
         let mut endp: *const ::core::ffi::c_char = begp
             .offset(strlen(*argv) as isize)
             .offset(-(1 as ::core::ffi::c_int as isize));
-        let expansion: *mut ::core::ffi::c_char;
-        let result: size_t;
         strip_whitespace(&raw mut begp, &raw mut endp);
         if !(begp > endp) {
-            expansion = expand_argument(begp, endp.offset(1 as ::core::ffi::c_int as isize));
-            result = strlen(expansion) as size_t;
-            if result == 0 {
-                free(expansion as *mut ::core::ffi::c_void);
-            } else {
-                o = variable_buffer_output(o, expansion, result);
-                free(expansion as *mut ::core::ffi::c_void);
+            let expansion = ExpandedArg::new(begp, endp.offset(1 as ::core::ffi::c_int as isize));
+            let result = strlen(expansion.as_ptr()) as size_t;
+            if result != 0 {
+                o = variable_buffer_output(o, expansion.as_ptr(), result);
                 break;
             }
         }
@@ -1953,31 +1972,27 @@ unsafe extern "C" fn func_and(
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut expansion: *mut ::core::ffi::c_char;
     loop {
         let mut begp: *const ::core::ffi::c_char = *argv;
         let mut endp: *const ::core::ffi::c_char = begp
             .offset(strlen(*argv) as isize)
             .offset(-(1 as ::core::ffi::c_int as isize));
-        let result: size_t;
         strip_whitespace(&raw mut begp, &raw mut endp);
         if begp > endp {
             return o;
         }
-        expansion = expand_argument(begp, endp.offset(1 as ::core::ffi::c_int as isize));
-        result = strlen(expansion) as size_t;
+        let expansion = ExpandedArg::new(begp, endp.offset(1 as ::core::ffi::c_int as isize));
+        let result = strlen(expansion.as_ptr()) as size_t;
         if result == 0 {
             break;
         }
         argv = argv.offset(1 as ::core::ffi::c_int as isize);
-        if !(*argv).is_null() {
-            free(expansion as *mut ::core::ffi::c_void);
-        } else {
-            o = variable_buffer_output(o, expansion, result);
+        if (*argv).is_null() {
+            o = variable_buffer_output(o, expansion.as_ptr(), result);
             break;
         }
+        // More arguments remain: drop this expansion and evaluate the next.
     }
-    free(expansion as *mut ::core::ffi::c_void);
     o
 }
 unsafe extern "C" fn func_wildcard(
@@ -2143,7 +2158,6 @@ pub unsafe extern "C" fn func_shell_base(
         if pid < 0 {
             shell_completed(127, 0);
         } else {
-            let mut buffer: *mut ::core::ffi::c_char;
             let mut maxlen: size_t;
             let mut i: size_t;
             let mut cc: ::core::ffi::c_int;
@@ -2153,19 +2167,21 @@ pub unsafe extern "C" fn func_shell_base(
                 close(pipedes[1 as ::core::ffi::c_int as usize]);
             }
             maxlen = 200;
-            buffer = xmalloc(maxlen.wrapping_add(1)) as *mut ::core::ffi::c_char;
+            // Owned read buffer (was xmalloc/xrealloc/free). `i` tracks the
+            // filled length and `maxlen` the usable size. The Vec is kept fully
+            // initialized (len == capacity) so a growth preserves the bytes
+            // already read rather than only the [0, len) prefix.
+            let mut buffer: Vec<u8> = vec![0u8; maxlen.wrapping_add(1) as usize];
             i = 0;
             loop {
                 if i == maxlen {
                     maxlen = maxlen.wrapping_add(512);
-                    buffer = xrealloc(buffer as *mut ::core::ffi::c_void, maxlen.wrapping_add(1))
-                        as *mut ::core::ffi::c_char;
+                    buffer.resize(maxlen.wrapping_add(1) as usize, 0);
                 }
                 loop {
                     cc = read(
                         pipedes[0 as ::core::ffi::c_int as usize],
-                        buffer.offset(i as isize) as *mut ::core::ffi::c_char
-                            as *mut ::core::ffi::c_void,
+                        buffer.as_mut_ptr().add(i as usize) as *mut ::core::ffi::c_void,
                         (maxlen as size_t).wrapping_sub(i as size_t),
                     ) as ::core::ffi::c_int;
                     if !(cc == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
@@ -2177,7 +2193,7 @@ pub unsafe extern "C" fn func_shell_base(
                 }
                 i = i.wrapping_add(cc as size_t);
             }
-            *buffer.offset(i as isize) = 0;
+            *buffer.as_mut_ptr().add(i as usize) = 0;
             close(pipedes[0 as ::core::ffi::c_int as usize]);
             while shell_function_completed == 0 {
                 reap_children(1, 0);
@@ -2195,9 +2211,12 @@ pub unsafe extern "C" fn func_shell_base(
                 free(batch_filename as *mut ::core::ffi::c_void);
             }
             shell_function_pid = 0 as ::core::ffi::c_int as pid_t;
-            fold_newlines(buffer, &raw mut i, trim_newlines);
-            o = variable_buffer_output(o, buffer, i);
-            free(buffer as *mut ::core::ffi::c_void);
+            fold_newlines(
+                buffer.as_mut_ptr() as *mut ::core::ffi::c_char,
+                &raw mut i,
+                trim_newlines,
+            );
+            o = variable_buffer_output(o, buffer.as_mut_ptr() as *mut ::core::ffi::c_char, i);
         }
     }
     if !command_argv.is_null() {
