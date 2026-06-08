@@ -1,8 +1,8 @@
-use libc::{__errno_location, close, exit, perror, sprintf, strcat, strerror};
-use ::c2rust_bitfields;
-use crate::stdio::{FILE};
 pub use crate::ffi_types::{__off64_t, __off_t, size_t, ssize_t, uintmax_t};
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
+use crate::stdio::FILE;
+use c2rust_bitfields;
+use libc::{__errno_location, close, exit, perror, sprintf, strcat, strerror};
 extern "C" {
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
@@ -188,11 +188,7 @@ pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> 
     } else {
         sprintf(p, fmt, program, makelevel, starting_directory);
     }
-    _outputs(
-        ::core::ptr::null_mut::<output>(),
-        0,
-        buf,
-    );
+    _outputs(::core::ptr::null_mut::<output>(), 0, buf);
     1
 }
 #[no_mangle]
@@ -250,7 +246,8 @@ pub unsafe extern "C" fn setup_tmpfile(out: *mut output) {
     // The block falls through to the error handler below on any failure;
     // reaching its end is the success path (the C code used `goto`).
     'setup: {
-        if io_state & (0x8 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int) as ::core::ffi::c_uint
+        if io_state
+            & (0x8 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int) as ::core::ffi::c_uint
             == 0
         {
             perror_with_name(
@@ -348,7 +345,7 @@ pub unsafe fn output_dump(out: *mut output) {
 }
 static mut stdout_flags: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut stderr_flags: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-pub unsafe fn output_init(mut out: *mut output) {
+pub unsafe fn output_init(out: *mut output) {
     if !out.is_null() {
         (*out).err = OUTPUT_NONE;
         (*out).out = (*out).err;
@@ -379,19 +376,21 @@ pub unsafe fn output_close(out: *mut output) {
     output_init(out);
 }
 pub unsafe fn output_start() {
-    if !output_context.is_null() && (*output_context).syncout() as ::core::ffi::c_int != 0 && !((*output_context).out >= 0
-            || (*output_context).err >= 0) {
+    if !output_context.is_null()
+        && (*output_context).syncout() as ::core::ffi::c_int != 0
+        && !((*output_context).out >= 0 || (*output_context).err >= 0)
+    {
         setup_tmpfile(output_context);
     }
-    if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE) && stdio_traced == 0 && should_print_dir() != 0 {
+    if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE)
+        && stdio_traced == 0
+        && should_print_dir() != 0
+    {
         stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn outputs(
-    is_err: ::core::ffi::c_int,
-    msg: *const ::core::ffi::c_char,
-) {
+pub unsafe extern "C" fn outputs(is_err: ::core::ffi::c_int, msg: *const ::core::ffi::c_char) {
     if msg.is_null() || *msg as ::core::ffi::c_int == 0 {
         return;
     }
@@ -409,9 +408,7 @@ pub unsafe extern "C" fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
         fmtbuf.buffer = xrealloc(fmtbuf.buffer as *mut ::core::ffi::c_void, fmtbuf.size)
             as *mut ::core::ffi::c_char;
     }
-    *fmtbuf
-        .buffer
-        .offset(need.wrapping_sub(1) as isize) = 0;
+    *fmtbuf.buffer.offset(need.wrapping_sub(1) as isize) = 0;
     fmtbuf.buffer
 }
 #[no_mangle]
@@ -421,7 +418,6 @@ pub unsafe extern "C" fn message(
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) {
-    let mut args_0: ::core::ffi::VaListImpl;
     let start: *mut ::core::ffi::c_char;
     let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
@@ -452,21 +448,19 @@ pub unsafe extern "C" fn message(
             }) as isize,
         );
     }
-    args_0 = args.clone();
-    vsprintf(p, fmt, args_0.as_va_list());
+    let args_0 = args.clone();
+    vsprintf(p, fmt, args_0);
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
-            == 0
-        {
-        } else {
-            __assert_fail(
-                b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-                440,
-                b"void message(int, size_t, const char *, ...)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
+    } else {
+        __assert_fail(
+            b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
+            440,
+            b"void message(int, size_t, const char *, ...)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     outputs(0, start);
 }
 #[no_mangle]
@@ -476,19 +470,16 @@ pub unsafe extern "C" fn error(
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) {
-    let mut args_0: ::core::ffi::VaListImpl;
     let start: *mut ::core::ffi::c_char;
     let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
-            .wrapping_add(
-                if !flocp.is_null() && !(*flocp).filenm.is_null() {
-                    strlen((*flocp).filenm)
-                } else {
-                    0
-                },
-            )
+            .wrapping_add(if !flocp.is_null() && !(*flocp).filenm.is_null() {
+                strlen((*flocp).filenm)
+            } else {
+                0
+            })
             .wrapping_add(INTSTR_LENGTH)
             .wrapping_add(4)
             .wrapping_add(1)
@@ -519,21 +510,19 @@ pub unsafe extern "C" fn error(
             )
         }) as isize,
     );
-    args_0 = args.clone();
-    vsprintf(p, fmt, args_0.as_va_list());
+    let args_0 = args.clone();
+    vsprintf(p, fmt, args_0);
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
-            == 0
-        {
-        } else {
-            __assert_fail(
-                b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-                470,
-                b"void error(const Floc *, size_t, const char *, ...)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
+    } else {
+        __assert_fail(
+            b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
+            470,
+            b"void error(const Floc *, size_t, const char *, ...)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     outputs(1, start);
 }
 #[no_mangle]
@@ -545,19 +534,16 @@ pub unsafe extern "C" fn fatal(
 ) -> ! {
     let stop: *const ::core::ffi::c_char =
         b".  Stop.\n\0" as *const u8 as *const ::core::ffi::c_char;
-    let mut args_0: ::core::ffi::VaListImpl;
     let start: *mut ::core::ffi::c_char;
     let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
-            .wrapping_add(
-                if !flocp.is_null() && !(*flocp).filenm.is_null() {
-                    strlen((*flocp).filenm)
-                } else {
-                    0
-                },
-            )
+            .wrapping_add(if !flocp.is_null() && !(*flocp).filenm.is_null() {
+                strlen((*flocp).filenm)
+            } else {
+                0
+            })
             .wrapping_add(INTSTR_LENGTH)
             .wrapping_add(8)
             .wrapping_add(strlen(stop))
@@ -588,21 +574,19 @@ pub unsafe extern "C" fn fatal(
             )
         }) as isize,
     );
-    args_0 = args.clone();
-    vsprintf(p, fmt, args_0.as_va_list());
+    let args_0 = args.clone();
+    vsprintf(p, fmt, args_0);
     strcat(p, stop);
-    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
-            == 0
-        {
-        } else {
-            __assert_fail(
-                b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-                502,
-                b"void fatal(const Floc *, size_t, const char *, ...)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
+    } else {
+        __assert_fail(
+            b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
+            502,
+            b"void fatal(const Floc *, size_t, const char *, ...)\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
+    };
     outputs(1, start);
     die(MAKE_FAILURE);
 }
@@ -613,7 +597,6 @@ pub unsafe extern "C" fn format(
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) -> *mut ::core::ffi::c_char {
-    let mut args_0: ::core::ffi::VaListImpl;
     let plen: size_t = if !prefix.is_null() {
         strlen(prefix) as size_t
     } else {
@@ -621,11 +604,7 @@ pub unsafe extern "C" fn format(
     };
     let start: *mut ::core::ffi::c_char;
     let mut p: *mut ::core::ffi::c_char;
-    len = len.wrapping_add(
-        strlen(fmt)
-            .wrapping_add(plen as size_t)
-            .wrapping_add(1) as size_t,
-    );
+    len = len.wrapping_add(strlen(fmt).wrapping_add(plen as size_t).wrapping_add(1) as size_t);
     p = get_buffer(len);
     start = p;
     if plen != 0 {
@@ -635,8 +614,8 @@ pub unsafe extern "C" fn format(
             plen as size_t,
         ) as *mut ::core::ffi::c_char;
     }
-    args_0 = args.clone();
-    vsprintf(p, fmt, args_0.as_va_list());
+    let args_0 = args.clone();
+    vsprintf(p, fmt, args_0);
     start
 }
 #[no_mangle]

@@ -253,7 +253,7 @@ pub unsafe extern "C" fn construct_vpath_list(
         }
     }
     if elem > 0 {
-        let mut path_0: *mut vpath;
+        let path_0: *mut vpath;
         if elem < maxelem.wrapping_sub(1) {
             vpath = xrealloc(
                 vpath as *mut ::core::ffi::c_void,

@@ -102,7 +102,6 @@ pub const __ASSERT_FUNCTION: [::core::ffi::c_char; 27] = unsafe {
     ::core::mem::transmute::<[u8; 27], [::core::ffi::c_char; 27]>(*b"FILE *get_tmpfile(char **)\0")
 };
 #[inline]
-
 unsafe fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
@@ -294,15 +293,14 @@ pub unsafe extern "C" fn concat(
     static mut result: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     let mut ri: size_t = 0;
-    let mut args_0: ::core::ffi::VaListImpl;
-    args_0 = args.clone();
+    let mut args_0 = args.clone();
     loop {
         let fresh0 = num;
         num = num.wrapping_sub(1);
         if !(fresh0 > 0) {
             break;
         }
-        let s: *const ::core::ffi::c_char = args_0.arg::<*const ::core::ffi::c_char>();
+        let s: *const ::core::ffi::c_char = args_0.next_arg::<*const ::core::ffi::c_char>();
         let l: size_t = if s.is_null() {
             0
         } else {
@@ -633,13 +631,12 @@ pub unsafe extern "C" fn dbg(fmt: *const ::core::ffi::c_char, args: ...) {
         b"/tmp/gmkdebug.log\0" as *const u8 as *const ::core::ffi::c_char,
         b"a+\0" as *const u8 as *const ::core::ffi::c_char,
     ) as *mut FILE;
-    let mut args_0: ::core::ffi::VaListImpl;
     let mut buf: [::core::ffi::c_char; 4096] = [0; 4096];
-    args_0 = args.clone();
+    let args_0 = args.clone();
     vsprintf(
         &raw mut buf as *mut ::core::ffi::c_char,
         fmt,
-        args_0.as_va_list(),
+        args_0,
     );
     fprintf(
         fp,

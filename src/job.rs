@@ -1008,7 +1008,7 @@ pub unsafe extern "C" fn free_child(child: *mut child) {
     free(child as *mut ::core::ffi::c_void);
 }
 #[no_mangle]
-pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
+pub unsafe extern "C" fn start_job_command(child: *mut child) {
     let mut flags: ::core::ffi::c_int;
     let mut p: *mut ::core::ffi::c_char;
     let mut argv: *mut *mut ::core::ffi::c_char;
@@ -1253,7 +1253,7 @@ pub unsafe extern "C" fn start_job_command(mut child: *mut child) {
     output_context = ::core::ptr::null_mut::<output>();
 }
 #[no_mangle]
-pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
     let f: *mut file = (*c).file;
     (*c).set_remote(
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
@@ -1333,8 +1333,8 @@ pub unsafe extern "C" fn start_waiting_job(mut c: *mut child) -> ::core::ffi::c_
 #[no_mangle]
 pub unsafe extern "C" fn new_job(file: *mut file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut cmds: *mut commands = (*file).cmds;
-    let mut c: *mut child;
+    let cmds: *mut commands = (*file).cmds;
+    let c: *mut child;
     let lines: *mut *mut ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
     start_waiting_jobs();
@@ -1525,7 +1525,9 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
     }
     jobserver_tokens = jobserver_tokens.wrapping_add(1);
     if 0x20 as ::core::ffi::c_int & db_level != 0 {
-        let mut nmbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        // Owns the concatenated also-make name list when one is built below;
+        // stays empty (no allocation) when the target has no also_make set.
+        let mut nmbuf_buf: Vec<u8> = Vec::new();
         let nm: *const ::core::ffi::c_char;
         let tp: *const ::core::ffi::c_char;
         if (*cmds).fileinfo.filenm.is_null() {
@@ -1560,7 +1562,8 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
                     .wrapping_add(strlen((*(*dp).file).name).wrapping_add(4) as size_t);
                 dp = (*dp).next;
             }
-            nmbuf = xmalloc(len.wrapping_add(1)) as *mut ::core::ffi::c_char;
+            nmbuf_buf = Vec::with_capacity(len.wrapping_add(1) as usize);
+            let nmbuf = nmbuf_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
             tp = nmbuf;
             cp = stpcpy(nmbuf, (*(*c).file).name);
             dp = (*(*c).file).also_make;
@@ -1662,7 +1665,7 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
                 }
             }
         }
-        free(nmbuf as *mut ::core::ffi::c_void);
+        drop(nmbuf_buf);
     }
     start_waiting_job(c);
     if job_slots == 1 || not_parallel != 0 {
@@ -1673,7 +1676,7 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
     output_context = ::core::ptr::null_mut::<output>();
 }
 #[no_mangle]
-pub unsafe extern "C" fn job_next_command(mut child: *mut child) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn job_next_command(child: *mut child) -> ::core::ffi::c_int {
     while (*child).command_ptr.is_null()
         || *(*child).command_ptr as ::core::ffi::c_int == 0
     {
