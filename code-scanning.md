@@ -176,10 +176,10 @@ Dereferencing an invalid or dangling pointer causes undefined behavior and may r
 
 #### `src/vpath.rs` (4)
 
-- [ ] [#1378](https://github.com/sevki/makers/security/code-scanning/1378) `src/vpath.rs:182` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1379](https://github.com/sevki/makers/security/code-scanning/1379) `src/vpath.rs:398` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1381](https://github.com/sevki/makers/security/code-scanning/1381) `src/vpath.rs:450` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1382](https://github.com/sevki/makers/security/code-scanning/1382) `src/vpath.rs:460` - This operation dereferences a pointer that may be invalid.
+- [x] [#1378](https://github.com/sevki/makers/security/code-scanning/1378) `src/vpath.rs:182` - This operation dereferences a pointer that may be invalid.
+- [x] [#1379](https://github.com/sevki/makers/security/code-scanning/1379) `src/vpath.rs:398` - This operation dereferences a pointer that may be invalid.
+- [x] [#1381](https://github.com/sevki/makers/security/code-scanning/1381) `src/vpath.rs:450` - This operation dereferences a pointer that may be invalid.
+- [x] [#1382](https://github.com/sevki/makers/security/code-scanning/1382) `src/vpath.rs:460` - This operation dereferences a pointer that may be invalid.
 
 #### `src/ar.rs` (2)
 
