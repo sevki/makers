@@ -114,7 +114,7 @@ pub unsafe fn make_toui(
     if !error_0.is_null() {
         if *str.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
             *error_0 = b"Missing value\0" as *const u8 as *const ::core::ffi::c_char;
-        } else if *end as ::core::ffi::c_int != 0 {
+        } else if end.as_ref().map_or(false, |&b| b as ::core::ffi::c_int != 0) {
             *error_0 = b"Invalid value\0" as *const u8 as *const ::core::ffi::c_char;
         } else {
             *error_0 = ::core::ptr::null::<::core::ffi::c_char>();
@@ -400,9 +400,9 @@ pub unsafe fn lindex(
     c: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
     while s < limit {
-        let fresh3 = s;
+        let matched = s.as_ref().map_or(false, |&b| b as ::core::ffi::c_int == c);
         s = s.offset(1 as ::core::ffi::c_int as isize);
-        if *fresh3 as ::core::ffi::c_int == c {
+        if matched {
             return s.offset(-(1 as ::core::ffi::c_int as isize)) as *mut ::core::ffi::c_char;
         }
     }
@@ -554,23 +554,23 @@ pub unsafe fn copy_dep(d: *const dep) -> *mut dep {
 pub unsafe fn copy_dep_chain(mut d: *const dep) -> *mut dep {
     let mut firstnew: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut lastnew: *mut dep = ::core::ptr::null_mut::<dep>();
-    while !d.is_null() {
+    while let Some(dn) = d.as_ref() {
         let c: *mut dep = copy_dep(d);
-        if firstnew.is_null() {
+        if let Some(ln) = lastnew.as_mut() {
+            ln.next = c;
+            lastnew = c;
+        } else {
             lastnew = c;
             firstnew = lastnew;
-        } else {
-            (*lastnew).next = c;
-            lastnew = (*lastnew).next;
         }
-        d = (*d).next;
+        d = dn.next;
     }
     firstnew
 }
 pub unsafe fn free_ns_chain(mut ns: *mut nameseq) {
-    while !ns.is_null() {
+    while let Some(node) = ns.as_ref() {
         let t: *mut nameseq = ns;
-        ns = (*ns).next;
+        ns = node.next;
         free_ns(t);
     }
 }
@@ -836,15 +836,14 @@ pub unsafe fn get_tmpfile(name: *mut *mut ::core::ffi::c_char) -> *mut FILE {
     if fd < 0 {
         return ::core::ptr::null_mut::<FILE>();
     }
-    if !(*name).is_null() {
-        } else {
-            __assert_fail(
-                b"*name\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/misc.c\0" as *const u8 as *const ::core::ffi::c_char,
-                831,
-                __ASSERT_FUNCTION.as_ptr(),
-            );
-        };
+    if name.as_ref().map_or(true, |inner| inner.is_null()) {
+        __assert_fail(
+            b"*name\0" as *const u8 as *const ::core::ffi::c_char,
+            b"src/misc.c\0" as *const u8 as *const ::core::ffi::c_char,
+            831,
+            __ASSERT_FUNCTION.as_ptr(),
+        );
+    };
     loop {
         *__errno_location() = 0;
         file = fdopen(fd, tmpfile_mode);

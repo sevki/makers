@@ -122,12 +122,12 @@ Dereferencing an invalid or dangling pointer causes undefined behavior and may r
 
 #### `src/misc.rs` (6)
 
-- [ ] [#1346](https://github.com/sevki/makers/security/code-scanning/1346) `src/misc.rs:118` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1347](https://github.com/sevki/makers/security/code-scanning/1347) `src/misc.rs:407` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1348](https://github.com/sevki/makers/security/code-scanning/1348) `src/misc.rs:565` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1349](https://github.com/sevki/makers/security/code-scanning/1349) `src/misc.rs:568` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1350](https://github.com/sevki/makers/security/code-scanning/1350) `src/misc.rs:575` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1351](https://github.com/sevki/makers/security/code-scanning/1351) `src/misc.rs:842` - This operation dereferences a pointer that may be invalid.
+- [x] [#1346](https://github.com/sevki/makers/security/code-scanning/1346) `src/misc.rs:118` - This operation dereferences a pointer that may be invalid.
+- [x] [#1347](https://github.com/sevki/makers/security/code-scanning/1347) `src/misc.rs:407` - This operation dereferences a pointer that may be invalid.
+- [x] [#1348](https://github.com/sevki/makers/security/code-scanning/1348) `src/misc.rs:565` - This operation dereferences a pointer that may be invalid.
+- [x] [#1349](https://github.com/sevki/makers/security/code-scanning/1349) `src/misc.rs:568` - This operation dereferences a pointer that may be invalid.
+- [x] [#1350](https://github.com/sevki/makers/security/code-scanning/1350) `src/misc.rs:575` - This operation dereferences a pointer that may be invalid.
+- [x] [#1351](https://github.com/sevki/makers/security/code-scanning/1351) `src/misc.rs:842` - This operation dereferences a pointer that may be invalid.
 
 #### `src/file.rs` (5)
 
