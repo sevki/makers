@@ -50,6 +50,33 @@ def load_alerts(path: Path) -> list[Alert]:
     return alerts
 
 
+def load_resolved(path: Path) -> tuple[set[str], set[str]]:
+    """Load persisted resolution state so checkmarks survive regeneration.
+
+    The sidecar file lists, one per line:
+      * ``rule:<rule-id>`` to mark every alert of that rule as resolved, and
+      * a bare alert number to mark that single alert as resolved.
+    ``#`` starts a comment. Returns ``(resolved_rule_ids, resolved_numbers)``.
+    """
+    rules: set[str] = set()
+    numbers: set[str] = set()
+    if not path or not path.exists():
+        return rules, numbers
+    for raw in path.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("rule:"):
+            rules.add(line[len("rule:") :].strip())
+        else:
+            numbers.add(line)
+    return rules, numbers
+
+
+def is_resolved(alert: Alert, resolved_rules: set[str], resolved_numbers: set[str]) -> bool:
+    return rule_id(alert) in resolved_rules or str(alert.get("number")) in resolved_numbers
+
+
 def rule(alert: Alert) -> dict[str, Any]:
     return alert.get("rule") or {}
 
@@ -194,7 +221,11 @@ def render_summary_by_file(alerts: list[Alert]) -> list[str]:
     return lines
 
 
-def render_checklist(alerts: list[Alert]) -> list[str]:
+def render_checklist(
+    alerts: list[Alert],
+    resolved_rules: set[str],
+    resolved_numbers: set[str],
+) -> list[str]:
     by_rule: dict[str, list[Alert]] = defaultdict(list)
     for alert in alerts:
         by_rule[rule_id(alert)].append(alert)
@@ -235,12 +266,38 @@ def render_checklist(alerts: list[Alert]) -> list[str]:
                 url = str(alert.get("html_url") or "")
                 message = instance_message(alert) or description(alert)
                 suffix = f" - {clean_text(message)}" if message else ""
-                lines.append(f"- [ ] [#{number}]({url}) `{format_pos(alert)}`{suffix}")
+                mark = "x" if is_resolved(alert, resolved_rules, resolved_numbers) else " "
+                lines.append(f"- [{mark}] [#{number}]({url}) `{format_pos(alert)}`{suffix}")
 
     return lines
 
 
-def render(alerts: list[Alert], source: Path, csv_source: str | None) -> str:
+def render_progress(
+    alerts: list[Alert],
+    resolved_rules: set[str],
+    resolved_numbers: set[str],
+) -> list[str]:
+    total = len(alerts)
+    done = sum(1 for a in alerts if is_resolved(a, resolved_rules, resolved_numbers))
+    lines = ["## Progress", "", f"Resolved **{done} / {total}** findings."]
+    if resolved_rules:
+        lines += ["", "Rules resolved wholesale (verified clean on `main`):", ""]
+        lines += [f"- `{r}`" for r in sorted(resolved_rules)]
+    lines.append("")
+    lines.append(
+        "Resolution state is persisted in `code-scanning-resolved.txt` so it"
+        " survives regeneration of this report."
+    )
+    return lines
+
+
+def render(
+    alerts: list[Alert],
+    source: Path,
+    csv_source: str | None,
+    resolved_rules: set[str],
+    resolved_numbers: set[str],
+) -> str:
     source_note = f"Generated from `{source}`."
     if csv_source:
         source_note += f" Source export: `{csv_source}`."
@@ -250,11 +307,13 @@ def render(alerts: list[Alert], source: Path, csv_source: str | None) -> str:
         "",
         source_note,
         "",
+        *render_progress(alerts, resolved_rules, resolved_numbers),
+        "",
         *render_summary_by_rule(alerts),
         "",
         *render_summary_by_file(alerts),
         "",
-        *render_checklist(alerts),
+        *render_checklist(alerts, resolved_rules, resolved_numbers),
         "",
     ]
     return "\n".join(lines)
@@ -271,10 +330,19 @@ def main() -> None:
         default=None,
         help="Optional CSV export name to mention in the generated report.",
     )
+    parser.add_argument(
+        "--resolved",
+        default="code-scanning-resolved.txt",
+        type=Path,
+        help="Sidecar file recording resolved rules/alert numbers (persists checkmarks).",
+    )
     args = parser.parse_args()
 
     alerts = load_alerts(args.input)
-    args.output.write_text(render(alerts, args.input, args.csv_source))
+    resolved_rules, resolved_numbers = load_resolved(args.resolved)
+    args.output.write_text(
+        render(alerts, args.input, args.csv_source, resolved_rules, resolved_numbers)
+    )
 
 
 if __name__ == "__main__":

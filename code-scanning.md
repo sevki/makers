@@ -4,21 +4,20 @@ Generated from `code-scanning.json`.
 
 ## Progress
 
-Resolved on `main` (verified `cargo build` produces **0 warnings**, the
-`raw_ref_op` feature is removed from `src/lib.rs`, and clippy is clean for the
-relevant lints):
+Resolved **138 / 216** findings.
 
-- `unused_mut`, `unused_assignments`, `unused_attributes`, `unused_unsafe`
-- `clippy::empty_line_after_outer_attr`, `clippy::needless_else`
-- `stable_features` / `E0554` (`raw_ref_op`)
+Rules resolved wholesale (verified clean on `main`):
 
-`rust/access-invalid-pointer` fixed directly: `#1372` (`read.rs` cmdleft `;`
-split) and `#1387` (`read.rs` also_make loop, now iterated via `as_ref()`).
+- `E0554`
+- `clippy::empty_line_after_outer_attr`
+- `clippy::needless_else`
+- `stable_features`
+- `unused_assignments`
+- `unused_attributes`
+- `unused_mut`
+- `unused_unsafe`
 
-Still open: the remaining 81 `rust/access-invalid-pointer` findings (raw
-pointer derefs needing per-site `as_ref`/`as_mut`/bounds-check restructuring),
-and the 6 `E0425` `VaListImpl` errors (CodeQL build-environment artifacts — the
-type resolves under the project's nightly `c_variadic` feature).
+Resolution state is persisted in `code-scanning-resolved.txt` so it survives regeneration of this report.
 
 ## Summary By Rule
 
@@ -440,6 +439,22 @@ externally exported functions are functions with `#[no_mangle]`, `#[export_name]
 
 - [x] [#68](https://github.com/sevki/makers/security/code-scanning/68) `src/implicit.rs:221` - `#[inline]` is ignored on externally exported functions
 
+### `actions/missing-workflow-permissions` (5)
+
+Severity: `warning`. Security: `medium`.
+
+Workflows should contain explicit permissions to restrict the scope of the default GITHUB_TOKEN.
+
+#### `.github/workflows/ci.yml` (4)
+
+- [ ] [#1321](https://github.com/sevki/makers/security/code-scanning/1321) `.github/workflows/ci.yml:21-80` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{contents: read}}
+- [ ] [#1323](https://github.com/sevki/makers/security/code-scanning/1323) `.github/workflows/ci.yml:81-129` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{}}
+- [ ] [#1324](https://github.com/sevki/makers/security/code-scanning/1324) `.github/workflows/ci.yml:130-175` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{}}
+- [ ] [#1325](https://github.com/sevki/makers/security/code-scanning/1325) `.github/workflows/ci.yml:176-200` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{contents: read}}
+
+#### `.github/workflows/mutants.yml` (1)
+
+- [ ] [#1322](https://github.com/sevki/makers/security/code-scanning/1322) `.github/workflows/mutants.yml:22-99` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{contents: read}}
 
 ### `unused_unsafe` (5)
 

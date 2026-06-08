@@ -409,10 +409,11 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                         (*file).name,
                     );
                 }
+                let gu_next = gu.as_ref().map_or(::core::ptr::null_mut(), |gd| gd.next);
                 if let Some(lg) = lastgoal.as_mut() {
-                    lg.next = (*gu).next;
+                    lg.next = gu_next;
                 } else {
-                    goals = (*gu).next;
+                    goals = gu_next;
                 }
                 if stop != 0 {
                     break;

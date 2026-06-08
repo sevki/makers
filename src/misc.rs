@@ -114,7 +114,7 @@ pub unsafe fn make_toui(
     if !error_0.is_null() {
         if *str.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
             *error_0 = b"Missing value\0" as *const u8 as *const ::core::ffi::c_char;
-        } else if end.as_ref().map_or(false, |&b| b as ::core::ffi::c_int != 0) {
+        } else if matches!(end.as_ref(), Some(&b) if b as ::core::ffi::c_int != 0) {
             *error_0 = b"Invalid value\0" as *const u8 as *const ::core::ffi::c_char;
         } else {
             *error_0 = ::core::ptr::null::<::core::ffi::c_char>();
@@ -400,7 +400,7 @@ pub unsafe fn lindex(
     c: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
     while s < limit {
-        let matched = s.as_ref().map_or(false, |&b| b as ::core::ffi::c_int == c);
+        let matched = matches!(s.as_ref(), Some(&b) if b as ::core::ffi::c_int == c);
         s = s.offset(1 as ::core::ffi::c_int as isize);
         if matched {
             return s.offset(-(1 as ::core::ffi::c_int as isize)) as *mut ::core::ffi::c_char;
@@ -836,7 +836,7 @@ pub unsafe fn get_tmpfile(name: *mut *mut ::core::ffi::c_char) -> *mut FILE {
     if fd < 0 {
         return ::core::ptr::null_mut::<FILE>();
     }
-    if name.as_ref().map_or(true, |inner| inner.is_null()) {
+    if !matches!(name.as_ref(), Some(p) if !p.is_null()) {
         __assert_fail(
             b"*name\0" as *const u8 as *const ::core::ffi::c_char,
             b"src/misc.c\0" as *const u8 as *const ::core::ffi::c_char,
