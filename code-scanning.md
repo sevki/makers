@@ -169,10 +169,10 @@ Dereferencing an invalid or dangling pointer causes undefined behavior and may r
 
 #### `src/remake.rs` (4)
 
-- [ ] [#1361](https://github.com/sevki/makers/security/code-scanning/1361) `src/remake.rs:292` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1362](https://github.com/sevki/makers/security/code-scanning/1362) `src/remake.rs:433` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1365](https://github.com/sevki/makers/security/code-scanning/1365) `src/remake.rs:915` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1377](https://github.com/sevki/makers/security/code-scanning/1377) `src/remake.rs:1573` - This operation dereferences a pointer that may be invalid.
+- [x] [#1361](https://github.com/sevki/makers/security/code-scanning/1361) `src/remake.rs:292` - This operation dereferences a pointer that may be invalid.
+- [x] [#1362](https://github.com/sevki/makers/security/code-scanning/1362) `src/remake.rs:433` - This operation dereferences a pointer that may be invalid.
+- [x] [#1365](https://github.com/sevki/makers/security/code-scanning/1365) `src/remake.rs:915` - This operation dereferences a pointer that may be invalid.
+- [x] [#1377](https://github.com/sevki/makers/security/code-scanning/1377) `src/remake.rs:1573` - This operation dereferences a pointer that may be invalid.
 
 #### `src/vpath.rs` (4)
 

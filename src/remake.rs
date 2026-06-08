@@ -275,11 +275,9 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
             let dchead: *mut file;
             let mut stop: ::core::ffi::c_int = 0;
             let mut all_updated: ::core::ffi::c_int = 1;
-            g = if !(*gu).shuf.is_null() {
-                (*gu).shuf
-            } else {
-                gu
-            };
+            g = gu.as_ref().map_or(gu, |gd| {
+                if gd.shuf.is_null() { gu } else { gd.shuf }
+            });
             goal_dep = g;
             dchead = if !(*(*g).file).double_colon.is_null() {
                 (*(*g).file).double_colon
@@ -411,10 +409,10 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                         (*file).name,
                     );
                 }
-                if lastgoal.is_null() {
-                    goals = (*gu).next;
+                if let Some(lg) = lastgoal.as_mut() {
+                    lg.next = (*gu).next;
                 } else {
-                    (*lastgoal).next = (*gu).next;
+                    goals = (*gu).next;
                 }
                 if stop != 0 {
                     break;
@@ -876,10 +874,10 @@ unsafe extern "C" fn update_file_1(
                         (*(*d).file).name,
                     );
                 }
-                if lastd.is_null() {
-                    (*file).deps = (*du).next;
+                if let Some(tail) = lastd.as_mut() {
+                    tail.next = (*du).next;
                 } else {
-                    (*lastd).next = (*du).next;
+                    (*file).deps = (*du).next;
                 }
                 du = (*du).next;
                 if dropped_list_len.wrapping_rem(DROPPED_LIST_INCR as size_t) == 0 {
@@ -1529,14 +1527,14 @@ unsafe extern "C" fn check_dep(
                         (*file).name,
                         (*(*d).file).name,
                     );
-                    if ld.is_null() {
+                    if let Some(tail) = ld.as_mut() {
+                        tail.next = (*d).next;
+                        free_dep(d);
+                        d = tail.next;
+                    } else {
                         (*file).deps = (*d).next;
                         free_dep(d);
                         d = (*file).deps;
-                    } else {
-                        (*ld).next = (*d).next;
-                        free_dep(d);
-                        d = (*ld).next;
                     }
                 } else {
                     (*(*d).file).parent = file;
