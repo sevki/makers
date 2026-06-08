@@ -1945,13 +1945,30 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                                 p2 = variable_buffer.offset(l_3 as isize);
                                                 if cmdleft.is_null() {
                                                     cmdleft = find_char_unquote(p2, ';' as i32);
-                                                    // Encode the null check in a reference so the
-                                                    // NUL-terminating write is provably valid.
-                                                    if let Some(slot) = cmdleft.as_mut() {
-                                                        *slot = 0;
-                                                        cmdleft = cmdleft.offset(
-                                                            1 as ::core::ffi::c_int as isize,
-                                                        );
+                                                    if !cmdleft.is_null() {
+                                                        let p2_start: usize = p2 as usize;
+                                                        let p2_end: usize = p2_start
+                                                            .saturating_add(strlen(p2) as usize);
+                                                        let cmdleft_pos: usize = cmdleft as usize;
+                                                        // NUL-terminate at the ';' before stepping
+                                                        // past it, so the write goes through the
+                                                        // just-null-checked pointer directly.
+                                                        if cmdleft_pos >= p2_start
+                                                            && cmdleft_pos < p2_end
+                                                        {
+                                                            let cmdleft_off: usize =
+                                                                cmdleft_pos.wrapping_sub(p2_start);
+                                                            let split =
+                                                                p2.offset(cmdleft_off as isize);
+                                                            *split = 0;
+                                                            cmdleft = split.offset(
+                                                                1 as ::core::ffi::c_int as isize,
+                                                            );
+                                                        } else {
+                                                            cmdleft = ::core::ptr::null_mut::<
+                                                                ::core::ffi::c_char,
+                                                            >();
+                                                        }
                                                     }
                                                 }
                                             }
