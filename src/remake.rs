@@ -283,7 +283,16 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
             // deref of `g`. `changed()` is re-read after the file loop because
             // `set_changed` may update it.
             let (g_file, g_flags, g_wait) = match g.as_ref() {
-                Some(gd) => (gd.file, gd.flags(), gd.wait_here()),
+                Some(gd) if !gd.file.is_null() => (gd.file, gd.flags(), gd.wait_here()),
+                Some(_) => {
+                    if let Some(lg) = lastgoal.as_mut() {
+                        lg.next = gu_next;
+                    } else {
+                        goals = gu_next;
+                    }
+                    gu = gu_next;
+                    continue;
+                }
                 None => break,
             };
             dchead = if !(*g_file).double_colon.is_null() {
