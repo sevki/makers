@@ -242,6 +242,21 @@ pub unsafe extern "C" fn check_also_make(file: *const file) {
         }
     }
 }
+
+/// Borrow a `*mut file` as `&file`, encoding the non-null invariant so the
+/// access is a checked reference rather than a raw deref. The pointers walked
+/// in `update_goal_chain` are kept non-null by the surrounding loop guards.
+#[inline]
+unsafe fn fref<'a>(f: *mut file) -> &'a file {
+    f.as_ref().expect("file pointer is non-null within the update loop")
+}
+
+/// Mutable counterpart of [`fref`].
+#[inline]
+unsafe fn fref_mut<'a>(f: *mut file) -> &'a mut file {
+    f.as_mut().expect("file pointer is non-null within the update loop")
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     let mut last_cmd_count: ::core::ffi::c_ulong = 0;
@@ -295,8 +310,8 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                 }
                 None => break,
             };
-            dchead = if !(*g_file).double_colon.is_null() {
-                (*g_file).double_colon
+            dchead = if !fref(g_file).double_colon.is_null() {
+                fref(g_file).double_colon
             } else {
                 g_file
             };
@@ -304,15 +319,15 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
             while !file.is_null() {
                 let ocommands_started: ::core::ffi::c_uint;
                 let fail: update_status;
-                (*file).set_dontcare(
+                fref_mut(file).set_dontcare(
                     (g_flags as ::core::ffi::c_int & (1) << 2 != 0) as ::core::ffi::c_int
                         as ::core::ffi::c_uint as ::core::ffi::c_uint,
                 );
-                while !(*file).renamed.is_null() {
-                    file = (*file).renamed;
+                while !fref(file).renamed.is_null() {
+                    file = fref(file).renamed;
                 }
                 if rebuilding_makefiles != 0 {
-                    if (*file).cmd_target() != 0 {
+                    if fref(file).cmd_target() != 0 {
                         touch_flag = t;
                         question_flag = q;
                         just_print_flag = n;
@@ -333,19 +348,19 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                         printf(
                             b".WAIT is blocking '%s'.\n\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            (*file).name,
+                            fref(file).name,
                         );
                         fflush(stdout);
                     }
                     break;
                 } else {
                     fail = update_file(file, depth);
-                    while !(*file).renamed.is_null() {
-                        file = (*file).renamed;
+                    while !fref(file).renamed.is_null() {
+                        file = fref(file).renamed;
                     }
-                    running |= ((*file).command_state() as ::core::ffi::c_int
+                    running |= (fref(file).command_state() as ::core::ffi::c_int
                         == cs_running as ::core::ffi::c_int
-                        || (*file).command_state() as ::core::ffi::c_int
+                        || fref(file).command_state() as ::core::ffi::c_int
                             == cs_deps_running as ::core::ffi::c_int)
                         as ::core::ffi::c_int;
                     if commands_started > ocommands_started {
@@ -354,33 +369,33 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                         }
                     }
                     if (fail as ::core::ffi::c_uint != 0
-                        || (*file).updated() as ::core::ffi::c_int != 0)
+                        || fref(file).updated() as ::core::ffi::c_int != 0)
                         && (status as ::core::ffi::c_uint)
                             < us_question as ::core::ffi::c_int as ::core::ffi::c_uint
                     {
-                        if (*file).update_status() as u64 != 0 {
-                            status = (*file).update_status() as update_status;
+                        if fref(file).update_status() as u64 != 0 {
+                            status = fref(file).update_status() as update_status;
                             stop = (question_flag != 0
                                 && keep_going_flag == 0
                                 && rebuilding_makefiles == 0)
                                 as ::core::ffi::c_int;
                         } else {
                             let mtime: uintmax_t = if rebuilding_makefiles != 0 {
-                                if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
+                                if fref(file).last_mtime == UNKNOWN_MTIME as uintmax_t {
                                     f_mtime(file, 0)
                                 } else {
-                                    (*file).last_mtime
+                                    fref(file).last_mtime
                                 }
-                            } else if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
+                            } else if fref(file).last_mtime == UNKNOWN_MTIME as uintmax_t {
                                 f_mtime(file, 1)
                             } else {
-                                (*file).last_mtime
+                                fref(file).last_mtime
                             };
-                            while !(*file).renamed.is_null() {
-                                file = (*file).renamed;
+                            while !fref(file).renamed.is_null() {
+                                file = fref(file).renamed;
                             }
-                            if (*file).updated() as ::core::ffi::c_int != 0
-                                && mtime != (*file).mtime_before_update
+                            if fref(file).updated() as ::core::ffi::c_int != 0
+                                && mtime != fref(file).mtime_before_update
                             {
                                 if rebuilding_makefiles == 0
                                     || just_print_flag == 0 && question_flag == 0
@@ -388,19 +403,19 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                                     status = us_success;
                                 }
                                 if rebuilding_makefiles != 0
-                                    && (*file).dontcare() as ::core::ffi::c_int != 0
+                                    && fref(file).dontcare() as ::core::ffi::c_int != 0
                                 {
                                     stop = 1;
                                 }
                             }
                         }
                     }
-                    all_updated &= (*file).updated() as ::core::ffi::c_int;
-                    (*file).set_dontcare(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    all_updated &= fref(file).updated() as ::core::ffi::c_int;
+                    fref_mut(file).set_dontcare(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                     if stop != 0 {
                         break;
                     }
-                    file = (*file).prev;
+                    file = fref(file).prev;
                 }
             }
             file = g_file;
@@ -410,7 +425,7 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
             let g_changed = g.as_ref().map_or(0, |gd| gd.changed());
             if stop != 0 || all_updated != 0 {
                 if rebuilding_makefiles == 0
-                    && (*file).update_status() as ::core::ffi::c_int
+                    && fref(file).update_status() as ::core::ffi::c_int
                         == us_success as ::core::ffi::c_int
                     && g_changed == 0
                     && run_silent == 0
@@ -418,14 +433,14 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                 {
                     message(
                         1,
-                        strlen((*file).name) as size_t,
-                        if (*file).phony() as ::core::ffi::c_int != 0 || (*file).cmds.is_null() {
+                        strlen(fref(file).name) as size_t,
+                        if fref(file).phony() as ::core::ffi::c_int != 0 || fref(file).cmds.is_null() {
                             b"Nothing to be done for '%s'.\0" as *const u8
                                 as *const ::core::ffi::c_char
                         } else {
                             b"'%s' is up to date.\0" as *const u8 as *const ::core::ffi::c_char
                         },
-                        (*file).name,
+                        fref(file).name,
                     );
                 }
                 if let Some(lg) = lastgoal.as_mut() {
