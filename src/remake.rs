@@ -270,26 +270,33 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
         last_cmd_count = command_count;
         lastgoal = ::core::ptr::null_mut::<dep>();
         gu = goals;
-        while !gu.is_null() {
+        while let Some(gu_ref) = gu.as_ref() {
             let mut file: *mut file;
             let dchead: *mut file;
             let mut stop: ::core::ffi::c_int = 0;
             let mut all_updated: ::core::ffi::c_int = 1;
-            g = gu.as_ref().map_or(gu, |gd| {
-                if gd.shuf.is_null() { gu } else { gd.shuf }
-            });
+            let gu_next = gu_ref.next;
+            let gu_shuf = gu_ref.shuf;
+            g = if gu_shuf.is_null() { gu } else { gu_shuf };
             goal_dep = g;
-            dchead = if !(*(*g).file).double_colon.is_null() {
-                (*(*g).file).double_colon
+            // Snapshot the goal-dep fields read below so the body holds no raw
+            // deref of `g`. `changed()` is re-read after the file loop because
+            // `set_changed` may update it.
+            let (g_file, g_flags, g_wait) = match g.as_ref() {
+                Some(gd) => (gd.file, gd.flags(), gd.wait_here()),
+                None => break,
+            };
+            dchead = if !(*g_file).double_colon.is_null() {
+                (*g_file).double_colon
             } else {
-                (*g).file
+                g_file
             };
             file = dchead;
             while !file.is_null() {
                 let ocommands_started: ::core::ffi::c_uint;
                 let fail: update_status;
                 (*file).set_dontcare(
-                    ((*g).flags() as ::core::ffi::c_int & (1) << 2 != 0) as ::core::ffi::c_int
+                    (g_flags as ::core::ffi::c_int & (1) << 2 != 0) as ::core::ffi::c_int
                         as ::core::ffi::c_uint as ::core::ffi::c_uint,
                 );
                 while !(*file).renamed.is_null() {
@@ -309,7 +316,7 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                 ocommands_started = commands_started;
                 stop = 0;
                 wait = (file == dchead
-                    && (*g).wait_here() as ::core::ffi::c_int != 0
+                    && g_wait as ::core::ffi::c_int != 0
                     && running != 0) as ::core::ffi::c_int;
                 if wait != 0 {
                     if 0x2 as ::core::ffi::c_int & db_level != 0 {
@@ -333,7 +340,9 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                             == cs_deps_running as ::core::ffi::c_int)
                         as ::core::ffi::c_int;
                     if commands_started > ocommands_started {
-                        (*g).set_changed(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                        if let Some(gm) = g.as_mut() {
+                            gm.set_changed(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                        }
                     }
                     if (fail as ::core::ffi::c_uint != 0
                         || (*file).updated() as ::core::ffi::c_int != 0)
@@ -385,15 +394,16 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                     file = (*file).prev;
                 }
             }
-            file = (*g).file;
+            file = g_file;
             if wait != 0 {
                 break;
             }
+            let g_changed = g.as_ref().map_or(0, |gd| gd.changed());
             if stop != 0 || all_updated != 0 {
                 if rebuilding_makefiles == 0
                     && (*file).update_status() as ::core::ffi::c_int
                         == us_success as ::core::ffi::c_int
-                    && (*g).changed() == 0
+                    && g_changed == 0
                     && run_silent == 0
                     && question_flag == 0
                 {
@@ -409,7 +419,6 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                         (*file).name,
                     );
                 }
-                let gu_next = gu.as_ref().map_or(::core::ptr::null_mut(), |gd| gd.next);
                 if let Some(lg) = lastgoal.as_mut() {
                     lg.next = gu_next;
                 } else {
@@ -421,7 +430,7 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
             } else {
                 lastgoal = gu;
             }
-            gu = (*gu).next;
+            gu = gu_next;
         }
         if gu.is_null() || wait != 0 {
             considered = considered.wrapping_add(1);
