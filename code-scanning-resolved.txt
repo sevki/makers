@@ -1,0 +1,37 @@
+# Persisted resolution state for code-scanning.md.
+# Read by scripts/code-scanning-to-md.py so checkmarks survive regeneration.
+#
+# `rule:<id>` marks every alert of that rule resolved; a bare number marks one.
+
+# Warning lints resolved wholesale on main (cargo build = 0 warnings;
+# raw_ref_op removed from src/lib.rs; clippy clean for these).
+rule:unused_mut
+rule:unused_assignments
+rule:unused_attributes
+rule:unused_unsafe
+rule:clippy::empty_line_after_outer_attr
+rule:clippy::needless_else
+rule:stable_features
+rule:E0554
+
+# rust/access-invalid-pointer findings fixed via reference helpers.
+# read.rs (merged to main):
+1372
+1387
+# vpath.rs:
+1378
+1379
+1381
+1382
+# misc.rs:
+1346
+1347
+1348
+1349
+1350
+1351
+# remake.rs:
+1361
+1362
+1365
+1377

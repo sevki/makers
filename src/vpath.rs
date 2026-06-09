@@ -176,10 +176,10 @@ pub unsafe extern "C" fn construct_vpath_list(
                         && (*pattern as ::core::ffi::c_int == 0
                             || strcmp(pattern.offset(1 as ::core::ffi::c_int as isize), (*path).pattern.offset(1 as ::core::ffi::c_int as isize), ) == 0))
             {
-                if lastpath.is_null() {
-                    vpaths = (*path).next;
+                if let Some(lp) = lastpath.as_mut() {
+                    lp.next = next;
                 } else {
-                    (*lastpath).next = next;
+                    vpaths = (*path).next;
                 }
                 free((*path).searchpath as *mut ::core::ffi::c_void);
                 free(path as *mut ::core::ffi::c_void);
@@ -395,7 +395,9 @@ unsafe extern "C" fn selective_vpath_search(
                             },
                         ))
             {
-                *mtime_ptr = (*f_0).last_mtime;
+                if let Some(slot) = mtime_ptr.as_mut() {
+                    *slot = (*f_0).last_mtime;
+                }
                 mtime_ptr = ::core::ptr::null_mut::<uintmax_t>();
             }
         }
@@ -446,8 +448,8 @@ unsafe extern "C" fn selective_vpath_search(
                 if e != 0 {
                     exists = 0;
                     do_return = false;
-                } else if !mtime_ptr.is_null() {
-                    *mtime_ptr = file_timestamp_cons(
+                } else if let Some(slot) = mtime_ptr.as_mut() {
+                    *slot = file_timestamp_cons(
                         name,
                         st.st_mtim.tv_sec as time_t,
                         st.st_mtim.tv_nsec as ::core::ffi::c_long,
@@ -456,8 +458,8 @@ unsafe extern "C" fn selective_vpath_search(
                 }
             }
             if do_return {
-                if !mtime_ptr.is_null() {
-                    *mtime_ptr = UNKNOWN_MTIME as uintmax_t;
+                if let Some(slot) = mtime_ptr.as_mut() {
+                    *slot = UNKNOWN_MTIME as uintmax_t;
                 }
                 if !path_index.is_null() {
                     *path_index = i;

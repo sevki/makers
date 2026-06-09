@@ -2,6 +2,23 @@
 
 Generated from `code-scanning.json`.
 
+## Progress
+
+Resolved **138 / 216** findings.
+
+Rules resolved wholesale (verified clean on `main`):
+
+- `E0554`
+- `clippy::empty_line_after_outer_attr`
+- `clippy::needless_else`
+- `stable_features`
+- `unused_assignments`
+- `unused_attributes`
+- `unused_mut`
+- `unused_unsafe`
+
+Resolution state is persisted in `code-scanning-resolved.txt` so it survives regeneration of this report.
+
 ## Summary By Rule
 
 | Rule | Count | Severity | Security | Description |
@@ -62,11 +79,11 @@ Dereferencing an invalid or dangling pointer causes undefined behavior and may r
 - [ ] [#1370](https://github.com/sevki/makers/security/code-scanning/1370) `src/read.rs:1736` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1371](https://github.com/sevki/makers/security/code-scanning/1371) `src/read.rs:1845` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1375](https://github.com/sevki/makers/security/code-scanning/1375) `src/read.rs:1911` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1372](https://github.com/sevki/makers/security/code-scanning/1372) `src/read.rs:1954` - This operation dereferences a pointer that may be invalid.
+- [x] [#1372](https://github.com/sevki/makers/security/code-scanning/1372) `src/read.rs:1954` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1384](https://github.com/sevki/makers/security/code-scanning/1384) `src/read.rs:3080` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1385](https://github.com/sevki/makers/security/code-scanning/1385) `src/read.rs:3228` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1386](https://github.com/sevki/makers/security/code-scanning/1386) `src/read.rs:3297` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1387](https://github.com/sevki/makers/security/code-scanning/1387) `src/read.rs:3309` - This operation dereferences a pointer that may be invalid.
+- [x] [#1387](https://github.com/sevki/makers/security/code-scanning/1387) `src/read.rs:3309` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1389](https://github.com/sevki/makers/security/code-scanning/1389) `src/read.rs:3340` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1390](https://github.com/sevki/makers/security/code-scanning/1390) `src/read.rs:3344` - This operation dereferences a pointer that may be invalid.
 - [ ] [#1391](https://github.com/sevki/makers/security/code-scanning/1391) `src/read.rs:3355` - This operation dereferences a pointer that may be invalid.
@@ -104,12 +121,12 @@ Dereferencing an invalid or dangling pointer causes undefined behavior and may r
 
 #### `src/misc.rs` (6)
 
-- [ ] [#1346](https://github.com/sevki/makers/security/code-scanning/1346) `src/misc.rs:118` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1347](https://github.com/sevki/makers/security/code-scanning/1347) `src/misc.rs:407` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1348](https://github.com/sevki/makers/security/code-scanning/1348) `src/misc.rs:565` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1349](https://github.com/sevki/makers/security/code-scanning/1349) `src/misc.rs:568` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1350](https://github.com/sevki/makers/security/code-scanning/1350) `src/misc.rs:575` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1351](https://github.com/sevki/makers/security/code-scanning/1351) `src/misc.rs:842` - This operation dereferences a pointer that may be invalid.
+- [x] [#1346](https://github.com/sevki/makers/security/code-scanning/1346) `src/misc.rs:118` - This operation dereferences a pointer that may be invalid.
+- [x] [#1347](https://github.com/sevki/makers/security/code-scanning/1347) `src/misc.rs:407` - This operation dereferences a pointer that may be invalid.
+- [x] [#1348](https://github.com/sevki/makers/security/code-scanning/1348) `src/misc.rs:565` - This operation dereferences a pointer that may be invalid.
+- [x] [#1349](https://github.com/sevki/makers/security/code-scanning/1349) `src/misc.rs:568` - This operation dereferences a pointer that may be invalid.
+- [x] [#1350](https://github.com/sevki/makers/security/code-scanning/1350) `src/misc.rs:575` - This operation dereferences a pointer that may be invalid.
+- [x] [#1351](https://github.com/sevki/makers/security/code-scanning/1351) `src/misc.rs:842` - This operation dereferences a pointer that may be invalid.
 
 #### `src/file.rs` (5)
 
@@ -151,17 +168,17 @@ Dereferencing an invalid or dangling pointer causes undefined behavior and may r
 
 #### `src/remake.rs` (4)
 
-- [ ] [#1361](https://github.com/sevki/makers/security/code-scanning/1361) `src/remake.rs:292` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1362](https://github.com/sevki/makers/security/code-scanning/1362) `src/remake.rs:433` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1365](https://github.com/sevki/makers/security/code-scanning/1365) `src/remake.rs:915` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1377](https://github.com/sevki/makers/security/code-scanning/1377) `src/remake.rs:1573` - This operation dereferences a pointer that may be invalid.
+- [x] [#1361](https://github.com/sevki/makers/security/code-scanning/1361) `src/remake.rs:292` - This operation dereferences a pointer that may be invalid.
+- [x] [#1362](https://github.com/sevki/makers/security/code-scanning/1362) `src/remake.rs:433` - This operation dereferences a pointer that may be invalid.
+- [x] [#1365](https://github.com/sevki/makers/security/code-scanning/1365) `src/remake.rs:915` - This operation dereferences a pointer that may be invalid.
+- [x] [#1377](https://github.com/sevki/makers/security/code-scanning/1377) `src/remake.rs:1573` - This operation dereferences a pointer that may be invalid.
 
 #### `src/vpath.rs` (4)
 
-- [ ] [#1378](https://github.com/sevki/makers/security/code-scanning/1378) `src/vpath.rs:182` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1379](https://github.com/sevki/makers/security/code-scanning/1379) `src/vpath.rs:398` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1381](https://github.com/sevki/makers/security/code-scanning/1381) `src/vpath.rs:450` - This operation dereferences a pointer that may be invalid.
-- [ ] [#1382](https://github.com/sevki/makers/security/code-scanning/1382) `src/vpath.rs:460` - This operation dereferences a pointer that may be invalid.
+- [x] [#1378](https://github.com/sevki/makers/security/code-scanning/1378) `src/vpath.rs:182` - This operation dereferences a pointer that may be invalid.
+- [x] [#1379](https://github.com/sevki/makers/security/code-scanning/1379) `src/vpath.rs:398` - This operation dereferences a pointer that may be invalid.
+- [x] [#1381](https://github.com/sevki/makers/security/code-scanning/1381) `src/vpath.rs:450` - This operation dereferences a pointer that may be invalid.
+- [x] [#1382](https://github.com/sevki/makers/security/code-scanning/1382) `src/vpath.rs:460` - This operation dereferences a pointer that may be invalid.
 
 #### `src/ar.rs` (2)
 
@@ -189,124 +206,124 @@ Severity: `warning`. Security: ``.
 
 #### `src/read.rs` (14)
 
-- [ ] [#119](https://github.com/sevki/makers/security/code-scanning/119) `src/read.rs:542` - variable does not need to be mutable
-- [ ] [#120](https://github.com/sevki/makers/security/code-scanning/120) `src/read.rs:574` - variable does not need to be mutable
-- [ ] [#121](https://github.com/sevki/makers/security/code-scanning/121) `src/read.rs:928` - variable does not need to be mutable
-- [ ] [#122](https://github.com/sevki/makers/security/code-scanning/122) `src/read.rs:1477` - variable does not need to be mutable
-- [ ] [#123](https://github.com/sevki/makers/security/code-scanning/123) `src/read.rs:1565` - variable does not need to be mutable
-- [ ] [#124](https://github.com/sevki/makers/security/code-scanning/124) `src/read.rs:2158` - variable does not need to be mutable
-- [ ] [#125](https://github.com/sevki/makers/security/code-scanning/125) `src/read.rs:2748` - variable does not need to be mutable
-- [ ] [#126](https://github.com/sevki/makers/security/code-scanning/126) `src/read.rs:2751` - variable does not need to be mutable
-- [ ] [#127](https://github.com/sevki/makers/security/code-scanning/127) `src/read.rs:3067` - variable does not need to be mutable
-- [ ] [#128](https://github.com/sevki/makers/security/code-scanning/128) `src/read.rs:3274` - variable does not need to be mutable
-- [ ] [#129](https://github.com/sevki/makers/security/code-scanning/129) `src/read.rs:3340` - variable does not need to be mutable
-- [ ] [#130](https://github.com/sevki/makers/security/code-scanning/130) `src/read.rs:3356` - variable does not need to be mutable
-- [ ] [#131](https://github.com/sevki/makers/security/code-scanning/131) `src/read.rs:3575` - variable does not need to be mutable
-- [ ] [#132](https://github.com/sevki/makers/security/code-scanning/132) `src/read.rs:3609` - variable does not need to be mutable
+- [x] [#119](https://github.com/sevki/makers/security/code-scanning/119) `src/read.rs:542` - variable does not need to be mutable
+- [x] [#120](https://github.com/sevki/makers/security/code-scanning/120) `src/read.rs:574` - variable does not need to be mutable
+- [x] [#121](https://github.com/sevki/makers/security/code-scanning/121) `src/read.rs:928` - variable does not need to be mutable
+- [x] [#122](https://github.com/sevki/makers/security/code-scanning/122) `src/read.rs:1477` - variable does not need to be mutable
+- [x] [#123](https://github.com/sevki/makers/security/code-scanning/123) `src/read.rs:1565` - variable does not need to be mutable
+- [x] [#124](https://github.com/sevki/makers/security/code-scanning/124) `src/read.rs:2158` - variable does not need to be mutable
+- [x] [#125](https://github.com/sevki/makers/security/code-scanning/125) `src/read.rs:2748` - variable does not need to be mutable
+- [x] [#126](https://github.com/sevki/makers/security/code-scanning/126) `src/read.rs:2751` - variable does not need to be mutable
+- [x] [#127](https://github.com/sevki/makers/security/code-scanning/127) `src/read.rs:3067` - variable does not need to be mutable
+- [x] [#128](https://github.com/sevki/makers/security/code-scanning/128) `src/read.rs:3274` - variable does not need to be mutable
+- [x] [#129](https://github.com/sevki/makers/security/code-scanning/129) `src/read.rs:3340` - variable does not need to be mutable
+- [x] [#130](https://github.com/sevki/makers/security/code-scanning/130) `src/read.rs:3356` - variable does not need to be mutable
+- [x] [#131](https://github.com/sevki/makers/security/code-scanning/131) `src/read.rs:3575` - variable does not need to be mutable
+- [x] [#132](https://github.com/sevki/makers/security/code-scanning/132) `src/read.rs:3609` - variable does not need to be mutable
 
 #### `src/hash.rs` (8)
 
-- [ ] [#94](https://github.com/sevki/makers/security/code-scanning/94) `src/hash.rs:81` - variable does not need to be mutable
-- [ ] [#95](https://github.com/sevki/makers/security/code-scanning/95) `src/hash.rs:136` - variable does not need to be mutable
-- [ ] [#96](https://github.com/sevki/makers/security/code-scanning/96) `src/hash.rs:213` - variable does not need to be mutable
-- [ ] [#97](https://github.com/sevki/makers/security/code-scanning/97) `src/hash.rs:255` - variable does not need to be mutable
-- [ ] [#98](https://github.com/sevki/makers/security/code-scanning/98) `src/hash.rs:269` - variable does not need to be mutable
-- [ ] [#99](https://github.com/sevki/makers/security/code-scanning/99) `src/hash.rs:295` - variable does not need to be mutable
-- [ ] [#156](https://github.com/sevki/makers/security/code-scanning/156) `src/hash.rs:320` - variable does not need to be mutable
-- [ ] [#101](https://github.com/sevki/makers/security/code-scanning/101) `src/hash.rs:380` - variable does not need to be mutable
+- [x] [#94](https://github.com/sevki/makers/security/code-scanning/94) `src/hash.rs:81` - variable does not need to be mutable
+- [x] [#95](https://github.com/sevki/makers/security/code-scanning/95) `src/hash.rs:136` - variable does not need to be mutable
+- [x] [#96](https://github.com/sevki/makers/security/code-scanning/96) `src/hash.rs:213` - variable does not need to be mutable
+- [x] [#97](https://github.com/sevki/makers/security/code-scanning/97) `src/hash.rs:255` - variable does not need to be mutable
+- [x] [#98](https://github.com/sevki/makers/security/code-scanning/98) `src/hash.rs:269` - variable does not need to be mutable
+- [x] [#99](https://github.com/sevki/makers/security/code-scanning/99) `src/hash.rs:295` - variable does not need to be mutable
+- [x] [#156](https://github.com/sevki/makers/security/code-scanning/156) `src/hash.rs:320` - variable does not need to be mutable
+- [x] [#101](https://github.com/sevki/makers/security/code-scanning/101) `src/hash.rs:380` - variable does not need to be mutable
 
 #### `src/dir.rs` (7)
 
-- [ ] [#76](https://github.com/sevki/makers/security/code-scanning/76) `src/dir.rs:133` - variable does not need to be mutable
-- [ ] [#77](https://github.com/sevki/makers/security/code-scanning/77) `src/dir.rs:459` - variable does not need to be mutable
-- [ ] [#78](https://github.com/sevki/makers/security/code-scanning/78) `src/dir.rs:605` - variable does not need to be mutable
-- [ ] [#79](https://github.com/sevki/makers/security/code-scanning/79) `src/dir.rs:606` - variable does not need to be mutable
-- [ ] [#80](https://github.com/sevki/makers/security/code-scanning/80) `src/dir.rs:843` - variable does not need to be mutable
-- [ ] [#81](https://github.com/sevki/makers/security/code-scanning/81) `src/dir.rs:871` - variable does not need to be mutable
-- [ ] [#82](https://github.com/sevki/makers/security/code-scanning/82) `src/dir.rs:897` - variable does not need to be mutable
+- [x] [#76](https://github.com/sevki/makers/security/code-scanning/76) `src/dir.rs:133` - variable does not need to be mutable
+- [x] [#77](https://github.com/sevki/makers/security/code-scanning/77) `src/dir.rs:459` - variable does not need to be mutable
+- [x] [#78](https://github.com/sevki/makers/security/code-scanning/78) `src/dir.rs:605` - variable does not need to be mutable
+- [x] [#79](https://github.com/sevki/makers/security/code-scanning/79) `src/dir.rs:606` - variable does not need to be mutable
+- [x] [#80](https://github.com/sevki/makers/security/code-scanning/80) `src/dir.rs:843` - variable does not need to be mutable
+- [x] [#81](https://github.com/sevki/makers/security/code-scanning/81) `src/dir.rs:871` - variable does not need to be mutable
+- [x] [#82](https://github.com/sevki/makers/security/code-scanning/82) `src/dir.rs:897` - variable does not need to be mutable
 
 #### `src/main.rs` (6)
 
-- [ ] [#110](https://github.com/sevki/makers/security/code-scanning/110) `src/main.rs:2132` - variable does not need to be mutable
-- [ ] [#111](https://github.com/sevki/makers/security/code-scanning/111) `src/main.rs:2335` - variable does not need to be mutable
-- [ ] [#112](https://github.com/sevki/makers/security/code-scanning/112) `src/main.rs:2352` - variable does not need to be mutable
-- [ ] [#113](https://github.com/sevki/makers/security/code-scanning/113) `src/main.rs:2391` - variable does not need to be mutable
-- [ ] [#114](https://github.com/sevki/makers/security/code-scanning/114) `src/main.rs:2913` - variable does not need to be mutable
-- [ ] [#115](https://github.com/sevki/makers/security/code-scanning/115) `src/main.rs:2949` - variable does not need to be mutable
+- [x] [#110](https://github.com/sevki/makers/security/code-scanning/110) `src/main.rs:2132` - variable does not need to be mutable
+- [x] [#111](https://github.com/sevki/makers/security/code-scanning/111) `src/main.rs:2335` - variable does not need to be mutable
+- [x] [#112](https://github.com/sevki/makers/security/code-scanning/112) `src/main.rs:2352` - variable does not need to be mutable
+- [x] [#113](https://github.com/sevki/makers/security/code-scanning/113) `src/main.rs:2391` - variable does not need to be mutable
+- [x] [#114](https://github.com/sevki/makers/security/code-scanning/114) `src/main.rs:2913` - variable does not need to be mutable
+- [x] [#115](https://github.com/sevki/makers/security/code-scanning/115) `src/main.rs:2949` - variable does not need to be mutable
 
 #### `src/rule.rs` (6)
 
-- [ ] [#136](https://github.com/sevki/makers/security/code-scanning/136) `src/rule.rs:170` - variable does not need to be mutable
-- [ ] [#137](https://github.com/sevki/makers/security/code-scanning/137) `src/rule.rs:429` - variable does not need to be mutable
-- [ ] [#138](https://github.com/sevki/makers/security/code-scanning/138) `src/rule.rs:668` - variable does not need to be mutable
-- [ ] [#139](https://github.com/sevki/makers/security/code-scanning/139) `src/rule.rs:773` - variable does not need to be mutable
-- [ ] [#140](https://github.com/sevki/makers/security/code-scanning/140) `src/rule.rs:826` - variable does not need to be mutable
-- [ ] [#141](https://github.com/sevki/makers/security/code-scanning/141) `src/rule.rs:858` - variable does not need to be mutable
+- [x] [#136](https://github.com/sevki/makers/security/code-scanning/136) `src/rule.rs:170` - variable does not need to be mutable
+- [x] [#137](https://github.com/sevki/makers/security/code-scanning/137) `src/rule.rs:429` - variable does not need to be mutable
+- [x] [#138](https://github.com/sevki/makers/security/code-scanning/138) `src/rule.rs:668` - variable does not need to be mutable
+- [x] [#139](https://github.com/sevki/makers/security/code-scanning/139) `src/rule.rs:773` - variable does not need to be mutable
+- [x] [#140](https://github.com/sevki/makers/security/code-scanning/140) `src/rule.rs:826` - variable does not need to be mutable
+- [x] [#141](https://github.com/sevki/makers/security/code-scanning/141) `src/rule.rs:858` - variable does not need to be mutable
 
 #### `src/variable.rs` (6)
 
-- [ ] [#145](https://github.com/sevki/makers/security/code-scanning/145) `src/variable.rs:213` - variable does not need to be mutable
-- [ ] [#148](https://github.com/sevki/makers/security/code-scanning/148) `src/variable.rs:616` - variable does not need to be mutable
-- [ ] [#149](https://github.com/sevki/makers/security/code-scanning/149) `src/variable.rs:815` - variable does not need to be mutable
-- [ ] [#150](https://github.com/sevki/makers/security/code-scanning/150) `src/variable.rs:914` - variable does not need to be mutable
-- [ ] [#153](https://github.com/sevki/makers/security/code-scanning/153) `src/variable.rs:1901` - variable does not need to be mutable
-- [ ] [#154](https://github.com/sevki/makers/security/code-scanning/154) `src/variable.rs:2026` - variable does not need to be mutable
+- [x] [#145](https://github.com/sevki/makers/security/code-scanning/145) `src/variable.rs:213` - variable does not need to be mutable
+- [x] [#148](https://github.com/sevki/makers/security/code-scanning/148) `src/variable.rs:616` - variable does not need to be mutable
+- [x] [#149](https://github.com/sevki/makers/security/code-scanning/149) `src/variable.rs:815` - variable does not need to be mutable
+- [x] [#150](https://github.com/sevki/makers/security/code-scanning/150) `src/variable.rs:914` - variable does not need to be mutable
+- [x] [#153](https://github.com/sevki/makers/security/code-scanning/153) `src/variable.rs:1901` - variable does not need to be mutable
+- [x] [#154](https://github.com/sevki/makers/security/code-scanning/154) `src/variable.rs:2026` - variable does not need to be mutable
 
 #### `src/job.rs` (5)
 
-- [ ] [#104](https://github.com/sevki/makers/security/code-scanning/104) `src/job.rs:1011` - variable does not need to be mutable
-- [ ] [#105](https://github.com/sevki/makers/security/code-scanning/105) `src/job.rs:1256` - variable does not need to be mutable
-- [ ] [#106](https://github.com/sevki/makers/security/code-scanning/106) `src/job.rs:1336` - variable does not need to be mutable
-- [ ] [#107](https://github.com/sevki/makers/security/code-scanning/107) `src/job.rs:1337` - variable does not need to be mutable
-- [ ] [#108](https://github.com/sevki/makers/security/code-scanning/108) `src/job.rs:1676` - variable does not need to be mutable
+- [x] [#104](https://github.com/sevki/makers/security/code-scanning/104) `src/job.rs:1011` - variable does not need to be mutable
+- [x] [#105](https://github.com/sevki/makers/security/code-scanning/105) `src/job.rs:1256` - variable does not need to be mutable
+- [x] [#106](https://github.com/sevki/makers/security/code-scanning/106) `src/job.rs:1336` - variable does not need to be mutable
+- [x] [#107](https://github.com/sevki/makers/security/code-scanning/107) `src/job.rs:1337` - variable does not need to be mutable
+- [x] [#108](https://github.com/sevki/makers/security/code-scanning/108) `src/job.rs:1676` - variable does not need to be mutable
 
 #### `src/file.rs` (4)
 
-- [ ] [#84](https://github.com/sevki/makers/security/code-scanning/84) `src/file.rs:501` - variable does not need to be mutable
-- [ ] [#85](https://github.com/sevki/makers/security/code-scanning/85) `src/file.rs:502` - variable does not need to be mutable
-- [ ] [#86](https://github.com/sevki/makers/security/code-scanning/86) `src/file.rs:607` - variable does not need to be mutable
-- [ ] [#87](https://github.com/sevki/makers/security/code-scanning/87) `src/file.rs:1178` - variable does not need to be mutable
+- [x] [#84](https://github.com/sevki/makers/security/code-scanning/84) `src/file.rs:501` - variable does not need to be mutable
+- [x] [#85](https://github.com/sevki/makers/security/code-scanning/85) `src/file.rs:502` - variable does not need to be mutable
+- [x] [#86](https://github.com/sevki/makers/security/code-scanning/86) `src/file.rs:607` - variable does not need to be mutable
+- [x] [#87](https://github.com/sevki/makers/security/code-scanning/87) `src/file.rs:1178` - variable does not need to be mutable
 
 #### `src/strcache.rs` (3)
 
-- [ ] [#142](https://github.com/sevki/makers/security/code-scanning/142) `src/strcache.rs:87` - variable does not need to be mutable
-- [ ] [#143](https://github.com/sevki/makers/security/code-scanning/143) `src/strcache.rs:98` - variable does not need to be mutable
-- [ ] [#144](https://github.com/sevki/makers/security/code-scanning/144) `src/strcache.rs:166` - variable does not need to be mutable
+- [x] [#142](https://github.com/sevki/makers/security/code-scanning/142) `src/strcache.rs:87` - variable does not need to be mutable
+- [x] [#143](https://github.com/sevki/makers/security/code-scanning/143) `src/strcache.rs:98` - variable does not need to be mutable
+- [x] [#144](https://github.com/sevki/makers/security/code-scanning/144) `src/strcache.rs:166` - variable does not need to be mutable
 
 #### `src/ar.rs` (2)
 
-- [ ] [#71](https://github.com/sevki/makers/security/code-scanning/71) `src/ar.rs:288` - variable does not need to be mutable
-- [ ] [#72](https://github.com/sevki/makers/security/code-scanning/72) `src/ar.rs:290` - variable does not need to be mutable
+- [x] [#71](https://github.com/sevki/makers/security/code-scanning/71) `src/ar.rs:288` - variable does not need to be mutable
+- [x] [#72](https://github.com/sevki/makers/security/code-scanning/72) `src/ar.rs:290` - variable does not need to be mutable
 
 #### `src/commands.rs` (2)
 
-- [ ] [#73](https://github.com/sevki/makers/security/code-scanning/73) `src/commands.rs:255` - variable does not need to be mutable
-- [ ] [#74](https://github.com/sevki/makers/security/code-scanning/74) `src/commands.rs:678` - variable does not need to be mutable
+- [x] [#73](https://github.com/sevki/makers/security/code-scanning/73) `src/commands.rs:255` - variable does not need to be mutable
+- [x] [#74](https://github.com/sevki/makers/security/code-scanning/74) `src/commands.rs:678` - variable does not need to be mutable
 
 #### `src/implicit.rs` (2)
 
-- [ ] [#102](https://github.com/sevki/makers/security/code-scanning/102) `src/implicit.rs:347` - variable does not need to be mutable
-- [ ] [#103](https://github.com/sevki/makers/security/code-scanning/103) `src/implicit.rs:1468` - variable does not need to be mutable
+- [x] [#102](https://github.com/sevki/makers/security/code-scanning/102) `src/implicit.rs:347` - variable does not need to be mutable
+- [x] [#103](https://github.com/sevki/makers/security/code-scanning/103) `src/implicit.rs:1468` - variable does not need to be mutable
 
 #### `src/default.rs` (1)
 
-- [ ] [#75](https://github.com/sevki/makers/security/code-scanning/75) `src/default.rs:492` - variable does not need to be mutable
+- [x] [#75](https://github.com/sevki/makers/security/code-scanning/75) `src/default.rs:492` - variable does not need to be mutable
 
 #### `src/function.rs` (1)
 
-- [ ] [#88](https://github.com/sevki/makers/security/code-scanning/88) `src/function.rs:1288` - variable does not need to be mutable
+- [x] [#88](https://github.com/sevki/makers/security/code-scanning/88) `src/function.rs:1288` - variable does not need to be mutable
 
 #### `src/output.rs` (1)
 
-- [ ] [#117](https://github.com/sevki/makers/security/code-scanning/117) `src/output.rs:351` - variable does not need to be mutable
+- [x] [#117](https://github.com/sevki/makers/security/code-scanning/117) `src/output.rs:351` - variable does not need to be mutable
 
 #### `src/remake.rs` (1)
 
-- [ ] [#133](https://github.com/sevki/makers/security/code-scanning/133) `src/remake.rs:1337` - variable does not need to be mutable
+- [x] [#133](https://github.com/sevki/makers/security/code-scanning/133) `src/remake.rs:1337` - variable does not need to be mutable
 
 #### `src/vpath.rs` (1)
 
-- [ ] [#155](https://github.com/sevki/makers/security/code-scanning/155) `src/vpath.rs:256` - variable does not need to be mutable
+- [x] [#155](https://github.com/sevki/makers/security/code-scanning/155) `src/vpath.rs:256` - variable does not need to be mutable
 
 ### `clippy::empty_line_after_outer_attr` (30)
 
@@ -347,8 +364,8 @@ for further information visit https://rust-lang.github.io/rust-clippy/master/ind
 
 - [x] [#160](https://github.com/sevki/makers/security/code-scanning/160) `src/misc.rs:104-105` - empty line after outer attribute
 - [x] [#159](https://github.com/sevki/makers/security/code-scanning/159) `src/misc.rs:106` - empty line after outer attribute
-- [ ] [#44](https://github.com/sevki/makers/security/code-scanning/44) `src/misc.rs:109-110` - empty line after outer attribute
-- [ ] [#43](https://github.com/sevki/makers/security/code-scanning/43) `src/misc.rs:111` - empty line after outer attribute
+- [x] [#44](https://github.com/sevki/makers/security/code-scanning/44) `src/misc.rs:109-110` - empty line after outer attribute
+- [x] [#43](https://github.com/sevki/makers/security/code-scanning/43) `src/misc.rs:111` - empty line after outer attribute
 
 #### `src/rule.rs` (4)
 
@@ -370,20 +387,20 @@ Severity: `warning`. Security: ``.
 
 #### `src/function.rs` (4)
 
-- [ ] [#89](https://github.com/sevki/makers/security/code-scanning/89) `src/function.rs:2896` - value assigned to `next` is never read
-- [ ] [#90](https://github.com/sevki/makers/security/code-scanning/90) `src/function.rs:2899` - value assigned to `next` is never read
-- [ ] [#91](https://github.com/sevki/makers/security/code-scanning/91) `src/function.rs:2923` - value assigned to `next_0` is never read
-- [ ] [#92](https://github.com/sevki/makers/security/code-scanning/92) `src/function.rs:2926` - value assigned to `next_0` is never read
+- [x] [#89](https://github.com/sevki/makers/security/code-scanning/89) `src/function.rs:2896` - value assigned to `next` is never read
+- [x] [#90](https://github.com/sevki/makers/security/code-scanning/90) `src/function.rs:2899` - value assigned to `next` is never read
+- [x] [#91](https://github.com/sevki/makers/security/code-scanning/91) `src/function.rs:2923` - value assigned to `next_0` is never read
+- [x] [#92](https://github.com/sevki/makers/security/code-scanning/92) `src/function.rs:2926` - value assigned to `next_0` is never read
 
 #### `src/remake.rs` (2)
 
-- [ ] [#134](https://github.com/sevki/makers/security/code-scanning/134) `src/remake.rs:2100` - value assigned to `p` is never read
-- [ ] [#135](https://github.com/sevki/makers/security/code-scanning/135) `src/remake.rs:2149` - value assigned to `p` is never read
+- [x] [#134](https://github.com/sevki/makers/security/code-scanning/134) `src/remake.rs:2100` - value assigned to `p` is never read
+- [x] [#135](https://github.com/sevki/makers/security/code-scanning/135) `src/remake.rs:2149` - value assigned to `p` is never read
 
 #### `src/variable.rs` (2)
 
-- [ ] [#151](https://github.com/sevki/makers/security/code-scanning/151) `src/variable.rs:1814` - value assigned to `s` is never read
-- [ ] [#152](https://github.com/sevki/makers/security/code-scanning/152) `src/variable.rs:1825-1828` - value assigned to `s` is never read
+- [x] [#151](https://github.com/sevki/makers/security/code-scanning/151) `src/variable.rs:1814` - value assigned to `s` is never read
+- [x] [#152](https://github.com/sevki/makers/security/code-scanning/152) `src/variable.rs:1825-1828` - value assigned to `s` is never read
 
 ### `E0425` (6)
 
@@ -409,19 +426,35 @@ externally exported functions are functions with `#[no_mangle]`, `#[export_name]
 
 #### `src/file.rs` (3)
 
-- [ ] [#65](https://github.com/sevki/makers/security/code-scanning/65) `src/file.rs:374` - `#[inline]` is ignored on externally exported functions
-- [ ] [#66](https://github.com/sevki/makers/security/code-scanning/66) `src/file.rs:379` - `#[inline]` is ignored on externally exported functions
-- [ ] [#67](https://github.com/sevki/makers/security/code-scanning/67) `src/file.rs:384` - `#[inline]` is ignored on externally exported functions
+- [x] [#65](https://github.com/sevki/makers/security/code-scanning/65) `src/file.rs:374` - `#[inline]` is ignored on externally exported functions
+- [x] [#66](https://github.com/sevki/makers/security/code-scanning/66) `src/file.rs:379` - `#[inline]` is ignored on externally exported functions
+- [x] [#67](https://github.com/sevki/makers/security/code-scanning/67) `src/file.rs:384` - `#[inline]` is ignored on externally exported functions
 
 #### `src/main.rs` (2)
 
-- [ ] [#69](https://github.com/sevki/makers/security/code-scanning/69) `src/main.rs:556` - `#[inline]` is ignored on externally exported functions
-- [ ] [#70](https://github.com/sevki/makers/security/code-scanning/70) `src/main.rs:571` - `#[inline]` is ignored on externally exported functions
+- [x] [#69](https://github.com/sevki/makers/security/code-scanning/69) `src/main.rs:556` - `#[inline]` is ignored on externally exported functions
+- [x] [#70](https://github.com/sevki/makers/security/code-scanning/70) `src/main.rs:571` - `#[inline]` is ignored on externally exported functions
 
 #### `src/implicit.rs` (1)
 
-- [ ] [#68](https://github.com/sevki/makers/security/code-scanning/68) `src/implicit.rs:221` - `#[inline]` is ignored on externally exported functions
+- [x] [#68](https://github.com/sevki/makers/security/code-scanning/68) `src/implicit.rs:221` - `#[inline]` is ignored on externally exported functions
 
+### `actions/missing-workflow-permissions` (5)
+
+Severity: `warning`. Security: `medium`.
+
+Workflows should contain explicit permissions to restrict the scope of the default GITHUB_TOKEN.
+
+#### `.github/workflows/ci.yml` (4)
+
+- [ ] [#1321](https://github.com/sevki/makers/security/code-scanning/1321) `.github/workflows/ci.yml:21-80` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{contents: read}}
+- [ ] [#1323](https://github.com/sevki/makers/security/code-scanning/1323) `.github/workflows/ci.yml:81-129` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{}}
+- [ ] [#1324](https://github.com/sevki/makers/security/code-scanning/1324) `.github/workflows/ci.yml:130-175` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{}}
+- [ ] [#1325](https://github.com/sevki/makers/security/code-scanning/1325) `.github/workflows/ci.yml:176-200` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{contents: read}}
+
+#### `.github/workflows/mutants.yml` (1)
+
+- [ ] [#1322](https://github.com/sevki/makers/security/code-scanning/1322) `.github/workflows/mutants.yml:22-99` - Actions job or workflow does not limit the permissions of the GITHUB_TOKEN. Consider setting an explicit permissions block, using the following as a minimal starting point: {{contents: read}}
 
 ### `unused_unsafe` (5)
 
@@ -431,20 +464,20 @@ Severity: `warning`. Security: ``.
 
 #### `src/variable.rs` (2)
 
-- [ ] [#146](https://github.com/sevki/makers/security/code-scanning/146) `src/variable.rs:346` - unnecessary `unsafe` block
-- [ ] [#147](https://github.com/sevki/makers/security/code-scanning/147) `src/variable.rs:355` - unnecessary `unsafe` block
+- [x] [#146](https://github.com/sevki/makers/security/code-scanning/146) `src/variable.rs:346` - unnecessary `unsafe` block
+- [x] [#147](https://github.com/sevki/makers/security/code-scanning/147) `src/variable.rs:355` - unnecessary `unsafe` block
 
 #### `src/expand.rs` (1)
 
-- [ ] [#83](https://github.com/sevki/makers/security/code-scanning/83) `src/expand.rs:134` - unnecessary `unsafe` block
+- [x] [#83](https://github.com/sevki/makers/security/code-scanning/83) `src/expand.rs:134` - unnecessary `unsafe` block
 
 #### `src/hash.rs` (1)
 
-- [ ] [#93](https://github.com/sevki/makers/security/code-scanning/93) `src/hash.rs:76` - unnecessary `unsafe` block
+- [x] [#93](https://github.com/sevki/makers/security/code-scanning/93) `src/hash.rs:76` - unnecessary `unsafe` block
 
 #### `src/read.rs` (1)
 
-- [ ] [#118](https://github.com/sevki/makers/security/code-scanning/118) `src/read.rs:448` - unnecessary `unsafe` block
+- [x] [#118](https://github.com/sevki/makers/security/code-scanning/118) `src/read.rs:448` - unnecessary `unsafe` block
 
 ### `E0554` (1)
 
@@ -454,7 +487,7 @@ the feature `raw_ref_op` has been stable since `1.82.0` and no longer requires a
 
 #### `src/lib.rs` (1)
 
-- [ ] [#7](https://github.com/sevki/makers/security/code-scanning/7) `src/lib.rs:3` - `#![feature]` may not be used on the stable release channel
+- [x] [#7](https://github.com/sevki/makers/security/code-scanning/7) `src/lib.rs:3` - `#![feature]` may not be used on the stable release channel
 
 ### `clippy::needless_else` (1)
 
@@ -474,4 +507,4 @@ Severity: `warning`. Security: ``.
 
 #### `src/lib.rs` (1)
 
-- [ ] [#64](https://github.com/sevki/makers/security/code-scanning/64) `src/lib.rs:5` - the feature `raw_ref_op` has been stable since 1.82.0 and no longer requires an attribute to enable
+- [x] [#64](https://github.com/sevki/makers/security/code-scanning/64) `src/lib.rs:5` - the feature `raw_ref_op` has been stable since 1.82.0 and no longer requires an attribute to enable
