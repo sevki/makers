@@ -269,6 +269,27 @@ unsafe extern "C" fn alloc_goaldep() -> *mut GoalDep {
 unsafe extern "C" fn free_ns(n: *mut NameSeq) {
     free(n as *mut ::core::ffi::c_void);
 }
+struct NameSeqNode {
+    name: *const ::core::ffi::c_char,
+    next: *mut NameSeq,
+}
+unsafe fn name_seq_len(mut n: *mut NameSeq) -> ::core::ffi::c_ushort {
+    let mut len: ::core::ffi::c_ushort = 0;
+    while let Some(node) = n.as_ref() {
+        len = len.wrapping_add(1);
+        n = node.next;
+    }
+    len
+}
+unsafe fn pop_name_seq(n: *mut NameSeq, context: &str) -> NameSeqNode {
+    let node = n.as_ref().expect(context);
+    let popped = NameSeqNode {
+        name: node.name,
+        next: node.next,
+    };
+    free_ns(n);
+    popped
+}
 #[inline]
 unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
     crate::file::free_seq_chain(d);
@@ -2685,7 +2706,6 @@ unsafe fn record_files(
         }
     }
     if !implicit_percent.is_null() {
-        let mut nextf: *mut NameSeq;
         let targets: *mut *const ::core::ffi::c_char;
         let target_pats: *mut *const ::core::ffi::c_char;
         let mut c: ::core::ffi::c_ushort;
@@ -2699,14 +2719,9 @@ unsafe fn record_files(
         &[],
     );
         }
-        nextf = (*filenames).next;
-        free_ns(filenames);
-        filenames = nextf;
-        c = 1;
-        while !nextf.is_null() {
-            c = c.wrapping_add(1);
-            nextf = (*nextf).next;
-        }
+        let first_target = pop_name_seq(filenames, "record_files target list is null");
+        filenames = first_target.next;
+        c = name_seq_len(filenames).wrapping_add(1);
         targets = xmalloc(
             (c as size_t)
                 .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
@@ -2721,7 +2736,8 @@ unsafe fn record_files(
         *fresh18 = implicit_percent;
         c = 1;
         while !filenames.is_null() {
-            name = (*filenames).name;
+            let target = pop_name_seq(filenames, "record_files target list is null");
+            name = target.name;
             implicit_percent = find_percent_cached(&raw mut name);
             if implicit_percent.is_null() {
                 fatal(
@@ -2736,18 +2752,16 @@ unsafe fn record_files(
             let fresh20 = &mut (*target_pats.offset(c as isize));
             *fresh20 = implicit_percent;
             c = c.wrapping_add(1);
-            nextf = (*filenames).next;
-            free_ns(filenames);
-            filenames = nextf;
+            filenames = target.next;
         }
         create_pattern_rule(targets, target_pats, c, two_colon, deps, cmds, 1);
         return;
     }
     while !filenames.is_null() {
-        let nextf_0: *mut NameSeq = (*filenames).next;
+        let target = pop_name_seq(filenames, "record_files target list is null");
+        let nextf_0: *mut NameSeq = target.next;
         let mut f: *mut File;
         let mut this: *mut Dep = ::core::ptr::null_mut::<Dep>();
-        free_ns(filenames);
         if !pattern.is_null() && pattern_matches(pattern, pattern_percent, name) == 0 {
             error(
                 ctx,
@@ -2901,7 +2915,10 @@ unsafe fn record_files(
             break;
         }
         filenames = nextf_0;
-        name = (*filenames).name;
+        name = filenames
+            .as_ref()
+            .expect("record_files target list is null")
+            .name;
         if !find_percent_cached(&raw mut name).is_null() {
             error(
                 ctx,
