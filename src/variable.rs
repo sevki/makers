@@ -716,7 +716,7 @@ pub unsafe fn lookup_variable_for_file(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut variable {
     let var: *mut variable;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -796,7 +796,7 @@ pub unsafe fn initialize_file_variables(
         (*l).next = (*(*file).parent).variables;
     }
     (*l).next_is_parent = 1;
-    if reading == 0 && (*file).pat_searched() == 0 {
+    if reading == 0 && ! (*file).pat_searched {
         let mut p: *mut pattern_var;
         let targlen: size_t = strlen((*file).name) as size_t;
         p = lookup_pattern_var(
@@ -853,7 +853,7 @@ pub unsafe fn initialize_file_variables(
             }
             current_variable_set_list = global;
         }
-        (*file).set_pat_searched(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        (*file).pat_searched = true;
     }
     if !(*file).pat_variables.is_null() {
         (*(*file).pat_variables).next = (*l).next;

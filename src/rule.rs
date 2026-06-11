@@ -22,12 +22,12 @@ use crate::floc::Floc;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct rule {
-    pub next: *mut rule,
+    pub next: *mut Rule,
     pub targets: *mut *const ::core::ffi::c_char,
     pub lens: *mut ::core::ffi::c_uint,
     pub suffixes: *mut *const ::core::ffi::c_char,
-    pub deps: *mut dep,
-    pub cmds: *mut commands,
+    pub deps: *mut Dep,
+    pub cmds: *mut Commands,
     pub _defn: *mut ::core::ffi::c_char,
     pub num: ::core::ffi::c_ushort,
     pub terminal: ::core::ffi::c_char,
@@ -272,7 +272,7 @@ unsafe fn percent_prefixed(s: *const ::core::ffi::c_char) -> Vec<u8> {
 unsafe fn convert_suffix_rule(
     target: *const ::core::ffi::c_char,
     source: *const ::core::ffi::c_char,
-    cmds: *mut commands,
+    cmds: *mut Commands,
 ) {
     let names: *mut *const ::core::ffi::c_char =
         xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
@@ -512,7 +512,7 @@ pub unsafe fn install_pattern_rule(
     rr.deps = parse_file_seq(
         ctx,
         &raw mut ptr as *mut *mut ::core::ffi::c_char,
-        ::core::mem::size_of::<dep>() as size_t,
+        ::core::mem::size_of::<Dep>() as size_t,
         MAP_NUL,
         ::core::ptr::null(),
         PARSEFS_NONE,
@@ -544,7 +544,7 @@ pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
     free(dead.lens as *mut ::core::ffi::c_void);
     free(dead._defn as *mut ::core::ffi::c_void);
     free(rule as *mut ::core::ffi::c_void);
-    if pattern_rules == rule {
+    if pattern_rules == Rule {
         if !lastrule.is_null() {
             abort();
         } else {
@@ -553,7 +553,7 @@ pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
     } else if let Some(last) = lastrule.as_mut() {
         last.next = next;
     }
-    if last_pattern_rule == rule {
+    if last_pattern_rule == Rule {
         last_pattern_rule = lastrule;
     }
 }

@@ -193,7 +193,7 @@ pub unsafe fn set_variable_buffer_byte(off: size_t, b: ::core::ffi::c_char) {
 pub unsafe fn recursively_expand_for_file(
     ctx: &crate::execctx::ExecContext,
     v: *mut variable,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let mut this_var: *const Floc;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -363,7 +363,7 @@ pub unsafe fn allocated_expand_variable_for_file(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
@@ -636,7 +636,7 @@ pub unsafe fn expand_argument(
 pub unsafe fn expand_string_for_file(
     ctx: &crate::execctx::ExecContext,
     string: *const ::core::ffi::c_char,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
@@ -665,7 +665,7 @@ pub unsafe fn expand_string_for_file(
 pub unsafe fn allocated_expand_string_for_file(
     ctx: &crate::execctx::ExecContext,
     string: *const ::core::ffi::c_char,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
