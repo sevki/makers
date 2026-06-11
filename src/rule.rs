@@ -217,19 +217,20 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
                             .wrapping_sub(1),
                     ) as *mut ::core::ffi::c_char;
                 }
-                p = mempcpy(
-                    p as *mut ::core::ffi::c_void,
-                    (if !current.name.is_null() {
-                        current.name
-                    } else {
-                        (*current.file).name
-                    }) as *const ::core::ffi::c_void,
-                    strlen(if !current.name.is_null() {
-                        current.name
-                    } else {
-                        (*current.file).name
-                    }),
-                ) as *mut ::core::ffi::c_char;
+                let dep_name: *const ::core::ffi::c_char = if !current.name.is_null() {
+                    current.name
+                } else if !current.file.is_null() {
+                    (*current.file).name
+                } else {
+                    ::core::ptr::null()
+                };
+                if !dep_name.is_null() {
+                    p = mempcpy(
+                        p as *mut ::core::ffi::c_void,
+                        dep_name as *const ::core::ffi::c_void,
+                        strlen(dep_name),
+                    ) as *mut ::core::ffi::c_char;
+                }
             }
             ood = current.next;
             sep = b" \0" as *const u8 as *const ::core::ffi::c_char;
