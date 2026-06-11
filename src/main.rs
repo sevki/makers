@@ -404,12 +404,12 @@ pub unsafe fn alloc_goaldep() -> *mut goaldep {
     xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
 }
 #[inline]
-unsafe extern "C" fn free_ns(n: *mut nameseq) {
+unsafe extern "C" fn free_ns(n: *mut NameSeq) {
     free(n as *mut ::core::ffi::c_void);
 }
 #[inline]
-unsafe extern "C" fn free_dep(d: *mut dep) {
-    free_ns(d as *mut nameseq);
+unsafe extern "C" fn free_dep(d: *mut Dep) {
+    free_ns(d as *mut NameSeq);
 }
 /// # Safety
 ///
@@ -419,8 +419,8 @@ pub unsafe fn free_goaldep(g: *mut goaldep) {
     free_dep(g as *mut dep);
 }
 #[inline]
-unsafe extern "C" fn free_dep_chain(d: *mut dep) {
-    free_ns_chain(d as *mut nameseq);
+unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
+    free_ns_chain(d as *mut NameSeq);
 }
 pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
@@ -1274,8 +1274,8 @@ static mut long_option_aliases: [option; 9] = [
         val: 'f' as i32,
     },
 ];
-static mut goals: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
-static mut lastgoal: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
+static mut goals: *mut GoalDep = ::core::ptr::null::<GoalDep>() as *mut GoalDep;
+static mut lastgoal: *mut GoalDep = ::core::ptr::null::<GoalDep>() as *mut GoalDep;
 static mut command_variables: *mut command_variable =
     ::core::ptr::null::<command_variable>() as *mut command_variable;
 pub static mut program: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -2704,7 +2704,7 @@ unsafe fn main_0(
     }
     if !read_files.is_null() {
         let makefile_mtimes: *mut uintmax_t;
-        let mut skipped_makefiles: *mut goaldep = ::core::ptr::null_mut::<goaldep>();
+        let mut skipped_makefiles: *mut GoalDep = ::core::ptr::null_mut::<GoalDep>();
         let mut nargv: *mut *const ::core::ffi::c_char = argv as *mut *const ::core::ffi::c_char;
         let mut any_failed: i32 = 0;
         let mut status: update_status;
@@ -2713,10 +2713,10 @@ unsafe fn main_0(
             fflush(stdout);
         }
         let mut num_mkfiles: ::core::ffi::c_uint = 0;
-        let mut d: *mut goaldep = read_files;
-        read_files = ::core::ptr::null_mut::<goaldep>();
+        let mut d: *mut GoalDep = read_files;
+        read_files = ::core::ptr::null_mut::<GoalDep>();
         while !d.is_null() {
-            let t: *mut goaldep = d;
+            let t: *mut GoalDep = d;
             d = (*d).next;
             (*t).next = read_files;
             read_files = t;
@@ -2728,8 +2728,8 @@ unsafe fn main_0(
                 as usize,
         ));
         makefile_mtimes = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut uintmax_t;
-        let mut d_0: *mut goaldep = read_files;
-        let mut last: *mut goaldep = ::core::ptr::null_mut::<goaldep>();
+        let mut d_0: *mut GoalDep = read_files;
+        let mut last: *mut GoalDep = ::core::ptr::null_mut::<GoalDep>();
         let mut mm_idx: ::core::ffi::c_uint = 0;
         while let Some(d0r) = d_0.as_mut() {
             let mut skip: i32 = 0;
@@ -2818,11 +2818,11 @@ unsafe fn main_0(
         if any_failed != 0
             && status as ::core::ffi::c_uint == us_success as i32 as ::core::ffi::c_uint
         {
-            status = us_none;
+            status = UpdateStatus :: None;
         }
         let needs_restart = match status as ::core::ffi::c_uint {
             1 => {
-                let mut d_2: *mut goaldep;
+                let mut d_2: *mut GoalDep;
                 d_2 = read_files;
                 while let Some(d_2r) = d_2.as_mut() {
                     let f_3: *mut file = d_2r.file;
@@ -2849,7 +2849,7 @@ unsafe fn main_0(
             3 => {
                 let mut any_remade: i32 = 0;
                 let mut i_3: ::core::ffi::c_uint;
-                let mut d_4: *mut goaldep;
+                let mut d_4: *mut GoalDep;
                 i_3 = 0;
                 d_4 = read_files;
                 while let Some(d_4r) = d_4.as_mut() {
@@ -3257,15 +3257,15 @@ unsafe fn main_0(
         if *p_6 as i32 != 0 {
             let mut f_6: *mut file = lookup_file(p_6);
             if f_6.is_null() {
-                let ns: *mut nameseq;
+                let ns: *mut NameSeq;
                 ns = parse_file_seq(
                     &ctx,
                     &raw mut p_6,
-                    ::core::mem::size_of::<nameseq>() as size_t,
+                    ::core::mem::size_of::<NameSeq>() as size_t,
                     MAP_NUL,
                     ::core::ptr::null::<::core::ffi::c_char>(),
                     PARSEFS_NONE,
-                ) as *mut nameseq;
+                ) as *mut NameSeq;
                 if !ns.is_null() {
                     if !(*ns).next.is_null() {
                         fatal(
@@ -3287,7 +3287,7 @@ unsafe fn main_0(
             }
         }
     } else {
-        (*lastgoal).next = ::core::ptr::null_mut::<goaldep>();
+        (*lastgoal).next = ::core::ptr::null_mut::<GoalDep>();
     }
     if goals.is_null() {
         let v_2: *mut variable = lookup_variable(
@@ -3443,7 +3443,7 @@ unsafe fn handle_non_switch_argument(
     } else if *arg.offset(0_i32 as isize) as i32 != 0
         && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint
     {
-        let f: *mut file;
+        let f: *mut File;
         if strcmp(arg, b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
             return 1;
         }
@@ -3871,7 +3871,7 @@ unsafe fn decode_switches(
         let prior_found_wait: i32 = found_wait as i32;
         found_wait = handle_non_switch_argument(ctx, *a, origin);
         if prior_found_wait != 0 && !lastgoal.is_null() {
-            (*lastgoal).set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            (*lastgoal).wait_here = true;
         }
         a = a.offset(1_i32 as isize);
     }

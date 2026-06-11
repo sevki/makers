@@ -186,7 +186,7 @@ pub struct child {
     pub environment: *mut *mut ::core::ffi::c_char,
     pub output: output,
     pub next: *mut child,
-    pub file: *mut file,
+    pub file: *mut File,
     pub sh_batch_file: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub command_ptr: *mut ::core::ffi::c_char,
@@ -1282,7 +1282,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 if (*child).pid >= 0 {
                     JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
                 }
-                set_command_state((*child).file, cs_running);
+                set_command_state((*child).file, CommandState :: Running );
                 if !argv.is_null() {
                     free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                     free(argv as *mut ::core::ffi::c_void);
@@ -1354,7 +1354,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
             unblock_sigs();
         }
         0 => {
-            (*f).set_update_status(us_success as update_status);
+            (*f).UpdateStatus = UpdateStatus :: Success;
             finish = true;
         }
         3 => {
@@ -1524,7 +1524,7 @@ unsafe fn collapse_dollar_refs(line: *mut ::core::ffi::c_char) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let cmds: *mut commands = (*file).cmds;
+    let cmds: *mut Commands = (*file).cmds;
     let c: *mut child;
     let lines: *mut *mut ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
@@ -1649,7 +1649,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
         {
             tp = (*c).file.as_ref().expect("a child always has a file").name;
         } else {
-            let mut dp: *const dep;
+            let mut dp: *const Dep;
             let mut cp: *mut ::core::ffi::c_char;
             let mut len: size_t =
                 strlen((*c).file.as_ref().expect("a child always has a file").name) as size_t;
