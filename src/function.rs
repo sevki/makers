@@ -9,6 +9,7 @@ use crate::misc::{
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
+use std::ffi::CStr;
 use libc::{
     __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strchr, strcmp,
     strcpy, strerror, strstr, strtoll,
@@ -1125,12 +1126,14 @@ pub unsafe extern "C" fn strip_whitespace(
     *begpp as *mut ::core::ffi::c_char
 }
 unsafe extern "C" fn parse_numeric(
-    s: *const ::core::ffi::c_char,
-    msg: *const ::core::ffi::c_char,
+    s: &CStr,
+    msg: &CStr,
 ) -> ::core::ffi::c_longlong {
-    let mut beg: *const ::core::ffi::c_char = s;
-    let mut end: *const ::core::ffi::c_char = s
-        .offset(strlen(s) as isize)
+    let s_ptr = s.as_ptr();
+    let msg_ptr = msg.as_ptr();
+    let mut beg: *const ::core::ffi::c_char = s_ptr;
+    let mut end: *const ::core::ffi::c_char = s_ptr
+        .offset(strlen(s_ptr) as isize)
         .offset(-(1 as ::core::ffi::c_int as isize));
     let mut endp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let num: ::core::ffi::c_longlong;
@@ -1138,9 +1141,9 @@ unsafe extern "C" fn parse_numeric(
     if beg > end {
         fatal(
             *expanding_var,
-            strlen(msg) as size_t,
+            strlen(msg_ptr) as size_t,
             b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
+            msg_ptr,
         );
     }
     *__errno_location() = 0;
@@ -1148,18 +1151,18 @@ unsafe extern "C" fn parse_numeric(
     if *__errno_location() == ERANGE {
         fatal(
             *expanding_var,
-            (strlen(msg) as size_t).wrapping_add(strlen(s) as size_t),
+            (strlen(msg_ptr) as size_t).wrapping_add(strlen(s_ptr) as size_t),
             b"%s: '%s' out of range\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
-            s,
+            msg_ptr,
+            s_ptr,
         );
     } else if endp == beg as *mut ::core::ffi::c_char || endp <= end as *mut ::core::ffi::c_char {
         fatal(
             *expanding_var,
-            (strlen(msg) as size_t).wrapping_add(strlen(s) as size_t),
+            (strlen(msg_ptr) as size_t).wrapping_add(strlen(s_ptr) as size_t),
             b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
-            s,
+            msg_ptr,
+            s_ptr,
         );
     }
     num
@@ -1172,9 +1175,13 @@ unsafe extern "C" fn func_word(
     let mut end_p: *const ::core::ffi::c_char;
     let mut p: *const ::core::ffi::c_char;
     let mut i: ::core::ffi::c_longlong;
+    let badfirst = CStr::from_bytes_with_nul(
+        b"invalid first argument to 'word' function\0",
+    )
+    .expect("word() diagnostic strings are nul-terminated");
     i = parse_numeric(
-        *argv.offset(0 as ::core::ffi::c_int as isize),
-        b"invalid first argument to 'word' function\0" as *const u8 as *const ::core::ffi::c_char,
+        CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
+        badfirst,
     );
     if i < 1 as ::core::ffi::c_longlong {
         fatal(
@@ -1209,33 +1216,40 @@ unsafe extern "C" fn func_wordlist(
     let mut start: ::core::ffi::c_longlong;
     let stop: ::core::ffi::c_longlong;
     let mut count: ::core::ffi::c_longlong;
-    let badfirst: *const ::core::ffi::c_char = b"invalid first argument to 'wordlist' function\0"
-        as *const u8 as *const ::core::ffi::c_char;
-    let badsecond: *const ::core::ffi::c_char = b"invalid second argument to 'wordlist' function\0"
-        as *const u8 as *const ::core::ffi::c_char;
-    start = parse_numeric(*argv.offset(0 as ::core::ffi::c_int as isize), badfirst);
+    let badfirst = CStr::from_bytes_with_nul(
+        b"invalid first argument to 'wordlist' function\0",
+    )
+    .expect("wordlist() diagnostic strings are nul-terminated");
+    let badsecond = CStr::from_bytes_with_nul(
+        b"invalid second argument to 'wordlist' function\0",
+    )
+    .expect("wordlist() diagnostic strings are nul-terminated");
+    start = parse_numeric(CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)), badfirst);
     if start < 1 as ::core::ffi::c_longlong {
         fatal(
             *expanding_var,
-            (strlen(badfirst) as size_t)
+            (badfirst.to_bytes().len() as size_t)
                 .wrapping_add(
                     strlen(make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
             b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            badfirst,
+            badfirst.as_ptr(),
             make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char),
         );
     }
-    stop = parse_numeric(*argv.offset(1 as ::core::ffi::c_int as isize), badsecond);
+    stop = parse_numeric(
+        CStr::from_ptr(*argv.offset(1 as ::core::ffi::c_int as isize)),
+        badsecond,
+    );
     if stop < 0 as ::core::ffi::c_longlong {
         fatal(
             *expanding_var,
-            (strlen(badsecond) as size_t)
+            (badsecond.to_bytes().len() as size_t)
                 .wrapping_add(
                     strlen(make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
             b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            badsecond,
+            badsecond.as_ptr(),
             make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char),
         );
     }
