@@ -1,3 +1,4 @@
+pub use crate::output::{FmtArg, error, fatal};
 pub use crate::expand::allocated_expand_string_for_file;
 pub use crate::job::construct_command_argv;
 pub use crate::variable::target_environment;
@@ -2976,9 +2977,9 @@ unsafe fn expand_builtin_function(
             strlen((*entry_p).name) as size_t,
             b"insufficient number of arguments (%u) to function '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            argc,
-            (*entry_p).name,
-        );
+        &[FmtArg::Uint((argc) as u32 as u64),
+            FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char)],
+    );
     }
     if argc == 0 && (*entry_p).alloc_fn() == 0 {
         return o;
@@ -2990,8 +2991,8 @@ unsafe fn expand_builtin_function(
             strlen((*entry_p).name) as size_t,
             b"unimplemented on this platform: function '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            (*entry_p).name,
-        );
+        &[FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char)],
+    );
     }
     if (*entry_p).adds_command() != 0 {
         crate::make_main::bump_command_count();
@@ -3333,9 +3334,9 @@ pub unsafe fn define_new_function(
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
             b"invalid minimum argument count (%u) for function %s\0" as *const u8
                 as *const ::core::ffi::c_char,
-            min,
-            name,
-        );
+        &[FmtArg::Uint((min) as u32 as u64),
+            FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
     }
     if max > 255 || max != 0 && max < min {
         fatal(
@@ -3344,9 +3345,9 @@ pub unsafe fn define_new_function(
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
             b"invalid maximum argument count (%u) for function %s\0" as *const u8
                 as *const ::core::ffi::c_char,
-            max,
-            name,
-        );
+        &[FmtArg::Uint((max) as u32 as u64),
+            FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
     }
     ent = xmalloc(::core::mem::size_of::<function_table_entry>() as size_t)
         as *mut function_table_entry;
