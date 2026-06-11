@@ -1,7 +1,16 @@
-extern "C" {
-    pub type _IO_wide_data;
-    pub type _IO_codecvt;
-    pub type _IO_marker;
+#[repr(C)]
+pub struct _IO_wide_data {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct _IO_codecvt {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct _IO_marker {
+    _private: [u8; 0],
 }
 
 pub use crate::ffi_types::{__off64_t, __off_t, size_t};

@@ -1,3 +1,5 @@
+pub use crate::output::{FmtArg, error, fatal, format_message};
+pub use crate::misc::concat;
 pub use crate::expand::allocated_expand_string_for_file;
 pub use crate::expand::recursively_expand_for_file;
 pub use crate::file::{CommandState, UpdateStatus};
@@ -1491,7 +1493,7 @@ pub unsafe fn target_environment(
                             vars =
                                 strstr(value, b" -- \0" as *const u8 as *const ::core::ffi::c_char);
                             if vars.is_null() {
-                                mf = xstrdup(concat(2, value, invalid));
+                                mf = xstrdup(concat(&[value, invalid]));
                             } else {
                                 let lf: size_t =
                                     vars.offset_from(value) as ::core::ffi::c_long as size_t;
@@ -1539,7 +1541,7 @@ pub unsafe fn target_environment(
                         .is_null()
                             && !((*v_0).origin() as i32 != o_env as i32)
                         {
-                            mf_0 = concat(2, value, invalid);
+                            mf_0 = concat(&[value, invalid]);
                             free(cp as *mut ::core::ffi::c_void);
                             cp = xstrdup(mf_0);
                             value = cp;

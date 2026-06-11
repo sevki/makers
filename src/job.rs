@@ -459,8 +459,7 @@ unsafe fn child_error(
         .expect("a child being reported has a recipe")
         .fileinfo;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut l: size_t;
-    if ignored != 0 && crate::make_main::opt_run_silent() {
+    if ignored != 0 && run_silent != 0 {
         return;
     }
     if exit_sig != 0 && coredump != 0 {
@@ -477,11 +476,9 @@ unsafe fn child_error(
         .wrapping_add(strlen(post)) as size_t;
     if let Some(label) = crate::shuffle::get_mode() {
         let mut buf = format!(" shuffle={}", label).into_bytes();
-        let written = buf.len();
         buf.push(0);
         alloca_allocations.push(buf);
         smode = alloca_allocations.last().unwrap().as_ptr() as *const ::core::ffi::c_char;
-        l = l.wrapping_add(written as size_t);
     }
     output_context = if (*child).output.syncout() as i32 != 0 {
         &raw mut (*child).output
@@ -569,7 +566,8 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     0,
                     b"*** Waiting for unfinished jobs....\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             PRINTED.store(true, Ordering::Relaxed);
         }
@@ -1608,7 +1606,8 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
                     0,
                     b"INTERNAL: no children as we go to sleep on read\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             got_token = jobserver_acquire(ctx, (waiting_jobs != NULL as *mut child) as i32) as i32;
             if !(got_token == 1) {
@@ -1727,9 +1726,9 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
                 (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
                 b"%s: update target '%s' due to: target does not exist\0" as *const u8
                     as *const ::core::ffi::c_char,
-                nm,
-                tp,
-            );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char)],
+    );
         } else {
             let mut newer: *mut ::core::ffi::c_char = allocated_expand_variable_for_file(
                 ctx,
@@ -1746,10 +1745,10 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
                         .wrapping_add(strlen(newer) as size_t),
                     b"%s: update target '%s' due to: %s\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    nm,
-                    tp,
-                    newer,
-                );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char),
+            FmtArg::Str((newer) as *const ::core::ffi::c_char)],
+    );
                 free(newer as *mut ::core::ffi::c_void);
             } else {
                 let mut len_0: size_t = 0;
@@ -1777,9 +1776,9 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
                         (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
                         b"%s: update target '%s' due to: unknown reasons\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        nm,
-                        tp,
-                    );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char)],
+    );
                 } else {
                     alloca_allocations.push(::std::vec::from_elem(0, len_0 as usize));
                     newer = alloca_allocations.last_mut().unwrap().as_mut_ptr()
@@ -1814,10 +1813,10 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
                             .wrapping_add(strlen(newer) as size_t),
                         b"%s: update target '%s' due to: %s\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        nm,
-                        tp,
-                        newer,
-                    );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char),
+            FmtArg::Str((newer) as *const ::core::ffi::c_char)],
+    );
                 }
             }
         }
@@ -2046,7 +2045,8 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                     0,
                     b"cannot enforce load limits on this operating system\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             } else {
                 perror_with_name(
                     ctx,

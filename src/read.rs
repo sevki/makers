@@ -1,3 +1,5 @@
+pub use crate::output::{FmtArg, error, fatal};
+pub use crate::misc::concat;
 pub use crate::expand::allocated_expand_string_for_file;
 pub use crate::file::enter_file;
 pub use crate::file::enter_prereqs;
@@ -67,6 +69,7 @@ extern "C" {
 pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
 use crate::warning::{self, Action, Type};
+pub type dirent = crate::dir::dirent;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct glob_t {
@@ -942,7 +945,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                             0,
                             b"invalid syntax in conditional\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                        );
+        &[],
+    );
                     }
                     ignoring = i;
                 } else {
@@ -984,12 +988,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 }) as size_t,
                                 b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                if exporting != 0 {
+        &[FmtArg::Str((if exporting != 0 {
                                     b"export\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"unexport\0" as *const u8 as *const ::core::ffi::c_char
-                                },
-                            );
+                                }) as *const ::core::ffi::c_char)],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1069,7 +1073,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 b"warning: vpath directive lines cannot start with TAB\0"
                                     as *const u8
                                     as *const ::core::ffi::c_char,
-                            );
+        &[],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1163,8 +1168,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     b"-include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
-                                },
-                            );
+                                }) as *const ::core::ffi::c_char)],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1271,12 +1276,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 }) as size_t,
                                 b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                if noerror_0 != 0 {
+        &[FmtArg::Str((if noerror_0 != 0 {
                                     b"-load\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"load\0" as *const u8 as *const ::core::ffi::c_char
-                                },
-                            );
+                                }) as *const ::core::ffi::c_char)],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1383,8 +1388,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         strlen(name) as size_t,
                                         b"%s: failed to load\0" as *const u8
                                             as *const ::core::ffi::c_char,
-                                        name,
-                                    );
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
                                 }
                                 name = file.name;
                                 f = lookup_file(name);
@@ -1419,7 +1424,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 0,
                                 b"recipe commences before first target\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                            );
+        &[],
+    );
                         }
                         let mut wtype: make_word_type;
                         let mut cmdleft: *mut ::core::ffi::c_char;
@@ -1476,7 +1482,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         0,
                                         b"missing rule before recipe\0" as *const u8
                                             as *const ::core::ffi::c_char,
-                                    );
+        &[],
+    );
                                 }
                             }
                             4 | 5 | 7 | 8 => {
@@ -1565,7 +1572,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             0,
                                             b"missing separator (did you mean TAB instead of 8 spaces?)\0"
                                                 as *const u8 as *const ::core::ffi::c_char,
-                                        );
+        &[],
+    );
                                     }
                                     p2 = next_token(line);
                                     // The more specific "ifeq/ifneq must be
@@ -1582,7 +1590,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             0,
                                             b"missing separator (ifeq/ifneq must be followed by whitespace)\0"
                                                 as *const u8 as *const ::core::ffi::c_char,
-                                        );
+        &[],
+    );
                                     }
                                     fatal(
                                         ctx,
@@ -1590,7 +1599,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         0,
                                         b"missing separator\0" as *const u8
                                             as *const ::core::ffi::c_char,
-                                    );
+        &[],
+    );
                                 } else {
                                     let colon_off: size_t = colonp.offset_from(variable_buffer)
                                         as ::core::ffi::c_long
@@ -1758,7 +1768,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                         0,
                                                         b"missing target pattern\0" as *const u8
                                                             as *const ::core::ffi::c_char,
-                                                    );
+        &[],
+    );
                                                 } else if !(*target).next.is_null() {
                                                     fatal(
                                                         ctx,
@@ -1766,7 +1777,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                         0,
                                                         b"multiple target patterns\0" as *const u8
                                                             as *const ::core::ffi::c_char,
-                                                    );
+        &[],
+    );
                                                 }
                                                 pattern_percent =
                                                     find_percent_cached(&raw mut (*target).name);
@@ -1779,7 +1791,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                         b"target pattern contains no '%%'\0"
                                                             as *const u8
                                                             as *const ::core::ffi::c_char,
-                                                    );
+        &[],
+    );
                                                 }
                                                 free_ns(target);
                                             } else {
@@ -1950,7 +1963,8 @@ unsafe fn do_define(
                 0,
                 b"extraneous text after 'define' directive\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
         *var.name.offset(var.length as isize) = 0;
     }
@@ -1978,7 +1992,8 @@ unsafe fn do_define(
                 0,
                 b"missing 'endef', unterminated 'define'\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
         (*ebuf).floc.lineno = (*ebuf)
             .floc
@@ -2093,7 +2108,8 @@ unsafe fn conditional_line(
             0,
             b"warning: conditional directive lines cannot start with TAB\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     line = line.offset(len as isize);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
@@ -2111,8 +2127,8 @@ unsafe fn conditional_line(
                 strlen(cmdname) as size_t,
                 b"extraneous text after '%s' directive\0" as *const u8
                     as *const ::core::ffi::c_char,
-                cmdname,
-            );
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
         }
         if (*conditionals).if_cmds == 0 {
             fatal(
@@ -2183,8 +2199,8 @@ unsafe fn conditional_line(
                     strlen(cmdname) as size_t,
                     b"extraneous text after '%s' directive\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    cmdname,
-                );
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
             } else {
                 if (*(*conditionals).ignoring.offset(o as isize) as i32) < 2 {
                     *(*conditionals).ignoring.offset(o as isize) =
@@ -2368,7 +2384,8 @@ unsafe fn record_target_var(
                     0,
                     b"malformed target-specific variable definition\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             current_variable_set_list = global;
         }
@@ -2616,7 +2633,8 @@ unsafe fn record_files(
             0,
             b"prerequisites cannot be defined in recipes\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     let mut filenames = ::core::ptr::NonNull::new(filenames)
         .expect("record_files: null filenames")
@@ -2678,7 +2696,8 @@ unsafe fn record_files(
                 0,
                 b"mixed implicit and static pattern rules\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
         nextf = (*filenames).next;
         free_ns(filenames);
@@ -2736,8 +2755,8 @@ unsafe fn record_files(
                 strlen(name) as size_t,
                 b"target '%s' doesn't match the target pattern\0" as *const u8
                     as *const ::core::ffi::c_char,
-                name,
-            );
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
         } else if !deps.is_null() {
             this = if !nextf_0.is_null() {
                 copy_dep_chain(deps)
@@ -2754,8 +2773,8 @@ unsafe fn record_files(
                     strlen((*f).name) as size_t,
                     b"target file '%s' has both : and :: entries\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
             }
             if !cmds.is_null() && cmds == (*f).cmds {
                 error(
@@ -2774,16 +2793,16 @@ unsafe fn record_files(
                     l,
                     b"warning: overriding recipe for target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
                 error(
                     ctx,
                     &raw mut (*(*f).cmds).fileinfo,
                     l,
                     b"warning: ignoring old recipe for target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
             }
             if f == default_file && this.is_null() && cmds.is_null() {
                 (*f).cmds = ::core::ptr::null_mut::<Commands>();
@@ -2887,7 +2906,8 @@ unsafe fn record_files(
                 0,
                 b"*** mixed implicit and normal rules: deprecated syntax\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
     }
     let mut i: *mut Dep = also_make;
