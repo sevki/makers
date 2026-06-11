@@ -251,10 +251,14 @@ unsafe extern "C" fn pattern_search(
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut int_file_boxes: Vec<Box<File>> = Vec::new();
+    let file_name = file
+        .as_ref()
+        .expect("pattern_search requires a non-null file")
+        .name;
     let filename: *const ::core::ffi::c_char = if archive != 0 {
-        strchr((*file).name, '(' as i32) as *const ::core::ffi::c_char
+        strchr(file_name, '(' as i32) as *const ::core::ffi::c_char
     } else {
-        (*file).name
+        file_name
     };
     let namelen: size_t = strlen(filename) as size_t;
     let lastslash: *const ::core::ffi::c_char;
@@ -767,7 +771,13 @@ unsafe extern "C" fn pattern_search(
                                             &raw mut stem_str as *mut ::core::ffi::c_char,
                                             o_automatic,
                                             0,
-                                            (*(*file).variables).set,
+                                            file
+                                                .as_ref()
+                                                .expect("pattern_search requires a non-null file")
+                                                .variables
+                                                .as_ref()
+                                                .expect("file variables were not initialized")
+                                                .set,
                                             NILF,
                                         );
                                         file_variables_set = 1;
@@ -904,7 +914,10 @@ unsafe extern "C" fn pattern_search(
                                     {
                                         explicit = 1;
                                     } else {
-                                        dp_0 = (*file).deps;
+                                        dp_0 = file
+                                            .as_ref()
+                                            .expect("pattern_search requires a non-null file")
+                                            .deps;
                                         while !dp_0.is_null() {
                                             if *(*d).name as ::core::ffi::c_int
                                                 == *(if !(*dp_0).name.is_null() {
@@ -1134,9 +1147,17 @@ unsafe extern "C" fn pattern_search(
                 let rule_ref = rule
                     .as_ref()
                     .expect("pattern_search selected a null rule");
-                (*file).name = *rule_ref
-                    .targets
-                    .offset((*tryrules.offset(foundrule as isize)).matches as isize);
+                let matched_tryrule = tryrules
+                    .offset(foundrule as isize)
+                    .as_ref()
+                    .expect("pattern_search selected a null tryrule");
+                let rule_targets =
+                    ::core::slice::from_raw_parts(rule_ref.targets, rule_ref.num as usize);
+                file.as_mut()
+                    .expect("pattern_search requires a non-null file")
+                    .name = *rule_targets
+                    .get(matched_tryrule.matches as usize)
+                    .expect("pattern rule match index is out of range");
             }
             loop {
                 let fresh8 = pat;
@@ -1203,15 +1224,21 @@ unsafe extern "C" fn pattern_search(
                             .tried_implicit = true;
                     }
                 }
-                (*dep_0).next = (*file).deps;
-                (*file).deps = dep_0;
-                (*file).was_shuffled = false;
+                let file_ref = file
+                    .as_mut()
+                    .expect("pattern_search requires a non-null file");
+                (*dep_0).next = file_ref.deps;
+                file_ref.deps = dep_0;
+                file_ref.was_shuffled = false;
             }
-            if !(*file).was_shuffled {
-                crate::shuffle::shuffle_deps_recursive((*file).deps);
+            let file_ref = file
+                .as_mut()
+                .expect("pattern_search requires a non-null file");
+            if !file_ref.was_shuffled {
+                crate::shuffle::shuffle_deps_recursive(file_ref.deps);
             }
             if (*tryrules.offset(foundrule as isize)).checked_lastslash == 0 {
-                (*file).stem = strcache_add_len(stem, stemlen);
+                file_ref.stem = strcache_add_len(stem, stemlen);
                 fullstemlen = stemlen;
             } else {
                 fullstemlen = pathlen.wrapping_add(stemlen);
@@ -1227,37 +1254,43 @@ unsafe extern "C" fn pattern_search(
                     stemlen as size_t,
                 );
                 stem_str[fullstemlen as usize] = 0;
-                (*file).stem = strcache_add(&raw mut stem_str as *mut ::core::ffi::c_char);
+                file_ref.stem = strcache_add(&raw mut stem_str as *mut ::core::ffi::c_char);
             }
             let rule_ref = rule
                 .as_ref()
                 .expect("pattern_search selected a null rule");
-            (*file).cmds = rule_ref.cmds;
-            (*file).is_target = true;
+            file_ref.cmds = rule_ref.cmds;
+            file_ref.is_target = true;
             let matched_tryrule = tryrules
                 .offset(foundrule as isize)
                 .as_ref()
                 .expect("pattern_search selected a null tryrule");
             let rule_targets = ::core::slice::from_raw_parts(rule_ref.targets, rule_ref.num as usize);
+            let rule_lens = ::core::slice::from_raw_parts(rule_ref.lens, rule_ref.num as usize);
+            let rule_suffixes =
+                ::core::slice::from_raw_parts(rule_ref.suffixes, rule_ref.num as usize);
             let matched_target = *rule_targets
                 .get(matched_tryrule.matches as usize)
                 .expect("pattern rule match index is out of range");
             let f_0: *mut File = lookup_file(matched_target);
             if !f_0.is_null() {
                 if (*f_0).precious {
-                    (*file).precious = true;
+                    file_ref.precious = true;
                 }
                 if (*f_0).notintermediate || no_intermediates != 0 {
-                    (*file).notintermediate = true;
+                    file_ref.notintermediate = true;
                 }
             }
-            if (*rule).num as ::core::ffi::c_int > 1 {
+            if rule_ref.num as ::core::ffi::c_int > 1 {
                 ri = 0;
-                while ri < (*rule).num as ::core::ffi::c_uint {
-                    if ri != (*tryrules.offset(foundrule as isize)).matches {
+                while ri < rule_ref.num as ::core::ffi::c_uint {
+                    if ri != matched_tryrule.matches {
+                        let target = rule_targets[ri as usize];
+                        let target_len = rule_lens[ri as usize] as size_t;
+                        let suffix = rule_suffixes[ri as usize];
                         alloca_allocations.push(::std::vec::from_elem(
                             0,
-                            (*(*rule).lens.offset(ri as isize) as size_t)
+                            target_len
                                 .wrapping_add(fullstemlen)
                                 .wrapping_add(1) as usize,
                         ));
@@ -1269,30 +1302,25 @@ unsafe extern "C" fn pattern_search(
                         let new: *mut Dep = alloc_dep();
                         p_1 = mempcpy(
                             p_1 as *mut ::core::ffi::c_void,
-                            *(*rule).targets.offset(ri as isize) as *const ::core::ffi::c_void,
-                            ((*(*rule).suffixes.offset(ri as isize))
-                                .offset_from(*(*rule).targets.offset(ri as isize))
-                                as ::core::ffi::c_long
-                                - 1) as size_t,
+                            target as *const ::core::ffi::c_void,
+                            (suffix.offset_from(target) as ::core::ffi::c_long - 1) as size_t,
                         ) as *mut ::core::ffi::c_char;
                         p_1 = mempcpy(
                             p_1 as *mut ::core::ffi::c_void,
-                            (*file).stem as *const ::core::ffi::c_void,
+                            file_ref.stem as *const ::core::ffi::c_void,
                             fullstemlen as size_t,
                         ) as *mut ::core::ffi::c_char;
                         memcpy(
                             p_1 as *mut ::core::ffi::c_void,
-                            *(*rule).suffixes.offset(ri as isize) as *const ::core::ffi::c_void,
-                            (*(*rule).lens.offset(ri as isize) as ::core::ffi::c_long
-                                - (*(*rule).suffixes.offset(ri as isize))
-                                    .offset_from(*(*rule).targets.offset(ri as isize))
-                                    as ::core::ffi::c_long
+                            suffix as *const ::core::ffi::c_void,
+                            (target_len as ::core::ffi::c_long
+                                - suffix.offset_from(target) as ::core::ffi::c_long
                                 + 1) as size_t,
                         );
                         (*new).name = strcache_add(nm);
                         (*new).file = enter_file((*new).name);
-                        (*new).next = (*file).also_make;
-                        f_1 = lookup_file(*(*rule).targets.offset(ri as isize));
+                        (*new).next = file_ref.also_make;
+                        f_1 = lookup_file(target);
                         if !f_1.is_null() {
                             if (*f_1).precious {
                                 (*(*new).file)
@@ -1306,7 +1334,7 @@ unsafe extern "C" fn pattern_search(
                         }
                         (*(*new).file)
                             .is_target = true;
-                        (*file).also_make = new;
+                        file_ref.also_make = new;
                     }
                     ri = ri.wrapping_add(1);
                 }
