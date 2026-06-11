@@ -469,11 +469,11 @@ pub unsafe fn convert_to_pattern() {
                 (*f).suffix = true;
             } else if posix_pedantic == 0 {
                 error(
-                    &raw mut (*(*f).cmds).fileinfo,
-                    0,
-                    b"warning: ignoring prerequisites on suffix rule definition\0" as *const u8
+        &raw mut (*(*f).cmds).fileinfo,
+        b"warning: ignoring prerequisites on suffix rule definition\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
                 (*f).suffix = true;
             }
         }
@@ -536,12 +536,12 @@ pub unsafe fn convert_to_pattern() {
                             skip = true;
                         } else {
                             error(
-                                &raw mut (*(*f).cmds).fileinfo,
-                                0,
-                                b"warning: ignoring prerequisites on suffix rule definition\0"
+        &raw mut (*(*f).cmds).fileinfo,
+        b"warning: ignoring prerequisites on suffix rule definition\0"
                                     as *const u8
                                     as *const ::core::ffi::c_char,
-                            );
+        &[],
+    );
                         }
                     }
                     if !skip {
@@ -840,12 +840,11 @@ pub unsafe fn print_rule_data_base() {
     }
     if num_pattern_rules != rules && num_pattern_rules != 0 {
         fatal(
-            ::core::ptr::null_mut::<Floc>(),
-            INTSTR_LENGTH.wrapping_mul(2),
-            b"INTERNAL: num_pattern_rules is wrong!  %u != %u\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"INTERNAL: num_pattern_rules is wrong!  %u != %u\0" as *const u8
                 as *const ::core::ffi::c_char,
-            num_pattern_rules,
-            rules,
-        );
+        &[FmtArg::Uint((num_pattern_rules) as u32 as u64),
+            FmtArg::Uint((rules) as u32 as u64)],
+    );
     }
 }

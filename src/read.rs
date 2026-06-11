@@ -1,3 +1,5 @@
+pub use crate::output::{FmtArg, error, fatal};
+pub use crate::misc::concat;
 pub use crate::expand::allocated_expand_string_for_file;
 pub use crate::file::enter_file;
 pub use crate::file::enter_prereqs;
@@ -28,7 +30,6 @@ use libc::{
     strpbrk,
 };
 extern "C" {
-    pub type dirent;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
     fn fclose(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -87,6 +88,7 @@ extern "C" {
 pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
 use crate::warning::{self, Action, Type};
+pub type dirent = crate::dir::dirent;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct glob_t {
@@ -491,11 +493,10 @@ unsafe extern "C" fn eval_makefile(
         EMFILE | ENFILE | ENOMEM => {
             let err: *const ::core::ffi::c_char = strerror((*deps).error);
             fatal(
-                reading_file,
-                strlen(err) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                err,
-            );
+        reading_file,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((err) as *const ::core::ffi::c_char)],
+    );
         }
         _ => {}
     }
@@ -511,12 +512,7 @@ unsafe extern "C" fn eval_makefile(
         let mut dir: *mut *const ::core::ffi::c_char;
         dir = include_directories;
         while !(*dir).is_null() {
-            let included: *const ::core::ffi::c_char = concat(
-                3,
-                *dir,
-                b"/\0" as *const u8 as *const ::core::ffi::c_char,
-                filename,
-            );
+            let included: *const ::core::ffi::c_char = concat(&[*dir, b"/\0" as *const u8 as *const ::core::ffi::c_char, filename]);
             loop {
                 *__errno_location() = 0;
                 ebuf.fp =
@@ -727,11 +723,11 @@ unsafe extern "C" fn parse_var_assignment(
         {
             if !flocp.is_null() {
                 error(
-                    flocp,
-                    0,
-                    b"warning: directive lines cannot start with TAB\0" as *const u8
+        flocp,
+        b"warning: directive lines cannot start with TAB\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             (*vmod).set_define_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             p = next_token(p2);
@@ -749,11 +745,11 @@ unsafe extern "C" fn parse_var_assignment(
         {
             if !flocp.is_null() {
                 error(
-                    flocp,
-                    0,
-                    b"warning: directive lines cannot start with TAB\0" as *const u8
+        flocp,
+        b"warning: directive lines cannot start with TAB\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             (*vmod).set_undefine_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             p = next_token(p2);
@@ -763,11 +759,11 @@ unsafe extern "C" fn parse_var_assignment(
         }
         if !flocp.is_null() {
             error(
-                flocp,
-                0,
-                b"warning: directive lines cannot start with TAB\0" as *const u8
+        flocp,
+        b"warning: directive lines cannot start with TAB\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
             flocp = ::core::ptr::null::<Floc>();
         }
         p = next_token(p2);
@@ -1027,11 +1023,11 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                 if i != -(2 as ::core::ffi::c_int) {
                     if i == -(1 as ::core::ffi::c_int) {
                         fatal(
-                            fstart,
-                            0,
-                            b"invalid syntax in conditional\0" as *const u8
+        fstart,
+        b"invalid syntax in conditional\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                        );
+        &[],
+    );
                     }
                     ignoring = i;
                 } else {
@@ -1067,20 +1063,15 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             };
                         if initial_tab != 0 {
                             error(
-                                &raw mut (*ebuf).floc,
-                                strlen(if exporting != 0 {
-                                    b"export\0" as *const u8 as *const ::core::ffi::c_char
-                                } else {
-                                    b"unexport\0" as *const u8 as *const ::core::ffi::c_char
-                                }) as size_t,
-                                b"warning: %s lines cannot start with TAB\0" as *const u8
+        &raw mut (*ebuf).floc,
+        b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                if exporting != 0 {
+        &[FmtArg::Str((if exporting != 0 {
                                     b"export\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"unexport\0" as *const u8 as *const ::core::ffi::c_char
-                                },
-                            );
+                                }) as *const ::core::ffi::c_char)],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1157,12 +1148,12 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         let mut l_0: size_t = 0;
                         if initial_tab != 0 {
                             error(
-                                &raw mut (*ebuf).floc,
-                                0,
-                                b"warning: vpath directive lines cannot start with TAB\0"
+        &raw mut (*ebuf).floc,
+        b"warning: vpath directive lines cannot start with TAB\0"
                                     as *const u8
                                     as *const ::core::ffi::c_char,
-                            );
+        &[],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1244,24 +1235,17 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 != 'i' as i32) as ::core::ffi::c_int;
                         if initial_tab != 0 {
                             error(
-                                &raw mut (*ebuf).floc,
-                                strlen(if *p as ::core::ffi::c_int == 'i' as i32 {
-                                    b"include\0" as *const u8 as *const ::core::ffi::c_char
-                                } else if *p as ::core::ffi::c_int == '-' as i32 {
-                                    b"-include\0" as *const u8 as *const ::core::ffi::c_char
-                                } else {
-                                    b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
-                                }) as size_t,
-                                b"warning: %s lines cannot start with TAB\0" as *const u8
+        &raw mut (*ebuf).floc,
+        b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                if *p as ::core::ffi::c_int == 'i' as i32 {
+        &[FmtArg::Str((if *p as ::core::ffi::c_int == 'i' as i32 {
                                     b"include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else if *p as ::core::ffi::c_int == '-' as i32 {
                                     b"-include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
-                                },
-                            );
+                                }) as *const ::core::ffi::c_char)],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1366,20 +1350,15 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 == '-' as i32) as ::core::ffi::c_int;
                         if initial_tab != 0 {
                             error(
-                                &raw mut (*ebuf).floc,
-                                strlen(if noerror_0 != 0 {
-                                    b"-load\0" as *const u8 as *const ::core::ffi::c_char
-                                } else {
-                                    b"load\0" as *const u8 as *const ::core::ffi::c_char
-                                }) as size_t,
-                                b"warning: %s lines cannot start with TAB\0" as *const u8
+        &raw mut (*ebuf).floc,
+        b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                if noerror_0 != 0 {
+        &[FmtArg::Str((if noerror_0 != 0 {
                                     b"-load\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"load\0" as *const u8 as *const ::core::ffi::c_char
-                                },
-                            );
+                                }) as *const ::core::ffi::c_char)],
+    );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1426,12 +1405,11 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 r = load_file(&raw mut (*ebuf).floc, &raw mut file, noerror_0);
                                 if r == 0 && noerror_0 == 0 {
                                     fatal(
-                                        &raw mut (*ebuf).floc,
-                                        strlen(name) as size_t,
-                                        b"%s: failed to load\0" as *const u8
+        &raw mut (*ebuf).floc,
+        b"%s: failed to load\0" as *const u8
                                             as *const ::core::ffi::c_char,
-                                        name,
-                                    );
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
                                 }
                                 name = file.name;
                                 f = lookup_file(name);
@@ -1457,11 +1435,11 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             == cmd_prefix as ::core::ffi::c_int
                         {
                             fatal(
-                                fstart,
-                                0,
-                                b"recipe commences before first target\0" as *const u8
+        fstart,
+        b"recipe commences before first target\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                            );
+        &[],
+    );
                         }
                         let mut wtype: make_word_type;
                         let mut cmdleft: *mut ::core::ffi::c_char;
@@ -1512,11 +1490,11 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             1 => {
                                 if !cmdleft.is_null() {
                                     fatal(
-                                        fstart,
-                                        0,
-                                        b"missing rule before recipe\0" as *const u8
+        fstart,
+        b"missing rule before recipe\0" as *const u8
                                             as *const ::core::ffi::c_char,
-                                    );
+        &[],
+    );
                                 }
                             }
                             4 | 5 | 7 | 8 => {
@@ -1595,11 +1573,11 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                         ) == 0
                                     {
                                         fatal(
-                                            fstart,
-                                            0,
-                                            b"missing separator (did you mean TAB instead of 8 spaces?)\0"
+        fstart,
+        b"missing separator (did you mean TAB instead of 8 spaces?)\0"
                                                 as *const u8 as *const ::core::ffi::c_char,
-                                        );
+        &[],
+    );
                                     }
                                     p2 = next_token(line);
                                     if strncmp(
@@ -1641,18 +1619,18 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                     != 0))
                                     {
                                         fatal(
-                                            fstart,
-                                            0,
-                                            b"missing separator (ifeq/ifneq must be followed by whitespace)\0"
+        fstart,
+        b"missing separator (ifeq/ifneq must be followed by whitespace)\0"
                                                 as *const u8 as *const ::core::ffi::c_char,
-                                        );
+        &[],
+    );
                                     }
                                     fatal(
-                                        fstart,
-                                        0,
-                                        b"missing separator\0" as *const u8
+        fstart,
+        b"missing separator\0" as *const u8
                                             as *const ::core::ffi::c_char,
-                                    );
+        &[],
+    );
                                 } else {
                                     let save_0: ::core::ffi::c_char = *colonp;
                                     if save_0 as ::core::ffi::c_int == '&' as i32 {
@@ -1815,30 +1793,30 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                 p2 = p2.offset(1 as ::core::ffi::c_int as isize);
                                                 if target.is_null() {
                                                     fatal(
-                                                        fstart,
-                                                        0,
-                                                        b"missing target pattern\0" as *const u8
+        fstart,
+        b"missing target pattern\0" as *const u8
                                                             as *const ::core::ffi::c_char,
-                                                    );
+        &[],
+    );
                                                 } else if !(*target).next.is_null() {
                                                     fatal(
-                                                        fstart,
-                                                        0,
-                                                        b"multiple target patterns\0" as *const u8
+        fstart,
+        b"multiple target patterns\0" as *const u8
                                                             as *const ::core::ffi::c_char,
-                                                    );
+        &[],
+    );
                                                 }
                                                 pattern_percent =
                                                     find_percent_cached(&raw mut (*target).name);
                                                 pattern = (*target).name;
                                                 if pattern_percent.is_null() {
                                                     fatal(
-                                                        fstart,
-                                                        0,
-                                                        b"target pattern contains no '%%'\0"
+        fstart,
+        b"target pattern contains no '%%'\0"
                                                             as *const u8
                                                             as *const ::core::ffi::c_char,
-                                                    );
+        &[],
+    );
                                                 }
                                                 free_ns(target);
                                             } else {
@@ -1897,10 +1875,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
     }
     if (*conditionals).if_cmds != 0 {
         fatal(
-            fstart,
-            0,
-            b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        fstart,
+        b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
     }
     if !filenames.is_null() {
         fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1944,10 +1922,10 @@ unsafe extern "C" fn do_undefine(
     name = next_token(var);
     if *name as ::core::ffi::c_int == 0 {
         fatal(
-            &raw mut (*ebuf).floc,
-            0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        &raw mut (*ebuf).floc,
+        b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
     }
     p = name
         .offset(strlen(name) as isize)
@@ -2007,11 +1985,11 @@ unsafe extern "C" fn do_define(
     } else {
         if *var.value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 {
             error(
-                &raw mut defstart,
-                0,
-                b"extraneous text after 'define' directive\0" as *const u8
+        &raw mut defstart,
+        b"extraneous text after 'define' directive\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
         *var.name.offset(var.length as isize) = 0;
     }
@@ -2019,10 +1997,10 @@ unsafe extern "C" fn do_define(
     name = next_token(n);
     if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
         fatal(
-            &raw mut defstart,
-            0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        &raw mut defstart,
+        b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
     }
     p = name
         .offset(strlen(name) as isize)
@@ -2042,11 +2020,11 @@ unsafe extern "C" fn do_define(
         let nlines: ::core::ffi::c_long = readline(ebuf);
         if nlines < 0 {
             fatal(
-                &raw mut defstart,
-                0,
-                b"missing 'endef', unterminated 'define'\0" as *const u8
+        &raw mut defstart,
+        b"missing 'endef', unterminated 'define'\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
         (*ebuf).floc.lineno = (*ebuf)
             .floc
@@ -2084,11 +2062,11 @@ unsafe extern "C" fn do_define(
                 remove_comments(p);
                 if *next_token(p) as ::core::ffi::c_int != 0 {
                     error(
-                        &raw mut (*ebuf).floc,
-                        0,
-                        b"extraneous text after 'endef' directive\0" as *const u8
+        &raw mut (*ebuf).floc,
+        b"extraneous text after 'endef' directive\0" as *const u8
                             as *const ::core::ffi::c_char,
-                    );
+        &[],
+    );
                 }
                 nlevels -= 1;
                 if nlevels == 0 {
@@ -2204,11 +2182,11 @@ unsafe extern "C" fn conditional_line(
     }
     if initial_tab != 0 {
         error(
-            flocp,
-            0,
-            b"warning: conditional directive lines cannot start with TAB\0" as *const u8
+        flocp,
+        b"warning: conditional directive lines cannot start with TAB\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     line = line.offset(len as isize);
     while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
@@ -2221,20 +2199,18 @@ unsafe extern "C" fn conditional_line(
     if cmdtype as ::core::ffi::c_uint == c_endif as ::core::ffi::c_int as ::core::ffi::c_uint {
         if *line as ::core::ffi::c_int != 0 {
             error(
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous text after '%s' directive\0" as *const u8
+        flocp,
+        b"extraneous text after '%s' directive\0" as *const u8
                     as *const ::core::ffi::c_char,
-                cmdname,
-            );
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
         }
         if (*conditionals).if_cmds == 0 {
             fatal(
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                cmdname,
-            );
+        flocp,
+        b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
         }
         (*conditionals).if_cmds = (*conditionals).if_cmds.wrapping_sub(1);
     } else if cmdtype as ::core::ffi::c_uint == c_else as ::core::ffi::c_int as ::core::ffi::c_uint
@@ -2242,19 +2218,18 @@ unsafe extern "C" fn conditional_line(
         let mut p: *const ::core::ffi::c_char;
         if (*conditionals).if_cmds == 0 {
             fatal(
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                cmdname,
-            );
+        flocp,
+        b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
         }
         o = (*conditionals).if_cmds.wrapping_sub(1);
         if *(*conditionals).seen_else.offset(o as isize) != 0 {
             fatal(
-                flocp,
-                0,
-                b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+        flocp,
+        b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
         }
         match *(*conditionals).ignoring.offset(o as isize) as ::core::ffi::c_int {
             0 => {
@@ -2298,12 +2273,11 @@ unsafe extern "C" fn conditional_line(
                 || conditional_line(line, len, flocp, 0) < 0
             {
                 error(
-                    flocp,
-                    strlen(cmdname) as size_t,
-                    b"extraneous text after '%s' directive\0" as *const u8
+        flocp,
+        b"extraneous text after '%s' directive\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    cmdname,
-                );
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
             } else {
                 if (*(*conditionals).ignoring.offset(o as isize) as ::core::ffi::c_int) < 2 {
                     *(*conditionals).ignoring.offset(o as isize) =
@@ -2496,12 +2470,11 @@ unsafe extern "C" fn conditional_line(
             }
             if *line as ::core::ffi::c_int != 0 {
                 error(
-                    flocp,
-                    strlen(cmdname) as size_t,
-                    b"extraneous text after '%s' directive\0" as *const u8
+        flocp,
+        b"extraneous text after '%s' directive\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    cmdname,
-                );
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
             }
             s2 = expand_string_buf(
                 ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -2576,11 +2549,11 @@ unsafe extern "C" fn record_target_var(
             v = try_variable_definition(flocp, defn, origin, s_target);
             if v.is_null() {
                 fatal(
-                    flocp,
-                    0,
-                    b"malformed target-specific variable definition\0" as *const u8
+        flocp,
+        b"malformed target-specific variable definition\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             current_variable_set_list = global;
         }
@@ -2832,18 +2805,18 @@ pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
         static mut wcmd: ::core::ffi::c_uint = 0;
         if wpre == 0 && !(*file).deps.is_null() {
             error(
-                flocp,
-                0,
-                b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+        flocp,
+        b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
             wpre = 1;
         }
         if wcmd == 0 && !(*file).cmds.is_null() {
             error(
-                flocp,
-                0,
-                b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+        flocp,
+        b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
             wcmd = 1;
         }
     }
@@ -2868,11 +2841,11 @@ unsafe extern "C" fn record_files(
     let mut name: *const ::core::ffi::c_char;
     if snapped_deps != 0 {
         fatal(
-            flocp,
-            0,
-            b"prerequisites cannot be defined in recipes\0" as *const u8
+        flocp,
+        b"prerequisites cannot be defined in recipes\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     name = (*filenames).name;
     implicit_percent = find_percent_cached(&raw mut name);
@@ -2886,10 +2859,10 @@ unsafe extern "C" fn record_files(
         (*cmds).recipe_prefix = prefix;
     } else if are_also_makes != 0 {
         fatal(
-            flocp,
-            0,
-            b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        flocp,
+        b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
     } else {
         cmds = ::core::ptr::null_mut::<Commands>();
     }
@@ -2917,11 +2890,11 @@ unsafe extern "C" fn record_files(
         let mut c: ::core::ffi::c_ushort;
         if !pattern.is_null() {
             fatal(
-                flocp,
-                0,
-                b"mixed implicit and static pattern rules\0" as *const u8
+        flocp,
+        b"mixed implicit and static pattern rules\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
         nextf = (*filenames).next;
         free_ns(filenames);
@@ -2949,10 +2922,10 @@ unsafe extern "C" fn record_files(
             implicit_percent = find_percent_cached(&raw mut name);
             if implicit_percent.is_null() {
                 fatal(
-                    flocp,
-                    0,
-                    b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
-                );
+        flocp,
+        b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
             }
             let fresh19 = &mut (*targets.offset(c as isize));
             *fresh19 = name;
@@ -2973,12 +2946,11 @@ unsafe extern "C" fn record_files(
         free_ns(filenames);
         if !pattern.is_null() && pattern_matches(pattern, pattern_percent, name) == 0 {
             error(
-                flocp,
-                strlen(name) as size_t,
-                b"target '%s' doesn't match the target pattern\0" as *const u8
+        flocp,
+        b"target '%s' doesn't match the target pattern\0" as *const u8
                     as *const ::core::ffi::c_char,
-                name,
-            );
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
         } else if !deps.is_null() {
             this = if !nextf_0.is_null() {
                 copy_dep_chain(deps)
@@ -2990,40 +2962,36 @@ unsafe extern "C" fn record_files(
             f = enter_file(strcache_add(name));
             if !(*f).double_colon.is_null() {
                 fatal(
-                    flocp,
-                    strlen((*f).name) as size_t,
-                    b"target file '%s' has both : and :: entries\0" as *const u8
+        flocp,
+        b"target file '%s' has both : and :: entries\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
             }
             if !cmds.is_null() && cmds == (*f).cmds {
                 error(
-                    flocp,
-                    strlen((*f).name) as size_t,
-                    b"target '%s' given more than once in the same rule\0" as *const u8
+        flocp,
+        b"target '%s' given more than once in the same rule\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
             } else if !cmds.is_null()
                 && !(*f).cmds.is_null()
                 && (*f).is_target
             {
-                let l: size_t = strlen((*f).name) as size_t;
+                let _l: size_t = strlen((*f).name) as size_t;
                 error(
-                    &raw mut (*cmds).fileinfo,
-                    l,
-                    b"warning: overriding recipe for target '%s'\0" as *const u8
+        &raw mut (*cmds).fileinfo,
+        b"warning: overriding recipe for target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
                 error(
-                    &raw mut (*(*f).cmds).fileinfo,
-                    l,
-                    b"warning: ignoring old recipe for target '%s'\0" as *const u8
+        &raw mut (*(*f).cmds).fileinfo,
+        b"warning: ignoring old recipe for target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
             }
             if f == default_file && this.is_null() && cmds.is_null() {
                 (*f).cmds = ::core::ptr::null_mut::<Commands>();
@@ -3042,12 +3010,11 @@ unsafe extern "C" fn record_files(
                 && (*f).double_colon.is_null()
             {
                 fatal(
-                    flocp,
-                    strlen((*f).name) as size_t,
-                    b"target file '%s' has both : and :: entries\0" as *const u8
+        flocp,
+        b"target file '%s' has both : and :: entries\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
             }
             f = enter_file(strcache_add(name));
             if (*f).double_colon.is_null() {
@@ -3121,11 +3088,11 @@ unsafe extern "C" fn record_files(
         name = (*filenames).name;
         if !find_percent_cached(&raw mut name).is_null() {
             error(
-                flocp,
-                0,
-                b"*** mixed implicit and normal rules: deprecated syntax\0" as *const u8
+        flocp,
+        b"*** mixed implicit and normal rules: deprecated syntax\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
         }
     }
     let mut i: *mut Dep = also_make;
@@ -3436,11 +3403,11 @@ pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
         len = strlen(p) as size_t;
         if len == 0 {
             error(
-                &raw mut (*ebuf).floc,
-                0,
-                b"warning: NUL character seen; rest of line ignored\0" as *const u8
+        &raw mut (*ebuf).floc,
+        b"warning: NUL character seen; rest of line ignored\0" as *const u8
                     as *const ::core::ffi::c_char,
-            );
+        &[],
+    );
             *p.offset(0 as ::core::ffi::c_int as isize) = '\n' as i32 as ::core::ffi::c_char;
             len = 1;
         }
@@ -3791,11 +3758,7 @@ pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi
             }
         }
         if !home_dir.is_null() {
-            let new: *mut ::core::ffi::c_char = xstrdup(concat(
-                2,
-                home_dir,
-                name.offset(1 as ::core::ffi::c_int as isize),
-            ));
+            let new: *mut ::core::ffi::c_char = xstrdup(concat(&[home_dir, name.offset(1 as ::core::ffi::c_int as isize)]));
             if is_variable != 0 {
                 free(home_dir as *mut ::core::ffi::c_void);
             }
@@ -3814,12 +3777,7 @@ pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi
                 return xstrdup((*pwent).pw_dir);
             }
             *userend = '/' as i32 as ::core::ffi::c_char;
-            return xstrdup(concat(
-                3,
-                (*pwent).pw_dir,
-                b"/\0" as *const u8 as *const ::core::ffi::c_char,
-                userend.offset(1 as ::core::ffi::c_int as isize),
-            ));
+            return xstrdup(concat(&[(*pwent).pw_dir, b"/\0" as *const u8 as *const ::core::ffi::c_char, userend.offset(1 as ::core::ffi::c_int as isize)]));
         } else if !userend.is_null() {
             *userend = '/' as i32 as ::core::ffi::c_char;
         }

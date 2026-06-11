@@ -427,7 +427,7 @@ pub unsafe extern "C" fn message(
     prefix: ::core::ffi::c_int,
     mut len: size_t,
     fmt: *const ::core::ffi::c_char,
-    args: ...
+    args: &[FmtArg],
 ) {
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
@@ -565,9 +565,8 @@ pub unsafe extern "C" fn fatal(
 /// Same printf contract as [`message`]; the returned buffer is shared.
 pub unsafe extern "C" fn format(
     prefix: *const ::core::ffi::c_char,
-    mut len: size_t,
     fmt: *const ::core::ffi::c_char,
-    args: ...
+    args: &[FmtArg],
 ) -> *mut ::core::ffi::c_char {
     let plen: size_t = if !prefix.is_null() {
         strlen(prefix) as size_t
@@ -584,9 +583,11 @@ pub unsafe extern "C" fn format(
             plen as size_t,
         ) as *mut ::core::ffi::c_char;
     }
-    let args_0 = args.clone();
-    vsprintf(p, fmt, args_0);
-    start
+    vformat_into(&mut out, fmt, args);
+    out.push(0);
+    let buf = get_buffer(out.len() as size_t);
+    ::core::ptr::copy_nonoverlapping(out.as_ptr(), buf as *mut u8, out.len());
+    buf
 }
 /// Report `str``name`: strerror(errno) via [`error`].
 ///

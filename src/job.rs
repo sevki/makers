@@ -12,7 +12,6 @@ use libc::{
     strchr, strcmp, strerror, strsignal,
 };
 extern "C" {
-    pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigprocmask(
@@ -406,7 +405,6 @@ unsafe extern "C" fn child_error(
     let flocp: *const Floc = &raw mut (*(*f).cmds).fileinfo;
     let nm: *const ::core::ffi::c_char;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut l: size_t;
     if ignored != 0 && run_silent != 0 {
         return;
     }
@@ -437,17 +435,11 @@ unsafe extern "C" fn child_error(
         );
         nm = a;
     }
-    l = strlen(pre)
-        .wrapping_add(strlen(nm))
-        .wrapping_add(strlen((*f).name))
-        .wrapping_add(strlen(post)) as size_t;
     if let Some(label) = crate::shuffle::get_mode() {
         let mut buf = format!(" shuffle={}", label).into_bytes();
-        let written = buf.len();
         buf.push(0);
         alloca_allocations.push(buf);
         smode = alloca_allocations.last().unwrap().as_ptr() as *const ::core::ffi::c_char;
-        l = l.wrapping_add(written as size_t);
     }
     output_context = if (*child).output.syncout() as ::core::ffi::c_int != 0 {
         &raw mut (*child).output
@@ -457,39 +449,36 @@ unsafe extern "C" fn child_error(
     show_goal_error();
     if exit_sig == 0 {
         error(
-            NILF,
-            l.wrapping_add(INTSTR_LENGTH),
-            b"%s[%s: %s] Error %d%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            pre,
-            nm,
-            (*f).name,
-            exit_code,
-            post,
-            if !smode.is_null() {
+        NILF,
+        b"%s[%s: %s] Error %d%s%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((pre) as *const ::core::ffi::c_char),
+            FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Int((exit_code) as i32 as i64),
+            FmtArg::Str((post) as *const ::core::ffi::c_char),
+            FmtArg::Str((if !smode.is_null() {
                 smode
             } else {
                 b"\0" as *const u8 as *const ::core::ffi::c_char
-            },
-        );
+            }) as *const ::core::ffi::c_char)],
+    );
     } else {
         let s: *const ::core::ffi::c_char = strsignal(exit_sig);
         error(
-            NILF,
-            l.wrapping_add(strlen(s) as size_t)
-                .wrapping_add(strlen(dump) as size_t),
-            b"%s[%s: %s] %s%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            pre,
-            nm,
-            (*f).name,
-            s,
-            dump,
-            post,
-            if !smode.is_null() {
+        NILF,
+        b"%s[%s: %s] %s%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((pre) as *const ::core::ffi::c_char),
+            FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((s) as *const ::core::ffi::c_char),
+            FmtArg::Str((dump) as *const ::core::ffi::c_char),
+            FmtArg::Str((post) as *const ::core::ffi::c_char),
+            FmtArg::Str((if !smode.is_null() {
                 smode
             } else {
                 b"\0" as *const u8 as *const ::core::ffi::c_char
-            },
-        );
+            }) as *const ::core::ffi::c_char)],
+    );
     }
     output_context = ::core::ptr::null_mut::<output>();
 }
@@ -526,11 +515,11 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             fflush(stdout);
             if printed == 0 {
                 error(
-                    ::core::ptr::null_mut::<Floc>(),
-                    0,
-                    b"*** Waiting for unfinished jobs....\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"*** Waiting for unfinished jobs....\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             printed = 1;
         }
@@ -731,12 +720,11 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             }
             if !e.is_null() {
                 error(
-                    ::core::ptr::null_mut::<Floc>(),
-                    (strlen((*c).cmd_name) as size_t).wrapping_add(strlen(e) as size_t),
-                    b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*c).cmd_name,
-                    e,
-                );
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*c).cmd_name) as *const ::core::ffi::c_char),
+            FmtArg::Str((e) as *const ::core::ffi::c_char)],
+    );
             }
         }
         if exit_sig == 0 && exit_code == 0 {
@@ -894,13 +882,12 @@ pub unsafe fn free_child(child: *mut child) {
     crate::output::output_close(&raw mut (*child).output);
     if jobserver_tokens == 0 {
         fatal(
-            ::core::ptr::null_mut::<Floc>(),
-            INTSTR_LENGTH.wrapping_add(strlen((*(*child).file).name) as size_t),
-            b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
                 as *const ::core::ffi::c_char,
-            child,
-            (*(*child).file).name,
-        );
+        &[FmtArg::Ptr((child) as *const ::core::ffi::c_void),
+            FmtArg::Str(((*(*child).file).name) as *const ::core::ffi::c_char)],
+    );
     }
     if jobserver_enabled() != 0 && jobserver_tokens > 1 {
         jobserver_release(1);
@@ -1046,11 +1033,10 @@ pub unsafe fn start_job_command(child: *mut child) {
                 || !(flags & 2 != 0) && run_silent == 0
             {
                 message(
-                    0,
-                    strlen(p) as size_t,
-                    b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    p,
-                );
+        0,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+    );
             }
             commands_started = commands_started.wrapping_add(1);
             if !(*argv.offset(0 as ::core::ffi::c_int as isize)).is_null()
@@ -1421,11 +1407,11 @@ pub unsafe fn new_job(file: *mut file) {
             }
             if children.is_null() {
                 fatal(
-                    ::core::ptr::null_mut::<Floc>(),
-                    0,
-                    b"INTERNAL: no children as we go to sleep on read\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"INTERNAL: no children as we go to sleep on read\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             }
             got_token =
                 jobserver_acquire((waiting_jobs != NULL as *mut child) as ::core::ffi::c_int)
@@ -1498,22 +1484,20 @@ pub unsafe fn new_job(file: *mut file) {
         }
         if (*(*c).file).phony {
             message(
-                0,
-                (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-                b"%s: update target '%s' due to: target is .PHONY\0" as *const u8
+        0,
+        b"%s: update target '%s' due to: target is .PHONY\0" as *const u8
                     as *const ::core::ffi::c_char,
-                nm,
-                tp,
-            );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char)],
+    );
         } else if (*(*c).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
             message(
-                0,
-                (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-                b"%s: update target '%s' due to: target does not exist\0" as *const u8
+        0,
+        b"%s: update target '%s' due to: target does not exist\0" as *const u8
                     as *const ::core::ffi::c_char,
-                nm,
-                tp,
-            );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char)],
+    );
         } else {
             let mut newer: *mut ::core::ffi::c_char = allocated_expand_variable_for_file(
                 b"?\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1522,16 +1506,13 @@ pub unsafe fn new_job(file: *mut file) {
             );
             if *newer.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 {
                 message(
-                    0,
-                    (strlen(nm) as size_t)
-                        .wrapping_add(strlen(tp) as size_t)
-                        .wrapping_add(strlen(newer) as size_t),
-                    b"%s: update target '%s' due to: %s\0" as *const u8
+        0,
+        b"%s: update target '%s' due to: %s\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    nm,
-                    tp,
-                    newer,
-                );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char),
+            FmtArg::Str((newer) as *const ::core::ffi::c_char)],
+    );
                 free(newer as *mut ::core::ffi::c_void);
             } else {
                 let mut len_0: size_t = 0;
@@ -1546,13 +1527,12 @@ pub unsafe fn new_job(file: *mut file) {
                 }
                 if len_0 == 0 {
                     message(
-                        0,
-                        (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-                        b"%s: update target '%s' due to: unknown reasons\0" as *const u8
+        0,
+        b"%s: update target '%s' due to: unknown reasons\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        nm,
-                        tp,
-                    );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char)],
+    );
                 } else {
                     alloca_allocations.push(::std::vec::from_elem(0, len_0 as usize));
                     newer = alloca_allocations.last_mut().unwrap().as_mut_ptr()
@@ -1571,16 +1551,13 @@ pub unsafe fn new_job(file: *mut file) {
                         d = (*d).next;
                     }
                     message(
-                        0,
-                        (strlen(nm) as size_t)
-                            .wrapping_add(strlen(tp) as size_t)
-                            .wrapping_add(strlen(newer) as size_t),
-                        b"%s: update target '%s' due to: %s\0" as *const u8
+        0,
+        b"%s: update target '%s' due to: %s\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        nm,
-                        tp,
-                        newer,
-                    );
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((tp) as *const ::core::ffi::c_char),
+            FmtArg::Str((newer) as *const ::core::ffi::c_char)],
+    );
                 }
             }
         }
@@ -1740,11 +1717,11 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
         if lossage == -(1 as ::core::ffi::c_int) || *__errno_location() != lossage {
             if *__errno_location() == 0 {
                 error(
-                    ::core::ptr::null_mut::<Floc>(),
-                    0,
-                    b"cannot enforce load limits on this operating system\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"cannot enforce load limits on this operating system\0" as *const u8
                         as *const ::core::ffi::c_char,
-                );
+        &[],
+    );
             } else {
                 perror_with_name(
                     b"cannot enforce load limit: \0" as *const u8 as *const ::core::ffi::c_char,
@@ -1858,13 +1835,11 @@ pub unsafe fn child_execute_job(
     }
     if pid < 0 {
         error(
-            ::core::ptr::null_mut::<Floc>(),
-            (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
-                .wrapping_add(strlen(strerror(r)) as size_t),
-            b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            *argv.offset(0 as ::core::ffi::c_int as isize),
-            strerror(r),
-        );
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*argv.offset(0 as ::core::ffi::c_int as isize)) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(r)) as *const ::core::ffi::c_char)],
+    );
     }
     pid
 }
@@ -2052,13 +2027,11 @@ pub unsafe fn exec_command(
     match *__errno_location() {
         ENOENT => {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
-                    .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                *argv.offset(0 as ::core::ffi::c_int as isize),
-                strerror(*__errno_location()),
-            );
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*argv.offset(0 as ::core::ffi::c_int as isize)) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         }
         ENOEXEC => {
             let mut shell: *const ::core::ffi::c_char;
@@ -2092,23 +2065,19 @@ pub unsafe fn exec_command(
             }
             execvp(shell, new_argv as *const *mut ::core::ffi::c_char);
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                (strlen(*new_argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
-                    .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                *new_argv.offset(0 as ::core::ffi::c_int as isize),
-                strerror(*__errno_location()),
-            );
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*new_argv.offset(0 as ::core::ffi::c_int as isize)) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         }
         _ => {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                (strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t)
-                    .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                *argv.offset(0 as ::core::ffi::c_int as isize),
-                strerror(*__errno_location()),
-            );
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*argv.offset(0 as ::core::ffi::c_int as isize)) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         }
     }
     pid
@@ -2674,15 +2643,12 @@ unsafe extern "C" fn construct_command_argv_internal(
         );
     } else {
         fatal(
-            NILF,
-            (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
-                .wrapping_sub(1)
-                .wrapping_add(INTSTR_LENGTH),
-            b"%s (line %d) Bad shell context (!unixy && !batch_mode_shell)\n\0" as *const u8
+        NILF,
+        b"%s (line %d) Bad shell context (!unixy && !batch_mode_shell)\n\0" as *const u8
                 as *const ::core::ffi::c_char,
-            b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char,
-            3621 as ::core::ffi::c_int,
-        );
+        &[FmtArg::Str((b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
+            FmtArg::Int((3621 as ::core::ffi::c_int) as i32 as i64)],
+    );
     }
     free(new_line as *mut ::core::ffi::c_void);
     new_argv

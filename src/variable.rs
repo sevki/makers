@@ -1,3 +1,5 @@
+pub use crate::output::{FmtArg, error, fatal, format_message};
+pub use crate::misc::concat;
 pub use crate::expand::allocated_expand_string_for_file;
 pub use crate::expand::recursively_expand_for_file;
 pub use crate::file::{CommandState, UpdateStatus};
@@ -319,31 +321,24 @@ unsafe extern "C" fn check_valid_name(
         return;
     }
     if warning::is_active(Type::InvalidVar) {
-        let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
-            ::core::ptr::null::<::core::ffi::c_char>(),
-            (53 as size_t)
-                .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
-                .wrapping_div(22)
-                .wrapping_add(3)
-                .wrapping_add(strlen(name) as size_t),
-            b"invalid variable name '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
-            length as ::core::ffi::c_int,
-            name,
-        ));
+        let mut _a: *mut ::core::ffi::c_char = xstrdup(format_message(
+        ::core::ptr::null::<::core::ffi::c_char>(),
+        b"invalid variable name '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Int((length as ::core::ffi::c_int) as i64),
+            FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    ));
         if warning::action(Type::InvalidVar) == Action::Error {
             fatal(
-                flocp,
-                strlen(_a) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                _a,
-            );
+        flocp,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+    );
         }
         error(
-            flocp,
-            strlen(_a) as size_t,
-            b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            _a,
-        );
+        flocp,
+        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+    );
         free(_a as *mut ::core::ffi::c_void);
     }
 }
@@ -636,31 +631,24 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
         return;
     }
     if warning::is_active(Type::InvalidRef) {
-        let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
-            ::core::ptr::null::<::core::ffi::c_char>(),
-            (53 as size_t)
-                .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
-                .wrapping_div(22)
-                .wrapping_add(3)
-                .wrapping_add(strlen(name) as size_t),
-            b"invalid variable reference '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
-            length as ::core::ffi::c_int,
-            name,
-        ));
+        let mut _a: *mut ::core::ffi::c_char = xstrdup(format_message(
+        ::core::ptr::null::<::core::ffi::c_char>(),
+        b"invalid variable reference '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Int((length as ::core::ffi::c_int) as i64),
+            FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    ));
         if warning::action(Type::InvalidRef) == Action::Error {
             fatal(
-                *expanding_var,
-                strlen(_a) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                _a,
-            );
+        *expanding_var,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+    );
         }
         error(
-            *expanding_var,
-            strlen(_a) as size_t,
-            b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            _a,
-        );
+        *expanding_var,
+        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+    );
         free(_a as *mut ::core::ffi::c_void);
     }
 }
@@ -1438,7 +1426,7 @@ pub unsafe fn target_environment(
                             vars =
                                 strstr(value, b" -- \0" as *const u8 as *const ::core::ffi::c_char);
                             if vars.is_null() {
-                                mf = xstrdup(concat(2, value, invalid));
+                                mf = xstrdup(concat(&[value, invalid]));
                             } else {
                                 let lf: size_t =
                                     vars.offset_from(value) as ::core::ffi::c_long as size_t;
@@ -1488,7 +1476,7 @@ pub unsafe fn target_environment(
                             && !((*v_0).origin() as ::core::ffi::c_int
                                 != o_env as ::core::ffi::c_int)
                         {
-                            mf_0 = concat(2, value, invalid);
+                            mf_0 = concat(&[value, invalid]);
                             free(cp as *mut ::core::ffi::c_void);
                             cp = xstrdup(mf_0);
                             value = cp;
@@ -1500,12 +1488,7 @@ pub unsafe fn target_environment(
                 }
                 let fresh10 = result;
                 result = result.offset(1 as ::core::ffi::c_int as isize);
-                *fresh10 = xstrdup(concat(
-                    3,
-                    (*v_0).name,
-                    b"=\0" as *const u8 as *const ::core::ffi::c_char,
-                    value,
-                ));
+                *fresh10 = xstrdup(concat(&[(*v_0).name, b"=\0" as *const u8 as *const ::core::ffi::c_char, value]));
                 free(cp as *mut ::core::ffi::c_void);
             }
         }
@@ -1514,12 +1497,7 @@ pub unsafe fn target_environment(
     if added_shell == 0 {
         let fresh11 = result;
         result = result.offset(1 as ::core::ffi::c_int as isize);
-        *fresh11 = xstrdup(concat(
-            3,
-            shell_var.name,
-            b"=\0" as *const u8 as *const ::core::ffi::c_char,
-            shell_var.value,
-        ));
+        *fresh11 = xstrdup(concat(&[shell_var.name, b"=\0" as *const u8 as *const ::core::ffi::c_char, shell_var.value]));
     }
     if found_makelevel == 0 {
         let mut val_0: [::core::ffi::c_char; 33] = [0; 33];
@@ -1967,10 +1945,10 @@ pub unsafe fn assign_variable_definition(
     (*v).name = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<File>());
     if *(*v).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
         fatal(
-            &raw mut (*v).fileinfo,
-            0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        &raw mut (*v).fileinfo,
+        b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+        &[],
+    );
     }
     v
 }
@@ -2041,32 +2019,25 @@ pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
             dp = dp.offset(1 as ::core::ffi::c_int as isize);
         }
         if warning::is_active(Type::UndefinedVar) {
-            let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
-                ::core::ptr::null::<::core::ffi::c_char>(),
-                (53 as size_t)
-                    .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
-                    .wrapping_div(22)
-                    .wrapping_add(3)
-                    .wrapping_add(strlen(name) as size_t),
-                b"reference to undefined variable '%.*s'\0" as *const u8
+            let mut _a: *mut ::core::ffi::c_char = xstrdup(format_message(
+        ::core::ptr::null::<::core::ffi::c_char>(),
+        b"reference to undefined variable '%.*s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                len as ::core::ffi::c_int,
-                name,
-            ));
+        &[FmtArg::Int((len as ::core::ffi::c_int) as i64),
+            FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    ));
             if warning::action(Type::UndefinedVar) == Action::Error {
                 fatal(
-                    reading_file,
-                    strlen(_a) as size_t,
-                    b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    _a,
-                );
+        reading_file,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+    );
             }
             error(
-                reading_file,
-                strlen(_a) as size_t,
-                b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                _a,
-            );
+        reading_file,
+        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+    );
             free(_a as *mut ::core::ffi::c_void);
         }
     }

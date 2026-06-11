@@ -80,9 +80,8 @@ fn fatal_invalid(arg: &str) -> ! {
     unsafe {
         fatal(
             ::core::ptr::null(),
-            msg.len(),
             b"%s\0".as_ptr() as *const ::core::ffi::c_char,
-            msg.as_ptr() as *const ::core::ffi::c_char,
+            &[FmtArg::Str(msg.as_ptr() as *const ::core::ffi::c_char)],
         );
     }
 }

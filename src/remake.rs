@@ -1,3 +1,4 @@
+pub use crate::output::{FmtArg, error, fatal, message};
 pub use crate::commands::chop_commands;
 pub use crate::commands::execute_file_commands;
 pub use crate::file::enter_file;
@@ -144,16 +145,15 @@ pub unsafe fn check_also_make(file: *const file) {
         while !ad.is_null() {
             if (*(*ad).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
                 error(
-                    if !(*file).cmds.is_null() {
+        if !(*file).cmds.is_null() {
                         &raw mut (*(*file).cmds).fileinfo
                     } else {
                         ::core::ptr::null_mut::<Floc>()
                     },
-                    strlen((*(*ad).file).name) as size_t,
-                    b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
+        b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*(*ad).file).name,
-                );
+        &[FmtArg::Str(((*(*ad).file).name) as *const ::core::ffi::c_char)],
+    );
             }
             ad = (*ad).next;
         }
@@ -370,7 +370,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         } else {
                             b"'%s' is up to date.\0" as *const u8 as *const ::core::ffi::c_char
                         },
-                        fref(file).name,
+                        &[FmtArg::Str(fref(file).name)],
                     );
                 }
                 if let Some(lg) = lastgoal.as_mut() {
@@ -412,13 +412,11 @@ pub unsafe fn show_goal_error() {
         if (*goal_dep).file == (*goal).file {
             if (*goal).error != 0 {
                 error(
-                    &raw mut (*goal).floc,
-                    (strlen((*(*goal).file).name) as size_t)
-                        .wrapping_add(strlen(strerror((*goal).error)) as size_t),
-                    b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*(*goal).file).name,
-                    strerror((*goal).error),
-                );
+        &raw mut (*goal).floc,
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*(*goal).file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror((*goal).error)) as *const ::core::ffi::c_char)],
+    );
                 (*goal).error = 0;
             }
             return;
@@ -511,53 +509,53 @@ pub unsafe fn complain(file: *mut file) {
     if d.is_null() {
         show_goal_error();
         if !(*file).parent.is_null() {
-            let l: size_t = (strlen((*file).name) as size_t)
-                .wrapping_add(strlen((*(*file).parent).name) as size_t)
-                .wrapping_add(4);
             let m: *const ::core::ffi::c_char = b"%sNo rule to make target '%s', needed by '%s'%s\0"
                 as *const u8
                 as *const ::core::ffi::c_char;
             if keep_going_flag == 0 {
                 fatal(
                     NILF,
-                    l,
                     m,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*file).name,
-                    (*(*file).parent).name,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                        FmtArg::Str((*file).name),
+                        FmtArg::Str((*(*file).parent).name),
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                    ],
                 );
             }
             error(
                 NILF,
-                l,
                 m,
-                b"*** \0" as *const u8 as *const ::core::ffi::c_char,
-                (*file).name,
-                (*(*file).parent).name,
-                b".\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
+                    FmtArg::Str((*file).name),
+                    FmtArg::Str((*(*file).parent).name),
+                    FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
+                ],
             );
         } else {
-            let l_0: size_t = (strlen((*file).name) as size_t).wrapping_add(4);
             let m_0: *const ::core::ffi::c_char =
                 b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
             if keep_going_flag == 0 {
                 fatal(
                     NILF,
-                    l_0,
                     m_0,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*file).name,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                        FmtArg::Str((*file).name),
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                    ],
                 );
             }
             error(
                 NILF,
-                l_0,
                 m_0,
-                b"*** \0" as *const u8 as *const ::core::ffi::c_char,
-                (*file).name,
-                b".\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
+                    FmtArg::Str((*file).name),
+                    FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
+                ],
             );
         }
         (*file).no_diag = false;
@@ -720,12 +718,11 @@ unsafe extern "C" fn update_file_1(
             as ::core::ffi::c_int;
         if ns != 0 {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                strlen((*file).name) as size_t,
-                b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
+        ::core::ptr::null_mut::<Floc>(),
+        b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
                     as *const u8 as *const ::core::ffi::c_char,
-                (*file).name,
-            );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+    );
         }
         this_mtime = this_mtime.wrapping_add(
             ((if FILE_TIMESTAMP_HI_RES != 0 {
@@ -838,25 +835,21 @@ unsafe extern "C" fn update_file_1(
             {
                 if warning::action(Type::CircularDep) == Action::Error {
                     fatal(
-                        ::core::ptr::null_mut::<Floc>(),
-                        (strlen((*file).name) as size_t)
-                            .wrapping_add(strlen((*(*d).file).name) as size_t),
-                        b"circular %s <- %s dependency detected\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"circular %s <- %s dependency detected\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*file).name,
-                        (*(*d).file).name,
-                    );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
+    );
                 }
                 if warning::is_active(Type::CircularDep) {
                     error(
-                        ::core::ptr::null_mut::<Floc>(),
-                        (strlen((*file).name) as size_t)
-                            .wrapping_add(strlen((*(*d).file).name) as size_t),
-                        b"circular %s <- %s dependency dropped\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*file).name,
-                        (*(*d).file).name,
-                    );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
+    );
                 }
                 if let Some(tail) = lastd.as_mut() {
                     tail.next = (*du).next;
@@ -1049,12 +1042,11 @@ unsafe extern "C" fn update_file_1(
         }
         if depth == 0 && keep_going_flag != 0 && just_print_flag == 0 && question_flag == 0 {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                strlen((*file).name) as size_t,
-                b"Target '%s' not remade because of errors.\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"Target '%s' not remade because of errors.\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*file).name,
-            );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+    );
         }
         return dep_status;
     }
@@ -1554,11 +1546,10 @@ unsafe extern "C" fn check_dep(
 pub unsafe fn touch_file(file: *mut file) -> update_status {
     if run_silent == 0 {
         message(
-            0,
-            strlen((*file).name) as size_t,
-            b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*file).name,
-        );
+        0,
+        b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+    );
     }
     if just_print_flag != 0 {
         return UpdateStatus::Success;
@@ -1912,15 +1903,12 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                     );
                 }
                 error(
-                    ::core::ptr::null_mut::<Floc>(),
-                    (strlen((*file).name) as size_t).wrapping_add(strlen(
-                        &raw mut from_now_string as *mut ::core::ffi::c_char,
-                    ) as size_t),
-                    b"warning: file '%s' has modification time %s s in the future\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"warning: file '%s' has modification time %s s in the future\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*file).name,
-                    &raw mut from_now_string as *mut ::core::ffi::c_char,
-                );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((&raw mut from_now_string as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char)],
+    );
                 clock_skew_detected = 1;
             }
         }
@@ -2130,12 +2118,11 @@ unsafe extern "C" fn library_search(
         p3 = find_percent(p);
         if p3.is_null() {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                strlen(p) as size_t,
-                b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
                     as *const ::core::ffi::c_char,
-                p,
-            );
+        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+    );
             *p.offset(len as isize) = c;
         } else {
             p4 = variable_buffer_output(

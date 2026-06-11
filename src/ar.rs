@@ -1,3 +1,5 @@
+pub use crate::output::{FmtArg, error, fatal};
+pub use crate::misc::concat;
 pub use crate::file::enter_file;
 pub use crate::file::lookup_file;
 pub use crate::remake::f_mtime;
@@ -9,8 +11,6 @@ use crate::file::{Dep, File};
 use crate::misc::{xcalloc, xstrdup};
 use crate::strcache::strcache_add;
 extern "C" {
-    pub type variable_set_list;
-    pub type commands;
     fn qsort(
         __base: *mut ::core::ffi::c_void,
         __nmemb: size_t,
@@ -82,12 +82,11 @@ pub unsafe fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
         && *end.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == ')' as i32
     {
         fatal(
-            ::core::ptr::null_mut::<Floc>(),
-            strlen(name) as size_t,
-            b"attempt to use unsupported feature: '%s'\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"attempt to use unsupported feature: '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            name,
-        );
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
     }
     1
 }
@@ -105,11 +104,10 @@ pub unsafe fn ar_parse_name(
     p = strchr(*arname_p, '(' as i32);
     if p.is_null() {
         fatal(
-            ::core::ptr::null_mut::<Floc>(),
-            strlen(*arname_p) as size_t,
-            b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            *arname_p,
-        );
+        ::core::ptr::null_mut::<Floc>(),
+        b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*arname_p) as *const ::core::ffi::c_char)],
+    );
     }
     let fresh0 = p;
     p = p.offset(1 as ::core::ffi::c_int as isize);
@@ -209,19 +207,17 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     match ar_member_touch(arname, memname) {
         -1 => {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                strlen(arname) as size_t,
-                b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
-                arname,
-            );
+        ::core::ptr::null_mut::<Floc>(),
+        b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+    );
         }
         -2 => {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                strlen(arname) as size_t,
-                b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
-                arname,
-            );
+        ::core::ptr::null_mut::<Floc>(),
+        b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+    );
         }
         -3 => {
             perror_with_name(
@@ -231,25 +227,23 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
         }
         1 => {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                (strlen(memname) as size_t).wrapping_add(strlen(arname) as size_t),
-                b"touch: member '%s' does not exist in '%s'\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"touch: member '%s' does not exist in '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                memname,
-                arname,
-            );
+        &[FmtArg::Str((memname) as *const ::core::ffi::c_char),
+            FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+    );
         }
         0 => {
             val = 0;
         }
         _ => {
             error(
-                ::core::ptr::null_mut::<Floc>(),
-                strlen(name) as size_t,
-                b"touch: bad return code from ar_member_touch on '%s'\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"touch: bad return code from ar_member_touch on '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                name,
-            );
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
         }
     }
     free(arname as *mut ::core::ffi::c_void);
@@ -271,13 +265,7 @@ unsafe extern "C" fn ar_glob_match<T: SeqNode>(
     let state: *mut ArGlobState<T> = arg as *mut ArGlobState<T>;
     if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
         let new: *mut T = T::alloc();
-        T::set_name(new, strcache_add(concat(
-            4,
-            (*state).arname,
-            b"(\0" as *const u8 as *const ::core::ffi::c_char,
-            mem,
-            b")\0" as *const u8 as *const ::core::ffi::c_char,
-        )));
+        T::set_name(new, strcache_add(concat(&[(*state).arname, b"(\0" as *const u8 as *const ::core::ffi::c_char, mem, b")\0" as *const u8 as *const ::core::ffi::c_char])));
         T::set_next(new, (*state).chain);
         (*state).chain = new;
         (*state).n = (*state).n.wrapping_add(1);

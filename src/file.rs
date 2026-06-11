@@ -1,3 +1,4 @@
+pub use crate::output::{FmtArg, error, fatal};
 pub use crate::commands::print_commands;
 pub use crate::commands::set_file_variables;
 pub use crate::expand::expand_string_for_file;
@@ -789,44 +790,37 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         if (*to_file).cmds.is_null() {
             (*to_file).cmds = (*from_file).cmds;
         } else if (*from_file).cmds != (*to_file).cmds {
-            let mut l: size_t = strlen((*from_file).name) as size_t;
             if !(*(*to_file).cmds).fileinfo.filenm.is_null() {
                 error(
-                    &raw mut (*(*from_file).cmds).fileinfo,
-                    l.wrapping_add(strlen((*(*to_file).cmds).fileinfo.filenm) as size_t)
-                        .wrapping_add(INTSTR_LENGTH),
-                    b"recipe was specified for file '%s' at %s:%lu,\0" as *const u8
+        &raw mut (*(*from_file).cmds).fileinfo,
+        b"recipe was specified for file '%s' at %s:%lu,\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*from_file).name,
-                    (*(*from_file).cmds).fileinfo.filenm,
-                    (*(*from_file).cmds).fileinfo.lineno,
-                );
+        &[FmtArg::Str(((*from_file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*(*from_file).cmds).fileinfo.filenm) as *const ::core::ffi::c_char),
+            FmtArg::Uint(((*(*from_file).cmds).fileinfo.lineno) as u64)],
+    );
             } else {
                 error(
-                    &raw mut (*(*from_file).cmds).fileinfo,
-                    l,
-                    b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
+        &raw mut (*(*from_file).cmds).fileinfo,
+        b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*from_file).name,
-                );
+        &[FmtArg::Str(((*from_file).name) as *const ::core::ffi::c_char)],
+    );
             }
-            l = l.wrapping_add(strlen(to_hname) as size_t);
             error(
-                &raw mut (*(*from_file).cmds).fileinfo,
-                l,
-                b"but '%s' is now considered the same file as '%s'\0" as *const u8
+        &raw mut (*(*from_file).cmds).fileinfo,
+        b"but '%s' is now considered the same file as '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*from_file).name,
-                to_hname,
-            );
+        &[FmtArg::Str(((*from_file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
             error(
-                &raw mut (*(*from_file).cmds).fileinfo,
-                l,
-                b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
+        &raw mut (*(*from_file).cmds).fileinfo,
+        b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*from_file).name,
-                to_hname,
-            );
+        &[FmtArg::Str(((*from_file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
         }
     }
     if (*to_file).deps.is_null() {
@@ -844,24 +838,22 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         && (*from_file).double_colon.is_null()
     {
         fatal(
-            ::core::ptr::null_mut::<Floc>(),
-            (strlen((*from_file).name) as size_t).wrapping_add(strlen(to_hname) as size_t),
-            b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            (*from_file).name,
-            to_hname,
-        );
+        &[FmtArg::Str(((*from_file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
     }
     if (*to_file).double_colon.is_null() && !(*from_file).double_colon.is_null() {
         if (*to_file).is_target {
             fatal(
-                ::core::ptr::null_mut::<Floc>(),
-                (strlen((*from_file).name) as size_t).wrapping_add(strlen(to_hname) as size_t),
-                b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*from_file).name,
-                to_hname,
-            );
+        &[FmtArg::Str(((*from_file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
         } else {
             (*to_file).double_colon = (*from_file).double_colon;
         }
@@ -952,12 +944,11 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
                     if !skip && !(*f).dontcare {
                         if sig != 0 {
                             error(
-                                ::core::ptr::null_mut::<Floc>(),
-                                strlen((*f).name) as size_t,
-                                b"*** deleting intermediate file '%s'\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"*** deleting intermediate file '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                (*f).name,
-                            );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
                         } else {
                             if doneany == 0 && 0x1 as ::core::ffi::c_int & db_level != 0 {
                                 printf(
@@ -1403,12 +1394,11 @@ pub unsafe fn snap_deps() {
             while !f2.is_null() {
                 if (*f2).notintermediate {
                     fatal(
-                        ::core::ptr::null_mut::<Floc>(),
-                        strlen((*f2).name) as size_t,
-                        b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*f2).name,
-                    );
+        &[FmtArg::Str(((*f2).name) as *const ::core::ffi::c_char)],
+    );
                 } else {
                     (*f2).intermediate = true;
                 }
@@ -1425,12 +1415,11 @@ pub unsafe fn snap_deps() {
                 while !f2.is_null() {
                     if (*f2).notintermediate {
                         fatal(
-                            ::core::ptr::null_mut::<Floc>(),
-                            strlen((*f2).name) as size_t,
-                            b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            (*f2).name,
-                        );
+        &[FmtArg::Str(((*f2).name) as *const ::core::ffi::c_char)],
+    );
                     } else {
                         let rhs = {
                             (*f2).secondary = true;
@@ -1448,11 +1437,11 @@ pub unsafe fn snap_deps() {
     }
     if no_intermediates != 0 && all_secondary != 0 {
         fatal(
-            ::core::ptr::null_mut::<Floc>(),
-            0,
-            b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     f = lookup_file(b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
     if !f.is_null() && (*f).is_target {
@@ -1640,14 +1629,12 @@ pub unsafe fn file_timestamp_cons(
         };
         file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, ts);
         error(
-            ::core::ptr::null_mut::<Floc>(),
-            (strlen(f) as size_t)
-                .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
-            b"%s: timestamp out of range: substituting %s\0" as *const u8
+        ::core::ptr::null_mut::<Floc>(),
+        b"%s: timestamp out of range: substituting %s\0" as *const u8
                 as *const ::core::ffi::c_char,
-            f,
-            &raw mut buf as *mut ::core::ffi::c_char,
-        );
+        &[FmtArg::Str((f) as *const ::core::ffi::c_char),
+            FmtArg::Str((&raw mut buf as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char)],
+    );
     }
     ts
 }
@@ -2050,68 +2037,48 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).name) == 0
     {
         error(
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).name) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"name\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-        );
+        ::core::ptr::null::<Floc>(),
+        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((b"name\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
     }
     if !(*f).hname.is_null()
         && *(*f).hname.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
         && strcache_iscached((*f).hname) == 0
     {
         error(
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).hname) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"hname\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).hname,
-        );
+        ::core::ptr::null::<Floc>(),
+        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((b"hname\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*f).hname) as *const ::core::ffi::c_char)],
+    );
     }
     if !(*f).vpath.is_null()
         && *(*f).vpath.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
         && strcache_iscached((*f).vpath) == 0
     {
         error(
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).vpath) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"vpath\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).vpath,
-        );
+        ::core::ptr::null::<Floc>(),
+        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((b"vpath\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*f).vpath) as *const ::core::ffi::c_char)],
+    );
     }
     if !(*f).stem.is_null()
         && *(*f).stem.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
         && strcache_iscached((*f).stem) == 0
     {
         error(
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).stem) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"stem\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).stem,
-        );
+        ::core::ptr::null::<Floc>(),
+        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((b"stem\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*f).stem) as *const ::core::ffi::c_char)],
+    );
     }
     for d in seq_iter((*f).deps) {
         if !(*d).need_2nd_expansion
@@ -2120,36 +2087,24 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
             && strcache_iscached((*d).name) == 0
         {
             error(
-                ::core::ptr::null::<Floc>(),
-                (strlen((*d).name) as size_t)
-                    .wrapping_add(
-                        (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
-                            .wrapping_sub(1),
-                    )
-                    .wrapping_add(strlen((*d).name) as size_t),
-                b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).name,
-                b"name\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).name,
-            );
+        ::core::ptr::null::<Floc>(),
+        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*d).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((b"name\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*d).name) as *const ::core::ffi::c_char)],
+    );
         }
         if !(*d).stem.is_null()
             && *(*d).stem.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
             && strcache_iscached((*d).stem) == 0
         {
             error(
-                ::core::ptr::null::<Floc>(),
-                (strlen((*d).name) as size_t)
-                    .wrapping_add(
-                        (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
-                            .wrapping_sub(1),
-                    )
-                    .wrapping_add(strlen((*d).stem) as size_t),
-                b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).name,
-                b"stem\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).stem,
-            );
+        ::core::ptr::null::<Floc>(),
+        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*d).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((b"stem\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*d).stem) as *const ::core::ffi::c_char)],
+    );
         }
     }
 }
