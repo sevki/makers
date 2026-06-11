@@ -1,4 +1,5 @@
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use crate::floc::Floc;
 use crate::output::msg;
@@ -65,6 +66,37 @@ impl Action {
     fn from_name(s: &str) -> Option<Action> {
         [Action::Ignore, Action::Warn, Action::Error].into_iter().find(|&a| a.name().unwrap().eq_ignore_ascii_case(s))
     }
+}
+
+static ACTION_NAME_CACHE: OnceLock<Mutex<HashMap<String, Option<Action>>>> = OnceLock::new();
+static TYPE_NAME_CACHE: OnceLock<Mutex<HashMap<String, Option<Type>>>> = OnceLock::new();
+
+fn action_name_cache() -> &'static Mutex<HashMap<String, Option<Action>>> {
+    ACTION_NAME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn type_name_cache() -> &'static Mutex<HashMap<String, Option<Type>>> {
+    TYPE_NAME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn action_from_name_cached(name: &str) -> Option<Action> {
+    let mut cache = action_name_cache().lock().unwrap();
+    if let Some(cached) = cache.get(name) {
+        return *cached;
+    }
+    let parsed = Action::from_name(name);
+    cache.insert(name.to_owned(), parsed);
+    parsed
+}
+
+fn type_from_name_cached(name: &str) -> Option<Type> {
+    let mut cache = type_name_cache().lock().unwrap();
+    if let Some(cached) = cache.get(name) {
+        return *cached;
+    }
+    let parsed = Type::from_name(name);
+    cache.insert(name.to_owned(), parsed);
+    parsed
 }
 
 #[derive(Default, Copy, Clone)]
@@ -166,7 +198,7 @@ pub fn decode_actions(value: &str, flocp: Option<&Floc>) {
             if token.is_empty() {
                 continue;
             }
-            if let Some(action) = Action::from_name(token) {
+            if let Some(action) = action_from_name_cached(token) {
                 if target_flag {
                     s.flag.global = action;
                 } else {
@@ -178,7 +210,7 @@ pub fn decode_actions(value: &str, flocp: Option<&Floc>) {
                 Some((n, a)) => (n, Some(a)),
                 None => (token, None),
             };
-            let ty = match Type::from_name(name) {
+            let ty = match type_from_name_cached(name) {
                 Some(t) => t,
                 None => {
                     errors.push((ReportKind::Unknown, name.to_string()));
@@ -187,7 +219,7 @@ pub fn decode_actions(value: &str, flocp: Option<&Floc>) {
             };
             let action = match action_part {
                 None => Action::Warn,
-                Some(s) => match Action::from_name(s) {
+                Some(s) => match action_from_name_cached(s) {
                     Some(a) => a,
                     None => {
                         errors.push((ReportKind::UnknownAction, s.to_string()));
