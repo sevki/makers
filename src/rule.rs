@@ -219,8 +219,8 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
                 }
                 let dep_name: *const ::core::ffi::c_char = if !current.name.is_null() {
                     current.name
-                } else if !current.file.is_null() {
-                    (*current.file).name
+                } else if let Some(file) = current.file.as_ref() {
+                    file.name
                 } else {
                     ::core::ptr::null()
                 };
