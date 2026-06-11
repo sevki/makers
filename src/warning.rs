@@ -82,22 +82,28 @@ fn type_name_cache() -> &'static Mutex<HashMap<String, Option<Type>>> {
 }
 
 fn action_from_name_cached(name: &str) -> Option<Action> {
-    let mut cache = action_name_cache().lock().unwrap();
-    if let Some(cached) = cache.get(name) {
+    let key = name.to_ascii_lowercase();
+    let mut cache = action_name_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = cache.get(&key) {
         return *cached;
     }
-    let parsed = Action::from_name(name);
-    cache.insert(name.to_owned(), parsed);
+    let parsed = Action::from_name(&key);
+    if parsed.is_some() {
+        cache.insert(key, parsed);
+    }
     parsed
 }
 
 fn type_from_name_cached(name: &str) -> Option<Type> {
-    let mut cache = type_name_cache().lock().unwrap();
-    if let Some(cached) = cache.get(name) {
+    let key = name.to_ascii_lowercase();
+    let mut cache = type_name_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = cache.get(&key) {
         return *cached;
     }
-    let parsed = Type::from_name(name);
-    cache.insert(name.to_owned(), parsed);
+    let parsed = Type::from_name(&key);
+    if parsed.is_some() {
+        cache.insert(key, parsed);
+    }
     parsed
 }
 

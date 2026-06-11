@@ -72,6 +72,9 @@ fn intern_utf8(
     set: &mut HashSet<&'static [u8]>,
     value: &str,
 ) -> *const c_char {
+    if let Some(&existing) = set.get(value.as_bytes()) {
+        return existing.as_ptr().cast();
+    }
     let key = Utf8String::new(db, value.to_owned());
     intern_bytes(set, key.text(db).as_bytes())
 }
