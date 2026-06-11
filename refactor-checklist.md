@@ -67,3 +67,32 @@
 - [x] Shared `File` / `Dep` / `Commands` / `VariableSetList`
 - [x] Shared `hash_table` struct definition reduced to `src/hash.rs`
 - [x] Duplicate `file` cluster structs eliminated from all modules
+
+## Dependency graph: idiomatic Rust conversion (no C ABI)
+- [x] `File`, `Dep`, `GoalDep` are plain Rust structs — no `#[repr(C)]`, no c2rust bitfields; flags are `bool`, status fields are real enums (`UpdateStatus`, `CommandState` with `PartialOrd`/`Default`)
+- [x] `goaldep` deduplicated (was cloned in `remake`/`main`/`read`) into shared `GoalDep` in `src/file.rs`
+- [x] `rule` struct deduplicated (implicit.rs clone removed); CamelCase names: `Rule`, `NameSeq`, `PatDeps`, `TryRule`
+- [x] Per-module `us_*`/`cs_*` const blocks and `file`/`dep`/`commands` lowercase aliases deleted
+- [x] Prefix-punning eliminated (was UB once `repr(C)` was dropped):
+  - `parse_file_seq` and `ar_glob` are generic over the `SeqNode` trait instead of taking a node `size` and casting `NameSeq*`→`Dep*`
+  - `update_goal_chain` works on a `GoalDep` chain (`copy_goal_chain`) instead of casting goals to `*mut Dep`
+  - shuffle is generic over `ShuffleNode` (`Dep`/`GoalDep`) instead of shuffling goals through a `Dep` cast
+  - `free_dep_chain`/`free_goaldep` walk their own node type (`free_seq_chain<T: NextLinked>`)
+- [x] `child` struct deduplicated (commands.rs clone removed; job.rs is canonical)
+- [x] Cross-module `extern "C"` declarations mentioning graph types replaced with direct `use crate::…` imports (~70 decls)
+- [x] `SeqIter`/`seq_iter` chain iterator + `File::deps_iter`; ~30 manual `while !d.is_null()` traversals converted to iterators
+- [ ] Remaining: duplicate `variable` struct clones per module (bridged with casts in `job.rs`/`rule.rs`/`variable.rs` for now)
+- [ ] Remaining: `#[no_mangle] extern "C"` on definitions (kept while hash-table callbacks and remaining extern decls need C fn pointers)
+
+### Semantic patches (Coccinelle for Rust)
+The term-level rewrites of the dependency-graph conversion are captured as
+`cfr` semantic patches (preferred over regex scripts for future passes):
+- `semantic-patches/depgraph_bitfield_accessors.cocci` — bitfield accessors → bool fields (generated; regenerate, don't hand-edit)
+- `semantic-patches/depgraph_status_enums.cocci` — `us_*`/`cs_*` consts → `UpdateStatus`/`CommandState` variants (delete the per-module const *definitions* first)
+
+cfr gotchas found (cfr 2024-era binary): `--suppress-diff` silently reports
+"Sites changed: 0" and skips transformation — never use it; occasional
+per-file panics (`index out of bounds` in control-flow parsing) — rerun or
+fall back to manual edit for that file. Not expressible in cocci: struct
+redefinition + trait/generic introduction (SeqNode/ShuffleNode), extern-block
+decl removal with import insertion (scripts/depgraph_extern_cleanup.py).
