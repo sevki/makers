@@ -1,3 +1,4 @@
+pub use crate::file::{CommandState, UpdateStatus};
 use libc::{fnmatch, free, strchr};
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};

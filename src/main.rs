@@ -1,3 +1,4 @@
+pub use crate::file::{CommandState, UpdateStatus};
 use crate::default::{
     define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
     set_default_suffixes, undefine_default_variables,
@@ -216,25 +217,11 @@ pub const _ISdigit: C2RustUnnamed_10 = 2048;
 pub const _ISalpha: C2RustUnnamed_10 = 1024;
 pub const _ISlower: C2RustUnnamed_10 = 512;
 pub const _ISupper: C2RustUnnamed_10 = 256;
-pub type file = File;
-pub type cmd_state = ::core::ffi::c_uint;
-pub const cs_finished: cmd_state = 3;
-pub const cs_running: cmd_state = 2;
-pub const cs_deps_running: cmd_state = 1;
-pub const cs_not_started: cmd_state = 0;
-pub type update_status = ::core::ffi::c_uint;
-pub type update_status_0 = u32;
-pub const us_failed: update_status_0 = 3;
-pub const us_question: update_status_0 = 2;
-pub const us_none: update_status_0 = 1;
-pub const us_success: update_status_0 = 0;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
-pub type dep = Dep;
-pub type commands = Commands;
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
