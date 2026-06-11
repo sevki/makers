@@ -9,11 +9,11 @@ use crate::misc::{
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
-use std::ffi::CStr;
 use libc::{
     __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strchr, strcmp,
     strcpy, strerror, strstr, strtoll,
 };
+use std::ffi::CStr;
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
@@ -1125,10 +1125,7 @@ pub unsafe extern "C" fn strip_whitespace(
     }
     *begpp as *mut ::core::ffi::c_char
 }
-unsafe extern "C" fn parse_numeric(
-    s: &CStr,
-    msg: &CStr,
-) -> ::core::ffi::c_longlong {
+unsafe fn parse_numeric(s: &CStr, msg: &CStr) -> ::core::ffi::c_longlong {
     let s_ptr = s.as_ptr();
     let msg_ptr = msg.as_ptr();
     let mut beg: *const ::core::ffi::c_char = s_ptr;
@@ -1175,10 +1172,8 @@ unsafe extern "C" fn func_word(
     let mut end_p: *const ::core::ffi::c_char;
     let mut p: *const ::core::ffi::c_char;
     let mut i: ::core::ffi::c_longlong;
-    let badfirst = CStr::from_bytes_with_nul(
-        b"invalid first argument to 'word' function\0",
-    )
-    .expect("word() diagnostic strings are nul-terminated");
+    let badfirst = CStr::from_bytes_with_nul(b"invalid first argument to 'word' function\0")
+        .expect("word() diagnostic strings are nul-terminated");
     i = parse_numeric(
         CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
         badfirst,
@@ -1216,15 +1211,14 @@ unsafe extern "C" fn func_wordlist(
     let mut start: ::core::ffi::c_longlong;
     let stop: ::core::ffi::c_longlong;
     let mut count: ::core::ffi::c_longlong;
-    let badfirst = CStr::from_bytes_with_nul(
-        b"invalid first argument to 'wordlist' function\0",
-    )
-    .expect("wordlist() diagnostic strings are nul-terminated");
-    let badsecond = CStr::from_bytes_with_nul(
-        b"invalid second argument to 'wordlist' function\0",
-    )
-    .expect("wordlist() diagnostic strings are nul-terminated");
-    start = parse_numeric(CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)), badfirst);
+    let badfirst = CStr::from_bytes_with_nul(b"invalid first argument to 'wordlist' function\0")
+        .expect("wordlist() diagnostic strings are nul-terminated");
+    let badsecond = CStr::from_bytes_with_nul(b"invalid second argument to 'wordlist' function\0")
+        .expect("wordlist() diagnostic strings are nul-terminated");
+    start = parse_numeric(
+        CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
+        badfirst,
+    );
     if start < 1 as ::core::ffi::c_longlong {
         fatal(
             *expanding_var,
@@ -1343,11 +1337,7 @@ unsafe extern "C" fn func_foreach(
             ::core::ptr::null_mut::<file>(),
         ));
         o = variable_buffer_output(o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
-        o = variable_buffer_output(
-            o,
-            b" \0" as *const u8 as *const ::core::ffi::c_char,
-            1,
-        );
+        o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         doneany = 1;
     }
     if doneany != 0 {
@@ -1805,11 +1795,7 @@ unsafe extern "C" fn func_sort(
                 ) != 0
             {
                 o = variable_buffer_output(o, words[i as usize], len);
-                o = variable_buffer_output(
-                    o,
-                    b" \0" as *const u8 as *const ::core::ffi::c_char,
-                    1,
-                );
+                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
             }
             i += 1;
         }
@@ -1948,7 +1934,8 @@ unsafe extern "C" fn func_if(
     strip_whitespace(&raw mut begp, &raw mut endp);
     if begp <= endp {
         let expansion = ExpandedArg::new(begp, endp.offset(1 as ::core::ffi::c_int as isize));
-        result = (*expansion.as_ptr().offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+        result = (*expansion.as_ptr().offset(0 as ::core::ffi::c_int as isize)
+            as ::core::ffi::c_int
             != 0) as ::core::ffi::c_int;
     }
     argv = argv.offset((1 + (result == 0) as ::core::ffi::c_int) as isize);

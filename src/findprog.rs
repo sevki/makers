@@ -47,7 +47,11 @@ unsafe fn join_path(
     dir_len: usize,
     progname: *const c_char,
 ) -> *mut c_char {
-    let base_len = if base.is_null() { 0 } else { libc::strlen(base) };
+    let base_len = if base.is_null() {
+        0
+    } else {
+        libc::strlen(base)
+    };
     let prog_len = libc::strlen(progname);
     // optional (base + '/') + dir + '/' + prog + '\0'
     let total = if base.is_null() { 0 } else { base_len + 1 } + dir_len + 1 + prog_len + 1;
@@ -96,8 +100,12 @@ pub unsafe extern "C" fn find_in_given_path(
         }
         if !directory.is_null() && *progname != b'/' as c_char {
             // Relative name resolved against `directory`: "directory/progname".
-            return join_path(::core::ptr::null(), directory, libc::strlen(directory), progname)
-                as *const c_char;
+            return join_path(
+                ::core::ptr::null(),
+                directory,
+                libc::strlen(directory),
+                progname,
+            ) as *const c_char;
         }
         return dup_cstr(progname) as *const c_char;
     }

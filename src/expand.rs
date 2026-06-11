@@ -675,7 +675,11 @@ pub unsafe extern "C" fn expand_argument(
     let len = end.offset_from(str) as ::core::ffi::c_long as size_t;
     let mut tmp_buf: Vec<u8> = ::std::vec::from_elem(0u8, (len as usize).wrapping_add(1));
     let tmp = tmp_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
-    memcpy(tmp as *mut ::core::ffi::c_void, str as *const ::core::ffi::c_void, len);
+    memcpy(
+        tmp as *mut ::core::ffi::c_void,
+        str as *const ::core::ffi::c_void,
+        len,
+    );
     *tmp.offset(len as isize) = 0;
     allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>())
 }

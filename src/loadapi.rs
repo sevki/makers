@@ -1,7 +1,7 @@
 use libc::free;
 
-use crate::file::{Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::file::{Dep, File, VariableSet, VariableSetList};
 use crate::misc::xmalloc;
 extern "C" {
     pub type commands;
@@ -65,10 +65,7 @@ pub unsafe extern "C" fn gmk_free(s: *mut ::core::ffi::c_char) {
     free(s as *mut ::core::ffi::c_void);
 }
 #[no_mangle]
-pub unsafe extern "C" fn gmk_eval(
-    buffer: *const ::core::ffi::c_char,
-    gfloc: *const gmk_floc,
-) {
+pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *const gmk_floc) {
     let mut pbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut plen: size_t = 0;
     let mut fl: Floc = Floc {
@@ -93,9 +90,7 @@ pub unsafe extern "C" fn gmk_eval(
     restore_variable_buffer(pbuf, plen);
 }
 #[no_mangle]
-pub unsafe extern "C" fn gmk_expand(
-    ref_0: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+pub unsafe extern "C" fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     allocated_expand_string_for_file(ref_0, ::core::ptr::null_mut::<file>())
 }
 #[no_mangle]

@@ -10,10 +10,13 @@ pub use crate::ffi_types::{
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::floc::Floc;
 use crate::load::unload_all;
+use crate::misc::free_ns_chain;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
+use crate::misc::{make_toui, xcalloc, xmalloc, xrealloc, xstrdup};
 use crate::read::construct_include_path;
 use crate::remote_stub::{remote_cleanup, remote_setup};
 use crate::stdio::FILE;
+use crate::strcache::strcache_add;
 use crate::strcache::{strcache_init, strcache_print_stats};
 use crate::variable::print_variable_data_base;
 use crate::vpath::{build_vpath_lists, print_vpath_data_base};
@@ -24,9 +27,6 @@ use libc::{
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::strcache::strcache_add;
-use crate::misc::{make_toui, xcalloc, xmalloc, xrealloc, xstrdup};
-use crate::misc::free_ns_chain;
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -2523,298 +2523,271 @@ unsafe fn main_0(
             2 | _ => false,
         };
         if needs_restart {
-                remove_intermediates(0);
-                if print_data_base_flag != 0 {
-                    print_data_base();
-                }
-                clean_jobserver(0);
-                if !makefiles.is_null() {
-                    let mut mfidx: ::core::ffi::c_int = 0;
-                    let mut av: *mut *mut ::core::ffi::c_char = argv;
-                    let mut nv: *mut *const ::core::ffi::c_char;
-                    alloca_allocations.push(::std::vec::from_elem(
-                        0,
-                        (::core::mem::size_of::<*mut ::core::ffi::c_char>() as usize)
-                            .wrapping_mul((argc + 1 + 1) as usize) as usize,
-                    ));
-                    nargv = alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                        as *mut *const ::core::ffi::c_char;
-                    nv = nargv;
-                    let fresh49 = av;
-                    av = av.offset(1 as ::core::ffi::c_int as isize);
-                    let fresh50 = nv;
-                    nv = nv.offset(1 as ::core::ffi::c_int as isize);
-                    *fresh50 = *fresh49;
-                    while !(*av).is_null() {
-                        let f_4: *mut ::core::ffi::c_char;
-                        let a: *mut ::core::ffi::c_char = *av;
-                        let mf: *const ::core::ffi::c_char =
-                            *(*makefiles).list.offset(mfidx as isize);
-                        if strlen(a) > 0 {
-                        } else {
-                            __assert_fail(
-                                b"strlen (a) > 0\0" as *const u8 as *const ::core::ffi::c_char,
-                                b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
-                                2602 as ::core::ffi::c_uint,
-                                b"int main(int, char **, char **)\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                            );
-                        };
-                        *nv = a;
-                        if !(*a.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                            != '-' as i32)
+            remove_intermediates(0);
+            if print_data_base_flag != 0 {
+                print_data_base();
+            }
+            clean_jobserver(0);
+            if !makefiles.is_null() {
+                let mut mfidx: ::core::ffi::c_int = 0;
+                let mut av: *mut *mut ::core::ffi::c_char = argv;
+                let mut nv: *mut *const ::core::ffi::c_char;
+                alloca_allocations.push(::std::vec::from_elem(
+                    0,
+                    (::core::mem::size_of::<*mut ::core::ffi::c_char>() as usize)
+                        .wrapping_mul((argc + 1 + 1) as usize) as usize,
+                ));
+                nargv = alloca_allocations.last_mut().unwrap().as_mut_ptr()
+                    as *mut *const ::core::ffi::c_char;
+                nv = nargv;
+                let fresh49 = av;
+                av = av.offset(1 as ::core::ffi::c_int as isize);
+                let fresh50 = nv;
+                nv = nv.offset(1 as ::core::ffi::c_int as isize);
+                *fresh50 = *fresh49;
+                while !(*av).is_null() {
+                    let f_4: *mut ::core::ffi::c_char;
+                    let a: *mut ::core::ffi::c_char = *av;
+                    let mf: *const ::core::ffi::c_char = *(*makefiles).list.offset(mfidx as isize);
+                    if strlen(a) > 0 {
+                    } else {
+                        __assert_fail(
+                            b"strlen (a) > 0\0" as *const u8 as *const ::core::ffi::c_char,
+                            b"src/main.c\0" as *const u8 as *const ::core::ffi::c_char,
+                            2602 as ::core::ffi::c_uint,
+                            b"int main(int, char **, char **)\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                        );
+                    };
+                    *nv = a;
+                    if !(*a.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                        != '-' as i32)
+                    {
+                        if *a.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                            == '-' as i32
                         {
-                            if *a.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                                == '-' as i32
-                            {
-                                // Rewrite -f/--file long options so the restart
-                                // reads the makefile we just remade.
-                                let substitute = if strcmp(
+                            // Rewrite -f/--file long options so the restart
+                            // reads the makefile we just remade.
+                            let substitute = if strcmp(
+                                a,
+                                b"--file\0" as *const u8 as *const ::core::ffi::c_char,
+                            ) == 0
+                                || strcmp(
                                     a,
-                                    b"--file\0" as *const u8 as *const ::core::ffi::c_char,
+                                    b"--makefile\0" as *const u8 as *const ::core::ffi::c_char,
                                 ) == 0
-                                    || strcmp(
+                            {
+                                av = av.offset(1 as ::core::ffi::c_int as isize);
+                                true
+                            } else {
+                                strncmp(
+                                    a,
+                                    b"--file=\0" as *const u8 as *const ::core::ffi::c_char,
+                                    7,
+                                ) == 0
+                                    || strncmp(
                                         a,
-                                        b"--makefile\0" as *const u8 as *const ::core::ffi::c_char,
+                                        b"--makefile=\0" as *const u8 as *const ::core::ffi::c_char,
+                                        11,
                                     ) == 0
+                            };
+                            if substitute {
+                                if mfidx == stdin_offset {
+                                    alloca_allocations.push(::std::vec::from_elem(
+                                        0,
+                                        (::core::mem::size_of::<[::core::ffi::c_char; 14]>()
+                                            as usize)
+                                            .wrapping_sub(1 as usize)
+                                            .wrapping_add(strlen(mf) as usize)
+                                            .wrapping_add(1 as usize)
+                                            as usize,
+                                    ));
+                                    let na: *mut ::core::ffi::c_char =
+                                        alloca_allocations.last_mut().unwrap().as_mut_ptr()
+                                            as *mut ::core::ffi::c_char;
+                                    sprintf(
+                                        na,
+                                        b"--temp-stdin=%s\0" as *const u8
+                                            as *const ::core::ffi::c_char,
+                                        mf,
+                                    );
+                                    *nv = na;
+                                } else {
+                                    alloca_allocations.push(::std::vec::from_elem(
+                                        0,
+                                        strlen(mf).wrapping_add(3) as usize,
+                                    ));
+                                    let na_0: *mut ::core::ffi::c_char =
+                                        alloca_allocations.last_mut().unwrap().as_mut_ptr()
+                                            as *mut ::core::ffi::c_char;
+                                    sprintf(
+                                        na_0,
+                                        b"-f%s\0" as *const u8 as *const ::core::ffi::c_char,
+                                        mf,
+                                    );
+                                    *nv = na_0;
+                                }
+                                mfidx += 1;
+                            }
+                        } else {
+                            f_4 = strchr(a, 'f' as i32);
+                            if !f_4.is_null() {
+                                if *f_4.offset(1 as ::core::ffi::c_int as isize)
+                                    as ::core::ffi::c_int
+                                    == 0
                                 {
                                     av = av.offset(1 as ::core::ffi::c_int as isize);
-                                    true
-                                } else {
-                                    strncmp(
-                                        a,
-                                        b"--file=\0" as *const u8 as *const ::core::ffi::c_char,
-                                        7,
-                                    ) == 0
-                                        || strncmp(
-                                            a,
-                                            b"--makefile=\0" as *const u8 as *const ::core::ffi::c_char,
-                                            11,
-                                        ) == 0
-                                };
-                                if substitute {
-                                        if mfidx == stdin_offset {
-                                            alloca_allocations.push(::std::vec::from_elem(
-                                                0,
-                                                (::core::mem::size_of::<[::core::ffi::c_char; 14]>()
-                                                    as usize)
-                                                    .wrapping_sub(1 as usize)
-                                                    .wrapping_add(strlen(mf) as usize)
-                                                    .wrapping_add(1 as usize)
-                                                    as usize,
-                                            ));
-                                            let na: *mut ::core::ffi::c_char =
-                                                alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                                                    as *mut ::core::ffi::c_char;
-                                            sprintf(
-                                                na,
-                                                b"--temp-stdin=%s\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                                mf,
-                                            );
-                                            *nv = na;
-                                        } else {
-                                            alloca_allocations.push(::std::vec::from_elem(
-                                                0,
-                                                strlen(mf).wrapping_add(3) as usize,
-                                            ));
-                                            let na_0: *mut ::core::ffi::c_char =
-                                                alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                                                    as *mut ::core::ffi::c_char;
-                                            sprintf(
-                                                na_0,
-                                                b"-f%s\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                                mf,
-                                            );
-                                            *nv = na_0;
-                                        }
-                                        mfidx += 1;
                                 }
-                            } else {
-                                f_4 = strchr(a, 'f' as i32);
-                                if !f_4.is_null() {
-                                    if *f_4.offset(1 as ::core::ffi::c_int as isize)
-                                        as ::core::ffi::c_int
-                                        == 0
-                                    {
-                                        av = av.offset(1 as ::core::ffi::c_int as isize);
-                                    }
-                                    if mfidx == stdin_offset {
-                                        let al: size_t =
-                                            f_4.offset_from(a) as ::core::ffi::c_long as size_t;
-                                        let mut na_1: *mut ::core::ffi::c_char;
-                                        if al > 1 {
-                                            alloca_allocations.push(::std::vec::from_elem(
-                                                0,
-                                                al.wrapping_add(1) as usize,
-                                            ));
-                                            na_1 =
-                                                alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                                                    as *mut ::core::ffi::c_char;
-                                            memcpy(
-                                                na_1 as *mut ::core::ffi::c_void,
-                                                a as *const ::core::ffi::c_void,
-                                                al as size_t,
-                                            );
-                                            *na_1.offset(al as isize) = 0;
-                                            let fresh51 = nv;
-                                            nv = nv.offset(1 as ::core::ffi::c_int as isize);
-                                            *fresh51 = na_1;
-                                        }
+                                if mfidx == stdin_offset {
+                                    let al: size_t =
+                                        f_4.offset_from(a) as ::core::ffi::c_long as size_t;
+                                    let mut na_1: *mut ::core::ffi::c_char;
+                                    if al > 1 {
                                         alloca_allocations.push(::std::vec::from_elem(
                                             0,
-                                            (::core::mem::size_of::<[::core::ffi::c_char; 14]>()
-                                                as usize)
-                                                .wrapping_sub(1 as usize)
-                                                .wrapping_add(strlen(mf) as usize)
-                                                .wrapping_add(1 as usize)
-                                                as usize,
+                                            al.wrapping_add(1) as usize,
                                         ));
                                         na_1 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
                                             as *mut ::core::ffi::c_char;
-                                        sprintf(
-                                            na_1,
-                                            b"--temp-stdin=%s\0" as *const u8
-                                                as *const ::core::ffi::c_char,
-                                            mf,
-                                        );
-                                        *nv = na_1;
-                                    } else if *f_4.offset(1 as ::core::ffi::c_int as isize)
-                                        as ::core::ffi::c_int
-                                        == 0
-                                    {
-                                        nv = nv.offset(1 as ::core::ffi::c_int as isize);
-                                        *nv = mf;
-                                    } else {
-                                        let al_0: size_t =
-                                            (f_4.offset_from(a) as ::core::ffi::c_long + 1)
-                                                as size_t;
-                                        let ml: size_t = (strlen(mf) as size_t).wrapping_add(1);
-                                        alloca_allocations.push(::std::vec::from_elem(
-                                            0,
-                                            al_0.wrapping_add(ml) as usize,
-                                        ));
-                                        let na_2: *mut ::core::ffi::c_char =
-                                            alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                                                as *mut ::core::ffi::c_char;
                                         memcpy(
-                                            na_2 as *mut ::core::ffi::c_void,
+                                            na_1 as *mut ::core::ffi::c_void,
                                             a as *const ::core::ffi::c_void,
-                                            al_0 as size_t,
+                                            al as size_t,
                                         );
-                                        memcpy(
-                                            na_2.offset(al_0 as isize) as *mut ::core::ffi::c_void,
-                                            mf as *const ::core::ffi::c_void,
-                                            ml as size_t,
-                                        );
-                                        *nv = na_2;
+                                        *na_1.offset(al as isize) = 0;
+                                        let fresh51 = nv;
+                                        nv = nv.offset(1 as ::core::ffi::c_int as isize);
+                                        *fresh51 = na_1;
                                     }
-                                    mfidx += 1;
+                                    alloca_allocations.push(::std::vec::from_elem(
+                                        0,
+                                        (::core::mem::size_of::<[::core::ffi::c_char; 14]>()
+                                            as usize)
+                                            .wrapping_sub(1 as usize)
+                                            .wrapping_add(strlen(mf) as usize)
+                                            .wrapping_add(1 as usize)
+                                            as usize,
+                                    ));
+                                    na_1 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
+                                        as *mut ::core::ffi::c_char;
+                                    sprintf(
+                                        na_1,
+                                        b"--temp-stdin=%s\0" as *const u8
+                                            as *const ::core::ffi::c_char,
+                                        mf,
+                                    );
+                                    *nv = na_1;
+                                } else if *f_4.offset(1 as ::core::ffi::c_int as isize)
+                                    as ::core::ffi::c_int
+                                    == 0
+                                {
+                                    nv = nv.offset(1 as ::core::ffi::c_int as isize);
+                                    *nv = mf;
+                                } else {
+                                    let al_0: size_t =
+                                        (f_4.offset_from(a) as ::core::ffi::c_long + 1) as size_t;
+                                    let ml: size_t = (strlen(mf) as size_t).wrapping_add(1);
+                                    alloca_allocations.push(::std::vec::from_elem(
+                                        0,
+                                        al_0.wrapping_add(ml) as usize,
+                                    ));
+                                    let na_2: *mut ::core::ffi::c_char =
+                                        alloca_allocations.last_mut().unwrap().as_mut_ptr()
+                                            as *mut ::core::ffi::c_char;
+                                    memcpy(
+                                        na_2 as *mut ::core::ffi::c_void,
+                                        a as *const ::core::ffi::c_void,
+                                        al_0 as size_t,
+                                    );
+                                    memcpy(
+                                        na_2.offset(al_0 as isize) as *mut ::core::ffi::c_void,
+                                        mf as *const ::core::ffi::c_void,
+                                        ml as size_t,
+                                    );
+                                    *nv = na_2;
                                 }
+                                mfidx += 1;
                             }
                         }
-                        av = av.offset(1 as ::core::ffi::c_int as isize);
-                        nv = nv.offset(1 as ::core::ffi::c_int as isize);
                     }
-                    *nv = ::core::ptr::null::<::core::ffi::c_char>();
+                    av = av.offset(1 as ::core::ffi::c_int as isize);
+                    nv = nv.offset(1 as ::core::ffi::c_int as isize);
                 }
-                if !directories.is_null() && (*directories).idx > 0 {
-                    let mut bad: ::core::ffi::c_int = 1;
-                    if !directory_before_chdir.is_null() {
-                        if chdir(directory_before_chdir) < 0 {
-                            perror_with_name(
-                                b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
-                                b"\0" as *const u8 as *const ::core::ffi::c_char,
-                            );
-                        } else {
-                            bad = 0;
-                        }
-                    }
-                    if bad != 0 {
-                        fatal(
-                            ::core::ptr::null_mut::<Floc>(),
-                            0,
-                            b"couldn't change back to original directory\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                *nv = ::core::ptr::null::<::core::ffi::c_char>();
+            }
+            if !directories.is_null() && (*directories).idx > 0 {
+                let mut bad: ::core::ffi::c_int = 1;
+                if !directory_before_chdir.is_null() {
+                    if chdir(directory_before_chdir) < 0 {
+                        perror_with_name(
+                            b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
+                            b"\0" as *const u8 as *const ::core::ffi::c_char,
                         );
+                    } else {
+                        bad = 0;
                     }
                 }
-                restarts = restarts.wrapping_add(1);
-                if 0x1 as ::core::ffi::c_int & db_level != 0 {
-                    let mut p_3: *mut *const ::core::ffi::c_char;
-                    printf(
-                        b"Re-executing[%u]:\0" as *const u8 as *const ::core::ffi::c_char,
-                        restarts,
+                if bad != 0 {
+                    fatal(
+                        ::core::ptr::null_mut::<Floc>(),
+                        0,
+                        b"couldn't change back to original directory\0" as *const u8
+                            as *const ::core::ffi::c_char,
                     );
-                    p_3 = nargv;
-                    while !(*p_3).is_null() {
-                        printf(b" %s\0" as *const u8 as *const ::core::ffi::c_char, *p_3);
-                        p_3 = p_3.offset(1 as ::core::ffi::c_int as isize);
-                    }
-                    putchar('\n' as i32);
-                    fflush(stdout);
                 }
-                let mut p_4: *mut *mut ::core::ffi::c_char;
-                p_4 = environ;
-                while !(*p_4).is_null() {
-                    if strncmp(
-                        *p_4,
-                        b"MAKELEVEL=\0" as *const u8 as *const ::core::ffi::c_char,
-                        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
-                            .wrapping_sub(1)
-                            .wrapping_add(1),
-                    ) == 0
-                    {
-                        alloca_allocations.push(::std::vec::from_elem(
-                            0,
-                            40 as ::core::ffi::c_int as ::core::ffi::c_ulong as usize,
-                        ));
-                        *p_4 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                            as *mut ::core::ffi::c_char;
-                        sprintf(
-                            *p_4,
-                            b"%s=%u\0" as *const u8 as *const ::core::ffi::c_char,
-                            MAKELEVEL_NAME.as_ptr(),
-                            makelevel,
-                        );
-                    } else if strncmp(
-                        *p_4,
-                        b"MAKE_RESTARTS=\0" as *const u8 as *const ::core::ffi::c_char,
-                        (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t)
-                            .wrapping_sub(1),
-                    ) == 0
-                    {
-                        alloca_allocations.push(::std::vec::from_elem(
-                            0,
-                            40 as ::core::ffi::c_int as ::core::ffi::c_ulong as usize,
-                        ));
-                        *p_4 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                            as *mut ::core::ffi::c_char;
-                        sprintf(
-                            *p_4,
-                            b"MAKE_RESTARTS=%s%u\0" as *const u8 as *const ::core::ffi::c_char,
-                            if stdio_traced != 0 {
-                                b"-\0" as *const u8 as *const ::core::ffi::c_char
-                            } else {
-                                b"\0" as *const u8 as *const ::core::ffi::c_char
-                            },
-                            restarts,
-                        );
-                        restarts = 0;
-                    }
-                    p_4 = p_4.offset(1 as ::core::ffi::c_int as isize);
+            }
+            restarts = restarts.wrapping_add(1);
+            if 0x1 as ::core::ffi::c_int & db_level != 0 {
+                let mut p_3: *mut *const ::core::ffi::c_char;
+                printf(
+                    b"Re-executing[%u]:\0" as *const u8 as *const ::core::ffi::c_char,
+                    restarts,
+                );
+                p_3 = nargv;
+                while !(*p_3).is_null() {
+                    printf(b" %s\0" as *const u8 as *const ::core::ffi::c_char, *p_3);
+                    p_3 = p_3.offset(1 as ::core::ffi::c_int as isize);
                 }
-                if restarts != 0 {
+                putchar('\n' as i32);
+                fflush(stdout);
+            }
+            let mut p_4: *mut *mut ::core::ffi::c_char;
+            p_4 = environ;
+            while !(*p_4).is_null() {
+                if strncmp(
+                    *p_4,
+                    b"MAKELEVEL=\0" as *const u8 as *const ::core::ffi::c_char,
+                    (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
+                        .wrapping_sub(1)
+                        .wrapping_add(1),
+                ) == 0
+                {
                     alloca_allocations.push(::std::vec::from_elem(
                         0,
                         40 as ::core::ffi::c_int as ::core::ffi::c_ulong as usize,
                     ));
-                    let b: *mut ::core::ffi::c_char =
-                        alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                            as *mut ::core::ffi::c_char;
+                    *p_4 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
+                        as *mut ::core::ffi::c_char;
                     sprintf(
-                        b,
+                        *p_4,
+                        b"%s=%u\0" as *const u8 as *const ::core::ffi::c_char,
+                        MAKELEVEL_NAME.as_ptr(),
+                        makelevel,
+                    );
+                } else if strncmp(
+                    *p_4,
+                    b"MAKE_RESTARTS=\0" as *const u8 as *const ::core::ffi::c_char,
+                    (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
+                ) == 0
+                {
+                    alloca_allocations.push(::std::vec::from_elem(
+                        0,
+                        40 as ::core::ffi::c_int as ::core::ffi::c_ulong as usize,
+                    ));
+                    *p_4 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
+                        as *mut ::core::ffi::c_char;
+                    sprintf(
+                        *p_4,
                         b"MAKE_RESTARTS=%s%u\0" as *const u8 as *const ::core::ffi::c_char,
                         if stdio_traced != 0 {
                             b"-\0" as *const u8 as *const ::core::ffi::c_char
@@ -2823,16 +2796,37 @@ unsafe fn main_0(
                         },
                         restarts,
                     );
-                    putenv(b);
+                    restarts = 0;
                 }
-                fflush(stdout);
-                fflush(stderr);
-                osync_clear();
-                jobserver_pre_child(1);
-                exec_command(nargv as *mut *mut ::core::ffi::c_char, environ);
-                jobserver_post_child(1);
-                temp_stdin_unlink();
-                _exit(127);
+                p_4 = p_4.offset(1 as ::core::ffi::c_int as isize);
+            }
+            if restarts != 0 {
+                alloca_allocations.push(::std::vec::from_elem(
+                    0,
+                    40 as ::core::ffi::c_int as ::core::ffi::c_ulong as usize,
+                ));
+                let b: *mut ::core::ffi::c_char =
+                    alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
+                sprintf(
+                    b,
+                    b"MAKE_RESTARTS=%s%u\0" as *const u8 as *const ::core::ffi::c_char,
+                    if stdio_traced != 0 {
+                        b"-\0" as *const u8 as *const ::core::ffi::c_char
+                    } else {
+                        b"\0" as *const u8 as *const ::core::ffi::c_char
+                    },
+                    restarts,
+                );
+                putenv(b);
+            }
+            fflush(stdout);
+            fflush(stderr);
+            osync_clear();
+            jobserver_pre_child(1);
+            exec_command(nargv as *mut *mut ::core::ffi::c_char, environ);
+            jobserver_post_child(1);
+            temp_stdin_unlink();
+            _exit(127);
         }
         if any_failed != 0 {
             die(MAKE_FAILURE);
@@ -3265,40 +3259,37 @@ unsafe extern "C" fn decode_switches(
                                     true
                                 };
                                 if arg_ok {
-                                        if (*cs).type_0 as ::core::ffi::c_uint
-                                            == string as ::core::ffi::c_int as ::core::ffi::c_uint
-                                        {
-                                            let val: *mut *mut ::core::ffi::c_char =
-                                                (*cs).value_ptr as *mut *mut ::core::ffi::c_char;
-                                            free(*val as *mut ::core::ffi::c_void);
-                                            *val = xstrdup(coptarg);
-                                            if !(*cs).origin.is_null() {
-                                                *(*cs).origin = origin;
-                                            }
-                                        } else {
-                                            sl = *((*cs).value_ptr as *mut *mut stringlist);
-                                            if sl.is_null() {
-                                                sl =
-                                                    xmalloc(::core::mem::size_of::<stringlist>()
-                                                        as size_t)
-                                                        as *mut stringlist;
-                                                (*sl).max = 5;
-                                                (*sl).idx = 0;
-                                                (*sl).list =
-                                                    xmalloc((5 as size_t).wrapping_mul(
-                                                        ::core::mem::size_of::<
-                                                            *mut ::core::ffi::c_char,
-                                                        >(
-                                                        )
-                                                            as size_t,
-                                                    ))
-                                                        as *mut *const ::core::ffi::c_char;
-                                                let fresh10 = &mut (*((*cs).value_ptr
-                                                    as *mut *mut stringlist));
-                                                *fresh10 = sl;
-                                            } else if (*sl).idx == (*sl).max.wrapping_sub(1) {
-                                                (*sl).max = (*sl).max.wrapping_add(5);
-                                                (*sl).list = xrealloc(
+                                    if (*cs).type_0 as ::core::ffi::c_uint
+                                        == string as ::core::ffi::c_int as ::core::ffi::c_uint
+                                    {
+                                        let val: *mut *mut ::core::ffi::c_char =
+                                            (*cs).value_ptr as *mut *mut ::core::ffi::c_char;
+                                        free(*val as *mut ::core::ffi::c_void);
+                                        *val = xstrdup(coptarg);
+                                        if !(*cs).origin.is_null() {
+                                            *(*cs).origin = origin;
+                                        }
+                                    } else {
+                                        sl = *((*cs).value_ptr as *mut *mut stringlist);
+                                        if sl.is_null() {
+                                            sl = xmalloc(
+                                                ::core::mem::size_of::<stringlist>() as size_t
+                                            )
+                                                as *mut stringlist;
+                                            (*sl).max = 5;
+                                            (*sl).idx = 0;
+                                            (*sl).list = xmalloc((5 as size_t).wrapping_mul(
+                                                ::core::mem::size_of::<*mut ::core::ffi::c_char>()
+                                                    as size_t,
+                                            ))
+                                                as *mut *const ::core::ffi::c_char;
+                                            let fresh10 =
+                                                &mut (*((*cs).value_ptr as *mut *mut stringlist));
+                                            *fresh10 = sl;
+                                        } else if (*sl).idx == (*sl).max.wrapping_sub(1) {
+                                            (*sl).max = (*sl).max.wrapping_add(5);
+                                            (*sl).list =
+                                                xrealloc(
                                                     (*sl).list as *mut ::core::ffi::c_void,
                                                     ((*sl).max as size_t).wrapping_mul(
                                                         ::core::mem::size_of::<
@@ -3309,92 +3300,86 @@ unsafe extern "C" fn decode_switches(
                                                     ),
                                                 )
                                                     as *mut *const ::core::ffi::c_char;
-                                            }
-                                            // Skip a value already present (but -f and --warn allow
-                                            // duplicates).
-                                            let duplicate = if (*cs).c != 'f' as i32 && (*cs).c != WARN_OPT {
-                                                let mut k: ::core::ffi::c_uint;
-                                                k = 0;
-                                                while k < (*sl).idx {
-                                                    if **(*sl).list.offset(k as isize)
+                                        }
+                                        // Skip a value already present (but -f and --warn allow
+                                        // duplicates).
+                                        let duplicate = if (*cs).c != 'f' as i32
+                                            && (*cs).c != WARN_OPT
+                                        {
+                                            let mut k: ::core::ffi::c_uint;
+                                            k = 0;
+                                            while k < (*sl).idx {
+                                                if **(*sl).list.offset(k as isize)
+                                                    as ::core::ffi::c_int
+                                                    == *coptarg as ::core::ffi::c_int
+                                                    && (**(*sl).list.offset(k as isize)
                                                         as ::core::ffi::c_int
-                                                        == *coptarg as ::core::ffi::c_int
-                                                        && (**(*sl).list.offset(k as isize)
-                                                            as ::core::ffi::c_int
-                                                            == 0
-                                                            || strcmp(
-                                                                (*(*sl).list.offset(k as isize))
-                                                                    .offset(
-                                                                        1 as ::core::ffi::c_int
-                                                                            as isize,
-                                                                    ),
-                                                                coptarg.offset(
+                                                        == 0
+                                                        || strcmp(
+                                                            (*(*sl).list.offset(k as isize))
+                                                                .offset(
                                                                     1 as ::core::ffi::c_int
                                                                         as isize,
                                                                 ),
-                                                            ) == 0)
-                                                    {
-                                                        break;
-                                                    }
-                                                    k = k.wrapping_add(1);
+                                                            coptarg.offset(
+                                                                1 as ::core::ffi::c_int as isize,
+                                                            ),
+                                                        ) == 0)
+                                                {
+                                                    break;
                                                 }
-                                                k < (*sl).idx
-                                            } else {
-                                                false
-                                            };
-                                            if !duplicate {
-                                                    if (*cs).type_0 as ::core::ffi::c_uint
-                                                        == strlist as ::core::ffi::c_int
-                                                            as ::core::ffi::c_uint
-                                                    {
-                                                        let fresh11 = (*sl).idx;
-                                                        (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let fresh12 = &mut (*(*sl)
-                                                            .list
-                                                            .offset(fresh11 as isize));
-                                                        *fresh12 = xstrdup(coptarg);
-                                                        if !(*cs).origin.is_null() {
-                                                            *(*cs).origin = origin;
-                                                        }
-                                                    } else if (*cs).c == TEMP_STDIN_OPT {
-                                                        if stdin_offset > 0 {
-                                                            fatal(
+                                                k = k.wrapping_add(1);
+                                            }
+                                            k < (*sl).idx
+                                        } else {
+                                            false
+                                        };
+                                        if !duplicate {
+                                            if (*cs).type_0 as ::core::ffi::c_uint
+                                                == strlist as ::core::ffi::c_int
+                                                    as ::core::ffi::c_uint
+                                            {
+                                                let fresh11 = (*sl).idx;
+                                                (*sl).idx = (*sl).idx.wrapping_add(1);
+                                                let fresh12 =
+                                                    &mut (*(*sl).list.offset(fresh11 as isize));
+                                                *fresh12 = xstrdup(coptarg);
+                                                if !(*cs).origin.is_null() {
+                                                    *(*cs).origin = origin;
+                                                }
+                                            } else if (*cs).c == TEMP_STDIN_OPT {
+                                                if stdin_offset > 0 {
+                                                    fatal(
                                                                 NILF,
                                                                 0,
                                                                 b"INTERNAL: multiple --temp-stdin options provided!\0"
                                                                     as *const u8 as *const ::core::ffi::c_char,
                                                             );
-                                                        }
-                                                        stdin_offset =
-                                                            (*sl).idx as ::core::ffi::c_int;
-                                                        let fresh13 = (*sl).idx;
-                                                        (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let fresh14 = &mut (*(*sl)
-                                                            .list
-                                                            .offset(fresh13 as isize));
-                                                        *fresh14 = strcache_add(coptarg);
-                                                        if !(*cs).origin.is_null() {
-                                                            *(*cs).origin = origin;
-                                                        }
-                                                    } else {
-                                                        let fresh15 = (*sl).idx;
-                                                        (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                        let fresh16 = &mut (*(*sl)
-                                                            .list
-                                                            .offset(fresh15 as isize));
-                                                        *fresh16 =
-                                                            expand_command_line_file(coptarg);
-                                                        if !(*cs).origin.is_null() {
-                                                            *(*cs).origin = origin;
-                                                        }
-                                                    }
-                                                    let fresh17 = &mut (*(*sl)
-                                                        .list
-                                                        .offset((*sl).idx as isize));
-                                                    *fresh17 =
-                                                        ::core::ptr::null::<::core::ffi::c_char>();
+                                                }
+                                                stdin_offset = (*sl).idx as ::core::ffi::c_int;
+                                                let fresh13 = (*sl).idx;
+                                                (*sl).idx = (*sl).idx.wrapping_add(1);
+                                                let fresh14 =
+                                                    &mut (*(*sl).list.offset(fresh13 as isize));
+                                                *fresh14 = strcache_add(coptarg);
+                                                if !(*cs).origin.is_null() {
+                                                    *(*cs).origin = origin;
+                                                }
+                                            } else {
+                                                let fresh15 = (*sl).idx;
+                                                (*sl).idx = (*sl).idx.wrapping_add(1);
+                                                let fresh16 =
+                                                    &mut (*(*sl).list.offset(fresh15 as isize));
+                                                *fresh16 = expand_command_line_file(coptarg);
+                                                if !(*cs).origin.is_null() {
+                                                    *(*cs).origin = origin;
+                                                }
                                             }
+                                            let fresh17 =
+                                                &mut (*(*sl).list.offset((*sl).idx as isize));
+                                            *fresh17 = ::core::ptr::null::<::core::ffi::c_char>();
                                         }
+                                    }
                                 }
                             }
                         }

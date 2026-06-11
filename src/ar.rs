@@ -1,9 +1,9 @@
 use libc::{fnmatch, free, strchr};
 
-use crate::file::{Dep, File};
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
-use crate::strcache::strcache_add;
+use crate::file::{Dep, File};
 use crate::misc::{xcalloc, xstrdup};
+use crate::strcache::strcache_add;
 extern "C" {
     pub type variable_set_list;
     pub type commands;
@@ -101,7 +101,8 @@ pub unsafe extern "C" fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ff
     end = p
         .offset(strlen(p) as isize)
         .offset(-(1 as ::core::ffi::c_int as isize));
-    if *end as ::core::ffi::c_int != ')' as i32 || end == p.offset(1 as ::core::ffi::c_int as isize) {
+    if *end as ::core::ffi::c_int != ')' as i32 || end == p.offset(1 as ::core::ffi::c_int as isize)
+    {
         return 0;
     }
     if *p.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '(' as i32

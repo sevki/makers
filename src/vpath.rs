@@ -1,13 +1,13 @@
 use libc::{__errno_location, free, printf, puts, strcmp, strrchr};
 
-use crate::stdio::{FILE};
-use crate::file::{File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, size_t, time_t, uintmax_t,
 };
-use crate::strcache::{strcache_add, strcache_add_len};
+use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{xmalloc, xrealloc};
+use crate::stdio::FILE;
+use crate::strcache::{strcache_add, strcache_add_len};
 extern "C" {
     pub type dep;
     pub type commands;
@@ -54,8 +54,8 @@ extern "C" {
         str: *const ::core::ffi::c_char,
     ) -> ::core::ffi::c_int;
 }
-pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
+pub use crate::sys_stat::timespec;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
@@ -174,7 +174,10 @@ pub unsafe extern "C" fn construct_vpath_list(
                         == (*path).percent.offset_from((*path).pattern) as ::core::ffi::c_long)
                     && (*pattern as ::core::ffi::c_int == *(*path).pattern as ::core::ffi::c_int
                         && (*pattern as ::core::ffi::c_int == 0
-                            || strcmp(pattern.offset(1 as ::core::ffi::c_int as isize), (*path).pattern.offset(1 as ::core::ffi::c_int as isize), ) == 0))
+                            || strcmp(
+                                pattern.offset(1 as ::core::ffi::c_int as isize),
+                                (*path).pattern.offset(1 as ::core::ffi::c_int as isize),
+                            ) == 0))
             {
                 if let Some(lp) = lastpath.as_mut() {
                     lp.next = next;
@@ -232,7 +235,8 @@ pub unsafe extern "C" fn construct_vpath_list(
         }
         len = p.offset_from(v) as ::core::ffi::c_long as size_t;
         if len > 1
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '/' as i32 {
+            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '/' as i32
+        {
             len = len.wrapping_sub(1);
         }
         if len > 1 || *v as ::core::ffi::c_int != '.' as i32 {
@@ -326,7 +330,10 @@ unsafe extern "C" fn selective_vpath_search(
     } else {
         0
     }) as size_t;
-    filename = if name_dplen > 0 { n.offset(1 as ::core::ffi::c_int as isize) } else { file
+    filename = if name_dplen > 0 {
+        n.offset(1 as ::core::ffi::c_int as isize)
+    } else {
+        file
     };
     if name_dplen > 0 {
         flen = flen.wrapping_sub(name_dplen.wrapping_add(1));
@@ -362,7 +369,8 @@ unsafe extern "C" fn selective_vpath_search(
             ) as *mut ::core::ffi::c_char;
         }
         if p != name
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '/' as i32 {
+            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '/' as i32
+        {
             *p = '/' as i32 as ::core::ffi::c_char;
             memcpy(
                 p.offset(1 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void,
@@ -466,7 +474,8 @@ unsafe extern "C" fn selective_vpath_search(
                 }
                 return strcache_add_len(
                     name,
-                    (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name) as ::core::ffi::c_long as size_t)
+                    (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name)
+                        as ::core::ffi::c_long as size_t)
                         .wrapping_add(flen),
                 );
             }
@@ -534,11 +543,7 @@ pub unsafe fn print_vpath_data_base() {
             printf(
                 b"%s%c\0" as *const u8 as *const ::core::ffi::c_char,
                 *(*v).searchpath.offset(i as isize),
-                if (*(*v)
-                    .searchpath
-                    .offset(i.wrapping_add(1) as isize))
-                .is_null()
-                {
+                if (*(*v).searchpath.offset(i.wrapping_add(1) as isize)).is_null() {
                     '\n' as i32
                 } else {
                     PATH_SEPARATOR_CHAR

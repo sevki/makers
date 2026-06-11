@@ -1967,7 +1967,8 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                                         } else {
                                                             cmdleft = ::core::ptr::null_mut::<
                                                                 ::core::ffi::c_char,
-                                                            >();
+                                                            >(
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -2068,9 +2069,8 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                                 cmds_started =
                                                     (*fstart).lineno as ::core::ffi::c_uint;
                                                 if l_4.wrapping_add(2) > commands_len {
-                                                    commands_len = l_4
-                                                        .wrapping_add(2)
-                                                        .wrapping_mul(2);
+                                                    commands_len =
+                                                        l_4.wrapping_add(2).wrapping_mul(2);
                                                     cmd_buf.resize(commands_len as usize, 0);
                                                     commands = cmd_buf.as_mut_ptr()
                                                         as *mut ::core::ffi::c_char;

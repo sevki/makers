@@ -1,12 +1,12 @@
 use libc::{__errno_location, free, printf, puts, strcmp, strerror, strrchr};
 
-use crate::stdio::{FILE};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __size_t, __syscall_slong_t, __time_t, __uid_t, dev_t, ino_t, size_t, time_t,
 };
-use crate::strcache::strcache_add_len;
 use crate::misc::{xcalloc, xmalloc, xrealloc};
+use crate::stdio::FILE;
+use crate::strcache::strcache_add_len;
 extern "C" {
     pub type __dirstream;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -61,8 +61,8 @@ extern "C" {
     fn jhash_string(key: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint;
     static mut hash_deleted_item: *const ::core::ffi::c_void;
 }
-pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
+pub use crate::sys_stat::timespec;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct glob_t {
@@ -148,8 +148,8 @@ unsafe extern "C" fn directory_contents_hash_1(
 ) -> ::core::ffi::c_ulong {
     let key: *const directory_contents = key_0 as *const directory_contents;
     let hash: ::core::ffi::c_ulong;
-    hash = (((*key).dev as ::core::ffi::c_uint) << 4
-        ^ (*key).ino as ::core::ffi::c_uint) as ::core::ffi::c_ulong;
+    hash = (((*key).dev as ::core::ffi::c_uint) << 4 ^ (*key).ino as ::core::ffi::c_uint)
+        as ::core::ffi::c_ulong;
     hash
 }
 unsafe extern "C" fn directory_contents_hash_2(
@@ -157,8 +157,8 @@ unsafe extern "C" fn directory_contents_hash_2(
 ) -> ::core::ffi::c_ulong {
     let key: *const directory_contents = key_0 as *const directory_contents;
     let hash: ::core::ffi::c_ulong;
-    hash = (((*key).dev as ::core::ffi::c_uint) << 4
-        ^ !(*key).ino as ::core::ffi::c_uint) as ::core::ffi::c_ulong;
+    hash = (((*key).dev as ::core::ffi::c_uint) << 4 ^ !(*key).ino as ::core::ffi::c_uint)
+        as ::core::ffi::c_ulong;
     hash
 }
 unsafe extern "C" fn directory_contents_hash_cmp(
@@ -210,7 +210,9 @@ pub unsafe extern "C" fn directory_hash_1(key: *const ::core::ffi::c_void) -> ::
     _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn directory_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn directory_hash_2(
+    mut _key: *const ::core::ffi::c_void,
+) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
@@ -251,7 +253,9 @@ pub unsafe extern "C" fn dirfile_hash_1(key: *const ::core::ffi::c_void) -> ::co
     _result_
 }
 #[no_mangle]
-pub unsafe extern "C" fn dirfile_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe extern "C" fn dirfile_hash_2(
+    mut _key: *const ::core::ffi::c_void,
+) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
@@ -261,8 +265,7 @@ unsafe extern "C" fn dirfile_hash_cmp(
 ) -> ::core::ffi::c_int {
     let x: *const dirfile = xv as *const dirfile;
     let y: *const dirfile = yv as *const dirfile;
-    let result: ::core::ffi::c_int =
-        (*x).length.wrapping_sub((*y).length) as ::core::ffi::c_int;
+    let result: ::core::ffi::c_int = (*x).length.wrapping_sub((*y).length) as ::core::ffi::c_int;
     if result != 0 {
         return result;
     }
@@ -538,7 +541,8 @@ unsafe extern "C" fn dir_contents_file_exists_p(
                     && (*(&raw mut (*d).d_name as *mut ::core::ffi::c_char) as ::core::ffi::c_int
                         == 0
                         || strcmp(
-                            (&raw mut (*d).d_name as *mut ::core::ffi::c_char).offset(1 as ::core::ffi::c_int as isize),
+                            (&raw mut (*d).d_name as *mut ::core::ffi::c_char)
+                                .offset(1 as ::core::ffi::c_int as isize),
                             filename.offset(1 as ::core::ffi::c_int as isize),
                         ) == 0))
             {
@@ -581,8 +585,7 @@ pub unsafe extern "C" fn file_exists_p(name: *const ::core::ffi::c_char) -> ::co
         let p: *mut ::core::ffi::c_char;
         alloca_allocations.push(::std::vec::from_elem(
             0,
-            (dirend.offset_from(name) as ::core::ffi::c_long + 1)
-                as ::core::ffi::c_ulong as usize,
+            (dirend.offset_from(name) as ::core::ffi::c_long + 1) as ::core::ffi::c_ulong as usize,
         ));
         p = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         memcpy(
@@ -590,8 +593,7 @@ pub unsafe extern "C" fn file_exists_p(name: *const ::core::ffi::c_char) -> ::co
             name as *const ::core::ffi::c_void,
             dirend.offset_from(name) as ::core::ffi::c_long as size_t,
         );
-        *p.offset(dirend.offset_from(name) as ::core::ffi::c_long as isize) =
-            0;
+        *p.offset(dirend.offset_from(name) as ::core::ffi::c_long as isize) = 0;
         dirname = p;
     }
     slash = slash.offset(1 as ::core::ffi::c_int as isize);
@@ -616,8 +618,7 @@ pub unsafe extern "C" fn file_impossible(mut filename: *const ::core::ffi::c_cha
             let cp: *mut ::core::ffi::c_char;
             alloca_allocations.push(::std::vec::from_elem(
                 0,
-                (dirend.offset_from(p) as ::core::ffi::c_long + 1)
-                    as ::core::ffi::c_ulong as usize,
+                (dirend.offset_from(p) as ::core::ffi::c_long + 1) as ::core::ffi::c_ulong as usize,
             ));
             cp = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
@@ -625,8 +626,7 @@ pub unsafe extern "C" fn file_impossible(mut filename: *const ::core::ffi::c_cha
                 p as *const ::core::ffi::c_void,
                 dirend.offset_from(p) as ::core::ffi::c_long as size_t,
             );
-            *cp.offset(dirend.offset_from(p) as ::core::ffi::c_long as isize) =
-                0;
+            *cp.offset(dirend.offset_from(p) as ::core::ffi::c_long as isize) = 0;
             dirname = cp;
         }
         dir = find_directory(dirname);
@@ -693,8 +693,8 @@ pub unsafe extern "C" fn file_impossible_p(
             let cp: *mut ::core::ffi::c_char;
             alloca_allocations.push(::std::vec::from_elem(
                 0,
-                (dirend.offset_from(filename) as ::core::ffi::c_long + 1)
-                    as ::core::ffi::c_ulong as usize,
+                (dirend.offset_from(filename) as ::core::ffi::c_long + 1) as ::core::ffi::c_ulong
+                    as usize,
             ));
             cp = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
@@ -702,8 +702,7 @@ pub unsafe extern "C" fn file_impossible_p(
                 filename as *const ::core::ffi::c_void,
                 dirend.offset_from(filename) as ::core::ffi::c_long as size_t,
             );
-            *cp.offset(dirend.offset_from(filename) as ::core::ffi::c_long as isize) =
-                0;
+            *cp.offset(dirend.offset_from(filename) as ::core::ffi::c_long as isize) = 0;
             dirname = cp;
         }
         dir = (*find_directory(dirname)).contents;
@@ -724,9 +723,7 @@ pub unsafe extern "C" fn file_impossible_p(
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn dir_name(
-    dir: *const ::core::ffi::c_char,
-) -> *const ::core::ffi::c_char {
+pub unsafe extern "C" fn dir_name(dir: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char {
     (*find_directory(dir)).name
 }
 #[no_mangle]

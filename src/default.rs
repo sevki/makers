@@ -1,7 +1,7 @@
-use ::c2rust_bitfields;
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::strcache::strcache_add;
 use crate::misc::{xmalloc, xstrdup};
+use crate::strcache::strcache_add;
+use ::c2rust_bitfields;
 extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     static mut no_builtin_rules_flag: ::core::ffi::c_int;
@@ -442,8 +442,7 @@ pub unsafe fn set_default_suffixes() {
     if no_builtin_rules_flag != 0 {
         define_variable_in_set(
             b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                .wrapping_sub(1),
+            (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
             b"\0" as *const u8 as *const ::core::ffi::c_char,
             o_default,
             0,
@@ -471,8 +470,7 @@ pub unsafe fn set_default_suffixes() {
         }
         define_variable_in_set(
             b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                .wrapping_sub(1),
+            (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
             &raw const default_suffixes as *const ::core::ffi::c_char,
             o_default,
             0,

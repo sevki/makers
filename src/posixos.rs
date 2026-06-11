@@ -1,12 +1,15 @@
-use libc::{__errno_location, close, dup, fcntl, free, open, perror, pipe, printf, sprintf, sscanf, strcmp, strerror, unlink};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
-use crate::stdio::{FILE};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, mode_t, pid_t, sig_atomic_t,
     size_t, ssize_t, uintmax_t,
 };
 use crate::misc::{get_tmpfd, make_pid, xmalloc, xstrdup};
+use crate::stdio::FILE;
+use libc::{
+    __errno_location, close, dup, fcntl, free, open, perror, pipe, printf, sprintf, sscanf, strcmp,
+    strerror, unlink,
+};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 extern "C" {
     fn pselect(
         __nfds: ::core::ffi::c_int,
@@ -57,8 +60,8 @@ pub type __fd_mask = ::core::ffi::c_long;
 pub struct fd_set {
     pub fds_bits: [__fd_mask; 16],
 }
-pub use crate::sys_stat::stat;
 use crate::floc::Floc;
+pub use crate::sys_stat::stat;
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -108,12 +111,10 @@ pub unsafe extern "C" fn check_io_state() -> ::core::ffi::c_uint {
     if fcntl(fileno(stdin), F_GETFD) != -1 || *__errno_location() != EBADF {
         state |= IO_STDIN_OK as ::core::ffi::c_uint;
     }
-    if fcntl(fileno(stdout), F_GETFD) != -1 || *__errno_location() != EBADF
-    {
+    if fcntl(fileno(stdout), F_GETFD) != -1 || *__errno_location() != EBADF {
         state |= IO_STDOUT_OK as ::core::ffi::c_uint;
     }
-    if fcntl(fileno(stderr), F_GETFD) != -1 || *__errno_location() != EBADF
-    {
+    if fcntl(fileno(stderr), F_GETFD) != -1 || *__errno_location() != EBADF {
         state |= IO_STDERR_OK as ::core::ffi::c_uint;
     }
     if state & (0x8 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int) as ::core::ffi::c_uint
@@ -135,8 +136,7 @@ pub unsafe extern "C" fn check_io_state() -> ::core::ffi::c_uint {
 pub const FIFO_PREFIX: [::core::ffi::c_char; 6] =
     unsafe { ::core::mem::transmute::<[u8; 6], [::core::ffi::c_char; 6]>(*b"fifo:\0") };
 static JOB_ROOT: AtomicBool = AtomicBool::new(false);
-static mut job_fds: [::core::ffi::c_int; 2] =
-    [-1, -1];
+static mut job_fds: [::core::ffi::c_int; 2] = [-1, -1];
 static mut job_rfd: ::core::ffi::c_int = -1;
 static mut token: ::core::ffi::c_char = '+' as i32 as ::core::ffi::c_char;
 static mut js_type: js_type = js_none;
@@ -197,16 +197,12 @@ pub unsafe extern "C" fn jobserver_setup(
     let mut r: ::core::ffi::c_int;
     let mut k: ::core::ffi::c_int;
     JOB_ROOT.store(true, Ordering::Relaxed);
-    if style.is_null()
-        || strcmp(style, b"fifo\0" as *const u8 as *const ::core::ffi::c_char)
-            == 0
-    {
+    if style.is_null() || strcmp(style, b"fifo\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
         let tmpdir: *const ::core::ffi::c_char = get_tmpdir();
         fifo_name = xmalloc(
             (strlen(tmpdir) as size_t)
                 .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                        .wrapping_sub(1),
+                    (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
                 )
                 .wrapping_add(INTSTR_LENGTH)
                 .wrapping_add(2),
@@ -232,13 +228,8 @@ pub unsafe extern "C" fn jobserver_setup(
             fifo_name = ::core::ptr::null_mut::<::core::ffi::c_char>();
         } else {
             loop {
-                job_fds[0 as usize] = open(
-                    fifo_name,
-                    0o4000 as ::core::ffi::c_int,
-                );
-                if !(job_fds[0 as usize] == -1
-                    && *__errno_location() == EINTR)
-                {
+                job_fds[0 as usize] = open(fifo_name, 0o4000 as ::core::ffi::c_int);
+                if !(job_fds[0 as usize] == -1 && *__errno_location() == EINTR) {
                     break;
                 }
             }
@@ -253,11 +244,8 @@ pub unsafe extern "C" fn jobserver_setup(
                 );
             }
             loop {
-                job_fds[1 as usize] =
-                    open(fifo_name, 0o1 as ::core::ffi::c_int);
-                if !(job_fds[1 as usize] == -1
-                    && *__errno_location() == EINTR)
-                {
+                job_fds[1 as usize] = open(fifo_name, 0o1 as ::core::ffi::c_int);
+                if !(job_fds[1 as usize] == -1 && *__errno_location() == EINTR) {
                     break;
                 }
             }
@@ -276,8 +264,7 @@ pub unsafe extern "C" fn jobserver_setup(
     }
     if js_type as ::core::ffi::c_uint == js_none as ::core::ffi::c_int as ::core::ffi::c_uint {
         if !style.is_null()
-            && strcmp(style, b"pipe\0" as *const u8 as *const ::core::ffi::c_char)
-                != 0
+            && strcmp(style, b"pipe\0" as *const u8 as *const ::core::ffi::c_char) != 0
         {
             fatal(
                 ::core::ptr::null_mut::<Floc>(),
@@ -302,10 +289,7 @@ pub unsafe extern "C" fn jobserver_setup(
     if make_job_rfd() < 0 {
         pfatal_with_name(b"duping jobs pipe\0" as *const u8 as *const ::core::ffi::c_char);
     }
-    force_blocking(
-        job_fds[1 as usize],
-        0,
-    );
+    force_blocking(job_fds[1 as usize], 0);
     k = 0;
     while k < slots {
         loop {
@@ -335,14 +319,8 @@ pub unsafe extern "C" fn jobserver_setup(
         }
         k += 1;
     }
-    force_blocking(
-        job_fds[1 as usize],
-        1,
-    );
-    set_blocking(
-        job_fds[0 as usize],
-        0,
-    );
+    force_blocking(job_fds[1 as usize], 1);
+    set_blocking(job_fds[0 as usize], 0);
     1
 }
 #[no_mangle]
@@ -363,9 +341,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
         ));
         loop {
             job_fds[0 as usize] = open(fifo_name, 0);
-            if !(job_fds[0 as usize] == -1
-                && *__errno_location() == EINTR)
-            {
+            if !(job_fds[0 as usize] == -1 && *__errno_location() == EINTR) {
                 break;
             }
         }
@@ -382,9 +358,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
         }
         loop {
             job_fds[1 as usize] = open(fifo_name, 0o1 as ::core::ffi::c_int);
-            if !(job_fds[1 as usize] == -1
-                && *__errno_location() == EINTR)
-            {
+            if !(job_fds[1 as usize] == -1 && *__errno_location() == EINTR) {
                 break;
             }
         }
@@ -410,9 +384,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
         if rfd == -2 || wfd == -2 {
             return 0;
         }
-        if !(fcntl(rfd, F_GETFD) != -1)
-            || !(fcntl(wfd, F_GETFD) != -1)
-        {
+        if !(fcntl(rfd, F_GETFD) != -1) || !(fcntl(wfd, F_GETFD) != -1) {
             return 0;
         }
         job_fds[0 as usize] = rfd;
@@ -434,10 +406,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(
         jobserver_clear();
         return 0;
     }
-    set_blocking(
-        job_fds[0 as usize],
-        0,
-    );
+    set_blocking(job_fds[0 as usize], 0);
     fd_noinherit(job_fds[0 as usize]);
     fd_noinherit(job_fds[1 as usize]);
     1
@@ -449,8 +418,7 @@ pub unsafe extern "C" fn jobserver_get_auth() -> *mut ::core::ffi::c_char {
         auth = xmalloc(
             (strlen(fifo_name) as size_t)
                 .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
-                        .wrapping_sub(1),
+                    (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
                 )
                 .wrapping_add(1),
         ) as *mut ::core::ffi::c_char;
@@ -460,11 +428,7 @@ pub unsafe extern "C" fn jobserver_get_auth() -> *mut ::core::ffi::c_char {
             fifo_name,
         );
     } else {
-        auth = xmalloc(
-            INTSTR_LENGTH
-                .wrapping_mul(2)
-                .wrapping_add(2),
-        ) as *mut ::core::ffi::c_char;
+        auth = xmalloc(INTSTR_LENGTH.wrapping_mul(2).wrapping_add(2)) as *mut ::core::ffi::c_char;
         sprintf(
             auth,
             b"%d,%d\0" as *const u8 as *const ::core::ffi::c_char,
@@ -544,10 +508,7 @@ pub unsafe extern "C" fn jobserver_release(is_fatal: ::core::ffi::c_int) {
 pub unsafe extern "C" fn jobserver_acquire_all() -> ::core::ffi::c_uint {
     let mut r: ::core::ffi::c_int;
     let mut tokens: ::core::ffi::c_uint = 0;
-    set_blocking(
-        job_fds[0 as usize],
-        1,
-    );
+    set_blocking(job_fds[0 as usize], 1);
     close(job_fds[1 as usize]);
     job_fds[1 as usize] = -1;
     loop {
@@ -604,10 +565,7 @@ pub unsafe extern "C" fn jobserver_signal() {
 }
 #[no_mangle]
 pub unsafe extern "C" fn jobserver_pre_acquire() {
-    if job_rfd < 0
-        && job_fds[0 as usize] >= 0
-        && make_job_rfd() < 0
-    {
+    if job_rfd < 0 && job_fds[0 as usize] >= 0 && make_job_rfd() < 0 {
         pfatal_with_name(b"duping jobs pipe\0" as *const u8 as *const ::core::ffi::c_char);
     }
 }
@@ -640,8 +598,7 @@ pub unsafe extern "C" fn jobserver_acquire(timeout: ::core::ffi::c_int) -> ::cor
             __i = __i.wrapping_add(1);
         }
         readfds.fds_bits[(job_fds[0 as usize] / __NFDBITS) as usize] |=
-            ((1) << (job_fds[0 as usize] % __NFDBITS))
-                as __fd_mask;
+            ((1) << (job_fds[0 as usize] % __NFDBITS)) as __fd_mask;
         r = pselect(
             job_fds[0 as usize] + 1,
             &raw mut readfds,
@@ -713,8 +670,7 @@ pub unsafe extern "C" fn osync_get_mutex() -> *mut ::core::ffi::c_char {
         mutex = xmalloc(
             (strlen(osync_tmpfile) as size_t)
                 .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
-                        .wrapping_sub(1),
+                    (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
                 )
                 .wrapping_add(1),
         ) as *mut ::core::ffi::c_char;
@@ -900,11 +856,7 @@ pub unsafe extern "C" fn fd_set_append(fd: ::core::ffi::c_int) -> ::core::ffi::c
         if flags >= 0 {
             let mut r: ::core::ffi::c_int;
             loop {
-                r = fcntl(
-                    fd,
-                    4,
-                    flags | 0o2000 as ::core::ffi::c_int,
-                );
+                r = fcntl(fd, 4, flags | 0o2000 as ::core::ffi::c_int);
                 if !(r == -1 && *__errno_location() == EINTR) {
                     break;
                 }
@@ -914,10 +866,7 @@ pub unsafe extern "C" fn fd_set_append(fd: ::core::ffi::c_int) -> ::core::ffi::c
     flags
 }
 #[no_mangle]
-pub unsafe extern "C" fn fd_reset_append(
-    fd: ::core::ffi::c_int,
-    flags: ::core::ffi::c_int,
-) {
+pub unsafe extern "C" fn fd_reset_append(fd: ::core::ffi::c_int, flags: ::core::ffi::c_int) {
     if flags >= 0 {
         let mut r: ::core::ffi::c_int;
         loop {
@@ -965,8 +914,7 @@ pub unsafe extern "C" fn os_anontmp() -> ::core::ffi::c_int {
         && (*tdir as ::core::ffi::c_int == 0
             || strcmp(
                 tdir.offset(1 as isize),
-                (b"/tmp\0" as *const u8 as *const ::core::ffi::c_char)
-                    .offset(1 as isize),
+                (b"/tmp\0" as *const u8 as *const ::core::ffi::c_char).offset(1 as isize),
             ) == 0)
     {
         let mask: mode_t = umask(0o77 as __mode_t) as mode_t;

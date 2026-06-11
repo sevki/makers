@@ -1,5 +1,5 @@
-use crate::floc::Floc;
 pub use crate::ffi_types::size_t;
+use crate::floc::Floc;
 
 extern "C" {
     pub type file;

@@ -1,9 +1,9 @@
-use libc::{__errno_location, close, open, strcmp, strrchr};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, intmax_t, off_t, size_t, ssize_t, uintmax_t,
 };
 use crate::misc::{make_toui, readbuf, writebuf};
+use libc::{__errno_location, close, open, strcmp, strrchr};
 extern "C" {
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
@@ -35,8 +35,8 @@ extern "C" {
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
-pub use crate::sys_stat::timespec;
 pub use crate::sys_stat::stat;
+pub use crate::sys_stat::timespec;
 
 pub type ar_member_func_t = Option<
     unsafe extern "C" fn(
@@ -89,7 +89,10 @@ fn parse_int(field: &[u8], base: u32, max: u64, what: &str, archive: &str, name:
     // end-of-field. Mirrors the C parser's two `while` loops.
     let start = field.iter().position(|&b| b != b' ').unwrap_or(field.len());
     let trailing = &field[start..];
-    let end = trailing.iter().position(|&b| b == b' ').unwrap_or(trailing.len());
+    let end = trailing
+        .iter()
+        .position(|&b| b == b' ')
+        .unwrap_or(trailing.len());
     let token = &trailing[..end];
 
     if token.is_empty() {
@@ -227,8 +230,10 @@ pub unsafe extern "C" fn ar_scan(
                 *p = 0;
             }
             if is_namemap == 0
-                && (*name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == ' ' as i32
-                    || *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32)
+                && (*name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                    == ' ' as i32
+                    || *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                        == '/' as i32)
                 && !namemap.is_null()
             {
                 let mut err: *const ::core::ffi::c_char =
@@ -245,8 +250,10 @@ pub unsafe extern "C" fn ar_scan(
                     break;
                 }
                 long_name = 1;
-            } else if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '#' as i32
-                && *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '1' as i32
+            } else if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                == '#' as i32
+                && *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+                    == '1' as i32
                 && *name.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                     == '/' as i32
             {
@@ -269,8 +276,7 @@ pub unsafe extern "C" fn ar_scan(
                 }
                 alloca_allocations.push(::std::vec::from_elem(
                     0,
-                    name_len_0.wrapping_add(1) as ::core::ffi::c_ulong
-                        as usize,
+                    name_len_0.wrapping_add(1) as ::core::ffi::c_ulong as usize,
                 ));
                 name =
                     alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
@@ -389,7 +395,8 @@ pub unsafe extern "C" fn ar_scan(
                 while clear < limit {
                     if *clear as ::core::ffi::c_int == '\n' as i32 {
                         *clear = 0;
-                        if *clear.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '/' as i32
+                        if *clear.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
+                            == '/' as i32
                         {
                             *clear.offset(-(1 as ::core::ffi::c_int) as isize) = 0;
                         }
@@ -418,7 +425,10 @@ pub unsafe extern "C" fn ar_name_equal(
     let p: *const ::core::ffi::c_char;
     if *name as ::core::ffi::c_int == *mem as ::core::ffi::c_int
         && (*name as ::core::ffi::c_int == 0
-            || strcmp(name.offset(1 as ::core::ffi::c_int as isize), mem.offset(1 as ::core::ffi::c_int as isize), ) == 0)
+            || strcmp(
+                name.offset(1 as ::core::ffi::c_int as isize),
+                mem.offset(1 as ::core::ffi::c_int as isize),
+            ) == 0)
     {
         return 1;
     }
@@ -439,8 +449,7 @@ pub unsafe extern "C" fn ar_name_equal(
         return (strncmp(
             name,
             mem,
-            (::core::mem::size_of::<[::core::ffi::c_char; 16]>() as size_t)
-                .wrapping_sub(1),
+            (::core::mem::size_of::<[::core::ffi::c_char; 16]>() as size_t).wrapping_sub(1),
         ) == 0) as ::core::ffi::c_int;
     }
     (strcmp(name, mem) == 0) as ::core::ffi::c_int
