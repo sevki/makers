@@ -20,25 +20,11 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
-pub type file = File;
-pub type cmd_state = ::core::ffi::c_uint;
-pub const cs_finished: cmd_state = 3;
-pub const cs_running: cmd_state = 2;
-pub const cs_deps_running: cmd_state = 1;
-pub const cs_not_started: cmd_state = 0;
-pub type update_status = ::core::ffi::c_uint;
-pub type update_status_0 = u32;
-pub const us_failed: update_status_0 = 3;
-pub const us_question: update_status_0 = 2;
-pub const us_none: update_status_0 = 1;
-pub const us_success: update_status_0 = 0;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
-pub type dep = Dep;
-pub type commands = Commands;
 use crate::floc::Floc;
 
 pub const o_invalid: variable_origin = 7;

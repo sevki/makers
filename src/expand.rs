@@ -1,3 +1,4 @@
+pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, File, VariableSet, VariableSetList};
 use crate::misc::{lindex, xmalloc, xrealloc, xstrdup, xstrndup};
@@ -43,23 +44,11 @@ impl Drop for OwnedCStr {
     }
 }
 
-pub type file = File;
-pub type cmd_state = ::core::ffi::c_uint;
-pub const cs_finished: cmd_state = 3;
-pub const cs_running: cmd_state = 2;
-pub const cs_deps_running: cmd_state = 1;
-pub const cs_not_started: cmd_state = 0;
-pub type update_status = ::core::ffi::c_uint;
-pub const us_failed: update_status = 3;
-pub const us_question: update_status = 2;
-pub const us_none: update_status = 1;
-pub const us_success: update_status = 0;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
-pub type commands = Commands;
 use crate::floc::Floc;
 use crate::function::{handle_function, patsubst_expand_pat};
 use crate::make_main::{db_level, stopchar_map};
