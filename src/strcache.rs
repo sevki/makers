@@ -7,9 +7,9 @@
 //! buffers plus a separate open-addressed `hash_table`.
 //!
 //! This implementation uses a small [`salsa`] interning database for UTF-8
-//! strings and a byte-oriented fallback set for non-UTF-8 names. In both paths,
-//! interned values are kept in leaked, NUL-terminated, address-stable storage —
-//! exactly make's ownership model (interned strings live for the whole process).
+//! strings and a byte-oriented fallback set for non-UTF-8 names. For both paths,
+//! the C-facing canonical pointers are backed by leaked, NUL-terminated,
+//! address-stable storage for the lifetime of the process.
 //!
 //! Two things are handled explicitly:
 //!
