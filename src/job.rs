@@ -1588,7 +1588,10 @@ pub unsafe fn new_job(file: *mut file) {
     }
     start_waiting_job(c);
     if job_slots == 1 || not_parallel != 0 {
-        while (*file).command_state as ::core::ffi::c_int == CommandState::Running as ::core::ffi::c_int {
+        // reap_children updates command_state through the global child list,
+        // which aliases `file` — invisible to clippy's immutability check.
+        #[allow(clippy::while_immutable_condition)]
+        while (*file).command_state == CommandState::Running {
             reap_children(1, 0);
         }
     }
