@@ -1,3 +1,4 @@
+pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
@@ -109,8 +110,6 @@ pub type variable_set = VariableSet;
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
-pub type dep = Dep;
-pub type commands = Commands;
 use crate::floc::Floc;
 
 pub const o_invalid: variable_origin = 7;
