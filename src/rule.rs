@@ -52,7 +52,11 @@ pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
 impl crate::file::NextLinked for Rule {
     unsafe fn next(this: *const Self) -> *mut Self {
-        (*this).next
+        if this.is_null() {
+            ::core::ptr::null_mut::<Self>()
+        } else {
+            (*this).next
+        }
     }
 }
 /// An implicit (pattern or suffix) rule in the rule chain.
