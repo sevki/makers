@@ -404,6 +404,9 @@ macro_rules! impl_seq_node {
     ($t:ty $(, $extra:tt)?) => {
         impl NextLinked for $t {
             unsafe fn next(this: *const Self) -> *mut Self {
+                if this.is_null() {
+                    return ::core::ptr::null_mut::<Self>();
+                }
                 (*this).next
             }
         }
@@ -412,15 +415,27 @@ macro_rules! impl_seq_node {
                 xcalloc(::core::mem::size_of::<Self>() as size_t) as *mut Self
             }
             unsafe fn name(this: *const Self) -> *const ::core::ffi::c_char {
+                if this.is_null() {
+                    return ::core::ptr::null::<::core::ffi::c_char>();
+                }
                 (*this).name
             }
             unsafe fn set_name(this: *mut Self, name: *const ::core::ffi::c_char) {
+                if this.is_null() {
+                    return;
+                }
                 (*this).name = name;
             }
             unsafe fn set_next(this: *mut Self, next: *mut Self) {
+                if this.is_null() {
+                    return;
+                }
                 (*this).next = next;
             }
             unsafe fn next_slot(this: *mut Self) -> *mut *mut Self {
+                if this.is_null() {
+                    return ::core::ptr::null_mut::<*mut Self>();
+                }
                 &raw mut (*this).next
             }
             $(impl_seq_node!(@wait $extra);)?
@@ -428,6 +443,9 @@ macro_rules! impl_seq_node {
     };
     (@wait wait) => {
         unsafe fn mark_wait(this: *mut Self) {
+            if this.is_null() {
+                return;
+            }
             (*this).wait_here = true;
         }
     };
