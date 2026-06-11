@@ -1,10 +1,21 @@
+pub use crate::expand::allocated_expand_string_for_file;
+pub use crate::file::enter_file;
+pub use crate::file::enter_prereqs;
+pub use crate::file::lookup_file;
+pub use crate::file::split_prereqs;
+pub use crate::load::load_file;
+pub use crate::make_main::default_file;
+pub use crate::rule::create_pattern_rule;
+pub use crate::rule::suffix_file;
+pub use crate::variable::initialize_file_variables;
+use crate::ar::ar_glob;
+use crate::file::SeqNode;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __size_t, __syscall_slong_t, __time_t, __uid_t, size_t, uintmax_t,
 };
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
-use crate::misc::free_ns_chain;
 use crate::misc::{
     collapse_continuations, copy_dep, copy_dep_chain, find_next_token, next_token, xcalloc,
     xmalloc, xrealloc, xstrdup, xstrndup,
@@ -257,7 +268,7 @@ unsafe extern "C" fn free_ns(n: *mut NameSeq) {
 }
 #[inline]
 unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
-    free_ns_chain(d as *mut NameSeq);
+    crate::file::free_seq_chain(d);
 }
 pub const NONEXISTENT_MTIME: i32 = 1;
 static mut toplevel_conditionals: conditionals = conditionals {
@@ -3517,7 +3528,7 @@ pub unsafe fn parse_file_seq(
                     strcache_add(__n)
                 } else {
                     xstrdup(__n) as *const ::core::ffi::c_char
-                };
+                });
                 if found_wait != 0 {
                     let dep_ref = (ns as *mut nameseq as *mut dep)
                         .as_mut()
@@ -3579,7 +3590,7 @@ pub unsafe fn parse_file_seq(
                         let mut found: *mut nameseq =
                             ar_glob(ctx, *nlist.offset(i as isize), memname, size);
                         if found.is_null() {
-                            let mut _ns_0: *mut NameSeq = xcalloc(size) as *mut NameSeq;
+                            let _ns_0: *mut T = T::alloc();
                             let mut __n_0: *const ::core::ffi::c_char = concat(
                                 5,
                                 prefix,
@@ -3595,7 +3606,7 @@ pub unsafe fn parse_file_seq(
                                 strcache_add(__n_0)
                             } else {
                                 xstrdup(__n_0) as *const ::core::ffi::c_char
-                            };
+                            });
                             if found_wait != 0 {
                                 let dep_ref = (ns as *mut nameseq as *mut dep)
                                     .as_mut()
@@ -3629,8 +3640,8 @@ pub unsafe fn parse_file_seq(
                             }
                         }
                     } else {
-                        let mut _ns_1: *mut NameSeq = xcalloc(size) as *mut NameSeq;
-                        let mut __n_1: *const ::core::ffi::c_char =
+                        let _ns_1: *mut T = T::alloc();
+                        let __n_1: *const ::core::ffi::c_char =
                             concat(2, prefix, *nlist.offset(i as isize));
                         let ns = _ns_1
                             .as_mut()
@@ -3639,7 +3650,7 @@ pub unsafe fn parse_file_seq(
                             strcache_add(__n_1)
                         } else {
                             xstrdup(__n_1) as *const ::core::ffi::c_char
-                        };
+                        });
                         if found_wait != 0 {
                             let dep_ref = (ns as *mut nameseq as *mut dep)
                                 .as_mut()
@@ -3661,7 +3672,7 @@ pub unsafe fn parse_file_seq(
         }
     }
     *stringp = p;
-    new as *mut ::core::ffi::c_void
+    new
 }
 
 #[cfg(test)]

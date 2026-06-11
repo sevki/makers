@@ -273,7 +273,6 @@ pub unsafe fn set_file_variables(
                 plus_len += len;
             }
         }
-        d = (*d).next;
     }
     if bar_len == 0 {
         bar_len = 1;
@@ -301,7 +300,6 @@ pub unsafe fn set_file_variables(
                 qmark_len -= len + 1;
             }
         }
-        d = (*d).next;
     }
     // Bridge the pointer-walked write cursor back to a bounded slice: `len` is
     // the address span the loop filled, and the buffer always holds one more
@@ -357,7 +355,6 @@ pub unsafe fn set_file_variables(
                 }
             }
         }
-        d = (*d).next;
     }
 
     let caret_value = plus_value;
@@ -386,7 +383,6 @@ pub unsafe fn set_file_variables(
                 }
             }
         }
-        d = (*d).next;
     }
     hash_free(&raw mut dep_hash, 0);
 
@@ -601,7 +597,6 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
             if (*c).remote() == 0 && (*c).pid > 0 {
                 kill((*c).pid, SIGTERM);
             }
-            c = (*c).next;
         }
     }
 

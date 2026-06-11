@@ -95,17 +95,10 @@ pub struct patdeps {
     pub name: *const ::core::ffi::c_char,
     pub pattern: *const ::core::ffi::c_char,
     pub file: *mut File,
-    #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(
-        name = "ignore_automatic_vars",
-        ty = "::core::ffi::c_uint",
-        bits = "1..=1"
-    )]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "wait_here", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    pub ignore_mtime_ignore_automatic_vars_is_explicit_wait_here: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 7],
+    pub ignore_mtime: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
 }
 /// A candidate pattern rule recorded during the first matching pass.
 #[derive(Copy, Clone)]

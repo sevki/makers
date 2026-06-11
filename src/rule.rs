@@ -20,8 +20,7 @@ pub type commands = Commands;
 use crate::floc::Floc;
 
 #[derive(Copy, Clone)]
-#[repr(C)]
-pub struct rule {
+pub struct Rule {
     pub next: *mut Rule,
     pub targets: *mut *const ::core::ffi::c_char,
     pub lens: *mut ::core::ffi::c_uint,
@@ -512,7 +511,6 @@ pub unsafe fn install_pattern_rule(
     rr.deps = parse_file_seq(
         ctx,
         &raw mut ptr as *mut *mut ::core::ffi::c_char,
-        ::core::mem::size_of::<Dep>() as size_t,
         MAP_NUL,
         ::core::ptr::null(),
         PARSEFS_NONE,
@@ -544,7 +542,7 @@ pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
     free(dead.lens as *mut ::core::ffi::c_void);
     free(dead._defn as *mut ::core::ffi::c_void);
     free(rule as *mut ::core::ffi::c_void);
-    if pattern_rules == Rule {
+    if pattern_rules == rule {
         if !lastrule.is_null() {
             abort();
         } else {
@@ -553,7 +551,7 @@ pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
     } else if let Some(last) = lastrule.as_mut() {
         last.next = next;
     }
-    if last_pattern_rule == Rule {
+    if last_pattern_rule == rule {
         last_pattern_rule = lastrule;
     }
 }
