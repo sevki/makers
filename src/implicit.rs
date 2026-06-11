@@ -1031,15 +1031,17 @@ unsafe extern "C" fn pattern_search(
                                                     int_file_boxes.push(Box::new(::core::mem::zeroed::<File>()));
                                                     int_file = &mut **int_file_boxes.last_mut().unwrap() as *mut File;
                                                 }
-                                                memset(
-                                                    int_file as *mut ::core::ffi::c_void,
-                                                    0,
-                                                    ::core::mem::size_of::<File>() as size_t,
-                                                );
-                                                (*int_file).name = d
+                                                let dep_name = d
                                                     .as_ref()
                                                     .expect("dependency chain contains a null node")
                                                     .name;
+                                                {
+                                                    let int_file_ref = int_file
+                                                        .as_mut()
+                                                        .expect("intermediate file scratch slot is null");
+                                                    *int_file_ref = File::default();
+                                                    int_file_ref.name = dep_name;
+                                                }
                                                 if pattern_search(
                                                     int_file,
                                                     0,
@@ -1048,11 +1050,11 @@ unsafe extern "C" fn pattern_search(
                                                     allow_compat_rules,
                                                 ) != 0
                                                 {
-                                                    (*pat).pattern = (*int_file).name;
-                                                    (*int_file).name = d
-                                                        .as_ref()
-                                                        .expect("dependency chain contains a null node")
-                                                        .name;
+                                                    let int_file_ref = int_file.as_mut().expect(
+                                                        "intermediate file scratch slot is null",
+                                                    );
+                                                    (*pat).pattern = int_file_ref.name;
+                                                    int_file_ref.name = dep_name;
                                                     (*pat).file = int_file;
                                                     int_file = ::core::ptr::null_mut::<File>();
                                                     let fresh7 = pat;
@@ -1061,12 +1063,15 @@ unsafe extern "C" fn pattern_search(
                                                     (*fresh7).name = (*d).name;
                                                     found_intermediate = true;
                                                 } else {
-                                                    if !(*int_file).variables.is_null() {
-                                                        free_variable_set((*int_file).variables);
+                                                    let int_file_ref = int_file.as_mut().expect(
+                                                        "intermediate file scratch slot is null",
+                                                    );
+                                                    if !int_file_ref.variables.is_null() {
+                                                        free_variable_set(int_file_ref.variables);
                                                     }
-                                                    if !(*int_file).pat_variables.is_null() {
+                                                    if !int_file_ref.pat_variables.is_null() {
                                                         free_variable_set(
-                                                            (*int_file).pat_variables,
+                                                            int_file_ref.pat_variables,
                                                         );
                                                     }
                                                     if df.is_null() {
@@ -1229,11 +1234,15 @@ unsafe extern "C" fn pattern_search(
                 .expect("pattern_search selected a null rule");
             (*file).cmds = rule_ref.cmds;
             (*file).is_target = true;
-            let f_0: *mut File = lookup_file(
-                *(*rule)
-                    .targets
-                    .offset((*tryrules.offset(foundrule as isize)).matches as isize),
-            );
+            let matched_tryrule = tryrules
+                .offset(foundrule as isize)
+                .as_ref()
+                .expect("pattern_search selected a null tryrule");
+            let rule_targets = ::core::slice::from_raw_parts(rule_ref.targets, rule_ref.num as usize);
+            let matched_target = *rule_targets
+                .get(matched_tryrule.matches as usize)
+                .expect("pattern rule match index is out of range");
+            let f_0: *mut File = lookup_file(matched_target);
             if !f_0.is_null() {
                 if (*f_0).precious {
                     (*file).precious = true;
