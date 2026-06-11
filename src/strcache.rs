@@ -29,7 +29,7 @@ use core::ffi::{c_char, c_int, CStr};
 use crate::ffi_types::size_t;
 
 #[salsa::db]
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct StrCacheDb {
     storage: salsa::Storage<Self>,
 }
@@ -67,7 +67,11 @@ fn intern_into(
 
 /// UTF-8 path: dedupe the string through salsa, then return the canonical
 /// NUL-terminated pointer from leaked byte storage.
-fn intern_utf8(db: &mut StrCacheDb, set: &mut HashSet<&'static [u8]>, value: &str) -> *const c_char {
+fn intern_utf8(
+    db: &mut StrCacheDb,
+    set: &mut HashSet<&'static [u8]>,
+    value: &str,
+) -> *const c_char {
     let key = Utf8String::new(db, value.to_owned());
     intern_bytes(set, key.text(db).as_bytes())
 }
@@ -150,7 +154,10 @@ pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char
 /// (matching the original, which compared pointer ranges rather than reading the
 /// string).
 pub fn strcache_iscached(str: *const c_char) -> c_int {
-    addrs().lock().unwrap_or_else(|e| e.into_inner()).contains(&(str as usize)) as c_int
+    addrs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&(str as usize)) as c_int
 }
 
 /// Print cache statistics, prefixed with `prefix`. Used by `make -p`.
