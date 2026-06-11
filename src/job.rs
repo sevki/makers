@@ -203,6 +203,11 @@ pub struct child {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 7],
 }
+impl crate::file::NextLinked for child {
+    unsafe fn next(this: *const Self) -> *mut Self {
+        (*this).next
+    }
+}
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct posix_spawnattr_t {
@@ -1290,7 +1295,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 if (*child).pid >= 0 {
                     JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
                 }
-                set_command_state((*child).file, CommandState :: Running );
+                set_command_state((*child).file, CommandState::Running);
                 if !argv.is_null() {
                     free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                     free(argv as *mut ::core::ffi::c_void);
@@ -1362,7 +1367,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
             unblock_sigs();
         }
         0 => {
-            (*f).UpdateStatus = UpdateStatus :: Success;
+            (*f).update_status = UpdateStatus::Success;
             finish = true;
         }
         3 => {
@@ -2998,7 +3003,7 @@ pub unsafe fn construct_command_argv(
         b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),
         file,
-    );
+    ) as *mut variable;
     if var.is_null() {
         shellflags = b"\0" as *const u8 as *const ::core::ffi::c_char;
     } else if (*var).origin() as i32 != o_default as i32 {

@@ -1,3 +1,4 @@
+pub use crate::expand::allocated_expand_string_for_file;
 pub use crate::file::{CommandState, UpdateStatus};
 use libc::free;
 

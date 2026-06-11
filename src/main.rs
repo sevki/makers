@@ -1,3 +1,11 @@
+pub use crate::file::enter_file;
+pub use crate::file::lookup_file;
+pub use crate::load::load_file;
+pub use crate::read::read_all_makefiles;
+pub use crate::remake::f_mtime;
+pub use crate::remake::update_goal_chain;
+pub use crate::rule::suffix_file;
+use crate::read::parse_file_seq;
 pub use crate::file::{CommandState, UpdateStatus};
 use crate::default::{
     define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
@@ -8,7 +16,7 @@ pub use crate::ffi_types::{
     __clock_t, __off64_t, __off_t, __pid_t, __sig_atomic_t, __uid_t, pid_t, sig_atomic_t, size_t,
     uintmax_t,
 };
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{Dep, File, VariableSet, VariableSetList};
 use crate::floc::Floc;
 use crate::load::unload_all;
 use crate::misc::free_ns_chain;
@@ -420,7 +428,7 @@ pub unsafe fn free_goaldep(g: *mut goaldep) {
 }
 #[inline]
 unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
-    free_ns_chain(d as *mut NameSeq);
+    crate::file::free_seq_chain(d);
 }
 pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
@@ -2796,7 +2804,7 @@ unsafe fn main_0(
         if any_failed != 0
             && status as ::core::ffi::c_uint == us_success as i32 as ::core::ffi::c_uint
         {
-            status = UpdateStatus :: None;
+            status = UpdateStatus::None;
         }
         let needs_restart = match status as ::core::ffi::c_uint {
             1 => {
@@ -3243,7 +3251,7 @@ unsafe fn main_0(
                     MAP_NUL,
                     ::core::ptr::null::<::core::ffi::c_char>(),
                     PARSEFS_NONE,
-                ) as *mut NameSeq;
+    );
                 if !ns.is_null() {
                     if !(*ns).next.is_null() {
                         fatal(
