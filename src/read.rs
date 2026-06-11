@@ -2942,7 +2942,7 @@ unsafe extern "C" fn record_files(
         create_pattern_rule(targets, target_pats, c, two_colon, deps, cmds, 1);
         return;
     }
-    loop {
+    while !filenames.is_null() {
         let nextf_0: *mut NameSeq = (*filenames).next;
         let mut f: *mut File;
         let mut this: *mut Dep = ::core::ptr::null_mut::<Dep>();

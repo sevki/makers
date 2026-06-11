@@ -250,6 +250,7 @@ unsafe extern "C" fn pattern_search(
     allow_compat_rules: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
+    let mut int_file_boxes: Vec<Box<File>> = Vec::new();
     let filename: *const ::core::ffi::c_char = if archive != 0 {
         strchr((*file).name, '(' as i32) as *const ::core::ffi::c_char
     } else {
@@ -1027,15 +1028,8 @@ unsafe extern "C" fn pattern_search(
                                                     fflush(stdout);
                                                 }
                                                 if int_file.is_null() {
-                                                    alloca_allocations.push(::std::vec::from_elem(
-                                                        0,
-                                                        ::core::mem::size_of::<File>() as usize,
-                                                    ));
-                                                    int_file = alloca_allocations
-                                                        .last_mut()
-                                                        .unwrap()
-                                                        .as_mut_ptr()
-                                                        as *mut File;
+                                                    int_file_boxes.push(Box::new(::core::mem::zeroed::<File>()));
+                                                    int_file = &mut **int_file_boxes.last_mut().unwrap() as *mut File;
                                                 }
                                                 memset(
                                                     int_file as *mut ::core::ffi::c_void,

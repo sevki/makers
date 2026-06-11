@@ -1776,11 +1776,23 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             }
         }
         free(arname as *mut ::core::ffi::c_void);
-        (*file).low_resolution_time = true;
+        while let Some(file_ref_mut) = file.as_ref() {
+            if file_ref_mut.renamed.is_null() {
+                break;
+            }
+            file = file_ref_mut.renamed;
+        }
+        let file_mut = file
+            .as_mut()
+            .expect("f_mtime archive member requires a non-null file");
+        file_mut.low_resolution_time = true;
         if mtime == NONEXISTENT_MTIME as uintmax_t {
             return NONEXISTENT_MTIME as uintmax_t;
         }
-        member_date = ar_member_date((*file).hname);
+        let file_ref2 = file
+            .as_ref()
+            .expect("f_mtime archive member requires a non-null file");
+        member_date = ar_member_date(file_ref2.hname);
         if member_date == -(1 as ::core::ffi::c_int) as time_t
             || memmtime != NONEXISTENT_MTIME as uintmax_t
                 && (memmtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
@@ -1790,7 +1802,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
         {
             mtime = NONEXISTENT_MTIME as uintmax_t;
         } else {
-            mtime = file_timestamp_cons((*file).hname, member_date, 0);
+            mtime = file_timestamp_cons(file_ref2.hname, member_date, 0);
         }
     } else {
         mtime = name_mtime((*file).name);
