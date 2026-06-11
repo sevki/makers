@@ -1,3 +1,5 @@
+pub use crate::expand::allocated_expand_string_for_file;
+pub use crate::expand::recursively_expand_for_file;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
@@ -796,7 +798,7 @@ pub unsafe fn initialize_file_variables(
         (*l).next = (*(*file).parent).variables;
     }
     (*l).next_is_parent = 1;
-    if reading == 0 && ! (*file).pat_searched {
+    if reading == 0 && !(*file).pat_searched {
         let mut p: *mut pattern_var;
         let targlen: size_t = strlen((*file).name) as size_t;
         p = lookup_pattern_var(

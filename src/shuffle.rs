@@ -14,12 +14,9 @@ pub enum Mode {
     Identity,
 }
 
-type Shuffler = fn(&mut [*mut Dep]);
-
 struct Config {
     mode: Mode,
     seed: u32,
-    shuffler: Option<Shuffler>,
 }
 
 impl Config {
@@ -27,7 +24,6 @@ impl Config {
         Self {
             mode: Mode::None,
             seed: 0,
-            shuffler: None,
         }
     }
 }
@@ -61,13 +57,10 @@ pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
     let mut cfg = config();
     if arg.eq_ignore_ascii_case("reverse") {
         cfg.mode = Mode::Reverse;
-        cfg.shuffler = Some(reverse_shuffle);
     } else if arg.eq_ignore_ascii_case("identity") {
         cfg.mode = Mode::Identity;
-        cfg.shuffler = Some(identity_shuffle);
     } else if arg.eq_ignore_ascii_case("none") {
         cfg.mode = Mode::None;
-        cfg.shuffler = None;
     } else {
         let seed = if arg.eq_ignore_ascii_case("random") {
             unsafe { make_rand() }
@@ -79,7 +72,6 @@ pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
         };
         cfg.mode = Mode::Random;
         cfg.seed = seed;
-        cfg.shuffler = Some(random_shuffle);
     }
 }
 
@@ -96,26 +88,26 @@ fn random_shuffle(slice: &mut [*mut Dep]) {
     }
 }
 
-fn reverse_shuffle(slice: &mut [*mut Dep]) {
+fn reverse_shuffle<T>(slice: &mut [*mut T]) {
     let len = slice.len();
     for i in 0..len / 2 {
         slice.swap(i, len - 1 - i);
     }
 }
 
-fn identity_shuffle(_: &mut [*mut Dep]) {}
+fn identity_shuffle<T>(_: &mut [*mut T]) {}
 
 /// Walk the deps linked list, shuffle the order, and write the new order back
 /// via the `shuf` field on each node.
-unsafe fn shuffle_deps(deps: *mut Dep) {
+unsafe fn shuffle_deps<T: ShuffleNode>(deps: *mut T) {
     let mut ndeps: usize = 0;
     let mut d = deps;
     while !d.is_null() {
-        if (*d).wait_here {
+        if T::wait_here(d) {
             return;
         }
         ndeps += 1;
-        d = (*d).next;
+        d = T::next(d);
     }
     if ndeps == 0 {
         return;
@@ -126,18 +118,20 @@ unsafe fn shuffle_deps(deps: *mut Dep) {
     d = deps;
     for _ in 0..ndeps {
         deps_order.push(d);
-        d = (*d).next;
+        d = T::next(d);
     }
 
-    let shuffler = config().shuffler;
-    if let Some(f) = shuffler {
-        f(&mut deps_order);
+    match config().mode {
+        Mode::None => {}
+        Mode::Random => random_shuffle(&mut deps_order),
+        Mode::Reverse => reverse_shuffle(&mut deps_order),
+        Mode::Identity => identity_shuffle(&mut deps_order),
     }
 
     d = deps;
     for dep in deps_order {
-        (*d).shuf = dep;
-        d = (*d).next;
+        T::set_shuf(d, dep);
+        d = T::next(d);
     }
 }
 
@@ -160,7 +154,7 @@ unsafe fn shuffle_file_deps_recursive(f: *mut File) {
 /// # Safety
 /// `deps` must be a valid (possibly null) head of a properly-linked `Dep`
 /// chain, and the chain's `File` pointers must be valid.
-pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
+pub unsafe fn shuffle_deps_recursive<T: ShuffleNode>(deps: *mut T) {
     let (mode, seed) = {
         let cfg = config();
         (cfg.mode, cfg.seed)
@@ -174,8 +168,8 @@ pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
     shuffle_deps(deps);
     let mut d = deps;
     while !d.is_null() {
-        shuffle_file_deps_recursive((*d).file);
-        d = (*d).next;
+        shuffle_file_deps_recursive(T::file(d));
+        d = T::next(d);
     }
 }
 
