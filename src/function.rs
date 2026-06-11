@@ -583,7 +583,7 @@ pub unsafe fn string_glob(
     static mut result: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut length: size_t = 0;
-    let mut chain: *mut nameseq;
+    let mut chain: *mut NameSeq;
     let mut idx: size_t;
     chain = parse_file_seq(
         ctx,
@@ -599,7 +599,7 @@ pub unsafe fn string_glob(
     }
     idx = 0;
     while !chain.is_null() {
-        let next: *mut nameseq = (*chain).next;
+        let next: *mut NameSeq = (*chain).next;
         let len: size_t = strlen((*chain).name) as size_t;
         if idx.wrapping_add(len).wrapping_add(1) > length {
             length = length.wrapping_add(len.wrapping_add(1 as size_t).wrapping_mul(2));
@@ -1347,7 +1347,7 @@ unsafe fn func_foreach(
         let result = ExpandedArg::from_raw(allocated_expand_string_for_file(
             ctx,
             body,
-            ::core::ptr::null_mut::<file>(),
+            ::core::ptr::null_mut::<File>(),
         ));
         o = variable_buffer_output(o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
         o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
@@ -2386,7 +2386,7 @@ pub unsafe fn func_shell_base(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
-        ::core::ptr::null_mut::<file>(),
+        ::core::ptr::null_mut::<File>(),
         0,
         &raw mut batch_filename,
     );

@@ -94,7 +94,7 @@ fn streq(a: &::core::ffi::CStr, b: &::core::ffi::CStr) -> bool {
 pub struct patdeps {
     pub name: *const ::core::ffi::c_char,
     pub pattern: *const ::core::ffi::c_char,
-    pub file: *mut file,
+    pub file: *mut File,
     #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(
         name = "ignore_automatic_vars",
@@ -110,7 +110,7 @@ pub struct patdeps {
 /// A candidate pattern rule recorded during the first matching pass.
 #[derive(Copy, Clone)]
 pub struct tryrule {
-    pub rule: *mut rule,
+    pub rule: *mut Rule,
     pub stemlen: size_t,
     pub matches: ::core::ffi::c_uint,
     pub order: ::core::ffi::c_uint,
