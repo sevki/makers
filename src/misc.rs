@@ -879,6 +879,11 @@ pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_c
         }
     }
     if file.is_null() {
+        let tmp_name_for_err: *const ::core::ffi::c_char = if name.is_null() || (*name).is_null() {
+            b"(unknown)\0" as *const u8 as *const ::core::ffi::c_char
+        } else {
+            *name as *const ::core::ffi::c_char
+        };
         error(
             ctx,
             null::<Floc>(),
