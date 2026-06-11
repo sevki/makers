@@ -600,6 +600,8 @@ static mut files: hash_table = hash_table {
 static mut rehashed_files: *mut *mut File = ::core::ptr::null::<*mut File>() as *mut *mut File;
 static mut rehashed_files_len: size_t = 0;
 pub const REHASHED_FILES_INCR: ::core::ffi::c_int = 5;
+const MAP_DIRSEP: ::core::ffi::c_int = 0x8000;
+const STOPCHAR_MAP_LEN: usize = 256;
 static mut all_secondary: ::core::ffi::c_int = 0;
 /// # Safety
 ///
@@ -633,26 +635,32 @@ pub unsafe fn lookup_file(mut name: *const ::core::ffi::c_char) -> *mut file {
     } else {
         panic!("assertion failed: *name != '\'");
     };
-    while *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '.' as i32
-        && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar as isize)
-            as ::core::ffi::c_int
-            & 0x8000 as ::core::ffi::c_int
-            != 0
-        && *name.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+
+    let mut offset = 0usize;
+    while name_bytes.get(offset) == Some(&b'.')
+        && name_bytes.get(offset + 1).is_some_and(|ch| is_dirsep(*ch))
+        && offset + 2 < name_bytes.len()
     {
-        name = name.offset(2 as ::core::ffi::c_int as isize);
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*name as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & 0x8000 as ::core::ffi::c_int
-            != 0
-        {
-            name = name.offset(1 as ::core::ffi::c_int as isize);
+        offset += 2;
+        while name_bytes.get(offset).is_some_and(|ch| is_dirsep(*ch)) {
+            offset += 1;
         }
     }
-    if *name as ::core::ffi::c_int == 0 {
-        name = b"./\0" as *const u8 as *const ::core::ffi::c_char;
+
+    if offset == name_bytes.len() {
+        b"./\0" as *const u8 as *const ::core::ffi::c_char
+    } else {
+        ::core::ffi::CStr::from_bytes_with_nul(&name_with_nul[offset..])
+            .expect("lookup_file normalized name remains NUL-terminated")
+            .as_ptr()
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn lookup_file(name: *const ::core::ffi::c_char) -> *mut File {
+    let f: *mut File;
+    let mut file_key: File = File::default();
+    let name = normalize_lookup_name(name);
     file_key.hname = name;
     f = hash_find_item(
         &raw mut files,
