@@ -1,6 +1,8 @@
+pub use crate::expand::allocated_expand_string_for_file;
+pub use crate::expand::recursively_expand_for_file;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{next_token, skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
 use c2rust_bitfields;
@@ -769,7 +771,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
         );
         (*file).variables = l;
     }
-    if !(*file).double_colon.is_null() && (*file).double_colon != File {
+    if !(*file).double_colon.is_null() && (*file).double_colon != file {
         initialize_file_variables((*file).double_colon, reading);
         (*l).next = (*(*file).double_colon).variables;
         (*l).next_is_parent = 0;
@@ -782,7 +784,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
         (*l).next = (*(*file).parent).variables;
     }
     (*l).next_is_parent = 1;
-    if reading == 0 && ! (*file).pat_searched {
+    if reading == 0 && !(*file).pat_searched {
         let mut p: *mut pattern_var;
         let targlen: size_t = strlen((*file).name) as size_t;
         p = lookup_pattern_var(
@@ -1376,7 +1378,7 @@ pub unsafe fn target_environment(
                                         .offset(1 as ::core::ffi::c_int as isize),
                                 ) == 0))
                 {
-                    cp = recursively_expand_for_file(v_0, file);
+                    cp = recursively_expand_for_file(v_0 as *mut crate::expand::variable, file);
                     value = cp;
                 }
                 if added_shell == 0

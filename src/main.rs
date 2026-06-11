@@ -1,3 +1,11 @@
+pub use crate::file::enter_file;
+pub use crate::file::lookup_file;
+pub use crate::load::load_file;
+pub use crate::read::read_all_makefiles;
+pub use crate::remake::f_mtime;
+pub use crate::remake::update_goal_chain;
+pub use crate::rule::suffix_file;
+use crate::read::parse_file_seq;
 pub use crate::file::{CommandState, UpdateStatus};
 use crate::default::{
     define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
@@ -8,7 +16,7 @@ pub use crate::ffi_types::{
     __clock_t, __off64_t, __off_t, __pid_t, __sig_atomic_t, __uid_t, pid_t, sig_atomic_t, size_t,
     uintmax_t,
 };
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{Dep, File, VariableSet, VariableSetList};
 use crate::floc::Floc;
 use crate::load::unload_all;
 use crate::misc::free_ns_chain;
@@ -430,7 +438,7 @@ pub unsafe fn free_goaldep(g: *mut goaldep) {
 }
 #[inline]
 unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
-    free_ns_chain(d as *mut NameSeq);
+    crate::file::free_seq_chain(d);
 }
 pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
@@ -1907,8 +1915,8 @@ unsafe fn main_0(
     if stdin_offset >= 0 {
         let f: *mut File = enter_file(*(*makefiles).list.offset(stdin_offset as isize));
         (*f).updated = true;
-        (*f).UpdateStatus = UpdateStatus :: Success;
-        (*f).command_state = CommandState :: Finished as CommandState;
+        (*f).update_status = UpdateStatus::Success;
+        (*f).command_state = CommandState::Finished;
         (*f).intermediate = false;
         (*f).dontcare = false;
         (*f).mtime_before_update = f_mtime(f, 0);
@@ -2114,8 +2122,8 @@ unsafe fn main_0(
             (*f_0).mtime_before_update = OLD_MTIME as uintmax_t;
             (*f_0).last_mtime = (*f_0).mtime_before_update;
             (*f_0).updated = true;
-            (*f_0).UpdateStatus = UpdateStatus :: Success;
-            (*f_0).command_state = CommandState :: Finished as CommandState;
+            (*f_0).update_status = UpdateStatus::Success;
+            (*f_0).command_state = CommandState::Finished;
             p_1 = p_1.offset(1 as ::core::ffi::c_int as isize);
         }
     }
@@ -2269,9 +2277,9 @@ unsafe fn main_0(
         }
         if any_failed != 0
             && status as ::core::ffi::c_uint
-                == UpdateStatus :: Success as ::core::ffi::c_int as ::core::ffi::c_uint
+                == UpdateStatus::Success as ::core::ffi::c_int as ::core::ffi::c_uint
         {
-            status = UpdateStatus :: None;
+            status = UpdateStatus::None;
         }
         let needs_restart = match status as ::core::ffi::c_uint {
             1 => {
@@ -2303,8 +2311,8 @@ unsafe fn main_0(
                 d_4 = read_files;
                 while !d_4.is_null() {
                     if (*(*d_4).file).updated {
-                        if (*(*d_4).file).UpdateStatus as ::core::ffi::c_int
-                            == UpdateStatus :: Success as ::core::ffi::c_int
+                        if (*(*d_4).file).update_status as ::core::ffi::c_int
+                            == UpdateStatus::Success as ::core::ffi::c_int
                         {
                             any_remade |=
                                 ((if (*(*d_4).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
@@ -2709,13 +2717,12 @@ unsafe fn main_0(
             let mut f_6: *mut File = lookup_file(p_6);
             if f_6.is_null() {
                 let ns: *mut NameSeq;
-                ns = parse_file_seq(
-                    &raw mut p_6,
-                    ::core::mem::size_of::<NameSeq>() as size_t,
-                    MAP_NUL,
+                ns = parse_file_seq::<NameSeq>(
+        &raw mut p_6,
+        MAP_NUL,
                     ::core::ptr::null::<::core::ffi::c_char>(),
                     PARSEFS_NONE,
-                ) as *mut NameSeq;
+    );
                 if !ns.is_null() {
                     if !(*ns).next.is_null() {
                         fatal(
@@ -2760,7 +2767,7 @@ unsafe fn main_0(
                 as *const ::core::ffi::c_char,
         );
     }
-    crate::shuffle::shuffle_deps_recursive(goals as *mut crate::file::Dep);
+    crate::shuffle::shuffle_deps_recursive(goals);
     if 0x1 as ::core::ffi::c_int & db_level != 0 {
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);

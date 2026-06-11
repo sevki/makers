@@ -1,9 +1,13 @@
+pub use crate::expand::allocated_expand_string_for_file;
+pub use crate::job::construct_command_argv;
+pub use crate::variable::target_environment;
+use crate::read::parse_file_seq;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
 };
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{
     end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
 };
@@ -585,13 +589,12 @@ pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ff
     static mut length: size_t = 0;
     let mut chain: *mut NameSeq;
     let mut idx: size_t;
-    chain = parse_file_seq(
+    chain = parse_file_seq::<NameSeq>(
         &raw mut line,
-        ::core::mem::size_of::<NameSeq>() as size_t,
         0x1 as ::core::ffi::c_int,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x1 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int | 0x8 as ::core::ffi::c_int,
-    ) as *mut NameSeq;
+    );
     if result.is_null() {
         length = 100;
         result = xmalloc(100) as *mut ::core::ffi::c_char;

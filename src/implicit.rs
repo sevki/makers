@@ -1,7 +1,14 @@
+pub use crate::commands::set_file_variables;
+pub use crate::expand::expand_string_for_file;
+pub use crate::file::enter_file;
+pub use crate::file::lookup_file;
+pub use crate::rule::get_rule_defn;
+pub use crate::rule::pattern_rules;
+pub use crate::variable::initialize_file_variables;
+use crate::read::parse_file_seq;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
-use crate::misc::free_ns_chain;
+use crate::file::{Dep, File, VariableSet, VariableSetList};
 use crate::misc::{lindex, print_spaces, skip_reference, xcalloc, xmalloc, xrealloc};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
@@ -102,21 +109,14 @@ pub struct patdeps {
     pub name: *const ::core::ffi::c_char,
     pub pattern: *const ::core::ffi::c_char,
     pub file: *mut File,
-    #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(
-        name = "ignore_automatic_vars",
-        ty = "::core::ffi::c_uint",
-        bits = "1..=1"
-    )]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "wait_here", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    pub ignore_mtime_ignore_automatic_vars_is_explicit_wait_here: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 7],
+    pub ignore_mtime: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
 }
+/// A candidate pattern rule under consideration in pattern_search.
 #[derive(Copy, Clone)]
-#[repr(C)]
-pub struct tryrule {
+pub struct TryRule {
     pub rule: *mut Rule,
     pub stemlen: size_t,
     pub matches: ::core::ffi::c_uint,
@@ -136,7 +136,7 @@ pub unsafe fn alloc_dep() -> *mut dep {
 }
 #[inline]
 unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
-    free_ns_chain(d as *mut NameSeq);
+    crate::file::free_seq_chain(d);
 }
 /// # Safety
 ///
@@ -578,7 +578,7 @@ unsafe extern "C" fn pattern_search(
                                     (*(*dep).file).name
                                 };
                             }
-                            if ! (*dep).need_2nd_expansion {
+                            if !(*dep).need_2nd_expansion {
                                 let mut p: *mut ::core::ffi::c_char;
                                 let mut is_explicit: ::core::ffi::c_int = 1;
                                 let cp: *const ::core::ffi::c_char = strchr(nptr, '%' as i32);
@@ -610,25 +610,23 @@ unsafe extern "C" fn pattern_search(
                                     is_explicit = 0;
                                 }
                                 p = depname;
-                                dl = parse_file_seq(
-                                    &raw mut p,
-                                    ::core::mem::size_of::<Dep>() as size_t,
-                                    0x1 as ::core::ffi::c_int,
+                                dl = parse_file_seq::<Dep>(
+        &raw mut p,
+        0x1 as ::core::ffi::c_int,
                                     ::core::ptr::null::<::core::ffi::c_char>(),
                                     0x20 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int,
-                                ) as *mut Dep;
+    );
                                 d = dl;
                                 while !d.is_null() {
                                     deps_found = deps_found.wrapping_add(1);
-                                    (*d).ignore_mtime = ( (*dep).ignore_mtime as ::core::ffi::c_uint ) != 0;
-                                    (*d).ignore_automatic_vars = ( (*dep).ignore_automatic_vars as ::core::ffi::c_uint ) != 0;
-                                    (*d).wait_here = (
-                                        (*d).wait_here | (*dep).wait_here as ::core::ffi::c_int
-                                                as ::core::ffi::c_uint,
+                                    (*d).ignore_mtime = (
+                                        (*dep).ignore_mtime as ::core::ffi::c_uint
                                     ) != 0;
-                                    (*d).is_explicit = (
-                                        is_explicit as ::core::ffi::c_uint as ::core::ffi::c_uint,
+                                    (*d).ignore_automatic_vars = (
+                                        (*dep).ignore_automatic_vars as ::core::ffi::c_uint
                                     ) != 0;
+                                    (*d).wait_here |= (*dep).wait_here;
+                                    (*d).is_explicit = is_explicit != 0;
                                     d = (*d).next;
                                 }
                                 nptr = ::core::ptr::null::<::core::ffi::c_char>();
@@ -776,10 +774,9 @@ unsafe extern "C" fn pattern_search(
                                     p_0 = expand_string_for_file(depname, file);
                                     dptr = &raw mut dl;
                                     loop {
-                                        let dp: *mut Dep = parse_file_seq(
-                                            &raw mut p_0,
-                                            ::core::mem::size_of::<Dep>() as size_t,
-                                            if order_only != 0 {
+                                        let dp: *mut Dep = parse_file_seq::<Dep>(
+        &raw mut p_0,
+        if order_only != 0 {
                                                 0x1 as ::core::ffi::c_int
                                             } else {
                                                 0x100 as ::core::ffi::c_int
@@ -790,21 +787,15 @@ unsafe extern "C" fn pattern_search(
                                                 ::core::ptr::null_mut::<::core::ffi::c_char>()
                                             },
                                             0x40 as ::core::ffi::c_int,
-                                        )
-                                            as *mut Dep;
+    );
                                         *dptr = dp;
                                         d = dp;
                                         while !d.is_null() {
                                             deps_found = deps_found.wrapping_add(1);
                                             if order_only != 0 {
-                                                (*d).ignore_mtime = (
-                                                    1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                                ) != 0;
+                                                (*d).ignore_mtime = true;
                                             }
-                                            (*d).is_explicit = (
-                                                is_explicit_0 as ::core::ffi::c_uint
-                                                    as ::core::ffi::c_uint,
-                                            ) != 0;
+                                            (*d).is_explicit = is_explicit_0 != 0;
                                             dptr = &raw mut (*d).next;
                                             d = (*d).next;
                                         }
@@ -872,10 +863,15 @@ unsafe extern "C" fn pattern_search(
                                         0,
                                         ::core::mem::size_of::<PatDeps>() as size_t,
                                     );
-                                    (*pat).ignore_mtime = ( (*d).ignore_mtime as ::core::ffi::c_uint ) != 0;
-                                    (*pat).ignore_automatic_vars = ( (*d).ignore_automatic_vars as ::core::ffi::c_uint ) != 0;
-                                    (*pat).wait_here = ( (*d).wait_here as ::core::ffi::c_uint ) != 0;
-                                    (*pat).is_explicit = ( (*d).is_explicit as ::core::ffi::c_uint ) != 0;
+                                    (*pat).ignore_mtime = (
+                                        (*d).ignore_mtime as ::core::ffi::c_uint
+                                    ) != 0;
+                                    (*pat).ignore_automatic_vars = (
+                                        (*d).ignore_automatic_vars as ::core::ffi::c_uint
+                                    ) != 0;
+                                    (*pat).wait_here = ((*d).wait_here as ::core::ffi::c_uint) != 0;
+                                    (*pat)
+                                        .is_explicit = ((*d).is_explicit as ::core::ffi::c_uint) != 0;
                                     if 0x8 as ::core::ffi::c_int & db_level != 0 {
                                         print_spaces(depth);
                                         printf(
@@ -893,18 +889,18 @@ unsafe extern "C" fn pattern_search(
                                     }
                                     df = lookup_file((*d).name);
                                     if !df.is_null()
-                                        && (*df).is_explicit {
-                                        (*pat).is_explicit = (
-                                            1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                        ) != 0;
+                                        && (*df).is_explicit
+                                    {
+                                        (*pat).is_explicit = true;
                                     }
                                     if !df.is_null()
-                                        && ! (*df).is_explicit && ! (*d).is_explicit {
-                                        (*df).intermediate = (
-                                            1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                        ) != 0;
+                                        && !(*df).is_explicit
+                                        && !(*d).is_explicit
+                                    {
+                                        (*df).intermediate = true;
                                     }
-                                    if !df.is_null() && (*df).is_target {
+                                    if !df.is_null() && (*df).is_target
+                                    {
                                         explicit = 1;
                                     } else {
                                         dp_0 = (*file).deps;
@@ -1016,8 +1012,10 @@ unsafe extern "C" fn pattern_search(
                                                 if 0x8 as ::core::ffi::c_int & db_level != 0 {
                                                     print_spaces(depth);
                                                     printf(
-                                                        if (*d).is_explicit || !df.is_null()
-                                                                && (*df).is_explicit {
+                                                        if (*d).is_explicit
+                                                            || !df.is_null()
+                                                                && (*df).is_explicit
+                                                        {
                                                             b"Looking for a rule with explicit file '%s'.\n\0"
                                                                 as *const u8 as *const ::core::ffi::c_char
                                                         } else {
@@ -1151,24 +1149,12 @@ unsafe extern "C" fn pattern_search(
                     (*f).stem = (*imf).stem;
                     merge_variable_set_lists(&raw mut (*f).variables, (*imf).variables);
                     (*f).pat_variables = (*imf).pat_variables;
-                    (*f).pat_searched = ( (*imf).pat_searched as ::core::ffi::c_uint ) != 0;
+                    (*f).pat_searched = ((*imf).pat_searched as ::core::ffi::c_uint) != 0;
                     (*f).also_make = (*imf).also_make;
                     (*f).is_target = true;
-                    (*f).set_is_explicit(
-                        (*f).is_explicit | ((*imf).is_explicit || (*pat).is_explicit )
-                                as ::core::ffi::c_int
-                                as ::core::ffi::c_uint,
-                    );
-                    (*f).set_notintermediate(
-                        (*f).notintermediate | ((*imf).notintermediate || no_intermediates != 0)
-                                as ::core::ffi::c_int
-                                as ::core::ffi::c_uint,
-                    );
-                    (*f).set_intermediate(
-                        (*f).intermediate | (! (*f).is_explicit && ! (*f).notintermediate )
-                                as ::core::ffi::c_int
-                                as ::core::ffi::c_uint,
-                    );
+                    (*f).is_explicit |= (*imf).is_explicit || (*pat).is_explicit;
+                    (*f).notintermediate |= (*imf).notintermediate || no_intermediates != 0;
+                    (*f).intermediate |= !(*f).is_explicit && !(*f).notintermediate;
                     (*f).tried_implicit = true;
                     imf = lookup_file((*pat).pattern);
                     if !imf.is_null() && (*imf).precious {
@@ -1178,17 +1164,17 @@ unsafe extern "C" fn pattern_search(
                     while !dep_0.is_null() {
                         (*dep_0).file = enter_file((*dep_0).name);
                         (*dep_0).name = ::core::ptr::null::<::core::ffi::c_char>();
-                        (*(*dep_0).file).set_tried_implicit(
-                            (*(*dep_0).file).tried_implicit | (*dep_0).changed as ::core::ffi::c_int as ::core::ffi::c_uint,
-                        );
+                        (*(*dep_0).file).tried_implicit |= (*dep_0).changed;
                         dep_0 = (*dep_0).next;
                     }
                 }
                 dep_0 = alloc_dep();
-                (*dep_0).ignore_mtime = ( (*pat).ignore_mtime as ::core::ffi::c_uint ) != 0;
-                (*dep_0).is_explicit = ( (*pat).is_explicit as ::core::ffi::c_uint ) != 0;
-                (*dep_0).ignore_automatic_vars = ( (*pat).ignore_automatic_vars as ::core::ffi::c_uint ) != 0;
-                (*dep_0).wait_here = ( (*pat).wait_here as ::core::ffi::c_uint ) != 0;
+                (*dep_0).ignore_mtime = ((*pat).ignore_mtime as ::core::ffi::c_uint) != 0;
+                (*dep_0).is_explicit = ((*pat).is_explicit as ::core::ffi::c_uint) != 0;
+                (*dep_0).ignore_automatic_vars = (
+                    (*pat).ignore_automatic_vars as ::core::ffi::c_uint
+                ) != 0;
+                (*dep_0).wait_here = ((*pat).wait_here as ::core::ffi::c_uint) != 0;
                 s = strcache_add((*pat).name);
                 if recursions != 0 {
                     (*dep_0).name = s;
@@ -1205,15 +1191,16 @@ unsafe extern "C" fn pattern_search(
                     if (*dep_0).file.is_null() {
                         (*dep_0).changed = true;
                     } else {
-                        (*(*dep_0).file).tried_implicit = true;
+                        (*(*dep_0).file)
+                            .tried_implicit = true;
                     }
                 }
                 (*dep_0).next = (*file).deps;
                 (*file).deps = dep_0;
                 (*file).was_shuffled = false;
             }
-            if ! (*file).was_shuffled {
-                crate::shuffle::shuffle_deps_recursive((*file).deps as *mut crate::file::Dep);
+            if !(*file).was_shuffled {
+                crate::shuffle::shuffle_deps_recursive((*file).deps);
             }
             if (*tryrules.offset(foundrule as isize)).checked_lastslash == 0 {
                 (*file).stem = strcache_add_len(stem, stemlen);
@@ -1293,16 +1280,17 @@ unsafe extern "C" fn pattern_search(
                         f_1 = lookup_file(*(*rule).targets.offset(ri as isize));
                         if !f_1.is_null() {
                             if (*f_1).precious {
-                                (*(*new).file).precious = true;
+                                (*(*new).file)
+                                    .precious = true;
                             }
-                            if (*f_1).notintermediate || no_intermediates != 0
+                            if (*f_1).notintermediate
+                                || no_intermediates != 0
                             {
-                                (*(*new).file).notintermediate = (
-                                    1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                ) != 0;
+                                (*(*new).file).notintermediate = true;
                             }
                         }
-                        (*(*new).file).is_target = true;
+                        (*(*new).file)
+                            .is_target = true;
                         (*file).also_make = new;
                     }
                     ri = ri.wrapping_add(1);

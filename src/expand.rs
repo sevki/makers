@@ -1,6 +1,7 @@
+pub use crate::variable::install_file_context;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Commands, File, VariableSet, VariableSetList};
+use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{lindex, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
 use libc::{free, printf, strchr};

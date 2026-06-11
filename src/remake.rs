@@ -1,11 +1,22 @@
+pub use crate::commands::chop_commands;
+pub use crate::commands::execute_file_commands;
+pub use crate::file::enter_file;
+pub use crate::file::expand_deps;
+pub use crate::file::lookup_file;
+pub use crate::file::rehash_file;
+pub use crate::file::rename_file;
+pub use crate::file::set_command_state;
+pub use crate::implicit::try_implicit_rule;
+pub use crate::make_main::default_file;
+use crate::misc::copy_goal_chain;
+use crate::file::free_seq_chain;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
-use crate::misc::free_ns_chain;
-use crate::misc::{copy_dep_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::file::{Dep, File, VariableSet, VariableSetList};
+use crate::misc::{find_next_token, print_spaces, xmalloc, xrealloc};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use libc::{
@@ -78,16 +89,8 @@ pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const RM_INCLUDED: ::core::ffi::c_int = (1) << 1;
 pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
 #[inline]
-unsafe extern "C" fn free_ns(n: *mut NameSeq) {
-    free(n as *mut ::core::ffi::c_void);
-}
-#[inline]
 unsafe extern "C" fn free_dep(d: *mut Dep) {
-    free_ns(d as *mut NameSeq);
-}
-#[inline]
-unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
-    free_ns_chain(d as *mut NameSeq);
+    free(d as *mut ::core::ffi::c_void);
 }
 pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
@@ -95,7 +98,7 @@ pub const OLD_MTIME: ::core::ffi::c_int = 2;
 pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
 pub static mut commands_started: ::core::ffi::c_uint = 0;
 static mut goal_list: *mut GoalDep = ::core::ptr::null::<GoalDep>() as *mut GoalDep;
-static mut goal_dep: *mut Dep = ::core::ptr::null::<Dep>() as *mut Dep;
+static mut goal_dep: *mut GoalDep = ::core::ptr::null::<GoalDep>() as *mut GoalDep;
 static mut considered: ::core::ffi::c_uint = 0;
 static mut dropped_list: *mut *mut Dep = ::core::ptr::null::<*mut Dep>() as *mut *mut Dep;
 static mut dropped_list_len: size_t = 0;
@@ -192,11 +195,11 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     let t: ::core::ffi::c_int = touch_flag;
     let q: ::core::ffi::c_int = question_flag;
     let n: ::core::ffi::c_int = just_print_flag;
-    let mut status: UpdateStatus = UpdateStatus :: None;
+    let mut status: UpdateStatus = UpdateStatus::None;
     let depth: ::core::ffi::c_uint =
         (if rebuilding_makefiles != 0 { 1 } else { 0 }) as ::core::ffi::c_uint;
-    let goals_orig: *mut Dep = copy_dep_chain(goaldeps as *mut Dep);
-    let mut goals: *mut Dep = goals_orig;
+    let goals_orig: *mut GoalDep = copy_goal_chain(goaldeps);
+    let mut goals: *mut GoalDep = goals_orig;
     goal_list = if rebuilding_makefiles != 0 {
         goaldeps
     } else {
@@ -204,15 +207,15 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     };
     considered = considered.wrapping_add(1);
     while !goals.is_null() {
-        let mut gu: *mut Dep;
-        let mut g: *mut Dep;
-        let mut lastgoal: *mut Dep;
+        let mut gu: *mut GoalDep;
+        let mut g: *mut GoalDep;
+        let mut lastgoal: *mut GoalDep;
         let mut running: ::core::ffi::c_int = 0;
         let mut wait: ::core::ffi::c_int = 0;
         start_waiting_jobs();
         reap_children((last_cmd_count == command_count) as ::core::ffi::c_int, 0);
         last_cmd_count = command_count;
-        lastgoal = ::core::ptr::null_mut::<Dep>();
+        lastgoal = ::core::ptr::null_mut::<GoalDep>();
         gu = goals;
         while let Some(gu_ref) = gu.as_ref() {
             let mut file: *mut File;
@@ -227,7 +230,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
             // deref of `g`. `changed()` is re-read after the file loop because
             // `set_changed` may update it.
             let (g_file, g_flags, g_wait) = match g.as_ref() {
-                Some(gd) if !gd.file.is_null() => (gd.file, gd.flags, gd.wait_here ),
+                Some(gd) if !gd.file.is_null() => (gd.file, gd.flags, gd.wait_here),
                 Some(_) => {
                     if let Some(lg) = lastgoal.as_mut() {
                         lg.next = gu_next;
@@ -248,10 +251,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
             while !file.is_null() {
                 let ocommands_started: ::core::ffi::c_uint;
                 let fail: UpdateStatus;
-                fref_mut(file).set_dontcare(
-                    (g_flags as ::core::ffi::c_int & (1) << 2 != 0) as ::core::ffi::c_int
-                        as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                );
+                fref_mut(file).dontcare = g_flags as ::core::ffi::c_int & (1) << 2 != 0;
                 while !fref(file).renamed.is_null() {
                     file = fref(file).renamed;
                 }
@@ -287,9 +287,9 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         file = fref(file).renamed;
                     }
                     running |= (fref(file).command_state as ::core::ffi::c_int
-                        == CommandState :: Running as ::core::ffi::c_int
+                        == CommandState::Running as ::core::ffi::c_int
                         || fref(file).command_state as ::core::ffi::c_int
-                            == CommandState :: DepsRunning as ::core::ffi::c_int)
+                            == CommandState::DepsRunning as ::core::ffi::c_int)
                         as ::core::ffi::c_int;
                     if commands_started > ocommands_started {
                         if let Some(gm) = g.as_mut() {
@@ -297,12 +297,12 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         }
                     }
                     if (fail as ::core::ffi::c_uint != 0
-                        || fref(file).updated )
+                        || fref(file).updated)
                         && (status as ::core::ffi::c_uint)
-                            < UpdateStatus :: Question as ::core::ffi::c_int as ::core::ffi::c_uint
+                            < UpdateStatus::Question as ::core::ffi::c_int as ::core::ffi::c_uint
                     {
-                        if fref(file).UpdateStatus as u64 != 0 {
-                            status = fref(file).UpdateStatus as UpdateStatus;
+                        if fref(file).update_status as u64 != 0 {
+                            status = fref(file).update_status as UpdateStatus;
                             stop = (question_flag != 0
                                 && keep_going_flag == 0
                                 && rebuilding_makefiles == 0)
@@ -322,15 +322,17 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                             while !fref(file).renamed.is_null() {
                                 file = fref(file).renamed;
                             }
-                            if fref(file).updated && mtime != fref(file).mtime_before_update
+                            if fref(file).updated
+                                && mtime != fref(file).mtime_before_update
                             {
                                 if rebuilding_makefiles == 0
                                     || just_print_flag == 0 && question_flag == 0
                                 {
-                                    status = UpdateStatus :: Success;
+                                    status = UpdateStatus::Success;
                                 }
                                 if rebuilding_makefiles != 0
-                                    && fref(file).dontcare {
+                                    && fref(file).dontcare
+                                {
                                     stop = 1;
                                 }
                             }
@@ -348,12 +350,12 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
             if wait != 0 {
                 break;
             }
-            let g_changed = g.as_ref().map_or(0, |gd| gd.changed );
+            let g_changed = g.as_ref().map_or(false, |gd| gd.changed);
             if stop != 0 || all_updated != 0 {
                 if rebuilding_makefiles == 0
-                    && fref(file).UpdateStatus as ::core::ffi::c_int
-                        == UpdateStatus :: Success as ::core::ffi::c_int
-                    && g_changed == 0
+                    && fref(file).update_status as ::core::ffi::c_int
+                        == UpdateStatus::Success as ::core::ffi::c_int
+                    && !g_changed
                     && run_silent == 0
                     && question_flag == 0
                 {
@@ -388,7 +390,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
             considered = considered.wrapping_add(1);
         }
     }
-    free_dep_chain(goals_orig);
+    free_seq_chain(goals_orig);
     if rebuilding_makefiles != 0 {
         touch_flag = t;
         question_flag = q;
@@ -476,7 +478,7 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
         if fr.command_state() as ::core::ffi::c_int == cs_running as ::core::ffi::c_int
             || fr.command_state() as ::core::ffi::c_int == cs_deps_running as ::core::ffi::c_int
         {
-            return UpdateStatus :: Success;
+            return UpdateStatus::Success;
         }
         if new as ::core::ffi::c_uint > status as ::core::ffi::c_uint {
             status = new;
@@ -496,8 +498,10 @@ pub unsafe fn complain(file: *mut file) {
     let mut d: *mut dep;
     d = (*file).deps;
     while !d.is_null() {
-        if (*(*d).file).updated && (*(*d).file).UpdateStatus as ::core::ffi::c_int > UpdateStatus :: None as ::core::ffi::c_int
-            && (*file).no_diag {
+        if (*(*d).file).updated
+            && (*(*d).file).update_status as ::core::ffi::c_int > UpdateStatus::None as ::core::ffi::c_int
+            && (*file).no_diag
+        {
             complain((*d).file);
             break;
         } else {
@@ -592,7 +596,7 @@ unsafe extern "C" fn update_file_1(
         fflush(stdout);
     }
     if (*file).updated {
-        if (*file).UpdateStatus as ::core::ffi::c_int > UpdateStatus :: None as ::core::ffi::c_int {
+        if (*file).update_status as ::core::ffi::c_int > UpdateStatus::None as ::core::ffi::c_int {
             if 0x2 as ::core::ffi::c_int & db_level != 0 {
                 print_spaces(depth);
                 printf(
@@ -602,10 +606,10 @@ unsafe extern "C" fn update_file_1(
                 );
                 fflush(stdout);
             }
-            if (*file).no_diag && ! (*file).dontcare {
+            if (*file).no_diag && !(*file).dontcare {
                 complain(file);
             }
-            return (*file).UpdateStatus as UpdateStatus;
+            return (*file).update_status as UpdateStatus;
         }
         if 0x2 as ::core::ffi::c_int & db_level != 0 {
             print_spaces(depth);
@@ -615,7 +619,7 @@ unsafe extern "C" fn update_file_1(
             );
             fflush(stdout);
         }
-        return UpdateStatus :: Success;
+        return UpdateStatus::Success;
     }
     match (*file).command_state as ::core::ffi::c_int {
         0 | 1 => {}
@@ -628,7 +632,7 @@ unsafe extern "C" fn update_file_1(
                 );
                 fflush(stdout);
             }
-            return UpdateStatus :: Success;
+            return UpdateStatus::Success;
         }
         3 => {
             if 0x2 as ::core::ffi::c_int & db_level != 0 {
@@ -639,7 +643,7 @@ unsafe extern "C" fn update_file_1(
                 );
                 fflush(stdout);
             }
-            return (*file).UpdateStatus as UpdateStatus;
+            return (*file).update_status as UpdateStatus;
         }
         _ => {
             abort();
@@ -709,7 +713,8 @@ unsafe extern "C" fn update_file_1(
                 }) as uintmax_t,
             )
             .wrapping_sub(1 as uintmax_t)
-        && (*file).low_resolution_time {
+        && (*file).low_resolution_time
+    {
         let ns: ::core::ffi::c_int = (this_mtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
             & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1) as uintmax_t)
             as ::core::ffi::c_int;
@@ -771,12 +776,13 @@ unsafe extern "C" fn update_file_1(
         ad = (*ad).next;
     }
     must_make = noexist;
-    if ! (*file).phony && (*file).cmds.is_null() && ! (*file).tried_implicit {
+    if !(*file).phony && (*file).cmds.is_null() && !(*file).tried_implicit {
         try_implicit_rule(file, depth);
         (*file).tried_implicit = true;
     }
     if (*file).cmds.is_null()
-        && ! (*file).is_target && !default_file.is_null()
+        && !(*file).is_target
+        && !default_file.is_null()
         && !(*default_file).cmds.is_null()
     {
         if 0x8 as ::core::ffi::c_int & db_level != 0 {
@@ -827,7 +833,9 @@ unsafe extern "C" fn update_file_1(
                 (*(*d).file).double_colon
             } else {
                 (*d).file
-            }).updating {
+            })
+            .updating
+            {
                 if warning::action(Type::CircularDep) == Action::Error {
                     fatal(
                         ::core::ptr::null_mut::<Floc>(),
@@ -873,16 +881,17 @@ unsafe extern "C" fn update_file_1(
                 maybe_make = must_make;
                 if rebuilding_makefiles != 0 {
                     dontcare = (*(*d).file).dontcare as ::core::ffi::c_int;
-                    (*(*d).file).dontcare = ( (*file).dontcare as ::core::ffi::c_uint ) != 0;
+                    (*(*d).file).dontcare = ((*file).dontcare as ::core::ffi::c_uint) != 0;
                 }
                 new = check_dep((*d).file, depth, this_mtime, &raw mut maybe_make);
                 if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new;
                 }
                 if rebuilding_makefiles != 0 {
-                    (*(*d).file).dontcare = ( dontcare as ::core::ffi::c_uint as ::core::ffi::c_uint ) != 0;
+                    (*(*d).file)
+                        .dontcare = dontcare != 0;
                 }
-                if ! (*d).ignore_mtime {
+                if !(*d).ignore_mtime {
                     must_make = maybe_make;
                 }
                 while !(*(*d).file).renamed.is_null() {
@@ -894,9 +903,9 @@ unsafe extern "C" fn update_file_1(
                 }
                 loop {
                     running |= ((*f).command_state as ::core::ffi::c_int
-                        == CommandState :: Running as ::core::ffi::c_int
+                        == CommandState::Running as ::core::ffi::c_int
                         || (*f).command_state as ::core::ffi::c_int
-                            == CommandState :: DepsRunning as ::core::ffi::c_int)
+                            == CommandState::DepsRunning as ::core::ffi::c_int)
                         as ::core::ffi::c_int;
                     f = (*f).prev;
                     if f.is_null() {
@@ -907,16 +916,12 @@ unsafe extern "C" fn update_file_1(
                     break;
                 }
                 if running == 0 {
-                    (*d).set_changed(
-                        ((if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                            f_mtime((*d).file, 1)
-                        } else {
-                            (*(*d).file).last_mtime
-                        }) != mtime
-                            || mtime == NONEXISTENT_MTIME as uintmax_t)
-                            as ::core::ffi::c_int as ::core::ffi::c_uint
-                            as ::core::ffi::c_uint,
-                    );
+                    (*d).changed = (if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
+                        f_mtime((*d).file, 1)
+                    } else {
+                        (*(*d).file).last_mtime
+                    }) != mtime
+                        || mtime == NONEXISTENT_MTIME as uintmax_t;
                 }
                 lastd = du;
                 du = (*du).next;
@@ -948,7 +953,7 @@ unsafe extern "C" fn update_file_1(
                 (*(*d).file).parent = file;
                 if rebuilding_makefiles != 0 {
                     dontcare_0 = (*(*d).file).dontcare as ::core::ffi::c_int;
-                    (*(*d).file).dontcare = ( (*file).dontcare as ::core::ffi::c_uint ) != 0;
+                    (*(*d).file).dontcare = ((*file).dontcare as ::core::ffi::c_uint) != 0;
                 }
                 (*(*d).file).considered = 0;
                 new_0 = update_file((*d).file, depth);
@@ -956,7 +961,8 @@ unsafe extern "C" fn update_file_1(
                     dep_status = new_0;
                 }
                 if rebuilding_makefiles != 0 {
-                    (*(*d).file).dontcare = ( dontcare_0 as ::core::ffi::c_uint as ::core::ffi::c_uint ) != 0;
+                    (*(*d).file)
+                        .dontcare = dontcare_0 != 0;
                 }
                 while !(*(*d).file).renamed.is_null() {
                     (*d).file = (*(*d).file).renamed;
@@ -967,9 +973,9 @@ unsafe extern "C" fn update_file_1(
                 }
                 loop {
                     running |= ((*f_0).command_state as ::core::ffi::c_int
-                        == CommandState :: Running as ::core::ffi::c_int
+                        == CommandState::Running as ::core::ffi::c_int
                         || (*f_0).command_state as ::core::ffi::c_int
-                            == CommandState :: DepsRunning as ::core::ffi::c_int)
+                            == CommandState::DepsRunning as ::core::ffi::c_int)
                         as ::core::ffi::c_int;
                     f_0 = (*f_0).prev;
                     if f_0.is_null() {
@@ -980,15 +986,12 @@ unsafe extern "C" fn update_file_1(
                     break;
                 }
                 if running == 0 {
-                    (*d).set_changed(
-                        ((*file).phony && !(*file).cmds.is_null()
-                            || (if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime((*d).file, 1)
-                            } else {
-                                (*(*d).file).last_mtime
-                            }) != mtime_0) as ::core::ffi::c_int
-                            as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                    );
+                    (*d).changed = (*file).phony && !(*file).cmds.is_null()
+                        || (if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
+                            f_mtime((*d).file, 1)
+                        } else {
+                            (*(*d).file).last_mtime
+                        }) != mtime_0;
                 }
             }
             du = (*du).next;
@@ -1008,7 +1011,7 @@ unsafe extern "C" fn update_file_1(
     (*fresh4).updating = false;
     depth = depth.wrapping_sub(1);
     if running != 0 {
-        set_command_state(file, CommandState :: DepsRunning );
+        set_command_state(file, CommandState::DepsRunning);
         if 0x2 as ::core::ffi::c_int & db_level != 0 {
             print_spaces(depth);
             printf(
@@ -1018,7 +1021,7 @@ unsafe extern "C" fn update_file_1(
             );
             fflush(stdout);
         }
-        return UpdateStatus :: Success;
+        return UpdateStatus::Success;
     }
     if 0x2 as ::core::ffi::c_int & db_level != 0 {
         print_spaces(depth);
@@ -1030,15 +1033,11 @@ unsafe extern "C" fn update_file_1(
         fflush(stdout);
     }
     if dep_status as u64 != 0 {
-        (*file).update_status = 
-            (if dep_status as ::core::ffi::c_uint
-                == UpdateStatus :: None as ::core::ffi::c_int as ::core::ffi::c_uint
-            {
-                UpdateStatus :: Failed as ::core::ffi::c_int as ::core::ffi::c_uint
-            } else {
-                dep_status as ::core::ffi::c_uint
-            }) as UpdateStatus as UpdateStatus,
-       ;
+        (*file).update_status = if dep_status == UpdateStatus::None {
+            UpdateStatus::Failed
+        } else {
+            dep_status
+        };
         notice_finished_file(file);
         if 0x2 as ::core::ffi::c_int & db_level != 0 {
             print_spaces(depth);
@@ -1059,8 +1058,8 @@ unsafe extern "C" fn update_file_1(
         }
         return dep_status;
     }
-    if (*file).command_state as ::core::ffi::c_int == CommandState :: DepsRunning as ::core::ffi::c_int {
-        set_command_state(file, CommandState :: NotStarted );
+    if (*file).command_state as ::core::ffi::c_int == CommandState::DepsRunning as ::core::ffi::c_int {
+        set_command_state(file, CommandState::NotStarted);
     }
     deps_changed = 0;
     d = (*file).deps;
@@ -1073,16 +1072,13 @@ unsafe extern "C" fn update_file_1(
         while !(*(*d).file).renamed.is_null() {
             (*d).file = (*(*d).file).renamed;
         }
-        if ! (*d).ignore_mtime {
-            if d_mtime == NONEXISTENT_MTIME as uintmax_t && ! (*(*d).file).intermediate {
+        if !(*d).ignore_mtime {
+            if d_mtime == NONEXISTENT_MTIME as uintmax_t && !(*(*d).file).intermediate {
                 must_make = 1;
             }
             deps_changed |= (*d).changed as ::core::ffi::c_int;
         }
-        (*d).changed = (
-            (*d).changed | (noexist != 0 || d_mtime > this_mtime) as ::core::ffi::c_int
-                    as ::core::ffi::c_uint,
-        ) != 0;
+        (*d).changed |= noexist != 0 || d_mtime > this_mtime;
         if noexist == 0 && (0x1 as ::core::ffi::c_int | 0x2 as ::core::ffi::c_int) & db_level != 0 {
             let mut fmt: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
             if (*d).ignore_mtime {
@@ -1137,7 +1133,8 @@ unsafe extern "C" fn update_file_1(
             fflush(stdout);
         }
     } else if noexist == 0
-        && (*file).is_target && deps_changed == 0
+        && (*file).is_target
+        && deps_changed == 0
         && (*file).cmds.is_null()
         && always_make_flag == 0
     {
@@ -1185,7 +1182,7 @@ unsafe extern "C" fn update_file_1(
             puts(b".\0" as *const u8 as *const ::core::ffi::c_char);
             fflush(stdout);
         }
-        if ! (*file).notintermediate && no_intermediates == 0 {
+        if !(*file).notintermediate && no_intermediates == 0 {
             (*file).secondary = true;
         }
         notice_finished_file(file);
@@ -1196,7 +1193,7 @@ unsafe extern "C" fn update_file_1(
                 None => break,
             }
         }
-        return UpdateStatus :: Success;
+        return UpdateStatus::Success;
     }
     if 0x1 as ::core::ffi::c_int & db_level != 0 {
         print_spaces(depth);
@@ -1223,7 +1220,7 @@ unsafe extern "C" fn update_file_1(
         (*file).ignore_vpath = true;
     }
     remake_file(file);
-    if (*file).command_state as ::core::ffi::c_int != CommandState :: Finished as ::core::ffi::c_int {
+    if (*file).command_state as ::core::ffi::c_int != CommandState::Finished as ::core::ffi::c_int {
         if 0x2 as ::core::ffi::c_int & db_level != 0 {
             print_spaces(depth);
             printf(
@@ -1232,9 +1229,9 @@ unsafe extern "C" fn update_file_1(
             );
             fflush(stdout);
         }
-        return UpdateStatus :: Success;
+        return UpdateStatus::Success;
     }
-    match (*file).UpdateStatus as ::core::ffi::c_int {
+    match (*file).update_status as ::core::ffi::c_int {
         3 => {
             if 0x1 as ::core::ffi::c_int & db_level != 0 {
                 print_spaces(depth);
@@ -1271,7 +1268,7 @@ unsafe extern "C" fn update_file_1(
         1 | _ => {}
     }
     (*file).updated = true;
-    (*file).UpdateStatus as UpdateStatus
+    (*file).update_status as UpdateStatus
 }
 /// # Safety
 ///
@@ -1283,10 +1280,10 @@ pub unsafe fn notice_finished_file(file: *mut file) {
         == cs_running as ::core::ffi::c_int)
         as ::core::ffi::c_int;
     let mut touched: ::core::ffi::c_int = 0;
-    (*file).command_state = CommandState :: Finished as CommandState;
+    (*file).command_state = CommandState::Finished;
     (*file).updated = true;
     if touch_flag != 0
-        && (*file).UpdateStatus as ::core::ffi::c_int == UpdateStatus :: Success as ::core::ffi::c_int
+        && (*file).update_status as ::core::ffi::c_int == UpdateStatus::Success as ::core::ffi::c_int
     {
         // Touch the file unless every command line is recursive (flagged
         // COMMANDS_RECURSE); a single non-recursive line means we touch.
@@ -1306,9 +1303,9 @@ pub unsafe fn notice_finished_file(file: *mut file) {
         }
         if should_touch {
             if (*file).phony {
-                (*file).UpdateStatus = UpdateStatus :: Success;
+                (*file).update_status = UpdateStatus::Success;
             } else if !(*file).cmds.is_null() {
-                (*file).UpdateStatus = touch_file(file) as UpdateStatus as UpdateStatus;
+                (*file).update_status = touch_file(file) as UpdateStatus as UpdateStatus;
                 commands_started = commands_started.wrapping_add(1);
                 touched = 1;
             }
@@ -1317,7 +1314,7 @@ pub unsafe fn notice_finished_file(file: *mut file) {
     if (*file).mtime_before_update == UNKNOWN_MTIME as uintmax_t {
         (*file).mtime_before_update = (*file).last_mtime;
     }
-    if ran != 0 && ! (*file).phony || touched != 0 {
+    if ran != 0 && !(*file).phony || touched != 0 {
         let mut i_0: ::core::ffi::c_int = 0;
         if (question_flag != 0 || just_print_flag != 0 || touch_flag != 0)
             && !(*file).cmds.is_null()
@@ -1370,13 +1367,13 @@ pub unsafe fn notice_finished_file(file: *mut file) {
             }
         }
     }
-    if ran != 0 && (*file).UpdateStatus as ::core::ffi::c_int != UpdateStatus :: None as ::core::ffi::c_int {
+    if ran != 0 && (*file).update_status as ::core::ffi::c_int != UpdateStatus::None as ::core::ffi::c_int {
         d = (*file).also_make;
         while !d.is_null() {
-            (*(*d).file).command_state = CommandState :: Finished as CommandState;
+            (*(*d).file).command_state = CommandState::Finished;
             (*(*d).file).updated = true;
-            (*(*d).file).UpdateStatus = (*file).UpdateStatus as UpdateStatus;
-            if ran != 0 && ! (*(*d).file).phony {
+            (*(*d).file).update_status = (*file).update_status;
+            if ran != 0 && !(*(*d).file).phony {
                 f_mtime((*d).file, 0);
                 if just_print_flag != 0 {
                     (*(*d).file).last_mtime = (!(0 as ::core::ffi::c_int as uintmax_t))
@@ -1397,8 +1394,8 @@ pub unsafe fn notice_finished_file(file: *mut file) {
         if (*file).tried_implicit && !(*file).also_make.is_null() {
             check_also_make(file);
         }
-    } else if (*file).UpdateStatus as ::core::ffi::c_int == UpdateStatus :: None as ::core::ffi::c_int {
-        (*file).UpdateStatus = UpdateStatus :: Success;
+    } else if (*file).update_status as ::core::ffi::c_int == UpdateStatus::None as ::core::ffi::c_int {
+        (*file).update_status = UpdateStatus::Success;
     }
 }
 unsafe extern "C" fn check_dep(
@@ -1412,7 +1409,7 @@ unsafe extern "C" fn check_dep(
     let mut dep_status: update_status = us_success;
     double_colon_file_mut(file).set_updating(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     ofile = file;
-    if (*file).phony || ! (*file).intermediate {
+    if (*file).phony || !(*file).intermediate {
         let mtime: uintmax_t;
         dep_status = update_file(file, depth);
         while !(*file).renamed.is_null() {
@@ -1431,12 +1428,13 @@ unsafe extern "C" fn check_dep(
         }
     } else {
         let mtime_0: uintmax_t;
-        if ! (*file).phony && (*file).cmds.is_null() && ! (*file).tried_implicit {
+        if !(*file).phony && (*file).cmds.is_null() && !(*file).tried_implicit {
             try_implicit_rule(file, depth);
             (*file).tried_implicit = true;
         }
         if (*file).cmds.is_null()
-            && ! (*file).is_target && !default_file.is_null()
+            && !(*file).is_target
+            && !default_file.is_null()
             && !(*default_file).cmds.is_null()
         {
             if 0x8 as ::core::ffi::c_int & db_level != 0 {
@@ -1466,13 +1464,13 @@ unsafe extern "C" fn check_dep(
         } else {
             let mut ld: *mut Dep;
             let mut deps_running: ::core::ffi::c_int = 0;
-            if (*file).command_state as ::core::ffi::c_int != CommandState :: Running as ::core::ffi::c_int {
+            if (*file).command_state as ::core::ffi::c_int != CommandState::Running as ::core::ffi::c_int {
                 if (*file).command_state as ::core::ffi::c_int
-                    == CommandState :: DepsRunning as ::core::ffi::c_int
+                    == CommandState::DepsRunning as ::core::ffi::c_int
                 {
                     (*file).considered = 0;
                 }
-                set_command_state(file, CommandState :: NotStarted );
+                set_command_state(file, CommandState::NotStarted);
             }
             ld = ::core::ptr::null_mut::<Dep>();
             if second_expansion != 0 {
@@ -1515,7 +1513,7 @@ unsafe extern "C" fn check_dep(
                     if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                         dep_status = new;
                     }
-                    if ! (*d).ignore_mtime {
+                    if !(*d).ignore_mtime {
                         *must_make_ptr = maybe_make;
                     }
                     loop {
@@ -1541,7 +1539,7 @@ unsafe extern "C" fn check_dep(
                 }
             }
             if deps_running != 0 {
-                set_command_state(file, CommandState :: DepsRunning );
+                set_command_state(file, CommandState::DepsRunning);
             }
         }
     }
@@ -1563,14 +1561,14 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
         );
     }
     if just_print_flag != 0 {
-        return UpdateStatus :: Success;
+        return UpdateStatus::Success;
     }
     if ar_name((*file).name) != 0 {
-        return (if ar_touch((*file).name) != 0 {
-            UpdateStatus :: Failed as ::core::ffi::c_int
+        return if ar_touch((*file).name) != 0 {
+            UpdateStatus::Failed
         } else {
-            UpdateStatus :: Success as ::core::ffi::c_int
-        }) as UpdateStatus;
+            UpdateStatus::Success
+        };
     } else {
         let mut fd: ::core::ffi::c_int;
         loop {
@@ -1588,7 +1586,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
                 b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
                 (*file).name,
             );
-            return UpdateStatus :: Failed;
+            return UpdateStatus::Failed;
         } else {
             let mut statbuf: stat = stat {
                 st_dev: 0,
@@ -1629,7 +1627,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
                     b"touch: fstat: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
-                return UpdateStatus :: Failed;
+                return UpdateStatus::Failed;
             }
             loop {
                 e = read(fd, &raw mut buf as *mut ::core::ffi::c_void, 1) as ::core::ffi::c_int;
@@ -1642,7 +1640,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
                     b"touch: read: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
-                return UpdateStatus :: Failed;
+                return UpdateStatus::Failed;
             }
             let mut o: off_t;
             loop {
@@ -1656,7 +1654,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
                     b"touch: lseek: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
-                return UpdateStatus :: Failed;
+                return UpdateStatus::Failed;
             }
             loop {
                 e = write(fd, &raw mut buf as *const ::core::ffi::c_void, 1) as ::core::ffi::c_int;
@@ -1669,7 +1667,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
                     b"touch: write: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
-                return UpdateStatus :: Failed;
+                return UpdateStatus::Failed;
             }
             if statbuf.st_size == 0 as __off_t {
                 close(fd);
@@ -1688,7 +1686,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
                         b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
                         (*file).name,
                     );
-                    return UpdateStatus :: Failed;
+                    return UpdateStatus::Failed;
                 }
             }
             close(fd);
@@ -1703,14 +1701,14 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
 pub unsafe fn remake_file(file: *mut file) {
     if (*file).cmds.is_null() {
         if (*file).phony {
-            (*file).UpdateStatus = UpdateStatus :: Success;
+            (*file).update_status = UpdateStatus::Success;
         } else if (*file).is_target {
-            (*file).UpdateStatus = UpdateStatus :: Success;
+            (*file).update_status = UpdateStatus::Success;
         } else {
-            if rebuilding_makefiles == 0 || ! (*file).dontcare {
+            if rebuilding_makefiles == 0 || !(*file).dontcare {
                 complain(file);
             }
-            (*file).UpdateStatus = UpdateStatus :: Failed;
+            (*file).update_status = UpdateStatus::Failed;
         }
     } else {
         chop_commands((*file).cmds);
@@ -1718,7 +1716,7 @@ pub unsafe fn remake_file(file: *mut file) {
             execute_file_commands(file);
             return;
         }
-        (*file).UpdateStatus = UpdateStatus :: Success;
+        (*file).update_status = UpdateStatus::Success;
     }
     notice_finished_file(file);
 }
@@ -1805,7 +1803,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
         }
     } else {
         mtime = name_mtime((*file).name);
-        if mtime == NONEXISTENT_MTIME as uintmax_t && search != 0 && ! (*file).ignore_vpath {
+        if mtime == NONEXISTENT_MTIME as uintmax_t && search != 0 && !(*file).ignore_vpath {
             let mut name_0: *const ::core::ffi::c_char = vpath_search(
                 (*file).name,
                 &raw mut mtime,
@@ -1875,7 +1873,8 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                             .wrapping_sub(1 as usize)
                 },
             )
-        && ! (*file).updated {
+        && !(*file).updated
+    {
         static mut adjusted_now: uintmax_t = 0;
         let adjusted_mtime: uintmax_t = mtime;
         if adjusted_now < adjusted_mtime {
@@ -1935,8 +1934,10 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
     propagate_timestamp = (*file).updated;
     loop {
         if mtime != NONEXISTENT_MTIME as uintmax_t
-            && (*file).command_state as ::core::ffi::c_int == CommandState :: NotStarted as ::core::ffi::c_int
-            && ! (*file).tried_implicit && (*file).intermediate {
+            && (*file).command_state as ::core::ffi::c_int == CommandState::NotStarted as ::core::ffi::c_int
+            && !(*file).tried_implicit
+            && (*file).intermediate
+        {
             (*file).intermediate = false;
         }
         if (*file).updated == propagate_timestamp {

@@ -235,7 +235,6 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
                 plus_len += len;
             }
         }
-        d = (*d).next;
     }
     if bar_len == 0 {
         bar_len = 1;
@@ -273,7 +272,6 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
                 qmark_len -= len + 1;
             }
         }
-        d = (*d).next;
     }
     finish_list(plus_value, cp);
     define_automatic(file, c"+", plus_value);
@@ -322,7 +320,6 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
                 }
             }
         }
-        d = (*d).next;
     }
 
     let caret_value = plus_value;
@@ -359,7 +356,6 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
                 }
             }
         }
-        d = (*d).next;
     }
     hash_free(&raw mut dep_hash, 0);
 
@@ -551,7 +547,6 @@ pub unsafe extern "C" fn fatal_error_signal(sig: c_int) {
             if (*c).remote() == 0 && (*c).pid > 0 {
                 kill((*c).pid, SIGTERM);
             }
-            c = (*c).next;
         }
     }
 
@@ -679,7 +674,6 @@ pub unsafe fn delete_child_targets(child: *mut child) {
     let mut d = (*(*child).file).also_make;
     while !d.is_null() {
         delete_target((*d).file, (*(*child).file).name);
-        d = (*d).next;
     }
     (*child).set_deleted(1);
 }

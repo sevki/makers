@@ -1,14 +1,43 @@
+pub use crate::commands::print_commands;
+pub use crate::commands::set_file_variables;
+pub use crate::expand::expand_string_for_file;
+pub use crate::variable::initialize_file_variables;
+pub use crate::variable::print_file_variables;
+pub use crate::variable::print_target_variables;
+use crate::read::parse_file_seq;
 pub use crate::ffi_types::{
-    __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
-    intmax_t, size_t, time_t, uintmax_t,
+    __clockid_t,
+    __off64_t,
+    __off_t,
+    __suseconds_t,
+    __syscall_slong_t,
+    __time_t,
+    clockid_t,
+    intmax_t,
+    size_t,
+    time_t,
+    uintmax_t,
 };
-use crate::misc::free_ns_chain;
-use crate::misc::{copy_dep_chain, end_of_token, xcalloc, xmalloc, xrealloc, xstrdup};
-use crate::stdio::FILE;
-use crate::strcache::{strcache_add_len, strcache_iscached};
-use c2rust_bitfields;
-use libc::{
-    __errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink,
+use {
+    crate::{
+        misc::{copy_dep_chain, end_of_token, xcalloc, xmalloc, xrealloc, xstrdup},
+        stdio::FILE,
+        strcache::{strcache_add_len, strcache_iscached},
+    },
+    c2rust_bitfields,
+    libc::{
+        __errno_location,
+        abort,
+        free,
+        printf,
+        putchar,
+        puts,
+        sprintf,
+        strchr,
+        strcmp,
+        strcpy,
+        unlink,
+    },
 };
 extern "C" {
     static mut stdout: *mut FILE;
@@ -72,8 +101,8 @@ pub struct tm {
     pub tm_gmtoff: ::core::ffi::c_long,
     pub tm_zone: *const ::core::ffi::c_char,
 }
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
+/// A node in make's dependency graph: one target (or prerequisite) file.
+#[derive(Copy, Clone)]
 pub struct File {
     pub name: *const ::core::ffi::c_char,
     pub hname: *const ::core::ffi::c_char,
@@ -93,50 +122,102 @@ pub struct File {
     pub mtime_before_update: uintmax_t,
     pub considered: ::core::ffi::c_uint,
     pub command_flags: ::core::ffi::c_int,
-    #[bitfield(name = "UpdateStatus", ty = "UpdateStatus", bits = "0..=1")]
-    #[bitfield(name = "command_state", ty = "CommandState", bits = "2..=3")]
-    #[bitfield(name = "builtin", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "precious", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "loaded", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "unloaded", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(
-        name = "low_resolution_time",
-        ty = "::core::ffi::c_uint",
-        bits = "8..=8"
-    )]
-    #[bitfield(name = "tried_implicit", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "updating", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(name = "updated", ty = "::core::ffi::c_uint", bits = "11..=11")]
-    #[bitfield(name = "is_target", ty = "::core::ffi::c_uint", bits = "12..=12")]
-    #[bitfield(name = "cmd_target", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "phony", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    #[bitfield(name = "intermediate", ty = "::core::ffi::c_uint", bits = "15..=15")]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "16..=16")]
-    #[bitfield(name = "secondary", ty = "::core::ffi::c_uint", bits = "17..=17")]
-    #[bitfield(name = "notintermediate", ty = "::core::ffi::c_uint", bits = "18..=18")]
-    #[bitfield(name = "dontcare", ty = "::core::ffi::c_uint", bits = "19..=19")]
-    #[bitfield(name = "ignore_vpath", ty = "::core::ffi::c_uint", bits = "20..=20")]
-    #[bitfield(name = "pat_searched", ty = "::core::ffi::c_uint", bits = "21..=21")]
-    #[bitfield(name = "no_diag", ty = "::core::ffi::c_uint", bits = "22..=22")]
-    #[bitfield(name = "was_shuffled", ty = "::core::ffi::c_uint", bits = "23..=23")]
-    #[bitfield(name = "snapped", ty = "::core::ffi::c_uint", bits = "24..=24")]
-    #[bitfield(name = "suffix", ty = "::core::ffi::c_uint", bits = "25..=25")]
-    pub update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix:
-        [u8; 4],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 4],
+    pub update_status: UpdateStatus,
+    pub command_state: CommandState,
+    pub builtin: bool,
+    pub precious: bool,
+    pub loaded: bool,
+    pub unloaded: bool,
+    pub low_resolution_time: bool,
+    pub tried_implicit: bool,
+    pub updating: bool,
+    pub updated: bool,
+    pub is_target: bool,
+    pub cmd_target: bool,
+    pub phony: bool,
+    pub intermediate: bool,
+    pub is_explicit: bool,
+    pub secondary: bool,
+    pub notintermediate: bool,
+    pub dontcare: bool,
+    pub ignore_vpath: bool,
+    pub pat_searched: bool,
+    pub no_diag: bool,
+    pub was_shuffled: bool,
+    pub snapped: bool,
+    pub suffix: bool,
 }
-pub type CommandState = ::core::ffi::c_uint;
-pub const CommandState::Finished: CommandState = 3;
-pub const CommandState::Running: CommandState = 2;
-pub const CommandState::DepsRunning: CommandState = 1;
-pub const CommandState::NotStarted: CommandState = 0;
-pub type UpdateStatus = ::core::ffi::c_uint;
-pub type UpdateStatus = u32;
-pub const UpdateStatus::Failed: UpdateStatus = 3;
-pub const UpdateStatus::Question: UpdateStatus = 2;
-pub const UpdateStatus::None: UpdateStatus = 1;
-pub const UpdateStatus::Success: UpdateStatus = 0;
+
+impl Default for File {
+    fn default() -> Self {
+        File {
+            name: ::core::ptr::null(),
+            hname: ::core::ptr::null(),
+            vpath: ::core::ptr::null(),
+            deps: ::core::ptr::null_mut(),
+            cmds: ::core::ptr::null_mut(),
+            stem: ::core::ptr::null(),
+            also_make: ::core::ptr::null_mut(),
+            prev: ::core::ptr::null_mut(),
+            last: ::core::ptr::null_mut(),
+            renamed: ::core::ptr::null_mut(),
+            variables: ::core::ptr::null_mut(),
+            pat_variables: ::core::ptr::null_mut(),
+            parent: ::core::ptr::null_mut(),
+            double_colon: ::core::ptr::null_mut(),
+            last_mtime: 0,
+            mtime_before_update: 0,
+            considered: 0,
+            command_flags: 0,
+            update_status: UpdateStatus::default(),
+            command_state: CommandState::default(),
+            builtin: false,
+            precious: false,
+            loaded: false,
+            unloaded: false,
+            low_resolution_time: false,
+            tried_implicit: false,
+            updating: false,
+            updated: false,
+            is_target: false,
+            cmd_target: false,
+            phony: false,
+            intermediate: false,
+            is_explicit: false,
+            secondary: false,
+            notintermediate: false,
+            dontcare: false,
+            ignore_vpath: false,
+            pat_searched: false,
+            no_diag: false,
+            was_shuffled: false,
+            snapped: false,
+            suffix: false,
+        }
+    }
+}
+
+/// State of a file's recipe execution.
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub enum CommandState {
+    #[default]
+    NotStarted = 0,
+    DepsRunning = 1,
+    Running = 2,
+    Finished = 3,
+}
+
+/// Outcome of the last attempt to update a file.
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub enum UpdateStatus {
+    #[default]
+    Success = 0,
+    None = 1,
+    Question = 2,
+    Failed = 3,
+}
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct VariableSetList {
@@ -152,35 +233,91 @@ pub struct VariableSet {
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
+/// One edge in the dependency graph: a prerequisite of a target.
+#[derive(Copy, Clone)]
 pub struct Dep {
     pub next: *mut Dep,
     pub name: *const ::core::ffi::c_char,
     pub file: *mut File,
     pub shuf: *mut Dep,
     pub stem: *const ::core::ffi::c_char,
-    #[bitfield(name = "flags", ty = "::core::ffi::c_uint", bits = "0..=7")]
-    #[bitfield(name = "changed", ty = "::core::ffi::c_uint", bits = "8..=8")]
-    #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "staticpattern", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(
-        name = "need_2nd_expansion",
-        ty = "::core::ffi::c_uint",
-        bits = "11..=11"
-    )]
-    #[bitfield(
-        name = "ignore_automatic_vars",
-        ty = "::core::ffi::c_uint",
-        bits = "12..=12"
-    )]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "wait_here", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    pub flags_changed_ignore_mtime_staticpattern_need_2nd_expansion_ignore_automatic_vars_is_explicit_wait_here:
-        [u8; 2],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 6],
+    pub flags: ::core::ffi::c_uint,
+    pub changed: bool,
+    pub ignore_mtime: bool,
+    pub staticpattern: bool,
+    pub need_2nd_expansion: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
 }
+impl Default for Dep {
+    fn default() -> Self {
+        Dep {
+            next: ::core::ptr::null_mut(),
+            name: ::core::ptr::null(),
+            file: ::core::ptr::null_mut(),
+            shuf: ::core::ptr::null_mut(),
+            stem: ::core::ptr::null(),
+            flags: 0,
+            changed: false,
+            ignore_mtime: false,
+            staticpattern: false,
+            need_2nd_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+        }
+    }
+}
+
+impl Default for GoalDep {
+    fn default() -> Self {
+        GoalDep {
+            next: ::core::ptr::null_mut(),
+            name: ::core::ptr::null(),
+            file: ::core::ptr::null_mut(),
+            shuf: ::core::ptr::null_mut(),
+            stem: ::core::ptr::null(),
+            flags: 0,
+            changed: false,
+            ignore_mtime: false,
+            staticpattern: false,
+            need_2nd_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+            error: 0,
+            floc: Floc {
+                filenm: ::core::ptr::null(),
+                lineno: 0,
+                offset: 0,
+            },
+        }
+    }
+}
+
+/// A goal: a top-level target make was asked to build, with error/location
+/// tracking. Mirrors `Dep` (a goal is an edge from "the command line" to a
+/// target) plus bookkeeping.
+#[derive(Copy, Clone)]
+pub struct GoalDep {
+    pub next: *mut GoalDep,
+    pub name: *const ::core::ffi::c_char,
+    pub file: *mut File,
+    pub shuf: *mut GoalDep,
+    pub stem: *const ::core::ffi::c_char,
+    pub flags: ::core::ffi::c_uint,
+    pub changed: bool,
+    pub ignore_mtime: bool,
+    pub staticpattern: bool,
+    pub need_2nd_expansion: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
+    pub error: ::core::ffi::c_int,
+    pub floc: Floc,
+}
+
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct Commands {
@@ -217,9 +354,6 @@ use crate::variable::{
     print_file_variables, print_target_variables,
 };
 
-pub type file = File;
-pub type dep = Dep;
-pub type commands = Commands;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
 
@@ -246,9 +380,113 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
+/// Intrusive singly-linked name-chain node. `NameSeq`, `Dep`, and `GoalDep`
+/// all share this shape; the trait lets `parse_file_seq` and the chain
+/// helpers operate on any of them without layout punning.
+pub trait SeqNode: NextLinked {
+    /// Allocate a zeroed node on the C heap (chains are freed with `free`).
+    unsafe fn alloc() -> *mut Self;
+    unsafe fn name(this: *const Self) -> *const ::core::ffi::c_char;
+    unsafe fn set_name(this: *mut Self, name: *const ::core::ffi::c_char);
+    unsafe fn set_next(this: *mut Self, next: *mut Self);
+    unsafe fn next_slot(this: *mut Self) -> *mut *mut Self;
+    /// Record a `.WAIT` marker on this node (only meaningful for `Dep`).
+    unsafe fn mark_wait(_this: *mut Self) {}
+}
+
+/// Anything that forms an intrusive singly-linked chain via a `next` field.
+pub trait NextLinked: Sized {
+    unsafe fn next(this: *const Self) -> *mut Self;
+}
+
+macro_rules! impl_seq_node {
+    ($t:ty $(, $extra:tt)?) => {
+        impl NextLinked for $t {
+            unsafe fn next(this: *const Self) -> *mut Self {
+                (*this).next
+            }
+        }
+        impl SeqNode for $t {
+            unsafe fn alloc() -> *mut Self {
+                xcalloc(::core::mem::size_of::<Self>() as size_t) as *mut Self
+            }
+            unsafe fn name(this: *const Self) -> *const ::core::ffi::c_char {
+                (*this).name
+            }
+            unsafe fn set_name(this: *mut Self, name: *const ::core::ffi::c_char) {
+                (*this).name = name;
+            }
+            unsafe fn set_next(this: *mut Self, next: *mut Self) {
+                (*this).next = next;
+            }
+            unsafe fn next_slot(this: *mut Self) -> *mut *mut Self {
+                &raw mut (*this).next
+            }
+            $(impl_seq_node!(@wait $extra);)?
+        }
+    };
+    (@wait wait) => {
+        unsafe fn mark_wait(this: *mut Self) {
+            (*this).wait_here = true;
+        }
+    };
+}
+impl_seq_node!(NameSeq);
+impl_seq_node!(Dep, wait);
+impl_seq_node!(GoalDep, wait);
+
+/// Iterator over an intrusive `next`-linked chain (`Dep`, `GoalDep`,
+/// `NameSeq`), yielding raw node pointers. The next pointer is read before
+/// the item is yielded, so the current node may be freed or relinked by the
+/// loop body.
+pub struct SeqIter<T: NextLinked> {
+    cur: *mut T,
+}
+
+impl<T: NextLinked> Iterator for SeqIter<T> {
+    type Item = *mut T;
+    fn next(&mut self) -> Option<*mut T> {
+        if self.cur.is_null() {
+            return None;
+        }
+        let item = self.cur;
+        self.cur = unsafe { T::next(item) };
+        Some(item)
+    }
+}
+
+/// Iterate a chain starting at `head`.
+///
+/// # Safety
+/// `head` must be null or point to a valid chain; nodes must stay valid
+/// until yielded.
+pub unsafe fn seq_iter<T: NextLinked>(head: *mut T) -> SeqIter<T> {
+    SeqIter { cur: head }
+}
+
+impl File {
+    /// Iterate this file's prerequisite chain.
+    ///
+    /// # Safety
+    /// The `deps` chain must be a valid chain; nodes must stay valid until
+    /// yielded.
+    pub unsafe fn deps_iter(&self) -> SeqIter<Dep> {
+        seq_iter(self.deps)
+    }
+}
+
+/// Free a whole chain of nodes, following `next` links.
+pub unsafe fn free_seq_chain<T: NextLinked>(mut n: *mut T) {
+    while !n.is_null() {
+        let next = T::next(n);
+        free(n as *mut ::core::ffi::c_void);
+        n = next;
+    }
+}
+
+/// A simple chain of names, as produced by parse_file_seq.
 #[derive(Copy, Clone)]
-#[repr(C)]
-pub struct nameseq {
+pub struct NameSeq {
     pub next: *mut NameSeq,
     pub name: *const ::core::ffi::c_char,
 }
@@ -263,10 +501,10 @@ pub const ENOENT: ::core::ffi::c_int = 2;
 pub const CLOCK_REALTIME: ::core::ffi::c_int = 0;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
-pub const INTSTR_LENGTH: usize = (53 as usize)
+pub const INTSTR_LENGTH: usize = 53_usize
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
-    .wrapping_div(22 as usize)
-    .wrapping_add(3 as usize);
+    .wrapping_div(22_usize)
+    .wrapping_add(3_usize);
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
 pub const COMMANDS_SILENT: ::core::ffi::c_int = 2;
 pub const COMMANDS_NOERROR: ::core::ffi::c_int = 4;
@@ -442,24 +680,22 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
         panic!("assertion failed: ! verify_flag || strcache_iscached (name)");
     };
     file_key.hname = name;
-    file_slot = hash_find_slot(
+    let file_slot: *mut *mut File = hash_find_slot(
         &raw mut files,
         &raw mut file_key as *const ::core::ffi::c_void,
     ) as *mut *mut File;
-    f = *file_slot;
-    if !(f.is_null()
-        || f as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
+    let f: *mut File = *file_slot;
+    if !(f.is_null() || std::ptr::eq(f as *mut ::core::ffi::c_void, hash_deleted_item))
         && (*f).double_colon.is_null()
     {
         (*f).builtin = false;
         return f;
     }
-    new = xcalloc(::core::mem::size_of::<File>() as size_t) as *mut File;
+    let new: *mut File = xcalloc(::core::mem::size_of::<File>() as size_t) as *mut File;
     (*new).hname = name;
     (*new).name = (*new).hname;
     (*new).update_status = UpdateStatus::None;
-    if f.is_null() || f as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
-    {
+    if f.is_null() || std::ptr::eq(f as *mut ::core::ffi::c_void, hash_deleted_item) {
         (*new).last = new;
         hash_insert_at(
             &raw mut files,
@@ -524,26 +760,24 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     {
         abort();
     }
-    deleted_file =
+    let deleted_file: *mut File =
         hash_delete(&raw mut files, from_file as *const ::core::ffi::c_void) as *mut File;
     if deleted_file != from_file {
         abort();
     }
     file_key.hname = to_hname;
-    file_slot = hash_find_slot(
+    let file_slot: *mut *mut File = hash_find_slot(
         &raw mut files,
         &raw mut file_key as *const ::core::ffi::c_void,
     ) as *mut *mut File;
-    to_file = *file_slot;
+    let to_file: *mut File = *file_slot;
     (*from_file).hname = to_hname;
     f = (*from_file).double_colon;
     while !f.is_null() {
         (*f).hname = to_hname;
         f = (*f).prev;
     }
-    if to_file.is_null()
-        || to_file as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
-    {
+    if to_file.is_null() || std::ptr::eq(to_file as *mut ::core::ffi::c_void, hash_deleted_item) {
         hash_insert_at(
             &raw mut files,
             from_file as *const ::core::ffi::c_void,
@@ -606,7 +840,8 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     }
     merge_variable_set_lists(&raw mut (*to_file).variables, (*from_file).variables);
     if !(*to_file).double_colon.is_null()
-        && (*from_file).is_target && (*from_file).double_colon.is_null()
+        && (*from_file).is_target
+        && (*from_file).double_colon.is_null()
     {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
@@ -635,48 +870,20 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         (*to_file).last_mtime = (*from_file).last_mtime;
     }
     (*to_file).mtime_before_update = (*from_file).mtime_before_update;
-    (*to_file).precious = (
-        (*to_file).precious | (*from_file).precious as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).loaded = (
-        (*to_file).loaded | (*from_file).loaded as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).tried_implicit = (
-        (*to_file).tried_implicit | (*from_file).tried_implicit as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).updating = (
-        (*to_file).updating | (*from_file).updating as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).updated = (
-        (*to_file).updated | (*from_file).updated as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).is_target = (
-        (*to_file).is_target | (*from_file).is_target as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).cmd_target = (
-        (*to_file).cmd_target | (*from_file).cmd_target as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).phony = (
-        (*to_file).phony | (*from_file).phony as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).is_explicit = (
-        (*to_file).is_explicit | (*from_file).is_explicit as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).secondary = (
-        (*to_file).secondary | (*from_file).secondary as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).notintermediate = (
-        (*to_file).notintermediate | (*from_file).notintermediate as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).ignore_vpath = (
-        (*to_file).ignore_vpath | (*from_file).ignore_vpath as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).snapped = (
-        (*to_file).snapped | (*from_file).snapped as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
-    (*to_file).suffix = (
-        (*to_file).suffix | (*from_file).suffix as ::core::ffi::c_int as ::core::ffi::c_uint,
-    ) != 0;
+    (*to_file).precious |= (*from_file).precious;
+    (*to_file).loaded |= (*from_file).loaded;
+    (*to_file).tried_implicit |= (*from_file).tried_implicit;
+    (*to_file).updating |= (*from_file).updating;
+    (*to_file).updated |= (*from_file).updated;
+    (*to_file).is_target |= (*from_file).is_target;
+    (*to_file).cmd_target |= (*from_file).cmd_target;
+    (*to_file).phony |= (*from_file).phony;
+    (*to_file).is_explicit |= (*from_file).is_explicit;
+    (*to_file).secondary |= (*from_file).secondary;
+    (*to_file).notintermediate |= (*from_file).notintermediate;
+    (*to_file).ignore_vpath |= (*from_file).ignore_vpath;
+    (*to_file).snapped |= (*from_file).snapped;
+    (*to_file).suffix |= (*from_file).suffix;
     (*to_file).builtin = false;
     (*from_file).renamed = to_file;
     if rehashed_files_len.wrapping_rem(REHASHED_FILES_INCR as size_t) == 0 {
@@ -724,8 +931,12 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
                 == hash_deleted_item as *mut ::core::ffi::c_void)
         {
             let f: *mut File = *file_slot;
-            if (*f).intermediate && ((*f).dontcare || ! (*f).precious )
-                && ! (*f).secondary && ! (*f).notintermediate && ! (*f).cmd_target {
+            if (*f).intermediate
+                && ((*f).dontcare || !(*f).precious)
+                && !(*f).secondary
+                && !(*f).notintermediate
+                && !(*f).cmd_target
+            {
                 let status: ::core::ffi::c_int;
                 if (*f).update_status as ::core::ffi::c_int != UpdateStatus::None as ::core::ffi::c_int {
                     // ENOENT from unlink means the file was already gone: skip the
@@ -738,7 +949,7 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
                         status = unlink((*f).name);
                         skip = status < 0 && *__errno_location() == ENOENT;
                     }
-                    if !skip && ! (*f).dontcare {
+                    if !skip && !(*f).dontcare {
                         if sig != 0 {
                             error(
                                 ::core::ptr::null_mut::<Floc>(),
@@ -798,21 +1009,19 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
 pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
     let mut new: *mut dep = parse_file_seq(
         &raw mut p,
-        ::core::mem::size_of::<Dep>() as size_t,
         0x100 as ::core::ffi::c_int,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x40 as ::core::ffi::c_int,
-    ) as *mut Dep;
+    );
     if *p != 0 {
         let mut ood: *mut Dep;
         p = p.offset(1 as ::core::ffi::c_int as isize);
-        ood = parse_file_seq(
-            &raw mut p,
-            ::core::mem::size_of::<Dep>() as size_t,
-            0x1 as ::core::ffi::c_int,
+        ood = parse_file_seq::<Dep>(
+        &raw mut p,
+        0x1 as ::core::ffi::c_int,
             ::core::ptr::null::<::core::ffi::c_char>(),
             0x40 as ::core::ffi::c_int,
-        ) as *mut Dep;
+    );
         if new.is_null() {
             new = ood;
         } else {
@@ -836,7 +1045,7 @@ pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char) -> *mut dep {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut d1: *mut Dep;
+    let _d1: *mut Dep;
     if deps.is_null() {
         return ::core::ptr::null_mut::<Dep>();
     }
@@ -906,9 +1115,8 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
             dp = (*dp).next;
         }
     }
-    d1 = deps;
-    while !d1.is_null() {
-        if !((*d1).need_2nd_expansion ) {
+    for d1 in seq_iter(deps) {
+        if !((*d1).need_2nd_expansion) {
             (*d1).file = lookup_file((*d1).name);
             if (*d1).file.is_null() {
                 (*d1).file = enter_file((*d1).name);
@@ -919,7 +1127,6 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
                 (*(*d1).file).is_explicit = true;
             }
         }
-        d1 = (*d1).next;
     }
     deps
 }
@@ -943,7 +1150,7 @@ pub unsafe fn expand_deps(f: *mut file) {
         let p: *mut ::core::ffi::c_char;
         let mut new: *mut Dep;
         let next: *mut Dep;
-        if (*d).name.is_null() || ! (*d).need_2nd_expansion {
+        if (*d).name.is_null() || !(*d).need_2nd_expansion {
             dp = &raw mut (*d).next;
             d = (*d).next;
         } else {
@@ -1014,8 +1221,7 @@ pub unsafe fn expand_deps(f: *mut file) {
                 free_dep(d);
                 *dp = new;
                 dp = &raw mut new;
-                d = new;
-                while !d.is_null() {
+                for d in seq_iter(new) {
                     (*d).file = lookup_file((*d).name);
                     if (*d).file.is_null() {
                         (*d).file = enter_file((*d).name);
@@ -1023,10 +1229,10 @@ pub unsafe fn expand_deps(f: *mut file) {
                     (*d).name = ::core::ptr::null::<::core::ffi::c_char>();
                     (*d).stem = fstem;
                     if fstem.is_null() {
-                        (*(*d).file).is_explicit = true;
+                        (*(*d).file)
+                            .is_explicit = true;
                     }
                     dp = &raw mut (*d).next;
-                    d = (*d).next;
                 }
                 *dp = next;
                 d = *dp;
@@ -1052,15 +1258,13 @@ pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
     } else {
         ::core::ptr::null_mut::<Dep>()
     };
-    d = prereqs;
-    while !d.is_null() {
+    for d in seq_iter(prereqs) {
         (*d).file = lookup_file((*d).name);
         if (*d).file.is_null() {
             (*d).file = enter_file((*d).name);
         }
         (*d).name = ::core::ptr::null::<::core::ffi::c_char>();
         (*d).ignore_automatic_vars = true;
-        d = (*d).next;
     }
     prereqs
 }
@@ -1074,10 +1278,10 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     if second_expansion == 0 {
         (*f).updating = false;
     }
-    if all_secondary != 0 && ! (*f).notintermediate {
+    if all_secondary != 0 && !(*f).notintermediate {
         (*f).intermediate = true;
     }
-    if no_intermediates != 0 && ! (*f).intermediate && ! (*f).secondary {
+    if no_intermediates != 0 && !(*f).intermediate && !(*f).secondary {
         (*f).notintermediate = true;
     }
     if !(*f).variables.is_null() {
@@ -1087,13 +1291,11 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
             (*(*f).variables).set,
         ));
         if second_expansion != 0 {
-            d = prereqs;
-            while !d.is_null() {
+            for d in seq_iter(prereqs) {
                 if (*d).name.is_null() {
                     (*d).name = xstrdup((*(*d).file).name);
                 }
                 (*d).need_2nd_expansion = true;
-                d = (*d).next;
             }
         }
     } else if (*f).is_target {
@@ -1145,34 +1347,29 @@ pub unsafe fn snap_deps() {
     snapped_deps = 1;
     f = lookup_file(b".PRECIOUS\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
+        for d in seq_iter((*f).deps) {
             f2 = (*d).file;
             while !f2.is_null() {
                 (*f2).precious = true;
                 f2 = (*f2).prev;
             }
-            d = (*d).next;
         }
         f = (*f).prev;
     }
     f = lookup_file(b".LOW_RESOLUTION_TIME\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
+        for d in seq_iter((*f).deps) {
             f2 = (*d).file;
             while !f2.is_null() {
                 (*f2).low_resolution_time = true;
                 f2 = (*f2).prev;
             }
-            d = (*d).next;
         }
         f = (*f).prev;
     }
     f = lookup_file(b".PHONY\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
+        for d in seq_iter((*f).deps) {
             f2 = (*d).file;
             while !f2.is_null() {
                 (*f2).phony = true;
@@ -1181,21 +1378,18 @@ pub unsafe fn snap_deps() {
                 (*f2).mtime_before_update = NONEXISTENT_MTIME as uintmax_t;
                 f2 = (*f2).prev;
             }
-            d = (*d).next;
         }
         f = (*f).prev;
     }
     f = lookup_file(b".NOTINTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         if !(*f).deps.is_null() {
-            d = (*f).deps;
-            while !d.is_null() {
+            for d in seq_iter((*f).deps) {
                 f2 = (*d).file;
                 while !f2.is_null() {
                     (*f2).notintermediate = true;
                     f2 = (*f2).prev;
                 }
-                d = (*d).next;
             }
         } else {
             no_intermediates = 1;
@@ -1204,8 +1398,7 @@ pub unsafe fn snap_deps() {
     }
     f = lookup_file(b".INTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
+        for d in seq_iter((*f).deps) {
             f2 = (*d).file;
             while !f2.is_null() {
                 if (*f2).notintermediate {
@@ -1221,15 +1414,13 @@ pub unsafe fn snap_deps() {
                 }
                 f2 = (*f2).prev;
             }
-            d = (*d).next;
         }
         f = (*f).prev;
     }
     f = lookup_file(b".SECONDARY\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         if !(*f).deps.is_null() {
-            d = (*f).deps;
-            while !d.is_null() {
+            for d in seq_iter((*f).deps) {
                 f2 = (*d).file;
                 while !f2.is_null() {
                     if (*f2).notintermediate {
@@ -1243,12 +1434,12 @@ pub unsafe fn snap_deps() {
                     } else {
                         let rhs = {
                             (*f2).secondary = true;
-                            (*f2).secondary } as ::core::ffi::c_uint;
-                        (*f2).intermediate = ( rhs ) != 0;
+                            (*f2).secondary
+                        } as ::core::ffi::c_uint;
+                        (*f2).intermediate = (rhs) != 0;
                     }
                     f2 = (*f2).prev;
                 }
-                d = (*d).next;
             }
         } else {
             all_secondary = 1;
@@ -1272,14 +1463,12 @@ pub unsafe fn snap_deps() {
         if (*f).deps.is_null() {
             ignore_errors_flag = 1;
         } else {
-            d = (*f).deps;
-            while !d.is_null() {
+            for d in seq_iter((*f).deps) {
                 f2 = (*d).file;
                 while !f2.is_null() {
                     (*f2).command_flags |= COMMANDS_NOERROR;
                     f2 = (*f2).prev;
                 }
-                d = (*d).next;
             }
         }
     }
@@ -1288,14 +1477,12 @@ pub unsafe fn snap_deps() {
         if (*f).deps.is_null() {
             run_silent = 1;
         } else {
-            d = (*f).deps;
-            while !d.is_null() {
+            for d in seq_iter((*f).deps) {
                 f2 = (*d).file;
                 while !f2.is_null() {
                     (*f2).command_flags |= COMMANDS_SILENT;
                     f2 = (*f2).prev;
                 }
-                d = (*d).next;
             }
         }
     }
@@ -1305,8 +1492,7 @@ pub unsafe fn snap_deps() {
         if (*f).deps.is_null() {
             not_parallel = 1;
         } else {
-            d = (*f).deps;
-            while !d.is_null() {
+            for d in seq_iter((*f).deps) {
                 f2 = (*d).file;
                 while !f2.is_null() {
                     if !(*f2).deps.is_null() {
@@ -1318,7 +1504,6 @@ pub unsafe fn snap_deps() {
                     }
                     f2 = (*f2).prev;
                 }
-                d = (*d).next;
             }
         }
     }
@@ -1351,7 +1536,6 @@ pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
         if state as ::core::ffi::c_uint > (*(*d).file).command_state as ::core::ffi::c_uint {
             (*(*d).file).command_state = state as CommandState as CommandState;
         }
-        d = (*d).next;
     }
 }
 /// # Safety
@@ -1564,7 +1748,7 @@ pub unsafe fn file_timestamp_sprintf(mut p: *mut ::core::ffi::c_char, ts: uintma
 pub unsafe fn print_prereqs(mut deps: *const dep) {
     let mut ood: *const dep = ::core::ptr::null::<dep>();
     while !deps.is_null() {
-        if ! (*deps).ignore_mtime {
+        if !(*deps).ignore_mtime {
             printf(
                 b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,
                 if (*deps).wait_here {
@@ -1597,8 +1781,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
                 (*(*ood).file).name
             },
         );
-        ood = (*ood).next;
-        while !ood.is_null() {
+        for ood in seq_iter((*ood).next) {
             if (*ood).ignore_mtime {
                 printf(
                     b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1614,7 +1797,6 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
                     },
                 );
             }
-            ood = (*ood).next;
         }
     }
     putchar('\n' as i32);
@@ -1645,7 +1827,7 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
     if !(*f).variables.is_null() {
         print_target_variables(f);
     }
-    if ! (*f).is_target {
+    if !(*f).is_target {
         puts(b"# Not a target:\0" as *const u8 as *const ::core::ffi::c_char);
     }
     printf(
@@ -1715,13 +1897,12 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
         puts(b"#  File is explicitly mentioned.\0" as *const u8 as *const ::core::ffi::c_char);
     }
     if !(*f).also_make.is_null() {
-        let mut d: *const Dep;
+        let _d: *const Dep;
         fputs(
             b"#  Also makes:\0" as *const u8 as *const ::core::ffi::c_char,
             stdout,
         );
-        d = (*f).also_make;
-        while !d.is_null() {
+        for d in seq_iter((*f).also_make) {
             printf(
                 b" %s\0" as *const u8 as *const ::core::ffi::c_char,
                 if !(*d).name.is_null() {
@@ -1730,7 +1911,6 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
                     (*(*d).file).name
                 },
             );
-            d = (*d).next;
         }
         putchar('\n' as i32);
     }
@@ -1780,11 +1960,7 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
                         as *const ::core::ffi::c_char,
                 );
             }
-            3 => {
-                puts(b"#  Failed to be updated.\0" as *const u8 as *const ::core::ffi::c_char);
-            }
-            1 | _ => {}
-        },
+        }
         _ => {
             puts(
                 b"#  Invalid value in 'command_state' member!\0" as *const u8
@@ -1937,9 +2113,9 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
             (*f).stem,
         );
     }
-    d = (*f).deps;
-    while !d.is_null() {
-        if ! (*d).need_2nd_expansion && !(*d).name.is_null()
+    for d in seq_iter((*f).deps) {
+        if !(*d).need_2nd_expansion
+            && !(*d).name.is_null()
             && *(*d).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
             && strcache_iscached((*d).name) == 0
         {
@@ -1975,7 +2151,6 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
                 (*d).stem,
             );
         }
-        d = (*d).next;
     }
 }
 /// # Safety
@@ -2006,7 +2181,8 @@ pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::c
         while fp < end {
             if !((*fp).is_null()
                 || *fp as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
-                && (**fp).is_target {
+                && (**fp).is_target
+            {
                 let f: *mut File = *fp;
                 let l: size_t = strlen((*f).name) as size_t;
                 len = len.wrapping_add(l.wrapping_add(1));

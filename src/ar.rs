@@ -1,3 +1,6 @@
+pub use crate::file::enter_file;
+pub use crate::file::lookup_file;
+pub use crate::remake::f_mtime;
 pub use crate::file::{CommandState, UpdateStatus};
 use libc::{fnmatch, free, strchr};
 
@@ -51,8 +54,7 @@ use crate::remake::f_mtime;
 pub struct ar_glob_state {
     pub arname: *const ::core::ffi::c_char,
     pub pattern: *const ::core::ffi::c_char,
-    pub size: size_t,
-    pub chain: *mut NameSeq,
+    pub chain: *mut T,
     pub n: ::core::ffi::c_uint,
 }
 pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
@@ -253,7 +255,7 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     free(arname as *mut ::core::ffi::c_void);
     val
 }
-unsafe extern "C" fn ar_glob_match(
+unsafe extern "C" fn ar_glob_match<T: SeqNode>(
     mut _desc: ::core::ffi::c_int,
     mem: *const ::core::ffi::c_char,
     mut _truncated: ::core::ffi::c_int,
@@ -266,17 +268,17 @@ unsafe extern "C" fn ar_glob_match(
     mut _mode: ::core::ffi::c_uint,
     arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
-    let state: *mut ar_glob_state = arg as *mut ar_glob_state;
+    let state: *mut ArGlobState<T> = arg as *mut ArGlobState<T>;
     if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
-        let new: *mut NameSeq = xcalloc((*state).size) as *mut NameSeq;
-        (*new).name = strcache_add(concat(
+        let new: *mut T = T::alloc();
+        T::set_name(new, strcache_add(concat(
             4,
             (*state).arname,
             b"(\0" as *const u8 as *const ::core::ffi::c_char,
             mem,
             b")\0" as *const u8 as *const ::core::ffi::c_char,
-        ));
-        (*new).next = (*state).chain;
+        )));
+        T::set_next(new, (*state).chain);
         (*state).chain = new;
         (*state).n = (*state).n.wrapping_add(1);
     }
@@ -318,31 +320,28 @@ unsafe extern "C" fn ar_glob_pattern_p(
 pub unsafe fn ar_glob(
     arname: *const ::core::ffi::c_char,
     member_pattern: *const ::core::ffi::c_char,
-    size: size_t,
-) -> *mut NameSeq {
+) -> *mut T {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut state: ar_glob_state = ar_glob_state {
+    let mut state: ArGlobState<T> = ArGlobState {
         arname: ::core::ptr::null::<::core::ffi::c_char>(),
         pattern: ::core::ptr::null::<::core::ffi::c_char>(),
-        size: 0,
-        chain: ::core::ptr::null_mut::<NameSeq>(),
+        chain: ::core::ptr::null_mut::<T>(),
         n: 0,
     };
-    let mut n: *mut NameSeq;
+    let mut n: *mut T;
     let names: *mut *const ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
     if ar_glob_pattern_p(member_pattern, 1) == 0 {
-        return ::core::ptr::null_mut::<NameSeq>();
+        return ::core::ptr::null_mut::<T>();
     }
     state.arname = arname;
     state.pattern = member_pattern;
-    state.size = size;
-    state.chain = ::core::ptr::null_mut::<NameSeq>();
+    state.chain = ::core::ptr::null_mut::<T>();
     state.n = 0;
     ar_scan(
         arname,
         Some(
-            ar_glob_match
+            ar_glob_match::<T>
                 as unsafe extern "C" fn(
                     ::core::ffi::c_int,
                     *const ::core::ffi::c_char,
@@ -360,7 +359,7 @@ pub unsafe fn ar_glob(
         &raw mut state as *const ::core::ffi::c_void,
     );
     if state.chain.is_null() {
-        return ::core::ptr::null_mut::<NameSeq>();
+        return ::core::ptr::null_mut::<T>();
     }
     alloca_allocations.push(::std::vec::from_elem(
         0,
@@ -375,8 +374,8 @@ pub unsafe fn ar_glob(
         let fresh1 = i;
         i = i.wrapping_add(1);
         let fresh2 = &mut (*names.offset(fresh1 as isize));
-        *fresh2 = (*n).name;
-        n = (*n).next;
+        *fresh2 = T::name(n);
+        n = T::next(n);
     }
     qsort(
         names as *mut ::core::ffi::c_void,
@@ -395,8 +394,8 @@ pub unsafe fn ar_glob(
     while !n.is_null() {
         let fresh3 = i;
         i = i.wrapping_add(1);
-        (*n).name = *names.offset(fresh3 as isize);
-        n = (*n).next;
+        T::set_name(n, *names.offset(fresh3 as isize));
+        n = T::next(n);
     }
     state.chain
 }
