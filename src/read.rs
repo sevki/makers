@@ -3287,59 +3287,76 @@ pub unsafe fn find_percent(pattern: *mut ::core::ffi::c_char) -> *mut ::core::ff
 pub unsafe fn find_percent_cached(
     string: *mut *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let p: *const ::core::ffi::c_char = strchr(*string, '%' as i32);
-    let new: *mut ::core::ffi::c_char;
-    let mut np: *mut ::core::ffi::c_char;
-    let mut slen: size_t;
-    if p.is_null()
-        || p == *string
-        || *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '\\' as i32
-    {
-        return p;
+    let string_slot = string
+        .as_mut()
+        .expect("find_percent_cached requires a non-null string slot");
+    let original = *string_slot;
+    if original.is_null() {
+        return ::core::ptr::null::<::core::ffi::c_char>();
     }
-    slen = strlen(*string) as size_t;
-    alloca_allocations.push(::std::vec::from_elem(0, slen.wrapping_add(1) as usize));
-    new = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    memcpy(
-        new as *mut ::core::ffi::c_void,
-        *string as *const ::core::ffi::c_void,
-        (slen as size_t).wrapping_add(1),
-    );
-    np = new.offset(p.offset_from(*string) as ::core::ffi::c_long as isize);
-    loop {
-        let pp: *mut ::core::ffi::c_char = np;
-        let mut i: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
-        while np.offset(i as isize) as *mut ::core::ffi::c_char >= new
-            && *np.offset(i as isize) as ::core::ffi::c_int == '\\' as i32
-        {
+
+    let original_cstr = ::core::ffi::CStr::from_ptr(original);
+    let original_with_nul = original_cstr.to_bytes_with_nul();
+    let original_bytes = &original_with_nul[..original_with_nul.len() - 1];
+    let Some(first_percent) = original_bytes.iter().position(|ch| *ch == b'%') else {
+        return ::core::ptr::null::<::core::ffi::c_char>();
+    };
+
+    if first_percent == 0 || original_bytes[first_percent - 1] != b'\\' {
+        return ::core::ffi::CStr::from_bytes_with_nul(&original_with_nul[first_percent..])
+            .expect("percent suffix remains NUL-terminated")
+            .as_ptr();
+    }
+
+    let mut new = original_with_nul.to_vec();
+    let mut slen = original_bytes.len();
+    let mut np = Some(first_percent);
+    while let Some(percent) = np {
+        let mut i: isize = -2;
+        while percent as isize + i >= 0 && new[(percent as isize + i) as usize] == b'\\' {
             i -= 1;
         }
         i += 1;
-        let hi: ::core::ffi::c_int = -(i / 2);
-        memmove(
-            pp.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-            pp.offset((i / 2) as isize) as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
-            (slen as size_t)
-                .wrapping_sub(pp.offset_from(new) as ::core::ffi::c_long as size_t)
-                .wrapping_add(hi as size_t)
-                .wrapping_add(1),
-        );
-        slen = slen.wrapping_add((i / 2 + i % 2) as size_t);
-        np = np.offset((i / 2) as isize);
+
+        let hi = -(i / 2);
+        let dest = (percent as isize + i) as usize;
+        let src = (percent as isize + i / 2) as usize;
+        let count = (slen as isize - percent as isize + hi + 1) as usize;
+        new.copy_within(src..src + count, dest);
+
+        slen = (slen as isize + i / 2 + i % 2) as usize;
+        let next_search = (percent as isize + i / 2) as usize;
+
         if i % 2 == 0 {
+            np = Some(next_search);
             break;
         }
-        np = strchr(np, '%' as i32);
-        if !(!np.is_null()
-            && *np.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '\\' as i32)
+
+        match new[next_search..slen]
+            .iter()
+            .position(|ch| *ch == b'%')
+            .map(|offset| next_search + offset)
         {
-            break;
+            Some(next_percent) if next_percent > 0 && new[next_percent - 1] == b'\\' => {
+                np = Some(next_percent);
+            }
+            Some(next_percent) => {
+                np = Some(next_percent);
+                break;
+            }
+            None => {
+                np = None;
+                break;
+            }
         }
     }
-    *string = strcache_add(new);
-    if !np.is_null() {
-        (*string).offset(np.offset_from(new) as ::core::ffi::c_long as isize)
+
+    *string_slot = strcache_add(new.as_mut_ptr() as *mut ::core::ffi::c_char);
+    if let Some(percent) = np {
+        let cached_with_nul = ::core::ffi::CStr::from_ptr(*string_slot).to_bytes_with_nul();
+        ::core::ffi::CStr::from_bytes_with_nul(&cached_with_nul[percent..])
+            .expect("cached percent suffix remains NUL-terminated")
+            .as_ptr()
     } else {
         ::core::ptr::null::<::core::ffi::c_char>()
     }
@@ -4127,4 +4144,43 @@ pub unsafe fn parse_file_seq(
     }
     *stringp = p;
     new
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::std::ffi::{CStr, CString};
+
+    fn find_cached(input: &[u8]) -> (Vec<u8>, Option<usize>) {
+        let input = CString::new(input).expect("test input must not contain interior NULs");
+        let mut slot = input.as_ptr();
+        let percent = unsafe { find_percent_cached(&raw mut slot) };
+        let output = unsafe { CStr::from_ptr(slot).to_bytes().to_vec() };
+        let percent = if percent.is_null() {
+            None
+        } else {
+            Some(percent as usize - slot as usize)
+        };
+        (output, percent)
+    }
+
+    #[test]
+    fn find_percent_cached_handles_unescaped_percent_without_copying() {
+        assert_eq!(find_cached(b"foo"), (b"foo".to_vec(), None));
+        assert_eq!(find_cached(b"foo%bar"), (b"foo%bar".to_vec(), Some(3)));
+    }
+
+    #[test]
+    fn find_percent_cached_compresses_escaped_percent() {
+        assert_eq!(find_cached(b"foo\\%bar"), (b"foo%bar".to_vec(), None));
+        assert_eq!(
+            find_cached(b"foo\\\\%bar"),
+            (b"foo\\%bar".to_vec(), Some(4))
+        );
+    }
+
+    #[test]
+    fn find_percent_cached_keeps_searching_after_escaped_percent() {
+        assert_eq!(find_cached(b"\\%a%b"), (b"%a%b".to_vec(), Some(2)));
+    }
 }
