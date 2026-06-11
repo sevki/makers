@@ -98,12 +98,21 @@ macro_rules! impl_shuffle_node {
     ($t:ty) => {
         impl ShuffleNode for $t {
             unsafe fn wait_here(this: *const Self) -> bool {
+                if this.is_null() {
+                    return false;
+                }
                 (*this).wait_here
             }
             unsafe fn set_shuf(this: *mut Self, shuf: *mut Self) {
+                if this.is_null() {
+                    return;
+                }
                 (*this).shuf = shuf;
             }
             unsafe fn file(this: *const Self) -> *mut File {
+                if this.is_null() {
+                    return ::core::ptr::null_mut::<File>();
+                }
                 (*this).file
             }
         }
