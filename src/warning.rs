@@ -316,3 +316,59 @@ unsafe fn append_char(fp: *mut ::core::ffi::c_char, c: char) -> *mut ::core::ffi
     let byte = c as u8;
     variable_buffer_output(fp, &byte as *const u8 as *const ::core::ffi::c_char, 1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both cache accessor functions must return the same `Mutex` object on
+    /// every call (singleton). This catches mutations that replace the
+    /// `OnceLock`-based accessor with `Box::leak(Box::new(...))`, which
+    /// allocates a fresh map on each call and breaks the caching invariant.
+    #[test]
+    fn action_name_cache_is_singleton() {
+        let p1 = action_name_cache() as *const _;
+        let p2 = action_name_cache() as *const _;
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn type_name_cache_is_singleton() {
+        let p1 = type_name_cache() as *const _;
+        let p2 = type_name_cache() as *const _;
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn action_from_name_cached_known_names() {
+        assert_eq!(action_from_name_cached("warn"), Some(Action::Warn));
+        assert_eq!(action_from_name_cached("ignore"), Some(Action::Ignore));
+        assert_eq!(action_from_name_cached("error"), Some(Action::Error));
+        // Case-insensitive match must also hit the correct variant.
+        assert_eq!(action_from_name_cached("WARN"), Some(Action::Warn));
+        // Unknown names must return None.
+        assert_eq!(action_from_name_cached("xyzzy"), None);
+    }
+
+    #[test]
+    fn type_from_name_cached_known_names() {
+        assert_eq!(
+            type_from_name_cached("circular-dep"),
+            Some(Type::CircularDep)
+        );
+        assert_eq!(
+            type_from_name_cached("invalid-ref"),
+            Some(Type::InvalidRef)
+        );
+        assert_eq!(
+            type_from_name_cached("invalid-var"),
+            Some(Type::InvalidVar)
+        );
+        assert_eq!(
+            type_from_name_cached("undefined-var"),
+            Some(Type::UndefinedVar)
+        );
+        // Unknown names must return None.
+        assert_eq!(type_from_name_cached("xyzzy"), None);
+    }
+}
