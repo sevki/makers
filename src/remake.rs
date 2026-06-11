@@ -1819,7 +1819,16 @@ pub unsafe fn f_mtime(
             }
         }
         free(arname as *mut ::core::ffi::c_void);
-        (*file).low_resolution_time = true;
+        while let Some(file_ref_mut) = file.as_ref() {
+            if file_ref_mut.renamed.is_null() {
+                break;
+            }
+            file = file_ref_mut.renamed;
+        }
+        let file_mut = file
+            .as_mut()
+            .expect("f_mtime archive member requires a non-null file");
+        file_mut.low_resolution_time = true;
         if mtime == NONEXISTENT_MTIME as uintmax_t {
             return NONEXISTENT_MTIME as uintmax_t;
         }
