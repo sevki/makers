@@ -201,14 +201,14 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
             }
         }
         sep = b" | \0" as *const u8 as *const ::core::ffi::c_char;
-        while !ood.is_null() {
-            if (*ood).ignore_mtime {
+        while let Some(current) = ood.as_ref() {
+            if current.ignore_mtime {
                 p = mempcpy(
                     p as *mut ::core::ffi::c_void,
                     sep as *const ::core::ffi::c_void,
                     strlen(sep),
                 ) as *mut ::core::ffi::c_char;
-                if (*ood).wait_here {
+                if current.wait_here {
                     p = mempcpy(
                         p as *mut ::core::ffi::c_void,
                         b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
@@ -219,19 +219,19 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
                 }
                 p = mempcpy(
                     p as *mut ::core::ffi::c_void,
-                    (if !(*ood).name.is_null() {
-                        (*ood).name
+                    (if !current.name.is_null() {
+                        current.name
                     } else {
-                        (*(*ood).file).name
+                        (*current.file).name
                     }) as *const ::core::ffi::c_void,
-                    strlen(if !(*ood).name.is_null() {
-                        (*ood).name
+                    strlen(if !current.name.is_null() {
+                        current.name
                     } else {
-                        (*(*ood).file).name
+                        (*current.file).name
                     }),
                 ) as *mut ::core::ffi::c_char;
             }
-            ood = (*ood).next;
+            ood = current.next;
             sep = b" \0" as *const u8 as *const ::core::ffi::c_char;
         }
         *p = 0;
