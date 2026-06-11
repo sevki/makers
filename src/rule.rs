@@ -13,11 +13,6 @@ extern "C" {
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn mempcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
 pub type variable_set_list = VariableSetList;
@@ -163,79 +158,39 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
         p = p.offset(1 as ::core::ffi::c_int as isize);
         *fresh4 = ':' as i32 as ::core::ffi::c_char;
         if r_ref.terminal != 0 {
-            let fresh5 = p;
-            p = p.offset(1 as ::core::ffi::c_int as isize);
-            *fresh5 = ':' as i32 as ::core::ffi::c_char;
+            defn.push(b':');
         }
         for dep in seq_iter(r_ref.deps) {
-            if !(*dep).ignore_mtime {
-                if (*dep).wait_here {
-                    p = mempcpy(
-                        p as *mut ::core::ffi::c_void,
-                        b" .WAIT\0" as *const u8 as *const ::core::ffi::c_char
-                            as *const ::core::ffi::c_void,
-                        (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                            .wrapping_sub(1),
-                    ) as *mut ::core::ffi::c_char;
+            let dep_ref = dep.as_ref().expect("rule dependency chain contains a null node");
+            if !dep_ref.ignore_mtime {
+                if dep_ref.wait_here {
+                    defn.extend_from_slice(b" .WAIT");
                 }
-                p = mempcpy(
-                    mempcpy(
-                        p as *mut ::core::ffi::c_void,
-                        b" \0" as *const u8 as *const ::core::ffi::c_char
-                            as *const ::core::ffi::c_void,
-                        1,
-                    ),
-                    (if !(*dep).name.is_null() {
-                        (*dep).name
-                    } else {
-                        (*(*dep).file).name
-                    }) as *const ::core::ffi::c_void,
-                    strlen(if !(*dep).name.is_null() {
-                        (*dep).name
-                    } else {
-                        (*(*dep).file).name
-                    }),
-                ) as *mut ::core::ffi::c_char;
+                defn.push(b' ');
+                append_cstr_bytes(&mut defn, dep_name(dep_ref));
             } else if ood.is_null() {
                 ood = dep;
             }
         }
-        sep = b" | \0" as *const u8 as *const ::core::ffi::c_char;
+        let mut sep: &[u8] = b" | ";
         while let Some(current) = ood.as_ref() {
             if current.ignore_mtime {
-                p = mempcpy(
-                    p as *mut ::core::ffi::c_void,
-                    sep as *const ::core::ffi::c_void,
-                    strlen(sep),
-                ) as *mut ::core::ffi::c_char;
+                defn.extend_from_slice(sep);
                 if current.wait_here {
-                    p = mempcpy(
-                        p as *mut ::core::ffi::c_void,
-                        b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
-                            as *const ::core::ffi::c_void,
-                        (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                            .wrapping_sub(1),
-                    ) as *mut ::core::ffi::c_char;
+                    defn.extend_from_slice(b".WAIT ");
                 }
-                let dep_name: *const ::core::ffi::c_char = if !current.name.is_null() {
-                    current.name
-                } else if let Some(file) = current.file.as_ref() {
-                    file.name
-                } else {
-                    ::core::ptr::null()
-                };
-                if !dep_name.is_null() {
-                    p = mempcpy(
-                        p as *mut ::core::ffi::c_void,
-                        dep_name as *const ::core::ffi::c_void,
-                        strlen(dep_name),
-                    ) as *mut ::core::ffi::c_char;
-                }
+                append_cstr_bytes(&mut defn, dep_name(current));
             }
             ood = current.next;
-            sep = b" \0" as *const u8 as *const ::core::ffi::c_char;
+            sep = b" ";
         }
-        *p = 0;
+        defn.push(0);
+        r_ref._defn = xmalloc(defn.len() as size_t) as *mut ::core::ffi::c_char;
+        memcpy(
+            r_ref._defn as *mut ::core::ffi::c_void,
+            defn.as_ptr() as *const ::core::ffi::c_void,
+            defn.len() as size_t,
+        );
     }
     r_ref._defn
 }
