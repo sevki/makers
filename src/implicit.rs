@@ -50,6 +50,22 @@ extern "C" {
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
+unsafe fn dep_name(dep: &Dep) -> *const ::core::ffi::c_char {
+    if !dep.name.is_null() {
+        dep.name
+    } else {
+        dep.file
+            .as_ref()
+            .expect("dependency has a null file pointer")
+            .name
+    }
+}
+
+unsafe fn cstr_eq(left: *const ::core::ffi::c_char, right: *const ::core::ffi::c_char) -> bool {
+    ::core::ffi::CStr::from_ptr(left).to_bytes()
+        == ::core::ffi::CStr::from_ptr(right).to_bytes()
+}
+
 pub type __compar_fn_t = Option<
     unsafe extern "C" fn(
         *const ::core::ffi::c_void,
@@ -919,26 +935,15 @@ unsafe extern "C" fn pattern_search(
                                             .expect("pattern_search requires a non-null file")
                                             .deps;
                                         while !dp_0.is_null() {
-                                            if *(*d).name as ::core::ffi::c_int
-                                                == *(if !(*dp_0).name.is_null() {
-                                                    (*dp_0).name
-                                                } else {
-                                                    (*(*dp_0).file).name
-                                                })
-                                                    as ::core::ffi::c_int
-                                                && (*(*d).name as ::core::ffi::c_int == 0
-                                                    || strcmp(
-                                                        (*d).name.offset(
-                                                            1 as ::core::ffi::c_int as isize,
-                                                        ),
-                                                        (if !(*dp_0).name.is_null() {
-                                                            (*dp_0).name
-                                                        } else {
-                                                            (*(*dp_0).file).name
-                                                        })
-                                                        .offset(1 as ::core::ffi::c_int as isize),
-                                                    ) == 0)
-                                            {
+                                            let generated_name = dep_name(
+                                                d.as_ref()
+                                                    .expect("generated dependency is null"),
+                                            );
+                                            let existing_name = dep_name(
+                                                dp_0.as_ref()
+                                                    .expect("file dependency is null"),
+                                            );
+                                            if cstr_eq(generated_name, existing_name) {
                                                 break;
                                             }
                                             dp_0 = (*dp_0).next;
