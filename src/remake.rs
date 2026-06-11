@@ -1863,6 +1863,9 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             }
         }
     }
+    let file_now_ref = file
+        .as_ref()
+        .expect("f_mtime requires a valid non-null file before final timestamp checks");
     if clock_skew_detected == 0
         && mtime != NONEXISTENT_MTIME as uintmax_t
         && mtime
@@ -1876,7 +1879,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                             .wrapping_sub(1 as usize)
                 },
             )
-        && !(*file).updated
+        && !file_now_ref.updated
     {
         static mut adjusted_now: uintmax_t = 0;
         let adjusted_mtime: uintmax_t = mtime;
@@ -1918,7 +1921,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
         ::core::ptr::null_mut::<Floc>(),
         b"warning: file '%s' has modification time %s s in the future\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+        &[FmtArg::Str((file_now_ref.name) as *const ::core::ffi::c_char),
             FmtArg::Str((&raw mut from_now_string as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char)],
     );
                 clock_skew_detected = 1;
