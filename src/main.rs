@@ -2741,6 +2741,10 @@ unsafe fn main_0(
             if skip == 0 {
                 let fresh48 = mm_idx;
                 mm_idx = mm_idx.wrapping_add(1);
+                let file_ref = d_0_ref
+                    .file
+                    .as_ref()
+                    .expect("read makefile goal has a null file pointer");
                 *makefile_mtimes.offset(fresh48 as isize) =
                     if f2_init.last_mtime == UNKNOWN_MTIME as uintmax_t {
                         f_mtime(&ctx, d0r.file, 0)

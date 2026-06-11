@@ -2869,6 +2869,9 @@ unsafe fn record_files(
                 }
             }
         }
+        let f_ref = f
+            .as_mut()
+            .expect("record_files target lookup returned a null file");
         if !this.is_null() {
             if fr.deps.is_null() {
                 fr.deps = this;
@@ -3641,7 +3644,7 @@ pub unsafe fn parse_file_seq(
                             if let Some(node) = newp.as_mut().and_then(|s| s.as_mut()) {
                                 node.next = found;
                             } else {
-                                *newp = found;
+                                *new_slot = found;
                             }
                             loop {
                                 let found_ref = found
