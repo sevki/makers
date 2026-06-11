@@ -205,7 +205,7 @@ pub struct child {
     pub environment: *mut *mut ::core::ffi::c_char,
     pub output: output,
     pub next: *mut child,
-    pub file: *mut file,
+    pub file: *mut File,
     pub sh_batch_file: *mut ::core::ffi::c_char,
     pub command_lines: *mut *mut ::core::ffi::c_char,
     pub command_ptr: *mut ::core::ffi::c_char,
@@ -397,7 +397,7 @@ unsafe extern "C" fn child_error(
     let mut pre: *const ::core::ffi::c_char = b"*** \0" as *const u8 as *const ::core::ffi::c_char;
     let mut post: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
-    let f: *const file = (*child).file;
+    let f: *const File = (*child).file;
     let flocp: *const Floc = &raw mut (*(*f).cmds).fileinfo;
     let nm: *const ::core::ffi::c_char;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -772,23 +772,23 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
         if (*c).good_stdin() != 0 {
             good_stdin_used = 0;
         }
-        dontcare = (*c).dontcare() as ::core::ffi::c_int;
+        dontcare = (*c).dontcare as ::core::ffi::c_int;
         if child_failed != 0 && (*c).noerror() == 0 && ignore_errors_flag == 0 {
             static mut delete_on_error: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(c, exit_code, exit_sig, coredump, 0);
             }
-            (*(*c).file).set_update_status(
+            (*(*c).file).update_status = 
                 (if child_failed == MAKE_FAILURE {
-                    us_failed as ::core::ffi::c_int
+                    UpdateStatus :: Failed as ::core::ffi::c_int
                 } else {
-                    us_question as ::core::ffi::c_int
-                }) as update_status as update_status,
-            );
+                    UpdateStatus :: Question as ::core::ffi::c_int
+                }) as UpdateStatus as UpdateStatus,
+           ;
             if delete_on_error == -(1 as ::core::ffi::c_int) {
-                let f: *mut file =
+                let f: *mut File =
                     lookup_file(b".DELETE_ON_ERROR\0" as *const u8 as *const ::core::ffi::c_char);
-                delete_on_error = (!f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0)
+                delete_on_error = (!f.is_null() && (*f).is_target )
                     as ::core::ffi::c_int;
             }
             if exit_sig != 0 || delete_on_error != 0 {
@@ -801,7 +801,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             }
             if job_next_command(c) != 0 {
                 if handling_fatal_signal != 0 {
-                    (*(*c).file).set_update_status(us_failed as update_status);
+                    (*(*c).file).UpdateStatus = UpdateStatus :: Failed;
                 } else {
                     if output_sync == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(&raw mut (*c).output);
@@ -812,19 +812,19 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                     );
                     start_job_command(c);
                     unblock_sigs();
-                    if (*(*c).file).command_state() as ::core::ffi::c_int
-                        == cs_running as ::core::ffi::c_int
+                    if (*(*c).file).command_state as ::core::ffi::c_int
+                        == CommandState :: Running as ::core::ffi::c_int
                     {
                         continue;
                     }
                 }
-                if (*(*c).file).update_status() as ::core::ffi::c_int
-                    != us_success as ::core::ffi::c_int
+                if (*(*c).file).UpdateStatus as ::core::ffi::c_int
+                    != UpdateStatus :: Success as ::core::ffi::c_int
                 {
                     delete_child_targets(c);
                 }
             } else {
-                (*(*c).file).set_update_status(us_success as update_status);
+                (*(*c).file).UpdateStatus = UpdateStatus :: Success;
             }
         }
         crate::output::output_dump(&raw mut (*c).output);
@@ -1013,7 +1013,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                 free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
             }
-            (*(*child).file).set_update_status(us_question as update_status);
+            (*(*child).file).UpdateStatus = UpdateStatus :: Question;
             notice_finished_file((*child).file);
             return;
         }
@@ -1156,7 +1156,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                 if (*child).pid >= 0 {
                     job_counter = job_counter.wrapping_add(1);
                 }
-                set_command_state((*child).file, cs_running);
+                set_command_state((*child).file, CommandState :: Running );
                 if !argv.is_null() {
                     free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
                     free(argv as *mut ::core::ffi::c_void);
@@ -1169,8 +1169,8 @@ pub unsafe fn start_job_command(child: *mut child) {
     if job_next_command(child) != 0 {
         start_job_command(child);
     } else {
-        set_command_state((*child).file, cs_running);
-        (*(*child).file).set_update_status(us_success as update_status);
+        set_command_state((*child).file, CommandState :: Running );
+        (*(*child).file).UpdateStatus = UpdateStatus :: Success;
         notice_finished_file((*child).file);
     }
     output_context = ::core::ptr::null_mut::<output>();
@@ -1185,16 +1185,16 @@ pub unsafe fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     if (*c).remote() == 0 && (job_slots_used > 0 && load_too_high() != 0) {
-        set_command_state(f, cs_running);
+        set_command_state(f, CommandState :: Running );
         (*c).next = waiting_jobs;
         waiting_jobs = c;
         return 0;
     }
     start_job_command(c);
-    // Finished states (cs_not_started reset to success, cs_finished) need the
+    // Finished states (CommandState::NotStarted reset to success, CommandState::Finished) need the
     // file noticed and the child freed; a still-running job does not.
     let mut finish = false;
-    match (*f).command_state() as ::core::ffi::c_int {
+    match (*f).command_state as ::core::ffi::c_int {
         2 => {
             (*c).next = children;
             if (*c).pid > 0 {
@@ -1224,7 +1224,7 @@ pub unsafe fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
             unblock_sigs();
         }
         0 => {
-            (*f).set_update_status(us_success as update_status);
+            (*f).UpdateStatus = UpdateStatus :: Success;
             finish = true;
         }
         3 => {
@@ -1249,7 +1249,7 @@ pub unsafe fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn new_job(file: *mut file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let cmds: *mut commands = (*file).cmds;
+    let cmds: *mut Commands = (*file).cmds;
     let c: *mut child;
     let lines: *mut *mut ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
@@ -1260,7 +1260,7 @@ pub unsafe fn new_job(file: *mut file) {
     crate::output::output_init(&raw mut (*c).output);
     (*c).file = file;
     (*c).sh_batch_file = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    (*c).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
+    (*c).dontcare = ( (*file).dontcare as ::core::ffi::c_uint ) != 0;
     output_context = if (*c).output.syncout() as ::core::ffi::c_int != 0 {
         &raw mut (*c).output
     } else {
@@ -1472,7 +1472,7 @@ pub unsafe fn new_job(file: *mut file) {
         if (*(*c).file).also_make.is_null() {
             tp = (*(*c).file).name;
         } else {
-            let mut dp: *const dep;
+            let mut dp: *const Dep;
             let mut cp: *mut ::core::ffi::c_char;
             let mut len: size_t = strlen((*(*c).file).name) as size_t;
             dp = (*(*c).file).also_make;
@@ -1493,7 +1493,7 @@ pub unsafe fn new_job(file: *mut file) {
                 dp = (*dp).next;
             }
         }
-        if (*(*c).file).phony() != 0 {
+        if (*(*c).file).phony {
             message(
                 0,
                 (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
@@ -1532,7 +1532,7 @@ pub unsafe fn new_job(file: *mut file) {
                 free(newer as *mut ::core::ffi::c_void);
             } else {
                 let mut len_0: size_t = 0;
-                let mut d: *mut dep;
+                let mut d: *mut Dep;
                 d = (*(*c).file).deps;
                 while !d.is_null() {
                     if (*(*d).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
@@ -1585,7 +1585,7 @@ pub unsafe fn new_job(file: *mut file) {
     }
     start_waiting_job(c);
     if job_slots == 1 || not_parallel != 0 {
-        while (*file).command_state() as ::core::ffi::c_int == cs_running as ::core::ffi::c_int {
+        while (*file).command_state as ::core::ffi::c_int == CommandState :: Running as ::core::ffi::c_int {
             reap_children(1, 0);
         }
     }
@@ -2689,7 +2689,7 @@ pub const PRESERVE_BSNL: ::core::ffi::c_int = 1;
 pub unsafe fn construct_command_argv(
     line: *mut ::core::ffi::c_char,
     restp: *mut *mut ::core::ffi::c_char,
-    file: *mut file,
+    file: *mut File,
     cmd_flags: ::core::ffi::c_int,
     batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {

@@ -52,7 +52,7 @@ pub struct ar_glob_state {
     pub arname: *const ::core::ffi::c_char,
     pub pattern: *const ::core::ffi::c_char,
     pub size: size_t,
-    pub chain: *mut nameseq,
+    pub chain: *mut NameSeq,
     pub n: ::core::ffi::c_uint,
 }
 pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
@@ -143,7 +143,7 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let val: intmax_t;
     ar_parse_name(name, &raw mut arname, &raw mut memname);
-    let mut arfile: *mut file;
+    let mut arfile: *mut File;
     arfile = lookup_file(arname);
     if arfile.is_null() && file_exists_p(arname) != 0 {
         arfile = enter_file(strcache_add(arname));
@@ -200,7 +200,7 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut val: ::core::ffi::c_int;
     ar_parse_name(name, &raw mut arname, &raw mut memname);
-    let arfile: *mut file;
+    let arfile: *mut File;
     arfile = enter_file(strcache_add(arname));
     f_mtime(arfile, 0);
     val = 1;
@@ -268,7 +268,7 @@ unsafe extern "C" fn ar_glob_match(
 ) -> intmax_t {
     let state: *mut ar_glob_state = arg as *mut ar_glob_state;
     if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
-        let new: *mut nameseq = xcalloc((*state).size) as *mut nameseq;
+        let new: *mut NameSeq = xcalloc((*state).size) as *mut NameSeq;
         (*new).name = strcache_add(concat(
             4,
             (*state).arname,
@@ -319,25 +319,25 @@ pub unsafe fn ar_glob(
     arname: *const ::core::ffi::c_char,
     member_pattern: *const ::core::ffi::c_char,
     size: size_t,
-) -> *mut nameseq {
+) -> *mut NameSeq {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut state: ar_glob_state = ar_glob_state {
         arname: ::core::ptr::null::<::core::ffi::c_char>(),
         pattern: ::core::ptr::null::<::core::ffi::c_char>(),
         size: 0,
-        chain: ::core::ptr::null_mut::<nameseq>(),
+        chain: ::core::ptr::null_mut::<NameSeq>(),
         n: 0,
     };
-    let mut n: *mut nameseq;
+    let mut n: *mut NameSeq;
     let names: *mut *const ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
     if ar_glob_pattern_p(member_pattern, 1) == 0 {
-        return ::core::ptr::null_mut::<nameseq>();
+        return ::core::ptr::null_mut::<NameSeq>();
     }
     state.arname = arname;
     state.pattern = member_pattern;
     state.size = size;
-    state.chain = ::core::ptr::null_mut::<nameseq>();
+    state.chain = ::core::ptr::null_mut::<NameSeq>();
     state.n = 0;
     ar_scan(
         arname,
@@ -360,7 +360,7 @@ pub unsafe fn ar_glob(
         &raw mut state as *const ::core::ffi::c_void,
     );
     if state.chain.is_null() {
-        return ::core::ptr::null_mut::<nameseq>();
+        return ::core::ptr::null_mut::<NameSeq>();
     }
     alloca_allocations.push(::std::vec::from_elem(
         0,

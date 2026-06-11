@@ -583,22 +583,22 @@ pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ff
     static mut result: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut length: size_t = 0;
-    let mut chain: *mut nameseq;
+    let mut chain: *mut NameSeq;
     let mut idx: size_t;
     chain = parse_file_seq(
         &raw mut line,
-        ::core::mem::size_of::<nameseq>() as size_t,
+        ::core::mem::size_of::<NameSeq>() as size_t,
         0x1 as ::core::ffi::c_int,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x1 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int | 0x8 as ::core::ffi::c_int,
-    ) as *mut nameseq;
+    ) as *mut NameSeq;
     if result.is_null() {
         length = 100;
         result = xmalloc(100) as *mut ::core::ffi::c_char;
     }
     idx = 0;
     while !chain.is_null() {
-        let next: *mut nameseq = (*chain).next;
+        let next: *mut NameSeq = (*chain).next;
         let len: size_t = strlen((*chain).name) as size_t;
         if idx.wrapping_add(len).wrapping_add(1) > length {
             length = length.wrapping_add(len.wrapping_add(1 as size_t).wrapping_mul(2));
@@ -1214,7 +1214,7 @@ unsafe extern "C" fn func_foreach(
         (*var).value = xstrndup(p, len);
         let result = ExpandedArg::from_raw(allocated_expand_string_for_file(
             body,
-            ::core::ptr::null_mut::<file>(),
+            ::core::ptr::null_mut::<File>(),
         ));
         o = variable_buffer_output(o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
         o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
@@ -2000,7 +2000,7 @@ pub unsafe fn func_shell_base(
     command_argv = construct_command_argv(
         *argv.offset(0 as ::core::ffi::c_int as isize),
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
-        ::core::ptr::null_mut::<file>(),
+        ::core::ptr::null_mut::<File>(),
         0,
         &raw mut batch_filename,
     );
@@ -2013,7 +2013,7 @@ pub unsafe fn func_shell_base(
     } else {
         fileno(stderr)
     };
-    child.environment = target_environment(::core::ptr::null_mut::<file>(), 0);
+    child.environment = target_environment(::core::ptr::null_mut::<File>(), 0);
     if pipe(&raw mut pipedes as *mut ::core::ffi::c_int) < 0 {
         error(
             reading_file,

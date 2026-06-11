@@ -184,7 +184,7 @@ pub unsafe fn swap_variable_buffer(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn recursively_expand_for_file(
     v: *mut variable,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let value: *mut ::core::ffi::c_char;
     let mut this_var: *const Floc;
@@ -264,11 +264,11 @@ pub unsafe fn recursively_expand_for_file(
     } else if (*v).origin() as ::core::ffi::c_int == o_command as ::core::ffi::c_int
         || (*v).origin() as ::core::ffi::c_int == o_env_override as ::core::ffi::c_int
     {
-        value = allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<file>());
+        value = allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<File>());
     } else if (*v).append() != 0 {
         value = allocated_variable_append(v);
     } else {
-        value = allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<file>());
+        value = allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<File>());
     }
     (*v).set_expanding(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if set_reading != 0 {
@@ -304,7 +304,7 @@ pub unsafe fn expand_variable_output(
     }
     recursive = (*v).recursive();
     value = if recursive != 0 {
-        recursively_expand_for_file(v, ::core::ptr::null_mut::<file>())
+        recursively_expand_for_file(v, ::core::ptr::null_mut::<File>())
     } else {
         (*v).value
     };
@@ -360,7 +360,7 @@ pub unsafe fn allocated_expand_variable(
 pub unsafe fn allocated_expand_variable_for_file(
     name: *const ::core::ffi::c_char,
     length: size_t,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let result: *mut ::core::ffi::c_char;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -501,7 +501,7 @@ pub unsafe fn expand_string_buf(
                                     as ::core::ffi::c_int
                                     != 0
                                 {
-                                    recursively_expand_for_file(v, ::core::ptr::null_mut::<file>())
+                                    recursively_expand_for_file(v, ::core::ptr::null_mut::<File>())
                                 } else {
                                     (*v).value
                                 };
@@ -610,7 +610,7 @@ pub unsafe fn expand_argument(
         return xstrdup(b"\0" as *const u8 as *const ::core::ffi::c_char);
     }
     if end.is_null() || *end as ::core::ffi::c_int == 0 {
-        return allocated_expand_string_for_file(str, ::core::ptr::null_mut::<file>());
+        return allocated_expand_string_for_file(str, ::core::ptr::null_mut::<File>());
     }
     // Copy the [str, end) slice into an owned, NUL-terminated buffer (the C
     // code chose alloca vs xmalloc by length; an owned Vec covers both).
@@ -623,7 +623,7 @@ pub unsafe fn expand_argument(
         len,
     );
     *tmp.offset(len as isize) = 0;
-    allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>())
+    allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<File>())
 }
 /// # Safety
 ///
@@ -631,7 +631,7 @@ pub unsafe fn expand_argument(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn expand_string_for_file(
     string: *const ::core::ffi::c_char,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let result: *mut ::core::ffi::c_char;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -658,7 +658,7 @@ pub unsafe fn expand_string_for_file(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn allocated_expand_string_for_file(
     string: *const ::core::ffi::c_char,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut ::core::ffi::c_char {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;

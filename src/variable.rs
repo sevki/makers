@@ -710,7 +710,7 @@ pub unsafe fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) 
 pub unsafe fn lookup_variable_for_file(
     name: *const ::core::ffi::c_char,
     length: size_t,
-    file: *mut file,
+    file: *mut File,
 ) -> *mut variable {
     let var: *mut variable;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
@@ -769,7 +769,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
         );
         (*file).variables = l;
     }
-    if !(*file).double_colon.is_null() && (*file).double_colon != file {
+    if !(*file).double_colon.is_null() && (*file).double_colon != File {
         initialize_file_variables((*file).double_colon, reading);
         (*l).next = (*(*file).double_colon).variables;
         (*l).next_is_parent = 0;
@@ -782,7 +782,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
         (*l).next = (*(*file).parent).variables;
     }
     (*l).next_is_parent = 1;
-    if reading == 0 && (*file).pat_searched() == 0 {
+    if reading == 0 && ! (*file).pat_searched {
         let mut p: *mut pattern_var;
         let targlen: size_t = strlen((*file).name) as size_t;
         p = lookup_pattern_var(
@@ -828,7 +828,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
             }
             current_variable_set_list = global;
         }
-        (*file).set_pat_searched(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        (*file).pat_searched = true;
     }
     if !(*file).pat_variables.is_null() {
         (*(*file).pat_variables).next = (*l).next;
@@ -1630,12 +1630,12 @@ pub unsafe fn do_variable_definition(
     }
     match flavor as ::core::ffi::c_uint {
         1 => {
-            alloc_value = allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
+            alloc_value = allocated_expand_string_for_file(value, ::core::ptr::null_mut::<File>());
             newval = alloc_value;
         }
         3 => {
             let t: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
+                allocated_expand_string_for_file(value, ::core::ptr::null_mut::<File>());
             alloc_value = xmalloc((strlen(t) as size_t).wrapping_mul(2).wrapping_add(1))
                 as *mut ::core::ffi::c_char;
             let mut np: *mut ::core::ffi::c_char = alloc_value;
@@ -1659,7 +1659,7 @@ pub unsafe fn do_variable_definition(
         }
         5 => {
             let q: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
+                allocated_expand_string_for_file(value, ::core::ptr::null_mut::<File>());
             alloc_value = shell_result(q);
             free(q as *mut ::core::ffi::c_void);
             flavor = f_recursive;
@@ -1716,7 +1716,7 @@ pub unsafe fn do_variable_definition(
                 } else if flavor as ::core::ffi::c_uint
                     != f_append_value as ::core::ffi::c_int as ::core::ffi::c_uint
                 {
-                    tp = allocated_expand_string_for_file(val, ::core::ptr::null_mut::<file>());
+                    tp = allocated_expand_string_for_file(val, ::core::ptr::null_mut::<File>());
                     val = tp;
                 }
                 vallen = strlen(val) as size_t;
@@ -1962,7 +1962,7 @@ pub unsafe fn assign_variable_definition(
         (*v).length as size_t,
     );
     *name.offset((*v).length as isize) = 0;
-    (*v).name = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
+    (*v).name = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<File>());
     if *(*v).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
         fatal(
             &raw mut (*v).fileinfo,

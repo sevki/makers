@@ -265,20 +265,20 @@ pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
 pub const RM_NO_TILDE: ::core::ffi::c_int = (1) << 3;
 pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
 #[inline]
-unsafe extern "C" fn alloc_dep() -> *mut dep {
-    xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
+unsafe extern "C" fn alloc_dep() -> *mut Dep {
+    xcalloc(::core::mem::size_of::<Dep>() as size_t) as *mut Dep
 }
 #[inline]
-unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
-    xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
+unsafe extern "C" fn alloc_goaldep() -> *mut GoalDep {
+    xcalloc(::core::mem::size_of::<GoalDep>() as size_t) as *mut GoalDep
 }
 #[inline]
-unsafe extern "C" fn free_ns(n: *mut nameseq) {
+unsafe extern "C" fn free_ns(n: *mut NameSeq) {
     free(n as *mut ::core::ffi::c_void);
 }
 #[inline]
-unsafe extern "C" fn free_dep_chain(d: *mut dep) {
-    free_ns_chain(d as *mut nameseq);
+unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
+    free_ns_chain(d as *mut NameSeq);
 }
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
 static mut toplevel_conditionals: conditionals = conditionals {
@@ -348,7 +348,7 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
     free(value as *mut ::core::ffi::c_void);
     if !makefiles.is_null() {
         while !(*makefiles).is_null() {
-            let d: *mut goaldep = eval_makefile(*makefiles, 0);
+            let d: *mut GoalDep = eval_makefile(*makefiles, 0);
             if *__errno_location() != 0 {
                 perror_with_name(b"\0" as *const u8 as *const ::core::ffi::c_char, *makefiles);
             }
@@ -381,9 +381,9 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
         } else {
             p_0 = &raw const default_makefiles as *const *const ::core::ffi::c_char;
             while !(*p_0).is_null() {
-                let d_0: *mut goaldep = alloc_goaldep();
+                let d_0: *mut GoalDep = alloc_goaldep();
                 (*d_0).file = enter_file(strcache_add(*p_0));
-                (*d_0).set_flags(RM_DONTCARE as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                (*d_0).flags = RM_DONTCARE as ::core::ffi::c_uint as ::core::ffi::c_uint;
                 (*d_0).next = read_files;
                 read_files = d_0;
                 p_0 = p_0.offset(1 as ::core::ffi::c_int as isize);
@@ -418,8 +418,8 @@ pub unsafe fn restore_conditionals(saved: *mut conditionals) {
 unsafe extern "C" fn eval_makefile(
     mut filename: *const ::core::ffi::c_char,
     flags: ::core::ffi::c_ushort,
-) -> *mut goaldep {
-    let deps: *mut goaldep;
+) -> *mut GoalDep {
+    let deps: *mut GoalDep;
     let mut ebuf: ebuffer = ebuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -532,8 +532,8 @@ unsafe extern "C" fn eval_makefile(
         (*deps).file = enter_file(filename);
     }
     filename = (*(*deps).file).name;
-    (*deps).set_flags(flags as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    (*(*deps).file).set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    (*deps).flags = flags as ::core::ffi::c_uint as ::core::ffi::c_uint;
+    (*(*deps).file).is_explicit = true;
     free(expanded as *mut ::core::ffi::c_void);
     if ebuf.fp.is_null() {
         *__errno_location() = (*deps).error;
@@ -783,7 +783,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
     let mut in_ignored_define: ::core::ffi::c_int = 0;
     let mut no_targets: ::core::ffi::c_int = 0;
     let mut also_make_targets: ::core::ffi::c_int = 0;
-    let mut filenames: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
+    let mut filenames: *mut NameSeq = ::core::ptr::null_mut::<NameSeq>();
     let mut depstr: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut nlines: ::core::ffi::c_long = 0;
     let mut two_colon: ::core::ffi::c_int = 0;
@@ -946,7 +946,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         prefix,
                         &raw mut fi,
                     );
-                    filenames = ::core::ptr::null_mut::<nameseq>();
+                    filenames = ::core::ptr::null_mut::<NameSeq>();
                 }
                 commands_idx = 0;
                 no_targets = 0;
@@ -1087,7 +1087,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 prefix,
                                 &raw mut fi,
                             );
-                            filenames = ::core::ptr::null_mut::<nameseq>();
+                            filenames = ::core::ptr::null_mut::<NameSeq>();
                         }
                         commands_idx = 0;
                         no_targets = 0;
@@ -1101,7 +1101,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             let ap: *mut ::core::ffi::c_char;
                             ap = allocated_expand_string_for_file(
                                 p2,
-                                ::core::ptr::null_mut::<file>(),
+                                ::core::ptr::null_mut::<File>(),
                             );
                             cp = ap;
                             p = find_next_token(&raw mut cp, &raw mut l);
@@ -1169,7 +1169,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 prefix,
                                 &raw mut fi,
                             );
-                            filenames = ::core::ptr::null_mut::<nameseq>();
+                            filenames = ::core::ptr::null_mut::<NameSeq>();
                         }
                         commands_idx = 0;
                         no_targets = 0;
@@ -1227,7 +1227,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             ignoring: ::core::ptr::null_mut::<::core::ffi::c_char>(),
                             seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
                         };
-                        let mut files: *mut nameseq;
+                        let mut files: *mut NameSeq;
                         let noerror: ::core::ffi::c_int =
                             (*p.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                                 != 'i' as i32) as ::core::ffi::c_int;
@@ -1268,24 +1268,24 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 prefix,
                                 &raw mut fi,
                             );
-                            filenames = ::core::ptr::null_mut::<nameseq>();
+                            filenames = ::core::ptr::null_mut::<NameSeq>();
                         }
                         commands_idx = 0;
                         no_targets = 0;
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
-                        p = allocated_expand_string_for_file(p2, ::core::ptr::null_mut::<file>());
+                        p = allocated_expand_string_for_file(p2, ::core::ptr::null_mut::<File>());
                         if *p as ::core::ffi::c_int == 0 {
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
                             files = parse_file_seq(
                                 &raw mut p2,
-                                ::core::mem::size_of::<nameseq>() as size_t,
+                                ::core::mem::size_of::<NameSeq>() as size_t,
                                 0x1 as ::core::ffi::c_int,
                                 ::core::ptr::null::<::core::ffi::c_char>(),
                                 0x2 as ::core::ffi::c_int,
-                            ) as *mut nameseq;
+                            ) as *mut NameSeq;
                             free(p as *mut ::core::ffi::c_void);
                             save = install_conditionals(&raw mut new_conditionals);
                             if !filenames.is_null() {
@@ -1304,14 +1304,14 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                     prefix,
                                     &raw mut fi,
                                 );
-                                filenames = ::core::ptr::null_mut::<nameseq>();
+                                filenames = ::core::ptr::null_mut::<NameSeq>();
                             }
                             commands_idx = 0;
                             no_targets = 0;
                             pattern = ::core::ptr::null::<::core::ffi::c_char>();
                             also_make_targets = 0;
                             while !files.is_null() {
-                                let next: *mut nameseq = (*files).next;
+                                let next: *mut NameSeq = (*files).next;
                                 let flags: ::core::ffi::c_ushort = (RM_INCLUDED
                                     | RM_NO_TILDE
                                     | (if noerror != 0 { RM_DONTCARE } else { 0 })
@@ -1321,7 +1321,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                         RM_NO_DEFAULT_GOAL
                                     }))
                                     as ::core::ffi::c_ushort;
-                                let d: *mut goaldep = eval_makefile((*files).name, flags);
+                                let d: *mut GoalDep = eval_makefile((*files).name, flags);
                                 (*d).floc = *fstart;
                                 free_ns(files);
                                 files = next;
@@ -1350,7 +1350,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             ) == 0)
                         && is_rule == 0
                     {
-                        let mut files_0: *mut nameseq;
+                        let mut files_0: *mut NameSeq;
                         let noerror_0: ::core::ffi::c_int =
                             (*p.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                                 == '-' as i32) as ::core::ffi::c_int;
@@ -1387,78 +1387,78 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 prefix,
                                 &raw mut fi,
                             );
-                            filenames = ::core::ptr::null_mut::<nameseq>();
+                            filenames = ::core::ptr::null_mut::<NameSeq>();
                         }
                         commands_idx = 0;
                         no_targets = 0;
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
-                        p = allocated_expand_string_for_file(p2, ::core::ptr::null_mut::<file>());
+                        p = allocated_expand_string_for_file(p2, ::core::ptr::null_mut::<File>());
                         if *p as ::core::ffi::c_int == 0 {
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
                             files_0 = parse_file_seq(
                                 &raw mut p2,
-                                ::core::mem::size_of::<nameseq>() as size_t,
+                                ::core::mem::size_of::<NameSeq>() as size_t,
                                 0x1 as ::core::ffi::c_int,
                                 ::core::ptr::null::<::core::ffi::c_char>(),
                                 0x2 as ::core::ffi::c_int,
-                            ) as *mut nameseq;
+                            ) as *mut NameSeq;
                             free(p as *mut ::core::ffi::c_void);
                             while !files_0.is_null() {
-                                let next_0: *mut nameseq = (*files_0).next;
+                                let next_0: *mut NameSeq = (*files_0).next;
                                 let mut name: *const ::core::ffi::c_char = (*files_0).name;
-                                let deps: *mut goaldep;
-                                let mut f: *mut file;
+                                let deps: *mut GoalDep;
+                                let mut f: *mut File;
                                 let r: ::core::ffi::c_int;
                                 let mut file: file = {
-                                    let mut init = file {
+                                    let mut init = File {
                                         update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
                                         c2rust_padding: [0; 4],
                                         name: ::core::ptr::null::<::core::ffi::c_char>(),
                                         hname: ::core::ptr::null::<::core::ffi::c_char>(),
                                         vpath: ::core::ptr::null::<::core::ffi::c_char>(),
-                                        deps: ::core::ptr::null_mut::<dep>(),
-                                        cmds: ::core::ptr::null_mut::<commands>(),
+                                        deps: ::core::ptr::null_mut::<Dep>(),
+                                        cmds: ::core::ptr::null_mut::<Commands>(),
                                         stem: ::core::ptr::null::<::core::ffi::c_char>(),
-                                        also_make: ::core::ptr::null_mut::<dep>(),
-                                        prev: ::core::ptr::null_mut::<file>(),
-                                        last: ::core::ptr::null_mut::<file>(),
-                                        renamed: ::core::ptr::null_mut::<file>(),
+                                        also_make: ::core::ptr::null_mut::<Dep>(),
+                                        prev: ::core::ptr::null_mut::<File>(),
+                                        last: ::core::ptr::null_mut::<File>(),
+                                        renamed: ::core::ptr::null_mut::<File>(),
                                         variables: ::core::ptr::null_mut::<variable_set_list>(),
                                         pat_variables: ::core::ptr::null_mut::<variable_set_list>(),
-                                        parent: ::core::ptr::null_mut::<file>(),
-                                        double_colon: ::core::ptr::null_mut::<file>(),
+                                        parent: ::core::ptr::null_mut::<File>(),
+                                        double_colon: ::core::ptr::null_mut::<File>(),
                                         last_mtime: 0,
                                         mtime_before_update: 0,
                                         considered: 0,
                                         command_flags: 0,
                                     };
-                                    init.set_update_status(us_success);
-                                    init.set_command_state(cs_not_started);
-                                    init.set_builtin(0);
-                                    init.set_precious(0);
-                                    init.set_loaded(0);
-                                    init.set_unloaded(0);
-                                    init.set_low_resolution_time(0);
-                                    init.set_tried_implicit(0);
-                                    init.set_updating(0);
-                                    init.set_updated(0);
-                                    init.set_is_target(0);
-                                    init.set_cmd_target(0);
-                                    init.set_phony(0);
-                                    init.set_intermediate(0);
-                                    init.set_is_explicit(0);
-                                    init.set_secondary(0);
-                                    init.set_notintermediate(0);
-                                    init.set_dontcare(0);
-                                    init.set_ignore_vpath(0);
-                                    init.set_pat_searched(0);
-                                    init.set_no_diag(0);
-                                    init.set_was_shuffled(0);
-                                    init.set_snapped(0);
-                                    init.set_suffix(0);
+                                    init.UpdateStatus = UpdateStatus :: Success;
+                                    init.command_state = CommandState :: NotStarted;
+                                    init.builtin = false;
+                                    init.precious = false;
+                                    init.loaded = false;
+                                    init.unloaded = false;
+                                    init.low_resolution_time = false;
+                                    init.tried_implicit = false;
+                                    init.updating = false;
+                                    init.updated = false;
+                                    init.is_target = false;
+                                    init.cmd_target = false;
+                                    init.phony = false;
+                                    init.intermediate = false;
+                                    init.is_explicit = false;
+                                    init.secondary = false;
+                                    init.notintermediate = false;
+                                    init.dontcare = false;
+                                    init.ignore_vpath = false;
+                                    init.pat_searched = false;
+                                    init.no_diag = false;
+                                    init.was_shuffled = false;
+                                    init.snapped = false;
+                                    init.suffix = false;
                                     init
                                 };
                                 file.name = name;
@@ -1477,8 +1477,8 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 if f.is_null() {
                                     f = enter_file(name);
                                 }
-                                (*f).set_loaded(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                                (*f).set_unloaded(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                                (*f).loaded = true;
+                                (*f).unloaded = false;
                                 free_ns(files_0);
                                 files_0 = next_0;
                                 if r == -(1 as ::core::ffi::c_int) {
@@ -1528,7 +1528,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 prefix,
                                 &raw mut fi,
                             );
-                            filenames = ::core::ptr::null_mut::<nameseq>();
+                            filenames = ::core::ptr::null_mut::<NameSeq>();
                         }
                         commands_idx = 0;
                         no_targets = 0;
@@ -1700,12 +1700,12 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                     *colonp = 0;
                                     filenames = parse_file_seq(
                                         &raw mut p2,
-                                        ::core::mem::size_of::<nameseq>() as size_t,
+                                        ::core::mem::size_of::<NameSeq>() as size_t,
                                         MAP_NUL,
                                         ::core::ptr::null::<::core::ffi::c_char>(),
                                         PARSEFS_NONE,
                                     )
-                                        as *mut nameseq;
+                                        as *mut NameSeq;
                                     *colonp = save_0;
                                     p2 = colonp.offset(
                                         (save_0 as ::core::ffi::c_int == '&' as i32)
@@ -1769,7 +1769,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                 &raw mut vmod,
                                                 fstart,
                                             );
-                                            filenames = ::core::ptr::null_mut::<nameseq>();
+                                            filenames = ::core::ptr::null_mut::<NameSeq>();
                                         } else {
                                             find_char_unquote(lb_next, '=' as i32);
                                             prefix = cmd_prefix;
@@ -1846,15 +1846,15 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                 );
                                             }
                                             if !p.is_null() {
-                                                let target: *mut nameseq;
+                                                let target: *mut NameSeq;
                                                 target = parse_file_seq(
                                                     &raw mut p2,
-                                                    ::core::mem::size_of::<nameseq>() as size_t,
+                                                    ::core::mem::size_of::<NameSeq>() as size_t,
                                                     0x40 as ::core::ffi::c_int,
                                                     ::core::ptr::null::<::core::ffi::c_char>(),
                                                     0x4 as ::core::ffi::c_int,
                                                 )
-                                                    as *mut nameseq;
+                                                    as *mut NameSeq;
                                                 p2 = p2.offset(1 as ::core::ffi::c_int as isize);
                                                 if target.is_null() {
                                                     fatal(
@@ -1983,7 +1983,7 @@ unsafe extern "C" fn do_undefine(
 ) {
     let mut p: *mut ::core::ffi::c_char;
     let var: *mut ::core::ffi::c_char;
-    var = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
+    var = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<File>());
     name = next_token(var);
     if *name as ::core::ffi::c_int == 0 {
         fatal(
@@ -2058,7 +2058,7 @@ unsafe extern "C" fn do_define(
         }
         *var.name.offset(var.length as isize) = 0;
     }
-    n = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
+    n = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<File>());
     name = next_token(n);
     if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
         fatal(
@@ -2394,7 +2394,7 @@ unsafe extern "C" fn conditional_line(
             let var: *mut ::core::ffi::c_char;
             let v: *mut variable;
             let mut p_0: *mut ::core::ffi::c_char;
-            var = allocated_expand_string_for_file(line, ::core::ptr::null_mut::<file>());
+            var = allocated_expand_string_for_file(line, ::core::ptr::null_mut::<File>());
             p_0 = end_of_token(var);
             l = p_0.offset_from(var) as ::core::ffi::c_long as size_t;
             while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
@@ -2574,13 +2574,13 @@ unsafe extern "C" fn conditional_line(
     0
 }
 unsafe extern "C" fn record_target_var(
-    mut filenames: *mut nameseq,
+    mut filenames: *mut NameSeq,
     defn: *mut ::core::ffi::c_char,
     origin: variable_origin,
     vmod: *mut vmodifiers,
     flocp: *const Floc,
 ) {
-    let mut nextf: *mut nameseq;
+    let mut nextf: *mut NameSeq;
     let global: *mut variable_set_list;
     global = current_variable_set_list;
     while !filenames.is_null() {
@@ -2602,12 +2602,12 @@ unsafe extern "C" fn record_target_var(
             (*v).set_origin(origin as variable_origin);
             if (*v).flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
                 (*v).value =
-                    allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<file>());
+                    allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<File>());
             } else {
                 (*v).value = xstrdup((*v).value);
             }
         } else {
-            let mut f: *mut file;
+            let mut f: *mut File;
             f = lookup_file(name);
             if f.is_null() {
                 f = enter_file(strcache_add(name));
@@ -2761,7 +2761,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
         } else if set_default != 0
             && *(*default_goal_var).value.offset(0) as ::core::ffi::c_int == 0
         {
-            let mut d: *mut dep;
+            let mut d: *mut Dep;
             let mut reject: ::core::ffi::c_int = 0;
             if !strchr(nm, '%' as i32).is_null() {
                 break;
@@ -2769,7 +2769,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
             if !(*nm as ::core::ffi::c_int == '.' as i32 && strchr(nm, '/' as i32).is_null()) {
                 d = (*suffix_file).deps;
                 while !d.is_null() {
-                    let mut d2: *mut dep;
+                    let mut d2: *mut Dep;
                     if *(if !(*d).name.is_null() {
                         (*d).name
                     } else {
@@ -2892,7 +2892,7 @@ pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
     }
 }
 unsafe extern "C" fn record_files(
-    mut filenames: *mut nameseq,
+    mut filenames: *mut NameSeq,
     are_also_makes: ::core::ffi::c_int,
     pattern: *const ::core::ffi::c_char,
     pattern_percent: *const ::core::ffi::c_char,
@@ -2904,9 +2904,9 @@ unsafe extern "C" fn record_files(
     prefix: ::core::ffi::c_char,
     flocp: *const Floc,
 ) {
-    let cmds: *mut commands;
-    let mut deps: *mut dep;
-    let mut also_make: *mut dep = ::core::ptr::null_mut::<dep>();
+    let cmds: *mut Commands;
+    let mut deps: *mut Dep;
+    let mut also_make: *mut Dep = ::core::ptr::null_mut::<Dep>();
     let mut implicit_percent: *const ::core::ffi::c_char;
     let mut name: *const ::core::ffi::c_char;
     if snapped_deps != 0 {
@@ -2920,7 +2920,7 @@ unsafe extern "C" fn record_files(
     name = (*filenames).name;
     implicit_percent = find_percent_cached(&raw mut name);
     if commands_idx > 0 {
-        cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
+        cmds = xmalloc(::core::mem::size_of::<Commands>() as size_t) as *mut Commands;
         (*cmds).fileinfo.filenm = (*flocp).filenm;
         (*cmds).fileinfo.lineno = cmds_started as ::core::ffi::c_ulong;
         (*cmds).fileinfo.offset = 0;
@@ -2934,16 +2934,16 @@ unsafe extern "C" fn record_files(
             b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
         );
     } else {
-        cmds = ::core::ptr::null_mut::<commands>();
+        cmds = ::core::ptr::null_mut::<Commands>();
     }
     if depstr.is_null() {
-        deps = ::core::ptr::null_mut::<dep>();
+        deps = ::core::ptr::null_mut::<Dep>();
     } else {
         depstr = unescape_char(depstr, ':' as i32);
         if second_expansion != 0 && !strchr(depstr, '$' as i32).is_null() {
             deps = alloc_dep();
             (*deps).name = depstr;
-            (*deps).set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            (*deps).need_2nd_expansion = true;
             (*deps).set_staticpattern(
                 (pattern != ::core::ptr::null::<::core::ffi::c_char>()) as ::core::ffi::c_int
                     as ::core::ffi::c_uint as ::core::ffi::c_uint,
@@ -2957,7 +2957,7 @@ unsafe extern "C" fn record_files(
         }
     }
     if !implicit_percent.is_null() {
-        let mut nextf: *mut nameseq;
+        let mut nextf: *mut NameSeq;
         let targets: *mut *const ::core::ffi::c_char;
         let target_pats: *mut *const ::core::ffi::c_char;
         let mut c: ::core::ffi::c_ushort;
@@ -3013,9 +3013,9 @@ unsafe extern "C" fn record_files(
         return;
     }
     loop {
-        let nextf_0: *mut nameseq = (*filenames).next;
-        let mut f: *mut file;
-        let mut this: *mut dep = ::core::ptr::null_mut::<dep>();
+        let nextf_0: *mut NameSeq = (*filenames).next;
+        let mut f: *mut File;
+        let mut this: *mut Dep = ::core::ptr::null_mut::<Dep>();
         free_ns(filenames);
         if !pattern.is_null() && pattern_matches(pattern, pattern_percent, name) == 0 {
             error(
@@ -3053,8 +3053,7 @@ unsafe extern "C" fn record_files(
                 );
             } else if !cmds.is_null()
                 && !(*f).cmds.is_null()
-                && (*f).is_target() as ::core::ffi::c_int != 0
-            {
+                && (*f).is_target {
                 let l: size_t = strlen((*f).name) as size_t;
                 error(
                     &raw mut (*cmds).fileinfo,
@@ -3072,20 +3071,19 @@ unsafe extern "C" fn record_files(
                 );
             }
             if f == default_file && this.is_null() && cmds.is_null() {
-                (*f).cmds = ::core::ptr::null_mut::<commands>();
+                (*f).cmds = ::core::ptr::null_mut::<Commands>();
             }
             if !cmds.is_null() {
                 (*f).cmds = cmds;
             }
             if f == suffix_file && this.is_null() {
                 free_dep_chain((*f).deps);
-                (*f).deps = ::core::ptr::null_mut::<dep>();
+                (*f).deps = ::core::ptr::null_mut::<Dep>();
             }
         } else {
             f = lookup_file(name);
             if !f.is_null()
-                && (*f).is_target() as ::core::ffi::c_int != 0
-                && (*f).double_colon.is_null()
+                && (*f).is_target && (*f).double_colon.is_null()
             {
                 fatal(
                     flocp,
@@ -3101,9 +3099,9 @@ unsafe extern "C" fn record_files(
             }
             (*f).cmds = cmds;
         }
-        (*f).set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        (*f).is_explicit = true;
         if are_also_makes != 0 {
-            let also: *mut dep = alloc_dep();
+            let also: *mut Dep = alloc_dep();
             (*also).name = (*f).name;
             (*also).file = f;
             (*also).next = also_make;
@@ -3174,7 +3172,7 @@ unsafe extern "C" fn record_files(
             );
         }
     }
-    let mut i: *mut dep = also_make;
+    let mut i: *mut Dep = also_make;
     while let Some(node) = i.as_ref() {
         let f_0: *mut file = node.file;
         let f0 = f_0
@@ -3887,8 +3885,8 @@ pub unsafe fn parse_file_seq(
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     let cachep: ::core::ffi::c_int =
         !(flags & 0x10 as ::core::ffi::c_int != 0) as ::core::ffi::c_int;
-    let mut new: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
-    let mut newp: *mut *mut nameseq = &raw mut new;
+    let mut new: *mut NameSeq = ::core::ptr::null_mut::<NameSeq>();
+    let mut newp: *mut *mut NameSeq = &raw mut new;
     let mut p: *mut ::core::ffi::c_char;
     let mut gl: glob_t = glob_t {
         gl_pathc: 0,
@@ -3908,8 +3906,8 @@ pub unsafe fn parse_file_seq(
         findmap |= MAP_BLANK;
     }
     stopmap |= MAP_NUL;
-    if size < ::core::mem::size_of::<nameseq>() as usize {
-        size = ::core::mem::size_of::<nameseq>() as usize as size_t;
+    if size < ::core::mem::size_of::<NameSeq>() as usize {
+        size = ::core::mem::size_of::<NameSeq>() as usize as size_t;
     }
     if !(flags & 0x4 as ::core::ffi::c_int != 0) {
         // read.rs carries its own layout-identical glob_t; reconcile the
@@ -4056,7 +4054,7 @@ pub unsafe fn parse_file_seq(
                 }
             }
             if flags & 0x4 as ::core::ffi::c_int != 0 {
-                let mut _ns: *mut nameseq = xcalloc(size) as *mut nameseq;
+                let mut _ns: *mut NameSeq = xcalloc(size) as *mut NameSeq;
                 let mut __n: *const ::core::ffi::c_char = concat(2, prefix, tmpbuf);
                 let ns = _ns
                     .as_mut()
@@ -4126,10 +4124,10 @@ pub unsafe fn parse_file_seq(
                 i = 0;
                 while i < tot {
                     if !memname.is_null() {
-                        let mut found: *mut nameseq =
+                        let mut found: *mut NameSeq =
                             ar_glob(*nlist.offset(i as isize), memname, size);
                         if found.is_null() {
-                            let mut _ns_0: *mut nameseq = xcalloc(size) as *mut nameseq;
+                            let mut _ns_0: *mut NameSeq = xcalloc(size) as *mut NameSeq;
                             let mut __n_0: *const ::core::ffi::c_char = concat(
                                 5,
                                 prefix,
@@ -4179,7 +4177,7 @@ pub unsafe fn parse_file_seq(
                             }
                         }
                     } else {
-                        let mut _ns_1: *mut nameseq = xcalloc(size) as *mut nameseq;
+                        let mut _ns_1: *mut NameSeq = xcalloc(size) as *mut NameSeq;
                         let mut __n_1: *const ::core::ffi::c_char =
                             concat(2, prefix, *nlist.offset(i as isize));
                         let ns = _ns_1

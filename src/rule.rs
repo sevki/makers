@@ -53,12 +53,12 @@ pub const f_bogus: variable_flavor = 0;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct rule {
-    pub next: *mut rule,
+    pub next: *mut Rule,
     pub targets: *mut *const ::core::ffi::c_char,
     pub lens: *mut ::core::ffi::c_uint,
     pub suffixes: *mut *const ::core::ffi::c_char,
-    pub deps: *mut dep,
-    pub cmds: *mut commands,
+    pub deps: *mut Dep,
+    pub cmds: *mut Commands,
     pub _defn: *mut ::core::ffi::c_char,
     pub num: ::core::ffi::c_ushort,
     pub terminal: ::core::ffi::c_char,
@@ -88,12 +88,12 @@ pub const INTSTR_LENGTH: usize = (53 as usize)
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
 pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
 #[inline]
-unsafe extern "C" fn alloc_dep() -> *mut dep {
-    xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
+unsafe extern "C" fn alloc_dep() -> *mut Dep {
+    xcalloc(::core::mem::size_of::<Dep>() as size_t) as *mut Dep
 }
 #[inline]
-unsafe extern "C" fn free_dep_chain(d: *mut dep) {
-    free_ns_chain(d as *mut nameseq);
+unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
+    free_ns_chain(d as *mut NameSeq);
 }
 pub static mut pattern_rules: *mut rule = ::core::ptr::null::<rule>() as *mut rule;
 pub static mut last_pattern_rule: *mut rule = ::core::ptr::null::<rule>() as *mut rule;
@@ -112,8 +112,8 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
         let mut k: ::core::ffi::c_uint;
         let mut p: *mut ::core::ffi::c_char;
         let mut sep: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
-        let mut dep: *const dep;
-        let mut ood: *const dep = ::core::ptr::null::<dep>();
+        let mut dep: *const Dep;
+        let mut ood: *const Dep = ::core::ptr::null::<Dep>();
         k = 0;
         while k < (*r).num as ::core::ffi::c_uint {
             len = len.wrapping_add((*(*r).lens.offset(k as isize)).wrapping_add(1) as size_t);
@@ -162,8 +162,8 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
         }
         dep = (*r).deps;
         while !dep.is_null() {
-            if (*dep).ignore_mtime() as ::core::ffi::c_int == 0 {
-                if (*dep).wait_here() != 0 {
+            if (*dep).ignore_mtime as ::core::ffi::c_int == 0 {
+                if (*dep).wait_here {
                     p = mempcpy(
                         p as *mut ::core::ffi::c_void,
                         b" .WAIT\0" as *const u8 as *const ::core::ffi::c_char
@@ -197,13 +197,13 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
         }
         sep = b" | \0" as *const u8 as *const ::core::ffi::c_char;
         while !ood.is_null() {
-            if (*ood).ignore_mtime() != 0 {
+            if (*ood).ignore_mtime {
                 p = mempcpy(
                     p as *mut ::core::ffi::c_void,
                     sep as *const ::core::ffi::c_void,
                     strlen(sep),
                 ) as *mut ::core::ffi::c_char;
-                if (*ood).wait_here() != 0 {
+                if (*ood).wait_here {
                     p = mempcpy(
                         p as *mut ::core::ffi::c_void,
                         b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
@@ -240,9 +240,9 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
 pub unsafe fn snap_implicit_rules() {
     let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut namelen: size_t = 0;
-    let mut rule: *mut rule;
-    let mut dep: *mut dep;
-    let prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
+    let mut rule: *mut Rule;
+    let mut dep: *mut Dep;
+    let prereqs: *mut Dep = expand_extra_prereqs(lookup_variable(
         b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
     ));
@@ -260,9 +260,9 @@ pub unsafe fn snap_implicit_rules() {
             if (*dep).name.is_null() {
                 (*dep).name = xstrdup((*(*dep).file).name);
             }
-            (*dep).set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            (*dep).need_2nd_expansion = true;
         }
-        if (*dep).need_2nd_expansion() != 0 {
+        if (*dep).need_2nd_expansion {
             loop {
                 d = strchr(d, '%' as i32);
                 if d.is_null() {
@@ -284,12 +284,12 @@ pub unsafe fn snap_implicit_rules() {
     rule = pattern_rules;
     while !rule.is_null() {
         let mut ndeps: ::core::ffi::c_uint = pre_deps;
-        let mut lastdep: *mut dep = ::core::ptr::null_mut::<dep>();
+        let mut lastdep: *mut Dep = ::core::ptr::null_mut::<Dep>();
         num_pattern_rules = num_pattern_rules.wrapping_add(1);
         if (*rule).num as ::core::ffi::c_uint > max_pattern_targets {
             max_pattern_targets = (*rule).num as ::core::ffi::c_uint;
         }
-        dep = (*rule).deps as *mut dep;
+        dep = (*rule).deps as *mut Dep;
         while !dep.is_null() {
             let dname: *const ::core::ffi::c_char = if !(*dep).name.is_null() {
                 (*dep).name
@@ -331,7 +331,7 @@ pub unsafe fn snap_implicit_rules() {
                         as ::core::ffi::c_uint,
                 );
             } else {
-                (*dep).set_changed(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                (*dep).changed = false;
             }
             dep = (*dep).next;
         }
@@ -339,7 +339,7 @@ pub unsafe fn snap_implicit_rules() {
             if !lastdep.is_null() {
                 (*lastdep).next = copy_dep_chain(prereqs);
             } else {
-                (*rule).deps = copy_dep_chain(prereqs) as *mut dep;
+                (*rule).deps = copy_dep_chain(prereqs) as *mut Dep;
             }
         }
         if ndeps > max_pattern_deps {
@@ -353,12 +353,12 @@ pub unsafe fn snap_implicit_rules() {
 unsafe extern "C" fn convert_suffix_rule(
     target: *const ::core::ffi::c_char,
     source: *const ::core::ffi::c_char,
-    cmds: *mut commands,
+    cmds: *mut Commands,
 ) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let names: *mut *const ::core::ffi::c_char;
     let percents: *mut *const ::core::ffi::c_char;
-    let deps: *mut dep;
+    let deps: *mut Dep;
     names = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
         as *mut *const ::core::ffi::c_char;
     percents = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
@@ -384,7 +384,7 @@ unsafe extern "C" fn convert_suffix_rule(
         *percents = *names;
     }
     if source.is_null() {
-        deps = ::core::ptr::null_mut::<dep>();
+        deps = ::core::ptr::null_mut::<Dep>();
     } else {
         let len_0: size_t = strlen(source) as size_t;
         alloca_allocations.push(::std::vec::from_elem(
@@ -410,8 +410,8 @@ unsafe extern "C" fn convert_suffix_rule(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn convert_to_pattern() {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut d: *mut dep;
-    let mut d2: *mut dep;
+    let mut d: *mut Dep;
+    let mut d2: *mut Dep;
     let rulename: *mut ::core::ffi::c_char;
     let mut maxsuffix: size_t = 0;
     d = (*suffix_file).deps;
@@ -433,7 +433,7 @@ pub unsafe fn convert_to_pattern() {
     rulename = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
     d = (*suffix_file).deps;
     while !d.is_null() {
-        let mut f: *mut file;
+        let mut f: *mut File;
         let slen: size_t;
         convert_suffix_rule(
             if !(*d).name.is_null() {
@@ -442,7 +442,7 @@ pub unsafe fn convert_to_pattern() {
                 (*(*d).file).name
             },
             ::core::ptr::null::<::core::ffi::c_char>(),
-            ::core::ptr::null_mut::<commands>(),
+            ::core::ptr::null_mut::<Commands>(),
         );
         if !(*(*d).file).cmds.is_null() {
             convert_suffix_rule(
@@ -472,7 +472,7 @@ pub unsafe fn convert_to_pattern() {
         f = lookup_file(rulename);
         if !f.is_null() && !(*f).cmds.is_null() {
             if (*f).deps.is_null() {
-                (*f).set_suffix(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                (*f).suffix = true;
             } else if posix_pedantic == 0 {
                 error(
                     &raw mut (*(*f).cmds).fileinfo,
@@ -480,7 +480,7 @@ pub unsafe fn convert_to_pattern() {
                     b"warning: ignoring prerequisites on suffix rule definition\0" as *const u8
                         as *const ::core::ffi::c_char,
                 );
-                (*f).set_suffix(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                (*f).suffix = true;
             }
         }
         d2 = (*suffix_file).deps;
@@ -551,7 +551,7 @@ pub unsafe fn convert_to_pattern() {
                         }
                     }
                     if !skip {
-                        (*f).set_suffix(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                        (*f).suffix = true;
                         if s2len == 2
                             && *rulename.offset(slen as isize) as ::core::ffi::c_int == '.' as i32
                             && *rulename.offset(slen.wrapping_add(1) as isize) as ::core::ffi::c_int
@@ -589,17 +589,17 @@ pub unsafe fn convert_to_pattern() {
     }
 }
 unsafe extern "C" fn new_pattern_rule(
-    rule: *mut rule,
+    rule: *mut Rule,
     override_0: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
-    let mut r: *mut rule;
-    let mut lastrule: *mut rule;
+    let mut r: *mut Rule;
+    let mut lastrule: *mut Rule;
     let mut i: ::core::ffi::c_uint;
     let mut j: ::core::ffi::c_uint;
     (*rule).in_use = 0;
     (*rule).terminal = 0;
-    (*rule).next = ::core::ptr::null_mut::<rule>();
-    lastrule = ::core::ptr::null_mut::<rule>();
+    (*rule).next = ::core::ptr::null_mut::<Rule>();
+    lastrule = ::core::ptr::null_mut::<Rule>();
     r = pattern_rules;
     's_18: while !r.is_null() {
         i = 0;
@@ -621,10 +621,10 @@ unsafe extern "C" fn new_pattern_rule(
                 j = j.wrapping_add(1);
             }
             if j == (*r).num as ::core::ffi::c_uint {
-                let mut d: *mut dep;
-                let mut d2: *mut dep;
-                d = (*rule).deps as *mut dep;
-                d2 = (*r).deps as *mut dep;
+                let mut d: *mut Dep;
+                let mut d2: *mut Dep;
+                d = (*rule).deps as *mut Dep;
+                d2 = (*r).deps as *mut Dep;
                 while !d.is_null() && !d2.is_null() {
                     if !(*(if !(*d).name.is_null() {
                         (*d).name
@@ -673,7 +673,7 @@ unsafe extern "C" fn new_pattern_rule(
                         last_pattern_rule = rule;
                         break 's_18;
                     } else {
-                        freerule(rule, ::core::ptr::null_mut::<rule>());
+                        freerule(rule, ::core::ptr::null_mut::<Rule>());
                         return 0;
                     }
                 }
@@ -701,7 +701,7 @@ unsafe extern "C" fn new_pattern_rule(
 pub unsafe fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int) {
     let r: *mut rule;
     let mut ptr: *const ::core::ffi::c_char;
-    r = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
+    r = xmalloc(::core::mem::size_of::<Rule>() as size_t) as *mut Rule;
     (*r).num = 1;
     (*r).targets = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
         as *mut *const ::core::ffi::c_char;
@@ -725,11 +725,11 @@ pub unsafe fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int
     ptr = (*p).dep;
     (*r).deps = parse_file_seq(
         &raw mut ptr as *mut *mut ::core::ffi::c_char,
-        ::core::mem::size_of::<dep>() as size_t,
+        ::core::mem::size_of::<Dep>() as size_t,
         MAP_NUL,
         ::core::ptr::null::<::core::ffi::c_char>(),
         PARSEFS_NONE,
-    ) as *mut dep as *mut dep;
+    ) as *mut Dep as *mut Dep;
     if new_pattern_rule(r, 0) != 0 {
         (*r).terminal = (if terminal != 0 { 1 } else { 0 }) as ::core::ffi::c_char;
         (*r).cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
@@ -753,7 +753,7 @@ pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
     free((*rule).lens as *mut ::core::ffi::c_void);
     free((*rule)._defn as *mut ::core::ffi::c_void);
     free(rule as *mut ::core::ffi::c_void);
-    if pattern_rules == rule {
+    if pattern_rules == Rule {
         if !lastrule.is_null() {
             abort();
         } else {
@@ -762,7 +762,7 @@ pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
     } else if !lastrule.is_null() {
         (*lastrule).next = next;
     }
-    if last_pattern_rule == rule {
+    if last_pattern_rule == Rule {
         last_pattern_rule = lastrule;
     }
 }
@@ -775,15 +775,15 @@ pub unsafe fn create_pattern_rule(
     target_percents: *mut *const ::core::ffi::c_char,
     n: ::core::ffi::c_ushort,
     terminal: ::core::ffi::c_int,
-    deps: *mut dep,
-    commands: *mut commands,
+    deps: *mut Dep,
+    commands: *mut Commands,
     override_0: ::core::ffi::c_int,
 ) {
     let mut i: ::core::ffi::c_uint;
-    let r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
+    let r: *mut Rule = xmalloc(::core::mem::size_of::<Rule>() as size_t) as *mut Rule;
     (*r).num = n;
-    (*r).cmds = commands as *mut commands;
-    (*r).deps = deps as *mut dep;
+    (*r).cmds = commands as *mut Commands;
+    (*r).deps = deps as *mut Dep;
     (*r).targets = targets;
     (*r).suffixes = target_percents;
     (*r).lens = xmalloc(
@@ -823,7 +823,7 @@ pub unsafe fn print_rule(r: *mut rule) {
 pub unsafe fn print_rule_data_base() {
     let mut rules: ::core::ffi::c_uint;
     let mut terminal: ::core::ffi::c_uint;
-    let mut r: *mut rule;
+    let mut r: *mut Rule;
     puts(b"\n# Implicit Rules\0" as *const u8 as *const ::core::ffi::c_char);
     terminal = 0;
     rules = terminal;

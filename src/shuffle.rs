@@ -123,7 +123,7 @@ unsafe fn shuffle_deps(deps: *mut Dep) {
     let mut ndeps: usize = 0;
     let mut d = deps;
     while !d.is_null() {
-        if (*d).wait_here() != 0 {
+        if (*d).wait_here {
             return;
         }
         ndeps += 1;
@@ -154,10 +154,10 @@ unsafe fn shuffle_deps(deps: *mut Dep) {
 }
 
 unsafe fn shuffle_file_deps_recursive(f: *mut File) {
-    if f.is_null() || (*f).was_shuffled() != 0 {
+    if f.is_null() || (*f).was_shuffled {
         return;
     }
-    (*f).set_was_shuffled(1);
+    (*f).was_shuffled = true;
     shuffle_deps((*f).deps);
     let mut d = (*f).deps;
     while !d.is_null() {
