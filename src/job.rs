@@ -205,6 +205,9 @@ pub struct child {
 }
 impl crate::file::NextLinked for child {
     unsafe fn next(this: *const Self) -> *mut Self {
+        if this.is_null() {
+            return ::core::ptr::null_mut::<Self>();
+        }
         (*this).next
     }
 }
