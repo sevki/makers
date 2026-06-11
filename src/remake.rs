@@ -1729,7 +1729,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
         let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut arfile: *mut File;
         let member_date: time_t;
-        ar_parse_name((*file).name, &raw mut arname, &raw mut memname);
+        ar_parse_name(file_ref.name, &raw mut arname, &raw mut memname);
         memmtime = name_mtime(memname);
         arfile = lookup_file(arname);
         if arfile.is_null() {

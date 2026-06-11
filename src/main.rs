@@ -2180,59 +2180,66 @@ unsafe fn main_0(
         let mut d_0: *mut GoalDep = read_files;
         let mut last: *mut GoalDep = ::core::ptr::null_mut::<GoalDep>();
         let mut mm_idx: ::core::ffi::c_uint = 0;
-        while !d_0.is_null() {
+        while let Some(d_0_ref) = d_0.as_mut() {
             let mut skip: ::core::ffi::c_int = 0;
-            let mut f_2: *mut File = (*d_0).file;
-            if (*f_2).phony {
+            let mut f_2: *mut File = d_0_ref.file;
+            let f_2_ref = f_2
+                .as_ref()
+                .expect("read makefile goal has a null file pointer");
+            if f_2_ref.phony {
                 skip = 1;
             } else {
-                f_2 = (*f_2).double_colon;
-                while !f_2.is_null() {
-                    if (*f_2).deps.is_null() && !(*f_2).cmds.is_null() {
+                f_2 = f_2_ref.double_colon;
+                while let Some(f_2_ref) = f_2.as_ref() {
+                    if f_2_ref.deps.is_null() && !f_2_ref.cmds.is_null() {
                         skip = 1;
                         break;
                     } else {
-                        f_2 = (*f_2).prev;
+                        f_2 = f_2_ref.prev;
                     }
                 }
             }
             if skip == 0 {
                 let fresh48 = mm_idx;
                 mm_idx = mm_idx.wrapping_add(1);
+                let file_ref = d_0_ref
+                    .file
+                    .as_ref()
+                    .expect("read makefile goal has a null file pointer");
                 *makefile_mtimes.offset(fresh48 as isize) =
-                    if (*(*d_0).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime((*d_0).file, 0)
+                    if file_ref.last_mtime == UNKNOWN_MTIME as uintmax_t {
+                        f_mtime(d_0_ref.file, 0)
                     } else {
-                        (*(*d_0).file).last_mtime
+                        file_ref.last_mtime
                     };
                 last = d_0;
-                d_0 = (*d_0).next;
+                d_0 = d_0_ref.next;
             } else {
                 if 0x2 as ::core::ffi::c_int & db_level != 0 {
+                    let f_2_ref = f_2
+                        .as_ref()
+                        .expect("skipped makefile has a null file pointer");
                     printf(
                         b"Makefile '%s' might loop; not remaking it.\n\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*f_2).name,
+                        f_2_ref.name,
                     );
                     fflush(stdout);
                 }
-                if !last.is_null() {
-                    (*last).next = (*d_0).next;
+                let d_0_next = d_0_ref.next;
+                if let Some(last_ref) = last.as_mut() {
+                    last_ref.next = d_0_next;
                 } else {
-                    read_files = (*d_0).next;
+                    read_files = d_0_next;
                 }
-                if (*d_0).error != 0 && (*d_0).flags as ::core::ffi::c_int & RM_DONTCARE == 0 {
-                    (*d_0).next = skipped_makefiles;
+                if d_0_ref.error != 0 && d_0_ref.flags as ::core::ffi::c_int & RM_DONTCARE == 0 {
+                    d_0_ref.next = skipped_makefiles;
                     skipped_makefiles = d_0;
                     any_failed = 1;
                 } else {
                     free_goaldep(d_0);
                 }
-                d_0 = if !last.is_null() {
-                    (*last).next
-                } else {
-                    read_files
-                };
+                d_0 = last.as_ref().map_or(read_files, |last_ref| last_ref.next);
             }
         }
         define_makeflags(1);
@@ -2244,20 +2251,25 @@ unsafe fn main_0(
         status = update_goal_chain(read_files) as UpdateStatus;
         rebuilding_makefiles = 0;
         db_level = orig_db_level;
-        while !skipped_makefiles.is_null() {
+        while let Some(d_1_ref) = skipped_makefiles.as_mut() {
             let d_1: *mut GoalDep = skipped_makefiles;
-            let err: *const ::core::ffi::c_char = strerror((*d_1).error);
+            let err: *const ::core::ffi::c_char = strerror(d_1_ref.error);
+            let dep_name = if !d_1_ref.name.is_null() {
+                d_1_ref.name
+            } else {
+                d_1_ref
+                    .file
+                    .as_ref()
+                    .expect("skipped makefile has a null file pointer")
+                    .name
+            };
             error(
-        &raw mut (*d_1).floc,
+        &raw mut d_1_ref.floc,
         b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((if !(*d_1).name.is_null() {
-                    (*d_1).name
-                } else {
-                    (*(*d_1).file).name
-                }) as *const ::core::ffi::c_char),
+        &[FmtArg::Str((dep_name) as *const ::core::ffi::c_char),
             FmtArg::Str((err) as *const ::core::ffi::c_char)],
     );
-            skipped_makefiles = (*skipped_makefiles).next;
+            skipped_makefiles = d_1_ref.next;
             free_goaldep(d_1);
         }
         if any_failed != 0
@@ -2270,20 +2282,23 @@ unsafe fn main_0(
             1 => {
                 let mut d_2: *mut GoalDep;
                 d_2 = read_files;
-                while !d_2.is_null() {
-                    if (*(*d_2).file).unloaded {
-                        let f_3: *mut File = (*d_2).file;
-                        if load_file(&raw mut (*d_2).floc, f_3, 0) == 0 {
+                while let Some(d_2_ref) = d_2.as_mut() {
+                    let f_3: *mut File = d_2_ref.file;
+                    let f_3_ref = f_3
+                        .as_mut()
+                        .expect("read makefile goal has a null file pointer");
+                    if f_3_ref.unloaded {
+                        if load_file(&raw mut d_2_ref.floc, f_3, 0) == 0 {
                             fatal(
-        &raw mut (*d_2).floc,
+        &raw mut d_2_ref.floc,
         b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*f_3).name) as *const ::core::ffi::c_char)],
+        &[FmtArg::Str((f_3_ref.name) as *const ::core::ffi::c_char)],
     );
                         }
-                        (*f_3).unloaded = false;
-                        (*f_3).loaded = true;
+                        f_3_ref.unloaded = false;
+                        f_3_ref.loaded = true;
                     }
-                    d_2 = (*d_2).next;
+                    d_2 = d_2_ref.next;
                 }
                 false
             }
@@ -2293,30 +2308,34 @@ unsafe fn main_0(
                 let mut d_4: *mut GoalDep;
                 i_3 = 0;
                 d_4 = read_files;
-                while !d_4.is_null() {
-                    if (*(*d_4).file).updated {
-                        if (*(*d_4).file).update_status as ::core::ffi::c_int
+                while let Some(d_4_ref) = d_4.as_mut() {
+                    let d_4_file = d_4_ref
+                        .file
+                        .as_ref()
+                        .expect("read makefile goal has a null file pointer");
+                    if d_4_file.updated {
+                        if d_4_file.update_status as ::core::ffi::c_int
                             == UpdateStatus::Success as ::core::ffi::c_int
                         {
                             any_remade |=
-                                ((if (*(*d_4).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                    f_mtime((*d_4).file, 0)
+                                ((if d_4_file.last_mtime == UNKNOWN_MTIME as uintmax_t {
+                                    f_mtime(d_4_ref.file, 0)
                                 } else {
-                                    (*(*d_4).file).last_mtime
+                                    d_4_file.last_mtime
                                 }) != *makefile_mtimes.offset(i_3 as isize))
                                     as ::core::ffi::c_int;
-                        } else if (*d_4).flags as ::core::ffi::c_int & RM_DONTCARE == 0 {
+                        } else if d_4_ref.flags as ::core::ffi::c_int & RM_DONTCARE == 0 {
                             let mtime: uintmax_t;
                             error(
-        &raw mut (*d_4).floc,
+        &raw mut d_4_ref.floc,
         b"failed to remake makefile '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*(*d_4).file).name) as *const ::core::ffi::c_char)],
+        &[FmtArg::Str((d_4_file.name) as *const ::core::ffi::c_char)],
     );
-                            mtime = if (*(*d_4).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime((*d_4).file, 0)
+                            mtime = if d_4_file.last_mtime == UNKNOWN_MTIME as uintmax_t {
+                                f_mtime(d_4_ref.file, 0)
                             } else {
-                                (*(*d_4).file).last_mtime
+                                d_4_file.last_mtime
                             };
                             any_remade |= (mtime != NONEXISTENT_MTIME as uintmax_t
                                 && mtime != *makefile_mtimes.offset(i_3 as isize))
@@ -2324,15 +2343,15 @@ unsafe fn main_0(
                             makefile_status = MAKE_FAILURE;
                             any_failed = 1;
                         }
-                    } else if (*d_4).flags as ::core::ffi::c_int & RM_DONTCARE == 0 {
-                        let dnm: *const ::core::ffi::c_char = if !(*d_4).name.is_null() {
-                            (*d_4).name
+                    } else if d_4_ref.flags as ::core::ffi::c_int & RM_DONTCARE == 0 {
+                        let dnm: *const ::core::ffi::c_char = if !d_4_ref.name.is_null() {
+                            d_4_ref.name
                         } else {
-                            (*(*d_4).file).name
+                            d_4_file.name
                         };
-                        if (*d_4).flags as ::core::ffi::c_int & RM_INCLUDED != 0 {
+                        if d_4_ref.flags as ::core::ffi::c_int & RM_INCLUDED != 0 {
                             error(
-        &raw mut (*d_4).floc,
+        &raw mut d_4_ref.floc,
         b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
         &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
@@ -2348,7 +2367,7 @@ unsafe fn main_0(
                         }
                     }
                     i_3 = i_3.wrapping_add(1);
-                    d_4 = (*d_4).next;
+                    d_4 = d_4_ref.next;
                 }
                 any_remade != 0
             }

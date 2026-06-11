@@ -1062,15 +1062,15 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
         let pattern: *const ::core::ffi::c_char = b"%\0" as *const u8 as *const ::core::ffi::c_char;
         let mut dp: *mut Dep = deps;
         let mut dl: *mut Dep = ::core::ptr::null_mut::<Dep>();
-        while !dp.is_null() {
+        while let Some(dp_ref) = dp.as_mut() {
             let percent: *mut ::core::ffi::c_char;
-            let nl: size_t = (strlen((*dp).name) as size_t).wrapping_add(1);
+            let nl: size_t = (strlen(dp_ref.name) as size_t).wrapping_add(1);
             alloca_allocations.push(::std::vec::from_elem(0, nl as usize));
             let nm: *mut ::core::ffi::c_char =
                 alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
                 nm as *mut ::core::ffi::c_void,
-                (*dp).name as *const ::core::ffi::c_void,
+                dp_ref.name as *const ::core::ffi::c_void,
                 nl as size_t,
             );
             percent = find_percent(nm);
@@ -1103,25 +1103,28 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
                 {
                     let df: *mut Dep = dp;
                     if dp == deps {
-                        deps = (*deps).next;
+                        deps = dp_ref.next;
                         dp = deps;
                     } else {
-                        (*dl).next = (*dp).next;
-                        dp = (*dl).next;
+                        let dl_ref = dl
+                            .as_mut()
+                            .expect("previous dependency is null while unlinking");
+                        dl_ref.next = dp_ref.next;
+                        dp = dl_ref.next;
                     }
                     free_dep(df);
                     continue;
                 } else {
-                    (*dp).name = strcache_add_len(
+                    dp_ref.name = strcache_add_len(
                         variable_buffer,
                         o.offset_from(variable_buffer) as ::core::ffi::c_long as size_t,
                     );
                 }
             }
-            (*dp).stem = stem;
-            (*dp).staticpattern = true;
+            dp_ref.stem = stem;
+            dp_ref.staticpattern = true;
             dl = dp;
-            dp = (*dp).next;
+            dp = dp_ref.next;
         }
     }
     for d1 in seq_iter(deps) {
@@ -1773,20 +1776,25 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
         deps = (*deps).next;
     }
     if !ood.is_null() {
+        let ood_ref = ood.as_ref().expect("order-only dependency is null");
         printf(
             b" | %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            if (*ood).wait_here {
+            if ood_ref.wait_here {
                 b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
             } else {
                 b"\0" as *const u8 as *const ::core::ffi::c_char
             },
-            if !(*ood).name.is_null() {
-                (*ood).name
+            if !ood_ref.name.is_null() {
+                ood_ref.name
             } else {
-                (*(*ood).file).name
+                ood_ref
+                    .file
+                    .as_ref()
+                    .expect("order-only dependency has a null file")
+                    .name
             },
         );
-        for ood in seq_iter((*ood).next) {
+        for ood in seq_iter(ood_ref.next) {
             if (*ood).ignore_mtime {
                 printf(
                     b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,

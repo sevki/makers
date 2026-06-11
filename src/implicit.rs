@@ -1042,7 +1042,10 @@ unsafe extern "C" fn pattern_search(
                                                     0,
                                                     ::core::mem::size_of::<File>() as size_t,
                                                 );
-                                                (*int_file).name = (*d).name;
+                                                (*int_file).name = d
+                                                    .as_ref()
+                                                    .expect("dependency chain contains a null node")
+                                                    .name;
                                                 if pattern_search(
                                                     int_file,
                                                     0,
@@ -1052,7 +1055,10 @@ unsafe extern "C" fn pattern_search(
                                                 ) != 0
                                                 {
                                                     (*pat).pattern = (*int_file).name;
-                                                    (*int_file).name = (*d).name;
+                                                    (*int_file).name = d
+                                                        .as_ref()
+                                                        .expect("dependency chain contains a null node")
+                                                        .name;
                                                     (*pat).file = int_file;
                                                     int_file = ::core::ptr::null_mut::<File>();
                                                     let fresh7 = pat;
@@ -1126,7 +1132,10 @@ unsafe extern "C" fn pattern_search(
         if !rule.is_null() {
             foundrule = ri;
             if recursions > 0 {
-                (*file).name = *(*rule)
+                let rule_ref = rule
+                    .as_ref()
+                    .expect("pattern_search selected a null rule");
+                (*file).name = *rule_ref
                     .targets
                     .offset((*tryrules.offset(foundrule as isize)).matches as isize);
             }
@@ -1221,7 +1230,10 @@ unsafe extern "C" fn pattern_search(
                 stem_str[fullstemlen as usize] = 0;
                 (*file).stem = strcache_add(&raw mut stem_str as *mut ::core::ffi::c_char);
             }
-            (*file).cmds = (*rule).cmds;
+            let rule_ref = rule
+                .as_ref()
+                .expect("pattern_search selected a null rule");
+            (*file).cmds = rule_ref.cmds;
             (*file).is_target = true;
             let f_0: *mut File = lookup_file(
                 *(*rule)

@@ -128,7 +128,7 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
             len = len.wrapping_add((*(*r).lens.offset(k as isize)).wrapping_add(1) as size_t);
             k = k.wrapping_add(1);
         }
-        for dep in seq_iter((*r).deps) {
+        for dep in seq_iter(r_ref.deps) {
             len = (len as ::core::ffi::c_ulong).wrapping_add(
                 strlen(if !(*dep).name.is_null() {
                     (*dep).name
@@ -143,18 +143,18 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
                 .wrapping_add(1) as ::core::ffi::c_ulong,
             ) as size_t as size_t;
         }
-        (*r)._defn = xmalloc(len) as *mut ::core::ffi::c_char;
-        p = (*r)._defn;
+        r_ref._defn = xmalloc(len) as *mut ::core::ffi::c_char;
+        p = r_ref._defn;
         k = 0;
-        while k < (*r).num as ::core::ffi::c_uint {
+        while k < r_ref.num as ::core::ffi::c_uint {
             p = mempcpy(
                 mempcpy(
                     p as *mut ::core::ffi::c_void,
                     sep as *const ::core::ffi::c_void,
                     strlen(sep),
                 ),
-                *(*r).targets.offset(k as isize) as *const ::core::ffi::c_void,
-                *(*r).lens.offset(k as isize) as size_t,
+                *r_ref.targets.offset(k as isize) as *const ::core::ffi::c_void,
+                *r_ref.lens.offset(k as isize) as size_t,
             ) as *mut ::core::ffi::c_char;
             k = k.wrapping_add(1);
             sep = b" \0" as *const u8 as *const ::core::ffi::c_char;
@@ -162,12 +162,12 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
         let fresh4 = p;
         p = p.offset(1 as ::core::ffi::c_int as isize);
         *fresh4 = ':' as i32 as ::core::ffi::c_char;
-        if (*r).terminal != 0 {
+        if r_ref.terminal != 0 {
             let fresh5 = p;
             p = p.offset(1 as ::core::ffi::c_int as isize);
             *fresh5 = ':' as i32 as ::core::ffi::c_char;
         }
-        for dep in seq_iter((*r).deps) {
+        for dep in seq_iter(r_ref.deps) {
             if !(*dep).ignore_mtime {
                 if (*dep).wait_here {
                     p = mempcpy(
@@ -237,7 +237,7 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
         }
         *p = 0;
     }
-    (*r)._defn
+    r_ref._defn
 }
 /// # Safety
 ///
@@ -339,8 +339,8 @@ pub unsafe fn snap_implicit_rules() {
             dep = (*dep).next;
         }
         if !prereqs.is_null() {
-            if !lastdep.is_null() {
-                (*lastdep).next = copy_dep_chain(prereqs);
+            if let Some(lastdep_ref) = lastdep.as_mut() {
+                lastdep_ref.next = copy_dep_chain(prereqs);
             } else {
                 (*rule).deps = copy_dep_chain(prereqs);
             }

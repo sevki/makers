@@ -2847,7 +2847,10 @@ unsafe extern "C" fn record_files(
         &[],
     );
     }
-    name = (*filenames).name;
+    name = filenames
+        .as_ref()
+        .expect("record_files requires a non-null filename list")
+        .name;
     implicit_percent = find_percent_cached(&raw mut name);
     if commands_idx > 0 {
         cmds = xmalloc(::core::mem::size_of::<Commands>() as size_t) as *mut Commands;
@@ -3056,6 +3059,9 @@ unsafe extern "C" fn record_files(
                 }
             }
         }
+        let f_ref = f
+            .as_mut()
+            .expect("record_files target lookup returned a null file");
         if !this.is_null() {
             if fr.deps.is_null() {
                 fr.deps = this;
@@ -4065,10 +4071,11 @@ pub unsafe fn parse_file_seq(
                             *newp = _ns_0;
                             newp = &raw mut ns.next;
                         } else {
-                            if !(*newp).is_null() {
-                                T::set_next(*newp, found);
+                            let new_slot = newp.as_mut().expect("parse_file_seq output slot is null");
+                            if !(*new_slot).is_null() {
+                                T::set_next(*new_slot, found);
                             } else {
-                                *newp = found;
+                                *new_slot = found;
                             }
                             loop {
                                 let found_ref = found
