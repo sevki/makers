@@ -1,3 +1,4 @@
+pub use crate::output::{FmtArg, error, fatal, message};
 pub use crate::commands::chop_commands;
 pub use crate::commands::execute_file_commands;
 pub use crate::file::enter_file;
@@ -141,11 +142,10 @@ pub unsafe fn check_also_make(ctx: &crate::execctx::ExecContext, file: *const fi
                     } else {
                         ::core::ptr::null_mut::<Floc>()
                     },
-                    strlen((*(*ad).file).name) as size_t,
-                    b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
+        b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*(*ad).file).name,
-                );
+        &[FmtArg::Str(((*(*ad).file).name) as *const ::core::ffi::c_char)],
+    );
             }
             ad = (*ad).next;
         }
@@ -360,7 +360,7 @@ pub unsafe fn update_goal_chain(
                         } else {
                             b"'%s' is up to date.\0" as *const u8 as *const ::core::ffi::c_char
                         },
-                        fref(file).name,
+                        &[FmtArg::Str(fref(file).name)],
                     );
                 }
                 if let Some(lg) = lastgoal.as_mut() {
@@ -505,9 +505,6 @@ pub unsafe fn complain(ctx: &crate::execctx::ExecContext, file: *mut file) {
     if d.is_null() {
         show_goal_error(ctx);
         if !(*file).parent.is_null() {
-            let l: size_t = (strlen((*file).name) as size_t)
-                .wrapping_add(strlen((*(*file).parent).name) as size_t)
-                .wrapping_add(4);
             let m: *const ::core::ffi::c_char = b"%sNo rule to make target '%s', needed by '%s'%s\0"
                 as *const u8
                 as *const ::core::ffi::c_char;
@@ -515,47 +512,50 @@ pub unsafe fn complain(ctx: &crate::execctx::ExecContext, file: *mut file) {
                 fatal(
                     ctx,
                     NILF,
-                    l,
                     m,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*file).name,
-                    (*(*file).parent).name,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                        FmtArg::Str((*file).name),
+                        FmtArg::Str((*(*file).parent).name),
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                    ],
                 );
             }
             error(
                 ctx,
                 NILF,
-                l,
                 m,
-                b"*** \0" as *const u8 as *const ::core::ffi::c_char,
-                (*file).name,
-                (*(*file).parent).name,
-                b".\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
+                    FmtArg::Str((*file).name),
+                    FmtArg::Str((*(*file).parent).name),
+                    FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
+                ],
             );
         } else {
-            let l_0: size_t = (strlen((*file).name) as size_t).wrapping_add(4);
             let m_0: *const ::core::ffi::c_char =
                 b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
             if !crate::make_main::opt_keep_going() {
                 fatal(
                     ctx,
                     NILF,
-                    l_0,
                     m_0,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*file).name,
-                    b"\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                        FmtArg::Str((*file).name),
+                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                    ],
                 );
             }
             error(
                 ctx,
                 NILF,
-                l_0,
                 m_0,
-                b"*** \0" as *const u8 as *const ::core::ffi::c_char,
-                (*file).name,
-                b".\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
+                    FmtArg::Str((*file).name),
+                    FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
+                ],
             );
         }
         (*file).no_diag = false;
@@ -722,8 +722,8 @@ unsafe extern "C" fn update_file_1(
                 strlen((*file).name) as size_t,
                 b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
                     as *const u8 as *const ::core::ffi::c_char,
-                (*file).name,
-            );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+    );
         }
         this_mtime = this_mtime.wrapping_add(
             ((if FILE_TIMESTAMP_HI_RES != 0 {
@@ -842,9 +842,9 @@ unsafe extern "C" fn update_file_1(
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
                         b"circular %s <- %s dependency detected\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*file).name,
-                        (*(*d).file).name,
-                    );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
+    );
                 }
                 if warning::is_active(Type::CircularDep) {
                     error(
@@ -854,9 +854,9 @@ unsafe extern "C" fn update_file_1(
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*file).name,
-                        (*(*d).file).name,
-                    );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
+    );
                 }
                 if let Some(tail) = lastd.as_mut() {
                     tail.next = (*du).next;
@@ -1063,8 +1063,8 @@ unsafe extern "C" fn update_file_1(
                 strlen((*file).name) as size_t,
                 b"Target '%s' not remade because of errors.\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*file).name,
-            );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+    );
         }
         return dep_status;
     }
@@ -2182,8 +2182,8 @@ unsafe extern "C" fn library_search(
                 strlen(p) as size_t,
                 b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
                     as *const ::core::ffi::c_char,
-                p,
-            );
+        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+    );
             *p.offset(len as isize) = c;
         } else {
             p4 = variable_buffer_output(

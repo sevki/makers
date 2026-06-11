@@ -1,3 +1,4 @@
+pub use crate::output::{FmtArg, error, fatal};
 pub use crate::commands::print_commands;
 pub use crate::commands::set_file_variables;
 pub use crate::expand::expand_string_for_file;
@@ -753,7 +754,6 @@ pub unsafe fn rehash_file(
                     fr2.name,
                 );
             }
-            l = l.wrapping_add(strlen(to_hname) as size_t);
             error(
                 ctx,
                 from_floc,
@@ -909,8 +909,8 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                                 strlen((*f).name) as size_t,
                                 b"*** deleting intermediate file '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                (*f).name,
-                            );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
                         } else {
                             if doneany == 0 && 0x1_i32 & db_level != 0 {
                                 printf(
@@ -1484,7 +1484,8 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             0,
             b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     f = lookup_file(b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
     if f.as_ref().is_some_and(|fr| fr.is_target() as i32 != 0) {
@@ -1670,24 +1671,85 @@ pub unsafe fn file_timestamp_cons(
             let f: *const ::core::ffi::c_char = if !fname.is_null() {
                 fname
             } else {
-                b"Current time\0" as *const u8 as *const ::core::ffi::c_char
-            };
-            // Format the substituted timestamp in safe Rust, then hand the C
-            // `error` formatter a NUL-terminated copy as its `%s` argument (same
-            // output sink and bytes as GNU make).
-            let stamp = CString::new(file_timestamp_string(substitute))
-                .expect("formatted timestamp never contains an interior NUL");
-            error(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                (strlen(f) as size_t).wrapping_add(stamp.as_bytes().len() as size_t),
-                b"%s: timestamp out of range: substituting %s\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                f,
-                stamp.as_ptr(),
-            );
-            substitute
-        }
+                !(0_i32 as uintmax_t)
+                    << (::core::mem::size_of::<uintmax_t>() as usize)
+                        .wrapping_mul(8_usize)
+                        .wrapping_sub(1_usize)
+            })
+            .wrapping_sub((2 + 1) as uintmax_t)
+            >> (if 1 != 0 { 30 } else { 0 })
+            << (if 1 != 0 { 30 } else { 0 }))
+        .wrapping_add((2 + 1) as uintmax_t)
+        .wrapping_add((if 1 != 0 { 1000000000_i32 } else { 1 }) as uintmax_t)
+        .wrapping_sub(1 as uintmax_t)
+        .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+            >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+        && product <= ts
+        && ts
+            <= ((!(0_i32 as uintmax_t))
+                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
+                } else {
+                    !(0_i32 as uintmax_t)
+                        << (::core::mem::size_of::<uintmax_t>() as usize)
+                            .wrapping_mul(8_usize)
+                            .wrapping_sub(1_usize)
+                })
+                .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
+            .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
+            .wrapping_add(
+                (if FILE_TIMESTAMP_HI_RES != 0 {
+                    1000000000_i32
+                } else {
+                    1
+                }) as uintmax_t,
+            )
+            .wrapping_sub(1 as uintmax_t))
+    {
+        let mut buf: [::core::ffi::c_char; 43] = [0; 43];
+        let f: *const ::core::ffi::c_char = if !fname.is_null() {
+            fname
+        } else {
+            b"Current time\0" as *const u8 as *const ::core::ffi::c_char
+        };
+        ts = if s <= OLD_MTIME as uintmax_t {
+            ORDINARY_MTIME_MIN as uintmax_t
+        } else {
+            ((!(0_i32 as uintmax_t))
+                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
+                } else {
+                    !(0_i32 as uintmax_t)
+                        << (::core::mem::size_of::<uintmax_t>() as usize)
+                            .wrapping_mul(8_usize)
+                            .wrapping_sub(1_usize)
+                })
+                .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
+            .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
+            .wrapping_add(
+                (if FILE_TIMESTAMP_HI_RES != 0 {
+                    1000000000_i32
+                } else {
+                    1
+                }) as uintmax_t,
+            )
+            .wrapping_sub(1 as uintmax_t)
+        };
+        file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, ts);
+        error(
+            ctx,
+            ::core::ptr::null_mut::<Floc>(),
+            (strlen(f) as size_t)
+                .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
+            b"%s: timestamp out of range: substituting %s\0" as *const u8
+                as *const ::core::ffi::c_char,
+        &[FmtArg::Str((f) as *const ::core::ffi::c_char),
+            FmtArg::Str((&raw mut buf as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char)],
+    );
     }
 }
 /// Sample the wall clock and pack it into a `FILE_TIMESTAMP`, returning the

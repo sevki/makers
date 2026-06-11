@@ -1,3 +1,5 @@
+pub use crate::output::{FmtArg, error, fatal};
+pub use crate::misc::concat;
 pub use crate::file::enter_file;
 pub use crate::file::lookup_file;
 pub use crate::load::load_file;
@@ -1620,8 +1622,8 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
                             strlen(p) as size_t,
                             b"unknown debug level specification '%s'\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            p,
-                        );
+        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+    );
                     }
                 }
                 loop {
@@ -2327,7 +2329,8 @@ unsafe fn main_0(
                         0,
                         b"Makefile from standard input specified twice\0" as *const u8
                             as *const ::core::ffi::c_char,
-                    );
+        &[],
+    );
                 }
                 outfile = get_tmpfile(&ctx, &raw mut newnm);
                 if outfile.is_null() {
@@ -2337,7 +2340,8 @@ unsafe fn main_0(
                         0,
                         b"cannot store makefile from stdin to a temporary file\0" as *const u8
                             as *const ::core::ffi::c_char,
-                    );
+        &[],
+    );
                 }
                 while feof(stdin) == 0 && ferror(stdin) == 0 {
                     let mut buf: [::core::ffi::c_char; 2048] = [0; 2048];
@@ -2363,9 +2367,9 @@ unsafe fn main_0(
                                 .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                             b"fwrite: temporary file %s: %s\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            newnm,
-                            strerror(*__errno_location()),
-                        );
+        &[FmtArg::Str((newnm) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
                     }
                 }
                 fclose(outfile);
@@ -2890,8 +2894,8 @@ unsafe fn main_0(
                                 strlen(dnm) as size_t,
                                 b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                dnm,
-                            );
+        &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+    );
                         } else {
                             error(
                                 &ctx,
@@ -2899,8 +2903,8 @@ unsafe fn main_0(
                                 strlen(dnm) as size_t,
                                 b"makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                dnm,
-                            );
+        &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+    );
                             any_failed = 1;
                         }
                     }
@@ -3268,7 +3272,8 @@ unsafe fn main_0(
                             0,
                             b".DEFAULT_GOAL contains more than one target\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                        );
+        &[],
+    );
                     }
                     f_6 = enter_file(strcache_add((*ns).name));
                     (*ns).name = ::core::ptr::null::<::core::ffi::c_char>();
@@ -3306,7 +3311,8 @@ unsafe fn main_0(
             0,
             b"No targets specified and no makefile found\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     crate::shuffle::shuffle_deps_recursive(goals as *mut crate::file::Dep);
     if 0x1_i32 & db_level != 0 {
@@ -3329,7 +3335,8 @@ unsafe fn main_0(
             0,
             b"warning: clock skew detected: your build may be incomplete\0" as *const u8
                 as *const ::core::ffi::c_char,
-        );
+        &[],
+    );
     }
     die(&ctx, makefile_status);
 }
@@ -3650,7 +3657,7 @@ unsafe fn decode_switches(
                                         b"the '%s%s' option requires a non-empty string argument\0"
                                             as *const u8
                                             as *const ::core::ffi::c_char,
-                                        if (*cs).c <= CHAR_MAX {
+        &[FmtArg::Str((if (*cs).c <= CHAR_MAX {
                                             b"-\0" as *const u8 as *const ::core::ffi::c_char
                                         } else {
                                             b"--\0" as *const u8 as *const ::core::ffi::c_char
@@ -3787,8 +3794,8 @@ unsafe fn decode_switches(
                                             0,
                                             b"the '-%c' option requires a positive integer argument\0"
                                                 as *const u8 as *const ::core::ffi::c_char,
-                                            (*cs).c,
-                                        );
+        &[FmtArg::Int(((*cs).c) as i64)],
+    );
                                         bad = 1;
                                     } else {
                                         // Only `-j` is a positive_int option; it stores into
