@@ -75,6 +75,18 @@ pub unsafe fn is_real_item(item: *const c_void) -> bool {
     !item.is_null() && item != hash_deleted_item
 }
 
+unsafe fn table_slots<'a>(ht: *const hash_table) -> &'a [*mut c_void] {
+    let ht = ht.as_ref().expect("hash table pointer is null");
+    assert!(!ht.ht_vec.is_null(), "hash table without a slot vector");
+    ::core::slice::from_raw_parts(ht.ht_vec, ht.ht_size as usize)
+}
+
+unsafe fn table_slots_mut<'a>(ht: *mut hash_table) -> &'a mut [*mut c_void] {
+    let ht = ht.as_mut().expect("hash table pointer is null");
+    assert!(!ht.ht_vec.is_null(), "hash table without a slot vector");
+    ::core::slice::from_raw_parts_mut(ht.ht_vec, ht.ht_size as usize)
+}
+
 /// Initialize `ht` with at least `size` slots (rounded up to a power of
 /// two) and the given hash/compare callbacks.
 ///
@@ -124,10 +136,16 @@ pub unsafe fn hash_load(
     cardinality: c_ulong,
     size: c_ulong,
 ) {
-    let mut items: *const c_char = item_table as *const c_char;
-    for _ in 0..cardinality {
-        hash_insert(ht, items as *const c_void);
-        items = items.offset(size as isize);
+    if cardinality == 0 {
+        return;
+    }
+    let row_size = size as usize;
+    let total_size = (cardinality as usize)
+        .checked_mul(row_size)
+        .expect("hash_load item table size overflow");
+    let items = ::core::slice::from_raw_parts(item_table as *const u8, total_size);
+    for item in items.chunks_exact(row_size) {
+        hash_insert(ht, item.as_ptr() as *const c_void);
     }
 }
 
@@ -145,11 +163,9 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
         hash_1 = (hash_1 as c_ulong & ((*ht).ht_size - 1)) as c_uint;
-        let slot = (*ht)
-            .ht_vec
-            .add(hash_1 as usize)
-            .as_mut()
-            .expect("hash table without a slot vector");
+        let slot = table_slots_mut(ht)
+            .get_mut(hash_1 as usize)
+            .expect("hash index within table size");
 
         if (*slot).is_null() {
             return if !deleted_slot.is_null() {
@@ -286,16 +302,11 @@ pub unsafe fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c
 /// Every stored item must be an owned `malloc`-family allocation.
 pub unsafe fn hash_free_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
-    for i in 0..(*ht).ht_size as usize {
-        let vec = (*ht)
-            .ht_vec
-            .add(i)
-            .as_mut()
-            .expect("hash table without a slot vector");
-        if is_real_item(*vec) {
-            free(*vec);
+    for slot in table_slots_mut(ht) {
+        if is_real_item(*slot) {
+            free(*slot);
         }
-        *vec = null_mut();
+        *slot = null_mut();
     }
     (*ht).ht_fill = 0;
     (*ht).ht_empty_slots = (*ht).ht_size;
@@ -307,13 +318,7 @@ pub unsafe fn hash_free_items(ht: *mut hash_table) {
 /// `ht` must be initialized.
 pub unsafe fn hash_delete_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
-    for i in 0..(*ht).ht_size as usize {
-        *(*ht)
-            .ht_vec
-            .add(i)
-            .as_mut()
-            .expect("hash table without a slot vector") = null_mut();
-    }
+    table_slots_mut(ht).fill(null_mut());
     (*ht).ht_fill = 0;
     (*ht).ht_collisions = 0;
     (*ht).ht_lookups = 0;
@@ -346,14 +351,9 @@ pub unsafe fn hash_free(ht: *mut hash_table, free_items: c_int) {
 pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
     (*ht).set_ht_in_map(1);
-    for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht)
-            .ht_vec
-            .add(i)
-            .as_ref()
-            .expect("hash table without a slot vector");
-        if is_real_item(*slot) {
-            map(*slot);
+    for &item in table_slots(ht) {
+        if is_real_item(item) {
+            map(item);
         }
     }
     (*ht).set_ht_in_map(0);
@@ -367,14 +367,9 @@ pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
 pub unsafe fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *mut c_void) {
     let map = map.expect("hash_map_arg without callback");
     (*ht).set_ht_in_map(1);
-    for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht)
-            .ht_vec
-            .add(i)
-            .as_ref()
-            .expect("hash table without a slot vector");
-        if is_real_item(*slot) {
-            map(*slot, arg);
+    for &item in table_slots(ht) {
+        if is_real_item(item) {
+            map(item, arg);
         }
     }
     (*ht).set_ht_in_map(0);
@@ -388,6 +383,7 @@ pub unsafe fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *
 pub unsafe fn hash_rehash(ht: *mut hash_table) {
     let old_ht_size = (*ht).ht_size;
     let old_vec = (*ht).ht_vec;
+    let old_slots = ::core::slice::from_raw_parts(old_vec, old_ht_size as usize);
 
     if (*ht).ht_fill >= (*ht).ht_capacity {
         (*ht).ht_size *= 2;
@@ -397,16 +393,12 @@ pub unsafe fn hash_rehash(ht: *mut hash_table) {
     (*ht).ht_vec = xcalloc(::core::mem::size_of::<*mut c_void>() * (*ht).ht_size as size_t)
         as *mut *mut c_void;
 
-    for i in 0..old_ht_size as usize {
-        let ovp = old_vec
-            .add(i)
-            .as_mut()
-            .expect("hash table without a slot vector");
-        if is_real_item(*ovp) {
-            let slot = hash_find_slot(ht, *ovp)
+    for &old_item in old_slots {
+        if is_real_item(old_item) {
+            let slot = hash_find_slot(ht, old_item)
                 .as_mut()
                 .expect("hash_find_slot always returns a slot");
-            *slot = *ovp;
+            *slot = old_item;
         }
     }
     (*ht).ht_empty_slots = (*ht).ht_size - (*ht).ht_fill;
@@ -456,19 +448,15 @@ pub unsafe fn hash_dump(
             as *mut *mut c_void;
     }
 
-    let mut vector = vector_0;
-    for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht)
-            .ht_vec
-            .add(i)
-            .as_ref()
-            .expect("hash table without a slot vector");
-        if is_real_item(*slot) {
-            *vector.as_mut().expect("hash_dump: null output vector") = *slot;
-            vector = vector.add(1);
+    let vector = ::core::slice::from_raw_parts_mut(vector_0, (*ht).ht_fill as usize + 1);
+    let mut count = 0usize;
+    for &item in table_slots(ht) {
+        if is_real_item(item) {
+            vector[count] = item;
+            count += 1;
         }
     }
-    *vector.as_mut().expect("hash_dump: null output vector") = null_mut();
+    vector[count] = null_mut();
 
     if compare.is_some() {
         qsort(
