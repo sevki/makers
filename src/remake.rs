@@ -503,7 +503,10 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
     let mut f: *mut file = if file.double_colon.is_null() {
         &raw mut *file
     } else {
-        file.double_colon
+        &raw mut *file
+            .double_colon
+            .as_mut()
+            .expect("update_file: null double_colon")
     };
     {
         let fr = f.as_ref().expect("update_file: null file chain");
@@ -535,10 +538,9 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
     while !f.is_null() {
         let mut fr = f.as_mut().expect("update_file: null file chain");
         fr.considered = considered;
-        let new: update_status = update_file_1(f, depth);
+        let new: update_status = update_file_1(&raw mut *fr, depth);
         while !fr.renamed.is_null() {
-            f = fr.renamed;
-            fr = f.as_mut().expect("update_file: null renamed file");
+            fr = fr.renamed.as_mut().expect("update_file: null renamed file");
         }
         if new as ::core::ffi::c_uint != 0 && keep_going_flag == 0 {
             return new;
@@ -551,7 +553,10 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
         if new as ::core::ffi::c_uint > status as ::core::ffi::c_uint {
             status = new;
         }
-        f = fr.prev;
+        f = match fr.prev.as_mut() {
+            Some(prev) => &raw mut *prev,
+            None => ::core::ptr::null_mut(),
+        };
     }
     status
 }
