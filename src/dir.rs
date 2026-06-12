@@ -247,10 +247,9 @@ pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
     if is_real_item(dir as *const c_void) {
         let dir_ref = dir.as_mut().expect("directory slot holds a real entry");
         // Cache hit: still valid unless a command has run since.
-        let ctr = if !dir_ref.contents.is_null() {
-            (*dir_ref.contents).counter
-        } else {
-            dir_ref.counter
+        let ctr = match dir_ref.contents.as_ref() {
+            Some(dc) => dc.counter,
+            None => dir_ref.counter,
         };
         if ctr == command_count {
             return dir;
@@ -269,8 +268,11 @@ pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
         }
     } else {
         let len = strlen(name);
-        dir = xmalloc(::core::mem::size_of::<directory>() as size_t) as *mut directory;
-        (*dir).name = strcache_add_len(name, len);
+        let new = (xmalloc(::core::mem::size_of::<directory>() as size_t) as *mut directory)
+            .as_mut()
+            .expect("xmalloc never returns null");
+        new.name = strcache_add_len(name, len);
+        dir = &raw mut *new;
         hash_insert_at(
             &raw mut directories,
             dir as *const c_void,
@@ -354,12 +356,15 @@ pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
 /// Does `filename` exist in `dir`? Reads the directory incrementally,
 /// caching every entry seen; a null `filename` reads to the end.
 unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_char) -> c_int {
-    let dc: *mut directory_contents = (*dir).contents;
-    if dc.is_null() || (*dc).dirfiles.ht_vec.is_null() {
-        // The directory could not be stat'd or opened.
+    let dir = dir.as_ref().expect("dir_contents_file_exists_p: null dir");
+    let Some(dc) = dir.contents.as_mut() else {
+        // The directory could not be stat'd.
+        return 0;
+    };
+    if dc.dirfiles.ht_vec.is_null() {
+        // The directory could not be opened.
         return 0;
     }
-    let dc = dc.as_mut().expect("checked non-null above");
 
     if !filename.is_null() {
         if *filename == 0 {
@@ -396,9 +401,9 @@ unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_cha
             if *__errno_location() != 0 {
                 fatal(
                     null::<Floc>(),
-                    strlen((*dir).name) + strlen(strerror(*__errno_location())),
+                    strlen(dir.name) + strlen(strerror(*__errno_location())),
                     c"readdir %s: %s".as_ptr(),
-                    (*dir).name,
+                    dir.name,
                     strerror(*__errno_location()),
                 );
             }
@@ -546,8 +551,20 @@ pub unsafe extern "C" fn file_impossible(filename: *const c_char) {
 #[no_mangle]
 pub unsafe extern "C" fn file_impossible_p(filename: *const c_char) -> c_int {
     let (dir, filename) = match split_dir(filename) {
-        None => ((*find_directory(c".".as_ptr())).contents, filename),
-        Some((_buf, dirname, base)) => ((*find_directory(dirname)).contents, base),
+        None => (
+            find_directory(c".".as_ptr())
+                .as_ref()
+                .expect("find_directory never returns null")
+                .contents,
+            filename,
+        ),
+        Some((_buf, dirname, base)) => (
+            find_directory(dirname)
+                .as_ref()
+                .expect("find_directory never returns null")
+                .contents,
+            base,
+        ),
     };
     let Some(dir) = dir.as_mut() else { return 0 };
     if dir.dirfiles.ht_vec.is_null() {
@@ -573,7 +590,10 @@ pub unsafe extern "C" fn file_impossible_p(filename: *const c_char) -> c_int {
 /// initialized.
 #[no_mangle]
 pub unsafe extern "C" fn dir_name(dir: *const c_char) -> *const c_char {
-    (*find_directory(dir)).name
+    find_directory(dir)
+        .as_ref()
+        .expect("find_directory never returns null")
+        .name
 }
 
 /// Print `n`, or `word` when `n` is zero (the "No files" / "no
@@ -623,7 +643,8 @@ pub unsafe fn print_dir_data_base() {
         for j in 0..dc.dirfiles.ht_size as usize {
             let df = *dc.dirfiles.ht_vec.add(j) as *const dirfile;
             if is_real_item(df as *const c_void) {
-                if (*df).impossible != 0 {
+                let df = df.as_ref().expect("slot holds a real entry");
+                if df.impossible != 0 {
                     im += 1;
                 } else {
                     f += 1;
@@ -662,19 +683,25 @@ pub unsafe fn print_dir_data_base() {
 /// glob `opendir` callback: position a cursor over the cached contents of
 /// `directory`, reading it to completion first.
 unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
-    let dir = find_directory(directory);
-    if (*dir).contents.is_null() || (*(*dir).contents).dirfiles.ht_vec.is_null() {
-        // The directory could not be stat'd or opened.
+    let dir = find_directory(directory)
+        .as_mut()
+        .expect("find_directory never returns null");
+    let Some(dc) = dir.contents.as_mut() else {
+        // The directory could not be stat'd.
+        return null_mut();
+    };
+    if dc.dirfiles.ht_vec.is_null() {
+        // The directory could not be opened.
         return null_mut();
     }
     // Read it all in now so the cache is complete.
-    dir_contents_file_exists_p(dir, null());
+    dir_contents_file_exists_p(&raw mut *dir, null());
 
     let new = (xmalloc(::core::mem::size_of::<dirstream>() as size_t) as *mut dirstream)
         .as_mut()
         .expect("xmalloc never returns null");
-    new.contents = (*dir).contents;
-    new.dirfile_slot = (*new.contents).dirfiles.ht_vec as *mut *mut dirfile;
+    new.contents = &raw mut *dc;
+    new.dirfile_slot = dc.dirfiles.ht_vec as *mut *mut dirfile;
     (&raw mut *new).cast()
 }
 
@@ -690,19 +717,24 @@ pub unsafe extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
     static mut buf: *mut c_char = null_mut();
     static mut bufsz: size_t = 0;
 
-    let ds = stream as *mut dirstream;
-    let dc: *mut directory_contents = (*ds).contents;
-    let dirfile_end =
-        ((*dc).dirfiles.ht_vec as *mut *mut dirfile).add((*dc).dirfiles.ht_size as usize);
+    let ds = (stream as *mut dirstream)
+        .as_mut()
+        .expect("read_dirstream: null stream");
+    let dc = ds.contents.as_ref().expect("dirstream always has contents");
+    let dirfile_end = (dc.dirfiles.ht_vec as *mut *mut dirfile).add(dc.dirfiles.ht_size as usize);
 
-    while (*ds).dirfile_slot < dirfile_end {
-        let slot = (*ds).dirfile_slot;
-        (*ds).dirfile_slot = slot.add(1);
+    while ds.dirfile_slot < dirfile_end {
+        let slot = ds.dirfile_slot;
+        ds.dirfile_slot = slot.add(1);
         let df = *slot;
-        if is_real_item(df as *const c_void) && (*df).impossible == 0 {
+        if !is_real_item(df as *const c_void) {
+            continue;
+        }
+        let df = df.as_ref().expect("slot holds a real entry");
+        if df.impossible == 0 {
             // Grow the dirent buffer to hold the name (the d_name field's
             // declared 256 bytes are replaced by the real length).
-            let len = (*df).length + 1;
+            let len = df.length + 1;
             let sz = ::core::mem::size_of::<dirent>() as size_t
                 - ::core::mem::size_of::<[c_char; 256]>() as size_t
                 + len;
@@ -710,15 +742,13 @@ pub unsafe extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
                 bufsz = (bufsz * 2).max(sz);
                 buf = xrealloc(buf as *mut c_void, bufsz) as *mut c_char;
             }
-            let d = buf as *mut dirent;
-            (*d).d_ino = 1;
-            (*d).d_type = (*df).type_0;
-            memcpy(
-                (*d).d_name.as_mut_ptr().cast(),
-                (*df).name as *const c_void,
-                len,
-            );
-            return d;
+            let d = (buf as *mut dirent)
+                .as_mut()
+                .expect("xrealloc never returns null");
+            d.d_ino = 1;
+            d.d_type = df.type_0;
+            memcpy(d.d_name.as_mut_ptr().cast(), df.name as *const c_void, len);
+            return &raw mut *d;
         }
     }
     null_mut()
