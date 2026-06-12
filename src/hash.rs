@@ -255,8 +255,10 @@ pub unsafe extern "C" fn hash_insert_at(
 /// `ht` must be initialized and `item` valid for its callbacks.
 #[no_mangle]
 pub unsafe extern "C" fn hash_delete(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
-    let slot = hash_find_slot(ht, item);
-    hash_delete_at(ht, slot as *const c_void)
+    let slot = hash_find_slot(ht, item)
+        .as_mut()
+        .expect("hash_find_slot always returns a slot");
+    hash_delete_at(ht, (&raw mut *slot).cast())
 }
 
 /// Delete whatever occupies `slot` (from [`hash_find_slot`]). Returns the
