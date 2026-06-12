@@ -142,25 +142,29 @@ pub unsafe extern "C" fn hash_find_slot(
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
         hash_1 = (hash_1 as c_ulong & ((*ht).ht_size - 1)) as c_uint;
-        let slot = (*ht).ht_vec.add(hash_1 as usize);
+        let slot = (*ht)
+            .ht_vec
+            .add(hash_1 as usize)
+            .as_mut()
+            .expect("hash table without a slot vector");
 
         if (*slot).is_null() {
             return if !deleted_slot.is_null() {
                 deleted_slot
             } else {
-                slot
+                &raw mut *slot
             };
         }
         if ::core::ptr::eq(*slot, hash_deleted_item as *mut c_void) {
             if deleted_slot.is_null() {
-                deleted_slot = slot;
+                deleted_slot = &raw mut *slot;
             }
         } else {
             if ::core::ptr::eq(key, *slot) {
-                return slot;
+                return &raw mut *slot;
             }
             if (*ht).ht_compare.expect("hash table without ht_compare")(key, *slot) == 0 {
-                return slot;
+                return &raw mut *slot;
             }
             (*ht).ht_collisions = (*ht).ht_collisions.wrapping_add(1);
         }
@@ -180,7 +184,9 @@ pub unsafe extern "C" fn hash_find_slot(
 /// `ht` must be initialized and `key` valid for its callbacks.
 #[no_mangle]
 pub unsafe extern "C" fn hash_find_item(ht: *mut hash_table, key: *const c_void) -> *mut c_void {
-    let slot = hash_find_slot(ht, key);
+    let slot = hash_find_slot(ht, key)
+        .as_mut()
+        .expect("hash_find_slot always returns a slot");
     if is_real_item(*slot) {
         *slot
     } else {
@@ -195,11 +201,13 @@ pub unsafe extern "C" fn hash_find_item(ht: *mut hash_table, key: *const c_void)
 /// table's lifetime.
 #[no_mangle]
 pub unsafe extern "C" fn hash_insert(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
-    let slot = hash_find_slot(ht, item);
-    let old_item: *const c_void = *slot;
-    hash_insert_at(ht, item, slot as *const c_void);
+    let slot = hash_find_slot(ht, item)
+        .as_mut()
+        .expect("hash_find_slot always returns a slot");
+    let old_item: *mut c_void = *slot;
+    hash_insert_at(ht, item, (&raw mut *slot).cast());
     if is_real_item(old_item) {
-        old_item as *mut c_void
+        old_item
     } else {
         null_mut()
     }
@@ -217,7 +225,9 @@ pub unsafe extern "C" fn hash_insert_at(
     item: *const c_void,
     slot: *const c_void,
 ) -> *mut c_void {
-    let slot = slot as *mut *const c_void;
+    let slot = (slot as *mut *const c_void)
+        .as_mut()
+        .expect("hash_insert_at: null slot");
     let old_item: *const c_void = *slot;
 
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
@@ -234,7 +244,7 @@ pub unsafe extern "C" fn hash_insert_at(
         hash_rehash(ht);
         hash_find_slot(ht, item) as *mut c_void
     } else {
-        slot as *mut c_void
+        (&raw mut *slot) as *mut c_void
     }
 }
 
@@ -257,7 +267,9 @@ pub unsafe extern "C" fn hash_delete(ht: *mut hash_table, item: *const c_void) -
 /// intervening modification.
 #[no_mangle]
 pub unsafe extern "C" fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c_void {
-    let slot = slot as *mut *const c_void;
+    let slot = (slot as *mut *const c_void)
+        .as_mut()
+        .expect("hash_delete_at: null slot");
     let item = *slot as *mut c_void;
     if is_real_item(item) {
         *slot = hash_deleted_item;
