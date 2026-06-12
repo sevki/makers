@@ -11,7 +11,7 @@ use ::core::{
     ptr::null_mut,
 };
 
-use libc::{exit, free, memcpy, qsort};
+use libc::{exit, free, qsort};
 
 use crate::{
     ffi_types::size_t,
@@ -547,54 +547,51 @@ macro_rules! jhash_final {
     };
 }
 
-/// Read a little-endian word from `k` (an unaligned load).
-unsafe fn load_word(k: *const c_uchar) -> c_uint {
-    let mut val: c_uint = 0;
-    memcpy(&raw mut val as *mut c_void, k as *const c_void, UINTSZ);
-    val
-}
-
 /// Hash `length` bytes at `k`.
 ///
 /// # Safety
 /// `k` must be valid for reads of `length` bytes.
-pub unsafe fn jhash(mut k: *const c_uchar, mut length: c_int) -> c_uint {
+pub unsafe fn jhash(k: *const c_uchar, length: c_int) -> c_uint {
+    assert!(length >= 0, "jhash length must not be negative");
+    let bytes = if length == 0 {
+        &[][..]
+    } else {
+        ::core::slice::from_raw_parts(k, length as usize)
+    };
     let mut c = JHASH_INITVAL.wrapping_add(length as c_uint);
     let mut b = c;
     let mut a = b;
 
-    while length > 12 {
-        a = a.wrapping_add(load_word(k));
-        b = b.wrapping_add(load_word(k.add(4)));
-        c = c.wrapping_add(load_word(k.add(8)));
+    let mut blocks = bytes;
+    while blocks.len() > 12 {
+        a = a.wrapping_add(load_partial_word(&blocks[..4]));
+        b = b.wrapping_add(load_partial_word(&blocks[4..8]));
+        c = c.wrapping_add(load_partial_word(&blocks[8..12]));
         jhash_mix!(a, b, c);
-        length -= 12;
-        k = k.add(12);
+        blocks = &blocks[12..];
     }
 
-    if length == 0 {
+    if blocks.is_empty() {
         return c;
     }
-    if length > 8 {
-        a = a.wrapping_add(load_word(k));
-        length -= 4;
-        k = k.add(4);
+    if blocks.len() > 8 {
+        a = a.wrapping_add(load_partial_word(&blocks[..4]));
+        blocks = &blocks[4..];
     }
-    if length > 4 {
-        b = b.wrapping_add(load_word(k));
-        length -= 4;
-        k = k.add(4);
+    if blocks.len() > 4 {
+        b = b.wrapping_add(load_partial_word(&blocks[..4]));
+        blocks = &blocks[4..];
     }
-    if length == 4 {
-        c = c.wrapping_add((*k.add(3) as c_uint) << 24);
+    if blocks.len() == 4 {
+        c = c.wrapping_add((blocks[3] as c_uint) << 24);
     }
-    if length >= 3 {
-        c = c.wrapping_add((*k.add(2) as c_uint) << 16);
+    if blocks.len() >= 3 {
+        c = c.wrapping_add((blocks[2] as c_uint) << 16);
     }
-    if length >= 2 {
-        c = c.wrapping_add((*k.add(1) as c_uint) << 8);
+    if blocks.len() >= 2 {
+        c = c.wrapping_add((blocks[1] as c_uint) << 8);
     }
-    c = c.wrapping_add(*k as c_uint);
+    c = c.wrapping_add(blocks[0] as c_uint);
 
     jhash_final!(a, b, c);
     c
@@ -651,6 +648,68 @@ pub unsafe fn jhash_string(k: *const c_uchar) -> c_uint {
 #[cfg(test)]
 mod tests {
     use {super::*, std::ffi::CString};
+
+    fn legacy_jhash(bytes: &[u8]) -> c_uint {
+        let mut length = bytes.len();
+        let mut offset = 0usize;
+        let mut c = JHASH_INITVAL.wrapping_add(length as c_uint);
+        let mut b = c;
+        let mut a = b;
+
+        while length > 12 {
+            a = a.wrapping_add(load_partial_word(&bytes[offset..offset + 4]));
+            b = b.wrapping_add(load_partial_word(&bytes[offset + 4..offset + 8]));
+            c = c.wrapping_add(load_partial_word(&bytes[offset + 8..offset + 12]));
+            jhash_mix!(a, b, c);
+            length -= 12;
+            offset += 12;
+        }
+
+        if length == 0 {
+            return c;
+        }
+        if length > 8 {
+            a = a.wrapping_add(load_partial_word(&bytes[offset..offset + 4]));
+            length -= 4;
+            offset += 4;
+        }
+        if length > 4 {
+            b = b.wrapping_add(load_partial_word(&bytes[offset..offset + 4]));
+            length -= 4;
+            offset += 4;
+        }
+        if length == 4 {
+            c = c.wrapping_add((bytes[offset + 3] as c_uint) << 24);
+        }
+        if length >= 3 {
+            c = c.wrapping_add((bytes[offset + 2] as c_uint) << 16);
+        }
+        if length >= 2 {
+            c = c.wrapping_add((bytes[offset + 1] as c_uint) << 8);
+        }
+        c = c.wrapping_add(bytes[offset] as c_uint);
+
+        jhash_final!(a, b, c);
+        c
+    }
+
+    #[test]
+    fn jhash_matches_legacy_pointer_loop() {
+        for input in [
+            &b""[..],
+            b"a",
+            b"abc",
+            b"abcd",
+            b"abcde",
+            b"abcdefgh",
+            b"abcdefghijkl",
+            b"abcdefghijklm",
+            b"abcdefghijklmnopqrstuvw",
+        ] {
+            let actual = unsafe { jhash(input.as_ptr(), input.len() as c_int) };
+            assert_eq!(actual, legacy_jhash(input), "{input:?}");
+        }
+    }
 
     fn legacy_string_word(bytes: &[u8], remaining: usize) -> (c_uint, c_uint) {
         let mut word = [0u8; UINTSZ];
