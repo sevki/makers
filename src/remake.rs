@@ -7,7 +7,6 @@ use crate::misc::free_ns_chain;
 use crate::misc::{copy_dep_chain, find_next_token, print_spaces, xmalloc, xrealloc};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
-use c2rust_bitfields;
 use libc::{
     __errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror,
     strrchr,
@@ -33,46 +32,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    static mut just_print_flag: ::core::ffi::c_int;
-    static mut keep_going_flag: ::core::ffi::c_int;
-    static mut run_silent: ::core::ffi::c_int;
-    static mut touch_flag: ::core::ffi::c_int;
-    static mut question_flag: ::core::ffi::c_int;
-    static mut always_make_flag: ::core::ffi::c_int;
-    static mut check_symlink_flag: ::core::ffi::c_int;
-    static mut second_expansion: ::core::ffi::c_int;
-    static mut clock_skew_detected: ::core::ffi::c_int;
-    static mut rebuilding_makefiles: ::core::ffi::c_int;
-    static mut command_count: ::core::ffi::c_ulong;
-    static mut no_intermediates: ::core::ffi::c_uint;
-    static mut db_level: ::core::ffi::c_int;
-    static mut default_file: *mut file;
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn expand_deps(f: *mut file);
-    fn rename_file(file: *mut file, name: *const ::core::ffi::c_char);
-    fn rehash_file(file: *mut file, name: *const ::core::ffi::c_char);
-    fn set_command_state(file: *mut file, state: cmd_state);
-    fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> ::core::ffi::c_int;
-    fn file_timestamp_cons(
-        _: *const ::core::ffi::c_char,
-        _: time_t,
-        _: ::core::ffi::c_long,
-    ) -> uintmax_t;
-    fn file_timestamp_now(_: *mut ::core::ffi::c_int) -> uintmax_t;
-    fn reap_children(block: ::core::ffi::c_int, err: ::core::ffi::c_int);
-    fn start_waiting_jobs();
-    static mut variable_buffer: *mut ::core::ffi::c_char;
-    fn variable_buffer_output(
-        ptr: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn allocated_expand_variable(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
 }
 pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
@@ -98,41 +57,24 @@ pub type dep = Dep;
 pub type commands = Commands;
 use crate::floc::Floc;
 
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct goaldep {
-    pub next: *mut goaldep,
-    pub name: *const ::core::ffi::c_char,
-    pub file: *mut file,
-    pub shuf: *mut goaldep,
-    pub stem: *const ::core::ffi::c_char,
-    #[bitfield(name = "flags", ty = "::core::ffi::c_uint", bits = "0..=7")]
-    #[bitfield(name = "changed", ty = "::core::ffi::c_uint", bits = "8..=8")]
-    #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "staticpattern", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(
-        name = "need_2nd_expansion",
-        ty = "::core::ffi::c_uint",
-        bits = "11..=11"
-    )]
-    #[bitfield(
-        name = "ignore_automatic_vars",
-        ty = "::core::ffi::c_uint",
-        bits = "12..=12"
-    )]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "wait_here", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    pub flags_changed_ignore_mtime_staticpattern_need_2nd_expansion_ignore_automatic_vars_is_explicit_wait_here:
-        [u8; 2],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 2],
-    pub error: ::core::ffi::c_int,
-    pub floc: Floc,
-}
 use crate::ar::{ar_member_date, ar_name, ar_parse_name, ar_touch};
 use crate::commands::{chop_commands, execute_file_commands};
+use crate::expand::{allocated_expand_variable, variable_buffer, variable_buffer_output};
 pub use crate::file::nameseq;
+use crate::file::{
+    enter_file, expand_deps, file_timestamp_cons, file_timestamp_now, lookup_file, rehash_file,
+    rename_file, set_command_state,
+};
+use crate::implicit::try_implicit_rule;
+use crate::job::{reap_children, start_waiting_jobs};
+use crate::make_main::{
+    always_make_flag, check_symlink_flag, clock_skew_detected, command_count, db_level,
+    default_file, just_print_flag, keep_going_flag, no_intermediates, question_flag,
+    rebuilding_makefiles, run_silent, second_expansion, touch_flag,
+};
 use crate::output::{error, fatal, message, perror_with_name};
+use crate::read::find_percent;
+pub use crate::read::goaldep;
 use crate::vpath::{gpath_search, vpath_search};
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const ENOENT: ::core::ffi::c_int = 2;
@@ -164,7 +106,6 @@ pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
 pub const OLD_MTIME: ::core::ffi::c_int = 2;
 pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
-#[no_mangle]
 pub static mut commands_started: ::core::ffi::c_uint = 0;
 static mut goal_list: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 static mut goal_dep: *mut dep = ::core::ptr::null::<dep>() as *mut dep;
@@ -172,8 +113,11 @@ static mut considered: ::core::ffi::c_uint = 0;
 static mut dropped_list: *mut *mut dep = ::core::ptr::null::<*mut dep>() as *mut *mut dep;
 static mut dropped_list_len: size_t = 0;
 pub const DROPPED_LIST_INCR: ::core::ffi::c_int = 5;
-#[no_mangle]
-pub unsafe extern "C" fn check_also_make(file: *const file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn check_also_make(file: *const file) {
     let mut ad: *mut dep;
     let mut mtime: uintmax_t = (*file).last_mtime;
     if mtime == UNKNOWN_MTIME as uintmax_t {
@@ -252,8 +196,11 @@ unsafe fn double_colon_file_mut<'a>(f: *mut file) -> &'a mut file {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     let mut last_cmd_count: ::core::ffi::c_ulong = 0;
     let t: ::core::ffi::c_int = touch_flag;
     let q: ::core::ffi::c_int = question_flag;
@@ -464,8 +411,11 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
     }
     status as update_status
 }
-#[no_mangle]
-pub unsafe extern "C" fn show_goal_error() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn show_goal_error() {
     let mut goal: *mut goaldep;
     if (*goal_dep).flags() as ::core::ffi::c_int & (RM_INCLUDED | RM_DONTCARE) != RM_INCLUDED {
         return;
@@ -553,8 +503,11 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
     }
     status
 }
-#[no_mangle]
-pub unsafe extern "C" fn complain(file: *mut file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn complain(file: *mut file) {
     let mut d: *mut dep;
     d = (*file).deps;
     while !d.is_null() {
@@ -1346,8 +1299,11 @@ unsafe extern "C" fn update_file_1(
     (*file).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     (*file).update_status() as update_status
 }
-#[no_mangle]
-pub unsafe extern "C" fn notice_finished_file(file: *mut file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn notice_finished_file(file: *mut file) {
     let mut d: *mut dep;
     let ran: ::core::ffi::c_int = ((*file).command_state() as ::core::ffi::c_int
         == cs_running as ::core::ffi::c_int)
@@ -1620,8 +1576,11 @@ unsafe extern "C" fn check_dep(
     double_colon_file_mut(ofile).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     dep_status
 }
-#[no_mangle]
-pub unsafe extern "C" fn touch_file(file: *mut file) -> update_status {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn touch_file(file: *mut file) -> update_status {
     if run_silent == 0 {
         message(
             0,
@@ -1764,8 +1723,11 @@ pub unsafe extern "C" fn touch_file(file: *mut file) -> update_status {
     }
     us_success
 }
-#[no_mangle]
-pub unsafe extern "C" fn remake_file(file: *mut file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn remake_file(file: *mut file) {
     if (*file).cmds.is_null() {
         if (*file).phony() != 0 {
             (*file).set_update_status(us_success as update_status);
@@ -1793,8 +1755,7 @@ pub unsafe extern "C" fn remake_file(file: *mut file) {
 /// # Safety
 /// `file` must point to a valid `File`; must run single-threaded with the
 /// global file table.
-#[no_mangle]
-pub unsafe extern "C" fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t {
+pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut mtime: uintmax_t;
     let propagate_timestamp: ::core::ffi::c_uint;
@@ -2018,8 +1979,11 @@ pub unsafe extern "C" fn f_mtime(file: *mut file, search: ::core::ffi::c_int) ->
     }
     mtime
 }
-#[no_mangle]
-pub unsafe extern "C" fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
     let mut mtime: uintmax_t;
     let mut st: stat = stat {
         st_dev: 0,

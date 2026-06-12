@@ -25,10 +25,10 @@ extern "C" {
 }
 
 pub type __compar_fn_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>;
-pub type hash_func_t = Option<unsafe extern "C" fn(*const c_void) -> c_ulong>;
-pub type hash_cmp_func_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>;
-pub type hash_map_func_t = Option<unsafe extern "C" fn(*const c_void)>;
-pub type hash_map_arg_func_t = Option<unsafe extern "C" fn(*const c_void, *mut c_void)>;
+pub type hash_func_t = Option<unsafe fn(*const c_void) -> c_ulong>;
+pub type hash_cmp_func_t = Option<unsafe fn(*const c_void, *const c_void) -> c_int>;
+pub type hash_map_func_t = Option<unsafe fn(*const c_void)>;
+pub type hash_map_arg_func_t = Option<unsafe fn(*const c_void, *mut c_void)>;
 pub type qsort_cmp_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>;
 
 /// An open-addressed (double-hashed) table of `void *` items. Deleted

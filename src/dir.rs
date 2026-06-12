@@ -131,21 +131,21 @@ unsafe fn clear_directory_contents(dc: *mut directory_contents) {
     }
 }
 
-unsafe extern "C" fn directory_contents_hash_1(key: *const c_void) -> c_ulong {
+unsafe fn directory_contents_hash_1(key: *const c_void) -> c_ulong {
     let key = (key as *const directory_contents)
         .as_ref()
         .expect("hash callback got a null key");
     ((key.dev as c_uint) << 4 ^ key.ino as c_uint) as c_ulong
 }
 
-unsafe extern "C" fn directory_contents_hash_2(key: *const c_void) -> c_ulong {
+unsafe fn directory_contents_hash_2(key: *const c_void) -> c_ulong {
     let key = (key as *const directory_contents)
         .as_ref()
         .expect("hash callback got a null key");
     ((key.dev as c_uint) << 4 ^ !key.ino as c_uint) as c_ulong
 }
 
-unsafe extern "C" fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
+unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
     let x = (xv as *const directory_contents)
         .as_ref()
         .expect("hash callback got a null key");
@@ -170,8 +170,7 @@ static mut directory_contents: hash_table = unsafe { ::core::mem::zeroed() };
 /// # Safety
 ///
 /// `key` must point to a `directory` whose name is NUL-terminated.
-#[no_mangle]
-pub unsafe extern "C" fn directory_hash_1(key: *const c_void) -> c_ulong {
+pub unsafe fn directory_hash_1(key: *const c_void) -> c_ulong {
     let key = (key as *const directory)
         .as_ref()
         .expect("hash callback got a null key");
@@ -184,12 +183,11 @@ pub unsafe extern "C" fn directory_hash_1(key: *const c_void) -> c_ulong {
 /// # Safety
 ///
 /// Never dereferences `key`; any pointer value is acceptable.
-#[no_mangle]
-pub unsafe extern "C" fn directory_hash_2(_key: *const c_void) -> c_ulong {
+pub unsafe fn directory_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
-unsafe extern "C" fn directory_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
+unsafe fn directory_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
     let xn = (x as *const directory)
         .as_ref()
         .expect("hash callback got a null key")
@@ -213,8 +211,7 @@ static mut directories: hash_table = unsafe { ::core::mem::zeroed() };
 /// # Safety
 ///
 /// `key` must point to a `dirfile` whose name is NUL-terminated.
-#[no_mangle]
-pub unsafe extern "C" fn dirfile_hash_1(key: *const c_void) -> c_ulong {
+pub unsafe fn dirfile_hash_1(key: *const c_void) -> c_ulong {
     let key = (key as *const dirfile)
         .as_ref()
         .expect("hash callback got a null key");
@@ -227,12 +224,11 @@ pub unsafe extern "C" fn dirfile_hash_1(key: *const c_void) -> c_ulong {
 /// # Safety
 ///
 /// Never dereferences `key`; any pointer value is acceptable.
-#[no_mangle]
-pub unsafe extern "C" fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
+pub unsafe fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
-unsafe extern "C" fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
+unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
     let x = (xv as *const dirfile)
         .as_ref()
         .expect("hash callback got a null key");
@@ -258,8 +254,7 @@ unsafe extern "C" fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> c
 ///
 /// `name` must be a NUL-terminated path; the directory tables must be
 /// initialized (see [`hash_init_directories`]).
-#[no_mangle]
-pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
+pub unsafe fn find_directory(name: *const c_char) -> *mut directory {
     let mut dir_key: directory = ::core::mem::zeroed();
     dir_key.name = name;
     let dir_slot = (hash_find_slot(&raw mut directories, (&raw const dir_key).cast())
@@ -366,11 +361,9 @@ pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
             hash_init(
                 &raw mut dc.dirfiles,
                 DIRFILE_BUCKETS as c_ulong,
-                Some(dirfile_hash_1 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-                Some(dirfile_hash_2 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-                Some(
-                    dirfile_hash_cmp as unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
-                ),
+                Some(dirfile_hash_1),
+                Some(dirfile_hash_2),
+                Some(dirfile_hash_cmp),
             );
             open_directories += 1;
             if open_directories == MAX_OPEN_DIRECTORIES as c_uint {
@@ -486,11 +479,7 @@ unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_cha
 /// # Safety
 ///
 /// Both must be NUL-terminated; the directory tables must be initialized.
-#[no_mangle]
-pub unsafe extern "C" fn dir_file_exists_p(
-    dirname: *const c_char,
-    filename: *const c_char,
-) -> c_int {
+pub unsafe fn dir_file_exists_p(dirname: *const c_char, filename: *const c_char) -> c_int {
     dir_contents_file_exists_p(find_directory(dirname), filename)
 }
 
@@ -519,8 +508,7 @@ unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *con
 ///
 /// `name` must be NUL-terminated; the directory tables must be
 /// initialized.
-#[no_mangle]
-pub unsafe extern "C" fn file_exists_p(name: *const c_char) -> c_int {
+pub unsafe fn file_exists_p(name: *const c_char) -> c_int {
     if crate::ar::ar_name(name) != 0 {
         return (crate::ar::ar_member_date(name) != -1) as c_int;
     }
@@ -537,8 +525,7 @@ pub unsafe extern "C" fn file_exists_p(name: *const c_char) -> c_int {
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-#[no_mangle]
-pub unsafe extern "C" fn file_impossible(filename: *const c_char) {
+pub unsafe fn file_impossible(filename: *const c_char) {
     let (dir, filename) = match split_dir(filename) {
         None => (find_directory(c".".as_ptr()), filename),
         Some((_buf, dirname, base)) => (find_directory(dirname), base),
@@ -556,9 +543,9 @@ pub unsafe extern "C" fn file_impossible(filename: *const c_char) {
         hash_init(
             &raw mut dc.dirfiles,
             DIRFILE_BUCKETS as c_ulong,
-            Some(dirfile_hash_1 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-            Some(dirfile_hash_2 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-            Some(dirfile_hash_cmp as unsafe extern "C" fn(*const c_void, *const c_void) -> c_int),
+            Some(dirfile_hash_1),
+            Some(dirfile_hash_2),
+            Some(dirfile_hash_cmp),
         );
     }
 
@@ -577,8 +564,7 @@ pub unsafe extern "C" fn file_impossible(filename: *const c_char) {
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-#[no_mangle]
-pub unsafe extern "C" fn file_impossible_p(filename: *const c_char) -> c_int {
+pub unsafe fn file_impossible_p(filename: *const c_char) -> c_int {
     let (dir, filename) = match split_dir(filename) {
         None => {
             let dir_ptr = find_directory(c".".as_ptr());
@@ -617,8 +603,7 @@ pub unsafe extern "C" fn file_impossible_p(filename: *const c_char) -> c_int {
 ///
 /// `dir` must be NUL-terminated; the directory tables must be
 /// initialized.
-#[no_mangle]
-pub unsafe extern "C" fn dir_name(dir: *const c_char) -> *const c_char {
+pub unsafe fn dir_name(dir: *const c_char) -> *const c_char {
     find_directory(dir)
         .as_ref()
         .expect("find_directory never returns null")
@@ -640,7 +625,6 @@ unsafe fn print_count(n: c_uint, zero_word: *const c_char) {
 /// # Safety
 ///
 /// The directory tables must be initialized and stdout valid.
-#[no_mangle]
 pub unsafe fn print_dir_data_base() {
     puts(c"\n# Directories\n".as_ptr());
 
@@ -741,7 +725,6 @@ unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
 ///
 /// `stream` must come from `open_dirstream`. The returned dirent lives in
 /// a static buffer that the next call overwrites.
-#[no_mangle]
 pub unsafe extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
     static mut buf: *mut c_char = null_mut();
     static mut bufsz: size_t = 0;
@@ -789,8 +772,7 @@ pub unsafe extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
 /// # Safety
 ///
 /// `gl` must be a valid `glob_t` matching this layout.
-#[no_mangle]
-pub unsafe extern "C" fn dir_setup_glob(gl: *mut glob_t) {
+pub unsafe fn dir_setup_glob(gl: *mut glob_t) {
     let gl = gl.as_mut().expect("dir_setup_glob: null glob_t");
     gl.gl_offs = 0;
     gl.gl_opendir = Some(open_dirstream);
@@ -805,23 +787,19 @@ pub unsafe extern "C" fn dir_setup_glob(gl: *mut glob_t) {
 /// # Safety
 ///
 /// Must run once, before any other function in this module.
-#[no_mangle]
 pub unsafe fn hash_init_directories() {
     hash_init(
         &raw mut directories,
         DIRECTORY_BUCKETS as c_ulong,
-        Some(directory_hash_1 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-        Some(directory_hash_2 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-        Some(directory_hash_cmp as unsafe extern "C" fn(*const c_void, *const c_void) -> c_int),
+        Some(directory_hash_1),
+        Some(directory_hash_2),
+        Some(directory_hash_cmp),
     );
     hash_init(
         &raw mut directory_contents,
         DIRECTORY_BUCKETS as c_ulong,
-        Some(directory_contents_hash_1 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-        Some(directory_contents_hash_2 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-        Some(
-            directory_contents_hash_cmp
-                as unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
-        ),
+        Some(directory_contents_hash_1),
+        Some(directory_contents_hash_2),
+        Some(directory_contents_hash_cmp),
     );
 }

@@ -1,16 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+use crate::expand::variable_buffer_output;
 use crate::floc::Floc;
 use crate::output::msg;
-
-extern "C" {
-    fn variable_buffer_output(
-        ptr: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: usize,
-    ) -> *mut ::core::ffi::c_char;
-}
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u32)]
@@ -83,7 +76,9 @@ fn type_name_cache() -> &'static Mutex<HashMap<String, Option<Type>>> {
 
 fn action_from_name_cached(name: &str) -> Option<Action> {
     let key = name.to_ascii_lowercase();
-    let mut cache = action_name_cache().lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = action_name_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(cached) = cache.get(&key) {
         return *cached;
     }
@@ -356,14 +351,8 @@ mod tests {
             type_from_name_cached("circular-dep"),
             Some(Type::CircularDep)
         );
-        assert_eq!(
-            type_from_name_cached("invalid-ref"),
-            Some(Type::InvalidRef)
-        );
-        assert_eq!(
-            type_from_name_cached("invalid-var"),
-            Some(Type::InvalidVar)
-        );
+        assert_eq!(type_from_name_cached("invalid-ref"), Some(Type::InvalidRef));
+        assert_eq!(type_from_name_cached("invalid-var"), Some(Type::InvalidVar));
         assert_eq!(
             type_from_name_cached("undefined-var"),
             Some(Type::UndefinedVar)
