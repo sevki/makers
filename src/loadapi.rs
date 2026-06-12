@@ -49,21 +49,24 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn gmk_alloc(len: ::core::ffi::c_uint) -> *mut ::core::ffi::c_char {
+#[no_mangle]
+pub unsafe extern "C" fn gmk_alloc(len: ::core::ffi::c_uint) -> *mut ::core::ffi::c_char {
     xmalloc(len as size_t) as *mut ::core::ffi::c_char
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn gmk_free(s: *mut ::core::ffi::c_char) {
+#[no_mangle]
+pub unsafe extern "C" fn gmk_free(s: *mut ::core::ffi::c_char) {
     free(s as *mut ::core::ffi::c_void);
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *const gmk_floc) {
+#[no_mangle]
+pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *const gmk_floc) {
     let mut pbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut plen: size_t = 0;
     let mut fl: Floc = Floc {
@@ -91,14 +94,16 @@ pub unsafe fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *const gmk_flo
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+#[no_mangle]
+pub unsafe extern "C" fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     allocated_expand_string_for_file(ref_0, ::core::ptr::null_mut::<file>())
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn gmk_add_function(
+#[no_mangle]
+pub unsafe extern "C" fn gmk_add_function(
     name: *const ::core::ffi::c_char,
     func: gmk_func_ptr,
     min: ::core::ffi::c_uint,
