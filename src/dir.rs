@@ -308,9 +308,12 @@ pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
         .expect("hash_find_slot always returns a slot");
     let mut dc = *dc_slot;
     if !is_real_item(dc as *const c_void) {
-        dc = xcalloc(::core::mem::size_of::<directory_contents>() as size_t)
-            as *mut directory_contents;
-        *dc = dc_key;
+        let new = (xcalloc(::core::mem::size_of::<directory_contents>() as size_t)
+            as *mut directory_contents)
+            .as_mut()
+            .expect("xcalloc never returns null");
+        *new = dc_key;
+        dc = &raw mut *new;
         hash_insert_at(
             &raw mut directory_contents,
             dc as *const c_void,
