@@ -70,113 +70,7 @@ extern "C" {
         __pglob: *mut glob_t,
     ) -> ::core::ffi::c_int;
     fn globfree(__pglob: *mut glob_t);
-    fn strip_whitespace(
-        begpp: *mut *const ::core::ffi::c_char,
-        endpp: *mut *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    static mut posix_pedantic: ::core::ffi::c_int;
-    static mut second_expansion: ::core::ffi::c_int;
-    static mut one_shell: ::core::ffi::c_int;
-    static mut export_all_variables: ::core::ffi::c_int;
-    static mut cmd_prefix: ::core::ffi::c_char;
     fn getpwnam(__name: *const ::core::ffi::c_char) -> *mut passwd;
-    static mut db_level: ::core::ffi::c_int;
-    static mut default_file: *mut file;
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn split_prereqs(prereqstr: *mut ::core::ffi::c_char) -> *mut dep;
-    fn enter_prereqs(prereqs: *mut dep, stem: *const ::core::ffi::c_char) -> *mut dep;
-    static mut snapped_deps: ::core::ffi::c_int;
-    static mut suffix_file: *mut file;
-    fn create_pattern_rule(
-        targets: *mut *const ::core::ffi::c_char,
-        target_percents: *mut *const ::core::ffi::c_char,
-        num: ::core::ffi::c_ushort,
-        terminal: ::core::ffi::c_int,
-        deps: *mut dep,
-        commands: *mut commands,
-        override_0: ::core::ffi::c_int,
-    );
-    static mut variable_buffer: *mut ::core::ffi::c_char;
-    static mut current_variable_set_list: *mut variable_set_list;
-    static mut default_goal_var: *mut variable;
-    fn variable_buffer_output(
-        ptr: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn expand_string_buf(
-        buf: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn allocated_expand_string_for_file(
-        line: *const ::core::ffi::c_char,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn allocated_expand_variable(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn pattern_matches(
-        pattern: *const ::core::ffi::c_char,
-        percent: *const ::core::ffi::c_char,
-        str: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn patsubst_expand_pat(
-        o: *mut ::core::ffi::c_char,
-        text: *const ::core::ffi::c_char,
-        pattern: *const ::core::ffi::c_char,
-        replace: *const ::core::ffi::c_char,
-        pattern_percent: *const ::core::ffi::c_char,
-        replace_percent: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int);
-    fn do_variable_definition(
-        flocp: *const Floc,
-        name: *const ::core::ffi::c_char,
-        value: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        flavor: variable_flavor,
-        conditional: ::core::ffi::c_int,
-        scope: variable_scope,
-    ) -> *mut variable;
-    fn parse_variable_definition(
-        line: *const ::core::ffi::c_char,
-        v: *mut variable,
-    ) -> *mut ::core::ffi::c_char;
-    fn assign_variable_definition(
-        v: *mut variable,
-        line: *const ::core::ffi::c_char,
-    ) -> *mut variable;
-    fn try_variable_definition(
-        flocp: *const Floc,
-        line: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        scope: variable_scope,
-    ) -> *mut variable;
-    fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
-    fn define_variable_in_set(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        value: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        recursive: ::core::ffi::c_int,
-        set: *mut variable_set,
-        flocp: *const Floc,
-    ) -> *mut variable;
-    fn undefine_variable_in_set(
-        flocp: *const Floc,
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        origin: variable_origin,
-        set: *mut variable_set,
-    );
-    fn create_pattern_var(
-        target: *const ::core::ffi::c_char,
-        suffix: *const ::core::ffi::c_char,
-    ) -> *mut pattern_var;
 }
 pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
@@ -226,28 +120,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -279,11 +152,27 @@ pub struct passwd {
 }
 use crate::ar::{ar_glob, ar_name, ar_parse_name};
 use crate::dir::{dir_setup_glob, file_exists_p};
+use crate::expand::{
+    allocated_expand_string_for_file, allocated_expand_variable, expand_string_buf,
+    variable_buffer, variable_buffer_output,
+};
 pub use crate::file::nameseq;
+use crate::file::{enter_file, enter_prereqs, lookup_file, snapped_deps, split_prereqs};
+use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
 use crate::load::load_file;
+use crate::make_main::{
+    cmd_prefix, db_level, default_file, default_goal_var, export_all_variables, one_shell,
+    posix_pedantic, second_expansion, stopchar_map,
+};
 use crate::misc::concat;
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
 use crate::posixos::fd_noinherit;
+use crate::rule::{create_pattern_rule, suffix_file};
+use crate::variable::{
+    assign_variable_definition, create_pattern_var, current_variable_set_list,
+    define_variable_in_set, do_variable_definition, initialize_file_variables, lookup_variable,
+    parse_variable_definition, try_variable_definition, undefine_variable_in_set,
+};
 use crate::vpath::construct_vpath_list;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
@@ -347,15 +236,7 @@ pub struct vmodifiers {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 3],
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pattern_var {
-    pub next: *mut pattern_var,
-    pub suffix: *const ::core::ffi::c_char,
-    pub target: *const ::core::ffi::c_char,
-    pub len: size_t,
-    pub variable: variable,
-}
+pub use crate::variable::pattern_var;
 pub const w_eol: make_word_type = 1;
 pub type make_word_type = ::core::ffi::c_uint;
 pub const w_ampdcolon: make_word_type = 8;
@@ -429,13 +310,13 @@ static mut default_include_directories: [*const ::core::ffi::c_char; 4] = [
 static mut include_directories: *mut *const ::core::ffi::c_char =
     ::core::ptr::null::<*const ::core::ffi::c_char>() as *mut *const ::core::ffi::c_char;
 static mut max_incl_len: size_t = 0;
-#[no_mangle]
 pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
 static mut read_files: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
-#[no_mangle]
-pub unsafe extern "C" fn read_all_makefiles(
-    mut makefiles: *mut *const ::core::ffi::c_char,
-) -> *mut goaldep {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char) -> *mut goaldep {
     let mut num_makefiles: ::core::ffi::c_uint = 0;
     define_variable_in_set(
         b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
@@ -524,8 +405,11 @@ pub unsafe extern "C" fn read_all_makefiles(
     }
     read_files
 }
-#[no_mangle]
-pub unsafe extern "C" fn install_conditionals(new: *mut conditionals) -> *mut conditionals {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn install_conditionals(new: *mut conditionals) -> *mut conditionals {
     let save: *mut conditionals = conditionals;
     memset(
         new as *mut ::core::ffi::c_void,
@@ -535,8 +419,11 @@ pub unsafe extern "C" fn install_conditionals(new: *mut conditionals) -> *mut co
     conditionals = new;
     save
 }
-#[no_mangle]
-pub unsafe extern "C" fn restore_conditionals(saved: *mut conditionals) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn restore_conditionals(saved: *mut conditionals) {
     free((*conditionals).ignoring as *mut ::core::ffi::c_void);
     free((*conditionals).seen_else as *mut ::core::ffi::c_void);
     conditionals = saved;
@@ -696,8 +583,11 @@ unsafe extern "C" fn eval_makefile(
     *__errno_location() = 0;
     deps
 }
-#[no_mangle]
-pub unsafe extern "C" fn eval_buffer(buffer: *mut ::core::ffi::c_char, flocp: *const Floc) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn eval_buffer(buffer: *mut ::core::ffi::c_char, flocp: *const Floc) {
     let mut ebuf: ebuffer = ebuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -890,8 +780,11 @@ unsafe extern "C" fn parse_var_assignment(
     (*vmod).set_assign_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     p as *mut ::core::ffi::c_char
 }
-#[no_mangle]
-pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
     let mut collapsed: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut collapsed_length: size_t = 0;
     let mut commands_len: size_t = 200;
@@ -2085,8 +1978,11 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
     free(collapsed as *mut ::core::ffi::c_void);
     drop(cmd_buf);
 }
-#[no_mangle]
-pub unsafe extern "C" fn remove_comments(line: *mut ::core::ffi::c_char) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn remove_comments(line: *mut ::core::ffi::c_char) {
     let comment: *mut ::core::ffi::c_char;
     comment = find_map_unquote(line, MAP_COMMENT | MAP_VARIABLE);
     if !comment.is_null() {
@@ -2768,8 +2664,11 @@ unsafe extern "C" fn record_target_var(
         filenames = nextf;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_int) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_int) {
     let mut t: *mut nameseq;
     t = files;
     while !t.is_null() {
@@ -2971,8 +2870,11 @@ pub unsafe extern "C" fn check_specials(files: *mut nameseq, set_default: ::core
         t = (*t).next;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn check_special_file(file: *mut file, flocp: *const Floc) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
     if *(*file).name as ::core::ffi::c_int
         == *(b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
         && (*(*file).name as ::core::ffi::c_int == 0
@@ -3457,14 +3359,18 @@ unsafe extern "C" fn unescape_char(
     *p = 0;
     string
 }
-#[no_mangle]
-pub unsafe extern "C" fn find_percent(
-    pattern: *mut ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn find_percent(pattern: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     find_char_unquote(pattern, '%' as i32)
 }
-#[no_mangle]
-pub unsafe extern "C" fn find_percent_cached(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn find_percent_cached(
     string: *mut *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
@@ -3524,8 +3430,11 @@ pub unsafe extern "C" fn find_percent_cached(
         ::core::ptr::null::<::core::ffi::c_char>()
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
     let mut eol: *mut ::core::ffi::c_char;
     if (*ebuf).bufnext >= (*ebuf).bufstart.offset((*ebuf).size as isize) {
         return -(1 as ::core::ffi::c_int) as ::core::ffi::c_long;
@@ -3557,8 +3466,11 @@ pub unsafe extern "C" fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
     (*ebuf).bufnext = eol.offset(1 as ::core::ffi::c_int as isize);
     0
 }
-#[no_mangle]
-pub unsafe extern "C" fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
     let mut p: *mut ::core::ffi::c_char;
     let mut end: *mut ::core::ffi::c_char;
     let mut start: *mut ::core::ffi::c_char;
@@ -3748,7 +3660,10 @@ unsafe extern "C" fn get_next_mword(
     }
     wtype
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_char) {
     let mut stbuf: stat = stat {
         st_dev: 0,
@@ -3899,10 +3814,11 @@ pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_ch
     free(include_directories as *mut ::core::ffi::c_void);
     include_directories = dirs;
 }
-#[no_mangle]
-pub unsafe extern "C" fn tilde_expand(
-    name: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     if *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32
         || *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
     {
@@ -3969,8 +3885,11 @@ pub unsafe extern "C" fn tilde_expand(
     }
     ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
-#[no_mangle]
-pub unsafe extern "C" fn parse_file_seq(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn parse_file_seq(
     stringp: *mut *mut ::core::ffi::c_char,
     mut size: size_t,
     mut stopmap: ::core::ffi::c_int,

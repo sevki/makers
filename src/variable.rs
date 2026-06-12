@@ -29,35 +29,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn reset_makeflags(origin: variable_origin);
-    static mut reading_file: *const Floc;
-    static mut expanding_var: *mut *const Floc;
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    static mut env_overrides: ::core::ffi::c_int;
-    static mut export_all_variables: ::core::ffi::c_int;
-    static mut default_shell: *const ::core::ffi::c_char;
-    static mut cmd_prefix: ::core::ffi::c_char;
-    static mut jobserver_auth: *mut ::core::ffi::c_char;
-    static mut makelevel: ::core::ffi::c_uint;
-    static mut variable_buffer: *mut ::core::ffi::c_char;
-    static mut shell_var: variable;
-    fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);
-    fn swap_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t)
-        -> *mut ::core::ffi::c_char;
-    fn allocated_expand_string_for_file(
-        line: *const ::core::ffi::c_char,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn recursively_expand_for_file(v: *mut variable, file: *mut file) -> *mut ::core::ffi::c_char;
-    fn allocated_expand_variable(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn func_shell_base(
-        o: *mut ::core::ffi::c_char,
-        argv: *mut *mut ::core::ffi::c_char,
-        trim_newlines: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_char;
 }
 use crate::warning::{self, Action, Type};
 pub type file = File;
@@ -79,14 +50,25 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 pub type dep = Dep;
 pub type commands = Commands;
+use crate::expand::{
+    allocated_expand_string_for_file, allocated_expand_variable, expanding_var,
+    install_variable_buffer, recursively_expand_for_file, swap_variable_buffer, variable_buffer,
+};
 use crate::floc::Floc;
+use crate::function::func_shell_base;
 use crate::hash::{
     hash_delete_at, hash_deleted_item, hash_find_item, hash_find_slot, hash_free, hash_init,
     hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
 };
+use crate::job::default_shell;
+use crate::make_main::{
+    cmd_prefix, env_overrides, export_all_variables, jobserver_auth, makelevel, reset_makeflags,
+    shell_var, stopchar_map,
+};
 use crate::misc::concat;
 use crate::output::{error, fatal, format};
 use crate::posixos::jobserver_get_invalid_auth;
+use crate::read::reading_file;
 use crate::remote_stub::remote_description;
 
 pub const o_invalid: variable_origin = 7;
@@ -159,14 +141,16 @@ pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
     unsafe { ::core::mem::transmute::<[u8; 10], [::core::ffi::c_char; 10]>(*b"MAKELEVEL\0") };
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
-#[no_mangle]
 pub static mut env_recursion: ::core::ffi::c_ulonglong = 0 as ::core::ffi::c_ulonglong;
 static mut variable_changenum: ::core::ffi::c_ulong = 0;
 static mut pattern_vars: *mut pattern_var = ::core::ptr::null::<pattern_var>() as *mut pattern_var;
 static mut last_pattern_vars: [*mut pattern_var; 256] =
     [::core::ptr::null::<pattern_var>() as *mut pattern_var; 256];
-#[no_mangle]
-pub unsafe extern "C" fn create_pattern_var(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn create_pattern_var(
     target: *const ::core::ffi::c_char,
     suffix: *const ::core::ffi::c_char,
 ) -> *mut pattern_var {
@@ -250,7 +234,10 @@ unsafe extern "C" fn lookup_pattern_var(
     }
     p
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let key: *const variable = keyv as *const variable;
     let mut _result_: ::core::ffi::c_ulong = 0;
@@ -259,7 +246,10 @@ pub unsafe extern "C" fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::
         .wrapping_add(jhash(_key_, (*key).length as ::core::ffi::c_int) as ::core::ffi::c_ulong);
     _result_
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _key: *const variable = keyv as *const variable;
     let mut _result_: ::core::ffi::c_ulong = 0;
@@ -310,7 +300,6 @@ static mut global_setlist: variable_set_list = variable_set_list {
     set: &raw const global_variable_set as *mut variable_set,
     next_is_parent: 0,
 };
-#[no_mangle]
 pub static mut current_variable_set_list: *mut variable_set_list =
     &raw const global_setlist as *mut variable_set_list;
 unsafe extern "C" fn check_valid_name(
@@ -367,8 +356,11 @@ unsafe extern "C" fn check_valid_name(
         free(_a as *mut ::core::ffi::c_void);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn init_hash_global_variable_set() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn init_hash_global_variable_set() {
     hash_init(
         &raw mut global_variable_set.table,
         VARIABLE_BUCKETS as ::core::ffi::c_ulong,
@@ -389,8 +381,11 @@ pub unsafe extern "C" fn init_hash_global_variable_set() {
         ),
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn define_variable_in_set(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn define_variable_in_set(
     mut name: *const ::core::ffi::c_char,
     length: size_t,
     value: *const ::core::ffi::c_char,
@@ -498,14 +493,20 @@ pub unsafe extern "C" fn define_variable_in_set(
     }
     v
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn free_variable_name_and_value(item: *const ::core::ffi::c_void) {
     let v: *mut variable = item as *mut variable;
     free((*v).name as *mut ::core::ffi::c_void);
     free((*v).value as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn free_variable_set(list: *mut variable_set_list) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_variable_set(list: *mut variable_set_list) {
     hash_map(
         &raw mut (*(*list).set).table,
         Some(
@@ -516,8 +517,11 @@ pub unsafe extern "C" fn free_variable_set(list: *mut variable_set_list) {
     free((*list).set as *mut ::core::ffi::c_void);
     free(list as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn undefine_variable_in_set(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn undefine_variable_in_set(
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
     length: size_t,
@@ -574,8 +578,11 @@ pub unsafe extern "C" fn undefine_variable_in_set(
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn lookup_special_var(var: *mut variable) -> *mut variable {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
     static mut last_changenum: ::core::ffi::c_ulong = 0;
     if variable_changenum != last_changenum
         && (*(*var).name as ::core::ffi::c_int
@@ -680,11 +687,11 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
         free(_a as *mut ::core::ffi::c_void);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn lookup_variable(
-    name: *const ::core::ffi::c_char,
-    length: size_t,
-) -> *mut variable {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable {
     let mut setlist: *const variable_set_list;
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -721,8 +728,11 @@ pub unsafe extern "C" fn lookup_variable(
     }
     ::core::ptr::null_mut::<variable>()
 }
-#[no_mangle]
-pub unsafe extern "C" fn lookup_variable_for_file(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn lookup_variable_for_file(
     name: *const ::core::ffi::c_char,
     length: size_t,
     file: *mut file,
@@ -737,8 +747,11 @@ pub unsafe extern "C" fn lookup_variable_for_file(
     restore_file_context(savev, ::core::ptr::null::<Floc>());
     var
 }
-#[no_mangle]
-pub unsafe extern "C" fn lookup_variable_in_set(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn lookup_variable_in_set(
     name: *const ::core::ffi::c_char,
     length: size_t,
     set: *const variable_set,
@@ -762,8 +775,11 @@ pub unsafe extern "C" fn lookup_variable_in_set(
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut variable
 }
-#[no_mangle]
-pub unsafe extern "C" fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int) {
     let mut l: *mut variable_set_list = (*file).variables;
     if l.is_null() {
         l = xmalloc(::core::mem::size_of::<variable_set_list>() as size_t)
@@ -858,8 +874,11 @@ pub unsafe extern "C" fn initialize_file_variables(file: *mut file, reading: ::c
         (*l).next_is_parent = 0;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn create_new_variable_set() -> *mut variable_set_list {
     let setlist: *mut variable_set_list;
     let set: *mut variable_set;
     set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
@@ -889,8 +908,11 @@ pub unsafe extern "C" fn create_new_variable_set() -> *mut variable_set_list {
     (*setlist).next_is_parent = 0;
     setlist
 }
-#[no_mangle]
-pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn push_new_variable_scope() -> *mut variable_set_list {
     current_variable_set_list = create_new_variable_set();
     if (*current_variable_set_list).next == &raw mut global_setlist {
         std::ptr::swap(
@@ -903,8 +925,11 @@ pub unsafe extern "C" fn push_new_variable_scope() -> *mut variable_set_list {
     }
     current_variable_set_list
 }
-#[no_mangle]
-pub unsafe extern "C" fn pop_variable_scope() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn pop_variable_scope() {
     let setlist: *mut variable_set_list;
     let set: *mut variable_set;
     if !(*current_variable_set_list).next.is_null() {
@@ -932,8 +957,11 @@ pub unsafe extern "C" fn pop_variable_scope() {
     hash_free(&raw mut (*set).table, 1);
     free(set as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn install_file_context(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn install_file_context(
     file: *mut file,
     oldlist: *mut *mut variable_set_list,
     oldfloc: *mut *const Floc,
@@ -949,11 +977,11 @@ pub unsafe extern "C" fn install_file_context(
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn restore_file_context(
-    oldlist: *mut variable_set_list,
-    oldfloc: *const Floc,
-) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn restore_file_context(oldlist: *mut variable_set_list, oldfloc: *const Floc) {
     current_variable_set_list = oldlist;
     if !oldfloc.is_null() {
         reading_file = oldfloc;
@@ -995,8 +1023,11 @@ unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *m
         from_var_slot = from_var_slot.offset(1 as ::core::ffi::c_int as isize);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn merge_variable_set_lists(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn merge_variable_set_lists(
     setlist0: *mut *mut variable_set_list,
     mut setlist1: *mut variable_set_list,
 ) {
@@ -1029,8 +1060,11 @@ pub unsafe extern "C" fn merge_variable_set_lists(
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn define_automatic_variables() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn define_automatic_variables() {
     let mut v: *mut variable;
     let mut buf: [::core::ffi::c_char; 200] = [0; 200];
     sprintf(
@@ -1240,8 +1274,11 @@ pub unsafe extern "C" fn define_automatic_variables() {
         NILF,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn should_export(v: *const variable) -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn should_export(v: *const variable) -> ::core::ffi::c_int {
     match (*v).export() as ::core::ffi::c_int {
         2 => return 0,
         3 => {
@@ -1270,8 +1307,11 @@ pub unsafe extern "C" fn should_export(v: *const variable) -> ::core::ffi::c_int
     }
     1
 }
-#[no_mangle]
-pub unsafe extern "C" fn target_environment(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn target_environment(
     file: *mut file,
     recursive: ::core::ffi::c_int,
 ) -> *mut *mut ::core::ffi::c_char {
@@ -1609,8 +1649,11 @@ unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin
     }
     var
 }
-#[no_mangle]
-pub unsafe extern "C" fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     let mut args: [*mut ::core::ffi::c_char; 2] =
@@ -1625,8 +1668,11 @@ pub unsafe extern "C" fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::c
     );
     swap_variable_buffer(buf, len)
 }
-#[no_mangle]
-pub unsafe extern "C" fn do_variable_definition(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn do_variable_definition(
     flocp: *const Floc,
     varname: *const ::core::ffi::c_char,
     value: *const ::core::ffi::c_char,
@@ -1829,8 +1875,11 @@ pub unsafe extern "C" fn do_variable_definition(
         v
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn parse_variable_definition(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn parse_variable_definition(
     str: *const ::core::ffi::c_char,
     var: *mut variable,
 ) -> *mut ::core::ffi::c_char {
@@ -1955,8 +2004,11 @@ pub unsafe extern "C" fn parse_variable_definition(
     (*var).value = next_token(p);
     p as *mut ::core::ffi::c_char
 }
-#[no_mangle]
-pub unsafe extern "C" fn assign_variable_definition(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn assign_variable_definition(
     v: *mut variable,
     line: *const ::core::ffi::c_char,
 ) -> *mut variable {
@@ -1986,8 +2038,11 @@ pub unsafe extern "C" fn assign_variable_definition(
     }
     v
 }
-#[no_mangle]
-pub unsafe extern "C" fn try_variable_definition(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn try_variable_definition(
     flocp: *const Floc,
     line: *const ::core::ffi::c_char,
     origin: variable_origin,
@@ -2029,8 +2084,11 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
     name: ::core::ptr::null::<::core::ffi::c_char>(),
     len: 0,
 }; 13];
-#[no_mangle]
-pub unsafe extern "C" fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
     if warning::is_active(Type::UndefinedVar) {
         let mut dp: *const defined_vars;
         dp = &raw const defined_vars as *const defined_vars;
@@ -2096,8 +2154,11 @@ unsafe extern "C" fn set_env_override(
         (*v).set_origin(new as variable_origin);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn reset_env_override() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn reset_env_override() {
     hash_map_arg(
         &raw mut global_variable_set.table,
         Some(
@@ -2252,7 +2313,10 @@ unsafe extern "C" fn print_variable_set(
     hash_print_stats(&raw mut (*set).table, stdout);
     putc('\n' as i32, stdout);
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_variable_data_base() {
     puts(b"\n# Variables\n\0" as *const u8 as *const ::core::ffi::c_char);
     print_variable_set(
@@ -2288,8 +2352,11 @@ pub unsafe fn print_variable_data_base() {
         );
     };
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_file_variables(file: *const file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_file_variables(file: *const file) {
     if !(*file).variables.is_null() {
         print_variable_set(
             (*(*file).variables).set,
@@ -2298,8 +2365,11 @@ pub unsafe extern "C" fn print_file_variables(file: *const file) {
         );
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_target_variables(file: *const file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_target_variables(file: *const file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     if !(*file).variables.is_null() {
         let l: size_t = strlen((*file).name) as size_t;

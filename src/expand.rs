@@ -2,7 +2,6 @@ pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, File, VariableSet, VariableSetList};
 use crate::misc::{lindex, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
-use c2rust_bitfields;
 use libc::{free, printf, strchr};
 extern "C" {
     pub type dep;
@@ -25,37 +24,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    static mut reading_file: *const Floc;
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    static mut db_level: ::core::ffi::c_int;
-    static mut env_recursion: ::core::ffi::c_ulonglong;
-    static mut current_variable_set_list: *mut variable_set_list;
-    fn handle_function(
-        op: *mut *mut ::core::ffi::c_char,
-        stringp: *mut *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn patsubst_expand_pat(
-        o: *mut ::core::ffi::c_char,
-        text: *const ::core::ffi::c_char,
-        pattern: *const ::core::ffi::c_char,
-        replace: *const ::core::ffi::c_char,
-        pattern_percent: *const ::core::ffi::c_char,
-        replace_percent: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn install_file_context(
-        file: *mut file,
-        oldlist: *mut *mut variable_set_list,
-        oldfloc: *mut *const Floc,
-    );
-    fn restore_file_context(oldlist: *mut variable_set_list, oldfloc: *const Floc);
-    fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
-    fn lookup_variable_in_set(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        set: *const variable_set,
-    ) -> *mut variable;
-    fn warn_undefined(name: *const ::core::ffi::c_char, length: size_t);
 }
 
 /// Owns a `malloc`ed C string and frees it on drop, replacing the manual
@@ -93,7 +61,14 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 pub type commands = Commands;
 use crate::floc::Floc;
+use crate::function::{handle_function, patsubst_expand_pat};
+use crate::make_main::{db_level, stopchar_map};
 use crate::output::fatal;
+use crate::read::{find_percent, reading_file};
+use crate::variable::{
+    current_variable_set_list, env_recursion, install_file_context, lookup_variable,
+    lookup_variable_in_set, restore_file_context, warn_undefined,
+};
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
@@ -103,28 +78,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -141,15 +95,16 @@ pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-#[no_mangle]
 pub static mut expanding_var: *mut *const Floc = &raw const reading_file as *mut *const Floc;
 pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5;
 static mut variable_buffer_length: size_t = 0;
-#[no_mangle]
 pub static mut variable_buffer: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-#[no_mangle]
-pub unsafe extern "C" fn variable_buffer_output(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn variable_buffer_output(
     mut ptr: *mut ::core::ffi::c_char,
     string: *const ::core::ffi::c_char,
     length: size_t,
@@ -190,8 +145,11 @@ pub unsafe extern "C" fn variable_buffer_output(
     *ptr = 0;
     ptr
 }
-#[no_mangle]
-pub unsafe extern "C" fn initialize_variable_output() -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn initialize_variable_output() -> *mut ::core::ffi::c_char {
     if variable_buffer.is_null() {
         variable_buffer_length = 200;
         variable_buffer = xmalloc(variable_buffer_length) as *mut ::core::ffi::c_char;
@@ -199,24 +157,30 @@ pub unsafe extern "C" fn initialize_variable_output() -> *mut ::core::ffi::c_cha
     *variable_buffer.offset(0 as ::core::ffi::c_int as isize) = 0;
     variable_buffer
 }
-#[no_mangle]
-pub unsafe extern "C" fn install_variable_buffer(
-    bufp: *mut *mut ::core::ffi::c_char,
-    lenp: *mut size_t,
-) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t) {
     *bufp = variable_buffer;
     *lenp = variable_buffer_length;
     variable_buffer = ::core::ptr::null_mut::<::core::ffi::c_char>();
     initialize_variable_output();
 }
-#[no_mangle]
-pub unsafe extern "C" fn restore_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn restore_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t) {
     free(variable_buffer as *mut ::core::ffi::c_void);
     variable_buffer = buf;
     variable_buffer_length = len;
 }
-#[no_mangle]
-pub unsafe extern "C" fn swap_variable_buffer(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn swap_variable_buffer(
     buf: *mut ::core::ffi::c_char,
     len: size_t,
 ) -> *mut ::core::ffi::c_char {
@@ -225,8 +189,11 @@ pub unsafe extern "C" fn swap_variable_buffer(
     variable_buffer_length = len;
     p
 }
-#[no_mangle]
-pub unsafe extern "C" fn recursively_expand_for_file(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn recursively_expand_for_file(
     v: *mut variable,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
@@ -324,8 +291,11 @@ pub unsafe extern "C" fn recursively_expand_for_file(
     expanding_var = saved_varp;
     value
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand_variable_output(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn expand_variable_output(
     mut ptr: *mut ::core::ffi::c_char,
     name: *const ::core::ffi::c_char,
     length: size_t,
@@ -355,8 +325,11 @@ pub unsafe extern "C" fn expand_variable_output(
     }
     ptr
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand_variable_buf(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn expand_variable_buf(
     mut buf: *mut ::core::ffi::c_char,
     name: *const ::core::ffi::c_char,
     length: size_t,
@@ -377,8 +350,11 @@ pub unsafe extern "C" fn expand_variable_buf(
     expand_variable_output(buf, name, length);
     variable_buffer.offset(offs as isize)
 }
-#[no_mangle]
-pub unsafe extern "C" fn allocated_expand_variable(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn allocated_expand_variable(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
@@ -388,8 +364,11 @@ pub unsafe extern "C" fn allocated_expand_variable(
     expand_variable_output(variable_buffer, name, length);
     swap_variable_buffer(obuf, olen)
 }
-#[no_mangle]
-pub unsafe extern "C" fn allocated_expand_variable_for_file(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn allocated_expand_variable_for_file(
     name: *const ::core::ffi::c_char,
     length: size_t,
     file: *mut file,
@@ -405,8 +384,11 @@ pub unsafe extern "C" fn allocated_expand_variable_for_file(
     restore_file_context(savev, savef);
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand_string_buf(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn expand_string_buf(
     mut buf: *mut ::core::ffi::c_char,
     string: *const ::core::ffi::c_char,
     length: size_t,
@@ -627,8 +609,11 @@ pub unsafe extern "C" fn expand_string_buf(
     }
     variable_buffer.offset(line_offset as isize)
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand_argument(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn expand_argument(
     str: *const ::core::ffi::c_char,
     end: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
@@ -651,8 +636,11 @@ pub unsafe extern "C" fn expand_argument(
     *tmp.offset(len as isize) = 0;
     allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>())
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand_string_for_file(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn expand_string_for_file(
     string: *const ::core::ffi::c_char,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
@@ -675,8 +663,11 @@ pub unsafe extern "C" fn expand_string_for_file(
     restore_file_context(savev, savef);
     result
 }
-#[no_mangle]
-pub unsafe extern "C" fn allocated_expand_string_for_file(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn allocated_expand_string_for_file(
     string: *const ::core::ffi::c_char,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
@@ -717,8 +708,11 @@ unsafe extern "C" fn variable_append(
     buf = expand_string_buf(buf, (*v).value, strlen((*v).value) as size_t);
     buf.offset(strlen(buf) as isize)
 }
-#[no_mangle]
-pub unsafe extern "C" fn allocated_variable_append(v: *const variable) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn allocated_variable_append(v: *const variable) -> *mut ::core::ffi::c_char {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(&raw mut obuf, &raw mut olen);

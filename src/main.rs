@@ -95,28 +95,6 @@ extern "C" {
         __n: size_t,
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn parse_file_seq(
-        stringp: *mut *mut ::core::ffi::c_char,
-        size: size_t,
-        stopmap: ::core::ffi::c_int,
-        prefix: *const ::core::ffi::c_char,
-        flags: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_void;
-    fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn read_all_makefiles(makefiles_0: *mut *const ::core::ffi::c_char) -> *mut goaldep;
-    fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
-    fn update_goal_chain(goals_0: *mut goaldep) -> update_status;
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn remove_intermediates(sig: ::core::ffi::c_int);
-    fn snap_deps();
-    fn init_hash_files();
-    fn verify_file_data_base();
-    fn print_file_data_base();
-    fn print_targets();
-    fn file_timestamp_now(_: *mut ::core::ffi::c_int) -> uintmax_t;
-    fn file_timestamp_sprintf(p: *mut ::core::ffi::c_char, ts: uintmax_t);
-    fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t;
     fn getopt_long(
         argc: ::core::ffi::c_int,
         argv: *const *mut ::core::ffi::c_char,
@@ -124,58 +102,6 @@ extern "C" {
         longopts: *const option,
         longind: *mut ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
-    fn child_handler(sig: ::core::ffi::c_int);
-    fn reap_children(block: ::core::ffi::c_int, err: ::core::ffi::c_int);
-    fn exec_command(
-        argv: *mut *mut ::core::ffi::c_char,
-        envp: *mut *mut ::core::ffi::c_char,
-    ) -> pid_t;
-    static mut job_slots_used: ::core::ffi::c_uint;
-    static mut jobserver_tokens: ::core::ffi::c_uint;
-    static mut suffix_file: *mut file;
-    fn snap_implicit_rules();
-    fn convert_to_pattern();
-    fn print_rule_data_base();
-    static mut variable_buffer: *mut ::core::ffi::c_char;
-    static mut current_variable_set_list: *mut variable_set_list;
-    fn initialize_variable_output() -> *mut ::core::ffi::c_char;
-    fn variable_buffer_output(
-        ptr: *mut ::core::ffi::c_char,
-        string_0: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);
-    fn restore_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t);
-    fn expand_string_buf(
-        buf: *mut ::core::ffi::c_char,
-        string_0: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn expand_variable_buf(
-        buf: *mut ::core::ffi::c_char,
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn define_automatic_variables();
-    fn try_variable_definition(
-        flocp: *const Floc,
-        line: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        scope: variable_scope,
-    ) -> *mut variable;
-    fn init_hash_global_variable_set();
-    fn hash_init_function_table();
-    fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
-    fn define_variable_in_set(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        value: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        recursive: ::core::ffi::c_int,
-        set: *mut variable_set,
-        flocp: *const Floc,
-    ) -> *mut variable;
-    fn reset_env_override();
 }
 pub type __uint32_t = u32;
 #[derive(Copy, Clone)]
@@ -330,28 +256,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -401,8 +306,18 @@ pub const string: C2RustUnnamed_11 = 2;
 pub const flag_off: C2RustUnnamed_11 = 1;
 pub const flag: C2RustUnnamed_11 = 0;
 use crate::commands::{fatal_error_signal, handling_fatal_signal};
+use crate::expand::{
+    expand_string_buf, expand_variable_buf, initialize_variable_output, install_variable_buffer,
+    restore_variable_buffer, variable_buffer, variable_buffer_output,
+};
 pub use crate::file::nameseq;
+use crate::file::{
+    enter_file, file_timestamp_now, file_timestamp_sprintf, init_hash_files, lookup_file,
+    print_file_data_base, print_targets, remove_intermediates, snap_deps, verify_file_data_base,
+};
+use crate::function::hash_init_function_table;
 use crate::guile::guile_gmake_setup;
+use crate::job::{child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children};
 use crate::load::load_file;
 use crate::misc::concat;
 pub use crate::output::output;
@@ -414,38 +329,15 @@ use crate::posixos::{
     jobserver_parse_auth, jobserver_post_child, jobserver_pre_child, jobserver_release,
     jobserver_setup, osync_clear, osync_get_mutex, osync_parse_mutex, osync_setup,
 };
+pub use crate::read::goaldep;
+use crate::read::{eval_buffer, parse_file_seq, read_all_makefiles, tilde_expand};
+use crate::remake::{f_mtime, update_goal_chain};
 use crate::remote_stub::remote_description;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct goaldep {
-    pub next: *mut goaldep,
-    pub name: *const ::core::ffi::c_char,
-    pub file: *mut file,
-    pub shuf: *mut goaldep,
-    pub stem: *const ::core::ffi::c_char,
-    #[bitfield(name = "flags", ty = "::core::ffi::c_uint", bits = "0..=7")]
-    #[bitfield(name = "changed", ty = "::core::ffi::c_uint", bits = "8..=8")]
-    #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "staticpattern", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(
-        name = "need_2nd_expansion",
-        ty = "::core::ffi::c_uint",
-        bits = "11..=11"
-    )]
-    #[bitfield(
-        name = "ignore_automatic_vars",
-        ty = "::core::ffi::c_uint",
-        bits = "12..=12"
-    )]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "wait_here", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    pub flags_changed_ignore_mtime_staticpattern_need_2nd_expansion_ignore_automatic_vars_is_explicit_wait_here:
-        [u8; 2],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 2],
-    pub error: ::core::ffi::c_int,
-    pub floc: Floc,
-}
+use crate::rule::{convert_to_pattern, print_rule_data_base, snap_implicit_rules, suffix_file};
+use crate::variable::{
+    current_variable_set_list, define_automatic_variables, define_variable_in_set,
+    init_hash_global_variable_set, lookup_variable, reset_env_override, try_variable_definition,
+};
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct command_variable {
@@ -527,8 +419,11 @@ pub const MAKE_FAILURE: ::core::ffi::c_int = 2;
 pub const RM_INCLUDED: ::core::ffi::c_int = (1) << 1;
 pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
 pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
-#[no_mangle]
-pub unsafe extern "C" fn alloc_goaldep() -> *mut goaldep {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn alloc_goaldep() -> *mut goaldep {
     xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
 }
 #[inline]
@@ -539,8 +434,11 @@ unsafe extern "C" fn free_ns(n: *mut nameseq) {
 unsafe extern "C" fn free_dep(d: *mut dep) {
     free_ns(d as *mut nameseq);
 }
-#[no_mangle]
-pub unsafe extern "C" fn free_goaldep(g: *mut goaldep) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_goaldep(g: *mut goaldep) {
     free_dep(g as *mut dep);
 }
 #[inline]
@@ -553,62 +451,43 @@ pub const OLD_MTIME: ::core::ffi::c_int = 2;
 pub const no_argument: ::core::ffi::c_int = 0;
 pub const required_argument: ::core::ffi::c_int = 1;
 pub const optional_argument: ::core::ffi::c_int = 2;
-#[no_mangle]
 pub static mut verify_flag: ::core::ffi::c_int = 0;
 static mut silent_flag: ::core::ffi::c_int = 0;
 static mut default_silent_flag: ::core::ffi::c_int = 0;
 static mut silent_origin: variable_origin = o_default;
-#[no_mangle]
 pub static mut run_silent: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut touch_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut just_print_flag: ::core::ffi::c_int = 0;
 static mut db_flags: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
 static mut debug_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut db_level: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut output_sync_option: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-#[no_mangle]
 pub static mut env_overrides: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut ignore_errors_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut print_data_base_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut print_targets_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut question_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut no_builtin_rules_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut no_builtin_variables_flag: ::core::ffi::c_int = 0;
 static mut old_builtin_rules_flag: ::core::ffi::c_int = 0;
 static mut old_builtin_variables_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut export_all_variables: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut keep_going_flag: ::core::ffi::c_int = 0;
 static mut default_keep_going_flag: ::core::ffi::c_int = 0;
 static mut keep_going_origin: variable_origin = o_default;
-#[no_mangle]
 pub static mut check_symlink_flag: ::core::ffi::c_int = 0;
 static mut print_directory_flag: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut default_print_directory_flag: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut print_directory_origin: variable_origin = o_default;
-#[no_mangle]
 pub static mut print_version_flag: ::core::ffi::c_int = 0;
 static mut makefiles: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
-#[no_mangle]
 pub static mut job_slots: ::core::ffi::c_uint = 0;
 pub const INVALID_JOB_SLOTS: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut master_job_slots: ::core::ffi::c_uint = 0;
 static mut arg_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
 static mut default_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
 static mut inf_jobs: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut jobserver_auth: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 static mut jobserver_style: *mut ::core::ffi::c_char =
@@ -617,9 +496,7 @@ static mut shuffle_mode: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 static mut sync_mutex: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-#[no_mangle]
 pub static mut max_load_average: ::core::ffi::c_double = -1.0f64;
-#[no_mangle]
 pub static mut default_load_average: ::core::ffi::c_double = -1.0f64;
 static mut directories: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
 static mut include_dirs: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
@@ -630,11 +507,8 @@ static mut print_usage_flag: ::core::ffi::c_int = 0;
 static mut warn_flags: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
 static mut warn_undefined_variables_flag: ::core::ffi::c_int = 0;
 static mut always_make_set: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut always_make_flag: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut rebuilding_makefiles: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut shell_var: variable = variable {
     name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -646,11 +520,8 @@ pub static mut shell_var: variable = variable {
     length: 0,
     recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
 };
-#[no_mangle]
 pub static mut cmd_prefix: ::core::ffi::c_char = '\t' as i32 as ::core::ffi::c_char;
-#[no_mangle]
 pub static mut no_intermediates: ::core::ffi::c_uint = 0;
-#[no_mangle]
 pub static mut command_count: ::core::ffi::c_ulong = 1;
 static mut stdin_offset: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut usage: [*const ::core::ffi::c_char; 36] = [
@@ -799,33 +670,20 @@ static mut goals: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 static mut lastgoal: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 static mut command_variables: *mut command_variable =
     ::core::ptr::null::<command_variable>() as *mut command_variable;
-#[no_mangle]
 pub static mut program: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-#[no_mangle]
 pub static mut directory_before_chdir: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-#[no_mangle]
 pub static mut starting_directory: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-#[no_mangle]
 pub static mut makelevel: ::core::ffi::c_uint = 0;
-#[no_mangle]
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
-#[no_mangle]
 pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut file;
-#[no_mangle]
 pub static mut posix_pedantic: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut second_expansion: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut one_shell: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut output_sync: ::core::ffi::c_int = OUTPUT_SYNC_NONE;
-#[no_mangle]
 pub static mut not_parallel: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut clock_skew_detected: ::core::ffi::c_int = 0;
-#[no_mangle]
 pub static mut stopchar_map: [::core::ffi::c_ushort; 256] = [
     0 as ::core::ffi::c_int as ::core::ffi::c_ushort,
     0,
@@ -1084,7 +942,6 @@ pub static mut stopchar_map: [::core::ffi::c_ushort; 256] = [
     0,
     0,
 ];
-#[no_mangle]
 pub static mut make_sync: output = output {
     out: 0,
     err: 0,
@@ -1099,7 +956,6 @@ unsafe fn set_make_sync_syncout(value: ::core::ffi::c_uint) {
     let make_sync_ptr = &raw mut make_sync;
     (*make_sync_ptr).syncout[0] = ((*make_sync_ptr).syncout[0] & !1) | (value as u8 & 1);
 }
-#[no_mangle]
 pub static mut fatal_signal_set: sigset_t = __sigset_t { __val: [0; 16] };
 unsafe extern "C" fn bsd_signal(
     sig: ::core::ffi::c_int,
@@ -1149,16 +1005,22 @@ unsafe fn install_fatal_signal(sig: ::core::ffi::c_int) {
         sigaddset(&raw mut fatal_signal_set, sig);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn initialize_global_hash_tables() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn initialize_global_hash_tables() {
     init_hash_global_variable_set();
     strcache_init();
     init_hash_files();
     hash_init_directories();
     hash_init_function_table();
 }
-#[no_mangle]
-pub unsafe extern "C" fn initialize_stopchar_map() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn initialize_stopchar_map() {
     let mut i: ::core::ffi::c_int;
     stopchar_map[0 as usize] = MAP_NUL as ::core::ffi::c_ushort;
     stopchar_map['#' as i32 as usize] = MAP_COMMENT as ::core::ffi::c_ushort;
@@ -1197,7 +1059,10 @@ pub unsafe extern "C" fn initialize_stopchar_map() {
         i += 1;
     }
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn close_stdout() {
     let prev_fail: ::core::ffi::c_int = ferror(stdout);
     let fclose_fail: ::core::ffi::c_int = fclose(stdout);
@@ -1252,12 +1117,18 @@ unsafe extern "C" fn expand_command_line_file(
     free(expanded as *mut ::core::ffi::c_void);
     cp
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn debug_signal_handler(mut _sig: ::core::ffi::c_int) {
     db_level = if db_level != 0 { DB_NONE } else { DB_BASIC };
 }
-#[no_mangle]
-pub unsafe extern "C" fn decode_debug_flags() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn decode_debug_flags() {
     let mut pp: *mut *const ::core::ffi::c_char;
     if debug_flag != 0 {
         db_level = DB_ALL;
@@ -1335,8 +1206,11 @@ pub unsafe extern "C" fn decode_debug_flags() {
         debug_flag = 0;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn decode_output_sync_flags() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn decode_output_sync_flags() {
     if !output_sync_option.is_null() {
         if *output_sync_option as ::core::ffi::c_int
             == *(b"none\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
@@ -1391,8 +1265,11 @@ pub unsafe extern "C" fn decode_output_sync_flags() {
         osync_parse_mutex(sync_mutex);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_usage(bad: ::core::ffi::c_int) -> ! {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_usage(bad: ::core::ffi::c_int) -> ! {
     let mut cpp: *const *const ::core::ffi::c_char;
     let usageto: *mut FILE;
     if print_version_flag != 0 {
@@ -1430,14 +1307,20 @@ pub unsafe extern "C" fn print_usage(bad: ::core::ffi::c_int) -> ! {
     );
     die(if bad != 0 { MAKE_FAILURE } else { MAKE_SUCCESS });
 }
-#[no_mangle]
-pub unsafe extern "C" fn reset_jobserver() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn reset_jobserver() {
     jobserver_clear();
     free(jobserver_auth as *mut ::core::ffi::c_void);
     jobserver_auth = ::core::ptr::null_mut::<::core::ffi::c_char>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn temp_stdin_unlink() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn temp_stdin_unlink() {
     if stdin_offset >= 0 {
         let nm: *const ::core::ffi::c_char = *(*makefiles).list.offset(stdin_offset as isize);
         let mut r: ::core::ffi::c_int;
@@ -2921,8 +2804,11 @@ static mut long_options: [option; 51] = [option {
     flag: ::core::ptr::null::<::core::ffi::c_int>() as *mut ::core::ffi::c_int,
     val: 0,
 }; 51];
-#[no_mangle]
-pub unsafe extern "C" fn init_switches() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn init_switches() {
     let mut p: *mut ::core::ffi::c_char;
     let mut c: ::core::ffi::c_uint;
     let mut i: ::core::ffi::c_uint;
@@ -3075,8 +2961,11 @@ unsafe extern "C" fn handle_non_switch_argument(
     }
     0
 }
-#[no_mangle]
-pub unsafe extern "C" fn reset_makeflags(origin: variable_origin) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn reset_makeflags(origin: variable_origin) {
     env_overrides = 0;
     decode_env_switches(
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3588,8 +3477,11 @@ unsafe extern "C" fn quote_for_env(
     }
     out
 }
-#[no_mangle]
-pub unsafe extern "C" fn disable_builtins() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn disable_builtins() {
     if no_builtin_variables_flag != 0 {
         no_builtin_rules_flag = 1;
     }
@@ -3614,8 +3506,11 @@ pub unsafe extern "C" fn disable_builtins() {
         undefine_default_variables();
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let ref_0: [::core::ffi::c_char; 14] =
         ::core::mem::transmute::<[u8; 14], [::core::ffi::c_char; 14]>(*b"MAKEOVERRIDES\0");
@@ -3968,15 +3863,21 @@ pub unsafe extern "C" fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut 
     restore_variable_buffer(bufsave, lensave);
     v
 }
-#[no_mangle]
-pub unsafe extern "C" fn should_print_dir() -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn should_print_dir() -> ::core::ffi::c_int {
     if print_directory_flag >= 0 {
         return print_directory_flag;
     }
     (silent_flag == 0 && (makelevel > 0 || !directories.is_null())) as ::core::ffi::c_int
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_version() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_version() {
     static PRINTED_VERSION: AtomicBool = AtomicBool::new(false);
     let precede: *const ::core::ffi::c_char = if print_data_base_flag != 0 {
         b"# \0" as *const u8 as *const ::core::ffi::c_char
@@ -4018,8 +3919,11 @@ pub unsafe extern "C" fn print_version() {
         precede,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_data_base() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_data_base() {
     let mut resolution: ::core::ffi::c_int = 0;
     let mut buf: [::core::ffi::c_char; 43] = [0; 43];
     file_timestamp_sprintf(
@@ -4046,8 +3950,11 @@ pub unsafe extern "C" fn print_data_base() {
         &raw mut buf as *mut ::core::ffi::c_char,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn clean_jobserver(status: ::core::ffi::c_int) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn clean_jobserver(status: ::core::ffi::c_int) {
     if jobserver_enabled() != 0 && jobserver_tokens != 0 {
         if status != 2 {
             error(
@@ -4083,8 +3990,11 @@ pub unsafe extern "C" fn clean_jobserver(status: ::core::ffi::c_int) {
     }
     reset_jobserver();
 }
-#[no_mangle]
-pub unsafe extern "C" fn die(status: ::core::ffi::c_int) -> ! {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn die(status: ::core::ffi::c_int) -> ! {
     static DYING: AtomicBool = AtomicBool::new(false);
     if !DYING.swap(true, Ordering::Relaxed) {
         let err: ::core::ffi::c_int;

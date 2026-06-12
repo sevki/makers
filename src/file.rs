@@ -36,64 +36,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    static mut just_print_flag: ::core::ffi::c_int;
-    static mut run_silent: ::core::ffi::c_int;
-    static mut ignore_errors_flag: ::core::ffi::c_int;
-    static mut question_flag: ::core::ffi::c_int;
-    static mut touch_flag: ::core::ffi::c_int;
-    static mut no_builtin_rules_flag: ::core::ffi::c_int;
-    static mut not_parallel: ::core::ffi::c_int;
-    static mut second_expansion: ::core::ffi::c_int;
-    static mut verify_flag: ::core::ffi::c_int;
-    static mut export_all_variables: ::core::ffi::c_int;
-    static mut cmd_prefix: ::core::ffi::c_char;
-    static mut no_intermediates: ::core::ffi::c_uint;
-    static mut db_level: ::core::ffi::c_int;
-    fn parse_file_seq(
-        stringp: *mut *mut ::core::ffi::c_char,
-        size: size_t,
-        stopmap: ::core::ffi::c_int,
-        prefix: *const ::core::ffi::c_char,
-        flags: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_void;
-    static mut variable_buffer: *mut ::core::ffi::c_char;
-    fn variable_buffer_output(
-        ptr: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn expand_string_buf(
-        buf: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn expand_string_for_file(
-        string: *const ::core::ffi::c_char,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn patsubst_expand_pat(
-        o: *mut ::core::ffi::c_char,
-        text: *const ::core::ffi::c_char,
-        pattern: *const ::core::ffi::c_char,
-        replace: *const ::core::ffi::c_char,
-        pattern_percent: *const ::core::ffi::c_char,
-        replace_percent: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int);
-    fn print_file_variables(file: *const file);
-    fn print_target_variables(file: *const file);
-    fn merge_variable_set_lists(
-        to_list: *mut *mut variable_set_list,
-        from_list: *mut variable_set_list,
-    );
-    fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
-    fn lookup_variable_in_set(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        set: *const variable_set,
-    ) -> *mut variable;
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -254,12 +196,26 @@ pub struct Commands {
     pub c2rust_padding: [u8; 4],
 }
 use crate::commands::{print_commands, set_file_variables};
+use crate::expand::{
+    expand_string_buf, expand_string_for_file, variable_buffer, variable_buffer_output,
+};
 use crate::floc::Floc;
+use crate::function::patsubst_expand_pat;
 use crate::hash::{
     hash_delete, hash_deleted_item, hash_dump, hash_find_item, hash_find_slot, hash_init,
     hash_insert_at, hash_map, hash_print_stats, jhash_string,
 };
+use crate::make_main::{
+    cmd_prefix, db_level, export_all_variables, ignore_errors_flag, just_print_flag,
+    no_builtin_rules_flag, no_intermediates, not_parallel, question_flag, run_silent,
+    second_expansion, stopchar_map, touch_flag, verify_flag,
+};
 use crate::output::{error, fatal, perror_with_name};
+use crate::read::{find_percent, parse_file_seq};
+use crate::variable::{
+    initialize_file_variables, lookup_variable, lookup_variable_in_set, merge_variable_set_lists,
+    print_file_variables, print_target_variables,
+};
 
 pub type file = File;
 pub type dep = Dep;
@@ -275,28 +231,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -335,25 +270,36 @@ pub const INTSTR_LENGTH: usize = (53 as usize)
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
 pub const COMMANDS_SILENT: ::core::ffi::c_int = 2;
 pub const COMMANDS_NOERROR: ::core::ffi::c_int = 4;
-#[no_mangle]
-pub unsafe extern "C" fn free_ns(n: *mut nameseq) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_ns(n: *mut nameseq) {
     free(n as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn free_dep(d: *mut dep) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_dep(d: *mut dep) {
     free_ns(d as *mut nameseq);
 }
-#[no_mangle]
-pub unsafe extern "C" fn free_dep_chain(d: *mut dep) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
 pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
 pub const OLD_MTIME: ::core::ffi::c_int = 2;
 pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
-#[no_mangle]
 pub static mut snapped_deps: ::core::ffi::c_int = 0;
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
@@ -361,7 +307,10 @@ pub unsafe extern "C" fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core:
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
     _result_
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
@@ -395,8 +344,11 @@ static mut rehashed_files: *mut *mut file = ::core::ptr::null::<*mut file>() as 
 static mut rehashed_files_len: size_t = 0;
 pub const REHASHED_FILES_INCR: ::core::ffi::c_int = 5;
 static mut all_secondary: ::core::ffi::c_int = 0;
-#[no_mangle]
-pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *mut file {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn lookup_file(mut name: *const ::core::ffi::c_char) -> *mut file {
     let f: *mut file;
     let mut file_key: file = file {
         name: ::core::ptr::null::<::core::ffi::c_char>(),
@@ -451,8 +403,11 @@ pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *m
     ) as *mut file;
     f
 }
-#[no_mangle]
-pub unsafe extern "C" fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     let f: *mut file;
     let new: *mut file;
     let file_slot: *mut *mut file;
@@ -518,11 +473,11 @@ pub unsafe extern "C" fn enter_file(name: *const ::core::ffi::c_char) -> *mut fi
     }
     new
 }
-#[no_mangle]
-pub unsafe extern "C" fn rehash_file(
-    mut from_file: *mut file,
-    to_hname: *const ::core::ffi::c_char,
-) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi::c_char) {
     let mut file_key: file = file {
         name: ::core::ptr::null::<::core::ffi::c_char>(),
         hname: ::core::ptr::null::<::core::ffi::c_char>(),
@@ -746,19 +701,22 @@ pub unsafe extern "C" fn rehash_file(
     let fresh3 = &mut (*rehashed_files.offset(fresh2 as isize));
     *fresh3 = from_file;
 }
-#[no_mangle]
-pub unsafe extern "C" fn rename_file(
-    mut from_file: *mut file,
-    to_hname: *const ::core::ffi::c_char,
-) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi::c_char) {
     rehash_file(from_file, to_hname);
     while !from_file.is_null() {
         (*from_file).name = (*from_file).hname;
         from_file = (*from_file).prev;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn remove_intermediates(sig: ::core::ffi::c_int) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
     let mut file_slot: *mut *mut file;
     let file_end: *mut *mut file;
     let mut doneany: ::core::ffi::c_int = 0;
@@ -847,8 +805,11 @@ pub unsafe extern "C" fn remove_intermediates(sig: ::core::ffi::c_int) {
         fflush(stdout);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
     let mut new: *mut dep = parse_file_seq(
         &raw mut p,
         ::core::mem::size_of::<dep>() as size_t,
@@ -883,11 +844,11 @@ pub unsafe extern "C" fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut 
     }
     new
 }
-#[no_mangle]
-pub unsafe extern "C" fn enter_prereqs(
-    mut deps: *mut dep,
-    stem: *const ::core::ffi::c_char,
-) -> *mut dep {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char) -> *mut dep {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut d1: *mut dep;
     if deps.is_null() {
@@ -976,8 +937,11 @@ pub unsafe extern "C" fn enter_prereqs(
     }
     deps
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand_deps(f: *mut file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn expand_deps(f: *mut file) {
     let mut d: *mut dep;
     let mut dp: *mut *mut dep;
     let mut fstem: *const ::core::ffi::c_char;
@@ -1088,8 +1052,11 @@ pub unsafe extern "C" fn expand_deps(f: *mut file) {
         crate::shuffle::shuffle_deps_recursive((*f).deps);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
     let mut d: *mut dep;
     let prereqs: *mut dep = if !extra.is_null() {
         split_prereqs(expand_string_buf(
@@ -1112,8 +1079,11 @@ pub unsafe extern "C" fn expand_extra_prereqs(extra: *const variable) -> *mut de
     }
     prereqs
 }
-#[no_mangle]
-pub unsafe extern "C" fn snap_file(f: *mut file, deps: *const dep) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d: *mut dep;
     if second_expansion == 0 {
@@ -1179,8 +1149,11 @@ pub unsafe extern "C" fn snap_file(f: *mut file, deps: *const dep) {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn snap_deps() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn snap_deps() {
     let mut f: *mut file;
     let mut f2: *mut file;
     let mut d: *mut dep;
@@ -1382,8 +1355,11 @@ pub unsafe extern "C" fn snap_deps() {
     free(filedump as *mut ::core::ffi::c_void);
     free_dep_chain(prereqs);
 }
-#[no_mangle]
-pub unsafe extern "C" fn set_command_state(file: *mut file, state: cmd_state) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
     let mut d: *mut dep;
     (*file).set_command_state(state as cmd_state as cmd_state);
     d = (*file).also_make;
@@ -1394,8 +1370,11 @@ pub unsafe extern "C" fn set_command_state(file: *mut file, state: cmd_state) {
         d = (*d).next;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn file_timestamp_cons(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn file_timestamp_cons(
     fname: *const ::core::ffi::c_char,
     stamp: time_t,
     ns: ::core::ffi::c_long,
@@ -1504,8 +1483,11 @@ pub unsafe extern "C" fn file_timestamp_cons(
     }
     ts
 }
-#[no_mangle]
-pub unsafe extern "C" fn file_timestamp_now(resolution: *mut ::core::ffi::c_int) -> uintmax_t {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn file_timestamp_now(resolution: *mut ::core::ffi::c_int) -> uintmax_t {
     let r: ::core::ffi::c_int;
     let s: time_t;
     let ns: ::core::ffi::c_int;
@@ -1543,8 +1525,11 @@ pub unsafe extern "C" fn file_timestamp_now(resolution: *mut ::core::ffi::c_int)
         ns as ::core::ffi::c_long,
     )
 }
-#[no_mangle]
-pub unsafe extern "C" fn file_timestamp_sprintf(mut p: *mut ::core::ffi::c_char, ts: uintmax_t) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn file_timestamp_sprintf(mut p: *mut ::core::ffi::c_char, ts: uintmax_t) {
     let mut t: time_t = (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
         >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) as time_t;
     let tm: *mut tm = localtime(&raw mut t);
@@ -1588,8 +1573,11 @@ pub unsafe extern "C" fn file_timestamp_sprintf(mut p: *mut ::core::ffi::c_char,
     p = p.offset((*p as ::core::ffi::c_int != '.' as i32) as ::core::ffi::c_int as isize);
     *p = 0;
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_prereqs(mut deps: *const dep) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_prereqs(mut deps: *const dep) {
     let mut ood: *const dep = ::core::ptr::null::<dep>();
     while !deps.is_null() {
         if (*deps).ignore_mtime() == 0 {
@@ -1647,7 +1635,10 @@ pub unsafe extern "C" fn print_prereqs(mut deps: *const dep) {
     }
     putchar('\n' as i32);
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     if no_builtin_rules_flag != 0 && (*f).builtin() as ::core::ffi::c_int != 0 {
@@ -1830,8 +1821,11 @@ pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
         print_file((*f).prev as *const ::core::ffi::c_void);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_file_data_base() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_file_data_base() {
     puts(b"\n# Files\0" as *const u8 as *const ::core::ffi::c_char);
     hash_map(
         &raw mut files,
@@ -1843,7 +1837,10 @@ pub unsafe extern "C" fn print_file_data_base() {
     );
     hash_print_stats(&raw mut files, stdout);
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn print_target(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     if (*f).is_target() == 0 || (*f).suffix() as ::core::ffi::c_int != 0 {
@@ -1877,14 +1874,20 @@ pub unsafe extern "C" fn print_target(item: *const ::core::ffi::c_void) {
     }
     puts((*f).name);
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_targets() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_targets() {
     hash_map(
         &raw mut files,
         Some(print_target as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ()),
     );
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn verify_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     let mut d: *const dep;
@@ -1998,17 +2001,21 @@ pub unsafe extern "C" fn verify_file(item: *const ::core::ffi::c_void) {
         d = (*d).next;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn verify_file_data_base() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn verify_file_data_base() {
     hash_map(
         &raw mut files,
         Some(verify_file as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ()),
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn build_target_list(
-    mut value: *mut ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     static mut last_targ_count: ::core::ffi::c_ulong = 0;
     if files.ht_fill != last_targ_count {
         let mut max: size_t = (strlen(value) as size_t)
@@ -2058,8 +2065,11 @@ pub unsafe extern "C" fn build_target_list(
     }
     value
 }
-#[no_mangle]
-pub unsafe extern "C" fn init_hash_files() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn init_hash_files() {
     hash_init(
         &raw mut files,
         1000 as ::core::ffi::c_ulong,

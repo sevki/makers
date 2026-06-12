@@ -41,43 +41,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    static mut no_intermediates: ::core::ffi::c_uint;
-    static mut db_level: ::core::ffi::c_int;
-    fn parse_file_seq(
-        stringp: *mut *mut ::core::ffi::c_char,
-        size: size_t,
-        stopmap: ::core::ffi::c_int,
-        prefix: *const ::core::ffi::c_char,
-        flags: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_void;
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
-    static mut pattern_rules: *mut rule;
-    static mut num_pattern_rules: ::core::ffi::c_uint;
-    static mut max_pattern_deps: ::core::ffi::c_uint;
-    static mut max_pattern_targets: ::core::ffi::c_uint;
-    static mut max_pattern_dep_length: size_t;
-    fn get_rule_defn(rule: *mut rule) -> *const ::core::ffi::c_char;
-    fn expand_string_for_file(
-        string: *const ::core::ffi::c_char,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn free_variable_set(_: *mut variable_set_list);
-    fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int);
-    fn merge_variable_set_lists(
-        to_list: *mut *mut variable_set_list,
-        from_list: *mut variable_set_list,
-    );
-    fn define_variable_in_set(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        value: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        recursive: ::core::ffi::c_int,
-        set: *mut variable_set,
-        flocp: *const Floc,
-    ) -> *mut variable;
 }
 pub type __compar_fn_t = Option<
     unsafe extern "C" fn(
@@ -114,28 +77,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -153,22 +95,20 @@ pub const f_bogus: variable_flavor = 0;
 use crate::ar::ar_name;
 use crate::commands::set_file_variables;
 use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
+use crate::expand::expand_string_for_file;
 pub use crate::file::nameseq;
+use crate::file::{enter_file, lookup_file};
+use crate::make_main::{db_level, no_intermediates, stopchar_map};
+use crate::read::parse_file_seq;
+pub use crate::rule::rule;
+use crate::rule::{
+    get_rule_defn, max_pattern_dep_length, max_pattern_deps, max_pattern_targets,
+    num_pattern_rules, pattern_rules,
+};
+use crate::variable::{
+    define_variable_in_set, free_variable_set, initialize_file_variables, merge_variable_set_lists,
+};
 use crate::vpath::vpath_search;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct rule {
-    pub next: *mut rule,
-    pub targets: *mut *const ::core::ffi::c_char,
-    pub lens: *mut ::core::ffi::c_uint,
-    pub suffixes: *mut *const ::core::ffi::c_char,
-    pub deps: *mut dep,
-    pub cmds: *mut commands,
-    pub _defn: *mut ::core::ffi::c_char,
-    pub num: ::core::ffi::c_ushort,
-    pub terminal: ::core::ffi::c_char,
-    pub in_use: ::core::ffi::c_char,
-}
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct patdeps {
@@ -200,19 +140,22 @@ pub const PATH_MAX: ::core::ffi::c_int = 4096 as ::core::ffi::c_int;
 pub const GET_PATH_MAX: ::core::ffi::c_int = PATH_MAX;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
-#[no_mangle]
-pub unsafe extern "C" fn alloc_dep() -> *mut dep {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn alloc_dep() -> *mut dep {
     xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
 }
 #[inline]
 unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
-#[no_mangle]
-pub unsafe extern "C" fn try_implicit_rule(
-    file: *mut file,
-    depth: ::core::ffi::c_uint,
-) -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> ::core::ffi::c_int {
     if 0x8 as ::core::ffi::c_int & db_level != 0 {
         print_spaces(depth);
         printf(
@@ -295,7 +238,10 @@ unsafe extern "C" fn get_next_word(
     }
     beg
 }
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn stemlen_compare(
     v1: *const ::core::ffi::c_void,
     v2: *const ::core::ffi::c_void,

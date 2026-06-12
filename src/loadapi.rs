@@ -1,26 +1,10 @@
 use libc::free;
 
-use crate::file::{Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
+use crate::file::{Dep, File, VariableSet, VariableSetList};
 use crate::misc::xmalloc;
 extern "C" {
     pub type commands;
-    static mut reading_file: *const Floc;
-    fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
-    fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);
-    fn restore_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t);
-    fn allocated_expand_string_for_file(
-        line: *const ::core::ffi::c_char,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn define_new_function(
-        flocp: *const Floc,
-        name: *const ::core::ffi::c_char,
-        min: ::core::ffi::c_uint,
-        max: ::core::ffi::c_uint,
-        flags: ::core::ffi::c_uint,
-        func: gmk_func_ptr,
-    );
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -35,7 +19,12 @@ pub type gmk_func_ptr = Option<
         *mut *mut ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char,
 >;
+use crate::expand::{
+    allocated_expand_string_for_file, install_variable_buffer, restore_variable_buffer,
+};
 use crate::floc::Floc;
+use crate::function::define_new_function;
+use crate::read::{eval_buffer, reading_file};
 
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
@@ -56,19 +45,25 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 pub type dep = Dep;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-#[no_mangle]
-pub unsafe extern "C" fn gmk_alloc(len: ::core::ffi::c_uint) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn gmk_alloc(len: ::core::ffi::c_uint) -> *mut ::core::ffi::c_char {
     xmalloc(len as size_t) as *mut ::core::ffi::c_char
 }
-#[no_mangle]
-pub unsafe extern "C" fn gmk_free(s: *mut ::core::ffi::c_char) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn gmk_free(s: *mut ::core::ffi::c_char) {
     free(s as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn gmk_eval(
-    buffer: *const ::core::ffi::c_char,
-    gfloc: *const gmk_floc,
-) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *const gmk_floc) {
     let mut pbuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut plen: size_t = 0;
     let mut fl: Floc = Floc {
@@ -92,14 +87,18 @@ pub unsafe extern "C" fn gmk_eval(
     eval_buffer(eval_input.as_mut_ptr() as *mut ::core::ffi::c_char, flp);
     restore_variable_buffer(pbuf, plen);
 }
-#[no_mangle]
-pub unsafe extern "C" fn gmk_expand(
-    ref_0: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     allocated_expand_string_for_file(ref_0, ::core::ptr::null_mut::<file>())
 }
-#[no_mangle]
-pub unsafe extern "C" fn gmk_add_function(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn gmk_add_function(
     name: *const ::core::ffi::c_char,
     func: gmk_func_ptr,
     min: ::core::ffi::c_uint,

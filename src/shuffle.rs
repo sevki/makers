@@ -1,11 +1,9 @@
 use crate::file::{Dep, File};
 use std::sync::{Mutex, OnceLock};
 
+use crate::make_main::not_parallel;
 use crate::misc::{make_rand, make_seed};
 use crate::output::fatal;
-extern "C" {
-    static mut not_parallel: ::core::ffi::c_int;
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum Mode {
