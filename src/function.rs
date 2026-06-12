@@ -1211,10 +1211,12 @@ unsafe extern "C" fn func_wordlist(
     let mut start: ::core::ffi::c_longlong;
     let stop: ::core::ffi::c_longlong;
     let mut count: ::core::ffi::c_longlong;
-    let badfirst = CStr::from_bytes_with_nul(b"invalid first argument to 'wordlist' function\0")
-        .expect("wordlist() diagnostic strings are nul-terminated");
-    let badsecond = CStr::from_bytes_with_nul(b"invalid second argument to 'wordlist' function\0")
-        .expect("wordlist() diagnostic strings are nul-terminated");
+    let badfirst = unsafe {
+        CStr::from_bytes_with_nul_unchecked(b"invalid first argument to 'wordlist' function\0")
+    };
+    let badsecond = unsafe {
+        CStr::from_bytes_with_nul_unchecked(b"invalid second argument to 'wordlist' function\0")
+    };
     start = parse_numeric(
         CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
         badfirst,
