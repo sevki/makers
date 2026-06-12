@@ -259,6 +259,16 @@ unsafe fn fref_mut<'a>(f: *mut file) -> &'a mut file {
         .expect("file pointer is non-null within the update loop")
 }
 
+#[inline]
+unsafe fn double_colon_file_mut<'a>(f: *mut file) -> &'a mut file {
+    let fr = fref_mut(f);
+    if fr.double_colon.is_null() {
+        fr
+    } else {
+        fref_mut(fr.double_colon)
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     let mut last_cmd_count: ::core::ffi::c_ulong = 0;
@@ -1487,12 +1497,7 @@ unsafe extern "C" fn check_dep(
     let ofile: *mut file;
     let mut d: *mut dep;
     let mut dep_status: update_status = us_success;
-    let fresh5 = &mut (*if !(*file).double_colon.is_null() {
-        (*file).double_colon
-    } else {
-        file
-    });
-    (*fresh5).set_updating(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    double_colon_file_mut(file).set_updating(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     ofile = file;
     if (*file).phony() as ::core::ffi::c_int != 0 || (*file).intermediate() == 0 {
         let mtime: uintmax_t;
@@ -1562,40 +1567,35 @@ unsafe extern "C" fn check_dep(
                 expand_deps(file);
             }
             d = (*file).deps;
-            while !d.is_null() {
+            while let Some(dep_ref) = d.as_mut() {
                 let new: update_status;
                 let mut maybe_make: ::core::ffi::c_int;
-                if (*if !(*(*d).file).double_colon.is_null() {
-                    (*(*d).file).double_colon
-                } else {
-                    (*d).file
-                })
-                .updating()
-                    != 0
-                {
+                let dep_file = dep_ref.file;
+                if double_colon_file_mut(dep_file).updating() != 0 {
+                    let dep_name = fref(dep_file).name;
                     error(
                         ::core::ptr::null_mut::<Floc>(),
-                        (strlen((*file).name) as size_t)
-                            .wrapping_add(strlen((*(*d).file).name) as size_t),
+                        (strlen((*file).name) as size_t).wrapping_add(strlen(dep_name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
                         (*file).name,
-                        (*(*d).file).name,
+                        dep_name,
                     );
+                    let next_dep = dep_ref.next;
                     if let Some(tail) = ld.as_mut() {
-                        tail.next = (*d).next;
+                        tail.next = next_dep;
                         free_dep(d);
                         d = tail.next;
                     } else {
-                        (*file).deps = (*d).next;
+                        (*file).deps = next_dep;
                         free_dep(d);
-                        d = (*file).deps;
+                        d = next_dep;
                     }
                 } else {
-                    (*(*d).file).parent = file;
+                    fref_mut(dep_file).parent = file;
                     maybe_make = *must_make_ptr;
                     new = check_dep(
-                        (*d).file,
+                        dep_file,
                         depth.wrapping_add(1),
                         this_mtime,
                         &raw mut maybe_make,
@@ -1606,21 +1606,26 @@ unsafe extern "C" fn check_dep(
                     if (*d).ignore_mtime() == 0 {
                         *must_make_ptr = maybe_make;
                     }
-                    while !(*(*d).file).renamed.is_null() {
-                        (*d).file = (*(*d).file).renamed;
+                    loop {
+                        let renamed = fref(dep_ref.file).renamed;
+                        if renamed.is_null() {
+                            break;
+                        }
+                        dep_ref.file = renamed;
                     }
                     if dep_status as ::core::ffi::c_uint != 0 && keep_going_flag == 0 {
                         break;
                     }
-                    if (*(*d).file).command_state() as ::core::ffi::c_int
+                    let dep_file_ref = fref(dep_ref.file);
+                    if dep_file_ref.command_state() as ::core::ffi::c_int
                         == cs_running as ::core::ffi::c_int
-                        || (*(*d).file).command_state() as ::core::ffi::c_int
+                        || dep_file_ref.command_state() as ::core::ffi::c_int
                             == cs_deps_running as ::core::ffi::c_int
                     {
                         deps_running = 1;
                     }
                     ld = d;
-                    d = (*d).next;
+                    d = dep_ref.next;
                 }
             }
             if deps_running != 0 {
@@ -1628,18 +1633,8 @@ unsafe extern "C" fn check_dep(
             }
         }
     }
-    let fresh6 = &mut (*if !(*file).double_colon.is_null() {
-        (*file).double_colon
-    } else {
-        file
-    });
-    (*fresh6).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let fresh7 = &mut (*if !(*ofile).double_colon.is_null() {
-        (*ofile).double_colon
-    } else {
-        ofile
-    });
-    (*fresh7).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    double_colon_file_mut(file).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    double_colon_file_mut(ofile).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     dep_status
 }
 #[no_mangle]
