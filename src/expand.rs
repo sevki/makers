@@ -350,7 +350,6 @@ pub unsafe fn expand_string_buf(
     string: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
-    let mut v: *mut variable;
     let mut p: *const ::core::ffi::c_char;
     let mut p1: *const ::core::ffi::c_char;
     let mut o: *mut ::core::ffi::c_char;
@@ -448,15 +447,18 @@ pub unsafe fn expand_string_buf(
                             let replace_beg: *const ::core::ffi::c_char = subst_end.add(1);
                             let replace_end: *const ::core::ffi::c_char = end;
                             let name_len = colon.offset_from(beg) as size_t;
-                            v = lookup_variable(beg, name_len);
-                            if v.is_null() {
+                            let v = lookup_variable(beg, name_len).as_mut();
+                            if v.is_none() {
                                 warn_undefined(beg, name_len);
                             }
-                            if !v.is_null() && *(*v).value != 0 {
-                                let value: *mut ::core::ffi::c_char = if (*v).recursive() != 0 {
-                                    recursively_expand_for_file(v, ::core::ptr::null_mut::<file>())
+                            if let Some(v) = v.filter(|v| *v.value != 0) {
+                                let value: *mut ::core::ffi::c_char = if v.recursive() != 0 {
+                                    recursively_expand_for_file(
+                                        &raw mut *v,
+                                        ::core::ptr::null_mut::<file>(),
+                                    )
                                 } else {
-                                    (*v).value
+                                    v.value
                                 };
 
                                 // Prefix both sides with `%` so an explicit
@@ -484,7 +486,7 @@ pub unsafe fn expand_string_buf(
                                 o = patsubst_expand_pat(
                                     o, value, pattern, replace, ppercent, rpercent,
                                 );
-                                if (*v).recursive() != 0 {
+                                if v.recursive() != 0 {
                                     free(value as *mut ::core::ffi::c_void);
                                 }
                             }
