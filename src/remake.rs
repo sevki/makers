@@ -248,13 +248,15 @@ pub unsafe extern "C" fn check_also_make(file: *const file) {
 /// in `update_goal_chain` are kept non-null by the surrounding loop guards.
 #[inline]
 unsafe fn fref<'a>(f: *mut file) -> &'a file {
-    f.as_ref().expect("file pointer is non-null within the update loop")
+    f.as_ref()
+        .expect("file pointer is non-null within the update loop")
 }
 
 /// Mutable counterpart of [`fref`].
 #[inline]
 unsafe fn fref_mut<'a>(f: *mut file) -> &'a mut file {
-    f.as_mut().expect("file pointer is non-null within the update loop")
+    f.as_mut()
+        .expect("file pointer is non-null within the update loop")
 }
 
 #[no_mangle]
@@ -339,9 +341,8 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                 }
                 ocommands_started = commands_started;
                 stop = 0;
-                wait = (file == dchead
-                    && g_wait as ::core::ffi::c_int != 0
-                    && running != 0) as ::core::ffi::c_int;
+                wait = (file == dchead && g_wait as ::core::ffi::c_int != 0 && running != 0)
+                    as ::core::ffi::c_int;
                 if wait != 0 {
                     if 0x2 as ::core::ffi::c_int & db_level != 0 {
                         print_spaces(depth);
@@ -434,7 +435,9 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                     message(
                         1,
                         strlen(fref(file).name) as size_t,
-                        if fref(file).phony() as ::core::ffi::c_int != 0 || fref(file).cmds.is_null() {
+                        if fref(file).phony() as ::core::ffi::c_int != 0
+                            || fref(file).cmds.is_null()
+                        {
                             b"Nothing to be done for '%s'.\0" as *const u8
                                 as *const ::core::ffi::c_char
                         } else {
@@ -495,54 +498,65 @@ pub unsafe extern "C" fn show_goal_error() {
 }
 unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) -> update_status {
     let mut status: update_status = us_success;
-    let mut f: *mut file;
-    f = if !(*file).double_colon.is_null() {
-        (*file).double_colon
+    // Checked view of FILE; a null argument is a caller bug.
+    let file = file.as_mut().expect("update_file: null file");
+    let mut f: *mut file = if file.double_colon.is_null() {
+        &raw mut *file
     } else {
-        file
+        &raw mut *file
+            .double_colon
+            .as_mut()
+            .expect("update_file: null double_colon")
     };
-    if (*f).considered == considered
-        && !((*f).updated() as ::core::ffi::c_int != 0
-            && (*f).update_status() as ::core::ffi::c_int > us_none as ::core::ffi::c_int
-            && (*f).dontcare() == 0
-            && (*f).no_diag() as ::core::ffi::c_int != 0)
-        && !(!(*file).double_colon.is_null()
-            && (*file).command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int
-            && !(*f).prev.is_null())
     {
-        if 0x2 as ::core::ffi::c_int & db_level != 0 {
-            print_spaces(depth);
-            printf(
-                b"Pruning file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                (*file).name,
-            );
-            fflush(stdout);
+        let fr = f.as_ref().expect("update_file: null file chain");
+        if fr.considered == considered
+            && !(fr.updated() as ::core::ffi::c_int != 0
+                && fr.update_status() as ::core::ffi::c_int > us_none as ::core::ffi::c_int
+                && fr.dontcare() == 0
+                && fr.no_diag() as ::core::ffi::c_int != 0)
+            && !(!file.double_colon.is_null()
+                && file.command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int
+                && !fr.prev.is_null())
+        {
+            if 0x2 as ::core::ffi::c_int & db_level != 0 {
+                print_spaces(depth);
+                printf(
+                    b"Pruning file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
+                    file.name,
+                );
+                fflush(stdout);
+            }
+            return (if fr.command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int
+            {
+                fr.update_status() as ::core::ffi::c_int
+            } else {
+                us_success as ::core::ffi::c_int
+            }) as update_status;
         }
-        return (if (*f).command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int {
-            (*f).update_status() as ::core::ffi::c_int
-        } else {
-            us_success as ::core::ffi::c_int
-        }) as update_status;
     }
     while !f.is_null() {
-        let new: update_status;
-        (*f).considered = considered;
-        new = update_file_1(f, depth);
-        while !(*f).renamed.is_null() {
-            f = (*f).renamed;
+        let mut fr = f.as_mut().expect("update_file: null file chain");
+        fr.considered = considered;
+        let new: update_status = update_file_1(&raw mut *fr, depth);
+        while !fr.renamed.is_null() {
+            fr = fr.renamed.as_mut().expect("update_file: null renamed file");
         }
         if new as ::core::ffi::c_uint != 0 && keep_going_flag == 0 {
             return new;
         }
-        if (*f).command_state() as ::core::ffi::c_int == cs_running as ::core::ffi::c_int
-            || (*f).command_state() as ::core::ffi::c_int == cs_deps_running as ::core::ffi::c_int
+        if fr.command_state() as ::core::ffi::c_int == cs_running as ::core::ffi::c_int
+            || fr.command_state() as ::core::ffi::c_int == cs_deps_running as ::core::ffi::c_int
         {
             return us_success;
         }
         if new as ::core::ffi::c_uint > status as ::core::ffi::c_uint {
             status = new;
         }
-        f = (*f).prev;
+        f = match fr.prev.as_mut() {
+            Some(prev) => &raw mut *prev,
+            None => ::core::ptr::null_mut(),
+        };
     }
     status
 }
@@ -617,15 +631,16 @@ pub unsafe extern "C" fn complain(file: *mut file) {
     }
 }
 unsafe extern "C" fn update_file_1(
-    mut file: *mut file,
+    file: *mut file,
     mut depth: ::core::ffi::c_uint,
 ) -> update_status {
+    // Checked view of FILE; a null argument is a caller bug.
+    let mut file = file.as_mut().expect("update_file_1: null file");
     let mut dep_status: update_status = us_success;
     let mut this_mtime: uintmax_t;
     let mut noexist: ::core::ffi::c_int;
     let mut must_make: ::core::ffi::c_int;
     let mut deps_changed: ::core::ffi::c_int;
-    let ofile: *mut file;
     let mut du: *mut dep;
     let mut d: *mut dep;
     let mut ad: *mut dep;
@@ -702,21 +717,24 @@ unsafe extern "C" fn update_file_1(
         }
     }
     (*file).set_no_diag((*file).dontcare() as ::core::ffi::c_uint);
-    let fresh0 = &mut (*if !(*file).double_colon.is_null() {
-        (*file).double_colon
+    let fresh0: *mut file = if !file.double_colon.is_null() {
+        file.double_colon
     } else {
-        file
-    });
-    (*fresh0).set_updating(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    ofile = file;
+        &raw mut *file
+    };
+    (*fresh0).set_updating(1);
+    let ofile: *mut file = &raw mut *file;
     depth = depth.wrapping_add(1);
     this_mtime = if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
         f_mtime(file, 1)
     } else {
         (*file).last_mtime
     };
-    while !(*file).renamed.is_null() {
-        file = (*file).renamed;
+    while !file.renamed.is_null() {
+        file = file
+            .renamed
+            .as_mut()
+            .expect("update_file_1: null renamed file");
     }
     noexist = (this_mtime == NONEXISTENT_MTIME as uintmax_t) as ::core::ffi::c_int;
     if noexist != 0 {
@@ -1054,12 +1072,12 @@ unsafe extern "C" fn update_file_1(
             du = (*du).next;
         }
     }
-    let fresh3 = &mut (*if !(*file).double_colon.is_null() {
-        (*file).double_colon
+    let fresh3: *mut file = if !file.double_colon.is_null() {
+        file.double_colon
     } else {
-        file
-    });
-    (*fresh3).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        &raw mut *file
+    };
+    (*fresh3).set_updating(0);
     let fresh4 = &mut (*if !(*ofile).double_colon.is_null() {
         (*ofile).double_colon
     } else {
@@ -1251,9 +1269,12 @@ unsafe extern "C" fn update_file_1(
             (*file).set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
         notice_finished_file(file);
-        while !file.is_null() {
-            (*file).name = (*file).hname;
-            file = (*file).prev;
+        loop {
+            file.name = file.hname;
+            match file.prev.as_mut() {
+                Some(prev) => file = prev,
+                None => break,
+            }
         }
         return us_success;
     }
@@ -1788,12 +1809,20 @@ pub unsafe extern "C" fn remake_file(file: *mut file) {
     }
     notice_finished_file(file);
 }
+/// Return the mtime of file F, computing it if necessary. Returns
+/// NONEXISTENT_MTIME if the file does not exist.
+///
+/// # Safety
+/// `file` must point to a valid `File`; must run single-threaded with the
+/// global file table.
 #[no_mangle]
-pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int) -> uintmax_t {
+pub unsafe extern "C" fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut mtime: uintmax_t;
     let propagate_timestamp: ::core::ffi::c_uint;
-    if ar_name((*file).name) != 0 {
+    // Checked view of FILE; a null argument is a caller bug.
+    let mut file = file.as_mut().expect("f_mtime: null file");
+    if ar_name(file.name) != 0 {
         let memmtime: uintmax_t;
         let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1841,8 +1870,8 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
             } else {
                 rehash_file(file, strcache_add(name));
             }
-            while !(*file).renamed.is_null() {
-                file = (*file).renamed;
+            while !file.renamed.is_null() {
+                file = file.renamed.as_mut().expect("f_mtime: null renamed file");
             }
         }
         free(arname as *mut ::core::ffi::c_void);
@@ -1890,8 +1919,8 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
                     .wrapping_sub(1) as size_t;
                 if gpath_search(name_0, name_len) != 0 {
                     rename_file(file, name_0);
-                    while !(*file).renamed.is_null() {
-                        file = (*file).renamed;
+                    while !file.renamed.is_null() {
+                        file = file.renamed.as_mut().expect("f_mtime: null renamed file");
                     }
                     return if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
                         f_mtime(file, 1)
@@ -1900,8 +1929,8 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
                     };
                 }
                 rehash_file(file, name_0);
-                while !(*file).renamed.is_null() {
-                    file = (*file).renamed;
+                while !file.renamed.is_null() {
+                    file = file.renamed.as_mut().expect("f_mtime: null renamed file");
                 }
                 if mtime != OLD_MTIME as uintmax_t
                     && mtime
@@ -1986,8 +2015,11 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
             }
         }
     }
-    if !(*file).double_colon.is_null() {
-        file = (*file).double_colon;
+    if !file.double_colon.is_null() {
+        file = file
+            .double_colon
+            .as_mut()
+            .expect("f_mtime: null double_colon");
     }
     propagate_timestamp = (*file).updated();
     loop {
@@ -2001,9 +2033,9 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
         if (*file).updated() == propagate_timestamp {
             (*file).last_mtime = mtime;
         }
-        file = (*file).prev;
-        if file.is_null() {
-            break;
+        match file.prev.as_mut() {
+            Some(prev) => file = prev,
+            None => break,
         }
     }
     mtime

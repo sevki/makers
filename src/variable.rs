@@ -98,12 +98,6 @@ extern "C" {
         argv: *mut *mut ::core::ffi::c_char,
         trim_newlines: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_char;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
 }
 use crate::warning::{self, Action, Type};
@@ -435,7 +429,7 @@ pub unsafe extern "C" fn define_variable_in_set(
     value: *const ::core::ffi::c_char,
     mut origin: variable_origin,
     recursive: ::core::ffi::c_int,
-    mut set: *mut variable_set,
+    set: *mut variable_set,
     flocp: *const Floc,
 ) -> *mut variable {
     let mut v: *mut variable;
@@ -452,13 +446,17 @@ pub unsafe extern "C" fn define_variable_in_set(
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     check_valid_name(flocp, name, length);
-    if set.is_null() {
-        set = &raw mut global_variable_set;
-    }
+    // Route SET through a checked reference; null means the global set.
+    let set = if set.is_null() {
+        &raw mut global_variable_set
+    } else {
+        set
+    };
+    let set: &mut variable_set = &mut *set;
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     var_slot = hash_find_slot(
-        &raw mut (*set).table,
+        &raw mut set.table,
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
     v = *var_slot;
@@ -495,7 +493,7 @@ pub unsafe extern "C" fn define_variable_in_set(
         v as *const ::core::ffi::c_void,
         var_slot as *const ::core::ffi::c_void,
     );
-    if set == &raw mut global_variable_set {
+    if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
         variable_changenum = variable_changenum.wrapping_add(1);
     }
     (*v).value = xstrdup(value);
@@ -557,7 +555,7 @@ pub unsafe extern "C" fn undefine_variable_in_set(
     name: *const ::core::ffi::c_char,
     length: size_t,
     mut origin: variable_origin,
-    mut set: *mut variable_set,
+    set: *mut variable_set,
 ) {
     let v: *mut variable;
     let var_slot: *mut *mut variable;
@@ -573,13 +571,17 @@ pub unsafe extern "C" fn undefine_variable_in_set(
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     check_valid_name(flocp, name, length);
-    if set.is_null() {
-        set = &raw mut global_variable_set;
-    }
+    // Route SET through a checked reference; null means the global set.
+    let set = if set.is_null() {
+        &raw mut global_variable_set
+    } else {
+        set
+    };
+    let set: &mut variable_set = &mut *set;
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     var_slot = hash_find_slot(
-        &raw mut (*set).table,
+        &raw mut set.table,
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
     if env_overrides != 0
@@ -596,13 +598,10 @@ pub unsafe extern "C" fn undefine_variable_in_set(
             (*v).set_origin(o_env_override as variable_origin);
         }
         if origin as ::core::ffi::c_int >= (*v).origin() as ::core::ffi::c_int {
-            hash_delete_at(
-                &raw mut (*set).table,
-                var_slot as *const ::core::ffi::c_void,
-            );
+            hash_delete_at(&raw mut set.table, var_slot as *const ::core::ffi::c_void);
             free_variable_name_and_value(v as *const ::core::ffi::c_void);
             free(v as *mut ::core::ffi::c_void);
-            if set == &raw mut global_variable_set {
+            if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
                 variable_changenum = variable_changenum.wrapping_add(1);
             }
         }
@@ -943,12 +942,7 @@ pub unsafe extern "C" fn pop_variable_scope() {
     let set: *mut variable_set;
     if !(*current_variable_set_list).next.is_null() {
     } else {
-        __assert_fail(
-            b"current_variable_set_list->next != NULL\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
-            788,
-            b"void pop_variable_scope(void)\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: current_variable_set_list->next != NULL");
     };
     if current_variable_set_list != &raw mut global_setlist {
         setlist = current_variable_set_list;
@@ -1838,13 +1832,7 @@ pub unsafe extern "C" fn do_variable_definition(
     }
     if do_define {
         if newval.is_null() {
-            __assert_fail(
-                b"newval\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
-                1545 as ::core::ffi::c_uint,
-                b"struct variable *do_variable_definition(const Floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-            );
+            panic!("assertion failed: newval");
         }
         v = define_variable_in_set(
             varname,
