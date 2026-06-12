@@ -3,7 +3,6 @@ use libc::__errno_location;
 pub use crate::ffi_types::pid_t;
 
 pub const ECHILD: ::core::ffi::c_int = 10;
-#[no_mangle]
 pub static mut remote_description: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 

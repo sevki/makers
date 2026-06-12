@@ -95,20 +95,6 @@ extern "C" {
         __n: size_t,
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
-    fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn guile_gmake_setup(flocp: *const Floc) -> ::core::ffi::c_int;
-    fn load_file(
-        flocp: *const Floc,
-        file: *mut file,
-        noerror: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
-    static mut remote_description: *mut ::core::ffi::c_char;
-    static mut handling_fatal_signal: sig_atomic_t;
-    fn fatal_error_signal(sig: ::core::ffi::c_int);
     fn parse_file_seq(
         stringp: *mut *mut ::core::ffi::c_char,
         size: size_t,
@@ -138,8 +124,6 @@ extern "C" {
         longopts: *const option,
         longind: *mut ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
-    static mut output_context: *mut output;
-    static mut stdio_traced: ::core::ffi::c_uint;
     fn child_handler(sig: ::core::ffi::c_int);
     fn reap_children(block: ::core::ffi::c_int, err: ::core::ffi::c_int);
     fn exec_command(
@@ -148,23 +132,6 @@ extern "C" {
     ) -> pid_t;
     static mut job_slots_used: ::core::ffi::c_uint;
     static mut jobserver_tokens: ::core::ffi::c_uint;
-    fn check_io_state() -> ::core::ffi::c_uint;
-    fn jobserver_enabled() -> ::core::ffi::c_uint;
-    fn jobserver_setup(
-        job_slots_0: ::core::ffi::c_int,
-        style: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_uint;
-    fn jobserver_parse_auth(auth: *const ::core::ffi::c_char) -> ::core::ffi::c_uint;
-    fn jobserver_get_auth() -> *mut ::core::ffi::c_char;
-    fn jobserver_clear();
-    fn jobserver_acquire_all() -> ::core::ffi::c_uint;
-    fn jobserver_release(is_fatal: ::core::ffi::c_int);
-    fn jobserver_pre_child(_: ::core::ffi::c_int);
-    fn jobserver_post_child(_: ::core::ffi::c_int);
-    fn osync_setup();
-    fn osync_get_mutex() -> *mut ::core::ffi::c_char;
-    fn osync_parse_mutex(mutex: *const ::core::ffi::c_char) -> ::core::ffi::c_uint;
-    fn osync_clear();
     static mut suffix_file: *mut file;
     fn snap_implicit_rules();
     fn convert_to_pattern();
@@ -433,8 +400,21 @@ pub const strlist: C2RustUnnamed_11 = 3;
 pub const string: C2RustUnnamed_11 = 2;
 pub const flag_off: C2RustUnnamed_11 = 1;
 pub const flag: C2RustUnnamed_11 = 0;
+use crate::commands::{fatal_error_signal, handling_fatal_signal};
 pub use crate::file::nameseq;
+use crate::guile::guile_gmake_setup;
+use crate::load::load_file;
+use crate::misc::concat;
 pub use crate::output::output;
+use crate::output::{
+    error, fatal, output_context, perror_with_name, pfatal_with_name, stdio_traced,
+};
+use crate::posixos::{
+    check_io_state, jobserver_acquire_all, jobserver_clear, jobserver_enabled, jobserver_get_auth,
+    jobserver_parse_auth, jobserver_post_child, jobserver_pre_child, jobserver_release,
+    jobserver_setup, osync_clear, osync_get_mutex, osync_parse_mutex, osync_setup,
+};
+use crate::remote_stub::remote_description;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct goaldep {

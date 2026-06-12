@@ -36,9 +36,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut just_print_flag: ::core::ffi::c_int;
@@ -53,8 +50,6 @@ extern "C" {
     static mut export_all_variables: ::core::ffi::c_int;
     static mut cmd_prefix: ::core::ffi::c_char;
     static mut no_intermediates: ::core::ffi::c_uint;
-    fn print_commands(cmds: *const commands);
-    fn set_file_variables(file: *mut file, stem: *const ::core::ffi::c_char);
     static mut db_level: ::core::ffi::c_int;
     fn parse_file_seq(
         stringp: *mut *mut ::core::ffi::c_char,
@@ -63,39 +58,6 @@ extern "C" {
         prefix: *const ::core::ffi::c_char,
         flags: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_void;
-    fn hash_init(
-        ht: *mut hash_table,
-        size: ::core::ffi::c_ulong,
-        hash_1: hash_func_t,
-        hash_2: hash_func_t,
-        hash_cmp: hash_cmp_func_t,
-    );
-    fn hash_find_slot(
-        ht: *mut hash_table,
-        key: *const ::core::ffi::c_void,
-    ) -> *mut *mut ::core::ffi::c_void;
-    fn hash_find_item(
-        ht: *mut hash_table,
-        key: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_insert_at(
-        ht: *mut hash_table,
-        item: *const ::core::ffi::c_void,
-        slot: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_delete(
-        ht: *mut hash_table,
-        item: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_map(ht: *mut hash_table, map: hash_map_func_t);
-    fn hash_print_stats(ht: *mut hash_table, out_FILE: *mut FILE);
-    fn hash_dump(
-        ht: *mut hash_table,
-        vector_0: *mut *mut ::core::ffi::c_void,
-        compare: qsort_cmp_t,
-    ) -> *mut *mut ::core::ffi::c_void;
-    fn jhash_string(key: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint;
-    static mut hash_deleted_item: *const ::core::ffi::c_void;
     static mut variable_buffer: *mut ::core::ffi::c_char;
     fn variable_buffer_output(
         ptr: *mut ::core::ffi::c_char,
@@ -291,7 +253,13 @@ pub struct Commands {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
+use crate::commands::{print_commands, set_file_variables};
 use crate::floc::Floc;
+use crate::hash::{
+    hash_delete, hash_deleted_item, hash_dump, hash_find_item, hash_find_slot, hash_init,
+    hash_insert_at, hash_map, hash_print_stats, jhash_string,
+};
+use crate::output::{error, fatal, perror_with_name};
 
 pub type file = File;
 pub type dep = Dep;

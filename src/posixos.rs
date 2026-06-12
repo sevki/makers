@@ -51,8 +51,7 @@ pub const IO_STDERR_OK: c_int = 0x10;
 ///
 /// # Safety
 /// Must run after stdio is initialized; reads the C stdio globals.
-#[no_mangle]
-pub unsafe extern "C" fn check_io_state() -> c_uint {
+pub unsafe fn check_io_state() -> c_uint {
     static IO_STATE: AtomicU32 = AtomicU32::new(IO_UNKNOWN as c_uint);
     let mut state = IO_STATE.load(Ordering::Relaxed);
     if state != IO_UNKNOWN as c_uint {
@@ -158,8 +157,7 @@ unsafe fn set_blocking(fd: c_int, blocking: bool) {
 /// # Safety
 /// `style` must be null or a valid NUL-terminated string; must run
 /// single-threaded during startup.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
+pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
     let mut r: c_int;
 
     JOB_ROOT.store(true, Ordering::Relaxed);
@@ -283,8 +281,7 @@ pub unsafe extern "C" fn jobserver_setup(slots: c_int, style: *const c_char) -> 
 /// # Safety
 /// `auth` must be a valid NUL-terminated string; must run single-threaded
 /// during startup.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
+pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
     let mut rfd: c_int = 0;
     let mut wfd: c_int = 0;
 
@@ -363,8 +360,7 @@ pub unsafe extern "C" fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_get_auth() -> *mut c_char {
+pub unsafe fn jobserver_get_auth() -> *mut c_char {
     if js_type == JsType::Fifo {
         let auth = xmalloc(strlen(fifo_name) + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
         sprintf(auth, c"fifo:%s".as_ptr(), fifo_name);
@@ -382,8 +378,7 @@ pub unsafe extern "C" fn jobserver_get_auth() -> *mut c_char {
 ///
 /// # Safety
 /// Always safe; unsafe only for C-API signature compatibility.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_get_invalid_auth() -> *const c_char {
+pub unsafe fn jobserver_get_invalid_auth() -> *const c_char {
     if js_type == JsType::Fifo {
         return null();
     }
@@ -394,8 +389,7 @@ pub unsafe extern "C" fn jobserver_get_invalid_auth() -> *const c_char {
 ///
 /// # Safety
 /// Always safe; unsafe only for C-API signature compatibility.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_enabled() -> c_uint {
+pub unsafe fn jobserver_enabled() -> c_uint {
     (js_type != JsType::None) as c_uint
 }
 
@@ -404,8 +398,7 @@ pub unsafe extern "C" fn jobserver_enabled() -> c_uint {
 /// # Safety
 /// Must run single-threaded (also called from the fatal-signal path, where
 /// it avoids freeing).
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_clear() {
+pub unsafe fn jobserver_clear() {
     if job_fds[0] >= 0 {
         close(job_fds[0]);
     }
@@ -442,8 +435,7 @@ pub unsafe extern "C" fn jobserver_clear() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_release(is_fatal: c_int) {
+pub unsafe fn jobserver_release(is_fatal: c_int) {
     let mut r: c_int;
     loop {
         r = write(job_fds[1], &raw const token as *const c_void, 1) as c_int;
@@ -464,8 +456,7 @@ pub unsafe extern "C" fn jobserver_release(is_fatal: c_int) {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_acquire_all() -> c_uint {
+pub unsafe fn jobserver_acquire_all() -> c_uint {
     let mut tokens: c_uint = 0;
 
     // Close the write side so the read below sees EOF once the pipe drains.
@@ -502,8 +493,7 @@ pub unsafe extern "C" fn jobserver_acquire_all() -> c_uint {
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_pre_child(recursive: c_int) {
+pub unsafe fn jobserver_pre_child(recursive: c_int) {
     if recursive != 0 && js_type == JsType::Pipe {
         fd_inherit(job_fds[0]);
         fd_inherit(job_fds[1]);
@@ -514,8 +504,7 @@ pub unsafe extern "C" fn jobserver_pre_child(recursive: c_int) {
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_post_child(recursive: c_int) {
+pub unsafe fn jobserver_post_child(recursive: c_int) {
     if recursive != 0 && js_type == JsType::Pipe {
         fd_noinherit(job_fds[0]);
         fd_noinherit(job_fds[1]);
@@ -527,8 +516,7 @@ pub unsafe extern "C" fn jobserver_post_child(recursive: c_int) {
 ///
 /// # Safety
 /// Async-signal-safe (only `close`).
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_signal() {
+pub unsafe fn jobserver_signal() {
     if job_rfd >= 0 {
         close(job_rfd);
         job_rfd = -1;
@@ -539,8 +527,7 @@ pub unsafe extern "C" fn jobserver_signal() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_pre_acquire() {
+pub unsafe fn jobserver_pre_acquire() {
     if job_rfd < 0 && job_fds[0] >= 0 && make_job_rfd() < 0 {
         pfatal_with_name(c"duping jobs pipe".as_ptr());
     }
@@ -551,8 +538,7 @@ pub unsafe extern "C" fn jobserver_pre_acquire() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn jobserver_acquire(timeout: c_int) -> c_uint {
+pub unsafe fn jobserver_acquire(timeout: c_int) -> c_uint {
     let mut spec = timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -628,8 +614,7 @@ static SYNC_ROOT: AtomicBool = AtomicBool::new(false);
 ///
 /// # Safety
 /// Always safe; unsafe only for C-API signature compatibility.
-#[no_mangle]
-pub unsafe extern "C" fn osync_enabled() -> c_uint {
+pub unsafe fn osync_enabled() -> c_uint {
     (osync_handle >= 0) as c_uint
 }
 
@@ -637,8 +622,7 @@ pub unsafe extern "C" fn osync_enabled() -> c_uint {
 ///
 /// # Safety
 /// Must run single-threaded during startup.
-#[no_mangle]
-pub unsafe extern "C" fn osync_setup() {
+pub unsafe fn osync_setup() {
     osync_handle = get_tmpfd(&raw mut osync_tmpfile);
     fd_noinherit(osync_handle);
     SYNC_ROOT.store(true, Ordering::Relaxed);
@@ -649,8 +633,7 @@ pub unsafe extern "C" fn osync_setup() {
 ///
 /// # Safety
 /// Must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn osync_get_mutex() -> *mut c_char {
+pub unsafe fn osync_get_mutex() -> *mut c_char {
     if osync_enabled() == 0 {
         return null_mut();
     }
@@ -665,8 +648,7 @@ pub unsafe extern "C" fn osync_get_mutex() -> *mut c_char {
 /// # Safety
 /// `mutex` must be a valid NUL-terminated string; must run single-threaded
 /// during startup.
-#[no_mangle]
-pub unsafe extern "C" fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
+pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
     if strncmp(mutex, MUTEX_PREFIX.as_ptr(), MUTEX_PREFIX.to_bytes().len()) != 0 {
         error(
             null::<Floc>(),
@@ -703,8 +685,7 @@ pub unsafe extern "C" fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
 ///
 /// # Safety
 /// Must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn osync_clear() {
+pub unsafe fn osync_clear() {
     if osync_handle >= 0 {
         close(osync_handle);
         osync_handle = -1;
@@ -727,8 +708,7 @@ pub unsafe extern "C" fn osync_clear() {
 ///
 /// # Safety
 /// Must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn osync_acquire() -> c_uint {
+pub unsafe fn osync_acquire() -> c_uint {
     if osync_enabled() != 0 {
         let mut fl: flock = ::core::mem::zeroed();
         fl.l_type = F_WRLCK as ::core::ffi::c_short;
@@ -747,8 +727,7 @@ pub unsafe extern "C" fn osync_acquire() -> c_uint {
 ///
 /// # Safety
 /// Must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn osync_release() {
+pub unsafe fn osync_release() {
     if osync_enabled() != 0 {
         let mut fl: flock = ::core::mem::zeroed();
         fl.l_type = F_UNLCK as ::core::ffi::c_short;
@@ -769,8 +748,7 @@ pub unsafe extern "C" fn osync_release() {
 ///
 /// # Safety
 /// Must run single-threaded the first time.
-#[no_mangle]
-pub unsafe extern "C" fn get_bad_stdin() -> c_int {
+pub unsafe fn get_bad_stdin() -> c_int {
     static BAD_STDIN: AtomicI32 = AtomicI32::new(-1);
     let cached = BAD_STDIN.load(Ordering::Relaxed);
     if cached != -1 {
@@ -798,8 +776,7 @@ pub unsafe extern "C" fn get_bad_stdin() -> c_int {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-#[no_mangle]
-pub unsafe extern "C" fn fd_inherit(fd: c_int) {
+pub unsafe fn fd_inherit(fd: c_int) {
     let flags = fcntl_retry(fd, F_GETFD);
     if flags >= 0 {
         fcntl_set_retry(fd, F_SETFD, flags & !FD_CLOEXEC);
@@ -810,8 +787,7 @@ pub unsafe extern "C" fn fd_inherit(fd: c_int) {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-#[no_mangle]
-pub unsafe extern "C" fn fd_noinherit(fd: c_int) {
+pub unsafe fn fd_noinherit(fd: c_int) {
     let flags = fcntl_retry(fd, F_GETFD);
     if flags >= 0 {
         fcntl_set_retry(fd, F_SETFD, flags | FD_CLOEXEC);
@@ -824,8 +800,7 @@ pub unsafe extern "C" fn fd_noinherit(fd: c_int) {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-#[no_mangle]
-pub unsafe extern "C" fn fd_set_append(fd: c_int) -> c_int {
+pub unsafe fn fd_set_append(fd: c_int) -> c_int {
     let mut flags: c_int = -1;
     let mut stbuf: libc::stat = ::core::mem::zeroed();
     if fstat(fd, &mut stbuf) == 0 && stbuf.st_mode & S_IFMT == S_IFREG {
@@ -842,8 +817,7 @@ pub unsafe extern "C" fn fd_set_append(fd: c_int) -> c_int {
 /// # Safety
 /// `fd` must be an open descriptor; `flags` must come from
 /// [`fd_set_append`].
-#[no_mangle]
-pub unsafe extern "C" fn fd_reset_append(fd: c_int, flags: c_int) {
+pub unsafe fn fd_reset_append(fd: c_int, flags: c_int) {
     if flags >= 0 {
         fcntl_set_retry(fd, F_SETFL, flags);
     }
@@ -855,8 +829,7 @@ pub unsafe extern "C" fn fd_reset_append(fd: c_int, flags: c_int) {
 ///
 /// # Safety
 /// Must run single-threaded (reports errors through the printers).
-#[no_mangle]
-pub unsafe extern "C" fn os_anontmp() -> c_int {
+pub unsafe fn os_anontmp() -> c_int {
     let tdir = get_tmpdir();
     let mut fd: c_int = -1;
     static TMPFILE_WORKS: AtomicBool = AtomicBool::new(true);

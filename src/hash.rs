@@ -57,7 +57,6 @@ pub const MAKE_TROUBLE: c_int = 1;
 
 /// Sentinel stored in slots whose item was deleted (its own address, so it
 /// can never equal a real item).
-#[no_mangle]
 pub static mut hash_deleted_item: *const c_void =
     &raw const hash_deleted_item as *mut *const c_void as *const c_void;
 
@@ -78,8 +77,7 @@ pub unsafe fn is_real_item(item: *const c_void) -> bool {
 /// # Safety
 /// `ht` must point to writable storage; the callbacks must be non-null and
 /// valid for the items later stored.
-#[no_mangle]
-pub unsafe extern "C" fn hash_init(
+pub unsafe fn hash_init(
     ht: *mut hash_table,
     size: c_ulong,
     hash_1: hash_func_t,
@@ -116,8 +114,7 @@ pub unsafe extern "C" fn hash_init(
 /// # Safety
 /// `item_table` must point to `cardinality * size` valid bytes whose rows
 /// are valid items for this table.
-#[no_mangle]
-pub unsafe extern "C" fn hash_load(
+pub unsafe fn hash_load(
     ht: *mut hash_table,
     item_table: *const c_void,
     cardinality: c_ulong,
@@ -135,11 +132,7 @@ pub unsafe extern "C" fn hash_load(
 ///
 /// # Safety
 /// `ht` must be initialized and `key` valid for its callbacks.
-#[no_mangle]
-pub unsafe extern "C" fn hash_find_slot(
-    ht: *mut hash_table,
-    key: *const c_void,
-) -> *mut *mut c_void {
+pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *mut c_void {
     let mut deleted_slot: *mut *mut c_void = null_mut();
     let mut hash_2: c_uint = 0;
     let mut hash_1 = (*ht).ht_hash_1.expect("hash table without ht_hash_1")(key) as c_uint;
@@ -188,8 +181,7 @@ pub unsafe extern "C" fn hash_find_slot(
 ///
 /// # Safety
 /// `ht` must be initialized and `key` valid for its callbacks.
-#[no_mangle]
-pub unsafe extern "C" fn hash_find_item(ht: *mut hash_table, key: *const c_void) -> *mut c_void {
+pub unsafe fn hash_find_item(ht: *mut hash_table, key: *const c_void) -> *mut c_void {
     let slot = hash_find_slot(ht, key)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -205,8 +197,7 @@ pub unsafe extern "C" fn hash_find_item(ht: *mut hash_table, key: *const c_void)
 /// # Safety
 /// `ht` must be initialized and `item` valid for its callbacks and for the
 /// table's lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn hash_insert(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
+pub unsafe fn hash_insert(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
     let slot = hash_find_slot(ht, item)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -225,8 +216,7 @@ pub unsafe extern "C" fn hash_insert(ht: *mut hash_table, item: *const c_void) -
 /// # Safety
 /// `slot` must come from `hash_find_slot` on this table with `item`'s key,
 /// with no intervening modification.
-#[no_mangle]
-pub unsafe extern "C" fn hash_insert_at(
+pub unsafe fn hash_insert_at(
     ht: *mut hash_table,
     item: *const c_void,
     slot: *const c_void,
@@ -259,8 +249,7 @@ pub unsafe extern "C" fn hash_insert_at(
 ///
 /// # Safety
 /// `ht` must be initialized and `item` valid for its callbacks.
-#[no_mangle]
-pub unsafe extern "C" fn hash_delete(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
+pub unsafe fn hash_delete(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
     let slot = hash_find_slot(ht, item)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -273,8 +262,7 @@ pub unsafe extern "C" fn hash_delete(ht: *mut hash_table, item: *const c_void) -
 /// # Safety
 /// `slot` must come from `hash_find_slot` on this table with no
 /// intervening modification.
-#[no_mangle]
-pub unsafe extern "C" fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c_void {
+pub unsafe fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c_void {
     let slot = (slot as *mut *const c_void)
         .as_mut()
         .expect("hash_delete_at: null slot");
@@ -292,8 +280,7 @@ pub unsafe extern "C" fn hash_delete_at(ht: *mut hash_table, slot: *const c_void
 ///
 /// # Safety
 /// Every stored item must be an owned `malloc`-family allocation.
-#[no_mangle]
-pub unsafe extern "C" fn hash_free_items(ht: *mut hash_table) {
+pub unsafe fn hash_free_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
     for i in 0..(*ht).ht_size as usize {
         let vec = (*ht)
@@ -314,8 +301,7 @@ pub unsafe extern "C" fn hash_free_items(ht: *mut hash_table) {
 ///
 /// # Safety
 /// `ht` must be initialized.
-#[no_mangle]
-pub unsafe extern "C" fn hash_delete_items(ht: *mut hash_table) {
+pub unsafe fn hash_delete_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
     for i in 0..(*ht).ht_size as usize {
         *(*ht)
@@ -336,8 +322,7 @@ pub unsafe extern "C" fn hash_delete_items(ht: *mut hash_table) {
 /// # Safety
 /// `ht` must be initialized; with `free_items` every stored item must be
 /// an owned allocation.
-#[no_mangle]
-pub unsafe extern "C" fn hash_free(ht: *mut hash_table, free_items: c_int) {
+pub unsafe fn hash_free(ht: *mut hash_table, free_items: c_int) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
     if free_items != 0 {
         hash_free_items(ht);
@@ -354,8 +339,7 @@ pub unsafe extern "C" fn hash_free(ht: *mut hash_table, free_items: c_int) {
 ///
 /// # Safety
 /// `ht` must be initialized and `map` non-null.
-#[no_mangle]
-pub unsafe extern "C" fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
+pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
     (*ht).set_ht_in_map(1);
     for i in 0..(*ht).ht_size as usize {
@@ -376,12 +360,7 @@ pub unsafe extern "C" fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
 ///
 /// # Safety
 /// `ht` must be initialized and `map` non-null.
-#[no_mangle]
-pub unsafe extern "C" fn hash_map_arg(
-    ht: *mut hash_table,
-    map: hash_map_arg_func_t,
-    arg: *mut c_void,
-) {
+pub unsafe fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *mut c_void) {
     let map = map.expect("hash_map_arg without callback");
     (*ht).set_ht_in_map(1);
     for i in 0..(*ht).ht_size as usize {
@@ -402,8 +381,7 @@ pub unsafe extern "C" fn hash_map_arg(
 ///
 /// # Safety
 /// `ht` must be initialized.
-#[no_mangle]
-pub unsafe extern "C" fn hash_rehash(ht: *mut hash_table) {
+pub unsafe fn hash_rehash(ht: *mut hash_table) {
     let old_ht_size = (*ht).ht_size;
     let old_vec = (*ht).ht_vec;
 
@@ -436,8 +414,7 @@ pub unsafe extern "C" fn hash_rehash(ht: *mut hash_table) {
 ///
 /// # Safety
 /// `ht` must be initialized and `out_file` an open stream.
-#[no_mangle]
-pub unsafe extern "C" fn hash_print_stats(ht: *mut hash_table, out_file: *mut FILE) {
+pub unsafe fn hash_print_stats(ht: *mut hash_table, out_file: *mut FILE) {
     fprintf(
         out_file,
         c"Load=%lu/%lu=%.0f%%, ".as_ptr(),
@@ -465,8 +442,7 @@ pub unsafe extern "C" fn hash_print_stats(ht: *mut hash_table, out_file: *mut FI
 ///
 /// # Safety
 /// `vector_0` must be null or have room for `ht_fill + 1` pointers.
-#[no_mangle]
-pub unsafe extern "C" fn hash_dump(
+pub unsafe fn hash_dump(
     ht: *mut hash_table,
     mut vector_0: *mut *mut c_void,
     compare: qsort_cmp_t,
@@ -507,8 +483,7 @@ pub unsafe extern "C" fn hash_dump(
 ///
 /// # Safety
 /// Always safe; unsafe only for C-API signature compatibility.
-#[no_mangle]
-pub unsafe extern "C" fn round_up_2(mut n: c_ulong) -> c_ulong {
+pub unsafe fn round_up_2(mut n: c_ulong) -> c_ulong {
     n |= n >> 1;
     n |= n >> 2;
     n |= n >> 4;
@@ -579,8 +554,7 @@ unsafe fn load_word(k: *const c_uchar) -> c_uint {
 ///
 /// # Safety
 /// `k` must be valid for reads of `length` bytes.
-#[no_mangle]
-pub unsafe extern "C" fn jhash(mut k: *const c_uchar, mut length: c_int) -> c_uint {
+pub unsafe fn jhash(mut k: *const c_uchar, mut length: c_int) -> c_uint {
     let mut c = JHASH_INITVAL.wrapping_add(length as c_uint);
     let mut b = c;
     let mut a = b;
@@ -658,8 +632,7 @@ fn add_until_nul(acc: c_uint, val: c_uint, have_nul: c_uint) -> c_uint {
 ///
 /// # Safety
 /// `k` must be a valid NUL-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn jhash_string(mut k: *const c_uchar) -> c_uint {
+pub unsafe fn jhash_string(mut k: *const c_uchar) -> c_uint {
     let start: *const c_uchar = k;
     let mut klen: size_t = strlen(k as *const c_char);
 

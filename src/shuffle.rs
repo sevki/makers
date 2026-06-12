@@ -1,10 +1,9 @@
 use crate::file::{Dep, File};
-use crate::floc::Floc;
 use std::sync::{Mutex, OnceLock};
 
 use crate::misc::{make_rand, make_seed};
+use crate::output::fatal;
 extern "C" {
-    fn fatal(flocp: *const Floc, length: usize, fmt: *const ::core::ffi::c_char, ...) -> !;
     static mut not_parallel: ::core::ffi::c_int;
 }
 

@@ -29,15 +29,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn format(
-        prefix: *const ::core::ffi::c_char,
-        length: size_t,
-        fmt: *const ::core::ffi::c_char,
-        ...
-    ) -> *mut ::core::ffi::c_char;
     fn reset_makeflags(origin: variable_origin);
     static mut reading_file: *const Floc;
     static mut expanding_var: *mut *const Floc;
@@ -48,37 +39,6 @@ extern "C" {
     static mut cmd_prefix: ::core::ffi::c_char;
     static mut jobserver_auth: *mut ::core::ffi::c_char;
     static mut makelevel: ::core::ffi::c_uint;
-    static mut remote_description: *mut ::core::ffi::c_char;
-    fn hash_init(
-        ht: *mut hash_table,
-        size: ::core::ffi::c_ulong,
-        hash_1: hash_func_t,
-        hash_2: hash_func_t,
-        hash_cmp: hash_cmp_func_t,
-    );
-    fn hash_find_slot(
-        ht: *mut hash_table,
-        key: *const ::core::ffi::c_void,
-    ) -> *mut *mut ::core::ffi::c_void;
-    fn hash_find_item(
-        ht: *mut hash_table,
-        key: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_insert_at(
-        ht: *mut hash_table,
-        item: *const ::core::ffi::c_void,
-        slot: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_delete_at(
-        ht: *mut hash_table,
-        slot: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_free(ht: *mut hash_table, free_items: ::core::ffi::c_int);
-    fn hash_map(ht: *mut hash_table, map: hash_map_func_t);
-    fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *mut ::core::ffi::c_void);
-    fn hash_print_stats(ht: *mut hash_table, out_file: *mut FILE);
-    fn jhash(key: *const ::core::ffi::c_uchar, n: ::core::ffi::c_int) -> ::core::ffi::c_uint;
-    static mut hash_deleted_item: *const ::core::ffi::c_void;
     static mut variable_buffer: *mut ::core::ffi::c_char;
     static mut shell_var: variable;
     fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);
@@ -98,7 +58,6 @@ extern "C" {
         argv: *mut *mut ::core::ffi::c_char,
         trim_newlines: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_char;
-    fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
 }
 use crate::warning::{self, Action, Type};
 pub type file = File;
@@ -121,6 +80,14 @@ pub type hash_func_t = crate::hash::hash_func_t;
 pub type dep = Dep;
 pub type commands = Commands;
 use crate::floc::Floc;
+use crate::hash::{
+    hash_delete_at, hash_deleted_item, hash_find_item, hash_find_slot, hash_free, hash_init,
+    hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
+};
+use crate::misc::concat;
+use crate::output::{error, fatal, format};
+use crate::posixos::jobserver_get_invalid_auth;
+use crate::remote_stub::remote_description;
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;

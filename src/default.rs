@@ -249,7 +249,6 @@ const DEFAULT_VARIABLES: &[(&CStr, &CStr)] = &[
 /// # Safety
 /// Must run single-threaded: it mutates the global file table, the global
 /// variable set, and the `suffix_file` global.
-#[no_mangle]
 pub unsafe fn set_default_suffixes() {
     suffix_file = enter_file(strcache_add(c".SUFFIXES".as_ptr()));
     (*suffix_file).set_builtin(1);
@@ -300,7 +299,6 @@ pub unsafe fn set_default_suffixes() {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global file table.
-#[no_mangle]
 pub unsafe fn install_default_suffix_rules() {
     if no_builtin_rules_flag != 0 {
         return;
@@ -324,7 +322,6 @@ pub unsafe fn install_default_suffix_rules() {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global pattern-rule lists.
-#[no_mangle]
 pub unsafe fn install_default_implicit_rules() {
     if no_builtin_rules_flag != 0 {
         return;
@@ -351,7 +348,6 @@ pub unsafe fn install_default_implicit_rules() {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global variable set.
-#[no_mangle]
 pub unsafe fn define_default_variables() {
     if no_builtin_variables_flag != 0 {
         return;
@@ -374,7 +370,6 @@ pub unsafe fn define_default_variables() {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global variable set.
-#[no_mangle]
 pub unsafe fn undefine_default_variables() {
     for &(name, _) in DEFAULT_VARIABLES {
         undefine_variable_in_set(

@@ -84,7 +84,6 @@ static mut gpaths: *mut Vpath = null_mut();
 /// # Safety
 /// Must run single-threaded: it reads and writes the module's vpath chains
 /// and expands make variables through the global variable tables.
-#[no_mangle]
 pub unsafe fn build_vpath_lists() {
     // Reverse the chain so vpaths are searched in the order their
     // directives appeared in the makefile.
@@ -141,8 +140,7 @@ unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
 /// # Safety
 /// `pattern` and `dirpath` must be null or valid nul-terminated strings,
 /// and the caller must be single-threaded with respect to the vpath chains.
-#[no_mangle]
-pub unsafe extern "C" fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_char) {
+pub unsafe fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_char) {
     let mut percent: *const c_char = null();
     if !pattern.is_null() {
         percent = find_percent(pattern);
@@ -262,8 +260,7 @@ pub unsafe extern "C" fn construct_vpath_list(pattern: *mut c_char, mut dirpath:
 ///
 /// # Safety
 /// `file` must point to at least `len` readable bytes.
-#[no_mangle]
-pub unsafe extern "C" fn gpath_search(file: *const c_char, len: size_t) -> c_int {
+pub unsafe fn gpath_search(file: *const c_char, len: size_t) -> c_int {
     if !gpaths.is_null() && len <= (*gpaths).maxlen {
         let mut gp = (*gpaths).searchpath;
         while !(*gp).is_null() {
@@ -424,8 +421,7 @@ unsafe fn selective_vpath_search(
 /// `file` must be a valid nul-terminated string; `mtime_ptr`, `vpath_index`,
 /// and `path_index` must each be null or valid for writes. When
 /// `vpath_index` is non-null, `path_index` must be non-null too.
-#[no_mangle]
-pub unsafe extern "C" fn vpath_search(
+pub unsafe fn vpath_search(
     file: *const c_char,
     mtime_ptr: *mut uintmax_t,
     vpath_index: *mut c_uint,
@@ -470,7 +466,6 @@ pub unsafe extern "C" fn vpath_search(
 /// # Safety
 /// Must run single-threaded: it reads the module's vpath chains and writes
 /// to the C `stdout` stream.
-#[no_mangle]
 pub unsafe fn print_vpath_data_base() {
     puts(c"\n# VPATH Search Paths\n".as_ptr());
 

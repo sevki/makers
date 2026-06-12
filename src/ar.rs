@@ -1,9 +1,9 @@
 use libc::{fnmatch, free, strchr};
 
-use crate::file::{Dep, File};
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
-use crate::strcache::strcache_add;
+use crate::file::{Dep, File};
 use crate::misc::{xcalloc, xstrdup};
+use crate::strcache::strcache_add;
 extern "C" {
     pub type variable_set_list;
     pub type commands;
@@ -14,29 +14,6 @@ extern "C" {
         __compar: __compar_fn_t,
     );
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn alpha_compare(
-        _: *const ::core::ffi::c_void,
-        _: *const ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int;
-    fn ar_scan(
-        archive: *const ::core::ffi::c_char,
-        function: ar_member_func_t,
-        arg: *const ::core::ffi::c_void,
-    ) -> intmax_t;
-    fn ar_name_equal(
-        name: *const ::core::ffi::c_char,
-        mem: *const ::core::ffi::c_char,
-        truncated: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
-    fn ar_member_touch(
-        arname: *const ::core::ffi::c_char,
-        memname: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn file_exists_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t;
@@ -77,7 +54,11 @@ pub type ar_member_func_t = Option<
         *const ::core::ffi::c_void,
     ) -> intmax_t,
 >;
+use crate::arscan::{ar_member_touch, ar_name_equal, ar_scan};
+use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
+use crate::misc::{alpha_compare, concat};
+use crate::output::{error, fatal, perror_with_name};
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ar_glob_state {
@@ -91,8 +72,11 @@ pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const FNM_PATHNAME: ::core::ffi::c_int = (1) << 0;
 pub const FNM_PERIOD: ::core::ffi::c_int = (1) << 2;
-#[no_mangle]
-pub unsafe extern "C" fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers; all pointer arguments must be
+/// valid (NUL-terminated where strings are expected) for the call.
+pub unsafe fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let p: *const ::core::ffi::c_char = strchr(name, '(' as i32);
     let end: *const ::core::ffi::c_char;
     if p.is_null() || p == name {
@@ -101,7 +85,8 @@ pub unsafe extern "C" fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ff
     end = p
         .offset(strlen(p) as isize)
         .offset(-(1 as ::core::ffi::c_int as isize));
-    if *end as ::core::ffi::c_int != ')' as i32 || end == p.offset(1 as ::core::ffi::c_int as isize) {
+    if *end as ::core::ffi::c_int != ')' as i32 || end == p.offset(1 as ::core::ffi::c_int as isize)
+    {
         return 0;
     }
     if *p.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '(' as i32
@@ -117,8 +102,11 @@ pub unsafe extern "C" fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ff
     }
     1
 }
-#[no_mangle]
-pub unsafe extern "C" fn ar_parse_name(
+/// # Safety
+///
+/// C-style API operating on raw pointers; all pointer arguments must be
+/// valid (NUL-terminated where strings are expected) for the call.
+pub unsafe fn ar_parse_name(
     name: *const ::core::ffi::c_char,
     arname_p: *mut *mut ::core::ffi::c_char,
     memname_p: *mut *mut ::core::ffi::c_char,
@@ -159,8 +147,11 @@ unsafe extern "C" fn ar_member_date_1(
         0 as intmax_t
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
+/// # Safety
+///
+/// C-style API operating on raw pointers; all pointer arguments must be
+/// valid (NUL-terminated where strings are expected) for the call.
+pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let val: intmax_t;
@@ -213,8 +204,11 @@ pub unsafe extern "C" fn ar_member_date(name: *const ::core::ffi::c_char) -> tim
         -(1 as ::core::ffi::c_int) as time_t
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers; all pointer arguments must be
+/// valid (NUL-terminated where strings are expected) for the call.
+pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut val: ::core::ffi::c_int;
@@ -330,8 +324,11 @@ unsafe extern "C" fn ar_glob_pattern_p(
     }
     0
 }
-#[no_mangle]
-pub unsafe extern "C" fn ar_glob(
+/// # Safety
+///
+/// C-style API operating on raw pointers; all pointer arguments must be
+/// valid (NUL-terminated where strings are expected) for the call.
+pub unsafe fn ar_glob(
     arname: *const ::core::ffi::c_char,
     member_pattern: *const ::core::ffi::c_char,
     size: size_t,

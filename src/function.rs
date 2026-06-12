@@ -63,12 +63,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn alpha_compare(
-        _: *const ::core::ffi::c_void,
-        _: *const ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut reading_file: *const Floc;
     static mut expanding_var: *mut *const Floc;
@@ -84,32 +78,6 @@ extern "C" {
         flags: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_void;
     fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
-    fn hash_init(
-        ht: *mut hash_table,
-        size: ::core::ffi::c_ulong,
-        hash_1: hash_func_t,
-        hash_2: hash_func_t,
-        hash_cmp: hash_cmp_func_t,
-    );
-    fn hash_load(
-        ht: *mut hash_table,
-        item_table: *const ::core::ffi::c_void,
-        cardinality: ::core::ffi::c_ulong,
-        size: ::core::ffi::c_ulong,
-    );
-    fn hash_find_item(
-        ht: *mut hash_table,
-        key: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_insert(
-        ht: *mut hash_table,
-        item: *const ::core::ffi::c_void,
-    ) -> *mut ::core::ffi::c_void;
-    fn hash_free(ht: *mut hash_table, free_items: ::core::ffi::c_int);
-    fn jhash(key: *const ::core::ffi::c_uchar, n: ::core::ffi::c_int) -> ::core::ffi::c_uint;
-    fn jhash_string(key: *const ::core::ffi::c_uchar) -> ::core::ffi::c_uint;
-    static mut output_context: *mut output;
-    fn outputs(is_err: ::core::ffi::c_int, msg: *const ::core::ffi::c_char);
     fn reap_children(block: ::core::ffi::c_int, err: ::core::ffi::c_int);
     fn free_childbase(child: *mut childbase);
     fn construct_command_argv(
@@ -124,7 +92,6 @@ extern "C" {
         good_stdin: ::core::ffi::c_int,
         argv: *mut *mut ::core::ffi::c_char,
     ) -> pid_t;
-    fn fd_noinherit(fd: ::core::ffi::c_int);
     static mut current_variable_set_list: *mut variable_set_list;
     fn variable_buffer_output(
         ptr: *mut ::core::ffi::c_char,
@@ -283,7 +250,13 @@ pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
 pub use crate::file::nameseq;
+use crate::hash::{
+    hash_find_item, hash_free, hash_init, hash_insert, hash_load, jhash, jhash_string,
+};
+use crate::misc::alpha_compare;
 pub use crate::output::output;
+use crate::output::{error, fatal, output_context, outputs};
+use crate::posixos::fd_noinherit;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct childbase {

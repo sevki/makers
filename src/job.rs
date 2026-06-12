@@ -55,12 +55,7 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn message(prefix: ::core::ffi::c_int, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn die(_: ::core::ffi::c_int) -> !;
-    fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
-    fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
     fn show_goal_error();
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut just_print_flag: ::core::ffi::c_int;
@@ -77,8 +72,6 @@ extern "C" {
     static mut job_slots: ::core::ffi::c_uint;
     static mut max_load_average: ::core::ffi::c_double;
     static mut commands_started: ::core::ffi::c_uint;
-    static mut handling_fatal_signal: sig_atomic_t;
-    static mut output_context: *mut output;
     fn wait(__stat_loc: *mut ::core::ffi::c_int) -> __pid_t;
     fn waitpid(
         __pid: __pid_t,
@@ -114,27 +107,10 @@ extern "C" {
         __fd: ::core::ffi::c_int,
         __newfd: ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
-    fn find_in_given_path(
-        progname: *const ::core::ffi::c_char,
-        path: *const ::core::ffi::c_char,
-        directory: *const ::core::ffi::c_char,
-        optimize_for_exec: bool,
-    ) -> *const ::core::ffi::c_char;
-    fn delete_child_targets(child: *mut child);
-    fn chop_commands(cmds: *mut commands);
     static mut db_level: ::core::ffi::c_int;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn set_command_state(file: *mut file, state: cmd_state);
     fn notice_finished_file(file: *mut file);
-    fn fd_noinherit(fd: ::core::ffi::c_int);
-    fn jobserver_enabled() -> ::core::ffi::c_uint;
-    fn jobserver_release(is_fatal: ::core::ffi::c_int);
-    fn jobserver_signal();
-    fn jobserver_pre_child(_: ::core::ffi::c_int);
-    fn jobserver_post_child(_: ::core::ffi::c_int);
-    fn jobserver_pre_acquire();
-    fn jobserver_acquire(timeout: ::core::ffi::c_int) -> ::core::ffi::c_uint;
-    fn get_bad_stdin() -> ::core::ffi::c_int;
     fn allocated_expand_string_for_file(
         line: *const ::core::ffi::c_char,
         file: *mut file,
@@ -352,6 +328,13 @@ pub struct posix_spawn_file_actions_t {
     pub __actions: *mut __spawn_action,
     pub __pad: [::core::ffi::c_int; 16],
 }
+use crate::commands::{chop_commands, delete_child_targets, handling_fatal_signal};
+use crate::findprog::find_in_given_path;
+use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
+use crate::posixos::{
+    fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
+    jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
+};
 use crate::warning::{self, Action, Type};
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const __S_IEXEC: ::core::ffi::c_int = 0o100 as ::core::ffi::c_int;
