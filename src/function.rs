@@ -1172,8 +1172,9 @@ unsafe extern "C" fn func_word(
     let mut end_p: *const ::core::ffi::c_char;
     let mut p: *const ::core::ffi::c_char;
     let mut i: ::core::ffi::c_longlong;
-    let badfirst = CStr::from_bytes_with_nul(b"invalid first argument to 'word' function\0")
-        .expect("word() diagnostic strings are nul-terminated");
+    let badfirst = unsafe {
+        CStr::from_bytes_with_nul_unchecked(b"invalid first argument to 'word' function\0")
+    };
     i = parse_numeric(
         CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
         badfirst,
