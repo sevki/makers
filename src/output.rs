@@ -1,109 +1,95 @@
-pub use crate::ffi_types::{__off64_t, __off_t, size_t, ssize_t, uintmax_t};
+//! Output handling: the `message`/`error`/`fatal` printers and the
+//! output-sync machinery that captures recipe output into temp files and
+//! dumps it atomically.
+//!
+//! Port of `output.c`. The variadic printers keep their C ABI because they
+//! are called with printf-style argument lists from all over the crate; the
+//! [`msg`] submodule provides native-Rust counterparts.
+
+use ::core::ffi::{c_char, c_int, c_uint, c_void};
+use ::core::ptr::{null, null_mut};
+
+use libc::{
+    __errno_location, close, exit, ftruncate, lseek, perror, read, sprintf, strcat, strerror,
+    strlen, EINTR, SEEK_END, SEEK_SET,
+};
+
+use crate::ffi_types::{__off_t, size_t, uintmax_t};
+use crate::floc::Floc;
+use crate::make_main::{
+    die, makelevel, output_sync, print_data_base_flag, program, should_print_dir,
+    starting_directory,
+};
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
+use crate::posixos::{
+    check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
+    osync_release,
+};
 use crate::stdio::FILE;
-use c2rust_bitfields;
-use libc::{__errno_location, close, exit, perror, sprintf, strcat, strerror};
+
 extern "C" {
-    fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
-    fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
-        -> ssize_t;
-    fn ftruncate(__fd: ::core::ffi::c_int, __length: __off_t) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
-    fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn vsprintf(
-        __s: *mut ::core::ffi::c_char,
-        __format: *const ::core::ffi::c_char,
-        __arg: ::core::ffi::VaList,
-    ) -> ::core::ffi::c_int;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn fwrite(
-        __ptr: *const ::core::ffi::c_void,
-        __size: size_t,
-        __n: size_t,
-        __s: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn fileno(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn mempcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn should_print_dir() -> ::core::ffi::c_int;
-    fn die(_: ::core::ffi::c_int) -> !;
-    static mut print_data_base_flag: ::core::ffi::c_int;
-    static mut output_sync: ::core::ffi::c_int;
-    static mut program: *const ::core::ffi::c_char;
-    static mut starting_directory: *mut ::core::ffi::c_char;
-    static mut makelevel: ::core::ffi::c_uint;
-    fn check_io_state() -> ::core::ffi::c_uint;
-    fn fd_noinherit(fd: ::core::ffi::c_int);
-    fn fd_set_append(fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
-    fn fd_reset_append(fd: ::core::ffi::c_int, flags: ::core::ffi::c_int);
-    fn osync_clear();
-    fn osync_acquire() -> ::core::ffi::c_uint;
-    fn osync_release();
+    fn fflush(stream: *mut FILE) -> c_int;
+    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> c_int;
+    fn fputs(s: *const c_char, stream: *mut FILE) -> c_int;
+    fn fwrite(ptr: *const c_void, size: size_t, n: size_t, s: *mut FILE) -> ::core::ffi::c_ulong;
+    fn fileno(stream: *mut FILE) -> c_int;
+    fn mempcpy(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void;
 }
-pub type __builtin_va_list = [__va_list_tag; 1];
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __va_list_tag {
-    pub gp_offset: ::core::ffi::c_uint,
-    pub fp_offset: ::core::ffi::c_uint,
-    pub overflow_arg_area: *mut ::core::ffi::c_void,
-    pub reg_save_area: *mut ::core::ffi::c_void,
-}
-pub type __gnuc_va_list = __builtin_va_list;
-pub type va_list = __gnuc_va_list;
-use crate::floc::Floc;
 
+/// Per-target output state: temp-file descriptors for stdout/stderr while
+/// output sync is active.
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct output {
-    pub out: ::core::ffi::c_int,
-    pub err: ::core::ffi::c_int,
+    pub out: c_int,
+    pub err: c_int,
     #[bitfield(name = "syncout", ty = "::core::ffi::c_uint", bits = "0..=0")]
     pub syncout: [u8; 1],
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 3],
 }
+
+/// The shared, growing buffer used by the printf-style printers.
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct fmtstring {
-    pub buffer: *mut ::core::ffi::c_char,
-    pub size: size_t,
+struct fmtstring {
+    buffer: *mut c_char,
+    size: size_t,
 }
-pub const EINTR: ::core::ffi::c_int = 4;
-pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const INTSTR_LENGTH: usize = (53 as usize)
-    .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
-    .wrapping_div(22 as usize)
-    .wrapping_add(3 as usize);
-pub const OUTPUT_SYNC_NONE: ::core::ffi::c_int = 0;
-pub const OUTPUT_SYNC_RECURSE: ::core::ffi::c_int = 3;
-pub const MAKE_FAILURE: ::core::ffi::c_int = 2;
-pub const SEEK_SET: ::core::ffi::c_int = 0;
-pub const SEEK_END: ::core::ffi::c_int = 2;
+
+/// Bytes needed to print an integer of type `uintmax_t`: digits (53/22
+/// approximates bits-to-decimal-digits), sign, and NUL (from makeint.h).
+pub const INTSTR_LENGTH: usize = 53 * ::core::mem::size_of::<uintmax_t>() / 22 + 3;
+
+pub const OUTPUT_SYNC_NONE: c_int = 0;
+pub const OUTPUT_SYNC_RECURSE: c_int = 3;
+pub const MAKE_FAILURE: c_int = 2;
+
+/// `check_io_state` bits (see os.h).
+const IO_COMBINED_OUTERR: c_uint = 0x0002;
+const IO_STDOUT_OK: c_uint = 0x0008;
+const IO_STDERR_OK: c_uint = 0x0010;
+
 #[no_mangle]
 pub static mut output_context: *mut output = ::core::ptr::null::<output>() as *mut output;
 #[no_mangle]
 pub static mut stdio_traced: ::core::ffi::c_uint = 0;
-pub const OUTPUT_NONE: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
+pub const OUTPUT_NONE: ::core::ffi::c_int = -1;
 unsafe extern "C" fn _outputs(
     out: *mut output,
     is_err: ::core::ffi::c_int,
     msg: *const ::core::ffi::c_char,
 ) {
-    let f: *mut FILE;
     if !out.is_null() && (*out).syncout() as ::core::ffi::c_int != 0 {
         let fd: ::core::ffi::c_int = if is_err != 0 { (*out).err } else { (*out).out };
         if fd != OUTPUT_NONE {
             let len: size_t = strlen(msg) as size_t;
             let mut r: ::core::ffi::c_int;
             loop {
-                r = lseek(fd, 0 as __off_t, 2) as ::core::ffi::c_int;
-                if !(r == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
+                r = lseek(fd, 0, 2) as ::core::ffi::c_int;
+                if !(r == -1 && *__errno_location() == EINTR) {
                     break;
                 }
             }
@@ -111,10 +97,14 @@ unsafe extern "C" fn _outputs(
             return;
         }
     }
-    f = if is_err != 0 { stderr } else { stdout };
+    let f: *mut FILE = if is_err != 0 { stderr } else { stdout };
     fputs(msg, f);
     fflush(f);
 }
+/// Print an entering/leaving-directory line (returns 1).
+///
+/// # Safety
+/// Must run single-threaded: reads make globals and a static buffer.
 #[no_mangle]
 pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi::c_int {
     static mut buf: *mut ::core::ffi::c_char =
@@ -133,29 +123,25 @@ pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> 
     if makelevel == 0 {
         if starting_directory.is_null() {
             if entering != 0 {
-                fmt = b"%s: Entering an unknown directory\n\0" as *const u8
-                    as *const ::core::ffi::c_char;
+                fmt = c"%s: Entering an unknown directory\n".as_ptr();
             } else {
-                fmt = b"%s: Leaving an unknown directory\n\0" as *const u8
-                    as *const ::core::ffi::c_char;
+                fmt = c"%s: Leaving an unknown directory\n".as_ptr();
             }
         } else if entering != 0 {
-            fmt = b"%s: Entering directory '%s'\n\0" as *const u8 as *const ::core::ffi::c_char;
+            fmt = c"%s: Entering directory '%s'\n".as_ptr();
         } else {
-            fmt = b"%s: Leaving directory '%s'\n\0" as *const u8 as *const ::core::ffi::c_char;
+            fmt = c"%s: Leaving directory '%s'\n".as_ptr();
         }
     } else if starting_directory.is_null() {
         if entering != 0 {
-            fmt = b"%s[%u]: Entering an unknown directory\n\0" as *const u8
-                as *const ::core::ffi::c_char;
+            fmt = c"%s[%u]: Entering an unknown directory\n".as_ptr();
         } else {
-            fmt = b"%s[%u]: Leaving an unknown directory\n\0" as *const u8
-                as *const ::core::ffi::c_char;
+            fmt = c"%s[%u]: Leaving an unknown directory\n".as_ptr();
         }
     } else if entering != 0 {
-        fmt = b"%s[%u]: Entering directory '%s'\n\0" as *const u8 as *const ::core::ffi::c_char;
+        fmt = c"%s[%u]: Entering directory '%s'\n".as_ptr();
     } else {
-        fmt = b"%s[%u]: Leaving directory '%s'\n\0" as *const u8 as *const ::core::ffi::c_char;
+        fmt = c"%s[%u]: Leaving directory '%s'\n".as_ptr();
     }
     need = need.wrapping_add(strlen(fmt) as size_t);
     if need > len {
@@ -165,10 +151,10 @@ pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> 
     p = buf;
     if print_data_base_flag != 0 {
         let fresh0 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+        p = p.add(1);
         *fresh0 = '#' as i32 as ::core::ffi::c_char;
         let fresh1 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+        p = p.add(1);
         *fresh1 = ' ' as i32 as ::core::ffi::c_char;
     }
     if makelevel == 0 {
@@ -182,14 +168,19 @@ pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> 
     } else {
         sprintf(p, fmt, program, makelevel, starting_directory);
     }
-    _outputs(::core::ptr::null_mut::<output>(), 0, buf);
+    _outputs(null_mut(), 0, buf);
     1
 }
+/// Copy everything from fd `from` to stream `to`, from the beginning.
+///
+/// # Safety
+/// `from` must be an open, seekable fd and `to` an open stream; uses a
+/// static buffer, so must run single-threaded.
 #[no_mangle]
 pub unsafe extern "C" fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) {
     static mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
-    if lseek(from, 0 as __off_t, SEEK_SET) == -(1 as ::core::ffi::c_int) as __off_t {
-        perror(b"lseek()\0" as *const u8 as *const ::core::ffi::c_char);
+    if lseek(from, 0, SEEK_SET) == -1 as __off_t {
+        perror(c"lseek()".as_ptr());
     }
     loop {
         let mut len: ::core::ffi::c_int;
@@ -199,12 +190,12 @@ pub unsafe extern "C" fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) 
                 &raw mut buffer as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
                 ::core::mem::size_of::<[::core::ffi::c_char; 8192]>() as size_t,
             ) as ::core::ffi::c_int;
-            if !(len == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
+            if !(len == -1 && *__errno_location() == EINTR) {
                 break;
             }
         }
         if len < 0 {
-            perror(b"read()\0" as *const u8 as *const ::core::ffi::c_char);
+            perror(c"read()".as_ptr());
         }
         if len <= 0 {
             break;
@@ -216,19 +207,28 @@ pub unsafe extern "C" fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) 
             to,
         ) < 1
         {
-            perror(b"fwrite()\0" as *const u8 as *const ::core::ffi::c_char);
+            perror(c"fwrite()".as_ptr());
             break;
         } else {
             fflush(to);
         }
     }
 }
+/// Create an anonymous temp fd in append mode for output sync.
+///
+/// # Safety
+/// Always safe; unsafe for C-API compatibility.
 #[no_mangle]
 pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
-    let fd: ::core::ffi::c_int = get_tmpfd(::core::ptr::null_mut::<*mut ::core::ffi::c_char>());
+    let fd: ::core::ffi::c_int = get_tmpfd(null_mut());
     fd_set_append(fd);
     fd
 }
+/// Set up the output-sync temp files for `out`, disabling output sync
+/// (with a message) on failure.
+///
+/// # Safety
+/// `out` must point to a valid `output`; must run single-threaded.
 #[no_mangle]
 pub unsafe extern "C" fn setup_tmpfile(out: *mut output) {
     static mut in_setup: ::core::ffi::c_uint = 0;
@@ -240,17 +240,11 @@ pub unsafe extern "C" fn setup_tmpfile(out: *mut output) {
     // The block falls through to the error handler below on any failure;
     // reaching its end is the success path (the C code used `goto`).
     'setup: {
-        if io_state
-            & (0x8 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int) as ::core::ffi::c_uint
-            == 0
-        {
-            perror_with_name(
-                b"output-sync suppressed: \0" as *const u8 as *const ::core::ffi::c_char,
-                b"stderr\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+        if io_state & (IO_STDOUT_OK | IO_STDERR_OK) == 0 {
+            perror_with_name(c"output-sync suppressed: ".as_ptr(), c"stderr".as_ptr());
             break 'setup;
         }
-        if io_state & 0x8 as ::core::ffi::c_uint != 0 {
+        if io_state & IO_STDOUT_OK != 0 {
             let fd: ::core::ffi::c_int = output_tmpfd();
             if fd < 0 {
                 break 'setup;
@@ -258,8 +252,8 @@ pub unsafe extern "C" fn setup_tmpfile(out: *mut output) {
             fd_noinherit(fd);
             (*out).out = fd;
         }
-        if io_state & 0x10 as ::core::ffi::c_uint != 0 {
-            if (*out).out != OUTPUT_NONE && io_state & 0x2 as ::core::ffi::c_uint != 0 {
+        if io_state & IO_STDERR_OK != 0 {
+            if (*out).out != OUTPUT_NONE && io_state & IO_COMBINED_OUTERR != 0 {
                 (*out).err = (*out).out;
             } else {
                 let fd_0: ::core::ffi::c_int = output_tmpfd();
@@ -274,31 +268,32 @@ pub unsafe extern "C" fn setup_tmpfile(out: *mut output) {
         return;
     }
     error(
-        ::core::ptr::null_mut::<Floc>(),
+        null::<Floc>(),
         0,
-        b"cannot open output-sync lock file: suppressing output-sync\0" as *const u8
-            as *const ::core::ffi::c_char,
+        c"cannot open output-sync lock file: suppressing output-sync".as_ptr(),
     );
     output_close(out);
     output_sync = OUTPUT_SYNC_NONE;
     osync_clear();
     in_setup = 0;
 }
+/// Dump any captured output under the output-sync lock and truncate the
+/// temp files for reuse.
+///
+/// # Safety
+/// `out` must point to a valid `output`; must run single-threaded.
 pub unsafe fn output_dump(out: *mut output) {
-    let outfd_not_empty: ::core::ffi::c_int = ((*out).out != OUTPUT_NONE
-        && lseek((*out).out, 0 as __off_t, SEEK_END) > 0 as __off_t)
-        as ::core::ffi::c_int;
-    let errfd_not_empty: ::core::ffi::c_int = ((*out).err != OUTPUT_NONE
-        && lseek((*out).err, 0 as __off_t, SEEK_END) > 0 as __off_t)
-        as ::core::ffi::c_int;
+    let outfd_not_empty: ::core::ffi::c_int =
+        ((*out).out != OUTPUT_NONE && lseek((*out).out, 0, SEEK_END) > 0) as ::core::ffi::c_int;
+    let errfd_not_empty: ::core::ffi::c_int =
+        ((*out).err != OUTPUT_NONE && lseek((*out).err, 0, SEEK_END) > 0) as ::core::ffi::c_int;
     if outfd_not_empty != 0 || errfd_not_empty != 0 {
         let mut traced: ::core::ffi::c_int = 0;
         if osync_acquire() == 0 {
             error(
-                ::core::ptr::null_mut::<Floc>(),
+                null::<Floc>(),
                 0,
-                b"warning: cannot acquire output lock: disabling output sync\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"warning: cannot acquire output lock: disabling output sync".as_ptr(),
             );
             osync_clear();
         }
@@ -317,28 +312,33 @@ pub unsafe fn output_dump(out: *mut output) {
         osync_release();
         if (*out).out != OUTPUT_NONE {
             let mut e: ::core::ffi::c_int;
-            lseek((*out).out, 0 as __off_t, SEEK_SET);
+            lseek((*out).out, 0, SEEK_SET);
             loop {
-                e = ftruncate((*out).out, 0 as __off_t);
-                if !(e == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
+                e = ftruncate((*out).out, 0);
+                if !(e == -1 && *__errno_location() == EINTR) {
                     break;
                 }
             }
         }
         if (*out).err != OUTPUT_NONE && (*out).err != (*out).out {
             let mut e_0: ::core::ffi::c_int;
-            lseek((*out).err, 0 as __off_t, SEEK_SET);
+            lseek((*out).err, 0, SEEK_SET);
             loop {
-                e_0 = ftruncate((*out).err, 0 as __off_t);
-                if !(e_0 == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
+                e_0 = ftruncate((*out).err, 0);
+                if !(e_0 == -1 && *__errno_location() == EINTR) {
                     break;
                 }
             }
         }
     }
 }
-static mut stdout_flags: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-static mut stderr_flags: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
+static mut stdout_flags: ::core::ffi::c_int = -1;
+static mut stderr_flags: ::core::ffi::c_int = -1;
+/// Initialize `out` (or, when null, switch stdout/stderr to append mode).
+///
+/// # Safety
+/// `out` must be null or point to a valid `output`; must run
+/// single-threaded.
 pub unsafe fn output_init(out: *mut output) {
     if !out.is_null() {
         (*out).err = OUTPUT_NONE;
@@ -351,6 +351,12 @@ pub unsafe fn output_init(out: *mut output) {
     stdout_flags = fd_set_append(fileno(stdout));
     stderr_flags = fd_set_append(fileno(stderr));
 }
+/// Dump and close `out`'s temp files (or, when null, restore
+/// stdout/stderr).
+///
+/// # Safety
+/// `out` must be null or point to a valid `output`; must run
+/// single-threaded.
 pub unsafe fn output_close(out: *mut output) {
     if out.is_null() {
         if stdio_traced != 0 {
@@ -369,6 +375,11 @@ pub unsafe fn output_close(out: *mut output) {
     }
     output_init(out);
 }
+/// Lazily set up output sync and the enter-directory trace before the
+/// first real output.
+///
+/// # Safety
+/// Must run single-threaded: touches output and trace globals.
 pub unsafe fn output_start() {
     if !output_context.is_null()
         && (*output_context).syncout() as ::core::ffi::c_int != 0
@@ -383,6 +394,11 @@ pub unsafe fn output_start() {
         stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
     }
 }
+/// Write `msg` to stdout or stderr (or the sync temp file), starting
+/// output first.
+///
+/// # Safety
+/// `msg` must be null or a valid NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn outputs(is_err: ::core::ffi::c_int, msg: *const ::core::ffi::c_char) {
     if msg.is_null() || *msg as ::core::ffi::c_int == 0 {
@@ -395,6 +411,10 @@ static mut fmtbuf: fmtstring = fmtstring {
     buffer: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     size: 0,
 };
+/// Return the shared format buffer, grown to at least `need` bytes.
+///
+/// # Safety
+/// Must run single-threaded; the buffer is shared between calls.
 #[no_mangle]
 pub unsafe extern "C" fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
     if need > fmtbuf.size {
@@ -402,9 +422,15 @@ pub unsafe extern "C" fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
         fmtbuf.buffer = xrealloc(fmtbuf.buffer as *mut ::core::ffi::c_void, fmtbuf.size)
             as *mut ::core::ffi::c_char;
     }
-    *fmtbuf.buffer.offset(need.wrapping_sub(1) as isize) = 0;
+    *fmtbuf.buffer.add(need - 1) = 0;
     fmtbuf.buffer
 }
+/// printf-style message to stdout, optionally prefixed with the program
+/// name; `len` must bound the formatted arguments' length.
+///
+/// # Safety
+/// `fmt` and the variadic arguments must form a valid printf invocation
+/// whose expansion fits in `len` extra bytes.
 #[no_mangle]
 pub unsafe extern "C" fn message(
     prefix: ::core::ffi::c_int,
@@ -412,8 +438,6 @@ pub unsafe extern "C" fn message(
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) {
-    let start: *mut ::core::ffi::c_char;
-    let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -422,35 +446,33 @@ pub unsafe extern "C" fn message(
             .wrapping_add(1)
             .wrapping_add(1) as ::core::ffi::c_ulong,
     ) as size_t as size_t;
-    p = get_buffer(len);
-    start = p;
+    let start: *mut ::core::ffi::c_char = get_buffer(len);
+    let mut p = start;
     if prefix != 0 {
         p = p.offset(
             (if makelevel == 0 {
-                sprintf(
-                    p,
-                    b"%s: \0" as *const u8 as *const ::core::ffi::c_char,
-                    program,
-                )
+                sprintf(p, c"%s: ".as_ptr(), program)
             } else {
-                sprintf(
-                    p,
-                    b"%s[%u]: \0" as *const u8 as *const ::core::ffi::c_char,
-                    program,
-                    makelevel,
-                )
+                sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel)
             }) as isize,
         );
     }
     let args_0 = args.clone();
     vsprintf(p, fmt, args_0);
-    strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
-    } else {
-        panic!("assertion failed: start[len-1] == '\'");
-    };
+    strcat(p, c"\n".as_ptr());
+    assert!(
+        *start.add(len - 1) == 0,
+        "formatted message overran its buffer"
+    );
     outputs(0, start);
 }
+/// printf-style error to stderr with a file:line or program prefix;
+/// `len` must bound the formatted arguments' length.
+///
+/// # Safety
+/// `flocp` must be null or valid; `fmt` and the variadic arguments must
+/// form a valid printf invocation whose expansion fits in `len` extra
+/// bytes.
 #[no_mangle]
 pub unsafe extern "C" fn error(
     flocp: *const Floc,
@@ -458,8 +480,6 @@ pub unsafe extern "C" fn error(
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) {
-    let start: *mut ::core::ffi::c_char;
-    let mut p: *mut ::core::ffi::c_char;
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -473,40 +493,36 @@ pub unsafe extern "C" fn error(
             .wrapping_add(1)
             .wrapping_add(1) as ::core::ffi::c_ulong,
     ) as size_t as size_t;
-    p = get_buffer(len);
-    start = p;
+    let start: *mut ::core::ffi::c_char = get_buffer(len);
+    let mut p = start;
     p = p.offset(
         (if !flocp.is_null() && !(*flocp).filenm.is_null() {
             sprintf(
                 p,
-                b"%s:%lu: \0" as *const u8 as *const ::core::ffi::c_char,
+                c"%s:%lu: ".as_ptr(),
                 (*flocp).filenm,
                 (*flocp).lineno.wrapping_add((*flocp).offset),
             )
         } else if makelevel == 0 {
-            sprintf(
-                p,
-                b"%s: \0" as *const u8 as *const ::core::ffi::c_char,
-                program,
-            )
+            sprintf(p, c"%s: ".as_ptr(), program)
         } else {
-            sprintf(
-                p,
-                b"%s[%u]: \0" as *const u8 as *const ::core::ffi::c_char,
-                program,
-                makelevel,
-            )
+            sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel)
         }) as isize,
     );
     let args_0 = args.clone();
     vsprintf(p, fmt, args_0);
-    strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
-    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
-    } else {
-        panic!("assertion failed: start[len-1] == '\'");
-    };
+    strcat(p, c"\n".as_ptr());
+    assert!(
+        *start.add(len - 1) == 0,
+        "formatted message overran its buffer"
+    );
     outputs(1, start);
 }
+/// Like [`error`] but adds the `*** ` marker and `.  Stop.` suffix, then
+/// dies with `MAKE_FAILURE`.
+///
+/// # Safety
+/// Same contract as [`error`].
 #[no_mangle]
 pub unsafe extern "C" fn fatal(
     flocp: *const Floc,
@@ -514,10 +530,7 @@ pub unsafe extern "C" fn fatal(
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) -> ! {
-    let stop: *const ::core::ffi::c_char =
-        b".  Stop.\n\0" as *const u8 as *const ::core::ffi::c_char;
-    let start: *mut ::core::ffi::c_char;
-    let mut p: *mut ::core::ffi::c_char;
+    let stop: *const ::core::ffi::c_char = c".  Stop.\n".as_ptr();
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -531,41 +544,36 @@ pub unsafe extern "C" fn fatal(
             .wrapping_add(strlen(stop))
             .wrapping_add(1) as ::core::ffi::c_ulong,
     ) as size_t as size_t;
-    p = get_buffer(len);
-    start = p;
+    let start: *mut ::core::ffi::c_char = get_buffer(len);
+    let mut p = start;
     p = p.offset(
         (if !flocp.is_null() && !(*flocp).filenm.is_null() {
             sprintf(
                 p,
-                b"%s:%lu: *** \0" as *const u8 as *const ::core::ffi::c_char,
+                c"%s:%lu: *** ".as_ptr(),
                 (*flocp).filenm,
                 (*flocp).lineno.wrapping_add((*flocp).offset),
             )
         } else if makelevel == 0 {
-            sprintf(
-                p,
-                b"%s: *** \0" as *const u8 as *const ::core::ffi::c_char,
-                program,
-            )
+            sprintf(p, c"%s: *** ".as_ptr(), program)
         } else {
-            sprintf(
-                p,
-                b"%s[%u]: *** \0" as *const u8 as *const ::core::ffi::c_char,
-                program,
-                makelevel,
-            )
+            sprintf(p, c"%s[%u]: *** ".as_ptr(), program, makelevel)
         }) as isize,
     );
     let args_0 = args.clone();
     vsprintf(p, fmt, args_0);
     strcat(p, stop);
-    if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
-    } else {
-        panic!("assertion failed: start[len-1] == '\'");
-    };
+    assert!(
+        *start.add(len - 1) == 0,
+        "formatted message overran its buffer"
+    );
     outputs(1, start);
     die(MAKE_FAILURE);
 }
+/// Format into the shared buffer with an optional prefix and return it.
+///
+/// # Safety
+/// Same printf contract as [`message`]; the returned buffer is shared.
 #[no_mangle]
 pub unsafe extern "C" fn format(
     prefix: *const ::core::ffi::c_char,
@@ -578,11 +586,9 @@ pub unsafe extern "C" fn format(
     } else {
         0
     };
-    let start: *mut ::core::ffi::c_char;
-    let mut p: *mut ::core::ffi::c_char;
     len = len.wrapping_add(strlen(fmt).wrapping_add(plen as size_t).wrapping_add(1) as size_t);
-    p = get_buffer(len);
-    start = p;
+    let start: *mut ::core::ffi::c_char = get_buffer(len);
+    let mut p = start;
     if plen != 0 {
         p = mempcpy(
             p as *mut ::core::ffi::c_void,
@@ -594,6 +600,10 @@ pub unsafe extern "C" fn format(
     vsprintf(p, fmt, args_0);
     start
 }
+/// Report `str``name`: strerror(errno) via [`error`].
+///
+/// # Safety
+/// `str` and `name` must be valid NUL-terminated strings.
 #[no_mangle]
 pub unsafe extern "C" fn perror_with_name(
     str: *const ::core::ffi::c_char,
@@ -601,27 +611,36 @@ pub unsafe extern "C" fn perror_with_name(
 ) {
     let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     error(
-        ::core::ptr::null_mut::<Floc>(),
+        null::<Floc>(),
         (strlen(str) as size_t)
             .wrapping_add(strlen(name) as size_t)
             .wrapping_add(strlen(err) as size_t),
-        b"%s%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        c"%s%s: %s".as_ptr(),
         str,
         name,
         err,
     );
 }
+/// Report `name`: strerror(errno) via [`fatal`] and die.
+///
+/// # Safety
+/// `name` must be a valid NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn pfatal_with_name(name: *const ::core::ffi::c_char) -> ! {
     let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     fatal(
-        ::core::ptr::null_mut::<Floc>(),
+        null::<Floc>(),
         (strlen(name) as size_t).wrapping_add(strlen(err) as size_t),
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        c"%s: %s".as_ptr(),
         name,
         err,
     );
 }
+/// Print the out-of-memory message without allocating and exit with
+/// `MAKE_FAILURE`.
+///
+/// # Safety
+/// Always safe to call; unsafe only for C-API signature compatibility.
 #[no_mangle]
 pub unsafe extern "C" fn out_of_memory() -> ! {
     writebuf(
@@ -631,8 +650,7 @@ pub unsafe extern "C" fn out_of_memory() -> ! {
     );
     writebuf(
         fileno(stdout),
-        b": *** virtual memory exhausted\n\0" as *const u8 as *const ::core::ffi::c_char
-            as *const ::core::ffi::c_void,
+        c": *** virtual memory exhausted\n".as_ptr() as *const ::core::ffi::c_void,
         (::core::mem::size_of::<[::core::ffi::c_char; 32]>() as size_t).wrapping_sub(1),
     );
     exit(MAKE_FAILURE);
