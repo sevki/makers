@@ -3,13 +3,15 @@ pub use crate::ffi_types::{
     intmax_t, size_t, time_t, uintmax_t,
 };
 use crate::misc::free_ns_chain;
-use crate::misc::{copy_dep_chain, end_of_token, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::misc::{copy_dep_chain, end_of_token, xmalloc, xrealloc, xstrdup};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add_len, strcache_iscached};
 use c2rust_bitfields;
 use libc::{
     __errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink,
 };
+use std::ffi::CStr;
+use std::sync::Mutex;
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
@@ -126,6 +128,33 @@ pub struct File {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
+impl Default for File {
+    fn default() -> Self {
+        Self {
+            name: ::core::ptr::null::<::core::ffi::c_char>(),
+            hname: ::core::ptr::null::<::core::ffi::c_char>(),
+            vpath: ::core::ptr::null::<::core::ffi::c_char>(),
+            deps: ::core::ptr::null_mut::<Dep>(),
+            cmds: ::core::ptr::null_mut::<Commands>(),
+            stem: ::core::ptr::null::<::core::ffi::c_char>(),
+            also_make: ::core::ptr::null_mut::<Dep>(),
+            prev: ::core::ptr::null_mut::<File>(),
+            last: ::core::ptr::null_mut::<File>(),
+            renamed: ::core::ptr::null_mut::<File>(),
+            variables: ::core::ptr::null_mut::<VariableSetList>(),
+            pat_variables: ::core::ptr::null_mut::<VariableSetList>(),
+            parent: ::core::ptr::null_mut::<File>(),
+            double_colon: ::core::ptr::null_mut::<File>(),
+            last_mtime: 0,
+            mtime_before_update: 0,
+            considered: 0,
+            command_flags: 0,
+            update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix:
+                [0; 4],
+            c2rust_padding: [0; 4],
+        }
+    }
+}
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
 pub const cs_running: cmd_state = 2;
@@ -203,12 +232,12 @@ use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
 use crate::hash::{
     hash_delete, hash_deleted_item, hash_dump, hash_find_item, hash_find_slot, hash_init,
-    hash_insert_at, hash_map, hash_print_stats, jhash_string,
+    hash_insert_at, hash_map, hash_print_stats, is_real_item, jhash_string, table_slots,
 };
 use crate::make_main::{
     cmd_prefix, db_level, export_all_variables, ignore_errors_flag, just_print_flag,
     no_builtin_rules_flag, no_intermediates, not_parallel, question_flag, run_silent,
-    second_expansion, stopchar_map, touch_flag, verify_flag,
+    second_expansion, stopchar_map, touch_flag, verify_flag, MAP_DIRSEP,
 };
 use crate::output::{error, fatal, perror_with_name};
 use crate::read::{find_percent, parse_file_seq};
@@ -270,6 +299,23 @@ pub const INTSTR_LENGTH: usize = (53 as usize)
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
 pub const COMMANDS_SILENT: ::core::ffi::c_int = 2;
 pub const COMMANDS_NOERROR: ::core::ffi::c_int = 4;
+
+impl File {
+    fn new_named(name: *const ::core::ffi::c_char) -> Self {
+        let mut file = Self {
+            name,
+            hname: name,
+            ..Self::default()
+        };
+        file.set_update_status(us_none as update_status);
+        file
+    }
+}
+
+fn boxed_file(name: *const ::core::ffi::c_char) -> *mut file {
+    Box::into_raw(Box::new(File::new_named(name)))
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -340,62 +386,50 @@ static mut files: hash_table = hash_table {
     ht_in_map: [0; 1],
     c2rust_padding: [0; 3],
 };
-static mut rehashed_files: *mut *mut file = ::core::ptr::null::<*mut file>() as *mut *mut file;
-static mut rehashed_files_len: size_t = 0;
-pub const REHASHED_FILES_INCR: ::core::ffi::c_int = 5;
+
+#[derive(Copy, Clone)]
+struct RehashedFile {
+    _ptr: *mut file,
+}
+
+// These file records are process-global C objects. The mutex protects the
+// side-list ownership; the records themselves are still managed by `files`.
+unsafe impl Send for RehashedFile {}
+
+static REHASHED_FILES: Mutex<Vec<RehashedFile>> = Mutex::new(Vec::new());
 static mut all_secondary: ::core::ffi::c_int = 0;
+
+unsafe fn stop_set_byte(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
+}
+
+unsafe fn normalize_lookup_name(name: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char {
+    assert!(!name.is_null(), "assertion failed: name != NULL");
+    let bytes = CStr::from_ptr(name).to_bytes_with_nul();
+    assert!(bytes[0] != 0, "assertion failed: *name != '\\0'");
+
+    let mut pos = 0usize;
+    while bytes[pos] == b'.' && stop_set_byte(bytes[pos + 1], MAP_DIRSEP) && bytes[pos + 2] != 0 {
+        pos += 2;
+        while stop_set_byte(bytes[pos], MAP_DIRSEP) {
+            pos += 1;
+        }
+    }
+
+    if bytes[pos] == 0 {
+        c"./".as_ptr()
+    } else {
+        bytes[pos..].as_ptr().cast()
+    }
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn lookup_file(mut name: *const ::core::ffi::c_char) -> *mut file {
+pub unsafe fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file {
     let f: *mut file;
-    let mut file_key: file = file {
-        name: ::core::ptr::null::<::core::ffi::c_char>(),
-        hname: ::core::ptr::null::<::core::ffi::c_char>(),
-        vpath: ::core::ptr::null::<::core::ffi::c_char>(),
-        deps: ::core::ptr::null_mut::<dep>(),
-        cmds: ::core::ptr::null_mut::<commands>(),
-        stem: ::core::ptr::null::<::core::ffi::c_char>(),
-        also_make: ::core::ptr::null_mut::<dep>(),
-        prev: ::core::ptr::null_mut::<file>(),
-        last: ::core::ptr::null_mut::<file>(),
-        renamed: ::core::ptr::null_mut::<file>(),
-        variables: ::core::ptr::null_mut::<variable_set_list>(),
-        pat_variables: ::core::ptr::null_mut::<variable_set_list>(),
-        parent: ::core::ptr::null_mut::<file>(),
-        double_colon: ::core::ptr::null_mut::<file>(),
-        last_mtime: 0,
-        mtime_before_update: 0,
-        considered: 0,
-        command_flags: 0,
-        update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
-        c2rust_padding: [0; 4],
-    };
-    if *name as ::core::ffi::c_int != 0 {
-    } else {
-        panic!("assertion failed: *name != '\'");
-    };
-    while *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '.' as i32
-        && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar as isize)
-            as ::core::ffi::c_int
-            & 0x8000 as ::core::ffi::c_int
-            != 0
-        && *name.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
-    {
-        name = name.offset(2 as ::core::ffi::c_int as isize);
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*name as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & 0x8000 as ::core::ffi::c_int
-            != 0
-        {
-            name = name.offset(1 as ::core::ffi::c_int as isize);
-        }
-    }
-    if *name as ::core::ffi::c_int == 0 {
-        name = b"./\0" as *const u8 as *const ::core::ffi::c_char;
-    }
+    let name = normalize_lookup_name(name);
+    let mut file_key = File::default();
     file_key.hname = name;
     f = hash_find_item(
         &raw mut files,
@@ -409,30 +443,8 @@ pub unsafe fn lookup_file(mut name: *const ::core::ffi::c_char) -> *mut file {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     let f: *mut file;
-    let new: *mut file;
     let file_slot: *mut *mut file;
-    let mut file_key: file = file {
-        name: ::core::ptr::null::<::core::ffi::c_char>(),
-        hname: ::core::ptr::null::<::core::ffi::c_char>(),
-        vpath: ::core::ptr::null::<::core::ffi::c_char>(),
-        deps: ::core::ptr::null_mut::<dep>(),
-        cmds: ::core::ptr::null_mut::<commands>(),
-        stem: ::core::ptr::null::<::core::ffi::c_char>(),
-        also_make: ::core::ptr::null_mut::<dep>(),
-        prev: ::core::ptr::null_mut::<file>(),
-        last: ::core::ptr::null_mut::<file>(),
-        renamed: ::core::ptr::null_mut::<file>(),
-        variables: ::core::ptr::null_mut::<variable_set_list>(),
-        pat_variables: ::core::ptr::null_mut::<variable_set_list>(),
-        parent: ::core::ptr::null_mut::<file>(),
-        double_colon: ::core::ptr::null_mut::<file>(),
-        last_mtime: 0,
-        mtime_before_update: 0,
-        considered: 0,
-        command_flags: 0,
-        update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
-        c2rust_padding: [0; 4],
-    };
+    let mut file_key = File::default();
     if *name as ::core::ffi::c_int != 0 {
     } else {
         panic!("assertion failed: *name != '\'");
@@ -454,10 +466,7 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
         (*f).set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         return f;
     }
-    new = xcalloc(::core::mem::size_of::<file>() as size_t) as *mut file;
-    (*new).hname = name;
-    (*new).name = (*new).hname;
-    (*new).set_update_status(us_none as update_status);
+    let new = boxed_file(name);
     if f.is_null() || f as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
     {
         (*new).last = new;
@@ -478,28 +487,7 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi::c_char) {
-    let mut file_key: file = file {
-        name: ::core::ptr::null::<::core::ffi::c_char>(),
-        hname: ::core::ptr::null::<::core::ffi::c_char>(),
-        vpath: ::core::ptr::null::<::core::ffi::c_char>(),
-        deps: ::core::ptr::null_mut::<dep>(),
-        cmds: ::core::ptr::null_mut::<commands>(),
-        stem: ::core::ptr::null::<::core::ffi::c_char>(),
-        also_make: ::core::ptr::null_mut::<dep>(),
-        prev: ::core::ptr::null_mut::<file>(),
-        last: ::core::ptr::null_mut::<file>(),
-        renamed: ::core::ptr::null_mut::<file>(),
-        variables: ::core::ptr::null_mut::<variable_set_list>(),
-        pat_variables: ::core::ptr::null_mut::<variable_set_list>(),
-        parent: ::core::ptr::null_mut::<file>(),
-        double_colon: ::core::ptr::null_mut::<file>(),
-        last_mtime: 0,
-        mtime_before_update: 0,
-        considered: 0,
-        command_flags: 0,
-        update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
-        c2rust_padding: [0; 4],
-    };
+    let mut file_key = File::default();
     let file_slot: *mut *mut file;
     let to_file: *mut file;
     let deleted_file: *mut file;
@@ -689,17 +677,10 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     );
     (*to_file).set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     (*from_file).renamed = to_file;
-    if rehashed_files_len.wrapping_rem(REHASHED_FILES_INCR as size_t) == 0 {
-        rehashed_files = xrealloc(
-            rehashed_files as *mut ::core::ffi::c_void,
-            (::core::mem::size_of::<*mut file>() as size_t)
-                .wrapping_mul(rehashed_files_len.wrapping_add(REHASHED_FILES_INCR as size_t)),
-        ) as *mut *mut file;
-    }
-    let fresh2 = rehashed_files_len;
-    rehashed_files_len = rehashed_files_len.wrapping_add(1);
-    let fresh3 = &mut (*rehashed_files.offset(fresh2 as isize));
-    *fresh3 = from_file;
+    REHASHED_FILES
+        .lock()
+        .expect("rehashed file list lock poisoned")
+        .push(RehashedFile { _ptr: from_file });
 }
 /// # Safety
 ///
@@ -717,8 +698,6 @@ pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
-    let mut file_slot: *mut *mut file;
-    let file_end: *mut *mut file;
     let mut doneany: ::core::ffi::c_int = 0;
     if question_flag != 0 || touch_flag != 0 || all_secondary != 0 || no_intermediates != 0 {
         return;
@@ -726,14 +705,9 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
     if sig != 0 && just_print_flag != 0 {
         return;
     }
-    file_slot = files.ht_vec as *mut *mut file;
-    file_end = file_slot.offset(files.ht_size as isize);
-    while file_slot < file_end {
-        if !((*file_slot).is_null()
-            || *file_slot as *mut ::core::ffi::c_void
-                == hash_deleted_item as *mut ::core::ffi::c_void)
-        {
-            let f: *mut file = *file_slot;
+    for slot in table_slots(&raw const files) {
+        if is_real_item(*slot) {
+            let f = *slot as *mut file;
             if (*f).intermediate() as ::core::ffi::c_int != 0
                 && ((*f).dontcare() as ::core::ffi::c_int != 0 || (*f).precious() == 0)
                 && (*f).secondary() == 0
@@ -798,7 +772,6 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
                 }
             }
         }
-        file_slot = file_slot.offset(1 as ::core::ffi::c_int as isize);
     }
     if doneany != 0 && sig == 0 {
         putchar('\n' as i32);
@@ -2015,17 +1988,15 @@ pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::c
             .wrapping_mul(500);
         let mut len: size_t;
         let mut p: *mut ::core::ffi::c_char;
-        let mut fp: *mut *mut file = files.ht_vec as *mut *mut file;
-        let end: *mut *mut file = fp.offset(files.ht_size as isize) as *mut *mut file;
         value = xrealloc(value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
         p = value;
         len = 0;
-        while fp < end {
-            if !((*fp).is_null()
-                || *fp as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
-                && (**fp).is_target() as ::core::ffi::c_int != 0
-            {
-                let f: *mut file = *fp;
+        for slot in table_slots(&raw const files) {
+            if is_real_item(*slot) {
+                let f = *slot as *mut file;
+                if (*f).is_target() == 0 {
+                    continue;
+                }
                 let l: size_t = strlen((*f).name) as size_t;
                 len = len.wrapping_add(l.wrapping_add(1));
                 if len > max {
@@ -2049,7 +2020,6 @@ pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::c
                 p = p.offset(1 as ::core::ffi::c_int as isize);
                 *fresh4 = ' ' as i32 as ::core::ffi::c_char;
             }
-            fp = fp.offset(1 as ::core::ffi::c_int as isize);
         }
         *p.offset(-(1 as ::core::ffi::c_int as isize)) = 0;
         last_targ_count = files.ht_fill;
@@ -2070,3 +2040,33 @@ pub unsafe fn init_hash_files() {
     );
 }
 pub const FILE_TIMESTAMP_HI_RES: ::core::ffi::c_int = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::make_main::initialize_stopchar_map;
+
+    #[test]
+    fn normalize_lookup_name_collapses_leading_dot_dirs() {
+        unsafe {
+            initialize_stopchar_map();
+
+            assert_eq!(
+                CStr::from_ptr(normalize_lookup_name(c"plain".as_ptr())).to_bytes(),
+                b"plain"
+            );
+            assert_eq!(
+                CStr::from_ptr(normalize_lookup_name(c"./".as_ptr())).to_bytes(),
+                b"./"
+            );
+            assert_eq!(
+                CStr::from_ptr(normalize_lookup_name(c".//".as_ptr())).to_bytes(),
+                b"./"
+            );
+            assert_eq!(
+                CStr::from_ptr(normalize_lookup_name(c"././src/file".as_ptr())).to_bytes(),
+                b"src/file"
+            );
+        }
+    }
+}
