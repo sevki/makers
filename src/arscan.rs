@@ -39,7 +39,7 @@ pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
 
 pub type ar_member_func_t = Option<
-    unsafe extern "C" fn(
+    unsafe fn(
         ::core::ffi::c_int,
         *const ::core::ffi::c_char,
         ::core::ffi::c_int,
@@ -460,7 +460,9 @@ pub unsafe fn ar_name_equal(
     }
     (strcmp(name, mem) == 0) as ::core::ffi::c_int
 }
-unsafe extern "C" fn ar_member_pos(
+// The argument list is the fixed ar_scan callback protocol.
+#[allow(clippy::too_many_arguments)]
+unsafe fn ar_member_pos(
     mut _desc: ::core::ffi::c_int,
     mem: *const ::core::ffi::c_char,
     truncated: ::core::ffi::c_int,
@@ -488,22 +490,7 @@ pub unsafe fn ar_member_touch(
 ) -> ::core::ffi::c_int {
     let pos: intmax_t = ar_scan(
         arname,
-        Some(
-            ar_member_pos
-                as unsafe extern "C" fn(
-                    ::core::ffi::c_int,
-                    *const ::core::ffi::c_char,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_long,
-                    ::core::ffi::c_long,
-                    ::core::ffi::c_long,
-                    intmax_t,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_uint,
-                    *const ::core::ffi::c_void,
-                ) -> intmax_t,
-        ),
+        Some(ar_member_pos),
         memname as *const ::core::ffi::c_void,
     );
     let opos: off_t;

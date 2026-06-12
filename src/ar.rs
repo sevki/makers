@@ -37,7 +37,7 @@ pub type dep = Dep;
 use crate::floc::Floc;
 
 pub type ar_member_func_t = Option<
-    unsafe extern "C" fn(
+    unsafe fn(
         ::core::ffi::c_int,
         *const ::core::ffi::c_char,
         ::core::ffi::c_int,
@@ -127,7 +127,9 @@ pub unsafe fn ar_parse_name(
     *p.offset(strlen(p).wrapping_sub(1) as isize) = 0;
     *memname_p = p;
 }
-unsafe extern "C" fn ar_member_date_1(
+// The argument list is the fixed ar_scan callback protocol.
+#[allow(clippy::too_many_arguments)]
+unsafe fn ar_member_date_1(
     mut _desc: ::core::ffi::c_int,
     mem: *const ::core::ffi::c_char,
     truncated: ::core::ffi::c_int,
@@ -165,22 +167,7 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     }
     val = ar_scan(
         arname,
-        Some(
-            ar_member_date_1
-                as unsafe extern "C" fn(
-                    ::core::ffi::c_int,
-                    *const ::core::ffi::c_char,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_long,
-                    ::core::ffi::c_long,
-                    ::core::ffi::c_long,
-                    intmax_t,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_uint,
-                    *const ::core::ffi::c_void,
-                ) -> intmax_t,
-        ),
+        Some(ar_member_date_1),
         memname as *const ::core::ffi::c_void,
     );
     free(arname as *mut ::core::ffi::c_void);
@@ -265,7 +252,9 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     free(arname as *mut ::core::ffi::c_void);
     val
 }
-unsafe extern "C" fn ar_glob_match(
+// The argument list is the fixed ar_scan callback protocol.
+#[allow(clippy::too_many_arguments)]
+unsafe fn ar_glob_match(
     mut _desc: ::core::ffi::c_int,
     mem: *const ::core::ffi::c_char,
     mut _truncated: ::core::ffi::c_int,
@@ -353,22 +342,7 @@ pub unsafe fn ar_glob(
     state.n = 0;
     ar_scan(
         arname,
-        Some(
-            ar_glob_match
-                as unsafe extern "C" fn(
-                    ::core::ffi::c_int,
-                    *const ::core::ffi::c_char,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_long,
-                    ::core::ffi::c_long,
-                    ::core::ffi::c_long,
-                    intmax_t,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_int,
-                    ::core::ffi::c_uint,
-                    *const ::core::ffi::c_void,
-                ) -> intmax_t,
-        ),
+        Some(ar_glob_match),
         &raw mut state as *const ::core::ffi::c_void,
     );
     if state.chain.is_null() {
@@ -394,13 +368,7 @@ pub unsafe fn ar_glob(
         names as *mut ::core::ffi::c_void,
         i as size_t,
         ::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t,
-        Some(
-            alpha_compare
-                as unsafe extern "C" fn(
-                    *const ::core::ffi::c_void,
-                    *const ::core::ffi::c_void,
-                ) -> ::core::ffi::c_int,
-        ),
+        Some(alpha_compare),
     );
     i = 0;
     n = state.chain;
