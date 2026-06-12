@@ -247,6 +247,8 @@ pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
     if is_real_item(dir as *const c_void) {
         let dir_ref = dir.as_mut().expect("directory slot holds a real entry");
         // Cache hit: still valid unless a command has run since.
+        // Prefer the shared contents counter: another name for the same
+        // directory may have refreshed it already this command.
         let ctr = match dir_ref.contents.as_ref() {
             Some(dc) => dc.counter,
             None => dir_ref.counter,
@@ -551,20 +553,20 @@ pub unsafe extern "C" fn file_impossible(filename: *const c_char) {
 #[no_mangle]
 pub unsafe extern "C" fn file_impossible_p(filename: *const c_char) -> c_int {
     let (dir, filename) = match split_dir(filename) {
-        None => (
-            find_directory(c".".as_ptr())
+        None => {
+            let dir_ptr = find_directory(c".".as_ptr());
+            let contents = dir_ptr
                 .as_ref()
-                .expect("find_directory never returns null")
-                .contents,
-            filename,
-        ),
-        Some((_buf, dirname, base)) => (
-            find_directory(dirname)
+                .map_or(::core::ptr::null_mut(), |d| d.contents);
+            (contents, filename)
+        }
+        Some((_buf, dirname, base)) => {
+            let dir_ptr = find_directory(dirname);
+            let contents = dir_ptr
                 .as_ref()
-                .expect("find_directory never returns null")
-                .contents,
-            base,
-        ),
+                .map_or(::core::ptr::null_mut(), |d| d.contents);
+            (contents, base)
+        }
     };
     let Some(dir) = dir.as_mut() else { return 0 };
     if dir.dirfiles.ht_vec.is_null() {
