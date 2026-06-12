@@ -8,7 +8,7 @@ pub use crate::variable::initialize_file_variables;
 use crate::read::parse_file_seq;
 pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Dep, File, VariableSet, VariableSetList};
+use crate::file::{seq_iter, Dep, File, VariableSet, VariableSetList};
 use crate::misc::{lindex, print_spaces, skip_reference, xcalloc, xmalloc, xrealloc};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
@@ -930,23 +930,25 @@ unsafe extern "C" fn pattern_search(
                                     {
                                         explicit = 1;
                                     } else {
-                                        dp_0 = file
+                                        let deps = file
                                             .as_ref()
                                             .expect("pattern_search requires a non-null file")
                                             .deps;
-                                        while !dp_0.is_null() {
-                                            let generated_name = dep_name(
-                                                d.as_ref()
-                                                    .expect("generated dependency is null"),
-                                            );
+                                        dp_0 = ::core::ptr::null_mut::<Dep>();
+                                        let generated_name = dep_name(
+                                            d.as_ref()
+                                                .expect("generated dependency is null"),
+                                        );
+                                        for existing_dep in seq_iter(deps) {
                                             let existing_name = dep_name(
-                                                dp_0.as_ref()
+                                                existing_dep
+                                                    .as_ref()
                                                     .expect("file dependency is null"),
                                             );
                                             if cstr_eq(generated_name, existing_name) {
+                                                dp_0 = existing_dep;
                                                 break;
                                             }
-                                            dp_0 = (*dp_0).next;
                                         }
                                     }
                                     if explicit != 0 || !dp_0.is_null() {
