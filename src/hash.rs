@@ -62,7 +62,13 @@ pub static mut hash_deleted_item: *const c_void =
     &raw const hash_deleted_item as *mut *const c_void as *const c_void;
 
 /// Is `item` a real entry (not empty, not the deleted sentinel)?
-unsafe fn is_real_item(item: *const c_void) -> bool {
+///
+/// # Safety
+///
+/// Only compares the pointer value against null and the sentinel; `item`
+/// is never dereferenced, so any pointer value is acceptable. Unsafe only
+/// because it reads the `hash_deleted_item` static.
+pub unsafe fn is_real_item(item: *const c_void) -> bool {
     !item.is_null() && item != hash_deleted_item
 }
 
