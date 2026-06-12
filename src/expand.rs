@@ -25,7 +25,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut reading_file: *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
@@ -94,6 +93,7 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 pub type commands = Commands;
 use crate::floc::Floc;
+use crate::output::fatal;
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;

@@ -33,26 +33,7 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn message(prefix: ::core::ffi::c_int, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn ar_parse_name(
-        _: *const ::core::ffi::c_char,
-        _: *mut *mut ::core::ffi::c_char,
-        _: *mut *mut ::core::ffi::c_char,
-    );
-    fn ar_touch(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn ar_member_date(_: *const ::core::ffi::c_char) -> time_t;
-    fn vpath_search(
-        file: *const ::core::ffi::c_char,
-        mtime_ptr: *mut uintmax_t,
-        vpath_index: *mut ::core::ffi::c_uint,
-        path_index: *mut ::core::ffi::c_uint,
-    ) -> *const ::core::ffi::c_char;
-    fn gpath_search(file: *const ::core::ffi::c_char, len: size_t) -> ::core::ffi::c_int;
     static mut just_print_flag: ::core::ffi::c_int;
     static mut keep_going_flag: ::core::ffi::c_int;
     static mut run_silent: ::core::ffi::c_int;
@@ -65,8 +46,6 @@ extern "C" {
     static mut rebuilding_makefiles: ::core::ffi::c_int;
     static mut command_count: ::core::ffi::c_ulong;
     static mut no_intermediates: ::core::ffi::c_uint;
-    fn execute_file_commands(file: *mut file);
-    fn chop_commands(cmds: *mut commands);
     static mut db_level: ::core::ffi::c_int;
     static mut default_file: *mut file;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
@@ -150,7 +129,11 @@ pub struct goaldep {
     pub error: ::core::ffi::c_int,
     pub floc: Floc,
 }
+use crate::ar::{ar_member_date, ar_name, ar_parse_name, ar_touch};
+use crate::commands::{chop_commands, execute_file_commands};
 pub use crate::file::nameseq;
+use crate::output::{error, fatal, message, perror_with_name};
+use crate::vpath::{gpath_search, vpath_search};
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const ENOENT: ::core::ffi::c_int = 2;
 pub const EINTR: ::core::ffi::c_int = 4;

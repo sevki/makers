@@ -81,7 +81,6 @@ unsafe fn dep_name(d: *const Dep) -> *const c_char {
 ///
 /// `key` must point to a valid `dep` whose name (or file name) is a
 /// NUL-terminated string.
-#[no_mangle]
 pub unsafe extern "C" fn dep_hash_1(key: *const c_void) -> c_ulong {
     jhash_string(dep_name(key as *const dep) as *const c_uchar) as c_ulong
 }
@@ -90,7 +89,6 @@ pub unsafe extern "C" fn dep_hash_1(key: *const c_void) -> c_ulong {
 ///
 /// This is a C hash-table callback. The raw key pointer is accepted to match the
 /// callback ABI, but this secondary hash intentionally does not inspect it.
-#[no_mangle]
 pub unsafe extern "C" fn dep_hash_2(_key: *const c_void) -> c_ulong {
     // SAFETY: No raw memory is accessed here; the pointer is ignored because the
     // old secondary hash always returned zero.
@@ -130,8 +128,7 @@ unsafe fn define_automatic(file: &mut File, name: &CStr, value: *const c_char) {
 ///
 /// `file` must be a valid file with initialized per-file variables; `stem`
 /// must be null or a NUL-terminated string that outlives the call.
-#[no_mangle]
-pub unsafe extern "C" fn set_file_variables(file: *mut file, mut stem: *const c_char) {
+pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     let file = file.as_mut().expect("set_file_variables: null file");
 
     // For an archive member `lib(member)`, `$@` is `lib` and `$%` is
@@ -382,8 +379,7 @@ pub unsafe extern "C" fn set_file_variables(file: *mut file, mut stem: *const c_
 ///
 /// `cmds` must be null or a valid `commands` whose `commands` string is
 /// NUL-terminated.
-#[no_mangle]
-pub unsafe extern "C" fn chop_commands(cmds: *mut commands) {
+pub unsafe fn chop_commands(cmds: *mut commands) {
     // Recipes are chopped lazily; only do it once.
     let Some(cmds) = cmds.as_mut() else { return };
     if !cmds.command_lines.is_null() {
@@ -497,8 +493,7 @@ pub unsafe extern "C" fn chop_commands(cmds: *mut commands) {
 /// # Safety
 ///
 /// `file` must be a valid file with a non-null `cmds`.
-#[no_mangle]
-pub unsafe extern "C" fn execute_file_commands(file: *mut file) {
+pub unsafe fn execute_file_commands(file: *mut file) {
     // A recipe of nothing but whitespace and `-`/`@`/`+` prefixes means
     // there is nothing to execute.
     let mut p: *const c_char = (*(*file).cmds).commands;
@@ -533,7 +528,6 @@ pub unsafe extern "C" fn execute_file_commands(file: *mut file) {
 
 /// Nonzero while a fatal signal is being handled; checked by code that
 /// must not re-enter (e.g. output sync teardown).
-#[no_mangle]
 pub static mut handling_fatal_signal: sig_atomic_t = 0;
 
 /// Handle a fatal signal: kill children, delete half-built targets, then
@@ -543,7 +537,6 @@ pub static mut handling_fatal_signal: sig_atomic_t = 0;
 ///
 /// Only callable as a signal handler (or from one); touches global job
 /// state.
-#[no_mangle]
 pub unsafe extern "C" fn fatal_error_signal(sig: c_int) {
     ::core::ptr::write_volatile(&raw mut handling_fatal_signal, 1);
     signal(sig, SIG_DFL);
@@ -678,8 +671,7 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
 /// # Safety
 ///
 /// `child` must be a valid child record.
-#[no_mangle]
-pub unsafe extern "C" fn delete_child_targets(child: *mut child) {
+pub unsafe fn delete_child_targets(child: *mut child) {
     if (*child).deleted() != 0 || (*child).pid < 0 {
         return;
     }
@@ -698,8 +690,7 @@ pub unsafe extern "C" fn delete_child_targets(child: *mut child) {
 /// # Safety
 ///
 /// `cmds` must be a valid `commands` with a NUL-terminated recipe.
-#[no_mangle]
-pub unsafe extern "C" fn print_commands(cmds: *const commands) {
+pub unsafe fn print_commands(cmds: *const commands) {
     fputs(c"#  recipe to execute".as_ptr(), stdout);
     if (*cmds).fileinfo.filenm.is_null() {
         puts(c" (built-in):".as_ptr());

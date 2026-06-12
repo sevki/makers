@@ -72,9 +72,7 @@ const IO_COMBINED_OUTERR: c_uint = 0x0002;
 const IO_STDOUT_OK: c_uint = 0x0008;
 const IO_STDERR_OK: c_uint = 0x0010;
 
-#[no_mangle]
 pub static mut output_context: *mut output = ::core::ptr::null::<output>() as *mut output;
-#[no_mangle]
 pub static mut stdio_traced: ::core::ffi::c_uint = 0;
 pub const OUTPUT_NONE: ::core::ffi::c_int = -1;
 unsafe extern "C" fn _outputs(
@@ -105,8 +103,7 @@ unsafe extern "C" fn _outputs(
 ///
 /// # Safety
 /// Must run single-threaded: reads make globals and a static buffer.
-#[no_mangle]
-pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi::c_int {
+pub unsafe fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi::c_int {
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut len: size_t = 0;
@@ -176,8 +173,7 @@ pub unsafe extern "C" fn log_working_directory(entering: ::core::ffi::c_int) -> 
 /// # Safety
 /// `from` must be an open, seekable fd and `to` an open stream; uses a
 /// static buffer, so must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) {
+pub unsafe fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) {
     static mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
     if lseek(from, 0, SEEK_SET) == -1 as __off_t {
         perror(c"lseek()".as_ptr());
@@ -218,8 +214,7 @@ pub unsafe extern "C" fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) 
 ///
 /// # Safety
 /// Always safe; unsafe for C-API compatibility.
-#[no_mangle]
-pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
+pub unsafe fn output_tmpfd() -> ::core::ffi::c_int {
     let fd: ::core::ffi::c_int = get_tmpfd(null_mut());
     fd_set_append(fd);
     fd
@@ -229,8 +224,7 @@ pub unsafe extern "C" fn output_tmpfd() -> ::core::ffi::c_int {
 ///
 /// # Safety
 /// `out` must point to a valid `output`; must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn setup_tmpfile(out: *mut output) {
+pub unsafe fn setup_tmpfile(out: *mut output) {
     static mut in_setup: ::core::ffi::c_uint = 0;
     if in_setup != 0 {
         return;
@@ -399,8 +393,7 @@ pub unsafe fn output_start() {
 ///
 /// # Safety
 /// `msg` must be null or a valid NUL-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn outputs(is_err: ::core::ffi::c_int, msg: *const ::core::ffi::c_char) {
+pub unsafe fn outputs(is_err: ::core::ffi::c_int, msg: *const ::core::ffi::c_char) {
     if msg.is_null() || *msg as ::core::ffi::c_int == 0 {
         return;
     }
@@ -415,8 +408,7 @@ static mut fmtbuf: fmtstring = fmtstring {
 ///
 /// # Safety
 /// Must run single-threaded; the buffer is shared between calls.
-#[no_mangle]
-pub unsafe extern "C" fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
+pub unsafe fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
     if need > fmtbuf.size {
         fmtbuf.size = fmtbuf.size.wrapping_add(need.wrapping_mul(2));
         fmtbuf.buffer = xrealloc(fmtbuf.buffer as *mut ::core::ffi::c_void, fmtbuf.size)
@@ -431,7 +423,6 @@ pub unsafe extern "C" fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
 /// # Safety
 /// `fmt` and the variadic arguments must form a valid printf invocation
 /// whose expansion fits in `len` extra bytes.
-#[no_mangle]
 pub unsafe extern "C" fn message(
     prefix: ::core::ffi::c_int,
     mut len: size_t,
@@ -473,7 +464,6 @@ pub unsafe extern "C" fn message(
 /// `flocp` must be null or valid; `fmt` and the variadic arguments must
 /// form a valid printf invocation whose expansion fits in `len` extra
 /// bytes.
-#[no_mangle]
 pub unsafe extern "C" fn error(
     flocp: *const Floc,
     mut len: size_t,
@@ -523,7 +513,6 @@ pub unsafe extern "C" fn error(
 ///
 /// # Safety
 /// Same contract as [`error`].
-#[no_mangle]
 pub unsafe extern "C" fn fatal(
     flocp: *const Floc,
     mut len: size_t,
@@ -574,7 +563,6 @@ pub unsafe extern "C" fn fatal(
 ///
 /// # Safety
 /// Same printf contract as [`message`]; the returned buffer is shared.
-#[no_mangle]
 pub unsafe extern "C" fn format(
     prefix: *const ::core::ffi::c_char,
     mut len: size_t,
@@ -604,11 +592,7 @@ pub unsafe extern "C" fn format(
 ///
 /// # Safety
 /// `str` and `name` must be valid NUL-terminated strings.
-#[no_mangle]
-pub unsafe extern "C" fn perror_with_name(
-    str: *const ::core::ffi::c_char,
-    name: *const ::core::ffi::c_char,
-) {
+pub unsafe fn perror_with_name(str: *const ::core::ffi::c_char, name: *const ::core::ffi::c_char) {
     let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     error(
         null::<Floc>(),
@@ -625,8 +609,7 @@ pub unsafe extern "C" fn perror_with_name(
 ///
 /// # Safety
 /// `name` must be a valid NUL-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn pfatal_with_name(name: *const ::core::ffi::c_char) -> ! {
+pub unsafe fn pfatal_with_name(name: *const ::core::ffi::c_char) -> ! {
     let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     fatal(
         null::<Floc>(),
@@ -641,8 +624,7 @@ pub unsafe extern "C" fn pfatal_with_name(name: *const ::core::ffi::c_char) -> !
 ///
 /// # Safety
 /// Always safe to call; unsafe only for C-API signature compatibility.
-#[no_mangle]
-pub unsafe extern "C" fn out_of_memory() -> ! {
+pub unsafe fn out_of_memory() -> ! {
     writebuf(
         fileno(stdout),
         program as *const ::core::ffi::c_void,

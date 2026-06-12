@@ -135,7 +135,6 @@ pub unsafe fn make_rand() -> c_uint {
 /// # Safety
 /// `v1` and `v2` must point to valid `char *` values that point to valid
 /// NUL-terminated strings.
-#[no_mangle]
 pub unsafe extern "C" fn alpha_compare(v1: *const c_void, v2: *const c_void) -> c_int {
     let s1: *const c_char = *(v1 as *mut *mut c_char);
     let s2: *const c_char = *(v2 as *mut *mut c_char);
@@ -240,7 +239,6 @@ pub unsafe fn print_spaces(n: c_uint) {
 /// Each of the `num` variadic arguments must be null or a valid
 /// NUL-terminated string. Not reentrant: the returned buffer is shared
 /// between calls.
-#[no_mangle]
 pub unsafe extern "C" fn concat(mut num: c_uint, args: ...) -> *const c_char {
     static mut rlen: size_t = 0;
     static mut result: *mut c_char = null_mut();
@@ -543,7 +541,6 @@ pub unsafe fn free_ns_chain(mut ns: *mut nameseq) {
 ///
 /// # Safety
 /// `type_0` must be a valid NUL-terminated string.
-#[no_mangle]
 pub unsafe fn spin(type_0: *const c_char) {
     let mut filenm: [c_char; 256] = [0; 256];
     let mut dummy: stat = ::core::mem::zeroed();
@@ -566,7 +563,6 @@ pub unsafe fn spin(type_0: *const c_char) {
 /// # Safety
 /// `fmt` and the variadic arguments must form a valid printf invocation
 /// producing less than 4096 bytes.
-#[no_mangle]
 pub unsafe extern "C" fn dbg(fmt: *const c_char, args: ...) {
     let fp: *mut FILE = fopen(c"/tmp/gmkdebug.log".as_ptr(), c"a+".as_ptr());
     let mut buf: [c_char; 4096] = [0; 4096];
@@ -587,7 +583,6 @@ const DEFAULT_TMPFILE: &::core::ffi::CStr = c"GmXXXXXX";
 /// # Safety
 /// Must run single-threaded: it caches its result in a static and reads the
 /// environment.
-#[no_mangle]
 pub unsafe fn get_tmpdir() -> *const c_char {
     static mut tmpdir: *const c_char = null();
 

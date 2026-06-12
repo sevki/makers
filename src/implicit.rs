@@ -41,19 +41,8 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn file_exists_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn file_impossible_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn file_impossible(_: *const ::core::ffi::c_char);
-    fn vpath_search(
-        file: *const ::core::ffi::c_char,
-        mtime_ptr: *mut uintmax_t,
-        vpath_index: *mut ::core::ffi::c_uint,
-        path_index: *mut ::core::ffi::c_uint,
-    ) -> *const ::core::ffi::c_char;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut no_intermediates: ::core::ffi::c_uint;
-    fn set_file_variables(file: *mut file, stem: *const ::core::ffi::c_char);
     static mut db_level: ::core::ffi::c_int;
     fn parse_file_seq(
         stringp: *mut *mut ::core::ffi::c_char,
@@ -161,7 +150,11 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
+use crate::ar::ar_name;
+use crate::commands::set_file_variables;
+use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
 pub use crate::file::nameseq;
+use crate::vpath::vpath_search;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct rule {

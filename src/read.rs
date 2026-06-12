@@ -70,30 +70,10 @@ extern "C" {
         __pglob: *mut glob_t,
     ) -> ::core::ffi::c_int;
     fn globfree(__pglob: *mut glob_t);
-    fn concat(_: ::core::ffi::c_uint, ...) -> *const ::core::ffi::c_char;
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
-    fn out_of_memory() -> !;
-    fn pfatal_with_name(_: *const ::core::ffi::c_char) -> !;
-    fn perror_with_name(_: *const ::core::ffi::c_char, _: *const ::core::ffi::c_char);
-    fn ar_name(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn ar_parse_name(
-        _: *const ::core::ffi::c_char,
-        _: *mut *mut ::core::ffi::c_char,
-        _: *mut *mut ::core::ffi::c_char,
-    );
-    fn file_exists_p(_: *const ::core::ffi::c_char) -> ::core::ffi::c_int;
-    fn dir_setup_glob(_: *mut glob_t);
-    fn construct_vpath_list(pattern: *mut ::core::ffi::c_char, dirpath: *mut ::core::ffi::c_char);
     fn strip_whitespace(
         begpp: *mut *const ::core::ffi::c_char,
         endpp: *mut *const ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char;
-    fn load_file(
-        flocp: *const Floc,
-        file: *mut file,
-        noerror: ::core::ffi::c_int,
-    ) -> ::core::ffi::c_int;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut posix_pedantic: ::core::ffi::c_int;
     static mut second_expansion: ::core::ffi::c_int;
@@ -102,18 +82,12 @@ extern "C" {
     static mut cmd_prefix: ::core::ffi::c_char;
     fn getpwnam(__name: *const ::core::ffi::c_char) -> *mut passwd;
     static mut db_level: ::core::ffi::c_int;
-    fn ar_glob(
-        arname: *const ::core::ffi::c_char,
-        member_pattern: *const ::core::ffi::c_char,
-        size: size_t,
-    ) -> *mut nameseq;
     static mut default_file: *mut file;
     fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
     fn split_prereqs(prereqstr: *mut ::core::ffi::c_char) -> *mut dep;
     fn enter_prereqs(prereqs: *mut dep, stem: *const ::core::ffi::c_char) -> *mut dep;
     static mut snapped_deps: ::core::ffi::c_int;
-    fn fd_noinherit(fd: ::core::ffi::c_int);
     static mut suffix_file: *mut file;
     fn create_pattern_rule(
         targets: *mut *const ::core::ffi::c_char,
@@ -303,7 +277,14 @@ pub struct passwd {
     pub pw_dir: *mut ::core::ffi::c_char,
     pub pw_shell: *mut ::core::ffi::c_char,
 }
+use crate::ar::{ar_glob, ar_name, ar_parse_name};
+use crate::dir::{dir_setup_glob, file_exists_p};
 pub use crate::file::nameseq;
+use crate::load::load_file;
+use crate::misc::concat;
+use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
+use crate::posixos::fd_noinherit;
+use crate::vpath::construct_vpath_list;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct goaldep {
@@ -4025,7 +4006,9 @@ pub unsafe extern "C" fn parse_file_seq(
         size = ::core::mem::size_of::<nameseq>() as usize as size_t;
     }
     if !(flags & 0x4 as ::core::ffi::c_int != 0) {
-        dir_setup_glob(&raw mut gl);
+        // read.rs carries its own layout-identical glob_t; reconcile the
+        // nominal types until the duplicate struct is unified.
+        dir_setup_glob((&raw mut gl).cast());
     }
     static mut tmpbuf_len: size_t = 0;
     let l: size_t = (strlen(*stringp) as size_t).wrapping_add(1);

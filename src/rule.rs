@@ -20,16 +20,9 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn error(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...);
-    fn fatal(flocp: *const Floc, length: size_t, fmt: *const ::core::ffi::c_char, ...) -> !;
     fn find_percent_cached(_: *mut *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    fn dir_file_exists_p(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
     static mut posix_pedantic: ::core::ffi::c_int;
     static mut second_expansion: ::core::ffi::c_int;
-    fn print_commands(cmds: *const commands);
     fn parse_file_seq(
         stringp: *mut *mut ::core::ffi::c_char,
         size: size_t,
@@ -127,7 +120,10 @@ pub struct pspec {
     pub dep: *const ::core::ffi::c_char,
     pub commands: *const ::core::ffi::c_char,
 }
+use crate::commands::print_commands;
+use crate::dir::dir_file_exists_p;
 pub use crate::file::nameseq;
+use crate::output::{error, fatal};
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const INTSTR_LENGTH: usize = (53 as usize)
