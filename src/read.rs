@@ -3307,28 +3307,30 @@ unsafe extern "C" fn record_files(
     let mut i: *mut dep = also_make;
     while let Some(node) = i.as_ref() {
         let f_0: *mut file = node.file;
-        let mut dp: *mut dep;
-        if !(*f_0).also_make.is_null() {
+        let f0 = f_0
+            .as_mut()
+            .expect("record_files: null also-make target file");
+        if !f0.also_make.is_null() {
             error(
                 &raw mut (*cmds).fileinfo,
-                strlen((*f_0).name) as size_t,
+                strlen(f0.name) as size_t,
                 b"warning: overriding group membership for target '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*f_0).name,
+                f0.name,
             );
-            free_dep_chain((*f_0).also_make);
-            (*f_0).also_make = ::core::ptr::null_mut::<dep>();
+            free_dep_chain(f0.also_make);
+            f0.also_make = ::core::ptr::null_mut::<dep>();
         }
-        dp = also_make;
-        while !dp.is_null() {
-            if (*dp).file != f_0 {
+        let mut dp: *mut dep = also_make;
+        while let Some(dep_ref) = dp.as_ref() {
+            if dep_ref.file != f_0 {
                 let cpy: *mut dep = copy_dep(dp);
                 if let Some(c) = cpy.as_mut() {
-                    c.next = (*f_0).also_make;
-                    (*f_0).also_make = cpy;
+                    c.next = f0.also_make;
+                    f0.also_make = cpy;
                 }
             }
-            dp = (*dp).next;
+            dp = dep_ref.next;
         }
         i = node.next;
     }
@@ -4167,18 +4169,23 @@ pub unsafe extern "C" fn parse_file_seq(
             if flags & 0x4 as ::core::ffi::c_int != 0 {
                 let mut _ns: *mut nameseq = xcalloc(size) as *mut nameseq;
                 let mut __n: *const ::core::ffi::c_char = concat(2, prefix, tmpbuf);
-                (*_ns).name = if cachep != 0 {
+                let ns = _ns
+                    .as_mut()
+                    .expect("parse_file_seq: xcalloc returned null nameseq");
+                ns.name = if cachep != 0 {
                     strcache_add(__n)
                 } else {
                     xstrdup(__n) as *const ::core::ffi::c_char
                 };
                 if found_wait != 0 {
-                    let fresh7 = &mut (*(_ns as *mut dep));
-                    (*fresh7).set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    let dep_ref = (ns as *mut nameseq as *mut dep)
+                        .as_mut()
+                        .expect("parse_file_seq: null wait marker dep");
+                    dep_ref.set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                     found_wait = 0;
                 }
                 *newp = _ns;
-                newp = &raw mut (*_ns).next;
+                newp = &raw mut ns.next;
             } else {
                 name = tmpbuf;
                 if *tmpbuf.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
@@ -4242,19 +4249,24 @@ pub unsafe extern "C" fn parse_file_seq(
                                 memname,
                                 b")\0" as *const u8 as *const ::core::ffi::c_char,
                             );
-                            (*_ns_0).name = if cachep != 0 {
+                            let ns = _ns_0
+                                .as_mut()
+                                .expect("parse_file_seq: xcalloc returned null archive nameseq");
+                            ns.name = if cachep != 0 {
                                 strcache_add(__n_0)
                             } else {
                                 xstrdup(__n_0) as *const ::core::ffi::c_char
                             };
                             if found_wait != 0 {
-                                let fresh8 = &mut (*(_ns_0 as *mut dep));
-                                (*fresh8)
+                                let dep_ref = (ns as *mut nameseq as *mut dep)
+                                    .as_mut()
+                                    .expect("parse_file_seq: null archive wait marker dep");
+                                dep_ref
                                     .set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                                 found_wait = 0;
                             }
                             *newp = _ns_0;
-                            newp = &raw mut (*_ns_0).next;
+                            newp = &raw mut ns.next;
                         } else {
                             if !(*newp).is_null() {
                                 (**newp).next = found;
@@ -4262,35 +4274,42 @@ pub unsafe extern "C" fn parse_file_seq(
                                 *newp = found;
                             }
                             loop {
+                                let found_ref = found
+                                    .as_mut()
+                                    .expect("parse_file_seq: null archive glob result");
                                 if cachep == 0 {
-                                    (*found).name = xstrdup(concat(2, prefix, name));
+                                    found_ref.name = xstrdup(concat(2, prefix, name));
                                 } else if !prefix.is_null() {
-                                    (*found).name = strcache_add(concat(2, prefix, name));
+                                    found_ref.name = strcache_add(concat(2, prefix, name));
                                 }
-                                if (*found).next.is_null() {
+                                if found_ref.next.is_null() {
+                                    newp = &raw mut found_ref.next;
                                     break;
                                 }
-                                found = (*found).next;
+                                found = found_ref.next;
                             }
-                            newp = &raw mut (*found).next;
                         }
                     } else {
                         let mut _ns_1: *mut nameseq = xcalloc(size) as *mut nameseq;
                         let mut __n_1: *const ::core::ffi::c_char =
                             concat(2, prefix, *nlist.offset(i as isize));
-                        (*_ns_1).name = if cachep != 0 {
+                        let ns = _ns_1
+                            .as_mut()
+                            .expect("parse_file_seq: xcalloc returned null nameseq");
+                        ns.name = if cachep != 0 {
                             strcache_add(__n_1)
                         } else {
                             xstrdup(__n_1) as *const ::core::ffi::c_char
                         };
                         if found_wait != 0 {
-                            let fresh9 = &mut (*(_ns_1 as *mut dep));
-                            (*fresh9)
-                                .set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                            let dep_ref = (ns as *mut nameseq as *mut dep)
+                                .as_mut()
+                                .expect("parse_file_seq: null wait marker dep");
+                            dep_ref.set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                             found_wait = 0;
                         }
                         *newp = _ns_1;
-                        newp = &raw mut (*_ns_1).next;
+                        newp = &raw mut ns.next;
                     }
                     i += 1;
                 }

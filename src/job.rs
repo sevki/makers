@@ -1069,10 +1069,11 @@ pub unsafe extern "C" fn start_job_command(child: *mut child) {
         if end.is_null() {
             (*child).command_ptr = ::core::ptr::null_mut::<::core::ffi::c_char>();
         } else {
-            let fresh12 = end;
-            end = end.offset(1 as ::core::ffi::c_int as isize);
-            *fresh12 = 0;
-            (*child).command_ptr = end;
+            let end_ref = end
+                .as_mut()
+                .expect("construct_command_argv returned an invalid end pointer");
+            *end_ref = 0;
+            (*child).command_ptr = end.add(1);
         }
         if !argv.is_null() && question_flag != 0 && !(flags & 1 != 0) {
             if !argv.is_null() {
