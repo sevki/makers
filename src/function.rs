@@ -1128,10 +1128,17 @@ pub unsafe extern "C" fn strip_whitespace(
 unsafe fn parse_numeric(s: &CStr, msg: &CStr) -> ::core::ffi::c_longlong {
     let s_ptr = s.as_ptr();
     let msg_ptr = msg.as_ptr();
+    let s_len = strlen(s_ptr) as isize;
+    if s_len == 0 {
+        fatal(
+            *expanding_var,
+            strlen(msg_ptr) as size_t,
+            b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
+            msg_ptr,
+        );
+    }
     let mut beg: *const ::core::ffi::c_char = s_ptr;
-    let mut end: *const ::core::ffi::c_char = s_ptr
-        .offset(strlen(s_ptr) as isize)
-        .offset(-(1 as ::core::ffi::c_int as isize));
+    let mut end: *const ::core::ffi::c_char = s_ptr.offset(s_len - 1);
     let mut endp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let num: ::core::ffi::c_longlong;
     strip_whitespace(&raw mut beg, &raw mut end);
