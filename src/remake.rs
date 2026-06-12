@@ -248,13 +248,15 @@ pub unsafe extern "C" fn check_also_make(file: *const file) {
 /// in `update_goal_chain` are kept non-null by the surrounding loop guards.
 #[inline]
 unsafe fn fref<'a>(f: *mut file) -> &'a file {
-    f.as_ref().expect("file pointer is non-null within the update loop")
+    f.as_ref()
+        .expect("file pointer is non-null within the update loop")
 }
 
 /// Mutable counterpart of [`fref`].
 #[inline]
 unsafe fn fref_mut<'a>(f: *mut file) -> &'a mut file {
-    f.as_mut().expect("file pointer is non-null within the update loop")
+    f.as_mut()
+        .expect("file pointer is non-null within the update loop")
 }
 
 #[no_mangle]
@@ -339,9 +341,8 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                 }
                 ocommands_started = commands_started;
                 stop = 0;
-                wait = (file == dchead
-                    && g_wait as ::core::ffi::c_int != 0
-                    && running != 0) as ::core::ffi::c_int;
+                wait = (file == dchead && g_wait as ::core::ffi::c_int != 0 && running != 0)
+                    as ::core::ffi::c_int;
                 if wait != 0 {
                     if 0x2 as ::core::ffi::c_int & db_level != 0 {
                         print_spaces(depth);
@@ -434,7 +435,9 @@ pub unsafe extern "C" fn update_goal_chain(goaldeps: *mut goaldep) -> update_sta
                     message(
                         1,
                         strlen(fref(file).name) as size_t,
-                        if fref(file).phony() as ::core::ffi::c_int != 0 || fref(file).cmds.is_null() {
+                        if fref(file).phony() as ::core::ffi::c_int != 0
+                            || fref(file).cmds.is_null()
+                        {
                             b"Nothing to be done for '%s'.\0" as *const u8
                                 as *const ::core::ffi::c_char
                         } else {
@@ -496,10 +499,9 @@ pub unsafe extern "C" fn show_goal_error() {
 unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) -> update_status {
     let mut status: update_status = us_success;
     let mut f: *mut file;
-    f = if !(*file).double_colon.is_null() {
-        (*file).double_colon
-    } else {
-        file
+    f = match file.as_ref() {
+        Some(fr) if !fr.double_colon.is_null() => fr.double_colon,
+        _ => file,
     };
     if (*f).considered == considered
         && !((*f).updated() as ::core::ffi::c_int != 0
@@ -1793,7 +1795,7 @@ pub unsafe extern "C" fn f_mtime(mut file: *mut file, search: ::core::ffi::c_int
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut mtime: uintmax_t;
     let propagate_timestamp: ::core::ffi::c_uint;
-    if ar_name((*file).name) != 0 {
+    if matches!(file.as_ref(), Some(fr) if ar_name(fr.name) != 0) {
         let memmtime: uintmax_t;
         let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();

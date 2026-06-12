@@ -352,7 +352,7 @@ pub unsafe fn xstrndup(str: *const c_char, length: size_t) -> *mut c_char {
 /// `s..limit` must be a valid readable range.
 pub unsafe fn lindex(mut s: *const c_char, limit: *const c_char, c: c_int) -> *mut c_char {
     while s < limit {
-        if *s as c_int == c {
+        if matches!(s.as_ref(), Some(&b) if b as c_int == c) {
             return s as *mut c_char;
         }
         s = s.add(1);
@@ -759,7 +759,7 @@ pub unsafe fn get_tmpfile(name: *mut *mut c_char) -> *mut FILE {
         return null_mut();
     }
 
-    if (*name).is_null() {
+    if !matches!(name.as_ref(), Some(p) if !p.is_null()) {
         __assert_fail(
             c"*name".as_ptr(),
             c"src/misc.c".as_ptr(),

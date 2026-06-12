@@ -1201,23 +1201,20 @@ pub unsafe extern "C" fn snap_file(f: *mut file, deps: *const dep) {
     if !prereqs.is_null() {
         d = prereqs;
         while !d.is_null() {
-            if *(*f).name as ::core::ffi::c_int
-                == *(if !(*d).name.is_null() {
-                    (*d).name
-                } else {
-                    (*(*d).file).name
-                }) as ::core::ffi::c_int
-                && (*(*f).name as ::core::ffi::c_int == 0
-                    || strcmp(
-                        (*f).name.offset(1 as ::core::ffi::c_int as isize),
-                        (if !(*d).name.is_null() {
-                            (*d).name
-                        } else {
-                            (*(*d).file).name
-                        })
-                        .offset(1),
-                    ) == 0)
-            {
+            let dname: *const ::core::ffi::c_char = if !(*d).name.is_null() {
+                (*d).name
+            } else {
+                (*(*d).file).name
+            };
+            let same = match dname.as_ref() {
+                Some(&b) => {
+                    *(*f).name as ::core::ffi::c_int == b as ::core::ffi::c_int
+                        && (*(*f).name as ::core::ffi::c_int == 0
+                            || strcmp((*f).name.offset(1), dname.offset(1)) == 0)
+                }
+                None => false,
+            };
+            if same {
                 break;
             }
             d = (*d).next;

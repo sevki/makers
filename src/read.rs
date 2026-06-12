@@ -1967,7 +1967,8 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                                         } else {
                                                             cmdleft = ::core::ptr::null_mut::<
                                                                 ::core::ffi::c_char,
-                                                            >();
+                                                            >(
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -2068,9 +2069,8 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                                 cmds_started =
                                                     (*fstart).lineno as ::core::ffi::c_uint;
                                                 if l_4.wrapping_add(2) > commands_len {
-                                                    commands_len = l_4
-                                                        .wrapping_add(2)
-                                                        .wrapping_mul(2);
+                                                    commands_len =
+                                                        l_4.wrapping_add(2).wrapping_mul(2);
                                                     cmd_buf.resize(commands_len as usize, 0);
                                                     commands = cmd_buf.as_mut_ptr()
                                                         as *mut ::core::ffi::c_char;
@@ -3277,10 +3277,12 @@ unsafe extern "C" fn record_files(
                 pattern_percent.offset(1 as ::core::ffi::c_int as isize),
                 percent.offset(1 as ::core::ffi::c_int as isize),
             );
-            (*f).stem = strcache_add_len(
-                variable_buffer,
-                o.offset_from(variable_buffer) as ::core::ffi::c_long as size_t,
-            );
+            if let Some(fr) = f.as_mut() {
+                fr.stem = strcache_add_len(
+                    variable_buffer,
+                    o.offset_from(variable_buffer) as ::core::ffi::c_long as size_t,
+                );
+            }
             if !this.is_null() {
                 if (*this).need_2nd_expansion() == 0 {
                     this = enter_prereqs(this, (*f).stem);
@@ -3294,10 +3296,13 @@ unsafe extern "C" fn record_files(
                 (*f).deps = this;
             } else if !cmds.is_null() {
                 let mut d: *mut dep = this;
-                while !(*d).next.is_null() {
-                    d = (*d).next;
+                while let Some(dr) = d.as_mut() {
+                    if dr.next.is_null() {
+                        dr.next = (*f).deps;
+                        break;
+                    }
+                    d = dr.next;
                 }
-                (*d).next = (*f).deps;
                 (*f).deps = this;
             } else {
                 let mut d_0: *mut dep = (*f).deps;
@@ -3341,8 +3346,10 @@ unsafe extern "C" fn record_files(
         while !dp.is_null() {
             if (*dp).file != f_0 {
                 let cpy: *mut dep = copy_dep(dp);
-                (*cpy).next = (*f_0).also_make;
-                (*f_0).also_make = cpy;
+                if let Some(c) = cpy.as_mut() {
+                    c.next = (*f_0).also_make;
+                    (*f_0).also_make = cpy;
+                }
             }
             dp = (*dp).next;
         }
