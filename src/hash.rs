@@ -290,7 +290,11 @@ pub unsafe extern "C" fn hash_delete_at(ht: *mut hash_table, slot: *const c_void
 pub unsafe extern "C" fn hash_free_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
     for i in 0..(*ht).ht_size as usize {
-        let vec = (*ht).ht_vec.add(i);
+        let vec = (*ht)
+            .ht_vec
+            .add(i)
+            .as_mut()
+            .expect("hash table without a slot vector");
         if is_real_item(*vec) {
             free(*vec);
         }
@@ -308,7 +312,11 @@ pub unsafe extern "C" fn hash_free_items(ht: *mut hash_table) {
 pub unsafe extern "C" fn hash_delete_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
     for i in 0..(*ht).ht_size as usize {
-        *(*ht).ht_vec.add(i) = null_mut();
+        *(*ht)
+            .ht_vec
+            .add(i)
+            .as_mut()
+            .expect("hash table without a slot vector") = null_mut();
     }
     (*ht).ht_fill = 0;
     (*ht).ht_collisions = 0;
@@ -345,7 +353,11 @@ pub unsafe extern "C" fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
     (*ht).set_ht_in_map(1);
     for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht).ht_vec.add(i);
+        let slot = (*ht)
+            .ht_vec
+            .add(i)
+            .as_ref()
+            .expect("hash table without a slot vector");
         if is_real_item(*slot) {
             map(*slot);
         }
@@ -367,7 +379,11 @@ pub unsafe extern "C" fn hash_map_arg(
     let map = map.expect("hash_map_arg without callback");
     (*ht).set_ht_in_map(1);
     for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht).ht_vec.add(i);
+        let slot = (*ht)
+            .ht_vec
+            .add(i)
+            .as_ref()
+            .expect("hash table without a slot vector");
         if is_real_item(*slot) {
             map(*slot, arg);
         }
@@ -394,9 +410,14 @@ pub unsafe extern "C" fn hash_rehash(ht: *mut hash_table) {
         as *mut *mut c_void;
 
     for i in 0..old_ht_size as usize {
-        let ovp = old_vec.add(i);
+        let ovp = old_vec
+            .add(i)
+            .as_mut()
+            .expect("hash table without a slot vector");
         if is_real_item(*ovp) {
-            let slot = hash_find_slot(ht, *ovp);
+            let slot = hash_find_slot(ht, *ovp)
+                .as_mut()
+                .expect("hash_find_slot always returns a slot");
             *slot = *ovp;
         }
     }
@@ -451,13 +472,17 @@ pub unsafe extern "C" fn hash_dump(
 
     let mut vector = vector_0;
     for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht).ht_vec.add(i);
+        let slot = (*ht)
+            .ht_vec
+            .add(i)
+            .as_ref()
+            .expect("hash table without a slot vector");
         if is_real_item(*slot) {
-            *vector = *slot;
+            *vector.as_mut().expect("hash_dump: null output vector") = *slot;
             vector = vector.add(1);
         }
     }
-    *vector = null_mut();
+    *vector.as_mut().expect("hash_dump: null output vector") = null_mut();
 
     if compare.is_some() {
         qsort(
