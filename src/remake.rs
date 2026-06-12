@@ -636,7 +636,6 @@ unsafe extern "C" fn update_file_1(
     let mut noexist: ::core::ffi::c_int;
     let mut must_make: ::core::ffi::c_int;
     let mut deps_changed: ::core::ffi::c_int;
-    let ofile: *mut file;
     let mut du: *mut dep;
     let mut d: *mut dep;
     let mut ad: *mut dep;
@@ -719,7 +718,7 @@ unsafe extern "C" fn update_file_1(
         &raw mut *file
     };
     (*fresh0).set_updating(1);
-    ofile = &raw mut *file;
+    let ofile: *mut file = &raw mut *file;
     depth = depth.wrapping_add(1);
     this_mtime = if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
         f_mtime(file, 1)
