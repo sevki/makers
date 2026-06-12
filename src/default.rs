@@ -1,555 +1,388 @@
-use ::c2rust_bitfields;
-pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::strcache::strcache_add;
-use crate::misc::{xmalloc, xstrdup};
-extern "C" {
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    static mut no_builtin_rules_flag: ::core::ffi::c_int;
-    static mut no_builtin_variables_flag: ::core::ffi::c_int;
-    fn parse_file_seq(
-        stringp: *mut *mut ::core::ffi::c_char,
-        size: size_t,
-        stopmap: ::core::ffi::c_int,
-        prefix: *const ::core::ffi::c_char,
-        flags: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_void;
-    fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn enter_prereqs(prereqs: *mut dep, stem: *const ::core::ffi::c_char) -> *mut dep;
-    static mut suffix_file: *mut file;
-    fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int);
-    static mut current_variable_set_list: *mut variable_set_list;
-    fn define_variable_in_set(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        value: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        recursive: ::core::ffi::c_int,
-        set: *mut variable_set,
-        flocp: *const Floc,
-    ) -> *mut variable;
-    fn undefine_variable_in_set(
-        flocp: *const Floc,
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        origin: variable_origin,
-        set: *mut variable_set,
-    );
-}
-pub type file = File;
-pub type cmd_state = ::core::ffi::c_uint;
-pub const cs_finished: cmd_state = 3;
-pub const cs_running: cmd_state = 2;
-pub const cs_deps_running: cmd_state = 1;
-pub const cs_not_started: cmd_state = 0;
-pub type update_status = ::core::ffi::c_uint;
-pub type update_status_0 = u32;
-pub const us_failed: update_status_0 = 3;
-pub const us_question: update_status_0 = 2;
-pub const us_none: update_status_0 = 1;
-pub const us_success: update_status_0 = 0;
-pub type variable_set_list = VariableSetList;
-pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
-pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
-pub type hash_func_t = crate::hash::hash_func_t;
-pub type dep = Dep;
-pub type commands = Commands;
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
-use crate::floc::Floc;
+//! Data base of default implicit rules and default variables.
+//!
+//! Port of `default.c`. The tables hand out `*const c_char` pointers because
+//! the consumers (`install_pattern_rule`, `define_variable_in_set`, ...) are
+//! still C-shaped APIs shared across modules.
 
-pub const o_invalid: variable_origin = 7;
-pub const o_automatic: variable_origin = 6;
-pub const o_override: variable_origin = 5;
-pub const o_command: variable_origin = 4;
-pub const o_env_override: variable_origin = 3;
-pub const o_file: variable_origin = 2;
-pub const o_env: variable_origin = 1;
-pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
-pub type variable_export = ::core::ffi::c_uint;
-pub const v_ifset: variable_export = 3;
-pub const v_noexport: variable_export = 2;
-pub const v_export: variable_export = 1;
-pub const v_default: variable_export = 0;
-pub type variable_origin = ::core::ffi::c_uint;
-pub type variable_flavor = ::core::ffi::c_uint;
-pub const f_append_value: variable_flavor = 6;
-pub const f_shell: variable_flavor = 5;
-pub const f_append: variable_flavor = 4;
-pub const f_expand: variable_flavor = 3;
-pub const f_recursive: variable_flavor = 2;
-pub const f_simple: variable_flavor = 1;
-pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pspec {
-    pub target: *const ::core::ffi::c_char,
-    pub dep: *const ::core::ffi::c_char,
-    pub commands: *const ::core::ffi::c_char,
-}
-pub const MAKE_CXX: [::core::ffi::c_char; 4] =
-    unsafe { ::core::mem::transmute::<[u8; 4], [::core::ffi::c_char; 4]>(*b"g++\0") };
-pub const SCCS_GET: [::core::ffi::c_char; 4] =
-    unsafe { ::core::mem::transmute::<[u8; 4], [::core::ffi::c_char; 4]>(*b"get\0") };
-pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
-pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
-pub const GNUMAKEFLAGS_NAME: [::core::ffi::c_char; 13] =
-    unsafe { ::core::mem::transmute::<[u8; 13], [::core::ffi::c_char; 13]>(*b"GNUMAKEFLAGS\0") };
-pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
-pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
-static mut default_suffixes: [::core::ffi::c_char; 147] = unsafe {
-    ::core::mem::transmute::<
-        [u8; 147],
-        [::core::ffi::c_char; 147],
-    >(
-        *b".out .a .ln .o .c .cc .C .cpp .p .f .F .m .r .y .l .ym .yl .s .S .mod .sym .def .h .info .dvi .tex .texinfo .texi .txinfo .w .ch .web .sh .elc .el\0",
-    )
+use ::core::ffi::{c_char, CStr};
+use ::core::ptr::{null, null_mut};
+
+use crate::ffi_types::size_t;
+use crate::file::{enter_file, enter_prereqs, Commands};
+use crate::floc::Floc;
+use crate::make_main::{no_builtin_rules_flag, no_builtin_variables_flag};
+use crate::misc::{xmalloc, xstrdup};
+use crate::read::{parse_file_seq, MAP_NUL, PARSEFS_NONE};
+use crate::rule::{install_pattern_rule, pspec, suffix_file};
+use crate::strcache::strcache_add;
+use crate::variable::{
+    current_variable_set_list, define_variable_in_set, o_default, undefine_variable_in_set,
 };
-static mut default_pattern_rules: [pspec; 5] = [
-    pspec {
-        target: b"(%)\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"%\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(AR) $(ARFLAGS) $@ $<\0" as *const u8 as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: b"%.out\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"%\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"@rm -f $@ \n cp $< $@\0" as *const u8 as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: b"%.c\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"%.w %.ch\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(CTANGLE) $^ $@\0" as *const u8 as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: b"%.tex\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"%.w %.ch\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(CWEAVE) $^ $@\0" as *const u8 as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: ::core::ptr::null::<::core::ffi::c_char>(),
-        dep: ::core::ptr::null::<::core::ffi::c_char>(),
-        commands: ::core::ptr::null::<::core::ffi::c_char>(),
-    },
+
+const RECIPEPREFIX_DEFAULT: c_char = b'\t' as c_char;
+
+/// The default `.SUFFIXES` list, in the order in which the corresponding
+/// suffix rules are tried.
+///
+/// Kept as a mutable byte buffer because `parse_file_seq` parses (and may
+/// de-escape) the sequence in place, matching the mutable `char[]` in C.
+static mut default_suffixes: [u8; 147] =
+    *b".out .a .ln .o .c .cc .C .cpp .p .f .F .m .r .y .l .ym .yl .s .S .mod .sym .def .h .info .dvi .tex .texinfo .texi .txinfo .w .ch .web .sh .elc .el\0";
+
+/// Default non-terminal pattern rules: (target, deps, recipe).
+const DEFAULT_PATTERN_RULES: &[(&CStr, &CStr, &CStr)] = &[
+    (c"(%)", c"%", c"$(AR) $(ARFLAGS) $@ $<"),
+    (c"%.out", c"%", c"@rm -f $@ \n cp $< $@"),
+    // Syntax is "ctangle foo.w foo.ch foo.c".
+    (c"%.c", c"%.w %.ch", c"$(CTANGLE) $^ $@"),
+    // Syntax is "cweave foo.w foo.ch foo.tex".
+    (c"%.tex", c"%.w %.ch", c"$(CWEAVE) $^ $@"),
 ];
-static mut default_terminal_rules: [pspec; 6] = [
-    pspec {
-        target: b"%\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"%,v\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(CHECKOUT,v)\0" as *const u8 as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: b"%\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"RCS/%,v\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(CHECKOUT,v)\0" as *const u8 as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: b"%\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"RCS/%\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(CHECKOUT,v)\0" as *const u8 as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: b"%\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"s.%\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(GET) $(GFLAGS) $(SCCS_OUTPUT_OPTION) $<\0" as *const u8
-            as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: b"%\0" as *const u8 as *const ::core::ffi::c_char,
-        dep: b"SCCS/s.%\0" as *const u8 as *const ::core::ffi::c_char,
-        commands: b"$(GET) $(GFLAGS) $(SCCS_OUTPUT_OPTION) $<\0" as *const u8
-            as *const ::core::ffi::c_char,
-    },
-    pspec {
-        target: ::core::ptr::null::<::core::ffi::c_char>(),
-        dep: ::core::ptr::null::<::core::ffi::c_char>(),
-        commands: ::core::ptr::null::<::core::ffi::c_char>(),
-    },
+
+/// Default terminal pattern rules (RCS and SCCS checkouts).
+const DEFAULT_TERMINAL_RULES: &[(&CStr, &CStr, &CStr)] = &[
+    // RCS.
+    (c"%", c"%,v", c"$(CHECKOUT,v)"),
+    (c"%", c"RCS/%,v", c"$(CHECKOUT,v)"),
+    (c"%", c"RCS/%", c"$(CHECKOUT,v)"),
+    // SCCS.
+    (c"%", c"s.%", c"$(GET) $(GFLAGS) $(SCCS_OUTPUT_OPTION) $<"),
+    (
+        c"%",
+        c"SCCS/s.%",
+        c"$(GET) $(GFLAGS) $(SCCS_OUTPUT_OPTION) $<",
+    ),
 ];
-static mut default_suffix_rules: [*const ::core::ffi::c_char; 100] = [
-    b".o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.o) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".s\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.s) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".S\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.S) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.c) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".cc\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.cc) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".C\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.C) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".cpp\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.cpp) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".f\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.f) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".m\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.m) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".p\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.p) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".F\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.F) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".r\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.r) $^ $(LOADLIBES) $(LDLIBS) -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".mod\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.mod) -o $@ -e $@ $^\0" as *const u8 as *const ::core::ffi::c_char,
-    b".def.sym\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.def) -o $@ $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".sh\0" as *const u8 as *const ::core::ffi::c_char,
-    b"cat $< >$@ \n chmod a+x $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".s.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.s) -o $@ $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".S.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.S) -o $@ $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".c.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.c) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".cc.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.cc) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".C.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.C) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".cpp.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.cpp) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".f.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.f) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".m.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.m) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".p.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.p) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".F.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.F) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".r.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.r) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".mod.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.mod) -o $@ $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".c.ln\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINT.c) -C$* $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".y.ln\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(YACC.y) $< \n $(LINT.c) -C$* y.tab.c \n $(RM) y.tab.c\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b".l.ln\0" as *const u8 as *const ::core::ffi::c_char,
-    b"@$(RM) $*.c\n $(LEX.l) $< > $*.c\n$(LINT.c) -i $*.c -o $@\n $(RM) $*.c\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b".y.c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(YACC.y) $< \n mv -f y.tab.c $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".l.c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"@$(RM) $@ \n $(LEX.l) $< > $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".ym.m\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(YACC.m) $< \n mv -f y.tab.c $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".lm.m\0" as *const u8 as *const ::core::ffi::c_char,
-    b"@$(RM) $@ \n $(LEX.m) $< > $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".F.f\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(PREPROCESS.F) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".r.f\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(PREPROCESS.r) $(OUTPUT_OPTION) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".l.r\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LEX.l) $< > $@ \n mv -f lex.yy.r $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".S.s\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(PREPROCESS.S) $< > $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".texinfo.info\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(MAKEINFO) $(MAKEINFO_FLAGS) $< -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".texi.info\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(MAKEINFO) $(MAKEINFO_FLAGS) $< -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".txinfo.info\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(MAKEINFO) $(MAKEINFO_FLAGS) $< -o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".tex.dvi\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(TEX) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".texinfo.dvi\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(TEXI2DVI) $(TEXI2DVI_FLAGS) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".texi.dvi\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(TEXI2DVI) $(TEXI2DVI_FLAGS) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".txinfo.dvi\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(TEXI2DVI) $(TEXI2DVI_FLAGS) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".w.c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CTANGLE) $< - $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".web.p\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(TANGLE) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    b".w.tex\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CWEAVE) $< - $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".web.tex\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(WEAVE) $<\0" as *const u8 as *const ::core::ffi::c_char,
-    ::core::ptr::null::<::core::ffi::c_char>(),
-    ::core::ptr::null::<::core::ffi::c_char>(),
+
+/// Default old-style suffix rules: (suffix target, recipe).
+const DEFAULT_SUFFIX_RULES: &[(&CStr, &CStr)] = &[
+    (c".o", c"$(LINK.o) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".s", c"$(LINK.s) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".S", c"$(LINK.S) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".c", c"$(LINK.c) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".cc", c"$(LINK.cc) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".C", c"$(LINK.C) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".cpp", c"$(LINK.cpp) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".f", c"$(LINK.f) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".m", c"$(LINK.m) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".p", c"$(LINK.p) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".F", c"$(LINK.F) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".r", c"$(LINK.r) $^ $(LOADLIBES) $(LDLIBS) -o $@"),
+    (c".mod", c"$(COMPILE.mod) -o $@ -e $@ $^"),
+    (c".def.sym", c"$(COMPILE.def) -o $@ $<"),
+    (c".sh", c"cat $< >$@ \n chmod a+x $@"),
+    (c".s.o", c"$(COMPILE.s) -o $@ $<"),
+    (c".S.o", c"$(COMPILE.S) -o $@ $<"),
+    (c".c.o", c"$(COMPILE.c) $(OUTPUT_OPTION) $<"),
+    (c".cc.o", c"$(COMPILE.cc) $(OUTPUT_OPTION) $<"),
+    (c".C.o", c"$(COMPILE.C) $(OUTPUT_OPTION) $<"),
+    (c".cpp.o", c"$(COMPILE.cpp) $(OUTPUT_OPTION) $<"),
+    (c".f.o", c"$(COMPILE.f) $(OUTPUT_OPTION) $<"),
+    (c".m.o", c"$(COMPILE.m) $(OUTPUT_OPTION) $<"),
+    (c".p.o", c"$(COMPILE.p) $(OUTPUT_OPTION) $<"),
+    (c".F.o", c"$(COMPILE.F) $(OUTPUT_OPTION) $<"),
+    (c".r.o", c"$(COMPILE.r) $(OUTPUT_OPTION) $<"),
+    (c".mod.o", c"$(COMPILE.mod) -o $@ $<"),
+    (c".c.ln", c"$(LINT.c) -C$* $<"),
+    (
+        c".y.ln",
+        c"$(YACC.y) $< \n $(LINT.c) -C$* y.tab.c \n $(RM) y.tab.c",
+    ),
+    (
+        c".l.ln",
+        c"@$(RM) $*.c\n $(LEX.l) $< > $*.c\n$(LINT.c) -i $*.c -o $@\n $(RM) $*.c",
+    ),
+    (c".y.c", c"$(YACC.y) $< \n mv -f y.tab.c $@"),
+    (c".l.c", c"@$(RM) $@ \n $(LEX.l) $< > $@"),
+    (c".ym.m", c"$(YACC.m) $< \n mv -f y.tab.c $@"),
+    (c".lm.m", c"@$(RM) $@ \n $(LEX.m) $< > $@"),
+    (c".F.f", c"$(PREPROCESS.F) $(OUTPUT_OPTION) $<"),
+    (c".r.f", c"$(PREPROCESS.r) $(OUTPUT_OPTION) $<"),
+    // This might actually make lex.yy.c if there's no %R% directive in $*.l,
+    // but in that case why were you trying to make $*.r anyway?
+    (c".l.r", c"$(LEX.l) $< > $@ \n mv -f lex.yy.r $@"),
+    (c".S.s", c"$(PREPROCESS.S) $< > $@"),
+    (c".texinfo.info", c"$(MAKEINFO) $(MAKEINFO_FLAGS) $< -o $@"),
+    (c".texi.info", c"$(MAKEINFO) $(MAKEINFO_FLAGS) $< -o $@"),
+    (c".txinfo.info", c"$(MAKEINFO) $(MAKEINFO_FLAGS) $< -o $@"),
+    (c".tex.dvi", c"$(TEX) $<"),
+    (c".texinfo.dvi", c"$(TEXI2DVI) $(TEXI2DVI_FLAGS) $<"),
+    (c".texi.dvi", c"$(TEXI2DVI) $(TEXI2DVI_FLAGS) $<"),
+    (c".txinfo.dvi", c"$(TEXI2DVI) $(TEXI2DVI_FLAGS) $<"),
+    (c".w.c", c"$(CTANGLE) $< - $@"),
+    (c".web.p", c"$(TANGLE) $<"),
+    (c".w.tex", c"$(CWEAVE) $< - $@"),
+    (c".web.tex", c"$(WEAVE) $<"),
 ];
-static mut default_variables: [*const ::core::ffi::c_char; 130] = [
-    b"AR\0" as *const u8 as *const ::core::ffi::c_char,
-    b"ar\0" as *const u8 as *const ::core::ffi::c_char,
-    b"ARFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-    b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
-    b"AS\0" as *const u8 as *const ::core::ffi::c_char,
-    b"as\0" as *const u8 as *const ::core::ffi::c_char,
-    b"CC\0" as *const u8 as *const ::core::ffi::c_char,
-    b"cc\0" as *const u8 as *const ::core::ffi::c_char,
-    b"OBJC\0" as *const u8 as *const ::core::ffi::c_char,
-    b"cc\0" as *const u8 as *const ::core::ffi::c_char,
-    b"CXX\0" as *const u8 as *const ::core::ffi::c_char,
-    MAKE_CXX.as_ptr(),
-    b"CHECKOUT,v\0" as *const u8 as *const ::core::ffi::c_char,
-    b"+$(if $(wildcard $@),,$(CO) $(COFLAGS) $< $@)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"CO\0" as *const u8 as *const ::core::ffi::c_char,
-    b"co\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-    b"\0" as *const u8 as *const ::core::ffi::c_char,
-    b"CPP\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CC) -E\0" as *const u8 as *const ::core::ffi::c_char,
-    b"FC\0" as *const u8 as *const ::core::ffi::c_char,
-    b"f77\0" as *const u8 as *const ::core::ffi::c_char,
-    b"F77\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"F77FLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FFLAGS)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"GET\0" as *const u8 as *const ::core::ffi::c_char,
-    SCCS_GET.as_ptr(),
-    b"LD\0" as *const u8 as *const ::core::ffi::c_char,
-    b"ld\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LEX\0" as *const u8 as *const ::core::ffi::c_char,
-    b"lex\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINT\0" as *const u8 as *const ::core::ffi::c_char,
-    b"lint\0" as *const u8 as *const ::core::ffi::c_char,
-    b"M2C\0" as *const u8 as *const ::core::ffi::c_char,
-    b"m2c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"PC\0" as *const u8 as *const ::core::ffi::c_char,
-    b"pc\0" as *const u8 as *const ::core::ffi::c_char,
-    b"YACC\0" as *const u8 as *const ::core::ffi::c_char,
-    b"yacc\0" as *const u8 as *const ::core::ffi::c_char,
-    b"MAKEINFO\0" as *const u8 as *const ::core::ffi::c_char,
-    b"makeinfo\0" as *const u8 as *const ::core::ffi::c_char,
-    b"TEX\0" as *const u8 as *const ::core::ffi::c_char,
-    b"tex\0" as *const u8 as *const ::core::ffi::c_char,
-    b"TEXI2DVI\0" as *const u8 as *const ::core::ffi::c_char,
-    b"texi2dvi\0" as *const u8 as *const ::core::ffi::c_char,
-    b"WEAVE\0" as *const u8 as *const ::core::ffi::c_char,
-    b"weave\0" as *const u8 as *const ::core::ffi::c_char,
-    b"CWEAVE\0" as *const u8 as *const ::core::ffi::c_char,
-    b"cweave\0" as *const u8 as *const ::core::ffi::c_char,
-    b"TANGLE\0" as *const u8 as *const ::core::ffi::c_char,
-    b"tangle\0" as *const u8 as *const ::core::ffi::c_char,
-    b"CTANGLE\0" as *const u8 as *const ::core::ffi::c_char,
-    b"ctangle\0" as *const u8 as *const ::core::ffi::c_char,
-    b"RM\0" as *const u8 as *const ::core::ffi::c_char,
-    b"rm -f\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.o\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CC) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COMPILE.c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"COMPILE.m\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(OBJC) $(OBJCFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"LINK.m\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(OBJC) $(OBJCFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"COMPILE.cc\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"COMPILE.C\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.cc)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COMPILE.cpp\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(COMPILE.cc)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.cc\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"LINK.C\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.cc)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.cpp\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINK.cc)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"YACC.y\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(YACC) $(YFLAGS)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LEX.l\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LEX) $(LFLAGS) -t\0" as *const u8 as *const ::core::ffi::c_char,
-    b"YACC.m\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(YACC) $(YFLAGS)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LEX.m\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LEX) $(LFLAGS) -t\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COMPILE.f\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(TARGET_ARCH) -c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.f\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COMPILE.F\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.F\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"COMPILE.r\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(RFLAGS) $(TARGET_ARCH) -c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.r\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(RFLAGS) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"COMPILE.def\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(M2C) $(M2FLAGS) $(DEFFLAGS) $(TARGET_ARCH)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COMPILE.mod\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(M2C) $(M2FLAGS) $(MODFLAGS) $(TARGET_ARCH)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COMPILE.p\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(PC) $(PFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.p\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(PC) $(PFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"LINK.s\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CC) $(ASFLAGS) $(LDFLAGS) $(TARGET_MACH)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"COMPILE.s\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(AS) $(ASFLAGS) $(TARGET_MACH)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINK.S\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CC) $(ASFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_MACH)\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"COMPILE.S\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CC) $(ASFLAGS) $(CPPFLAGS) $(TARGET_MACH) -c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"PREPROCESS.S\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(CPP) $(CPPFLAGS)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"PREPROCESS.F\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -F\0" as *const u8 as *const ::core::ffi::c_char,
-    b"PREPROCESS.r\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(FC) $(FFLAGS) $(RFLAGS) $(TARGET_ARCH) -F\0" as *const u8 as *const ::core::ffi::c_char,
-    b"LINT.c\0" as *const u8 as *const ::core::ffi::c_char,
-    b"$(LINT) $(LINTFLAGS) $(CPPFLAGS) $(TARGET_ARCH)\0" as *const u8 as *const ::core::ffi::c_char,
-    b"OUTPUT_OPTION\0" as *const u8 as *const ::core::ffi::c_char,
-    b"-o $@\0" as *const u8 as *const ::core::ffi::c_char,
-    b".LIBPATTERNS\0" as *const u8 as *const ::core::ffi::c_char,
-    b"lib%.so lib%.a\0" as *const u8 as *const ::core::ffi::c_char,
-    GNUMAKEFLAGS_NAME.as_ptr(),
-    b"\0" as *const u8 as *const ::core::ffi::c_char,
-    ::core::ptr::null::<::core::ffi::c_char>(),
-    ::core::ptr::null::<::core::ffi::c_char>(),
+
+/// Default variables: (name, value). Defined as recursively-expanding with
+/// `o_default` origin so makefiles and the environment can override them.
+const DEFAULT_VARIABLES: &[(&CStr, &CStr)] = &[
+    (c"AR", c"ar"),
+    (c"ARFLAGS", c"-rv"),
+    (c"AS", c"as"),
+    (c"CC", c"cc"),
+    (c"OBJC", c"cc"),
+    (c"CXX", c"g++"),
+    (
+        c"CHECKOUT,v",
+        c"+$(if $(wildcard $@),,$(CO) $(COFLAGS) $< $@)",
+    ),
+    (c"CO", c"co"),
+    (c"COFLAGS", c""),
+    (c"CPP", c"$(CC) -E"),
+    (c"FC", c"f77"),
+    // System V uses these, so explicit rules using them should work.
+    // However, there is no way to make implicit rules use them and FC.
+    (c"F77", c"$(FC)"),
+    (c"F77FLAGS", c"$(FFLAGS)"),
+    (c"GET", c"get"),
+    (c"LD", c"ld"),
+    (c"LEX", c"lex"),
+    (c"LINT", c"lint"),
+    (c"M2C", c"m2c"),
+    (c"PC", c"pc"),
+    (c"YACC", c"yacc"),
+    (c"MAKEINFO", c"makeinfo"),
+    (c"TEX", c"tex"),
+    (c"TEXI2DVI", c"texi2dvi"),
+    (c"WEAVE", c"weave"),
+    (c"CWEAVE", c"cweave"),
+    (c"TANGLE", c"tangle"),
+    (c"CTANGLE", c"ctangle"),
+    (c"RM", c"rm -f"),
+    (c"LINK.o", c"$(CC) $(LDFLAGS) $(TARGET_ARCH)"),
+    (
+        c"COMPILE.c",
+        c"$(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c",
+    ),
+    (
+        c"LINK.c",
+        c"$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)",
+    ),
+    (
+        c"COMPILE.m",
+        c"$(OBJC) $(OBJCFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c",
+    ),
+    (
+        c"LINK.m",
+        c"$(OBJC) $(OBJCFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)",
+    ),
+    (
+        c"COMPILE.cc",
+        c"$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c",
+    ),
+    (c"COMPILE.C", c"$(COMPILE.cc)"),
+    (c"COMPILE.cpp", c"$(COMPILE.cc)"),
+    (
+        c"LINK.cc",
+        c"$(CXX) $(CXXFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)",
+    ),
+    (c"LINK.C", c"$(LINK.cc)"),
+    (c"LINK.cpp", c"$(LINK.cc)"),
+    (c"YACC.y", c"$(YACC) $(YFLAGS)"),
+    (c"LEX.l", c"$(LEX) $(LFLAGS) -t"),
+    (c"YACC.m", c"$(YACC) $(YFLAGS)"),
+    (c"LEX.m", c"$(LEX) $(LFLAGS) -t"),
+    (c"COMPILE.f", c"$(FC) $(FFLAGS) $(TARGET_ARCH) -c"),
+    (c"LINK.f", c"$(FC) $(FFLAGS) $(LDFLAGS) $(TARGET_ARCH)"),
+    (
+        c"COMPILE.F",
+        c"$(FC) $(FFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c",
+    ),
+    (
+        c"LINK.F",
+        c"$(FC) $(FFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)",
+    ),
+    (c"COMPILE.r", c"$(FC) $(FFLAGS) $(RFLAGS) $(TARGET_ARCH) -c"),
+    (
+        c"LINK.r",
+        c"$(FC) $(FFLAGS) $(RFLAGS) $(LDFLAGS) $(TARGET_ARCH)",
+    ),
+    (
+        c"COMPILE.def",
+        c"$(M2C) $(M2FLAGS) $(DEFFLAGS) $(TARGET_ARCH)",
+    ),
+    (
+        c"COMPILE.mod",
+        c"$(M2C) $(M2FLAGS) $(MODFLAGS) $(TARGET_ARCH)",
+    ),
+    (
+        c"COMPILE.p",
+        c"$(PC) $(PFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c",
+    ),
+    (
+        c"LINK.p",
+        c"$(PC) $(PFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)",
+    ),
+    (c"LINK.s", c"$(CC) $(ASFLAGS) $(LDFLAGS) $(TARGET_MACH)"),
+    (c"COMPILE.s", c"$(AS) $(ASFLAGS) $(TARGET_MACH)"),
+    (
+        c"LINK.S",
+        c"$(CC) $(ASFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_MACH)",
+    ),
+    (
+        c"COMPILE.S",
+        c"$(CC) $(ASFLAGS) $(CPPFLAGS) $(TARGET_MACH) -c",
+    ),
+    (c"PREPROCESS.S", c"$(CPP) $(CPPFLAGS)"),
+    (
+        c"PREPROCESS.F",
+        c"$(FC) $(FFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -F",
+    ),
+    (
+        c"PREPROCESS.r",
+        c"$(FC) $(FFLAGS) $(RFLAGS) $(TARGET_ARCH) -F",
+    ),
+    (
+        c"LINT.c",
+        c"$(LINT) $(LINTFLAGS) $(CPPFLAGS) $(TARGET_ARCH)",
+    ),
+    (c"OUTPUT_OPTION", c"-o $@"),
+    (c".LIBPATTERNS", c"lib%.so lib%.a"),
+    (c"GNUMAKEFLAGS", c""),
 ];
+
+/// Set up the `.SUFFIXES` special target and the `SUFFIXES` variable. With
+/// `--no-builtin-rules` both are left empty.
+///
+/// # Safety
+/// Must run single-threaded: it mutates the global file table, the global
+/// variable set, and the `suffix_file` global.
 #[no_mangle]
 pub unsafe fn set_default_suffixes() {
-    suffix_file = enter_file(strcache_add(
-        b".SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
-    ));
-    (*suffix_file).set_builtin(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    suffix_file = enter_file(strcache_add(c".SUFFIXES".as_ptr()));
+    (*suffix_file).set_builtin(1);
+
     if no_builtin_rules_flag != 0 {
         define_variable_in_set(
-            b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                .wrapping_sub(1),
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
+            c"SUFFIXES".as_ptr(),
+            8,
+            c"".as_ptr(),
             o_default,
             0,
             (*current_variable_set_list).set,
-            NILF,
+            null::<Floc>(),
         );
     } else {
-        let mut d: *mut dep;
-        let mut p: *const ::core::ffi::c_char =
-            &raw const default_suffixes as *const ::core::ffi::c_char;
+        let mut p = &raw mut default_suffixes as *mut c_char;
         (*suffix_file).deps = enter_prereqs(
             parse_file_seq(
-                &raw mut p as *mut *mut ::core::ffi::c_char,
-                ::core::mem::size_of::<dep>() as size_t,
+                &mut p,
+                ::core::mem::size_of::<crate::file::Dep>(),
                 MAP_NUL,
-                ::core::ptr::null::<::core::ffi::c_char>(),
+                null(),
                 PARSEFS_NONE,
-            ) as *mut dep,
-            ::core::ptr::null::<::core::ffi::c_char>(),
+            ) as *mut crate::file::Dep,
+            null(),
         );
-        d = (*suffix_file).deps;
+
+        let mut d = (*suffix_file).deps;
         while !d.is_null() {
-            (*(*d).file).set_builtin(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            (*(*d).file).set_builtin(1);
             d = (*d).next;
         }
+
         define_variable_in_set(
-            b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                .wrapping_sub(1),
-            &raw const default_suffixes as *const ::core::ffi::c_char,
+            c"SUFFIXES".as_ptr(),
+            8,
+            &raw const default_suffixes as *const c_char,
             o_default,
             0,
             (*current_variable_set_list).set,
-            NILF,
+            null::<Floc>(),
         );
-    };
+    }
 }
+
+/// Enter the default suffix rules into the file table as targets with
+/// recipes, unless `--no-builtin-rules` was given.
+///
+/// # Safety
+/// Must run single-threaded: it mutates the global file table.
 #[no_mangle]
 pub unsafe fn install_default_suffix_rules() {
-    let mut s: *const *const ::core::ffi::c_char;
     if no_builtin_rules_flag != 0 {
         return;
     }
-    s = &raw const default_suffix_rules as *const *const ::core::ffi::c_char;
-    while !(*s).is_null() {
-        let f: *mut file = enter_file(strcache_add(*s.offset(0 as ::core::ffi::c_int as isize)));
+    for &(target, recipe) in DEFAULT_SUFFIX_RULES {
+        let f = enter_file(strcache_add(target.as_ptr()));
+        // Don't clobber cmds given in a makefile if there were any.
         if (*f).cmds.is_null() {
-            (*f).cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
-            (*(*f).cmds).fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
-            (*(*f).cmds).commands = xstrdup(*s.offset(1 as ::core::ffi::c_int as isize));
-            (*(*f).cmds).command_lines = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
-            (*(*f).cmds).recipe_prefix = RECIPEPREFIX_DEFAULT as ::core::ffi::c_char;
-            (*f).set_builtin(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            let cmds = xmalloc(::core::mem::size_of::<Commands>()) as *mut Commands;
+            (*cmds).fileinfo.filenm = null();
+            (*cmds).commands = xstrdup(recipe.as_ptr());
+            (*cmds).command_lines = null_mut();
+            (*cmds).recipe_prefix = RECIPEPREFIX_DEFAULT;
+            (*f).cmds = cmds;
+            (*f).set_builtin(1);
         }
-        s = s.offset(2 as ::core::ffi::c_int as isize);
     }
 }
+
+/// Install the default pattern rules, unless `--no-builtin-rules` was given.
+///
+/// # Safety
+/// Must run single-threaded: it mutates the global pattern-rule lists.
 #[no_mangle]
 pub unsafe fn install_default_implicit_rules() {
-    let mut p: *const pspec;
     if no_builtin_rules_flag != 0 {
         return;
     }
-    p = &raw const default_pattern_rules as *const pspec;
-    while !(*p).target.is_null() {
-        install_pattern_rule(p, 0);
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+    for &(target, dep, commands) in DEFAULT_PATTERN_RULES {
+        let spec = pspec {
+            target: target.as_ptr(),
+            dep: dep.as_ptr(),
+            commands: commands.as_ptr(),
+        };
+        install_pattern_rule(&spec, 0);
     }
-    p = &raw const default_terminal_rules as *const pspec;
-    while !(*p).target.is_null() {
-        install_pattern_rule(p, 1);
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+    for &(target, dep, commands) in DEFAULT_TERMINAL_RULES {
+        let spec = pspec {
+            target: target.as_ptr(),
+            dep: dep.as_ptr(),
+            commands: commands.as_ptr(),
+        };
+        install_pattern_rule(&spec, 1);
     }
 }
+
+/// Define the default variables, unless `--no-builtin-variables` was given.
+///
+/// # Safety
+/// Must run single-threaded: it mutates the global variable set.
 #[no_mangle]
 pub unsafe fn define_default_variables() {
-    let mut s: *const *const ::core::ffi::c_char;
     if no_builtin_variables_flag != 0 {
         return;
     }
-    s = &raw const default_variables as *const *const ::core::ffi::c_char;
-    while !(*s).is_null() {
+    for &(name, value) in DEFAULT_VARIABLES {
         define_variable_in_set(
-            *s.offset(0 as ::core::ffi::c_int as isize),
-            strlen(*s.offset(0 as ::core::ffi::c_int as isize)) as size_t,
-            *s.offset(1 as ::core::ffi::c_int as isize),
+            name.as_ptr(),
+            name.to_bytes().len() as size_t,
+            value.as_ptr(),
             o_default,
             1,
             (*current_variable_set_list).set,
-            NILF,
+            null::<Floc>(),
         );
-        s = s.offset(2 as ::core::ffi::c_int as isize);
     }
 }
+
+/// Undefine all the default variables (used by `-R`/`--no-builtin-variables`
+/// after the environment has been processed).
+///
+/// # Safety
+/// Must run single-threaded: it mutates the global variable set.
 #[no_mangle]
 pub unsafe fn undefine_default_variables() {
-    let mut s: *const *const ::core::ffi::c_char;
-    s = &raw const default_variables as *const *const ::core::ffi::c_char;
-    while !(*s).is_null() {
+    for &(name, _) in DEFAULT_VARIABLES {
         undefine_variable_in_set(
-            ::core::ptr::null_mut::<Floc>(),
-            *s.offset(0 as ::core::ffi::c_int as isize),
-            strlen(*s.offset(0 as ::core::ffi::c_int as isize)) as size_t,
+            null(),
+            name.as_ptr(),
+            name.to_bytes().len() as size_t,
             o_default,
-            ::core::ptr::null_mut::<variable_set>(),
+            null_mut(),
         );
-        s = s.offset(2 as ::core::ffi::c_int as isize);
     }
 }
