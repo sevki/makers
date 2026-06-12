@@ -132,22 +132,30 @@ unsafe fn clear_directory_contents(dc: *mut directory_contents) {
 }
 
 unsafe extern "C" fn directory_contents_hash_1(key: *const c_void) -> c_ulong {
-    let key = key as *const directory_contents;
-    (((*key).dev as c_uint) << 4 ^ (*key).ino as c_uint) as c_ulong
+    let key = (key as *const directory_contents)
+        .as_ref()
+        .expect("hash callback got a null key");
+    ((key.dev as c_uint) << 4 ^ key.ino as c_uint) as c_ulong
 }
 
 unsafe extern "C" fn directory_contents_hash_2(key: *const c_void) -> c_ulong {
-    let key = key as *const directory_contents;
-    (((*key).dev as c_uint) << 4 ^ !(*key).ino as c_uint) as c_ulong
+    let key = (key as *const directory_contents)
+        .as_ref()
+        .expect("hash callback got a null key");
+    ((key.dev as c_uint) << 4 ^ !key.ino as c_uint) as c_ulong
 }
 
 unsafe extern "C" fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
-    let x = xv as *const directory_contents;
-    let y = yv as *const directory_contents;
-    match (*x).ino.cmp(&(*y).ino) {
+    let x = (xv as *const directory_contents)
+        .as_ref()
+        .expect("hash callback got a null key");
+    let y = (yv as *const directory_contents)
+        .as_ref()
+        .expect("hash callback got a null key");
+    match x.ino.cmp(&y.ino) {
         ::core::cmp::Ordering::Less => -1,
         ::core::cmp::Ordering::Greater => 1,
-        ::core::cmp::Ordering::Equal => match (*x).dev.cmp(&(*y).dev) {
+        ::core::cmp::Ordering::Equal => match x.dev.cmp(&y.dev) {
             ::core::cmp::Ordering::Less => -1,
             ::core::cmp::Ordering::Greater => 1,
             ::core::cmp::Ordering::Equal => 0,
@@ -164,7 +172,10 @@ static mut directory_contents: hash_table = unsafe { ::core::mem::zeroed() };
 /// `key` must point to a `directory` whose name is NUL-terminated.
 #[no_mangle]
 pub unsafe extern "C" fn directory_hash_1(key: *const c_void) -> c_ulong {
-    jhash_string((*(key as *const directory)).name as *const c_uchar) as c_ulong
+    let key = (key as *const directory)
+        .as_ref()
+        .expect("hash callback got a null key");
+    jhash_string(key.name as *const c_uchar) as c_ulong
 }
 
 /// Secondary hash for [`directory`] keys; always zero, kept for the
@@ -179,8 +190,14 @@ pub unsafe extern "C" fn directory_hash_2(_key: *const c_void) -> c_ulong {
 }
 
 unsafe extern "C" fn directory_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
-    let xn = (*(x as *const directory)).name;
-    let yn = (*(y as *const directory)).name;
+    let xn = (x as *const directory)
+        .as_ref()
+        .expect("hash callback got a null key")
+        .name;
+    let yn = (y as *const directory)
+        .as_ref()
+        .expect("hash callback got a null key")
+        .name;
     // Names are interned, so pointer equality short-circuits the strcmp.
     if ::core::ptr::eq(xn, yn) {
         0
@@ -198,7 +215,10 @@ static mut directories: hash_table = unsafe { ::core::mem::zeroed() };
 /// `key` must point to a `dirfile` whose name is NUL-terminated.
 #[no_mangle]
 pub unsafe extern "C" fn dirfile_hash_1(key: *const c_void) -> c_ulong {
-    jhash_string((*(key as *const dirfile)).name as *const c_uchar) as c_ulong
+    let key = (key as *const dirfile)
+        .as_ref()
+        .expect("hash callback got a null key");
+    jhash_string(key.name as *const c_uchar) as c_ulong
 }
 
 /// Secondary hash for [`dirfile`] keys; always zero, kept for the
@@ -213,17 +233,21 @@ pub unsafe extern "C" fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
 }
 
 unsafe extern "C" fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
-    let x = xv as *const dirfile;
-    let y = yv as *const dirfile;
+    let x = (xv as *const dirfile)
+        .as_ref()
+        .expect("hash callback got a null key");
+    let y = (yv as *const dirfile)
+        .as_ref()
+        .expect("hash callback got a null key");
     // Compare lengths first (cheap), then interned pointers, then bytes.
-    let result = (*x).length.wrapping_sub((*y).length) as c_int;
+    let result = x.length.wrapping_sub(y.length) as c_int;
     if result != 0 {
         return result;
     }
-    if ::core::ptr::eq((*x).name, (*y).name) {
+    if ::core::ptr::eq(x.name, y.name) {
         0
     } else {
-        strcmp((*x).name, (*y).name)
+        strcmp(x.name, y.name)
     }
 }
 
