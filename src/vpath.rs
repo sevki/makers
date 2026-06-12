@@ -80,6 +80,10 @@ static mut gpaths: *mut Vpath = null_mut();
 
 /// Reverse the chain of vpath directives and build the `VPATH`/`GPATH`
 /// pseudo-vpaths from the variables' current values.
+///
+/// # Safety
+/// Must run single-threaded: it reads and writes the module's vpath chains
+/// and expands make variables through the global variable tables.
 #[no_mangle]
 pub unsafe fn build_vpath_lists() {
     // Reverse the chain so vpaths are searched in the order their
@@ -133,6 +137,10 @@ unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
 /// If `pattern` is null too, remove all `Vpath` listings. The existing
 /// chains' contents are not freed beyond the listing structures themselves,
 /// since the string-cache strings may still be referenced elsewhere.
+///
+/// # Safety
+/// `pattern` and `dirpath` must be null or valid nul-terminated strings,
+/// and the caller must be single-threaded with respect to the vpath chains.
 #[no_mangle]
 pub unsafe extern "C" fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_char) {
     let mut percent: *const c_char = null();
@@ -207,7 +215,7 @@ pub unsafe extern "C" fn construct_vpath_list(pattern: *mut c_char, mut dirpath:
 
         // Skip "." entries: searching "." is implicit.
         if len > 1 || *v as c_int != '.' as i32 {
-            *searchpath.offset(elem as isize) = dir_name(strcache_add_len(v, len));
+            *searchpath.add(elem as usize) = dir_name(strcache_add_len(v, len));
             elem += 1;
             if len > maxvpath {
                 maxvpath = len;
@@ -229,7 +237,7 @@ pub unsafe extern "C" fn construct_vpath_list(pattern: *mut c_char, mut dirpath:
                 (elem as size_t + 1) * ::core::mem::size_of::<*const c_char>(),
             ) as *mut *const c_char;
         }
-        *searchpath.offset(elem as isize) = null();
+        *searchpath.add(elem as usize) = null();
 
         let path = xmalloc(::core::mem::size_of::<Vpath>()) as *mut Vpath;
         (*path).searchpath = searchpath;
@@ -251,12 +259,15 @@ pub unsafe extern "C" fn construct_vpath_list(pattern: *mut c_char, mut dirpath:
 
 /// Search the `GPATH` list for a pathname (`file` of length `len`, which is
 /// not null-terminated). Returns 1 if it is there, 0 if not.
+///
+/// # Safety
+/// `file` must point to at least `len` readable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn gpath_search(file: *const c_char, len: size_t) -> c_int {
     if !gpaths.is_null() && len <= (*gpaths).maxlen {
         let mut gp = (*gpaths).searchpath;
         while !(*gp).is_null() {
-            if strncmp(*gp, file, len) == 0 && *(*gp).offset(len as isize) == 0 {
+            if strncmp(*gp, file, len) == 0 && *(*gp).add(len) == 0 {
                 return 1;
             }
             gp = gp.add(1);
@@ -308,8 +319,8 @@ unsafe fn selective_vpath_search(
 
     // Try each VPATH entry.
     let mut i: c_uint = 0;
-    while !(*searchpath.offset(i as isize)).is_null() {
-        let entry = *searchpath.offset(i as isize);
+    while !(*searchpath.add(i as usize)).is_null() {
+        let entry = *searchpath.add(i as usize);
 
         // Put the next VPATH entry into NAME at P and advance P past it.
         let mut p = name;
@@ -339,12 +350,11 @@ unsafe fn selective_vpath_search(
         if !f.is_null() {
             exists = not_target || (*f).is_target() != 0;
             // Preserve the special -W / -o timestamps.
-            if exists
-                && !mtime_ptr.is_null()
-                && ((*f).last_mtime == OLD_MTIME || (*f).last_mtime == NEW_MTIME)
-            {
-                *mtime_ptr = (*f).last_mtime;
-                mtime_ptr = null_mut();
+            if exists && ((*f).last_mtime == OLD_MTIME || (*f).last_mtime == NEW_MTIME) {
+                if let Some(slot) = mtime_ptr.as_mut() {
+                    *slot = (*f).last_mtime;
+                    mtime_ptr = null_mut();
+                }
             }
         }
 
@@ -379,8 +389,8 @@ unsafe fn selective_vpath_search(
                     // Stale cache entry: keep searching the remaining
                     // vpath entries instead of returning it.
                     exists = false;
-                } else if !mtime_ptr.is_null() {
-                    *mtime_ptr =
+                } else if let Some(slot) = mtime_ptr.as_mut() {
+                    *slot =
                         file_timestamp_cons(name, st.st_mtim.tv_sec as time_t, st.st_mtim.tv_nsec);
                     mtime_ptr = null_mut();
                 }
@@ -390,8 +400,8 @@ unsafe fn selective_vpath_search(
         if exists {
             // We found a file. If mtime_ptr wasn't set above, record
             // UNKNOWN_MTIME to say so.
-            if !mtime_ptr.is_null() {
-                *mtime_ptr = UNKNOWN_MTIME;
+            if let Some(slot) = mtime_ptr.as_mut() {
+                *slot = UNKNOWN_MTIME;
             }
             if !path_index.is_null() {
                 *path_index = i;
@@ -409,6 +419,11 @@ unsafe fn selective_vpath_search(
 /// `file` exists. On success returns the cached full pathname and fills
 /// `*mtime_ptr`, `*vpath_index`, and `*path_index` as for
 /// [`selective_vpath_search`]; returns null if not found.
+///
+/// # Safety
+/// `file` must be a valid nul-terminated string; `mtime_ptr`, `vpath_index`,
+/// and `path_index` must each be null or valid for writes. When
+/// `vpath_index` is non-null, `path_index` must be non-null too.
 #[no_mangle]
 pub unsafe extern "C" fn vpath_search(
     file: *const c_char,
@@ -451,33 +466,34 @@ pub unsafe extern "C" fn vpath_search(
 }
 
 /// Print the data base of VPATH search paths.
+///
+/// # Safety
+/// Must run single-threaded: it reads the module's vpath chains and writes
+/// to the C `stdout` stream.
 #[no_mangle]
 pub unsafe fn print_vpath_data_base() {
-    puts(b"\n# VPATH Search Paths\n\0".as_ptr() as *const c_char);
+    puts(c"\n# VPATH Search Paths\n".as_ptr());
 
     let mut nvpaths: c_uint = 0;
     let mut v = vpaths;
     while !v.is_null() {
         nvpaths += 1;
-        printf(b"vpath %s \0".as_ptr() as *const c_char, (*v).pattern);
+        printf(c"vpath %s ".as_ptr(), (*v).pattern);
         print_search_path((*v).searchpath);
         v = (*v).next;
     }
 
     if vpaths.is_null() {
-        puts(b"# No 'vpath' search paths.\0".as_ptr() as *const c_char);
+        puts(c"# No 'vpath' search paths.".as_ptr());
     } else {
-        printf(
-            b"\n# %u 'vpath' search paths.\n\0".as_ptr() as *const c_char,
-            nvpaths,
-        );
+        printf(c"\n# %u 'vpath' search paths.\n".as_ptr(), nvpaths);
     }
 
     if general_vpath.is_null() {
-        puts(b"\n# No general ('VPATH' variable) search path.\0".as_ptr() as *const c_char);
+        puts(c"\n# No general ('VPATH' variable) search path.".as_ptr());
     } else {
         fputs(
-            b"\n# General ('VPATH' variable) search path:\n# \0".as_ptr() as *const c_char,
+            c"\n# General ('VPATH' variable) search path:\n# ".as_ptr(),
             stdout,
         );
         print_search_path((*general_vpath).searchpath);
@@ -494,7 +510,7 @@ unsafe fn print_search_path(path: *mut *const c_char) {
         } else {
             PATH_SEPARATOR_CHAR
         };
-        printf(b"%s%c\0".as_ptr() as *const c_char, *path.offset(i), sep);
+        printf(c"%s%c".as_ptr(), *path.offset(i), sep);
         i += 1;
     }
 }
