@@ -505,13 +505,17 @@ pub unsafe extern "C" fn patsubst_expand_pat(
         if t.is_null() {
             break;
         }
+        let t0 = match t.as_ref() {
+            Some(&b) => b,
+            None => break,
+        };
         let mut fail: ::core::ffi::c_int = 0;
         if len < pattern_prepercent_len.wrapping_add(pattern_postpercent_len) {
             fail = 1;
         }
         if fail == 0
             && pattern_prepercent_len > 0
-            && (*t as ::core::ffi::c_int != *pattern as ::core::ffi::c_int
+            && (t0 as ::core::ffi::c_int != *pattern as ::core::ffi::c_int
                 || *t.offset(pattern_prepercent_len.wrapping_sub(1) as isize) as ::core::ffi::c_int
                     != *pattern_percent.offset(-(2 as ::core::ffi::c_int) as isize)
                         as ::core::ffi::c_int
@@ -1329,11 +1333,7 @@ unsafe extern "C" fn func_foreach(
             ::core::ptr::null_mut::<file>(),
         ));
         o = variable_buffer_output(o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
-        o = variable_buffer_output(
-            o,
-            b" \0" as *const u8 as *const ::core::ffi::c_char,
-            1,
-        );
+        o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         doneany = 1;
     }
     if doneany != 0 {
@@ -1791,11 +1791,7 @@ unsafe extern "C" fn func_sort(
                 ) != 0
             {
                 o = variable_buffer_output(o, words[i as usize], len);
-                o = variable_buffer_output(
-                    o,
-                    b" \0" as *const u8 as *const ::core::ffi::c_char,
-                    1,
-                );
+                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
             }
             i += 1;
         }
@@ -1934,7 +1930,8 @@ unsafe extern "C" fn func_if(
     strip_whitespace(&raw mut begp, &raw mut endp);
     if begp <= endp {
         let expansion = ExpandedArg::new(begp, endp.offset(1 as ::core::ffi::c_int as isize));
-        result = (*expansion.as_ptr().offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
+        result = (*expansion.as_ptr().offset(0 as ::core::ffi::c_int as isize)
+            as ::core::ffi::c_int
             != 0) as ::core::ffi::c_int;
     }
     argv = argv.offset((1 + (result == 0) as ::core::ffi::c_int) as isize);

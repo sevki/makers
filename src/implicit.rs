@@ -53,12 +53,6 @@ extern "C" {
     ) -> *const ::core::ffi::c_char;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
     static mut no_intermediates: ::core::ffi::c_uint;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn set_file_variables(file: *mut file, stem: *const ::core::ffi::c_char);
     static mut db_level: ::core::ffi::c_int;
     fn parse_file_seq(
@@ -213,11 +207,6 @@ pub const PATH_MAX: ::core::ffi::c_int = 4096 as ::core::ffi::c_int;
 pub const GET_PATH_MAX: ::core::ffi::c_int = PATH_MAX;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
-pub const __ASSERT_FUNCTION: [::core::ffi::c_char; 72] = unsafe {
-    ::core::mem::transmute::<[u8; 72], [::core::ffi::c_char; 72]>(
-        *b"int pattern_search(struct file *, int, unsigned int, unsigned int, int)\0",
-    )
-};
 #[no_mangle]
 pub unsafe extern "C" fn alloc_dep() -> *mut dep {
     xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
@@ -763,14 +752,7 @@ unsafe extern "C" fn pattern_search(
                                                 as size_t;
                                             if o_0.offset(i as isize) < dend {
                                             } else {
-                                                __assert_fail(
-                                                    b"o + i < dend\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    b"src/implicit.c\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    632,
-                                                    __ASSERT_FUNCTION.as_ptr(),
-                                                );
+                                                panic!("assertion failed: o + i < dend");
                                             };
                                             o_0 = mempcpy(
                                                 o_0 as *mut ::core::ffi::c_void,
@@ -784,14 +766,7 @@ unsafe extern "C" fn pattern_search(
                                                     < dend
                                                 {
                                                 } else {
-                                                    __assert_fail(
-                                                        b"o + 5 < dend\0" as *const u8
-                                                            as *const ::core::ffi::c_char,
-                                                        b"src/implicit.c\0" as *const u8
-                                                            as *const ::core::ffi::c_char,
-                                                        637,
-                                                        __ASSERT_FUNCTION.as_ptr(),
-                                                    );
+                                                    panic!("assertion failed: o + 5 < dend");
                                                 };
                                                 o_0 = mempcpy(
                                                     o_0 as *mut ::core::ffi::c_void,
@@ -806,14 +781,7 @@ unsafe extern "C" fn pattern_search(
                                                     < dend
                                                 {
                                                 } else {
-                                                    __assert_fail(
-                                                        b"o + 2 < dend\0" as *const u8
-                                                            as *const ::core::ffi::c_char,
-                                                        b"src/implicit.c\0" as *const u8
-                                                            as *const ::core::ffi::c_char,
-                                                        642,
-                                                        __ASSERT_FUNCTION.as_ptr(),
-                                                    );
+                                                    panic!("assertion failed: o + 2 < dend");
                                                 };
                                                 o_0 = mempcpy(
                                                     o_0 as *mut ::core::ffi::c_void,
@@ -826,26 +794,12 @@ unsafe extern "C" fn pattern_search(
                                             }
                                             if o_0 < dend {
                                             } else {
-                                                __assert_fail(
-                                                    b"o < dend\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    b"src/implicit.c\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    645,
-                                                    __ASSERT_FUNCTION.as_ptr(),
-                                                );
+                                                panic!("assertion failed: o < dend");
                                             };
                                             cp_0 = cp_0.offset(1 as ::core::ffi::c_int as isize);
                                             if cp_0 <= end {
                                             } else {
-                                                __assert_fail(
-                                                    b"cp <= end\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    b"src/implicit.c\0" as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    647,
-                                                    __ASSERT_FUNCTION.as_ptr(),
-                                                );
+                                                panic!("assertion failed: cp <= end");
                                             };
                                             nptr = cp_0;
                                             if nptr == end {
@@ -1489,12 +1443,7 @@ unsafe extern "C" fn pattern_search(
         }
         if allow_compat_rules == 0 {
         } else {
-            __assert_fail(
-                b"allow_compat_rules == 0\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/implicit.c\0" as *const u8 as *const ::core::ffi::c_char,
-                1134 as ::core::ffi::c_uint,
-                __ASSERT_FUNCTION.as_ptr(),
-            );
+            panic!("assertion failed: allow_compat_rules == 0");
         };
         return pattern_search(file, archive, depth, recursions, 1);
     }

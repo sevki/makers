@@ -29,12 +29,6 @@ extern "C" {
     fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
     static mut reading_file: *const Floc;
     static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     static mut db_level: ::core::ffi::c_int;
     static mut env_recursion: ::core::ffi::c_ulonglong;
     static mut current_variable_set_list: *mut variable_set_list;
@@ -164,24 +158,11 @@ pub unsafe extern "C" fn variable_buffer_output(
         length.wrapping_add(ptr.offset_from(variable_buffer) as ::core::ffi::c_long as size_t);
     if ptr >= variable_buffer {
     } else {
-        __assert_fail(
-            b"ptr >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-            61,
-            b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: ptr >= variable_buffer");
     };
     if ptr < variable_buffer.offset(variable_buffer_length as isize) {
     } else {
-        __assert_fail(
-            b"ptr < variable_buffer + variable_buffer_length\0" as *const u8
-                as *const ::core::ffi::c_char,
-            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-            62,
-            b"char *variable_buffer_output(char *, const char *, size_t)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: ptr < variable_buffer + variable_buffer_length");
     };
     if newlen
         .wrapping_add(VARIABLE_BUFFER_ZONE as size_t)
@@ -386,24 +367,11 @@ pub unsafe extern "C" fn expand_variable_buf(
     }
     if buf >= variable_buffer {
     } else {
-        __assert_fail(
-            b"buf >= variable_buffer\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-            315,
-            b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: buf >= variable_buffer");
     };
     if buf < variable_buffer.offset(variable_buffer_length as isize) {
     } else {
-        __assert_fail(
-            b"buf < variable_buffer + variable_buffer_length\0" as *const u8
-                as *const ::core::ffi::c_char,
-            b"src/expand.c\0" as *const u8 as *const ::core::ffi::c_char,
-            316,
-            b"char *expand_variable_buf(char *, const char *, size_t)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: buf < variable_buffer + variable_buffer_length");
     };
     offs = buf.offset_from(variable_buffer) as ::core::ffi::c_long as size_t;
     expand_variable_output(buf, name, length);
@@ -675,7 +643,11 @@ pub unsafe extern "C" fn expand_argument(
     let len = end.offset_from(str) as ::core::ffi::c_long as size_t;
     let mut tmp_buf: Vec<u8> = ::std::vec::from_elem(0u8, (len as usize).wrapping_add(1));
     let tmp = tmp_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
-    memcpy(tmp as *mut ::core::ffi::c_void, str as *const ::core::ffi::c_void, len);
+    memcpy(
+        tmp as *mut ::core::ffi::c_void,
+        str as *const ::core::ffi::c_void,
+        len,
+    );
     *tmp.offset(len as isize) = 0;
     allocated_expand_string_for_file(tmp, ::core::ptr::null_mut::<file>())
 }
