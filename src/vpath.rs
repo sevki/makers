@@ -1,188 +1,165 @@
-use libc::{__errno_location, free, printf, puts, strcmp, strrchr};
+//! Searching the `vpath` / `VPATH` / `GPATH` directory search paths.
+//!
+//! Port of `vpath.c`. The search-path data structures are still C-shaped
+//! (`xmalloc`-owned, nul-terminated string arrays handed out by the string
+//! cache) because they are shared with `read.rs`, `remake.rs`, and
+//! `implicit.rs` through `extern "C"` boundaries.
 
-use crate::stdio::{FILE};
-use crate::file::{File, VariableSet, VariableSetList};
-pub use crate::ffi_types::{
-    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
-    __syscall_slong_t, __time_t, __uid_t, size_t, time_t, uintmax_t,
+use ::core::ffi::{c_char, c_int, c_uint, c_void};
+use ::core::ptr::{null, null_mut};
+
+use libc::{
+    __errno_location, free, memcpy, mempcpy, printf, puts, strcmp, strlen, strncmp, strrchr,
 };
-use crate::strcache::{strcache_add, strcache_add_len};
+
+use crate::dir::{dir_file_exists_p, dir_name};
+use crate::expand::expand_variable_buf;
+use crate::ffi_types::{size_t, time_t, uintmax_t};
+use crate::file::{file_timestamp_cons, lookup_file};
+use crate::function::pattern_matches;
+use crate::make_main::stopchar_map;
 use crate::misc::{xmalloc, xrealloc};
+use crate::read::find_percent;
+use crate::stdio::FILE;
+use crate::strcache::{strcache_add, strcache_add_len};
+use crate::sys_stat::stat;
+
 extern "C" {
-    pub type dep;
-    pub type commands;
-    fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
+    fn stat(file: *const c_char, buf: *mut stat) -> c_int;
     static mut stdout: *mut FILE;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn memcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn mempcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    fn dir_file_exists_p(
-        _: *const ::core::ffi::c_char,
-        _: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
-    fn dir_name(_: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn file_timestamp_cons(
-        _: *const ::core::ffi::c_char,
-        _: time_t,
-        _: ::core::ffi::c_long,
-    ) -> uintmax_t;
-    fn expand_variable_buf(
-        buf: *mut ::core::ffi::c_char,
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn pattern_matches(
-        pattern: *const ::core::ffi::c_char,
-        percent: *const ::core::ffi::c_char,
-        str: *const ::core::ffi::c_char,
-    ) -> ::core::ffi::c_int;
+    fn fputs(s: *const c_char, stream: *mut FILE) -> c_int;
 }
-pub use crate::sys_stat::timespec;
-pub use crate::sys_stat::stat;
-pub type file = File;
-pub type cmd_state = ::core::ffi::c_uint;
-pub const cs_finished: cmd_state = 3;
-pub const cs_running: cmd_state = 2;
-pub const cs_deps_running: cmd_state = 1;
-pub const cs_not_started: cmd_state = 0;
-pub type update_status = ::core::ffi::c_uint;
-pub const us_failed: update_status = 3;
-pub const us_question: update_status = 2;
-pub const us_none: update_status = 1;
-pub const us_success: update_status = 0;
-pub type variable_set_list = VariableSetList;
-pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
-pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
-pub type hash_func_t = crate::hash::hash_func_t;
-#[derive(Copy, Clone)]
+
+/// Character-class bits in `stopchar_map` (see `makeint.h`).
+const MAP_BLANK: c_int = 0x0002;
+const MAP_NEWLINE: c_int = 0x0004;
+const MAP_COLON: c_int = 0x0040;
+const MAP_SPACE: c_int = MAP_BLANK | MAP_NEWLINE;
+/// On POSIX the search-path separator is `:`.
+const MAP_PATHSEP: c_int = MAP_COLON;
+const PATH_SEPARATOR_CHAR: c_int = ':' as i32;
+
+/// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
+/// classes selected by `mask`?
+unsafe fn stop_set(c: c_char, mask: c_int) -> bool {
+    stopchar_map[c as u8 as usize] as c_int & mask != 0
+}
+
+/// `file->last_mtime` value meaning the modtime has not been checked yet
+/// (`UNKNOWN_MTIME` in `filedef.h`).
+const UNKNOWN_MTIME: uintmax_t = 0;
+/// `file->last_mtime` of a file pretended old via `-o` (`OLD_MTIME`).
+const OLD_MTIME: uintmax_t = 2;
+/// `file->last_mtime` of a file pretended new via `-W` (`NEW_MTIME`): the
+/// largest representable timestamp.
+const NEW_MTIME: uintmax_t = uintmax_t::MAX;
+
+/// One element of the `vpath` directive chain: a `%` pattern plus the
+/// directories to search for files matching it.
 #[repr(C)]
-pub struct vpath {
-    pub next: *mut vpath,
-    pub pattern: *const ::core::ffi::c_char,
-    pub percent: *const ::core::ffi::c_char,
-    pub patlen: size_t,
-    pub searchpath: *mut *const ::core::ffi::c_char,
-    pub maxlen: size_t,
+struct Vpath {
+    next: *mut Vpath,
+    /// The pattern to match, in the string cache.
+    pattern: *const c_char,
+    /// Pointer into `pattern` at the `%`, or null if there is none.
+    percent: *const c_char,
+    patlen: size_t,
+    /// Null-terminated array of cached directory names, owned via `xmalloc`.
+    searchpath: *mut *const c_char,
+    /// Length of the longest entry in `searchpath`.
+    maxlen: size_t,
 }
-pub const EINTR: ::core::ffi::c_int = 4;
-pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
-pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
-pub const OLD_MTIME: ::core::ffi::c_int = 2;
-static mut vpaths: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
-static mut general_vpath: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
-static mut gpaths: *mut vpath = ::core::ptr::null::<vpath>() as *mut vpath;
+
+/// The chain built from `vpath` directives, in reverse parse order until
+/// `build_vpath_lists` reverses it.
+static mut vpaths: *mut Vpath = null_mut();
+/// The pseudo-vpath built from the `VPATH` variable, searched for every file.
+static mut general_vpath: *mut Vpath = null_mut();
+/// The pseudo-vpath built from the `GPATH` variable.
+static mut gpaths: *mut Vpath = null_mut();
+
+/// Reverse the chain of vpath directives and build the `VPATH`/`GPATH`
+/// pseudo-vpaths from the variables' current values.
 #[no_mangle]
 pub unsafe fn build_vpath_lists() {
-    let mut new: *mut vpath = ::core::ptr::null_mut::<vpath>();
-    let mut old: *mut vpath;
-    let mut nexto: *mut vpath;
-    let mut p: *mut ::core::ffi::c_char;
-    old = vpaths;
+    // Reverse the chain so vpaths are searched in the order their
+    // directives appeared in the makefile.
+    let mut reversed: *mut Vpath = null_mut();
+    let mut old = vpaths;
     while !old.is_null() {
-        nexto = (*old).next;
-        (*old).next = new;
-        new = old;
-        old = nexto;
+        let next = (*old).next;
+        (*old).next = reversed;
+        reversed = old;
+        old = next;
     }
-    vpaths = new;
-    p = expand_variable_buf(
-        ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        b"VPATH\0" as *const u8 as *const ::core::ffi::c_char,
-        5,
-    );
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-        .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0
-    {
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+    vpaths = reversed;
+
+    if let Some(list) = vpath_from_variable(b"VPATH\0") {
+        general_vpath = list;
     }
-    if *p as ::core::ffi::c_int != 0 {
-        let save_vpaths: *mut vpath = vpaths;
-        let mut gp: [::core::ffi::c_char; 2] =
-            ::core::mem::transmute::<[u8; 2], [::core::ffi::c_char; 2]>(*b"%\0");
-        vpaths = ::core::ptr::null_mut::<vpath>();
-        construct_vpath_list(&raw mut gp as *mut ::core::ffi::c_char, p);
-        general_vpath = vpaths;
-        vpaths = save_vpaths;
-    }
-    p = expand_variable_buf(
-        ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        b"GPATH\0" as *const u8 as *const ::core::ffi::c_char,
-        5,
-    );
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-        .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0
-    {
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-    }
-    if *p as ::core::ffi::c_int != 0 {
-        let save_vpaths_0: *mut vpath = vpaths;
-        let mut gp_0: [::core::ffi::c_char; 2] =
-            ::core::mem::transmute::<[u8; 2], [::core::ffi::c_char; 2]>(*b"%\0");
-        vpaths = ::core::ptr::null_mut::<vpath>();
-        construct_vpath_list(&raw mut gp_0 as *mut ::core::ffi::c_char, p);
-        gpaths = vpaths;
-        vpaths = save_vpaths_0;
+    if let Some(list) = vpath_from_variable(b"GPATH\0") {
+        gpaths = list;
     }
 }
+
+/// Expand the named make variable and build a `%`-pattern vpath chain from
+/// its value, leaving the directive-built `vpaths` chain untouched. Returns
+/// `None` when the value is empty or whitespace-only.
+unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
+    let mut p = expand_variable_buf(
+        null_mut(),
+        name.as_ptr() as *const c_char,
+        (name.len() - 1) as size_t,
+    );
+    while stop_set(*p, MAP_SPACE) {
+        p = p.add(1);
+    }
+    if *p == 0 {
+        return None;
+    }
+    let saved = vpaths;
+    vpaths = null_mut();
+    let mut pattern = *b"%\0";
+    construct_vpath_list(pattern.as_mut_ptr() as *mut c_char, p);
+    let list = vpaths;
+    vpaths = saved;
+    Some(list)
+}
+
+/// Construct the `Vpath` listing for the pattern and search path given.
+/// `pattern` and `dirpath` may be overwritten in place.
+///
+/// If `dirpath` is null, remove all previous listings with the same pattern.
+/// If `pattern` is null too, remove all `Vpath` listings. The existing
+/// chains' contents are not freed beyond the listing structures themselves,
+/// since the string-cache strings may still be referenced elsewhere.
 #[no_mangle]
-pub unsafe extern "C" fn construct_vpath_list(
-    pattern: *mut ::core::ffi::c_char,
-    mut dirpath: *mut ::core::ffi::c_char,
-) {
-    let mut elem: ::core::ffi::c_uint;
-    let mut p: *mut ::core::ffi::c_char;
-    let mut vpath: *mut *const ::core::ffi::c_char;
-    let mut maxvpath: size_t;
-    let mut maxelem: ::core::ffi::c_uint;
-    let mut percent: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+pub unsafe extern "C" fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_char) {
+    let mut percent: *const c_char = null();
     if !pattern.is_null() {
         percent = find_percent(pattern);
     }
+
     if dirpath.is_null() {
-        let mut path: *mut vpath;
-        let mut lastpath: *mut vpath;
-        lastpath = ::core::ptr::null_mut::<vpath>();
-        path = vpaths;
+        // Remove matching listings from the chain.
+        let mut lastpath: *mut Vpath = null_mut();
+        let mut path = vpaths;
         while !path.is_null() {
-            let next: *mut vpath = (*path).next;
-            if pattern.is_null()
-                || (percent.is_null() && (*path).percent.is_null()
-                    || percent.offset_from(pattern) as ::core::ffi::c_long
-                        == (*path).percent.offset_from((*path).pattern) as ::core::ffi::c_long)
-                    && (*pattern as ::core::ffi::c_int == *(*path).pattern as ::core::ffi::c_int
-                        && (*pattern as ::core::ffi::c_int == 0
-                            || strcmp(pattern.offset(1 as ::core::ffi::c_int as isize), (*path).pattern.offset(1 as ::core::ffi::c_int as isize), ) == 0))
-            {
+            let next = (*path).next;
+            let matches = pattern.is_null()
+                || ((percent.is_null() && (*path).percent.is_null()
+                    || percent.offset_from(pattern)
+                        == (*path).percent.offset_from((*path).pattern))
+                    && strcmp(pattern, (*path).pattern) == 0);
+            if matches {
+                // Unlink and free this entry.
                 if let Some(lp) = lastpath.as_mut() {
                     lp.next = next;
                 } else {
-                    vpaths = (*path).next;
+                    vpaths = next;
                 }
-                free((*path).searchpath as *mut ::core::ffi::c_void);
-                free(path as *mut ::core::ffi::c_void);
+                free((*path).searchpath as *mut c_void);
+                free(path as *mut c_void);
             } else {
                 lastpath = path;
             }
@@ -190,399 +167,334 @@ pub unsafe extern "C" fn construct_vpath_list(
         }
         return;
     }
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-        .offset(*dirpath as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int)
-        != 0
-    {
-        dirpath = dirpath.offset(1 as ::core::ffi::c_int as isize);
+
+    // Skip over any initial separators and blanks.
+    while stop_set(*dirpath, MAP_BLANK | MAP_PATHSEP) {
+        dirpath = dirpath.add(1);
     }
-    maxelem = 2;
-    p = dirpath;
-    while *p as ::core::ffi::c_int != 0 {
-        let fresh0 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*fresh0 as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int)
-            != 0
-        {
-            maxelem = maxelem.wrapping_add(1);
+
+    // Figure out the maximum number of VPATH entries and allocate a vector
+    // for them: one for every separator plus one for the final entry, plus
+    // one for the null terminator.
+    let mut maxelem: c_uint = 2;
+    let mut p = dirpath;
+    while *p != 0 {
+        let c = *p;
+        p = p.add(1);
+        if stop_set(c, MAP_BLANK | MAP_PATHSEP) {
+            maxelem += 1;
         }
     }
-    vpath = xmalloc(
-        (maxelem as size_t)
-            .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
-    ) as *mut *const ::core::ffi::c_char;
-    maxvpath = 0;
-    elem = 0;
+
+    let mut searchpath =
+        xmalloc(maxelem as size_t * ::core::mem::size_of::<*const c_char>()) as *mut *const c_char;
+    let mut maxvpath: size_t = 0;
+    let mut elem: c_uint = 0;
+
     p = dirpath;
-    while *p as ::core::ffi::c_int != 0 {
-        let v: *mut ::core::ffi::c_char;
-        let mut len: size_t;
-        v = p;
-        while *p as ::core::ffi::c_int != 0
-            && *p as ::core::ffi::c_int != PATH_SEPARATOR_CHAR
-            && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-                & 0x2 as ::core::ffi::c_int
-                != 0)
-        {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
+    while *p != 0 {
+        // Find the end of this entry.
+        let v = p;
+        while *p != 0 && *p as c_int != PATH_SEPARATOR_CHAR && !stop_set(*p, MAP_BLANK) {
+            p = p.add(1);
         }
-        len = p.offset_from(v) as ::core::ffi::c_long as size_t;
-        if len > 1
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '/' as i32 {
-            len = len.wrapping_sub(1);
+
+        let mut len = p.offset_from(v) as size_t;
+        // Omit a trailing slash, unless the entry is just "/".
+        if len > 1 && *p.sub(1) as c_int == '/' as i32 {
+            len -= 1;
         }
-        if len > 1 || *v as ::core::ffi::c_int != '.' as i32 {
-            let fresh1 = elem;
-            elem = elem.wrapping_add(1);
-            let fresh2 = &mut (*vpath.offset(fresh1 as isize));
-            *fresh2 = dir_name(strcache_add_len(v, len));
+
+        // Skip "." entries: searching "." is implicit.
+        if len > 1 || *v as c_int != '.' as i32 {
+            *searchpath.offset(elem as isize) = dir_name(strcache_add_len(v, len));
+            elem += 1;
             if len > maxvpath {
                 maxvpath = len;
             }
         }
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int)
-            != 0
-        {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
+
+        // Skip over separators and blanks between entries.
+        while stop_set(*p, MAP_BLANK | MAP_PATHSEP) {
+            p = p.add(1);
         }
     }
+
     if elem > 0 {
-        let path_0: *mut vpath;
-        if elem < maxelem.wrapping_sub(1) {
-            vpath = xrealloc(
-                vpath as *mut ::core::ffi::c_void,
-                (elem.wrapping_add(1) as size_t)
-                    .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
-            ) as *mut *const ::core::ffi::c_char;
+        // Usually fewer entries than estimated; shrink, keeping room for
+        // the null terminator.
+        if elem < maxelem - 1 {
+            searchpath = xrealloc(
+                searchpath as *mut c_void,
+                (elem as size_t + 1) * ::core::mem::size_of::<*const c_char>(),
+            ) as *mut *const c_char;
         }
-        let fresh3 = &mut (*vpath.offset(elem as isize));
-        *fresh3 = ::core::ptr::null::<::core::ffi::c_char>();
-        path_0 = xmalloc(::core::mem::size_of::<vpath>() as size_t) as *mut vpath;
-        (*path_0).searchpath = vpath;
-        (*path_0).maxlen = maxvpath;
-        (*path_0).next = vpaths;
-        vpaths = path_0;
-        (*path_0).pattern = strcache_add(pattern);
-        (*path_0).patlen = strlen(pattern) as size_t;
-        (*path_0).percent = if !percent.is_null() {
-            (*path_0)
-                .pattern
-                .offset(percent.offset_from(pattern) as ::core::ffi::c_long as isize)
+        *searchpath.offset(elem as isize) = null();
+
+        let path = xmalloc(::core::mem::size_of::<Vpath>()) as *mut Vpath;
+        (*path).searchpath = searchpath;
+        (*path).maxlen = maxvpath;
+        (*path).next = vpaths;
+        vpaths = path;
+        (*path).pattern = strcache_add(pattern);
+        (*path).patlen = strlen(pattern);
+        (*path).percent = if !percent.is_null() {
+            (*path).pattern.offset(percent.offset_from(pattern))
         } else {
-            ::core::ptr::null::<::core::ffi::c_char>()
+            null()
         };
     } else {
-        free(vpath as *mut ::core::ffi::c_void);
-    };
+        // There were no entries; forget the whole thing.
+        free(searchpath as *mut c_void);
+    }
 }
+
+/// Search the `GPATH` list for a pathname (`file` of length `len`, which is
+/// not null-terminated). Returns 1 if it is there, 0 if not.
 #[no_mangle]
-pub unsafe extern "C" fn gpath_search(
-    file: *const ::core::ffi::c_char,
-    len: size_t,
-) -> ::core::ffi::c_int {
+pub unsafe extern "C" fn gpath_search(file: *const c_char, len: size_t) -> c_int {
     if !gpaths.is_null() && len <= (*gpaths).maxlen {
-        let mut gp: *mut *const ::core::ffi::c_char;
-        gp = (*gpaths).searchpath;
+        let mut gp = (*gpaths).searchpath;
         while !(*gp).is_null() {
-            if strncmp(*gp, file, len as size_t) == 0
-                && *(*gp).offset(len as isize) as ::core::ffi::c_int == 0
-            {
+            if strncmp(*gp, file, len) == 0 && *(*gp).offset(len as isize) == 0 {
                 return 1;
             }
-            gp = gp.offset(1 as ::core::ffi::c_int as isize);
+            gp = gp.add(1);
         }
     }
     0
 }
-unsafe extern "C" fn selective_vpath_search(
-    path: *mut vpath,
-    file: *const ::core::ffi::c_char,
+
+/// Search the given `Vpath` list for a directory where `file` exists. If it
+/// is found, return the cached full pathname, storing the file's modtime
+/// into `*mtime_ptr` (when non-null) and the index of the matching search
+/// path into `*path_index` (when non-null). Returns null if not found.
+unsafe fn selective_vpath_search(
+    path: *mut Vpath,
+    file: *const c_char,
     mut mtime_ptr: *mut uintmax_t,
-    path_index: *mut ::core::ffi::c_uint,
-) -> *const ::core::ffi::c_char {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let not_target: ::core::ffi::c_int;
-    let name: *mut ::core::ffi::c_char;
-    let n: *const ::core::ffi::c_char;
-    let filename: *const ::core::ffi::c_char;
-    let vpath: *mut *const ::core::ffi::c_char = (*path).searchpath;
-    let maxvpath: size_t = (*path).maxlen;
-    let mut i: ::core::ffi::c_uint;
-    let mut flen: size_t;
-    let name_dplen: size_t;
-    let mut exists: ::core::ffi::c_int = 0;
-    let f: *mut file = lookup_file(file);
-    not_target = (f.is_null() || (*f).is_target() == 0) as ::core::ffi::c_int;
-    flen = strlen(file) as size_t;
-    n = strrchr(file, '/' as i32);
-    name_dplen = (if !n.is_null() {
-        n.offset_from(file) as ::core::ffi::c_long
-    } else {
-        0
-    }) as size_t;
-    filename = if name_dplen > 0 { n.offset(1 as ::core::ffi::c_int as isize) } else { file
+    path_index: *mut c_uint,
+) -> *const c_char {
+    let searchpath = (*path).searchpath;
+    let maxvpath = (*path).maxlen;
+
+    // If and only if *FILE is NOT a target, accept prospective files that
+    // don't exist but are mentioned in a makefile.
+    let not_target = {
+        let f = lookup_file(file);
+        f.is_null() || (*f).is_target() == 0
     };
+
+    // Split *FILE into a directory prefix and a name-within-directory:
+    // NAME_DPLEN is the length of the prefix, FILENAME points at the
+    // name-within-directory, and FLEN is its length.
+    let mut flen = strlen(file);
+    let n = strrchr(file, '/' as i32);
+    let name_dplen: size_t = if n.is_null() {
+        0
+    } else {
+        n.offset_from(file) as size_t
+    };
+    let filename = if name_dplen > 0 { n.add(1) } else { file };
     if name_dplen > 0 {
-        flen = flen.wrapping_sub(name_dplen.wrapping_add(1));
+        flen -= name_dplen + 1;
     }
-    alloca_allocations.push(::std::vec::from_elem(
-        0,
-        maxvpath
-            .wrapping_add(1)
-            .wrapping_add(name_dplen)
-            .wrapping_add(1)
-            .wrapping_add(flen)
-            .wrapping_add(1) as usize,
-    ));
-    name = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    i = 0;
-    while !(*vpath.offset(i as isize)).is_null() {
-        let mut exists_in_cache: ::core::ffi::c_int = 0;
-        let mut p: *mut ::core::ffi::c_char = name;
-        let vlen: size_t = strlen(*vpath.offset(i as isize)) as size_t;
-        p = mempcpy(
-            p as *mut ::core::ffi::c_void,
-            *vpath.offset(i as isize) as *const ::core::ffi::c_void,
-            vlen as size_t,
-        ) as *mut ::core::ffi::c_char;
+
+    // Scratch buffer with room for the biggest VPATH entry, a slash, the
+    // directory prefix that came with *FILE, another slash (not always
+    // needed), the filename, and a null terminator.
+    let mut name_buf = vec![0u8; maxvpath + 1 + name_dplen + 1 + flen + 1];
+    let name = name_buf.as_mut_ptr() as *mut c_char;
+
+    // Try each VPATH entry.
+    let mut i: c_uint = 0;
+    while !(*searchpath.offset(i as isize)).is_null() {
+        let entry = *searchpath.offset(i as isize);
+
+        // Put the next VPATH entry into NAME at P and advance P past it.
+        let mut p = name;
+        p = mempcpy(p as *mut c_void, entry as *const c_void, strlen(entry)) as *mut c_char;
+
+        // Add the directory prefix already in *FILE.
         if name_dplen > 0 {
-            let fresh4 = p;
-            p = p.offset(1 as ::core::ffi::c_int as isize);
-            *fresh4 = '/' as i32 as ::core::ffi::c_char;
-            p = mempcpy(
-                p as *mut ::core::ffi::c_void,
-                file as *const ::core::ffi::c_void,
-                name_dplen as size_t,
-            ) as *mut ::core::ffi::c_char;
+            *p = '/' as c_char;
+            p = p.add(1);
+            p = mempcpy(p as *mut c_void, file as *const c_void, name_dplen) as *mut c_char;
         }
-        if p != name
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '/' as i32 {
-            *p = '/' as i32 as ::core::ffi::c_char;
-            memcpy(
-                p.offset(1 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void,
-                filename as *const ::core::ffi::c_void,
-                (flen as size_t).wrapping_add(1),
-            );
+
+        // Now add the name-within-directory at the end of NAME.
+        if p != name && *p.sub(1) as c_int != '/' as i32 {
+            *p = '/' as c_char;
+            memcpy(p.add(1) as *mut c_void, filename as *const c_void, flen + 1);
         } else {
-            memcpy(
-                p as *mut ::core::ffi::c_void,
-                filename as *const ::core::ffi::c_void,
-                (flen as size_t).wrapping_add(1),
-            );
+            memcpy(p as *mut c_void, filename as *const c_void, flen + 1);
         }
-        let f_0: *mut file = lookup_file(name);
-        if !f_0.is_null() {
-            exists = (not_target != 0 || (*f_0).is_target() as ::core::ffi::c_int != 0)
-                as ::core::ffi::c_int;
-            if exists != 0
+
+        // Check whether the file is mentioned in a makefile. If *FILE is
+        // not a target, that is enough for us to decide this file exists.
+        // If *FILE is a target, the file must also be mentioned as a target
+        // to be chosen.
+        let mut exists = false;
+        let f = lookup_file(name);
+        if !f.is_null() {
+            exists = not_target || (*f).is_target() != 0;
+            // Preserve the special -W / -o timestamps.
+            if exists
                 && !mtime_ptr.is_null()
-                && ((*f_0).last_mtime == OLD_MTIME as uintmax_t
-                    || (*f_0).last_mtime
-                        == (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
-                            if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
-                                0 as ::core::ffi::c_int as uintmax_t
-                            } else {
-                                !(0 as ::core::ffi::c_int as uintmax_t)
-                                    << (::core::mem::size_of::<uintmax_t>() as usize)
-                                        .wrapping_mul(CHAR_BIT as usize)
-                                        .wrapping_sub(1 as usize)
-                            },
-                        ))
+                && ((*f).last_mtime == OLD_MTIME || (*f).last_mtime == NEW_MTIME)
             {
-                if let Some(slot) = mtime_ptr.as_mut() {
-                    *slot = (*f_0).last_mtime;
-                }
-                mtime_ptr = ::core::ptr::null_mut::<uintmax_t>();
+                *mtime_ptr = (*f).last_mtime;
+                mtime_ptr = null_mut();
             }
         }
-        if exists == 0 {
+
+        let mut exists_in_cache = false;
+        if !exists {
+            // The file wasn't mentioned in the makefile. Clobber a null
+            // into NAME at the last slash, so NAME is the directory to look
+            // in (the directory cache knows it already), and ask the cache
+            // whether the file exists there.
             *p = 0;
-            exists = dir_file_exists_p(name, filename);
+            exists = dir_file_exists_p(name, filename) != 0;
             exists_in_cache = exists;
         }
-        if exists != 0 {
-            let mut st: stat = stat {
-                st_dev: 0,
-                st_ino: 0,
-                st_nlink: 0,
-                st_mode: 0,
-                st_uid: 0,
-                st_gid: 0,
-                __pad0: 0,
-                st_rdev: 0,
-                st_size: 0,
-                st_blksize: 0,
-                st_blocks: 0,
-                st_atim: timespec {
-                    tv_sec: 0,
-                    tv_nsec: 0,
-                },
-                st_mtim: timespec {
-                    tv_sec: 0,
-                    tv_nsec: 0,
-                },
-                st_ctim: timespec {
-                    tv_sec: 0,
-                    tv_nsec: 0,
-                },
-                __glibc_reserved: [0; 3],
-            };
-            *p = '/' as i32 as ::core::ffi::c_char;
-            // A cached hit that no longer stat()s is treated as missing: keep
-            // searching the remaining vpath entries instead of returning it.
-            let mut do_return = true;
-            if exists_in_cache != 0 {
-                let mut e: ::core::ffi::c_int;
+
+        if exists {
+            // Put the slash back in NAME.
+            *p = '/' as c_char;
+
+            if exists_in_cache {
+                // The directory cache may be out of date; check that the
+                // file really exists in the filesystem, because higher
+                // levels get confused otherwise.
+                let mut st: stat = ::core::mem::zeroed();
+                let mut e: c_int;
                 loop {
-                    e = stat(name, &raw mut st);
-                    if !(e == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
+                    e = stat(name, &mut st);
+                    if !(e == -1 && *__errno_location() == libc::EINTR) {
                         break;
                     }
                 }
                 if e != 0 {
-                    exists = 0;
-                    do_return = false;
-                } else if let Some(slot) = mtime_ptr.as_mut() {
-                    *slot = file_timestamp_cons(
-                        name,
-                        st.st_mtim.tv_sec as time_t,
-                        st.st_mtim.tv_nsec as ::core::ffi::c_long,
-                    );
-                    mtime_ptr = ::core::ptr::null_mut::<uintmax_t>();
+                    // Stale cache entry: keep searching the remaining
+                    // vpath entries instead of returning it.
+                    exists = false;
+                } else if !mtime_ptr.is_null() {
+                    *mtime_ptr =
+                        file_timestamp_cons(name, st.st_mtim.tv_sec as time_t, st.st_mtim.tv_nsec);
+                    mtime_ptr = null_mut();
                 }
-            }
-            if do_return {
-                if let Some(slot) = mtime_ptr.as_mut() {
-                    *slot = UNKNOWN_MTIME as uintmax_t;
-                }
-                if !path_index.is_null() {
-                    *path_index = i;
-                }
-                return strcache_add_len(
-                    name,
-                    (p.offset(1 as ::core::ffi::c_int as isize).offset_from(name) as ::core::ffi::c_long as size_t)
-                        .wrapping_add(flen),
-                );
             }
         }
-        i = i.wrapping_add(1);
+
+        if exists {
+            // We found a file. If mtime_ptr wasn't set above, record
+            // UNKNOWN_MTIME to say so.
+            if !mtime_ptr.is_null() {
+                *mtime_ptr = UNKNOWN_MTIME;
+            }
+            if !path_index.is_null() {
+                *path_index = i;
+            }
+            return strcache_add_len(name, p.add(1).offset_from(name) as size_t + flen);
+        }
+
+        i += 1;
     }
-    ::core::ptr::null::<::core::ffi::c_char>()
+
+    null()
 }
+
+/// Search the VPATH list whose pattern matches `file` for a directory where
+/// `file` exists. On success returns the cached full pathname and fills
+/// `*mtime_ptr`, `*vpath_index`, and `*path_index` as for
+/// [`selective_vpath_search`]; returns null if not found.
 #[no_mangle]
 pub unsafe extern "C" fn vpath_search(
-    file: *const ::core::ffi::c_char,
+    file: *const c_char,
     mtime_ptr: *mut uintmax_t,
-    vpath_index: *mut ::core::ffi::c_uint,
-    path_index: *mut ::core::ffi::c_uint,
-) -> *const ::core::ffi::c_char {
-    let mut v: *mut vpath;
-    if *file.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32
-        || vpaths.is_null() && general_vpath.is_null()
-    {
-        return ::core::ptr::null::<::core::ffi::c_char>();
+    vpath_index: *mut c_uint,
+    path_index: *mut c_uint,
+) -> *const c_char {
+    // Absolute names need no vpath search.
+    if *file == '/' as c_char || (vpaths.is_null() && general_vpath.is_null()) {
+        return null();
     }
+
     if !vpath_index.is_null() {
         *vpath_index = 0;
         *path_index = 0;
     }
-    v = vpaths;
+
+    let mut v = vpaths;
     while !v.is_null() {
         if pattern_matches((*v).pattern, (*v).percent, file) != 0 {
-            let p: *const ::core::ffi::c_char =
-                selective_vpath_search(v, file, mtime_ptr, path_index);
+            let p = selective_vpath_search(v, file, mtime_ptr, path_index);
             if !p.is_null() {
                 return p;
             }
         }
         if !vpath_index.is_null() {
-            *vpath_index = (*vpath_index).wrapping_add(1);
+            *vpath_index += 1;
         }
         v = (*v).next;
     }
+
     if !general_vpath.is_null() {
-        let p_0: *const ::core::ffi::c_char =
-            selective_vpath_search(general_vpath, file, mtime_ptr, path_index);
-        if !p_0.is_null() {
-            return p_0;
+        let p = selective_vpath_search(general_vpath, file, mtime_ptr, path_index);
+        if !p.is_null() {
+            return p;
         }
     }
-    ::core::ptr::null::<::core::ffi::c_char>()
+
+    null()
 }
+
+/// Print the data base of VPATH search paths.
 #[no_mangle]
 pub unsafe fn print_vpath_data_base() {
-    let mut nvpaths: ::core::ffi::c_uint;
-    let mut v: *mut vpath;
-    puts(b"\n# VPATH Search Paths\n\0" as *const u8 as *const ::core::ffi::c_char);
-    nvpaths = 0;
-    v = vpaths;
+    puts(b"\n# VPATH Search Paths\n\0".as_ptr() as *const c_char);
+
+    let mut nvpaths: c_uint = 0;
+    let mut v = vpaths;
     while !v.is_null() {
-        let mut i: ::core::ffi::c_uint;
-        nvpaths = nvpaths.wrapping_add(1);
-        printf(
-            b"vpath %s \0" as *const u8 as *const ::core::ffi::c_char,
-            (*v).pattern,
-        );
-        i = 0;
-        while !(*(*v).searchpath.offset(i as isize)).is_null() {
-            printf(
-                b"%s%c\0" as *const u8 as *const ::core::ffi::c_char,
-                *(*v).searchpath.offset(i as isize),
-                if (*(*v)
-                    .searchpath
-                    .offset(i.wrapping_add(1) as isize))
-                .is_null()
-                {
-                    '\n' as i32
-                } else {
-                    PATH_SEPARATOR_CHAR
-                },
-            );
-            i = i.wrapping_add(1);
-        }
+        nvpaths += 1;
+        printf(b"vpath %s \0".as_ptr() as *const c_char, (*v).pattern);
+        print_search_path((*v).searchpath);
         v = (*v).next;
     }
+
     if vpaths.is_null() {
-        puts(b"# No 'vpath' search paths.\0" as *const u8 as *const ::core::ffi::c_char);
+        puts(b"# No 'vpath' search paths.\0".as_ptr() as *const c_char);
     } else {
         printf(
-            b"\n# %u 'vpath' search paths.\n\0" as *const u8 as *const ::core::ffi::c_char,
+            b"\n# %u 'vpath' search paths.\n\0".as_ptr() as *const c_char,
             nvpaths,
         );
     }
+
     if general_vpath.is_null() {
-        puts(
-            b"\n# No general ('VPATH' variable) search path.\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        puts(b"\n# No general ('VPATH' variable) search path.\0".as_ptr() as *const c_char);
     } else {
-        let path: *mut *const ::core::ffi::c_char = (*general_vpath).searchpath;
-        let mut i_0: ::core::ffi::c_uint;
         fputs(
-            b"\n# General ('VPATH' variable) search path:\n# \0" as *const u8
-                as *const ::core::ffi::c_char,
+            b"\n# General ('VPATH' variable) search path:\n# \0".as_ptr() as *const c_char,
             stdout,
         );
-        i_0 = 0;
-        while !(*path.offset(i_0 as isize)).is_null() {
-            printf(
-                b"%s%c\0" as *const u8 as *const ::core::ffi::c_char,
-                *path.offset(i_0 as isize),
-                if (*path.offset(i_0.wrapping_add(1) as isize)).is_null() {
-                    '\n' as i32
-                } else {
-                    PATH_SEPARATOR_CHAR
-                },
-            );
-            i_0 = i_0.wrapping_add(1);
-        }
-    };
+        print_search_path((*general_vpath).searchpath);
+    }
 }
-pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
-pub const PATH_SEPARATOR_CHAR: ::core::ffi::c_int = ':' as i32;
+
+/// Print a null-terminated array of directory names separated by the path
+/// separator, ending with a newline.
+unsafe fn print_search_path(path: *mut *const c_char) {
+    let mut i: isize = 0;
+    while !(*path.offset(i)).is_null() {
+        let sep = if (*path.offset(i + 1)).is_null() {
+            '\n' as c_int
+        } else {
+            PATH_SEPARATOR_CHAR
+        };
+        printf(b"%s%c\0".as_ptr() as *const c_char, *path.offset(i), sep);
+        i += 1;
+    }
+}
