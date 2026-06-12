@@ -6,14 +6,18 @@
 //! still keyed on interned C strings; the layout of `hash_table` is shared
 //! through `#[repr(C)]`.
 
-use ::core::ffi::{c_char, c_double, c_int, c_uchar, c_uint, c_ulong, c_void};
-use ::core::ptr::null_mut;
+use ::core::{
+    ffi::{c_char, c_double, c_int, c_uchar, c_uint, c_ulong, c_void},
+    ptr::null_mut,
+};
 
-use libc::{exit, free, memcpy, qsort, strlen};
+use libc::{exit, free, memcpy, qsort};
 
-use crate::ffi_types::size_t;
-use crate::misc::{xcalloc, xmalloc};
-use crate::stdio::FILE;
+use crate::{
+    ffi_types::size_t,
+    misc::{xcalloc, xmalloc},
+    stdio::FILE,
+};
 
 extern "C" {
     static mut stderr: *mut FILE;
@@ -596,35 +600,11 @@ pub unsafe fn jhash(mut k: *const c_uchar, mut length: c_int) -> c_uint {
     c
 }
 
-/// Read the next word of a NUL-terminated string without reading past
-/// `klen` remaining bytes, and report which bytes (if any) are NUL via the
-/// SWAR has-zero trick.
-unsafe fn load_string_word(k: *const c_uchar, klen: size_t) -> (c_uint, c_uint) {
-    let mut val: c_uint = 0;
-    memcpy(
-        &raw mut val as *mut c_void,
-        k as *const c_void,
-        if klen >= UINTSZ { UINTSZ } else { klen },
-    );
-    let have_nul = val.wrapping_sub(0x01010101) & !val & 0x80808080;
-    (val, have_nul)
-}
-
-/// Add `val`'s bytes that precede its first NUL into `acc`.
-fn add_until_nul(acc: c_uint, val: c_uint, have_nul: c_uint) -> c_uint {
-    if have_nul == 0 {
-        acc.wrapping_add(val)
-    } else if val & 0xff != 0 {
-        if val & 0xff00 == 0 {
-            acc.wrapping_add(val & 0xff)
-        } else if val & 0xff0000 == 0 {
-            acc.wrapping_add(val & 0xffff)
-        } else {
-            acc.wrapping_add(val)
-        }
-    } else {
-        acc
-    }
+fn load_partial_word(bytes: &[u8]) -> c_uint {
+    let mut word = [0u8; UINTSZ];
+    let len = bytes.len().min(UINTSZ);
+    word[..len].copy_from_slice(&bytes[..len]);
+    c_uint::from_ne_bytes(word)
 }
 
 /// Hash the NUL-terminated string `k` (lookup3 over words, mixing in the
@@ -632,35 +612,117 @@ fn add_until_nul(acc: c_uint, val: c_uint, have_nul: c_uint) -> c_uint {
 ///
 /// # Safety
 /// `k` must be a valid NUL-terminated string.
-pub unsafe fn jhash_string(mut k: *const c_uchar) -> c_uint {
-    let start: *const c_uchar = k;
-    let mut klen: size_t = strlen(k as *const c_char);
+pub unsafe fn jhash_string(k: *const c_uchar) -> c_uint {
+    let bytes = ::core::ffi::CStr::from_ptr(k as *const c_char).to_bytes();
+    let mut chunks = bytes.chunks_exact(UINTSZ);
 
     let mut a = JHASH_INITVAL;
     let mut b = JHASH_INITVAL;
     let mut c = JHASH_INITVAL;
 
-    // Consume the string a word at a time into the three lanes, mixing
-    // after every third word, until a word containing the NUL is seen.
-    'words: loop {
+    loop {
         for lane in 0..3 {
-            let (val, have_nul) = load_string_word(k, klen);
-            let acc = match lane {
-                0 => &mut a,
-                1 => &mut b,
-                _ => &mut c,
+            let word = match chunks.next() {
+                Some(chunk) => load_partial_word(chunk),
+                None => {
+                    let remainder = chunks.remainder();
+                    if !remainder.is_empty() {
+                        let acc = match lane {
+                            0 => &mut a,
+                            1 => &mut b,
+                            _ => &mut c,
+                        };
+                        *acc = acc.wrapping_add(load_partial_word(remainder));
+                    }
+                    jhash_final!(a, b, c);
+                    return c.wrapping_add((bytes.len() / UINTSZ * UINTSZ) as c_uint);
+                }
             };
-            *acc = add_until_nul(*acc, val, have_nul);
-            if have_nul != 0 {
-                break 'words;
+            match lane {
+                0 => a = a.wrapping_add(word),
+                1 => b = b.wrapping_add(word),
+                _ => c = c.wrapping_add(word),
             }
-            k = k.add(UINTSZ);
-            assert!(klen >= UINTSZ, "jhash_string ran past the terminator");
-            klen -= UINTSZ;
         }
         jhash_mix!(a, b, c);
     }
+}
 
-    jhash_final!(a, b, c);
-    c.wrapping_add(k.offset_from(start) as c_uint)
+#[cfg(test)]
+mod tests {
+    use {super::*, std::ffi::CString};
+
+    fn legacy_string_word(bytes: &[u8], remaining: usize) -> (c_uint, c_uint) {
+        let mut word = [0u8; UINTSZ];
+        let len = remaining.min(UINTSZ);
+        word[..len].copy_from_slice(&bytes[..len]);
+        let val = c_uint::from_ne_bytes(word);
+        let have_nul = val.wrapping_sub(0x01010101) & !val & 0x80808080;
+        (val, have_nul)
+    }
+
+    fn legacy_add_until_nul(acc: c_uint, val: c_uint, have_nul: c_uint) -> c_uint {
+        if have_nul == 0 {
+            acc.wrapping_add(val)
+        } else if val & 0xff != 0 {
+            if val & 0xff00 == 0 {
+                acc.wrapping_add(val & 0xff)
+            } else if val & 0xff0000 == 0 {
+                acc.wrapping_add(val & 0xffff)
+            } else {
+                acc.wrapping_add(val)
+            }
+        } else {
+            acc
+        }
+    }
+
+    fn legacy_jhash_string(bytes: &[u8]) -> c_uint {
+        let mut offset = 0usize;
+        let mut remaining = bytes.len();
+        let mut a = JHASH_INITVAL;
+        let mut b = JHASH_INITVAL;
+        let mut c = JHASH_INITVAL;
+
+        'words: loop {
+            for lane in 0..3 {
+                let (val, have_nul) = legacy_string_word(&bytes[offset..], remaining);
+                let acc = match lane {
+                    0 => &mut a,
+                    1 => &mut b,
+                    _ => &mut c,
+                };
+                *acc = legacy_add_until_nul(*acc, val, have_nul);
+                if have_nul != 0 {
+                    break 'words;
+                }
+                offset += UINTSZ;
+                assert!(remaining >= UINTSZ);
+                remaining -= UINTSZ;
+            }
+            jhash_mix!(a, b, c);
+        }
+
+        jhash_final!(a, b, c);
+        c.wrapping_add(offset as c_uint)
+    }
+
+    #[test]
+    fn jhash_string_matches_legacy_word_loop() {
+        for input in [
+            "",
+            "a",
+            "abc",
+            "abcd",
+            "abcde",
+            "abcdefgh",
+            "abcdefghijkl",
+            "abcdefghijklm",
+            "target%pattern",
+        ] {
+            let c_string = CString::new(input).unwrap();
+            let actual = unsafe { jhash_string(c_string.as_ptr() as *const c_uchar) };
+            assert_eq!(actual, legacy_jhash_string(input.as_bytes()), "{input:?}");
+        }
+    }
 }
