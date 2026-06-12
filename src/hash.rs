@@ -75,7 +75,7 @@ pub unsafe fn is_real_item(item: *const c_void) -> bool {
     !item.is_null() && item != hash_deleted_item
 }
 
-unsafe fn table_slots<'a>(ht: *const hash_table) -> &'a [*mut c_void] {
+pub(crate) unsafe fn table_slots<'a>(ht: *const hash_table) -> &'a [*mut c_void] {
     let ht = ht.as_ref().expect("hash table pointer is null");
     assert!(!ht.ht_vec.is_null(), "hash table without a slot vector");
     ::core::slice::from_raw_parts(ht.ht_vec, ht.ht_size as usize)
