@@ -6,14 +6,18 @@
 //! still keyed on interned C strings; the layout of `hash_table` is shared
 //! through `#[repr(C)]`.
 
-use ::core::ffi::{c_char, c_double, c_int, c_uchar, c_uint, c_ulong, c_void};
-use ::core::ptr::null_mut;
+use ::core::{
+    ffi::{c_char, c_double, c_int, c_uchar, c_uint, c_ulong, c_void},
+    ptr::null_mut,
+};
 
-use libc::{exit, free, memcpy, qsort, strlen};
+use libc::{exit, free, qsort};
 
-use crate::ffi_types::size_t;
-use crate::misc::{xcalloc, xmalloc};
-use crate::stdio::FILE;
+use crate::{
+    ffi_types::size_t,
+    misc::{xcalloc, xmalloc},
+    stdio::FILE,
+};
 
 extern "C" {
     static mut stderr: *mut FILE;
@@ -71,6 +75,18 @@ pub unsafe fn is_real_item(item: *const c_void) -> bool {
     !item.is_null() && item != hash_deleted_item
 }
 
+unsafe fn table_slots<'a>(ht: *const hash_table) -> &'a [*mut c_void] {
+    let ht = ht.as_ref().expect("hash table pointer is null");
+    assert!(!ht.ht_vec.is_null(), "hash table without a slot vector");
+    ::core::slice::from_raw_parts(ht.ht_vec, ht.ht_size as usize)
+}
+
+unsafe fn table_slots_mut<'a>(ht: *mut hash_table) -> &'a mut [*mut c_void] {
+    let ht = ht.as_mut().expect("hash table pointer is null");
+    assert!(!ht.ht_vec.is_null(), "hash table without a slot vector");
+    ::core::slice::from_raw_parts_mut(ht.ht_vec, ht.ht_size as usize)
+}
+
 /// Initialize `ht` with at least `size` slots (rounded up to a power of
 /// two) and the given hash/compare callbacks.
 ///
@@ -120,10 +136,16 @@ pub unsafe fn hash_load(
     cardinality: c_ulong,
     size: c_ulong,
 ) {
-    let mut items: *const c_char = item_table as *const c_char;
-    for _ in 0..cardinality {
-        hash_insert(ht, items as *const c_void);
-        items = items.offset(size as isize);
+    if cardinality == 0 {
+        return;
+    }
+    let row_size = size as usize;
+    let total_size = (cardinality as usize)
+        .checked_mul(row_size)
+        .expect("hash_load item table size overflow");
+    let items = ::core::slice::from_raw_parts(item_table as *const u8, total_size);
+    for item in items.chunks_exact(row_size) {
+        hash_insert(ht, item.as_ptr() as *const c_void);
     }
 }
 
@@ -141,11 +163,9 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
         hash_1 = (hash_1 as c_ulong & ((*ht).ht_size - 1)) as c_uint;
-        let slot = (*ht)
-            .ht_vec
-            .add(hash_1 as usize)
-            .as_mut()
-            .expect("hash table without a slot vector");
+        let slot = table_slots_mut(ht)
+            .get_mut(hash_1 as usize)
+            .expect("hash index within table size");
 
         if (*slot).is_null() {
             return if !deleted_slot.is_null() {
@@ -282,16 +302,11 @@ pub unsafe fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c
 /// Every stored item must be an owned `malloc`-family allocation.
 pub unsafe fn hash_free_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
-    for i in 0..(*ht).ht_size as usize {
-        let vec = (*ht)
-            .ht_vec
-            .add(i)
-            .as_mut()
-            .expect("hash table without a slot vector");
-        if is_real_item(*vec) {
-            free(*vec);
+    for slot in table_slots_mut(ht) {
+        if is_real_item(*slot) {
+            free(*slot);
         }
-        *vec = null_mut();
+        *slot = null_mut();
     }
     (*ht).ht_fill = 0;
     (*ht).ht_empty_slots = (*ht).ht_size;
@@ -303,13 +318,7 @@ pub unsafe fn hash_free_items(ht: *mut hash_table) {
 /// `ht` must be initialized.
 pub unsafe fn hash_delete_items(ht: *mut hash_table) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
-    for i in 0..(*ht).ht_size as usize {
-        *(*ht)
-            .ht_vec
-            .add(i)
-            .as_mut()
-            .expect("hash table without a slot vector") = null_mut();
-    }
+    table_slots_mut(ht).fill(null_mut());
     (*ht).ht_fill = 0;
     (*ht).ht_collisions = 0;
     (*ht).ht_lookups = 0;
@@ -342,14 +351,9 @@ pub unsafe fn hash_free(ht: *mut hash_table, free_items: c_int) {
 pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
     (*ht).set_ht_in_map(1);
-    for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht)
-            .ht_vec
-            .add(i)
-            .as_ref()
-            .expect("hash table without a slot vector");
-        if is_real_item(*slot) {
-            map(*slot);
+    for &item in table_slots(ht) {
+        if is_real_item(item) {
+            map(item);
         }
     }
     (*ht).set_ht_in_map(0);
@@ -363,14 +367,9 @@ pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
 pub unsafe fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *mut c_void) {
     let map = map.expect("hash_map_arg without callback");
     (*ht).set_ht_in_map(1);
-    for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht)
-            .ht_vec
-            .add(i)
-            .as_ref()
-            .expect("hash table without a slot vector");
-        if is_real_item(*slot) {
-            map(*slot, arg);
+    for &item in table_slots(ht) {
+        if is_real_item(item) {
+            map(item, arg);
         }
     }
     (*ht).set_ht_in_map(0);
@@ -384,6 +383,7 @@ pub unsafe fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *
 pub unsafe fn hash_rehash(ht: *mut hash_table) {
     let old_ht_size = (*ht).ht_size;
     let old_vec = (*ht).ht_vec;
+    let old_slots = ::core::slice::from_raw_parts(old_vec, old_ht_size as usize);
 
     if (*ht).ht_fill >= (*ht).ht_capacity {
         (*ht).ht_size *= 2;
@@ -393,16 +393,12 @@ pub unsafe fn hash_rehash(ht: *mut hash_table) {
     (*ht).ht_vec = xcalloc(::core::mem::size_of::<*mut c_void>() * (*ht).ht_size as size_t)
         as *mut *mut c_void;
 
-    for i in 0..old_ht_size as usize {
-        let ovp = old_vec
-            .add(i)
-            .as_mut()
-            .expect("hash table without a slot vector");
-        if is_real_item(*ovp) {
-            let slot = hash_find_slot(ht, *ovp)
+    for &old_item in old_slots {
+        if is_real_item(old_item) {
+            let slot = hash_find_slot(ht, old_item)
                 .as_mut()
                 .expect("hash_find_slot always returns a slot");
-            *slot = *ovp;
+            *slot = old_item;
         }
     }
     (*ht).ht_empty_slots = (*ht).ht_size - (*ht).ht_fill;
@@ -452,19 +448,15 @@ pub unsafe fn hash_dump(
             as *mut *mut c_void;
     }
 
-    let mut vector = vector_0;
-    for i in 0..(*ht).ht_size as usize {
-        let slot = (*ht)
-            .ht_vec
-            .add(i)
-            .as_ref()
-            .expect("hash table without a slot vector");
-        if is_real_item(*slot) {
-            *vector.as_mut().expect("hash_dump: null output vector") = *slot;
-            vector = vector.add(1);
+    let vector = ::core::slice::from_raw_parts_mut(vector_0, (*ht).ht_fill as usize + 1);
+    let mut count = 0usize;
+    for &item in table_slots(ht) {
+        if is_real_item(item) {
+            vector[count] = item;
+            count += 1;
         }
     }
-    *vector.as_mut().expect("hash_dump: null output vector") = null_mut();
+    vector[count] = null_mut();
 
     if compare.is_some() {
         qsort(
@@ -543,88 +535,61 @@ macro_rules! jhash_final {
     };
 }
 
-/// Read a little-endian word from `k` (an unaligned load).
-unsafe fn load_word(k: *const c_uchar) -> c_uint {
-    let mut val: c_uint = 0;
-    memcpy(&raw mut val as *mut c_void, k as *const c_void, UINTSZ);
-    val
-}
-
 /// Hash `length` bytes at `k`.
 ///
 /// # Safety
 /// `k` must be valid for reads of `length` bytes.
-pub unsafe fn jhash(mut k: *const c_uchar, mut length: c_int) -> c_uint {
+pub unsafe fn jhash(k: *const c_uchar, length: c_int) -> c_uint {
+    assert!(length >= 0, "jhash length must not be negative");
+    let bytes = if length == 0 {
+        &[][..]
+    } else {
+        ::core::slice::from_raw_parts(k, length as usize)
+    };
     let mut c = JHASH_INITVAL.wrapping_add(length as c_uint);
     let mut b = c;
     let mut a = b;
 
-    while length > 12 {
-        a = a.wrapping_add(load_word(k));
-        b = b.wrapping_add(load_word(k.add(4)));
-        c = c.wrapping_add(load_word(k.add(8)));
+    let mut blocks = bytes;
+    while blocks.len() > 12 {
+        a = a.wrapping_add(load_partial_word(&blocks[..4]));
+        b = b.wrapping_add(load_partial_word(&blocks[4..8]));
+        c = c.wrapping_add(load_partial_word(&blocks[8..12]));
         jhash_mix!(a, b, c);
-        length -= 12;
-        k = k.add(12);
+        blocks = &blocks[12..];
     }
 
-    if length == 0 {
+    if blocks.is_empty() {
         return c;
     }
-    if length > 8 {
-        a = a.wrapping_add(load_word(k));
-        length -= 4;
-        k = k.add(4);
+    if blocks.len() > 8 {
+        a = a.wrapping_add(load_partial_word(&blocks[..4]));
+        blocks = &blocks[4..];
     }
-    if length > 4 {
-        b = b.wrapping_add(load_word(k));
-        length -= 4;
-        k = k.add(4);
+    if blocks.len() > 4 {
+        b = b.wrapping_add(load_partial_word(&blocks[..4]));
+        blocks = &blocks[4..];
     }
-    if length == 4 {
-        c = c.wrapping_add((*k.add(3) as c_uint) << 24);
+    if blocks.len() == 4 {
+        c = c.wrapping_add((blocks[3] as c_uint) << 24);
     }
-    if length >= 3 {
-        c = c.wrapping_add((*k.add(2) as c_uint) << 16);
+    if blocks.len() >= 3 {
+        c = c.wrapping_add((blocks[2] as c_uint) << 16);
     }
-    if length >= 2 {
-        c = c.wrapping_add((*k.add(1) as c_uint) << 8);
+    if blocks.len() >= 2 {
+        c = c.wrapping_add((blocks[1] as c_uint) << 8);
     }
-    c = c.wrapping_add(*k as c_uint);
+    c = c.wrapping_add(blocks[0] as c_uint);
 
     jhash_final!(a, b, c);
     c
 }
 
-/// Read the next word of a NUL-terminated string without reading past
-/// `klen` remaining bytes, and report which bytes (if any) are NUL via the
-/// SWAR has-zero trick.
-unsafe fn load_string_word(k: *const c_uchar, klen: size_t) -> (c_uint, c_uint) {
-    let mut val: c_uint = 0;
-    memcpy(
-        &raw mut val as *mut c_void,
-        k as *const c_void,
-        if klen >= UINTSZ { UINTSZ } else { klen },
-    );
-    let have_nul = val.wrapping_sub(0x01010101) & !val & 0x80808080;
-    (val, have_nul)
-}
-
-/// Add `val`'s bytes that precede its first NUL into `acc`.
-fn add_until_nul(acc: c_uint, val: c_uint, have_nul: c_uint) -> c_uint {
-    if have_nul == 0 {
-        acc.wrapping_add(val)
-    } else if val & 0xff != 0 {
-        if val & 0xff00 == 0 {
-            acc.wrapping_add(val & 0xff)
-        } else if val & 0xff0000 == 0 {
-            acc.wrapping_add(val & 0xffff)
-        } else {
-            acc.wrapping_add(val)
-        }
-    } else {
-        acc
-    }
+fn load_partial_word(bytes: &[u8]) -> c_uint {
+    let mut word = [0u8; UINTSZ];
+    let len = bytes.len().min(UINTSZ);
+    word[..len].copy_from_slice(&bytes[..len]);
+    c_uint::from_ne_bytes(word)
 }
 
 /// Hash the NUL-terminated string `k` (lookup3 over words, mixing in the
@@ -632,35 +597,179 @@ fn add_until_nul(acc: c_uint, val: c_uint, have_nul: c_uint) -> c_uint {
 ///
 /// # Safety
 /// `k` must be a valid NUL-terminated string.
-pub unsafe fn jhash_string(mut k: *const c_uchar) -> c_uint {
-    let start: *const c_uchar = k;
-    let mut klen: size_t = strlen(k as *const c_char);
+pub unsafe fn jhash_string(k: *const c_uchar) -> c_uint {
+    let bytes = ::core::ffi::CStr::from_ptr(k as *const c_char).to_bytes();
+    let mut chunks = bytes.chunks_exact(UINTSZ);
 
     let mut a = JHASH_INITVAL;
     let mut b = JHASH_INITVAL;
     let mut c = JHASH_INITVAL;
 
-    // Consume the string a word at a time into the three lanes, mixing
-    // after every third word, until a word containing the NUL is seen.
-    'words: loop {
+    loop {
         for lane in 0..3 {
-            let (val, have_nul) = load_string_word(k, klen);
-            let acc = match lane {
-                0 => &mut a,
-                1 => &mut b,
-                _ => &mut c,
+            let word = match chunks.next() {
+                Some(chunk) => load_partial_word(chunk),
+                None => {
+                    let remainder = chunks.remainder();
+                    if !remainder.is_empty() {
+                        let acc = match lane {
+                            0 => &mut a,
+                            1 => &mut b,
+                            _ => &mut c,
+                        };
+                        *acc = acc.wrapping_add(load_partial_word(remainder));
+                    }
+                    jhash_final!(a, b, c);
+                    return c.wrapping_add((bytes.len() / UINTSZ * UINTSZ) as c_uint);
+                }
             };
-            *acc = add_until_nul(*acc, val, have_nul);
-            if have_nul != 0 {
-                break 'words;
+            match lane {
+                0 => a = a.wrapping_add(word),
+                1 => b = b.wrapping_add(word),
+                _ => c = c.wrapping_add(word),
             }
-            k = k.add(UINTSZ);
-            assert!(klen >= UINTSZ, "jhash_string ran past the terminator");
-            klen -= UINTSZ;
         }
         jhash_mix!(a, b, c);
     }
+}
 
-    jhash_final!(a, b, c);
-    c.wrapping_add(k.offset_from(start) as c_uint)
+#[cfg(test)]
+mod tests {
+    use {super::*, std::ffi::CString};
+
+    fn legacy_jhash(bytes: &[u8]) -> c_uint {
+        let mut length = bytes.len();
+        let mut offset = 0usize;
+        let mut c = JHASH_INITVAL.wrapping_add(length as c_uint);
+        let mut b = c;
+        let mut a = b;
+
+        while length > 12 {
+            a = a.wrapping_add(load_partial_word(&bytes[offset..offset + 4]));
+            b = b.wrapping_add(load_partial_word(&bytes[offset + 4..offset + 8]));
+            c = c.wrapping_add(load_partial_word(&bytes[offset + 8..offset + 12]));
+            jhash_mix!(a, b, c);
+            length -= 12;
+            offset += 12;
+        }
+
+        if length == 0 {
+            return c;
+        }
+        if length > 8 {
+            a = a.wrapping_add(load_partial_word(&bytes[offset..offset + 4]));
+            length -= 4;
+            offset += 4;
+        }
+        if length > 4 {
+            b = b.wrapping_add(load_partial_word(&bytes[offset..offset + 4]));
+            length -= 4;
+            offset += 4;
+        }
+        if length == 4 {
+            c = c.wrapping_add((bytes[offset + 3] as c_uint) << 24);
+        }
+        if length >= 3 {
+            c = c.wrapping_add((bytes[offset + 2] as c_uint) << 16);
+        }
+        if length >= 2 {
+            c = c.wrapping_add((bytes[offset + 1] as c_uint) << 8);
+        }
+        c = c.wrapping_add(bytes[offset] as c_uint);
+
+        jhash_final!(a, b, c);
+        c
+    }
+
+    #[test]
+    fn jhash_matches_legacy_pointer_loop() {
+        for input in [
+            &b""[..],
+            b"a",
+            b"abc",
+            b"abcd",
+            b"abcde",
+            b"abcdefgh",
+            b"abcdefghijkl",
+            b"abcdefghijklm",
+            b"abcdefghijklmnopqrstuvw",
+        ] {
+            let actual = unsafe { jhash(input.as_ptr(), input.len() as c_int) };
+            assert_eq!(actual, legacy_jhash(input), "{input:?}");
+        }
+    }
+
+    fn legacy_string_word(bytes: &[u8], remaining: usize) -> (c_uint, c_uint) {
+        let mut word = [0u8; UINTSZ];
+        let len = remaining.min(UINTSZ);
+        word[..len].copy_from_slice(&bytes[..len]);
+        let val = c_uint::from_ne_bytes(word);
+        let have_nul = val.wrapping_sub(0x01010101) & !val & 0x80808080;
+        (val, have_nul)
+    }
+
+    fn legacy_add_until_nul(acc: c_uint, val: c_uint, have_nul: c_uint) -> c_uint {
+        if have_nul == 0 {
+            acc.wrapping_add(val)
+        } else if val & 0xff != 0 {
+            if val & 0xff00 == 0 {
+                acc.wrapping_add(val & 0xff)
+            } else if val & 0xff0000 == 0 {
+                acc.wrapping_add(val & 0xffff)
+            } else {
+                acc.wrapping_add(val)
+            }
+        } else {
+            acc
+        }
+    }
+
+    fn legacy_jhash_string(bytes: &[u8]) -> c_uint {
+        let mut offset = 0usize;
+        let mut remaining = bytes.len();
+        let mut a = JHASH_INITVAL;
+        let mut b = JHASH_INITVAL;
+        let mut c = JHASH_INITVAL;
+
+        'words: loop {
+            for lane in 0..3 {
+                let (val, have_nul) = legacy_string_word(&bytes[offset..], remaining);
+                let acc = match lane {
+                    0 => &mut a,
+                    1 => &mut b,
+                    _ => &mut c,
+                };
+                *acc = legacy_add_until_nul(*acc, val, have_nul);
+                if have_nul != 0 {
+                    break 'words;
+                }
+                offset += UINTSZ;
+                assert!(remaining >= UINTSZ);
+                remaining -= UINTSZ;
+            }
+            jhash_mix!(a, b, c);
+        }
+
+        jhash_final!(a, b, c);
+        c.wrapping_add(offset as c_uint)
+    }
+
+    #[test]
+    fn jhash_string_matches_legacy_word_loop() {
+        for input in [
+            "",
+            "a",
+            "abc",
+            "abcd",
+            "abcde",
+            "abcdefgh",
+            "abcdefghijkl",
+            "abcdefghijklm",
+            "target%pattern",
+        ] {
+            let c_string = CString::new(input).unwrap();
+            let actual = unsafe { jhash_string(c_string.as_ptr() as *const c_uchar) };
+            assert_eq!(actual, legacy_jhash_string(input.as_bytes()), "{input:?}");
+        }
+    }
 }
