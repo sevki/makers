@@ -81,7 +81,7 @@ unsafe fn dep_name(d: *const Dep) -> *const c_char {
 ///
 /// `key` must point to a valid `dep` whose name (or file name) is a
 /// NUL-terminated string.
-pub unsafe extern "C" fn dep_hash_1(key: *const c_void) -> c_ulong {
+pub unsafe fn dep_hash_1(key: *const c_void) -> c_ulong {
     jhash_string(dep_name(key as *const dep) as *const c_uchar) as c_ulong
 }
 
@@ -89,13 +89,13 @@ pub unsafe extern "C" fn dep_hash_1(key: *const c_void) -> c_ulong {
 ///
 /// This is a C hash-table callback. The raw key pointer is accepted to match the
 /// callback ABI, but this secondary hash intentionally does not inspect it.
-pub unsafe extern "C" fn dep_hash_2(_key: *const c_void) -> c_ulong {
+pub unsafe fn dep_hash_2(_key: *const c_void) -> c_ulong {
     // SAFETY: No raw memory is accessed here; the pointer is ignored because the
     // old secondary hash always returned zero.
     0
 }
 
-unsafe extern "C" fn dep_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
+unsafe fn dep_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
     strcmp(dep_name(x as *const dep), dep_name(y as *const dep))
 }
 
@@ -293,9 +293,9 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     hash_init(
         &raw mut dep_hash,
         500,
-        Some(dep_hash_1 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-        Some(dep_hash_2 as unsafe extern "C" fn(*const c_void) -> c_ulong),
-        Some(dep_hash_cmp as unsafe extern "C" fn(*const c_void, *const c_void) -> c_int),
+        Some(dep_hash_1),
+        Some(dep_hash_2),
+        Some(dep_hash_cmp),
     );
 
     let mut d = file.deps;

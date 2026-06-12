@@ -300,7 +300,7 @@ pub static mut snapped_deps: ::core::ffi::c_int = 0;
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const file)).hname as *const ::core::ffi::c_uchar;
@@ -311,11 +311,11 @@ pub unsafe extern "C" fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core:
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe extern "C" fn file_hash_cmp(
+unsafe fn file_hash_cmp(
     x: *const ::core::ffi::c_void,
     y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
@@ -1639,7 +1639,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
+pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     if no_builtin_rules_flag != 0 && (*f).builtin() as ::core::ffi::c_int != 0 {
         return;
@@ -1827,10 +1827,7 @@ pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_file_data_base() {
     puts(b"\n# Files\0" as *const u8 as *const ::core::ffi::c_char);
-    hash_map(
-        &raw mut files,
-        Some(print_file as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ()),
-    );
+    hash_map(&raw mut files, Some(print_file));
     fputs(
         b"\n# files hash-table stats:\n# \0" as *const u8 as *const ::core::ffi::c_char,
         stdout,
@@ -1841,7 +1838,7 @@ pub unsafe fn print_file_data_base() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn print_target(item: *const ::core::ffi::c_void) {
+pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     if (*f).is_target() == 0 || (*f).suffix() as ::core::ffi::c_int != 0 {
         return;
@@ -1879,16 +1876,13 @@ pub unsafe extern "C" fn print_target(item: *const ::core::ffi::c_void) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_targets() {
-    hash_map(
-        &raw mut files,
-        Some(print_target as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ()),
-    );
+    hash_map(&raw mut files, Some(print_target));
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn verify_file(item: *const ::core::ffi::c_void) {
+pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     let mut d: *const dep;
     if !(*f).name.is_null()
@@ -2006,10 +2000,7 @@ pub unsafe extern "C" fn verify_file(item: *const ::core::ffi::c_void) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn verify_file_data_base() {
-    hash_map(
-        &raw mut files,
-        Some(verify_file as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ()),
-    );
+    hash_map(&raw mut files, Some(verify_file));
 }
 /// # Safety
 ///
@@ -2073,19 +2064,9 @@ pub unsafe fn init_hash_files() {
     hash_init(
         &raw mut files,
         1000 as ::core::ffi::c_ulong,
-        Some(
-            file_hash_1 as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            file_hash_2 as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            file_hash_cmp
-                as unsafe extern "C" fn(
-                    *const ::core::ffi::c_void,
-                    *const ::core::ffi::c_void,
-                ) -> ::core::ffi::c_int,
-        ),
+        Some(file_hash_1),
+        Some(file_hash_2),
+        Some(file_hash_cmp),
     );
 }
 pub const FILE_TIMESTAMP_HI_RES: ::core::ffi::c_int = 1;

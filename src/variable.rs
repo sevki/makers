@@ -238,7 +238,7 @@ unsafe extern "C" fn lookup_pattern_var(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let key: *const variable = keyv as *const variable;
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
@@ -250,12 +250,12 @@ pub unsafe extern "C" fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _key: *const variable = keyv as *const variable;
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe extern "C" fn variable_hash_cmp(
+unsafe fn variable_hash_cmp(
     xv: *const ::core::ffi::c_void,
     yv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
@@ -364,21 +364,9 @@ pub unsafe fn init_hash_global_variable_set() {
     hash_init(
         &raw mut global_variable_set.table,
         VARIABLE_BUCKETS as ::core::ffi::c_ulong,
-        Some(
-            variable_hash_1
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            variable_hash_2
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            variable_hash_cmp
-                as unsafe extern "C" fn(
-                    *const ::core::ffi::c_void,
-                    *const ::core::ffi::c_void,
-                ) -> ::core::ffi::c_int,
-        ),
+        Some(variable_hash_1),
+        Some(variable_hash_2),
+        Some(variable_hash_cmp),
     );
 }
 /// # Safety
@@ -497,7 +485,7 @@ pub unsafe fn define_variable_in_set(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn free_variable_name_and_value(item: *const ::core::ffi::c_void) {
+pub unsafe fn free_variable_name_and_value(item: *const ::core::ffi::c_void) {
     let v: *mut variable = item as *mut variable;
     free((*v).name as *mut ::core::ffi::c_void);
     free((*v).value as *mut ::core::ffi::c_void);
@@ -509,9 +497,7 @@ pub unsafe extern "C" fn free_variable_name_and_value(item: *const ::core::ffi::
 pub unsafe fn free_variable_set(list: *mut variable_set_list) {
     hash_map(
         &raw mut (*(*list).set).table,
-        Some(
-            free_variable_name_and_value as unsafe extern "C" fn(*const ::core::ffi::c_void) -> (),
-        ),
+        Some(free_variable_name_and_value),
     );
     hash_free(&raw mut (*(*list).set).table, 1);
     free((*list).set as *mut ::core::ffi::c_void);
@@ -788,21 +774,9 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
         hash_init(
             &raw mut (*(*l).set).table,
             PERFILE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
-            Some(
-                variable_hash_1
-                    as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-            ),
-            Some(
-                variable_hash_2
-                    as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-            ),
-            Some(
-                variable_hash_cmp
-                    as unsafe extern "C" fn(
-                        *const ::core::ffi::c_void,
-                        *const ::core::ffi::c_void,
-                    ) -> ::core::ffi::c_int,
-            ),
+            Some(variable_hash_1),
+            Some(variable_hash_2),
+            Some(variable_hash_cmp),
         );
         (*file).variables = l;
     }
@@ -885,21 +859,9 @@ pub unsafe fn create_new_variable_set() -> *mut variable_set_list {
     hash_init(
         &raw mut (*set).table,
         SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
-        Some(
-            variable_hash_1
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            variable_hash_2
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            variable_hash_cmp
-                as unsafe extern "C" fn(
-                    *const ::core::ffi::c_void,
-                    *const ::core::ffi::c_void,
-                ) -> ::core::ffi::c_int,
-        ),
+        Some(variable_hash_1),
+        Some(variable_hash_2),
+        Some(variable_hash_cmp),
     );
     setlist =
         xmalloc(::core::mem::size_of::<variable_set_list>() as size_t) as *mut variable_set_list;
@@ -948,12 +910,7 @@ pub unsafe fn pop_variable_scope() {
         global_setlist.next_is_parent = (*setlist).next_is_parent;
     }
     free(setlist as *mut ::core::ffi::c_void);
-    hash_map(
-        &raw mut (*set).table,
-        Some(
-            free_variable_name_and_value as unsafe extern "C" fn(*const ::core::ffi::c_void) -> (),
-        ),
-    );
+    hash_map(&raw mut (*set).table, Some(free_variable_name_and_value));
     hash_free(&raw mut (*set).table, 1);
     free(set as *mut ::core::ffi::c_void);
 }
@@ -1356,21 +1313,9 @@ pub unsafe fn target_environment(
     hash_init(
         &raw mut table,
         VARIABLE_BUCKETS as ::core::ffi::c_ulong,
-        Some(
-            variable_hash_1
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            variable_hash_2
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            variable_hash_cmp
-                as unsafe extern "C" fn(
-                    *const ::core::ffi::c_void,
-                    *const ::core::ffi::c_void,
-                ) -> ::core::ffi::c_int,
-        ),
+        Some(variable_hash_1),
+        Some(variable_hash_2),
+        Some(variable_hash_cmp),
     );
     s = set_list;
     while !s.is_null() {
@@ -2135,10 +2080,7 @@ pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
         }
     }
 }
-unsafe extern "C" fn set_env_override(
-    item: *const ::core::ffi::c_void,
-    mut _arg: *mut ::core::ffi::c_void,
-) {
+unsafe fn set_env_override(item: *const ::core::ffi::c_void, mut _arg: *mut ::core::ffi::c_void) {
     let v: *mut variable = item as *mut variable;
     let old: variable_origin = (if env_overrides != 0 {
         o_env as ::core::ffi::c_int
@@ -2161,17 +2103,11 @@ unsafe extern "C" fn set_env_override(
 pub unsafe fn reset_env_override() {
     hash_map_arg(
         &raw mut global_variable_set.table,
-        Some(
-            set_env_override
-                as unsafe extern "C" fn(*const ::core::ffi::c_void, *mut ::core::ffi::c_void) -> (),
-        ),
+        Some(set_env_override),
         NULL,
     );
 }
-unsafe extern "C" fn print_variable(
-    item: *const ::core::ffi::c_void,
-    arg: *mut ::core::ffi::c_void,
-) {
+unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     let v: *const variable = item as *const variable;
     let prefix: *const ::core::ffi::c_char = arg as *const ::core::ffi::c_char;
     let mut origin: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -2261,19 +2197,13 @@ unsafe extern "C" fn print_variable(
         putchar('\n' as i32);
     };
 }
-unsafe extern "C" fn print_auto_variable(
-    item: *const ::core::ffi::c_void,
-    arg: *mut ::core::ffi::c_void,
-) {
+unsafe fn print_auto_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     let v: *const variable = item as *const variable;
     if (*v).origin() as ::core::ffi::c_int == o_automatic as ::core::ffi::c_int {
         print_variable(item, arg);
     }
 }
-unsafe extern "C" fn print_noauto_variable(
-    item: *const ::core::ffi::c_void,
-    arg: *mut ::core::ffi::c_void,
-) {
+unsafe fn print_noauto_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     let v: *const variable = item as *const variable;
     if (*v).origin() as ::core::ffi::c_int != o_automatic as ::core::ffi::c_int {
         print_variable(item, arg);
@@ -2287,21 +2217,9 @@ unsafe extern "C" fn print_variable_set(
     hash_map_arg(
         &raw mut (*set).table,
         if pauto != 0 {
-            Some(
-                print_auto_variable
-                    as unsafe extern "C" fn(
-                        *const ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
-            )
+            Some(print_auto_variable)
         } else {
-            Some(
-                print_variable
-                    as unsafe extern "C" fn(
-                        *const ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
-            )
+            Some(print_variable)
         },
         prefix as *mut ::core::ffi::c_void,
     );
@@ -2386,13 +2304,7 @@ pub unsafe fn print_target_variables(file: *const file) {
         *t.offset(l.wrapping_add(2) as isize) = 0;
         hash_map_arg(
             &raw mut (*(*(*file).variables).set).table,
-            Some(
-                print_noauto_variable
-                    as unsafe extern "C" fn(
-                        *const ::core::ffi::c_void,
-                        *mut ::core::ffi::c_void,
-                    ) -> (),
-            ),
+            Some(print_noauto_variable),
             t as *mut ::core::ffi::c_void,
         );
     }

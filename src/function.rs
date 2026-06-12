@@ -236,9 +236,7 @@ pub const INTSTR_LENGTH: usize = (53 as usize)
     .wrapping_add(3 as usize);
 pub const EXP_COUNT_BITS: ::core::ffi::c_int = 15;
 pub const EXP_COUNT_MAX: ::core::ffi::c_int = ((1) << EXP_COUNT_BITS) - 1;
-unsafe extern "C" fn function_table_entry_hash_1(
-    keyv: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_ulong {
+unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let key: *const function_table_entry = keyv as *const function_table_entry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
@@ -246,14 +244,12 @@ unsafe extern "C" fn function_table_entry_hash_1(
         .wrapping_add(jhash(_key_, (*key).len as ::core::ffi::c_int) as ::core::ffi::c_ulong);
     _result_
 }
-unsafe extern "C" fn function_table_entry_hash_2(
-    keyv: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_ulong {
+unsafe fn function_table_entry_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _key: *const function_table_entry = keyv as *const function_table_entry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe extern "C" fn function_table_entry_hash_cmp(
+unsafe fn function_table_entry_hash_cmp(
     xv: *const ::core::ffi::c_void,
     yv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
@@ -1318,7 +1314,7 @@ unsafe extern "C" fn func_let(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn a_word_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn a_word_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const a_word)).str_0 as *const ::core::ffi::c_uchar;
@@ -1329,13 +1325,11 @@ pub unsafe extern "C" fn a_word_hash_1(key: *const ::core::ffi::c_void) -> ::cor
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn a_word_hash_2(
-    mut _key: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_ulong {
+pub unsafe fn a_word_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe extern "C" fn a_word_hash_cmp(
+unsafe fn a_word_hash_cmp(
     x: *const ::core::ffi::c_void,
     y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
@@ -1467,21 +1461,9 @@ unsafe extern "C" fn func_filter_filterout(
         hash_init(
             &raw mut a_word_table,
             word_count,
-            Some(
-                a_word_hash_1
-                    as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-            ),
-            Some(
-                a_word_hash_2
-                    as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-            ),
-            Some(
-                a_word_hash_cmp
-                    as unsafe extern "C" fn(
-                        *const ::core::ffi::c_void,
-                        *const ::core::ffi::c_void,
-                    ) -> ::core::ffi::c_int,
-            ),
+            Some(a_word_hash_1),
+            Some(a_word_hash_2),
+            Some(a_word_hash_cmp),
         );
         wp = words;
         while wp < word_end {
@@ -3017,21 +2999,9 @@ pub unsafe fn hash_init_function_table() {
         (::core::mem::size_of::<[function_table_entry; 38]>() as ::core::ffi::c_ulong)
             .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong)
             .wrapping_mul(2),
-        Some(
-            function_table_entry_hash_1
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            function_table_entry_hash_2
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            function_table_entry_hash_cmp
-                as unsafe extern "C" fn(
-                    *const ::core::ffi::c_void,
-                    *const ::core::ffi::c_void,
-                ) -> ::core::ffi::c_int,
-        ),
+        Some(function_table_entry_hash_1),
+        Some(function_table_entry_hash_2),
+        Some(function_table_entry_hash_cmp),
     );
     hash_load(
         &raw mut function_table,
