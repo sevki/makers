@@ -626,9 +626,11 @@ pub unsafe extern "C" fn complain(file: *mut file) {
     }
 }
 unsafe extern "C" fn update_file_1(
-    mut file: *mut file,
+    file: *mut file,
     mut depth: ::core::ffi::c_uint,
 ) -> update_status {
+    // Checked view of FILE; a null argument is a caller bug.
+    let mut file = file.as_mut().expect("update_file_1: null file");
     let mut dep_status: update_status = us_success;
     let mut this_mtime: uintmax_t;
     let mut noexist: ::core::ffi::c_int;
@@ -711,21 +713,24 @@ unsafe extern "C" fn update_file_1(
         }
     }
     (*file).set_no_diag((*file).dontcare() as ::core::ffi::c_uint);
-    let fresh0 = &mut (*if !(*file).double_colon.is_null() {
-        (*file).double_colon
+    let fresh0: *mut file = if !file.double_colon.is_null() {
+        file.double_colon
     } else {
-        file
-    });
-    (*fresh0).set_updating(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    ofile = file;
+        &raw mut *file
+    };
+    (*fresh0).set_updating(1);
+    ofile = &raw mut *file;
     depth = depth.wrapping_add(1);
     this_mtime = if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
         f_mtime(file, 1)
     } else {
         (*file).last_mtime
     };
-    while !(*file).renamed.is_null() {
-        file = (*file).renamed;
+    while !file.renamed.is_null() {
+        file = file
+            .renamed
+            .as_mut()
+            .expect("update_file_1: null renamed file");
     }
     noexist = (this_mtime == NONEXISTENT_MTIME as uintmax_t) as ::core::ffi::c_int;
     if noexist != 0 {
@@ -1063,12 +1068,12 @@ unsafe extern "C" fn update_file_1(
             du = (*du).next;
         }
     }
-    let fresh3 = &mut (*if !(*file).double_colon.is_null() {
-        (*file).double_colon
+    let fresh3: *mut file = if !file.double_colon.is_null() {
+        file.double_colon
     } else {
-        file
-    });
-    (*fresh3).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        &raw mut *file
+    };
+    (*fresh3).set_updating(0);
     let fresh4 = &mut (*if !(*ofile).double_colon.is_null() {
         (*ofile).double_colon
     } else {
@@ -1260,9 +1265,12 @@ unsafe extern "C" fn update_file_1(
             (*file).set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
         notice_finished_file(file);
-        while !file.is_null() {
-            (*file).name = (*file).hname;
-            file = (*file).prev;
+        loop {
+            file.name = file.hname;
+            match file.prev.as_mut() {
+                Some(prev) => file = prev,
+                None => break,
+            }
         }
         return us_success;
     }
@@ -1797,6 +1805,12 @@ pub unsafe extern "C" fn remake_file(file: *mut file) {
     }
     notice_finished_file(file);
 }
+/// Return the mtime of file F, computing it if necessary. Returns
+/// NONEXISTENT_MTIME if the file does not exist.
+///
+/// # Safety
+/// `file` must point to a valid `File`; must run single-threaded with the
+/// global file table.
 #[no_mangle]
 pub unsafe extern "C" fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();

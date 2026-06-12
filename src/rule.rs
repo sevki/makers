@@ -740,6 +740,11 @@ unsafe extern "C" fn new_pattern_rule(
     }
     1
 }
+/// Install an implicit pattern rule from a `pspec`.
+///
+/// # Safety
+/// `p` must point to a valid `pspec` whose strings are NUL-terminated and
+/// live for the program's lifetime; must run single-threaded.
 #[no_mangle]
 pub unsafe extern "C" fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int) {
     let r: *mut rule;
@@ -758,9 +763,7 @@ pub unsafe extern "C" fn install_pattern_rule(p: *const pspec, terminal: ::core:
     let fresh1 = &mut (*(*r).targets.offset(0 as ::core::ffi::c_int as isize));
     *fresh1 = (*p).target;
     let fresh2 = &mut (*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize));
-    *fresh2 =
-        find_percent_cached((*r).targets.offset(0 as ::core::ffi::c_int as isize)
-            as *mut *const ::core::ffi::c_char);
+    *fresh2 = find_percent_cached((*r).targets.offset(0));
     if !(*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize)).is_null() {
     } else {
         panic!("assertion failed: r->suffixes[0] != NULL");

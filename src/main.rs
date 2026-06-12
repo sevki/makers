@@ -2583,12 +2583,10 @@ unsafe fn main_0(
                                 if mfidx == stdin_offset {
                                     alloca_allocations.push(::std::vec::from_elem(
                                         0,
-                                        (::core::mem::size_of::<[::core::ffi::c_char; 14]>()
-                                            as usize)
-                                            .wrapping_sub(1 as usize)
-                                            .wrapping_add(strlen(mf) as usize)
-                                            .wrapping_add(1 as usize)
-                                            as usize,
+                                        ::core::mem::size_of::<[::core::ffi::c_char; 14]>()
+                                            .wrapping_sub(1)
+                                            .wrapping_add(strlen(mf))
+                                            .wrapping_add(1),
                                     ));
                                     let na: *mut ::core::ffi::c_char =
                                         alloca_allocations.last_mut().unwrap().as_mut_ptr()
@@ -2642,19 +2640,17 @@ unsafe fn main_0(
                                             a as *const ::core::ffi::c_void,
                                             al as size_t,
                                         );
-                                        *na_1.offset(al as isize) = 0;
+                                        *na_1.add(al) = 0;
                                         let fresh51 = nv;
                                         nv = nv.offset(1 as ::core::ffi::c_int as isize);
                                         *fresh51 = na_1;
                                     }
                                     alloca_allocations.push(::std::vec::from_elem(
                                         0,
-                                        (::core::mem::size_of::<[::core::ffi::c_char; 14]>()
-                                            as usize)
-                                            .wrapping_sub(1 as usize)
-                                            .wrapping_add(strlen(mf) as usize)
-                                            .wrapping_add(1 as usize)
-                                            as usize,
+                                        ::core::mem::size_of::<[::core::ffi::c_char; 14]>()
+                                            .wrapping_sub(1)
+                                            .wrapping_add(strlen(mf))
+                                            .wrapping_add(1),
                                     ));
                                     na_1 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
                                         as *mut ::core::ffi::c_char;
@@ -2688,7 +2684,7 @@ unsafe fn main_0(
                                         al_0 as size_t,
                                     );
                                     memcpy(
-                                        na_2.offset(al_0 as isize) as *mut ::core::ffi::c_void,
+                                        na_2.add(al_0) as *mut ::core::ffi::c_void,
                                         mf as *const ::core::ffi::c_void,
                                         ml as size_t,
                                     );

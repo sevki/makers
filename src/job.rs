@@ -1153,12 +1153,8 @@ pub unsafe extern "C" fn start_job_command(child: *mut child) {
                         as ::core::ffi::c_int
                         == 0)
                 && (*argv.offset(3 as ::core::ffi::c_int as isize)).is_null()
+                || (just_print_flag != 0 && !(flags & 1 != 0))
             {
-                if !argv.is_null() {
-                    free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
-                    free(argv as *mut ::core::ffi::c_void);
-                }
-            } else if just_print_flag != 0 && !(flags & 1 != 0) {
                 if !argv.is_null() {
                     free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
                     free(argv as *mut ::core::ffi::c_void);
@@ -2402,7 +2398,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                         ap = ap.offset(1 as ::core::ffi::c_int as isize);
                         *fresh24 = 0;
                         i = i.wrapping_add(1);
-                        let fresh25 = &mut (*new_argv.offset(i as isize));
+                        let fresh25 = &mut (*new_argv.add(i));
                         *fresh25 = ap;
                         last_argument_was_empty = 0;
                         seen_nonequals |= (word_has_equals == 0) as ::core::ffi::c_int;
@@ -2453,9 +2449,7 @@ unsafe extern "C" fn construct_command_argv_internal(
             break 'fast;
         }
         *ap = 0;
-        if *(*new_argv.offset(i as isize)).offset(0 as ::core::ffi::c_int as isize)
-            as ::core::ffi::c_int
-            != 0
+        if *(*new_argv.add(i)).offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
             || last_argument_was_empty != 0
         {
             i = i.wrapping_add(1);
