@@ -53,12 +53,6 @@ extern "C" {
     static mut export_all_variables: ::core::ffi::c_int;
     static mut cmd_prefix: ::core::ffi::c_char;
     static mut no_intermediates: ::core::ffi::c_uint;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn print_commands(cmds: *const commands);
     fn set_file_variables(file: *mut file, stem: *const ::core::ffi::c_char);
     static mut db_level: ::core::ffi::c_int;
@@ -460,12 +454,7 @@ pub unsafe extern "C" fn lookup_file(mut name: *const ::core::ffi::c_char) -> *m
     };
     if *name as ::core::ffi::c_int != 0 {
     } else {
-        __assert_fail(
-            b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-            92,
-            b"struct file *lookup_file(const char *)\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: *name != '\'");
     };
     while *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '.' as i32
         && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
@@ -523,22 +512,11 @@ pub unsafe extern "C" fn enter_file(name: *const ::core::ffi::c_char) -> *mut fi
     };
     if *name as ::core::ffi::c_int != 0 {
     } else {
-        __assert_fail(
-            b"*name != '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-            158,
-            b"struct file *enter_file(const char *)\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: *name != '\'");
     };
     if verify_flag == 0 || strcache_iscached(name) != 0 {
     } else {
-        __assert_fail(
-            b"! verify_flag || strcache_iscached (name)\0" as *const u8
-                as *const ::core::ffi::c_char,
-            b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-            159,
-            b"struct file *enter_file(const char *)\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: ! verify_flag || strcache_iscached (name)");
     };
     file_key.hname = name;
     file_slot = hash_find_slot(
@@ -1200,24 +1178,25 @@ pub unsafe extern "C" fn snap_file(f: *mut file, deps: *const dep) {
     }
     if !prereqs.is_null() {
         d = prereqs;
-        while !d.is_null() {
-            let dname: *const ::core::ffi::c_char = if !(*d).name.is_null() {
-                (*d).name
+        while let Some(dr) = d.as_ref() {
+            let dname: *const ::core::ffi::c_char = if !dr.name.is_null() {
+                dr.name
             } else {
-                (*(*d).file).name
+                dr.file.as_ref().expect("expand_deps: null dep file").name
             };
-            let same = match dname.as_ref() {
-                Some(&b) => {
-                    *(*f).name as ::core::ffi::c_int == b as ::core::ffi::c_int
-                        && (*(*f).name as ::core::ffi::c_int == 0
-                            || strcmp((*f).name.offset(1), dname.offset(1)) == 0)
+            let fname = (*f).name;
+            let same = match (dname.as_ref(), fname.as_ref()) {
+                (Some(&db), Some(&fb)) => {
+                    fb as ::core::ffi::c_int == db as ::core::ffi::c_int
+                        && (fb as ::core::ffi::c_int == 0
+                            || strcmp(fname.offset(1), dname.offset(1)) == 0)
                 }
-                None => false,
+                _ => false,
             };
             if same {
                 break;
             }
-            d = (*d).next;
+            d = dr.next;
         }
         if !d.is_null() {
             free_dep_chain(prereqs);
@@ -1851,13 +1830,7 @@ pub unsafe extern "C" fn print_file(item: *const ::core::ffi::c_void) {
             2 => {
                 if question_flag != 0 {
                 } else {
-                    __assert_fail(
-                        b"question_flag\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"src/file.c\0" as *const u8 as *const ::core::ffi::c_char,
-                        1181 as ::core::ffi::c_uint,
-                        b"void print_file(const void *)\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                    panic!("assertion failed: question_flag");
                 };
                 puts(
                     b"#  Needs to be updated (-q is set).\0" as *const u8

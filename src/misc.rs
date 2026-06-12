@@ -35,12 +35,6 @@ extern "C" {
     fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> c_int;
     fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> c_int;
     fn time(timer: *mut time_t) -> time_t;
-    fn __assert_fail(
-        assertion: *const c_char,
-        file: *const c_char,
-        line: c_uint,
-        function: *const c_char,
-    ) -> !;
 }
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
@@ -742,31 +736,19 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> c_int {
 /// `name` must be non-null and valid for writes; the caller takes ownership
 /// of `*name`.
 pub unsafe fn get_tmpfile(name: *mut *mut c_char) -> *mut FILE {
-    const ASSERT_FUNCTION: &::core::ffi::CStr = c"FILE *get_tmpfile(char **)";
     let tmpfile_mode: *const c_char = c"wb+".as_ptr();
 
-    if name.is_null() {
-        __assert_fail(
-            c"name".as_ptr(),
-            c"src/misc.c".as_ptr(),
-            827,
-            ASSERT_FUNCTION.as_ptr(),
-        );
-    }
+    let name = name.as_mut().expect("get_tmpfile: name must be non-null");
 
     let fd = get_tmpfd(name);
     if fd < 0 {
         return null_mut();
     }
 
-    if !matches!(name.as_ref(), Some(p) if !p.is_null()) {
-        __assert_fail(
-            c"*name".as_ptr(),
-            c"src/misc.c".as_ptr(),
-            831,
-            ASSERT_FUNCTION.as_ptr(),
-        );
-    }
+    assert!(
+        !name.is_null(),
+        "get_tmpfile: temporary file name must be set"
+    );
 
     let mut file: *mut FILE;
     loop {

@@ -100,12 +100,6 @@ extern "C" {
     static mut one_shell: ::core::ffi::c_int;
     static mut export_all_variables: ::core::ffi::c_int;
     static mut cmd_prefix: ::core::ffi::c_char;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn getpwnam(__name: *const ::core::ffi::c_char) -> *mut passwd;
     static mut db_level: ::core::ffi::c_int;
     fn ar_glob(
@@ -1107,13 +1101,7 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                     }
                     if !v.is_null() {
                     } else {
-                        __assert_fail(
-                            b"v != NULL\0" as *const u8 as *const ::core::ffi::c_char,
-                            b"src/read.c\0" as *const u8 as *const ::core::ffi::c_char,
-                            762,
-                            b"void eval(struct ebuffer *, int)\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                        );
+                        panic!("assertion failed: v != NULL");
                     };
                     if vmod.export_v() as ::core::ffi::c_int != v_default as ::core::ffi::c_int {
                         (*v).set_export(vmod.export_v() as variable_export);
@@ -1868,15 +1856,7 @@ pub unsafe extern "C" fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_in
                                     } else {
                                         if *p2 as ::core::ffi::c_int != 0 {
                                         } else {
-                                            __assert_fail(
-                                                b"*p2 != '\\0'\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                                b"src/read.c\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                                1215 as ::core::ffi::c_uint,
-                                                b"void eval(struct ebuffer *, int)\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                            );
+                                            panic!("assertion failed: *p2 != '\'");
                                         };
                                         p2 = p2.offset(1 as ::core::ffi::c_int as isize);
                                         two_colon = (*p2 as ::core::ffi::c_int == ':' as i32)
@@ -2753,13 +2733,7 @@ unsafe extern "C" fn record_target_var(
             v = assign_variable_definition(&raw mut (*p).variable, defn);
             if !v.is_null() {
             } else {
-                __assert_fail(
-                        b"v != 0\0" as *const u8 as *const ::core::ffi::c_char,
-                        b"src/read.c\0" as *const u8 as *const ::core::ffi::c_char,
-                        1840 as ::core::ffi::c_uint,
-                        b"void record_target_var(struct nameseq *, char *, enum variable_origin, struct vmodifiers *, const Floc *)\0"
-                            as *const u8 as *const ::core::ffi::c_char,
-                    );
+                panic!("assertion failed: v != 0");
             };
             (*v).set_origin(origin as variable_origin);
             if (*v).flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
@@ -3265,7 +3239,9 @@ unsafe extern "C" fn record_files(
             (*also).next = also_make;
             also_make = also;
         }
-        (*f).set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        // Checked view of the target file for the updates below.
+        let fr = f.as_mut().expect("record_files: null target file");
+        fr.set_is_target(1);
         if !pattern.is_null() {
             static mut percent: *const ::core::ffi::c_char =
                 b"%\0" as *const u8 as *const ::core::ffi::c_char;
@@ -3277,39 +3253,40 @@ unsafe extern "C" fn record_files(
                 pattern_percent.offset(1 as ::core::ffi::c_int as isize),
                 percent.offset(1 as ::core::ffi::c_int as isize),
             );
-            if let Some(fr) = f.as_mut() {
-                fr.stem = strcache_add_len(
-                    variable_buffer,
-                    o.offset_from(variable_buffer) as ::core::ffi::c_long as size_t,
-                );
-            }
-            if !this.is_null() {
-                if (*this).need_2nd_expansion() == 0 {
-                    this = enter_prereqs(this, (*f).stem);
+            fr.stem = strcache_add_len(
+                variable_buffer,
+                o.offset_from(variable_buffer) as ::core::ffi::c_long as size_t,
+            );
+            if let Some(thisr) = this.as_mut() {
+                if thisr.need_2nd_expansion() == 0 {
+                    this = enter_prereqs(this, fr.stem);
                 } else {
-                    (*this).stem = (*f).stem;
+                    thisr.stem = fr.stem;
                 }
             }
         }
         if !this.is_null() {
-            if (*f).deps.is_null() {
-                (*f).deps = this;
+            if fr.deps.is_null() {
+                fr.deps = this;
             } else if !cmds.is_null() {
                 let mut d: *mut dep = this;
                 while let Some(dr) = d.as_mut() {
                     if dr.next.is_null() {
-                        dr.next = (*f).deps;
+                        dr.next = fr.deps;
                         break;
                     }
                     d = dr.next;
                 }
-                (*f).deps = this;
+                fr.deps = this;
             } else {
-                let mut d_0: *mut dep = (*f).deps;
-                while !(*d_0).next.is_null() {
-                    d_0 = (*d_0).next;
+                let mut d_0: *mut dep = fr.deps;
+                while let Some(d0r) = d_0.as_mut() {
+                    if d0r.next.is_null() {
+                        d0r.next = this;
+                        break;
+                    }
+                    d_0 = d0r.next;
                 }
-                (*d_0).next = this;
             }
         }
         check_special_file(f, flocp);

@@ -98,12 +98,6 @@ extern "C" {
         argv: *mut *mut ::core::ffi::c_char,
         trim_newlines: ::core::ffi::c_int,
     ) -> *mut ::core::ffi::c_char;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn jobserver_get_invalid_auth() -> *const ::core::ffi::c_char;
 }
 use crate::warning::{self, Action, Type};
@@ -948,12 +942,7 @@ pub unsafe extern "C" fn pop_variable_scope() {
     let set: *mut variable_set;
     if !(*current_variable_set_list).next.is_null() {
     } else {
-        __assert_fail(
-            b"current_variable_set_list->next != NULL\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
-            788,
-            b"void pop_variable_scope(void)\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: current_variable_set_list->next != NULL");
     };
     if current_variable_set_list != &raw mut global_setlist {
         setlist = current_variable_set_list;
@@ -1843,13 +1832,7 @@ pub unsafe extern "C" fn do_variable_definition(
     }
     if do_define {
         if newval.is_null() {
-            __assert_fail(
-                b"newval\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/variable.c\0" as *const u8 as *const ::core::ffi::c_char,
-                1545 as ::core::ffi::c_uint,
-                b"struct variable *do_variable_definition(const Floc *, const char *, const char *, enum variable_origin, enum variable_flavor, int, enum variable_scope)\0"
-                    as *const u8 as *const ::core::ffi::c_char,
-            );
+            panic!("assertion failed: newval");
         }
         v = define_variable_in_set(
             varname,

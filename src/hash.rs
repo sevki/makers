@@ -22,12 +22,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
 }
 pub type __compar_fn_t = Option<
     unsafe extern "C" fn(
@@ -213,13 +207,7 @@ pub unsafe extern "C" fn hash_insert_at(
     let old_item: *const ::core::ffi::c_void = *(slot as *mut *mut ::core::ffi::c_void);
     if (*ht).ht_in_map() == 0 {
     } else {
-        __assert_fail(
-            b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
-            144,
-            b"void *hash_insert_at(struct hash_table *, const void *, const void *)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: ! ht->ht_in_map");
     };
     if old_item.is_null()
         || old_item as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
@@ -268,13 +256,7 @@ pub unsafe extern "C" fn hash_free_items(ht: *mut hash_table) {
         vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     if (*ht).ht_in_map() == 0 {
     } else {
-        __assert_fail(
-            b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
-            191,
-            b"void hash_free_items(struct hash_table *)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: ! ht->ht_in_map");
     };
     while vec < end {
         let item: *mut ::core::ffi::c_void = *vec;
@@ -294,13 +276,7 @@ pub unsafe extern "C" fn hash_delete_items(ht: *mut hash_table) {
         vec.offset((*ht).ht_size as isize) as *mut *mut ::core::ffi::c_void;
     if (*ht).ht_in_map() == 0 {
     } else {
-        __assert_fail(
-            b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
-            211,
-            b"void hash_delete_items(struct hash_table *)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: ! ht->ht_in_map");
     };
     while vec < end {
         *vec = ::core::ptr::null_mut::<::core::ffi::c_void>();
@@ -316,13 +292,7 @@ pub unsafe extern "C" fn hash_delete_items(ht: *mut hash_table) {
 pub unsafe extern "C" fn hash_free(ht: *mut hash_table, free_items: ::core::ffi::c_int) {
     if (*ht).ht_in_map() == 0 {
     } else {
-        __assert_fail(
-            b"! ht->ht_in_map\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
-            226,
-            b"void hash_free(struct hash_table *, int)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: ! ht->ht_in_map");
     };
     if free_items != 0 {
         hash_free_items(ht);
@@ -631,13 +601,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         k = k.offset(UINTSZ as isize);
         if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
         } else {
-            __assert_fail(
-                b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
-                506,
-                b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            panic!("assertion failed: klen >= UINTSZ");
         };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;
@@ -676,13 +640,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         k = k.offset(UINTSZ as isize);
         if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
         } else {
-            __assert_fail(
-                b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
-                513,
-                b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            panic!("assertion failed: klen >= UINTSZ");
         };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;
@@ -721,13 +679,7 @@ pub unsafe extern "C" fn jhash_string(mut k: *const ::core::ffi::c_uchar) -> ::c
         k = k.offset(UINTSZ as isize);
         if klen >= ::core::mem::size_of::<::core::ffi::c_uint>() as usize {
         } else {
-            __assert_fail(
-                b"klen >= UINTSZ\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/hash.c\0" as *const u8 as *const ::core::ffi::c_char,
-                520,
-                b"unsigned int jhash_string(const unsigned char *)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            panic!("assertion failed: klen >= UINTSZ");
         };
         klen = (klen as ::core::ffi::c_ulong).wrapping_sub(UINTSZ as ::core::ffi::c_ulong) as size_t
             as size_t;

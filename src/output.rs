@@ -37,12 +37,6 @@ extern "C" {
     static mut program: *const ::core::ffi::c_char;
     static mut starting_directory: *mut ::core::ffi::c_char;
     static mut makelevel: ::core::ffi::c_uint;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn check_io_state() -> ::core::ffi::c_uint;
     fn fd_noinherit(fd: ::core::ffi::c_int);
     fn fd_set_append(fd: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -453,13 +447,7 @@ pub unsafe extern "C" fn message(
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
     if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
     } else {
-        __assert_fail(
-            b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-            440,
-            b"void message(int, size_t, const char *, ...)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: start[len-1] == '\'");
     };
     outputs(0, start);
 }
@@ -515,13 +503,7 @@ pub unsafe extern "C" fn error(
     strcat(p, b"\n\0" as *const u8 as *const ::core::ffi::c_char);
     if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
     } else {
-        __assert_fail(
-            b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-            470,
-            b"void error(const Floc *, size_t, const char *, ...)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: start[len-1] == '\'");
     };
     outputs(1, start);
 }
@@ -579,13 +561,7 @@ pub unsafe extern "C" fn fatal(
     strcat(p, stop);
     if *start.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int == 0 {
     } else {
-        __assert_fail(
-            b"start[len-1] == '\\0'\0" as *const u8 as *const ::core::ffi::c_char,
-            b"src/output.c\0" as *const u8 as *const ::core::ffi::c_char,
-            502,
-            b"void fatal(const Floc *, size_t, const char *, ...)\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        panic!("assertion failed: start[len-1] == '\'");
     };
     outputs(1, start);
     die(MAKE_FAILURE);

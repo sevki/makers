@@ -1,11 +1,11 @@
-use libc::{abort, free, printf, putchar, puts, strchr, strcmp, strrchr};
-use ::c2rust_bitfields;
-use crate::stdio::{FILE};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::strcache::strcache_add_len;
-use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::free_ns_chain;
+use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::stdio::FILE;
+use crate::strcache::strcache_add_len;
+use ::c2rust_bitfields;
+use libc::{abort, free, printf, putchar, puts, strchr, strcmp, strrchr};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
@@ -29,12 +29,6 @@ extern "C" {
     ) -> ::core::ffi::c_int;
     static mut posix_pedantic: ::core::ffi::c_int;
     static mut second_expansion: ::core::ffi::c_int;
-    fn __assert_fail(
-        __assertion: *const ::core::ffi::c_char,
-        __file: *const ::core::ffi::c_char,
-        __line: ::core::ffi::c_uint,
-        __function: *const ::core::ffi::c_char,
-    ) -> !;
     fn print_commands(cmds: *const commands);
     fn parse_file_seq(
         stringp: *mut *mut ::core::ffi::c_char,
@@ -175,29 +169,22 @@ pub unsafe extern "C" fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_ch
         let mut ood: *const dep = ::core::ptr::null::<dep>();
         k = 0;
         while k < (*r).num as ::core::ffi::c_uint {
-            len = len.wrapping_add(
-                (*(*r).lens.offset(k as isize)).wrapping_add(1) as size_t,
-            );
+            len = len.wrapping_add((*(*r).lens.offset(k as isize)).wrapping_add(1) as size_t);
             k = k.wrapping_add(1);
         }
         dep = (*r).deps;
         while !dep.is_null() {
             len = (len as ::core::ffi::c_ulong).wrapping_add(
-                strlen(
-                    if !(*dep).name.is_null() {
-                        (*dep).name
-                    } else {
-                        (*(*dep).file).name
-                    },
-                )
-                .wrapping_add(
-                    if (*dep).wait_here() as ::core::ffi::c_int != 0 {
-                        (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                            .wrapping_sub(1)
-                    } else {
-                        0
-                    },
-                )
+                strlen(if !(*dep).name.is_null() {
+                    (*dep).name
+                } else {
+                    (*(*dep).file).name
+                })
+                .wrapping_add(if (*dep).wait_here() as ::core::ffi::c_int != 0 {
+                    (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1)
+                } else {
+                    0
+                })
                 .wrapping_add(1) as ::core::ffi::c_ulong,
             ) as size_t as size_t;
             dep = (*dep).next;
@@ -379,18 +366,15 @@ pub unsafe extern "C" fn snap_implicit_rules() {
                 }
                 if p.offset_from(dname) as ::core::ffi::c_long as size_t > namelen {
                     namelen = p.offset_from(dname) as ::core::ffi::c_long as size_t;
-                    name = xrealloc(
-                        name as *mut ::core::ffi::c_void,
-                        namelen.wrapping_add(1),
-                    ) as *mut ::core::ffi::c_char;
+                    name = xrealloc(name as *mut ::core::ffi::c_void, namelen.wrapping_add(1))
+                        as *mut ::core::ffi::c_char;
                 }
                 memcpy(
                     name as *mut ::core::ffi::c_void,
                     dname as *const ::core::ffi::c_void,
                     p.offset_from(dname) as ::core::ffi::c_long as size_t,
                 );
-                *name.offset(p.offset_from(dname) as ::core::ffi::c_long as isize) =
-                    0;
+                *name.offset(p.offset_from(dname) as ::core::ffi::c_long as isize) = 0;
                 (*dep).set_changed(
                     (dir_file_exists_p(name, b"\0" as *const u8 as *const ::core::ffi::c_char) == 0)
                         as ::core::ffi::c_int as ::core::ffi::c_uint
@@ -430,10 +414,7 @@ unsafe extern "C" fn convert_suffix_rule(
     percents = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
         as *mut *const ::core::ffi::c_char;
     if target.is_null() {
-        *names = strcache_add_len(
-            b"(%.o)\0" as *const u8 as *const ::core::ffi::c_char,
-            5,
-        );
+        *names = strcache_add_len(b"(%.o)\0" as *const u8 as *const ::core::ffi::c_char, 5);
         *percents = (*names).offset(1 as ::core::ffi::c_int as isize);
     } else {
         let len: size_t = strlen(target) as size_t;
@@ -471,15 +452,7 @@ unsafe extern "C" fn convert_suffix_rule(
         deps = alloc_dep();
         (*deps).name = strcache_add_len(p_0, len_0.wrapping_add(1));
     }
-    create_pattern_rule(
-        names,
-        percents,
-        1,
-        0,
-        deps,
-        cmds,
-        0,
-    );
+    create_pattern_rule(names, percents, 1, 0, deps, cmds, 0);
 }
 #[no_mangle]
 pub unsafe extern "C" fn convert_to_pattern() {
@@ -502,9 +475,7 @@ pub unsafe extern "C" fn convert_to_pattern() {
     }
     alloca_allocations.push(::std::vec::from_elem(
         0,
-        maxsuffix
-            .wrapping_mul(2)
-            .wrapping_add(1) as usize,
+        maxsuffix.wrapping_mul(2).wrapping_add(1) as usize,
     ));
     rulename = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
     d = (*suffix_file).deps;
@@ -589,12 +560,14 @@ pub unsafe extern "C" fn convert_to_pattern() {
                                 (*d).name
                             } else {
                                 (*(*d).file).name
-                            }) . offset ( 1 ) ,
+                            })
+                            .offset(1),
                             (if !(*d2).name.is_null() {
                                 (*d2).name
                             } else {
                                 (*(*d2).file).name
-                            }) . offset ( 1 ) ,
+                            })
+                            .offset(1),
                         ) == 0)))
             {
                 memcpy(
@@ -684,8 +657,10 @@ unsafe extern "C" fn new_pattern_rule(
                     == **(*r).targets.offset(j as isize) as ::core::ffi::c_int
                     && (**(*rule).targets.offset(i as isize) as ::core::ffi::c_int == 0
                         || strcmp(
-                            (*(*rule).targets.offset(i as isize)).offset(1 as ::core::ffi::c_int as isize),
-                            (*(*r).targets.offset(j as isize)).offset(1 as ::core::ffi::c_int as isize),
+                            (*(*rule).targets.offset(i as isize))
+                                .offset(1 as ::core::ffi::c_int as isize),
+                            (*(*r).targets.offset(j as isize))
+                                .offset(1 as ::core::ffi::c_int as isize),
                         ) == 0))
                 {
                     break;
@@ -719,12 +694,14 @@ unsafe extern "C" fn new_pattern_rule(
                                     (*d).name
                                 } else {
                                     (*(*d).file).name
-                                }) . offset ( 1 ) ,
+                                })
+                                .offset(1),
                                 (if !(*d2).name.is_null() {
                                     (*d2).name
                                 } else {
                                     (*(*d2).file).name
-                                }) . offset ( 1 ) ,
+                                })
+                                .offset(1),
                             ) == 0))
                     {
                         break;
@@ -764,10 +741,7 @@ unsafe extern "C" fn new_pattern_rule(
     1
 }
 #[no_mangle]
-pub unsafe extern "C" fn install_pattern_rule(
-    p: *const pspec,
-    terminal: ::core::ffi::c_int,
-) {
+pub unsafe extern "C" fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int) {
     let r: *mut rule;
     let mut ptr: *const ::core::ffi::c_char;
     r = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
@@ -779,22 +753,18 @@ pub unsafe extern "C" fn install_pattern_rule(
     (*r).lens = xmalloc(::core::mem::size_of::<::core::ffi::c_uint>() as size_t)
         as *mut ::core::ffi::c_uint;
     (*r)._defn = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    *(*r).lens.offset(0 as ::core::ffi::c_int as isize) = strlen((*p).target) as ::core::ffi::c_uint;
+    *(*r).lens.offset(0 as ::core::ffi::c_int as isize) =
+        strlen((*p).target) as ::core::ffi::c_uint;
     let fresh1 = &mut (*(*r).targets.offset(0 as ::core::ffi::c_int as isize));
     *fresh1 = (*p).target;
     let fresh2 = &mut (*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize));
     *fresh2 =
-        find_percent_cached((*r).targets.offset(0 as ::core::ffi::c_int as isize) as *mut *const ::core::ffi::c_char);
+        find_percent_cached((*r).targets.offset(0 as ::core::ffi::c_int as isize)
+            as *mut *const ::core::ffi::c_char);
     if !(*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize)).is_null() {
-        } else {
-            __assert_fail(
-                b"r->suffixes[0] != NULL\0" as *const u8 as *const ::core::ffi::c_char,
-                b"src/rule.c\0" as *const u8 as *const ::core::ffi::c_char,
-                492,
-                b"void install_pattern_rule(const struct pspec *, int)\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-        };
+    } else {
+        panic!("assertion failed: r->suffixes[0] != NULL");
+    };
     let fresh3 = &mut (*(*r).suffixes.offset(0 as ::core::ffi::c_int as isize));
     *fresh3 = (*fresh3).offset(1 as ::core::ffi::c_int as isize);
     ptr = (*p).dep;
@@ -806,11 +776,7 @@ pub unsafe extern "C" fn install_pattern_rule(
         PARSEFS_NONE,
     ) as *mut dep as *mut dep;
     if new_pattern_rule(r, 0) != 0 {
-        (*r).terminal = (if terminal != 0 {
-            1
-        } else {
-            0
-        }) as ::core::ffi::c_char;
+        (*r).terminal = (if terminal != 0 { 1 } else { 0 }) as ::core::ffi::c_char;
         (*r).cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
         (*(*r).cmds).fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
         (*(*r).cmds).fileinfo.lineno = 0;
@@ -867,26 +833,15 @@ pub unsafe extern "C" fn create_pattern_rule(
     while i < n as ::core::ffi::c_uint {
         *(*r).lens.offset(i as isize) = strlen(*targets.offset(i as isize)) as ::core::ffi::c_uint;
         if !(*(*r).suffixes.offset(i as isize)).is_null() {
-            } else {
-                __assert_fail(
-                    b"r->suffixes[i] != NULL\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    b"src/rule.c\0" as *const u8 as *const ::core::ffi::c_char,
-                    584,
-                    b"void create_pattern_rule(const char **, const char **, unsigned short, int, struct dep *, struct commands *, int)\0"
-                        as *const u8 as *const ::core::ffi::c_char,
-                );
-            };
+        } else {
+            panic!("assertion failed: r->suffixes[i] != NULL");
+        };
         let fresh0 = &mut (*(*r).suffixes.offset(i as isize));
         *fresh0 = (*fresh0).offset(1 as ::core::ffi::c_int as isize);
         i = i.wrapping_add(1);
     }
     if new_pattern_rule(r, override_0) != 0 {
-        (*r).terminal = (if terminal != 0 {
-            1
-        } else {
-            0
-        }) as ::core::ffi::c_char;
+        (*r).terminal = (if terminal != 0 { 1 } else { 0 }) as ::core::ffi::c_char;
     }
 }
 #[no_mangle]
