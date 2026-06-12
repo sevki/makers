@@ -453,10 +453,12 @@ pub unsafe extern "C" fn define_variable_in_set(
     };
     check_valid_name(flocp, name, length);
     // Route SET through a checked reference; null means the global set.
-    let set: &mut variable_set = match set.as_mut() {
-        Some(s) => s,
-        None => &mut *(&raw mut global_variable_set),
+    let set = if set.is_null() {
+        &raw mut global_variable_set
+    } else {
+        set
     };
+    let set: &mut variable_set = &mut *set;
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     var_slot = hash_find_slot(
@@ -576,10 +578,12 @@ pub unsafe extern "C" fn undefine_variable_in_set(
     };
     check_valid_name(flocp, name, length);
     // Route SET through a checked reference; null means the global set.
-    let set: &mut variable_set = match set.as_mut() {
-        Some(s) => s,
-        None => &mut *(&raw mut global_variable_set),
+    let set = if set.is_null() {
+        &raw mut global_variable_set
+    } else {
+        set
     };
+    let set: &mut variable_set = &mut *set;
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     var_slot = hash_find_slot(
