@@ -14,9 +14,6 @@ extern "C" {
         __compar: __compar_fn_t,
     );
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn enter_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t;
 }
 pub type __compar_fn_t = Option<
     unsafe extern "C" fn(
@@ -57,8 +54,10 @@ pub type ar_member_func_t = Option<
 use crate::arscan::{ar_member_touch, ar_name_equal, ar_scan};
 use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
+use crate::file::{enter_file, lookup_file};
 use crate::misc::{alpha_compare, concat};
 use crate::output::{error, fatal, perror_with_name};
+use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ar_glob_state {

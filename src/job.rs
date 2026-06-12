@@ -55,23 +55,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn die(_: ::core::ffi::c_int) -> !;
-    fn show_goal_error();
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    static mut just_print_flag: ::core::ffi::c_int;
-    static mut run_silent: ::core::ffi::c_int;
-    static mut keep_going_flag: ::core::ffi::c_int;
-    static mut ignore_errors_flag: ::core::ffi::c_int;
-    static mut touch_flag: ::core::ffi::c_int;
-    static mut question_flag: ::core::ffi::c_int;
-    static mut posix_pedantic: ::core::ffi::c_int;
-    static mut not_parallel: ::core::ffi::c_int;
-    static mut one_shell: ::core::ffi::c_int;
-    static mut output_sync: ::core::ffi::c_int;
-    static mut command_count: ::core::ffi::c_ulong;
-    static mut job_slots: ::core::ffi::c_uint;
-    static mut max_load_average: ::core::ffi::c_double;
-    static mut commands_started: ::core::ffi::c_uint;
     fn wait(__stat_loc: *mut ::core::ffi::c_int) -> __pid_t;
     fn waitpid(
         __pid: __pid_t,
@@ -107,37 +90,8 @@ extern "C" {
         __fd: ::core::ffi::c_int,
         __newfd: ::core::ffi::c_int,
     ) -> ::core::ffi::c_int;
-    static mut db_level: ::core::ffi::c_int;
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn set_command_state(file: *mut file, state: cmd_state);
-    fn notice_finished_file(file: *mut file);
-    fn allocated_expand_string_for_file(
-        line: *const ::core::ffi::c_char,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn allocated_expand_variable_for_file(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn shell_completed(exit_code: ::core::ffi::c_int, exit_sig: ::core::ffi::c_int);
-    fn lookup_variable_for_file(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        file: *mut file,
-    ) -> *mut variable;
-    fn target_environment(
-        file: *mut file,
-        recursive: ::core::ffi::c_int,
-    ) -> *mut *mut ::core::ffi::c_char;
-    static mut fatal_signal_set: sigset_t;
-    static mut shell_function_pid: pid_t;
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct __sigset_t {
-    pub __val: [::core::ffi::c_ulong; 16],
-}
+pub use crate::make_main::__sigset_t;
 pub type sigset_t = __sigset_t;
 pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
@@ -235,28 +189,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -329,12 +262,22 @@ pub struct posix_spawn_file_actions_t {
     pub __pad: [::core::ffi::c_int; 16],
 }
 use crate::commands::{chop_commands, delete_child_targets, handling_fatal_signal};
+use crate::expand::{allocated_expand_string_for_file, allocated_expand_variable_for_file};
+use crate::file::{lookup_file, set_command_state};
 use crate::findprog::find_in_given_path;
+use crate::function::{shell_completed, shell_function_pid};
+use crate::make_main::{
+    command_count, db_level, die, fatal_signal_set, ignore_errors_flag, job_slots, just_print_flag,
+    keep_going_flag, max_load_average, not_parallel, one_shell, output_sync, posix_pedantic,
+    question_flag, run_silent, stopchar_map, touch_flag,
+};
 use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
 use crate::posixos::{
     fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
     jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
 };
+use crate::remake::{commands_started, notice_finished_file, show_goal_error};
+use crate::variable::{lookup_variable_for_file, target_environment};
 use crate::warning::{self, Action, Type};
 pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
 pub const __S_IEXEC: ::core::ffi::c_int = 0o100 as ::core::ffi::c_int;
@@ -357,10 +300,8 @@ pub const OUTPUT_SYNC_RECURSE: ::core::ffi::c_int = 3;
 pub const MAKE_SUCCESS: ::core::ffi::c_int = 0;
 pub const MAKE_TROUBLE: ::core::ffi::c_int = 1;
 pub const MAKE_FAILURE: ::core::ffi::c_int = 2;
-#[no_mangle]
 pub static mut default_shell: *const ::core::ffi::c_char =
     b"/bin/sh\0" as *const u8 as *const ::core::ffi::c_char;
-#[no_mangle]
 pub static mut batch_mode_shell: ::core::ffi::c_int = 0;
 pub const S_IXUSR: ::core::ffi::c_int = __S_IEXEC;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
@@ -369,8 +310,11 @@ pub const POSIX_SPAWN_USEVFORK: ::core::ffi::c_int = 0x40 as ::core::ffi::c_int;
 pub const COMMANDS_RECURSE: ::core::ffi::c_int = 1;
 pub const COMMANDS_SILENT: ::core::ffi::c_int = 2;
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
-#[no_mangle]
-pub unsafe extern "C" fn pid2str(pid: pid_t) -> *const ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn pid2str(pid: pid_t) -> *const ::core::ffi::c_char {
     static mut pidstring: [::core::ffi::c_char; 100] = [0; 100];
     sprintf(
         &raw mut pidstring as *mut ::core::ffi::c_char,
@@ -379,22 +323,18 @@ pub unsafe extern "C" fn pid2str(pid: pid_t) -> *const ::core::ffi::c_char {
     );
     &raw mut pidstring as *mut ::core::ffi::c_char
 }
-#[no_mangle]
 pub static mut children: *mut child = ::core::ptr::null::<child>() as *mut child;
-#[no_mangle]
 pub static mut job_slots_used: ::core::ffi::c_uint = 0;
 static mut good_stdin_used: ::core::ffi::c_int = 0;
 static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child;
-#[no_mangle]
 pub static mut unixy_shell: ::core::ffi::c_int = 1;
-#[no_mangle]
 pub static mut job_counter: ::core::ffi::c_ulong = 0;
-#[no_mangle]
 pub static mut jobserver_tokens: ::core::ffi::c_uint = 0;
-#[no_mangle]
-pub unsafe extern "C" fn is_bourne_compatible_shell(
-    path: *const ::core::ffi::c_char,
-) -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn is_bourne_compatible_shell(path: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     static mut unix_shells: [*const ::core::ffi::c_char; 8] = [
         b"sh\0" as *const u8 as *const ::core::ffi::c_char,
         b"bash\0" as *const u8 as *const ::core::ffi::c_char,
@@ -425,24 +365,33 @@ pub unsafe extern "C" fn is_bourne_compatible_shell(
     }
     0
 }
-#[no_mangle]
-pub unsafe extern "C" fn block_sigs() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn block_sigs() {
     sigprocmask(
         SIG_BLOCK,
         &raw mut fatal_signal_set,
         ::core::ptr::null_mut::<sigset_t>(),
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn unblock_sigs() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn unblock_sigs() {
     sigprocmask(
         SIG_UNBLOCK,
         &raw mut fatal_signal_set,
         ::core::ptr::null_mut::<sigset_t>(),
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn unblock_all_sigs() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn unblock_all_sigs() {
     let mut empty: sigset_t = __sigset_t { __val: [0; 16] };
     sigemptyset(&raw mut empty);
     sigprocmask(
@@ -554,13 +503,19 @@ unsafe extern "C" fn child_error(
     output_context = ::core::ptr::null_mut::<output>();
 }
 static mut dead_children: ::core::ffi::c_uint = 0;
-#[no_mangle]
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn child_handler(mut _sig: ::core::ffi::c_int) {
     dead_children = dead_children.wrapping_add(1);
     jobserver_signal();
 }
-#[no_mangle]
-pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_int) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_int) {
     let mut status: ::core::ffi::c_int = 0;
     let mut reap_more: ::core::ffi::c_int = 1;
     while (!children.is_null() || shell_function_pid != 0) && (block != 0 || reap_more != 0) {
@@ -926,8 +881,11 @@ pub unsafe extern "C" fn reap_children(mut block: ::core::ffi::c_int, err: ::cor
         block = 0;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn free_childbase(child: *mut childbase) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_childbase(child: *mut childbase) {
     if !(*child).environment.is_null() {
         let mut ep: *mut *mut ::core::ffi::c_char = (*child).environment;
         while !(*ep).is_null() {
@@ -939,8 +897,11 @@ pub unsafe extern "C" fn free_childbase(child: *mut childbase) {
     }
     free((*child).cmd_name as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn free_child(child: *mut child) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_child(child: *mut child) {
     crate::output::output_close(&raw mut (*child).output);
     if jobserver_tokens == 0 {
         fatal(
@@ -979,8 +940,11 @@ pub unsafe extern "C" fn free_child(child: *mut child) {
     free_childbase(child as *mut childbase);
     free(child as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn start_job_command(child: *mut child) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn start_job_command(child: *mut child) {
     let mut flags: ::core::ffi::c_int;
     let mut p: *mut ::core::ffi::c_char;
     let mut argv: *mut *mut ::core::ffi::c_char;
@@ -1225,8 +1189,11 @@ pub unsafe extern "C" fn start_job_command(child: *mut child) {
     }
     output_context = ::core::ptr::null_mut::<output>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
     let f: *mut file = (*c).file;
     (*c).set_remote(
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
@@ -1290,8 +1257,11 @@ pub unsafe extern "C" fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int 
     }
     1
 }
-#[no_mangle]
-pub unsafe extern "C" fn new_job(file: *mut file) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn new_job(file: *mut file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let cmds: *mut commands = (*file).cmds;
     let c: *mut child;
@@ -1635,8 +1605,11 @@ pub unsafe extern "C" fn new_job(file: *mut file) {
     }
     output_context = ::core::ptr::null_mut::<output>();
 }
-#[no_mangle]
-pub unsafe extern "C" fn job_next_command(child: *mut child) -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn job_next_command(child: *mut child) -> ::core::ffi::c_int {
     while (*child).command_ptr.is_null() || *(*child).command_ptr as ::core::ffi::c_int == 0 {
         if (*child).command_line == (*(*(*child).file).cmds).ncommand_lines as ::core::ffi::c_uint {
             (*child).command_ptr = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1654,8 +1627,11 @@ pub unsafe extern "C" fn job_next_command(child: *mut child) -> ::core::ffi::c_i
 }
 pub const LOAD_WEIGHT_A: ::core::ffi::c_double = 0.25f64;
 pub const LOAD_WEIGHT_B: ::core::ffi::c_double = 0.25f64;
-#[no_mangle]
-pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn load_too_high() -> ::core::ffi::c_int {
     static mut last_sec: ::core::ffi::c_double = 0.;
     static mut last_now: time_t = 0;
     static mut proc_fd: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
@@ -1810,8 +1786,11 @@ pub unsafe extern "C" fn load_too_high() -> ::core::ffi::c_int {
     }
     (guess >= max_load_average) as ::core::ffi::c_int
 }
-#[no_mangle]
-pub unsafe extern "C" fn start_waiting_jobs() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn start_waiting_jobs() {
     let mut job: *mut child;
     if waiting_jobs.is_null() {
         return;
@@ -1847,8 +1826,11 @@ impl Drop for SpawnFileActions {
         }
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn child_execute_job(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn child_execute_job(
     child: *mut childbase,
     good_stdin: ::core::ffi::c_int,
     argv: *mut *mut ::core::ffi::c_char,
@@ -2060,8 +2042,11 @@ unsafe fn spawn_child(
     }
     r
 }
-#[no_mangle]
-pub unsafe extern "C" fn exec_command(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn exec_command(
     argv: *mut *mut ::core::ffi::c_char,
     envp: *mut *mut ::core::ffi::c_char,
 ) -> pid_t {
@@ -2711,8 +2696,11 @@ unsafe extern "C" fn construct_command_argv_internal(
     new_argv
 }
 pub const PRESERVE_BSNL: ::core::ffi::c_int = 1;
-#[no_mangle]
-pub unsafe extern "C" fn construct_command_argv(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn construct_command_argv(
     line: *mut ::core::ffi::c_char,
     restp: *mut *mut ::core::ffi::c_char,
     file: *mut file,

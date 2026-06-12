@@ -63,78 +63,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn find_percent(_: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char;
-    static mut reading_file: *const Floc;
-    static mut expanding_var: *mut *const Floc;
-    static mut stopchar_map: [::core::ffi::c_ushort; 0];
-    static mut command_count: ::core::ffi::c_ulong;
-    static mut starting_directory: *mut ::core::ffi::c_char;
-    static mut db_level: ::core::ffi::c_int;
-    fn parse_file_seq(
-        stringp: *mut *mut ::core::ffi::c_char,
-        size: size_t,
-        stopmap: ::core::ffi::c_int,
-        prefix: *const ::core::ffi::c_char,
-        flags: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_void;
-    fn eval_buffer(buffer: *mut ::core::ffi::c_char, floc: *const Floc);
-    fn reap_children(block: ::core::ffi::c_int, err: ::core::ffi::c_int);
-    fn free_childbase(child: *mut childbase);
-    fn construct_command_argv(
-        line: *mut ::core::ffi::c_char,
-        restp: *mut *mut ::core::ffi::c_char,
-        file: *mut file,
-        cmd_flags: ::core::ffi::c_int,
-        batch_file: *mut *mut ::core::ffi::c_char,
-    ) -> *mut *mut ::core::ffi::c_char;
-    fn child_execute_job(
-        child: *mut childbase,
-        good_stdin: ::core::ffi::c_int,
-        argv: *mut *mut ::core::ffi::c_char,
-    ) -> pid_t;
-    static mut current_variable_set_list: *mut variable_set_list;
-    fn variable_buffer_output(
-        ptr: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn install_variable_buffer(bufp: *mut *mut ::core::ffi::c_char, lenp: *mut size_t);
-    fn restore_variable_buffer(buf: *mut ::core::ffi::c_char, len: size_t);
-    fn expand_string_buf(
-        buf: *mut ::core::ffi::c_char,
-        string: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn allocated_expand_string_for_file(
-        line: *const ::core::ffi::c_char,
-        file: *mut file,
-    ) -> *mut ::core::ffi::c_char;
-    fn expand_argument(
-        str: *const ::core::ffi::c_char,
-        end: *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char;
-    fn expand_variable_output(
-        ptr: *mut ::core::ffi::c_char,
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-    ) -> *mut ::core::ffi::c_char;
-    fn push_new_variable_scope() -> *mut variable_set_list;
-    fn pop_variable_scope();
-    fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
-    fn define_variable_in_set(
-        name: *const ::core::ffi::c_char,
-        length: size_t,
-        value: *const ::core::ffi::c_char,
-        origin: variable_origin,
-        recursive: ::core::ffi::c_int,
-        set: *mut variable_set,
-        flocp: *const Floc,
-    ) -> *mut variable;
-    fn warn_undefined(name: *const ::core::ffi::c_char, length: size_t);
-    fn target_environment(
-        file: *mut file,
-        recursive: ::core::ffi::c_int,
-    ) -> *mut *mut ::core::ffi::c_char;
 }
 
 /// RAII owner for a string produced by `expand_argument`.
@@ -213,28 +141,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -249,21 +156,26 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
+use crate::expand::{
+    allocated_expand_string_for_file, expand_argument, expand_string_buf, expand_variable_output,
+    expanding_var, install_variable_buffer, restore_variable_buffer, variable_buffer_output,
+};
 pub use crate::file::nameseq;
 use crate::hash::{
     hash_find_item, hash_free, hash_init, hash_insert, hash_load, jhash, jhash_string,
 };
+pub use crate::job::childbase;
+use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
+use crate::make_main::{command_count, db_level, starting_directory, stopchar_map};
 use crate::misc::alpha_compare;
 pub use crate::output::output;
 use crate::output::{error, fatal, output_context, outputs};
 use crate::posixos::fd_noinherit;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct childbase {
-    pub cmd_name: *mut ::core::ffi::c_char,
-    pub environment: *mut *mut ::core::ffi::c_char,
-    pub output: output,
-}
+use crate::read::{eval_buffer, find_percent, parse_file_seq, reading_file};
+use crate::variable::{
+    current_variable_set_list, define_variable_in_set, lookup_variable, pop_variable_scope,
+    push_new_variable_scope, target_environment, warn_undefined,
+};
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct function_table_entry {
@@ -324,9 +236,7 @@ pub const INTSTR_LENGTH: usize = (53 as usize)
     .wrapping_add(3 as usize);
 pub const EXP_COUNT_BITS: ::core::ffi::c_int = 15;
 pub const EXP_COUNT_MAX: ::core::ffi::c_int = ((1) << EXP_COUNT_BITS) - 1;
-unsafe extern "C" fn function_table_entry_hash_1(
-    keyv: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_ulong {
+unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let key: *const function_table_entry = keyv as *const function_table_entry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
@@ -334,14 +244,12 @@ unsafe extern "C" fn function_table_entry_hash_1(
         .wrapping_add(jhash(_key_, (*key).len as ::core::ffi::c_int) as ::core::ffi::c_ulong);
     _result_
 }
-unsafe extern "C" fn function_table_entry_hash_2(
-    keyv: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_ulong {
+unsafe fn function_table_entry_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _key: *const function_table_entry = keyv as *const function_table_entry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe extern "C" fn function_table_entry_hash_cmp(
+unsafe fn function_table_entry_hash_cmp(
     xv: *const ::core::ffi::c_void,
     yv: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
@@ -377,8 +285,11 @@ static mut function_table: hash_table = hash_table {
     ht_in_map: [0; 1],
     c2rust_padding: [0; 3],
 };
-#[no_mangle]
-pub unsafe extern "C" fn subst_expand(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn subst_expand(
     mut o: *mut ::core::ffi::c_char,
     text: *const ::core::ffi::c_char,
     subst: *const ::core::ffi::c_char,
@@ -435,8 +346,11 @@ pub unsafe extern "C" fn subst_expand(
     }
     o
 }
-#[no_mangle]
-pub unsafe extern "C" fn patsubst_expand_pat(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn patsubst_expand_pat(
     mut o: *mut ::core::ffi::c_char,
     mut text: *const ::core::ffi::c_char,
     pattern: *const ::core::ffi::c_char,
@@ -543,8 +457,11 @@ pub unsafe extern "C" fn patsubst_expand_pat(
     }
     o
 }
-#[no_mangle]
-pub unsafe extern "C" fn patsubst_expand(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn patsubst_expand(
     o: *mut ::core::ffi::c_char,
     text: *const ::core::ffi::c_char,
     pattern: *mut ::core::ffi::c_char,
@@ -593,8 +510,11 @@ unsafe extern "C" fn lookup_function(s: *const ::core::ffi::c_char) -> *const fu
         &raw mut function_table_entry_key as *const ::core::ffi::c_void,
     ) as *const function_table_entry
 }
-#[no_mangle]
-pub unsafe extern "C" fn pattern_matches(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn pattern_matches(
     mut pattern: *const ::core::ffi::c_char,
     mut percent: *const ::core::ffi::c_char,
     str: *const ::core::ffi::c_char,
@@ -668,10 +588,11 @@ unsafe extern "C" fn find_next_argument(
     }
     ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
-#[no_mangle]
-pub unsafe extern "C" fn string_glob(
-    mut line: *mut ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     static mut result: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut length: size_t = 0;
@@ -1078,8 +999,11 @@ unsafe extern "C" fn func_words(
     );
     o
 }
-#[no_mangle]
-pub unsafe extern "C" fn strip_whitespace(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn strip_whitespace(
     begpp: *mut *const ::core::ffi::c_char,
     endpp: *mut *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
@@ -1386,22 +1310,26 @@ unsafe extern "C" fn func_let(
     pop_variable_scope();
     o.offset(strlen(o) as isize)
 }
-#[no_mangle]
-pub unsafe extern "C" fn a_word_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn a_word_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     let mut _key_: *const ::core::ffi::c_uchar =
         (*(key as *const a_word)).str_0 as *const ::core::ffi::c_uchar;
     _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
     _result_
 }
-#[no_mangle]
-pub unsafe extern "C" fn a_word_hash_2(
-    mut _key: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_ulong {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn a_word_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe extern "C" fn a_word_hash_cmp(
+unsafe fn a_word_hash_cmp(
     x: *const ::core::ffi::c_void,
     y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
@@ -1533,21 +1461,9 @@ unsafe extern "C" fn func_filter_filterout(
         hash_init(
             &raw mut a_word_table,
             word_count,
-            Some(
-                a_word_hash_1
-                    as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-            ),
-            Some(
-                a_word_hash_2
-                    as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-            ),
-            Some(
-                a_word_hash_cmp
-                    as unsafe extern "C" fn(
-                        *const ::core::ffi::c_void,
-                        *const ::core::ffi::c_void,
-                    ) -> ::core::ffi::c_int,
-            ),
+            Some(a_word_hash_1),
+            Some(a_word_hash_2),
+            Some(a_word_hash_cmp),
         );
         wp = words;
         while wp < word_end {
@@ -2037,14 +1953,13 @@ unsafe extern "C" fn fold_newlines(
     *last_nonnl = 0;
     *length = last_nonnl.offset_from(buffer) as ::core::ffi::c_long as size_t;
 }
-#[no_mangle]
 pub static mut shell_function_pid: pid_t = 0 as pid_t;
 static mut shell_function_completed: ::core::ffi::c_int = 0;
-#[no_mangle]
-pub unsafe extern "C" fn shell_completed(
-    mut exit_code: ::core::ffi::c_int,
-    exit_sig: ::core::ffi::c_int,
-) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn shell_completed(mut exit_code: ::core::ffi::c_int, exit_sig: ::core::ffi::c_int) {
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     shell_function_pid = 0 as ::core::ffi::c_int as pid_t;
     if exit_sig == 0 && exit_code == 127 {
@@ -2070,8 +1985,11 @@ pub unsafe extern "C" fn shell_completed(
         NILF,
     );
 }
-#[no_mangle]
-pub unsafe extern "C" fn func_shell_base(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn func_shell_base(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     trim_newlines: ::core::ffi::c_int,
@@ -2768,8 +2686,11 @@ unsafe extern "C" fn expand_builtin_function(
     }
     o
 }
-#[no_mangle]
-pub unsafe extern "C" fn handle_function(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn handle_function(
     op: *mut *mut ::core::ffi::c_char,
     stringp: *mut *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
@@ -2982,8 +2903,11 @@ unsafe extern "C" fn func_call(
     pop_variable_scope();
     o.offset(strlen(o) as isize)
 }
-#[no_mangle]
-pub unsafe extern "C" fn define_new_function(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn define_new_function(
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
     min: ::core::ffi::c_uint,
@@ -3065,28 +2989,19 @@ pub unsafe extern "C" fn define_new_function(
         as *mut function_table_entry;
     free(ent as *mut ::core::ffi::c_void);
 }
-#[no_mangle]
-pub unsafe extern "C" fn hash_init_function_table() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn hash_init_function_table() {
     hash_init(
         &raw mut function_table,
         (::core::mem::size_of::<[function_table_entry; 38]>() as ::core::ffi::c_ulong)
             .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong)
             .wrapping_mul(2),
-        Some(
-            function_table_entry_hash_1
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            function_table_entry_hash_2
-                as unsafe extern "C" fn(*const ::core::ffi::c_void) -> ::core::ffi::c_ulong,
-        ),
-        Some(
-            function_table_entry_hash_cmp
-                as unsafe extern "C" fn(
-                    *const ::core::ffi::c_void,
-                    *const ::core::ffi::c_void,
-                ) -> ::core::ffi::c_int,
-        ),
+        Some(function_table_entry_hash_1),
+        Some(function_table_entry_hash_2),
+        Some(function_table_entry_hash_cmp),
     );
     hash_load(
         &raw mut function_table,

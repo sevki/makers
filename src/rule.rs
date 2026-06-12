@@ -4,7 +4,6 @@ use crate::misc::free_ns_chain;
 use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xrealloc, xstrdup};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add_len;
-use ::c2rust_bitfields;
 use libc::{abort, free, printf, putchar, puts, strchr, strcmp, strrchr};
 extern "C" {
     static mut stdout: *mut FILE;
@@ -20,19 +19,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn find_percent_cached(_: *mut *const ::core::ffi::c_char) -> *const ::core::ffi::c_char;
-    static mut posix_pedantic: ::core::ffi::c_int;
-    static mut second_expansion: ::core::ffi::c_int;
-    fn parse_file_seq(
-        stringp: *mut *mut ::core::ffi::c_char,
-        size: size_t,
-        stopmap: ::core::ffi::c_int,
-        prefix: *const ::core::ffi::c_char,
-        flags: ::core::ffi::c_int,
-    ) -> *mut ::core::ffi::c_void;
-    fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file;
-    fn expand_extra_prereqs(extra: *const variable) -> *mut dep;
-    fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable;
 }
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
@@ -63,28 +49,7 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct variable {
-    pub name: *mut ::core::ffi::c_char,
-    pub value: *mut ::core::ffi::c_char,
-    pub fileinfo: Floc,
-    pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
-}
+pub use crate::variable::variable;
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
 pub const v_noexport: variable_export = 2;
@@ -123,7 +88,11 @@ pub struct pspec {
 use crate::commands::print_commands;
 use crate::dir::dir_file_exists_p;
 pub use crate::file::nameseq;
+use crate::file::{expand_extra_prereqs, lookup_file};
+use crate::make_main::{posix_pedantic, second_expansion};
 use crate::output::{error, fatal};
+use crate::read::{find_percent_cached, parse_file_seq};
+use crate::variable::lookup_variable;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const INTSTR_LENGTH: usize = (53 as usize)
@@ -140,22 +109,18 @@ unsafe extern "C" fn alloc_dep() -> *mut dep {
 unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
-#[no_mangle]
 pub static mut pattern_rules: *mut rule = ::core::ptr::null::<rule>() as *mut rule;
-#[no_mangle]
 pub static mut last_pattern_rule: *mut rule = ::core::ptr::null::<rule>() as *mut rule;
-#[no_mangle]
 pub static mut num_pattern_rules: ::core::ffi::c_uint = 0;
-#[no_mangle]
 pub static mut max_pattern_targets: ::core::ffi::c_uint = 0;
-#[no_mangle]
 pub static mut max_pattern_deps: ::core::ffi::c_uint = 0;
-#[no_mangle]
 pub static mut max_pattern_dep_length: size_t = 0;
-#[no_mangle]
 pub static mut suffix_file: *mut file = ::core::ptr::null::<file>() as *mut file;
-#[no_mangle]
-pub unsafe extern "C" fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
     if (*r)._defn.is_null() {
         let mut len: size_t = 8;
         let mut k: ::core::ffi::c_uint;
@@ -282,8 +247,11 @@ pub unsafe extern "C" fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_ch
     }
     (*r)._defn
 }
-#[no_mangle]
-pub unsafe extern "C" fn snap_implicit_rules() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn snap_implicit_rules() {
     let mut name: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut namelen: size_t = 0;
     let mut rule: *mut rule;
@@ -450,8 +418,11 @@ unsafe extern "C" fn convert_suffix_rule(
     }
     create_pattern_rule(names, percents, 1, 0, deps, cmds, 0);
 }
-#[no_mangle]
-pub unsafe extern "C" fn convert_to_pattern() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn convert_to_pattern() {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut d: *mut dep;
     let mut d2: *mut dep;
@@ -741,8 +712,7 @@ unsafe extern "C" fn new_pattern_rule(
 /// # Safety
 /// `p` must point to a valid `pspec` whose strings are NUL-terminated and
 /// live for the program's lifetime; must run single-threaded.
-#[no_mangle]
-pub unsafe extern "C" fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int) {
+pub unsafe fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int) {
     let r: *mut rule;
     let mut ptr: *const ::core::ffi::c_char;
     r = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
@@ -785,8 +755,11 @@ pub unsafe extern "C" fn install_pattern_rule(p: *const pspec, terminal: ::core:
         (*(*r).cmds).recipe_prefix = RECIPEPREFIX_DEFAULT as ::core::ffi::c_char;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn freerule(rule: *mut rule, lastrule: *mut rule) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
     let next: *mut rule = (*rule).next;
     free_dep_chain((*rule).deps as *mut dep);
     free((*rule).targets as *mut ::core::ffi::c_void);
@@ -807,8 +780,11 @@ pub unsafe extern "C" fn freerule(rule: *mut rule, lastrule: *mut rule) {
         last_pattern_rule = lastrule;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn create_pattern_rule(
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn create_pattern_rule(
     targets: *mut *const ::core::ffi::c_char,
     target_percents: *mut *const ::core::ffi::c_char,
     n: ::core::ffi::c_ushort,
@@ -843,16 +819,22 @@ pub unsafe extern "C" fn create_pattern_rule(
         (*r).terminal = (if terminal != 0 { 1 } else { 0 }) as ::core::ffi::c_char;
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_rule(r: *mut rule) {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_rule(r: *mut rule) {
     fputs(get_rule_defn(r), stdout);
     putchar('\n' as i32);
     if !(*r).cmds.is_null() {
         print_commands((*r).cmds);
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn print_rule_data_base() {
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn print_rule_data_base() {
     let mut rules: ::core::ffi::c_uint;
     let mut terminal: ::core::ffi::c_uint;
     let mut r: *mut rule;
