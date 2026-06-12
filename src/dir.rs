@@ -247,11 +247,7 @@ pub unsafe extern "C" fn find_directory(name: *const c_char) -> *mut directory {
     if is_real_item(dir as *const c_void) {
         let dir_ref = dir.as_mut().expect("directory slot holds a real entry");
         // Cache hit: still valid unless a command has run since.
-        let ctr = if !dir_ref.contents.is_null() {
-            (*dir_ref.contents).counter
-        } else {
-            dir_ref.counter
-        };
+        let ctr = dir_ref.counter;
         if ctr == command_count {
             return dir;
         }
@@ -546,8 +542,20 @@ pub unsafe extern "C" fn file_impossible(filename: *const c_char) {
 #[no_mangle]
 pub unsafe extern "C" fn file_impossible_p(filename: *const c_char) -> c_int {
     let (dir, filename) = match split_dir(filename) {
-        None => ((*find_directory(c".".as_ptr())).contents, filename),
-        Some((_buf, dirname, base)) => ((*find_directory(dirname)).contents, base),
+        None => {
+            let dir_ptr = find_directory(c".".as_ptr());
+            let contents = dir_ptr
+                .as_ref()
+                .map_or(::core::ptr::null_mut(), |d| d.contents);
+            (contents, filename)
+        }
+        Some((_buf, dirname, base)) => {
+            let dir_ptr = find_directory(dirname);
+            let contents = dir_ptr
+                .as_ref()
+                .map_or(::core::ptr::null_mut(), |d| d.contents);
+            (contents, base)
+        }
     };
     let Some(dir) = dir.as_mut() else { return 0 };
     if dir.dirfiles.ht_vec.is_null() {
