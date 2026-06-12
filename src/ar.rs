@@ -127,6 +127,8 @@ pub unsafe fn ar_parse_name(
     *p.offset(strlen(p).wrapping_sub(1) as isize) = 0;
     *memname_p = p;
 }
+// The argument list is the fixed ar_scan callback protocol.
+#[allow(clippy::too_many_arguments)]
 unsafe fn ar_member_date_1(
     mut _desc: ::core::ffi::c_int,
     mem: *const ::core::ffi::c_char,
@@ -250,6 +252,8 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     free(arname as *mut ::core::ffi::c_void);
     val
 }
+// The argument list is the fixed ar_scan callback protocol.
+#[allow(clippy::too_many_arguments)]
 unsafe fn ar_glob_match(
     mut _desc: ::core::ffi::c_int,
     mem: *const ::core::ffi::c_char,

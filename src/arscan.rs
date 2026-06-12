@@ -460,6 +460,8 @@ pub unsafe fn ar_name_equal(
     }
     (strcmp(name, mem) == 0) as ::core::ffi::c_int
 }
+// The argument list is the fixed ar_scan callback protocol.
+#[allow(clippy::too_many_arguments)]
 unsafe fn ar_member_pos(
     mut _desc: ::core::ffi::c_int,
     mem: *const ::core::ffi::c_char,
