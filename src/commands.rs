@@ -316,9 +316,11 @@ pub unsafe extern "C" fn set_file_variables(file: *mut file, mut stem: *const c_
             } else {
                 // Already seen: an order-only duplicate of a normal dep
                 // is promoted to normal, on both nodes.
-                let hd = *slot as *mut dep;
-                if (*d).ignore_mtime() != (*hd).ignore_mtime() {
-                    (*hd).set_ignore_mtime(0);
+                let hd = (*slot as *mut dep)
+                    .as_mut()
+                    .expect("dedupe table stored a null dep");
+                if (*d).ignore_mtime() != hd.ignore_mtime() {
+                    hd.set_ignore_mtime(0);
                     (*d).set_ignore_mtime(0);
                 }
             }
