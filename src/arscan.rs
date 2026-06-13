@@ -239,16 +239,14 @@ pub unsafe fn ar_scan(
                         == '/' as i32)
                 && !namemap.is_null()
             {
-                let mut err: *const ::core::ffi::c_char =
-                    ::core::ptr::null::<::core::ffi::c_char>();
-                let name_off: ::core::ffi::c_uint =
-                    make_toui(name.offset(1 as ::core::ffi::c_int as isize), &raw mut err);
-                let name_len: size_t;
-                if !err.is_null() || name_off >= namemap_size {
+                let (name_off, err) = make_toui(::core::ffi::CStr::from_ptr(
+                    name.offset(1 as ::core::ffi::c_int as isize),
+                ));
+                if err || name_off >= namemap_size {
                     break;
                 }
                 name = namemap.offset(name_off as isize);
-                name_len = strlen(name) as size_t;
+                let name_len: size_t = strlen(name) as size_t;
                 if name_len < 1 {
                     break;
                 }
@@ -260,13 +258,10 @@ pub unsafe fn ar_scan(
                 && *name.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                     == '/' as i32
             {
-                let mut err_0: *const ::core::ffi::c_char =
-                    ::core::ptr::null::<::core::ffi::c_char>();
-                let name_len_0: ::core::ffi::c_uint = make_toui(
+                let (name_len_0, err_0) = make_toui(::core::ffi::CStr::from_ptr(
                     name.offset(3 as ::core::ffi::c_int as isize),
-                    &raw mut err_0,
-                );
-                if !err_0.is_null()
+                ));
+                if err_0
                     || name_len_0 == 0
                     || name_len_0
                         >= (if (4096 as ::core::ffi::c_int) < 2147483647 as ::core::ffi::c_int {
