@@ -1041,16 +1041,13 @@ pub unsafe fn strip_whitespace(
     }
     *begpp as *mut ::core::ffi::c_char
 }
-unsafe extern "C" fn parse_numeric(
-    s: *const ::core::ffi::c_char,
-    msg: *const ::core::ffi::c_char,
-) -> ::core::ffi::c_longlong {
+unsafe fn parse_numeric(s: *const ::core::ffi::c_char, msg: *const ::core::ffi::c_char) -> i64 {
     let mut beg: *const ::core::ffi::c_char = s;
     let mut end: *const ::core::ffi::c_char = s
         .offset(strlen(s) as isize)
         .offset(-(1 as ::core::ffi::c_int as isize));
     let mut endp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let num: ::core::ffi::c_longlong;
+    let num: i64;
     strip_whitespace(&raw mut beg, &raw mut end);
     if beg > end {
         fatal(
@@ -1088,12 +1085,12 @@ unsafe fn func_word(
 ) -> *mut ::core::ffi::c_char {
     let mut end_p: *const ::core::ffi::c_char;
     let mut p: *const ::core::ffi::c_char;
-    let mut i: ::core::ffi::c_longlong;
+    let mut i: i64;
     i = parse_numeric(
         *argv.offset(0 as ::core::ffi::c_int as isize),
         b"invalid first argument to 'word' function\0" as *const u8 as *const ::core::ffi::c_char,
     );
-    if i < 1 as ::core::ffi::c_longlong {
+    if i < 1 {
         fatal(
             *expanding_var,
             0,
@@ -1108,11 +1105,11 @@ unsafe fn func_word(
             break;
         }
         i -= 1;
-        if i == 0 as ::core::ffi::c_longlong {
+        if i == 0 {
             break;
         }
     }
-    if i == 0 as ::core::ffi::c_longlong {
+    if i == 0 {
         o = variable_buffer_output(o, p, end_p.offset_from(p) as ::core::ffi::c_long as size_t);
     }
     o
@@ -1123,15 +1120,15 @@ unsafe fn func_wordlist(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut buf: [::core::ffi::c_char; 23] = [0; 23];
-    let mut start: ::core::ffi::c_longlong;
-    let stop: ::core::ffi::c_longlong;
-    let mut count: ::core::ffi::c_longlong;
+    let mut start: i64;
+    let stop: i64;
+    let mut count: i64;
     let badfirst: *const ::core::ffi::c_char = b"invalid first argument to 'wordlist' function\0"
         as *const u8 as *const ::core::ffi::c_char;
     let badsecond: *const ::core::ffi::c_char = b"invalid second argument to 'wordlist' function\0"
         as *const u8 as *const ::core::ffi::c_char;
     start = parse_numeric(*argv.offset(0 as ::core::ffi::c_int as isize), badfirst);
-    if start < 1 as ::core::ffi::c_longlong {
+    if start < 1 {
         fatal(
             *expanding_var,
             (strlen(badfirst) as size_t)
@@ -1144,7 +1141,7 @@ unsafe fn func_wordlist(
         );
     }
     stop = parse_numeric(*argv.offset(1 as ::core::ffi::c_int as isize), badsecond);
-    if stop < 0 as ::core::ffi::c_longlong {
+    if stop < 0 {
         fatal(
             *expanding_var,
             (strlen(badsecond) as size_t)
@@ -1156,8 +1153,8 @@ unsafe fn func_wordlist(
             make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char),
         );
     }
-    count = stop - start + 1 as ::core::ffi::c_longlong;
-    if count > 0 as ::core::ffi::c_longlong {
+    count = stop - start + 1;
+    if count > 0 {
         let mut p: *const ::core::ffi::c_char;
         let mut end_p: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
         loop {

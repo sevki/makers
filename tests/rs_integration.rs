@@ -577,3 +577,34 @@ fn recipe_var_assignment_prefix_uses_shell() {
     assert_eq!(code, Some(0), "stdout: {out}");
     assert_eq!(out, "bar\n");
 }
+
+#[test]
+fn func_word_wordlist_words() {
+    // Exercises parse_numeric + func_words / func_word / func_wordlist, none of
+    // which were previously covered. Expected output follows GNU make semantics:
+    // word indices are 1-based; word past the end is empty; wordlist clamps the
+    // stop index to the last word and yields empty when start is past the end.
+    let mk = "\
+L := alpha beta gamma delta epsilon
+all: ; @printf 'n=[%s] w3=[%s] first=[%s] last=[%s] wl=[%s] tail=[%s] oob=[%s]\\n' \
+'$(words $(L))' '$(word 3,$(L))' '$(word 1,$(L))' '$(word 5,$(L))' \
+'$(wordlist 2,4,$(L))' '$(wordlist 3,99,$(L))' '$(wordlist 9,10,$(L))'
+";
+    let (out, code) = run_make(mk, &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(
+        out.trim_end(),
+        "n=[5] w3=[gamma] first=[alpha] last=[epsilon] wl=[beta gamma delta] tail=[gamma delta epsilon] oob=[]"
+    );
+}
+
+#[test]
+fn func_word_invalid_index_errors() {
+    // Drives the fatal-error branches: index 0 trips func_word's `i < 1` guard,
+    // and a non-numeric index trips parse_numeric's validation. GNU make aborts
+    // with exit code 2 in both cases.
+    let (out, code) = run_make("all: ; @echo $(word 0,a b c)\n", &[], &[]);
+    assert_eq!(code, Some(2), "stdout: {out}");
+    let (out2, code2) = run_make("all: ; @echo $(word x,a b c)\n", &[], &[]);
+    assert_eq!(code2, Some(2), "stdout: {out2}");
+}
