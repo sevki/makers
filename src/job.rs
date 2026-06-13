@@ -1876,7 +1876,7 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
                     let cnt: ::core::ffi::c_uint = make_toui(::core::ffi::CStr::from_ptr(
                         p.offset(1 as ::core::ffi::c_int as isize),
                     ))
-                    .0;
+                    .unwrap_or(0);
                     if 0x4 as ::core::ffi::c_int & db_level != 0 {
                         printf(
                             b"Running: system = %u / make = %u (max requested = %f)\n\0"

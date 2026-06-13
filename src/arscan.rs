@@ -239,10 +239,12 @@ pub unsafe fn ar_scan(
                         == '/' as i32)
                 && !namemap.is_null()
             {
-                let (name_off, err) = make_toui(::core::ffi::CStr::from_ptr(
+                let Some(name_off) = make_toui(::core::ffi::CStr::from_ptr(
                     name.offset(1 as ::core::ffi::c_int as isize),
-                ));
-                if err || name_off >= namemap_size {
+                )) else {
+                    break;
+                };
+                if name_off >= namemap_size {
                     break;
                 }
                 name = namemap.offset(name_off as isize);
@@ -258,11 +260,11 @@ pub unsafe fn ar_scan(
                 && *name.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
                     == '/' as i32
             {
-                let (name_len_0, err_0) = make_toui(::core::ffi::CStr::from_ptr(
+                let name_len_0 = make_toui(::core::ffi::CStr::from_ptr(
                     name.offset(3 as ::core::ffi::c_int as isize),
-                ));
-                if err_0
-                    || name_len_0 == 0
+                ))
+                .unwrap_or(0);
+                if name_len_0 == 0
                     || name_len_0
                         >= (if (4096 as ::core::ffi::c_int) < 2147483647 as ::core::ffi::c_int {
                             4096 as ::core::ffi::c_int
