@@ -473,11 +473,9 @@ pub unsafe fn hash_dump(
 
 /// Round up to the next power of two by bit-smearing. Note this is NOT
 /// `next_power_of_two`: exact powers of two are doubled (16 -> 32), which
-/// the table relies on for its capacity margin.
-///
-/// # Safety
-/// Always safe; unsafe only for C-API signature compatibility.
-pub unsafe fn round_up_2(mut n: c_ulong) -> c_ulong {
+/// the table relies on for its capacity margin. Equivalently, the result is
+/// `1 << bit_length(n)` (and `1` for `n == 0`).
+pub fn round_up_2(mut n: u64) -> u64 {
     n |= n >> 1;
     n |= n >> 2;
     n |= n >> 4;
@@ -638,6 +636,38 @@ pub unsafe fn jhash_string(k: *const c_uchar) -> c_uint {
 #[cfg(test)]
 mod tests {
     use {super::*, std::ffi::CString};
+
+    #[test]
+    fn round_up_2_known_values() {
+        // 0 maps to 1; otherwise the result is the next power of two strictly
+        // above the input's top set bit, so exact powers of two are doubled.
+        assert_eq!(round_up_2(0), 1);
+        assert_eq!(round_up_2(1), 2);
+        assert_eq!(round_up_2(2), 4);
+        assert_eq!(round_up_2(3), 4);
+        assert_eq!(round_up_2(15), 16);
+        assert_eq!(round_up_2(16), 32);
+        assert_eq!(round_up_2(17), 32);
+        assert_eq!(round_up_2(1000), 1024);
+    }
+
+    #[test]
+    fn round_up_2_matches_bit_length_formula() {
+        // For every input the result equals `1 << bit_length(n)` (with
+        // `bit_length(0) == 0`), which is what the hash table relies on.
+        for n in (0u64..4096).chain([
+            65_535,
+            65_536,
+            65_537,
+            (1 << 31) - 1,
+            1 << 31,
+            (1 << 32) + 1,
+            (1 << 62) + 12345,
+        ]) {
+            let expected = 1u64 << (64 - n.leading_zeros());
+            assert_eq!(round_up_2(n), expected, "round_up_2({n})");
+        }
+    }
 
     fn legacy_jhash(bytes: &[u8]) -> c_uint {
         let mut length = bytes.len();
