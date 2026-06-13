@@ -14,6 +14,12 @@ concurrency:
 env:
     GNULIB_URL: https://github.com/sevki/gnulib.git
 
+# Read-only: this job only checks out code and reports. The PR comment is
+# posted by the companion change-risk-comment.yml workflow, which holds the
+# pull-requests:write scope.
+permissions:
+    contents: read
+
 jobs:
     cargo-crap:
         runs-on: ubuntu-latest
@@ -59,6 +65,22 @@ jobs:
 
             - run: cargo install cargo-crap
 
+            # Gate against the TRUSTED main-branch baseline, not the one in the
+            # PR worktree. Otherwise a PR could raise a function's CRAP score and
+            # bump .cargo-crap-baseline.json in the same diff, so --fail-regression
+            # would compare new-vs-new and never fire. We resolve the baseline
+            # from origin/main; until main carries one (e.g. this bootstrapping
+            # PR), fall back to the in-tree file.
+            - name: Resolve trusted baseline
+              run: |
+                  git fetch --depth=1 origin main:refs/remotes/origin/main || true
+                  if git show origin/main:.cargo-crap-baseline.json > main-baseline.json 2>/dev/null; then
+                      echo "Using main-branch CRAP baseline"
+                  else
+                      echo "No baseline on main yet; falling back to in-tree baseline"
+                      cp .cargo-crap-baseline.json main-baseline.json
+                  fi
+
             # --ignore-run-fail keeps coverage flowing even if a flaky
             # integration test fails, so the CRAP gate scores real data.
             - run: cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info
@@ -74,7 +96,7 @@ jobs:
               if: github.event_name == 'pull_request'
               run: |
                   cargo crap --lcov lcov.info \
-                    --baseline .cargo-crap-baseline.json \
+                    --baseline main-baseline.json \
                     --format pr-comment --output crap-comment.md
                   echo "${{ github.event.pull_request.number }}" > pr-number.txt
 
@@ -92,8 +114,8 @@ jobs:
 
             # Gate on regressions, not absolute score: the codebase already
             # carries debt above threshold 30, so blocking on --fail-above
-            # would be red on every PR. .cargo-crap-baseline.json captures the
+            # would be red on every PR. The trusted main baseline captures the
             # current scores; CI fails only when a function gets WORSE.
-            # Refresh the baseline with: ./scripts/crap.sh --format json \
-            #   --output .cargo-crap-baseline.json
-            - run: cargo crap --lcov lcov.info --baseline .cargo-crap-baseline.json --fail-regression
+            # Refresh the in-tree baseline with: ./scripts/crap.sh \
+            #   --format json --output .cargo-crap-baseline.json
+            - run: cargo crap --lcov lcov.info --baseline main-baseline.json --fail-regression
