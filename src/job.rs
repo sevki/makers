@@ -4,7 +4,7 @@ pub use crate::ffi_types::{
     ssize_t, time_t, uintmax_t,
 };
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
-use crate::misc::{make_toui, xcalloc, xmalloc, xstrdup};
+use crate::misc::{xcalloc, xmalloc, xstrdup};
 use crate::stdio::FILE;
 use ::c2rust_bitfields;
 use libc::{
@@ -1799,6 +1799,17 @@ pub const LOAD_WEIGHT_B: ::core::ffi::c_double = 0.25f64;
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+/// Parse the number of currently-running jobs from `/proc/loadavg` contents:
+/// the integer before `/` in the 4th whitespace-separated field (e.g. `1` in
+/// `"0.00 0.01 0.05 1/234 5678"`). Returns `None` when that field is missing or
+/// does not begin with a number — matching when C make's `load_too_high`
+/// reports "Failed to parse /proc/loadavg".
+fn loadavg_running_jobs(contents: &[u8]) -> Option<u32> {
+    let field = contents.split(|&b| b == b' ').nth(3)?;
+    let numerator = field.split(|&b| b == b'/').next()?;
+    crate::misc::parse_uint_strtoul(numerator).ok()
+}
+
 pub unsafe fn load_too_high() -> ::core::ffi::c_int {
     static mut last_sec: ::core::ffi::c_double = 0.;
     static mut last_now: time_t = 0;
@@ -1859,24 +1870,10 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
                 }
             }
             if r >= 0 {
-                let mut p: *const ::core::ffi::c_char;
                 avg[r as usize] = 0;
-                p = strchr(&raw mut avg as *mut ::core::ffi::c_char, ' ' as i32);
-                if !p.is_null() {
-                    p = strchr(p.offset(1 as ::core::ffi::c_int as isize), ' ' as i32);
-                }
-                if !p.is_null() {
-                    p = strchr(p.offset(1 as ::core::ffi::c_int as isize), ' ' as i32);
-                }
-                if !p.is_null()
-                    && (*p.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_uint)
-                        .wrapping_sub('0' as i32 as ::core::ffi::c_uint)
-                        <= 9
-                {
-                    let cnt: ::core::ffi::c_uint = make_toui(::core::ffi::CStr::from_ptr(
-                        p.offset(1 as ::core::ffi::c_int as isize),
-                    ))
-                    .unwrap_or(0);
+                // SAFETY: avg[r] was just set to NUL, so this is a valid C string.
+                let contents = ::core::ffi::CStr::from_ptr(avg.as_ptr()).to_bytes();
+                if let Some(cnt) = loadavg_running_jobs(contents) {
                     if 0x4 as ::core::ffi::c_int & db_level != 0 {
                         printf(
                             b"Running: system = %u / make = %u (max requested = %f)\n\0"
@@ -2925,27 +2922,23 @@ pub unsafe fn construct_command_argv(
 }
 
 #[cfg(test)]
-mod load_too_high_tests {
-    use super::{load_too_high, max_load_average};
+mod loadavg_tests {
+    use super::loadavg_running_jobs;
 
-    // A single test (not several) because these all mutate the process-global
-    // `max_load_average` and `load_too_high`'s cached `proc_fd`; running them as
-    // one body keeps them off separate parallel test threads.
     #[test]
-    fn load_too_high_paths() {
-        unsafe {
-            // No `-l` limit (the default): short-circuit to 0 without probing.
-            max_load_average = -1.0;
-            assert_eq!(load_too_high(), 0);
+    fn parses_running_jobs_field() {
+        // 4th field is "running/total"; we want the running count (numerator),
+        // matching C strtoul stopping at '/'.
+        assert_eq!(loadavg_running_jobs(b"0.00 0.01 0.05 1/234 5678"), Some(1));
+        assert_eq!(loadavg_running_jobs(b"0.50 0.40 0.30 12/200 999"), Some(12));
+        assert_eq!(loadavg_running_jobs(b"0.00 0.00 0.00 0/100 1"), Some(0));
+    }
 
-            // With a very high limit, exercise the /proc/loadavg parse path
-            // (which runs make_toui on the running-process field) where it is
-            // available; a huge limit means we never report "load too high".
-            if std::path::Path::new("/proc/loadavg").exists() {
-                max_load_average = 1.0e9;
-                assert_eq!(load_too_high(), 0);
-            }
-            max_load_average = -1.0; // restore the default for any later code
-        }
+    #[test]
+    fn rejects_malformed() {
+        assert_eq!(loadavg_running_jobs(b"too short"), None); // fewer than 4 fields
+        assert_eq!(loadavg_running_jobs(b"0.0 0.0 0.0 x/9 1"), None); // non-numeric
+        assert_eq!(loadavg_running_jobs(b"0.0 0.0 0.0 /9 1"), None); // empty numerator
+        assert_eq!(loadavg_running_jobs(b""), None);
     }
 }
