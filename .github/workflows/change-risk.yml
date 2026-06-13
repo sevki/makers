@@ -101,8 +101,12 @@ jobs:
 
             # Post or update the report comment in this same job. Same-repo PRs
             # carry pull-requests:write, so no companion workflow_run is needed.
+            # Skipped for fork/Dependabot PRs (they get a read-only token, so the
+            # API call would 403); continue-on-error keeps any unexpected failure
+            # from turning a report-comment hiccup into a red CI run.
             - name: Post or update PR comment
-              if: github.event_name == 'pull_request'
+              if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+              continue-on-error: true
               uses: actions/github-script@v7
               with:
                   script: |
