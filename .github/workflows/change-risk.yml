@@ -63,6 +63,33 @@ jobs:
             # integration test fails, so the CRAP gate scores real data.
             - run: cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info
 
+            # Render the PR-comment report (deltas vs baseline). Generated
+            # before the gate so a regression failure still publishes the
+            # comment. The pr-comment format emits its own
+            # `<!-- cargo-crap-report -->` marker, which the companion workflow
+            # uses to find and update an existing comment instead of stacking
+            # new ones. Function and Location cells auto-link to source via
+            # GITHUB_SERVER_URL / GITHUB_REPOSITORY / GITHUB_SHA, set by Actions.
+            - name: Render PR comment
+              if: github.event_name == 'pull_request'
+              run: |
+                  cargo crap --lcov lcov.info \
+                    --baseline .cargo-crap-baseline.json \
+                    --format pr-comment --output crap-comment.md
+                  echo "${{ github.event.pull_request.number }}" > pr-number.txt
+
+            # Uploaded for the privileged workflow_run job to post. The CI run
+            # itself only has read access on fork PRs, so commenting is deferred.
+            - name: Upload PR comment artifact
+              if: github.event_name == 'pull_request'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: crap-pr-comment
+                  path: |
+                      crap-comment.md
+                      pr-number.txt
+                  if-no-files-found: error
+
             # Gate on regressions, not absolute score: the codebase already
             # carries debt above threshold 30, so blocking on --fail-above
             # would be red on every PR. .cargo-crap-baseline.json captures the
