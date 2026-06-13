@@ -442,13 +442,21 @@ pub unsafe fn vpath_search(
     path_index: *mut c_uint,
 ) -> *const c_char {
     // Absolute names need no vpath search.
-    if *file == '/' as c_char || (vpaths.is_null() && general_vpath.is_null()) {
+    let file_ref = file
+        .as_ref()
+        .expect("vpath_search requires a non-null file");
+    if *file_ref == '/' as c_char || (vpaths.is_null() && general_vpath.is_null()) {
         return null();
     }
 
     if !vpath_index.is_null() {
         *vpath_index = 0;
-        *path_index = 0;
+        // The contract pairs a non-null `vpath_index` with a non-null
+        // `path_index`; write through a checked reference so the deref is
+        // validated rather than assumed.
+        if let Some(slot) = path_index.as_mut() {
+            *slot = 0;
+        }
     }
 
     let mut v = vpaths;

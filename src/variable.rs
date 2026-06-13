@@ -2275,9 +2275,10 @@ pub unsafe fn print_variable_data_base() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_file_variables(file: *const file) {
-    if !(*file).variables.is_null() {
+    let file = file.as_ref().expect("print_file_variables requires a file");
+    if let Some(file_vars) = file.variables.as_ref() {
         print_variable_set(
-            (*(*file).variables).set,
+            file_vars.set,
             b"# \0" as *const u8 as *const ::core::ffi::c_char,
             1,
         );
@@ -2288,24 +2289,23 @@ pub unsafe fn print_file_variables(file: *const file) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_target_variables(file: *const file) {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    if !(*file).variables.is_null() {
-        let l: size_t = strlen((*file).name) as size_t;
-        alloca_allocations.push(::std::vec::from_elem(0, l.wrapping_add(3) as usize));
-        let t: *mut ::core::ffi::c_char =
-            alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-        memcpy(
-            t as *mut ::core::ffi::c_void,
-            (*file).name as *const ::core::ffi::c_void,
-            l as size_t,
-        );
-        *t.offset(l as isize) = ':' as i32 as ::core::ffi::c_char;
-        *t.offset(l.wrapping_add(1) as isize) = ' ' as i32 as ::core::ffi::c_char;
-        *t.offset(l.wrapping_add(2) as isize) = 0;
+    let file = file
+        .as_ref()
+        .expect("print_target_variables requires a file");
+    if let Some(file_vars) = file.variables.as_ref() {
+        // Prefix each variable line with "<target>: ".
+        let name = ::core::slice::from_raw_parts(file.name.cast::<u8>(), strlen(file.name));
+        let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 3);
+        prefix.extend_from_slice(name);
+        prefix.extend_from_slice(b": \0");
+        let set = file_vars
+            .set
+            .as_mut()
+            .expect("a variable set list always has a set");
         hash_map_arg(
-            &raw mut (*(*(*file).variables).set).table,
+            &raw mut set.table,
             Some(print_noauto_variable),
-            t as *mut ::core::ffi::c_void,
+            prefix.as_mut_ptr() as *mut ::core::ffi::c_void,
         );
     }
 }
