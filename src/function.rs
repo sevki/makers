@@ -11,7 +11,7 @@ use crate::strcache::strcache_add;
 use c2rust_bitfields;
 use libc::{
     __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strchr, strcmp,
-    strcpy, strerror, strstr, strtoll,
+    strcpy, strerror, strstr,
 };
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -1041,64 +1041,116 @@ pub unsafe fn strip_whitespace(
     }
     *begpp as *mut ::core::ffi::c_char
 }
-unsafe fn parse_numeric(s: *const ::core::ffi::c_char, msg: *const ::core::ffi::c_char) -> i64 {
-    let mut beg: *const ::core::ffi::c_char = s;
-    let mut end: *const ::core::ffi::c_char = s
-        .offset(strlen(s) as isize)
-        .offset(-(1 as ::core::ffi::c_int as isize));
-    let mut endp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let num: i64;
-    strip_whitespace(&raw mut beg, &raw mut end);
-    if beg > end {
-        fatal(
-            *expanding_var,
-            strlen(msg) as size_t,
-            b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
-        );
+/// Outcome of classifying a make integer argument; see [`classify_numeric`].
+#[derive(Debug, PartialEq, Eq)]
+enum NumParse {
+    Ok(i64),
+    Empty,
+    OutOfRange,
+    Invalid,
+}
+
+/// Pure, allocation-free port of the parsing half of make's `parse_numeric`.
+///
+/// Mirrors `strtoll(.., 10)` over the make-whitespace-trimmed token: an optional
+/// `+`/`-` sign followed by decimal digits, with the digit run required to span
+/// the entire trimmed token. Precedence matches the C code, where the `strtoll`
+/// range check happens before the "trailing garbage" check — so an overflowing
+/// value reports [`NumParse::OutOfRange`] even when it is also followed by junk.
+fn classify_numeric(s: &[u8]) -> NumParse {
+    // make's ISSPACE is C `isspace` in the C locale: space, \t, \n, \v, \f, \r.
+    const WS: &[u8] = b" \t\n\x0b\x0c\r";
+    let mut token = s;
+    while let [first, rest @ ..] = token {
+        if WS.contains(first) {
+            token = rest;
+        } else {
+            break;
+        }
     }
-    *__errno_location() = 0;
-    num = strtoll(beg, &raw mut endp, 10);
-    if *__errno_location() == ERANGE {
-        fatal(
-            *expanding_var,
-            (strlen(msg) as size_t).wrapping_add(strlen(s) as size_t),
-            b"%s: '%s' out of range\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
-            s,
-        );
-    } else if endp == beg as *mut ::core::ffi::c_char || endp <= end as *mut ::core::ffi::c_char {
-        fatal(
-            *expanding_var,
-            (strlen(msg) as size_t).wrapping_add(strlen(s) as size_t),
-            b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
-            s,
-        );
+    while let [rest @ .., last] = token {
+        if WS.contains(last) {
+            token = rest;
+        } else {
+            break;
+        }
     }
-    num
+    if token.is_empty() {
+        return NumParse::Empty;
+    }
+    let sign_len = usize::from(matches!(token.first(), Some(b'+' | b'-')));
+    let ndigits = token[sign_len..]
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    if ndigits == 0 {
+        return NumParse::Invalid; // strtoll consumed nothing (endp == beg)
+    }
+    let prefix = &token[..sign_len + ndigits];
+    // `prefix` is a sign plus ASCII digits, so it is always valid UTF-8.
+    match std::str::from_utf8(prefix).unwrap_or("").parse::<i64>() {
+        Err(e)
+            if matches!(
+                e.kind(),
+                ::core::num::IntErrorKind::PosOverflow | ::core::num::IntErrorKind::NegOverflow
+            ) =>
+        {
+            NumParse::OutOfRange
+        }
+        _ if sign_len + ndigits != token.len() => NumParse::Invalid, // trailing junk (endp <= end)
+        Ok(n) => NumParse::Ok(n),
+        Err(_) => NumParse::Invalid,
+    }
+}
+
+/// Validate the single base-10 integer in `s`, aborting via `fatal` (with the
+/// `msg` context) on empty / out-of-range / otherwise-invalid input. The parsing
+/// is done in safe Rust by [`classify_numeric`]; the only `unsafe` here is the
+/// variadic `fatal` reporting, which still needs the C string pointers.
+unsafe fn parse_numeric(s: &::core::ffi::CStr, msg: &::core::ffi::CStr) -> i64 {
+    match classify_numeric(s.to_bytes()) {
+        NumParse::Ok(n) => n,
+        // `fatal` diverges (`-> !`), so these arms never produce an `i64`.
+        NumParse::Empty => fatal(
+            *expanding_var,
+            msg.to_bytes().len() as size_t,
+            c"%s: empty value".as_ptr(),
+            msg.as_ptr(),
+        ),
+        other => {
+            let fmt = if other == NumParse::OutOfRange {
+                c"%s: '%s' out of range"
+            } else {
+                c"%s: '%s'"
+            };
+            fatal(
+                *expanding_var,
+                (msg.to_bytes().len() + s.to_bytes().len()) as size_t,
+                fmt.as_ptr(),
+                msg.as_ptr(),
+                s.as_ptr(),
+            )
+        }
+    }
 }
 unsafe fn func_word(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut end_p: *const ::core::ffi::c_char;
     let mut p: *const ::core::ffi::c_char;
-    let mut i: i64;
-    i = parse_numeric(
-        *argv.offset(0 as ::core::ffi::c_int as isize),
-        b"invalid first argument to 'word' function\0" as *const u8 as *const ::core::ffi::c_char,
+    let mut i = parse_numeric(
+        ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
+        c"invalid first argument to 'word' function",
     );
     if i < 1 {
         fatal(
             *expanding_var,
             0,
-            b"first argument to 'word' function must be greater than 0\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"first argument to 'word' function must be greater than 0".as_ptr(),
         );
     }
-    end_p = *argv.offset(1 as ::core::ffi::c_int as isize);
+    let mut end_p: *const ::core::ffi::c_char = *argv.offset(1 as ::core::ffi::c_int as isize);
     loop {
         p = find_next_token(&raw mut end_p, ::core::ptr::null_mut::<size_t>());
         if p.is_null() {
@@ -1120,40 +1172,41 @@ unsafe fn func_wordlist(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut buf: [::core::ffi::c_char; 23] = [0; 23];
-    let mut start: i64;
-    let stop: i64;
-    let mut count: i64;
-    let badfirst: *const ::core::ffi::c_char = b"invalid first argument to 'wordlist' function\0"
-        as *const u8 as *const ::core::ffi::c_char;
-    let badsecond: *const ::core::ffi::c_char = b"invalid second argument to 'wordlist' function\0"
-        as *const u8 as *const ::core::ffi::c_char;
-    start = parse_numeric(*argv.offset(0 as ::core::ffi::c_int as isize), badfirst);
+    let badfirst = c"invalid first argument to 'wordlist' function";
+    let badsecond = c"invalid second argument to 'wordlist' function";
+    let mut start = parse_numeric(
+        ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
+        badfirst,
+    );
     if start < 1 {
         fatal(
             *expanding_var,
-            (strlen(badfirst) as size_t)
+            (badfirst.to_bytes().len() as size_t)
                 .wrapping_add(
                     strlen(make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
-            b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            badfirst,
+            c"%s: '%s'".as_ptr(),
+            badfirst.as_ptr(),
             make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char),
         );
     }
-    stop = parse_numeric(*argv.offset(1 as ::core::ffi::c_int as isize), badsecond);
+    let stop = parse_numeric(
+        ::core::ffi::CStr::from_ptr(*argv.offset(1 as ::core::ffi::c_int as isize)),
+        badsecond,
+    );
     if stop < 0 {
         fatal(
             *expanding_var,
-            (strlen(badsecond) as size_t)
+            (badsecond.to_bytes().len() as size_t)
                 .wrapping_add(
                     strlen(make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
-            b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            badsecond,
+            c"%s: '%s'".as_ptr(),
+            badsecond.as_ptr(),
             make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char),
         );
     }
-    count = stop - start + 1;
+    let mut count = stop - start + 1;
     if count > 0 {
         let mut p: *const ::core::ffi::c_char;
         let mut end_p: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
@@ -3054,5 +3107,67 @@ mod ft_init_tests {
                 "idx {i}: alloc/adds expected zero in static table"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod parse_numeric_tests {
+    use super::{classify_numeric, NumParse};
+
+    #[test]
+    fn classifies_valid_integers() {
+        assert_eq!(classify_numeric(b"0"), NumParse::Ok(0));
+        assert_eq!(classify_numeric(b"42"), NumParse::Ok(42));
+        assert_eq!(classify_numeric(b"007"), NumParse::Ok(7));
+        assert_eq!(classify_numeric(b"+5"), NumParse::Ok(5));
+        assert_eq!(classify_numeric(b"-5"), NumParse::Ok(-5));
+        // Leading/trailing make-whitespace (incl. \v and \f) is stripped.
+        assert_eq!(classify_numeric(b"  12\t\n"), NumParse::Ok(12));
+        assert_eq!(classify_numeric(b"\x0b\x0c9\x0c"), NumParse::Ok(9));
+        assert_eq!(
+            classify_numeric(&i64::MAX.to_string().into_bytes()),
+            NumParse::Ok(i64::MAX)
+        );
+        assert_eq!(
+            classify_numeric(&i64::MIN.to_string().into_bytes()),
+            NumParse::Ok(i64::MIN)
+        );
+    }
+
+    #[test]
+    fn classifies_empty_as_empty() {
+        assert_eq!(classify_numeric(b""), NumParse::Empty);
+        assert_eq!(classify_numeric(b"   \t \n"), NumParse::Empty);
+    }
+
+    #[test]
+    fn classifies_overflow_as_out_of_range() {
+        assert_eq!(
+            classify_numeric(b"9223372036854775808"),
+            NumParse::OutOfRange
+        ); // MAX+1
+        assert_eq!(
+            classify_numeric(b"-9223372036854775809"),
+            NumParse::OutOfRange
+        ); // MIN-1
+        assert_eq!(
+            classify_numeric(b"99999999999999999999999"),
+            NumParse::OutOfRange
+        );
+        // Range check precedes the trailing-garbage check, mirroring strtoll+errno.
+        assert_eq!(
+            classify_numeric(b"99999999999999999999abc"),
+            NumParse::OutOfRange
+        );
+    }
+
+    #[test]
+    fn classifies_malformed_as_invalid() {
+        assert_eq!(classify_numeric(b"x"), NumParse::Invalid);
+        assert_eq!(classify_numeric(b"+"), NumParse::Invalid);
+        assert_eq!(classify_numeric(b"-"), NumParse::Invalid);
+        assert_eq!(classify_numeric(b"12abc"), NumParse::Invalid); // trailing junk
+        assert_eq!(classify_numeric(b"0x10"), NumParse::Invalid); // base 10 only
+        assert_eq!(classify_numeric(b"1 2"), NumParse::Invalid); // internal whitespace
     }
 }
