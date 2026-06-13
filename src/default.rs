@@ -278,7 +278,10 @@ pub unsafe fn set_default_suffixes() {
 
         let mut d = (*suffix_file).deps;
         while !d.is_null() {
-            (*(*d).file).set_builtin(1);
+            (*d).file
+                .as_mut()
+                .expect("a .SUFFIXES dep always has a file")
+                .set_builtin(1);
             d = (*d).next;
         }
 

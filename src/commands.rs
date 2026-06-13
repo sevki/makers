@@ -71,7 +71,7 @@ unsafe fn dep_name(d: *const Dep) -> *const c_char {
     if !(*d).name.is_null() {
         (*d).name
     } else {
-        (*(*d).file).name
+        (*d).file.as_ref().expect("a nameless dep has a file").name
     }
 }
 
@@ -499,7 +499,11 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
 pub unsafe fn execute_file_commands(file: *mut file) {
     // A recipe of nothing but whitespace and `-`/`@`/`+` prefixes means
     // there is nothing to execute.
-    let mut p: *const c_char = (*(*file).cmds).commands;
+    let mut p: *const c_char = (*file)
+        .cmds
+        .as_ref()
+        .expect("execute_file_commands requires non-null cmds")
+        .commands;
     while *p != 0 {
         if !stop_set(*p, MAP_BLANK | MAP_NEWLINE)
             && *p != b'-' as c_char
@@ -679,9 +683,10 @@ pub unsafe fn delete_child_targets(child: *mut child) {
         return;
     }
     delete_target((*child).file, null());
-    let mut d = (*(*child).file).also_make;
+    let cf = (*child).file.as_ref().expect("a started child has a file");
+    let mut d = cf.also_make;
     while !d.is_null() {
-        delete_target((*d).file, (*(*child).file).name);
+        delete_target((*d).file, cf.name);
         d = (*d).next;
     }
     (*child).set_deleted(1);

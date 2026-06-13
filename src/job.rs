@@ -412,7 +412,13 @@ unsafe extern "C" fn child_error(
     let mut post: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let f: *const file = (*child).file;
-    let flocp: *const Floc = &raw mut (*(*f).cmds).fileinfo;
+    let flocp: *const Floc = &raw const f
+        .as_ref()
+        .expect("a child always has a file")
+        .cmds
+        .as_ref()
+        .expect("a child being reported has a recipe")
+        .fileinfo;
     let nm: *const ::core::ffi::c_char;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut l: size_t;
@@ -571,7 +577,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                         b"Live child %p (%s) PID %s %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,
                         c,
-                        (*(*c).file).name,
+                        (*c).file.as_ref().expect("a child always has a file").name,
                         pid2str((*c).pid),
                         if (*c).remote() as ::core::ffi::c_int != 0 {
                             b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
@@ -792,13 +798,16 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(c, exit_code, exit_sig, coredump, 0);
             }
-            (*(*c).file).set_update_status(
-                (if child_failed == MAKE_FAILURE {
-                    us_failed as ::core::ffi::c_int
-                } else {
-                    us_question as ::core::ffi::c_int
-                }) as update_status as update_status,
-            );
+            (*c).file
+                .as_mut()
+                .expect("a child always has a file")
+                .set_update_status(
+                    (if child_failed == MAKE_FAILURE {
+                        us_failed as ::core::ffi::c_int
+                    } else {
+                        us_question as ::core::ffi::c_int
+                    }) as update_status as update_status,
+                );
             if delete_on_error == -(1 as ::core::ffi::c_int) {
                 let f: *mut file =
                     lookup_file(b".DELETE_ON_ERROR\0" as *const u8 as *const ::core::ffi::c_char);
@@ -815,7 +824,10 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             }
             if job_next_command(c) != 0 {
                 if handling_fatal_signal != 0 {
-                    (*(*c).file).set_update_status(us_failed as update_status);
+                    (*c).file
+                        .as_mut()
+                        .expect("a child always has a file")
+                        .set_update_status(us_failed as update_status);
                 } else {
                     if output_sync == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(&raw mut (*c).output);
@@ -826,19 +838,30 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                     );
                     start_job_command(c);
                     unblock_sigs();
-                    if (*(*c).file).command_state() as ::core::ffi::c_int
+                    if (*c)
+                        .file
+                        .as_ref()
+                        .expect("a child always has a file")
+                        .command_state() as ::core::ffi::c_int
                         == cs_running as ::core::ffi::c_int
                     {
                         continue;
                     }
                 }
-                if (*(*c).file).update_status() as ::core::ffi::c_int
+                if (*c)
+                    .file
+                    .as_ref()
+                    .expect("a child always has a file")
+                    .update_status() as ::core::ffi::c_int
                     != us_success as ::core::ffi::c_int
                 {
                     delete_child_targets(c);
                 }
             } else {
-                (*(*c).file).set_update_status(us_success as update_status);
+                (*c).file
+                    .as_mut()
+                    .expect("a child always has a file")
+                    .set_update_status(us_success as update_status);
             }
         }
         crate::output::output_dump(&raw mut (*c).output);
@@ -906,11 +929,21 @@ pub unsafe fn free_child(child: *mut child) {
     if jobserver_tokens == 0 {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
-            INTSTR_LENGTH.wrapping_add(strlen((*(*child).file).name) as size_t),
+            INTSTR_LENGTH.wrapping_add(strlen(
+                (*child)
+                    .file
+                    .as_ref()
+                    .expect("a child always has a file")
+                    .name,
+            ) as size_t),
             b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
                 as *const ::core::ffi::c_char,
             child,
-            (*(*child).file).name,
+            (*child)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .name,
         );
     }
     if jobserver_enabled() != 0 && jobserver_tokens > 1 {
@@ -919,7 +952,11 @@ pub unsafe fn free_child(child: *mut child) {
             printf(
                 b"Released token for child %p (%s).\n\0" as *const u8 as *const ::core::ffi::c_char,
                 child,
-                (*(*child).file).name,
+                (*child)
+                    .file
+                    .as_ref()
+                    .expect("a child always has a file")
+                    .name,
             );
             fflush(stdout);
         }
@@ -931,7 +968,16 @@ pub unsafe fn free_child(child: *mut child) {
     if !(*child).command_lines.is_null() {
         let mut i: ::core::ffi::c_uint;
         i = 0;
-        while i < (*(*(*child).file).cmds).ncommand_lines as ::core::ffi::c_uint {
+        while i
+            < (*child)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .cmds
+                .as_ref()
+                .expect("a child being run has a recipe")
+                .ncommand_lines as ::core::ffi::c_uint
+        {
             free(*(*child).command_lines.offset(i as isize) as *mut ::core::ffi::c_void);
             i = i.wrapping_add(1);
         }
@@ -949,8 +995,18 @@ pub unsafe fn start_job_command(child: *mut child) {
     let mut p: *mut ::core::ffi::c_char;
     let mut argv: *mut *mut ::core::ffi::c_char;
     if !(*child).command_ptr.is_null() {
-        flags = (*(*child).file).command_flags
-            | *(*(*(*child).file).cmds)
+        flags = (*child)
+            .file
+            .as_ref()
+            .expect("a child always has a file")
+            .command_flags
+            | *(*child)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .cmds
+                .as_ref()
+                .expect("a child being run has a recipe")
                 .lines_flags
                 .offset((*child).command_line.wrapping_sub(1) as isize)
                 as ::core::ffi::c_int;
@@ -978,12 +1034,25 @@ pub unsafe fn start_job_command(child: *mut child) {
         (*child).set_recursive(
             (flags & 1 != 0) as ::core::ffi::c_int as ::core::ffi::c_uint as ::core::ffi::c_uint,
         );
-        let fresh10 = &mut (*(*(*(*child).file).cmds)
+        let fresh10 = &mut (*(*child)
+            .file
+            .as_ref()
+            .expect("a child always has a file")
+            .cmds
+            .as_ref()
+            .expect("a child being run has a recipe")
             .lines_flags
             .offset((*child).command_line.wrapping_sub(1) as isize));
         *fresh10 =
             (*fresh10 as ::core::ffi::c_int | flags & COMMANDS_RECURSE) as ::core::ffi::c_uchar;
-        let prefix: ::core::ffi::c_char = (*(*(*child).file).cmds).recipe_prefix;
+        let prefix: ::core::ffi::c_char = (*child)
+            .file
+            .as_ref()
+            .expect("a child always has a file")
+            .cmds
+            .as_ref()
+            .expect("a child being run has a recipe")
+            .recipe_prefix;
         let mut p1: *mut ::core::ffi::c_char;
         let mut p2: *mut ::core::ffi::c_char;
         p2 = p;
@@ -1006,11 +1075,21 @@ pub unsafe fn start_job_command(child: *mut child) {
             p,
             &raw mut end,
             (*child).file,
-            *(*(*(*child).file).cmds)
+            *(*child)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .cmds
+                .as_ref()
+                .expect("a child being run has a recipe")
                 .lines_flags
                 .offset((*child).command_line.wrapping_sub(1) as isize)
                 as ::core::ffi::c_int
-                | (*(*child).file).command_flags,
+                | (*child)
+                    .file
+                    .as_ref()
+                    .expect("a child always has a file")
+                    .command_flags,
             &raw mut (*child).sh_batch_file,
         );
         if end.is_null() {
@@ -1027,7 +1106,11 @@ pub unsafe fn start_job_command(child: *mut child) {
                 free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
             }
-            (*(*child).file).set_update_status(us_question as update_status);
+            (*child)
+                .file
+                .as_mut()
+                .expect("a child always has a file")
+                .set_update_status(us_question as update_status);
             notice_finished_file((*child).file);
             return;
         }
@@ -1122,7 +1205,14 @@ pub unsafe fn start_job_command(child: *mut child) {
                 if (*child).environment.is_null() {
                     (*child).environment = target_environment(
                         (*child).file,
-                        (*(*(*child).file).cmds).any_recurse() as ::core::ffi::c_int,
+                        (*child)
+                            .file
+                            .as_ref()
+                            .expect("a child always has a file")
+                            .cmds
+                            .as_ref()
+                            .expect("a child being run has a recipe")
+                            .any_recurse() as ::core::ffi::c_int,
                     );
                 }
                 // Run the job locally unless it is successfully handed off to a
@@ -1184,7 +1274,11 @@ pub unsafe fn start_job_command(child: *mut child) {
         start_job_command(child);
     } else {
         set_command_state((*child).file, cs_running);
-        (*(*child).file).set_update_status(us_success as update_status);
+        (*child)
+            .file
+            .as_mut()
+            .expect("a child always has a file")
+            .set_update_status(us_success as update_status);
         notice_finished_file((*child).file);
     }
     output_context = ::core::ptr::null_mut::<output>();
@@ -1217,7 +1311,7 @@ pub unsafe fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
                         b"Putting child %p (%s) PID %s%s on the chain.\n\0" as *const u8
                             as *const ::core::ffi::c_char,
                         c,
-                        (*(*c).file).name,
+                        (*c).file.as_ref().expect("a child always has a file").name,
                         pid2str((*c).pid),
                         if (*c).remote() as ::core::ffi::c_int != 0 {
                             b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
@@ -1449,7 +1543,7 @@ pub unsafe fn new_job(file: *mut file) {
                     b"Obtained token for child %p (%s).\n\0" as *const u8
                         as *const ::core::ffi::c_char,
                     c,
-                    (*(*c).file).name,
+                    (*c).file.as_ref().expect("a child always has a file").name,
                 );
                 fflush(stdout);
             }
@@ -1483,31 +1577,58 @@ pub unsafe fn new_job(file: *mut file) {
             );
             nm = n;
         }
-        if (*(*c).file).also_make.is_null() {
-            tp = (*(*c).file).name;
+        if (*c)
+            .file
+            .as_ref()
+            .expect("a child always has a file")
+            .also_make
+            .is_null()
+        {
+            tp = (*c).file.as_ref().expect("a child always has a file").name;
         } else {
             let mut dp: *const dep;
             let mut cp: *mut ::core::ffi::c_char;
-            let mut len: size_t = strlen((*(*c).file).name) as size_t;
-            dp = (*(*c).file).also_make;
+            let mut len: size_t =
+                strlen((*c).file.as_ref().expect("a child always has a file").name) as size_t;
+            dp = (*c)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .also_make;
             while !dp.is_null() {
-                len = len.wrapping_add(strlen((*(*dp).file).name).wrapping_add(4) as size_t);
+                len = len.wrapping_add(
+                    strlen((*dp).file.as_ref().expect("a dep always has a file").name)
+                        .wrapping_add(4) as size_t,
+                );
                 dp = (*dp).next;
             }
             nmbuf_buf = Vec::with_capacity(len.wrapping_add(1) as usize);
             let nmbuf = nmbuf_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
             tp = nmbuf;
-            cp = stpcpy(nmbuf, (*(*c).file).name);
-            dp = (*(*c).file).also_make;
+            cp = stpcpy(
+                nmbuf,
+                (*c).file.as_ref().expect("a child always has a file").name,
+            );
+            dp = (*c)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .also_make;
             while !dp.is_null() {
                 cp = stpcpy(
                     stpcpy(cp, b"', '\0" as *const u8 as *const ::core::ffi::c_char),
-                    (*(*dp).file).name,
+                    (*dp).file.as_ref().expect("a dep always has a file").name,
                 );
                 dp = (*dp).next;
             }
         }
-        if (*(*c).file).phony() != 0 {
+        if (*c)
+            .file
+            .as_ref()
+            .expect("a child always has a file")
+            .phony()
+            != 0
+        {
             message(
                 0,
                 (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
@@ -1516,7 +1637,13 @@ pub unsafe fn new_job(file: *mut file) {
                 nm,
                 tp,
             );
-        } else if (*(*c).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
+        } else if (*c)
+            .file
+            .as_ref()
+            .expect("a child always has a file")
+            .last_mtime
+            == NONEXISTENT_MTIME as uintmax_t
+        {
             message(
                 0,
                 (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
@@ -1547,11 +1674,19 @@ pub unsafe fn new_job(file: *mut file) {
             } else {
                 let mut len_0: size_t = 0;
                 let mut d: *mut dep;
-                d = (*(*c).file).deps;
+                d = (*c).file.as_ref().expect("a child always has a file").deps;
                 while !d.is_null() {
-                    if (*(*d).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
-                        len_0 =
-                            len_0.wrapping_add(strlen((*(*d).file).name).wrapping_add(1) as size_t);
+                    if (*d)
+                        .file
+                        .as_ref()
+                        .expect("a dep always has a file")
+                        .last_mtime
+                        == NONEXISTENT_MTIME as uintmax_t
+                    {
+                        len_0 = len_0.wrapping_add(
+                            strlen((*d).file.as_ref().expect("a dep always has a file").name)
+                                .wrapping_add(1) as size_t,
+                        );
                     }
                     d = (*d).next;
                 }
@@ -1569,15 +1704,24 @@ pub unsafe fn new_job(file: *mut file) {
                     newer = alloca_allocations.last_mut().unwrap().as_mut_ptr()
                         as *mut ::core::ffi::c_char;
                     let mut cp_0: *mut ::core::ffi::c_char = newer;
-                    d = (*(*c).file).deps;
+                    d = (*c).file.as_ref().expect("a child always has a file").deps;
                     while !d.is_null() {
-                        if (*(*d).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
+                        if (*d)
+                            .file
+                            .as_ref()
+                            .expect("a dep always has a file")
+                            .last_mtime
+                            == NONEXISTENT_MTIME as uintmax_t
+                        {
                             if cp_0 > newer {
                                 let fresh8 = cp_0;
                                 cp_0 = cp_0.offset(1 as ::core::ffi::c_int as isize);
                                 *fresh8 = ' ' as i32 as ::core::ffi::c_char;
                             }
-                            cp_0 = stpcpy(cp_0, (*(*d).file).name);
+                            cp_0 = stpcpy(
+                                cp_0,
+                                (*d).file.as_ref().expect("a dep always has a file").name,
+                            );
                         }
                         d = (*d).next;
                     }
@@ -1611,9 +1755,26 @@ pub unsafe fn new_job(file: *mut file) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn job_next_command(child: *mut child) -> ::core::ffi::c_int {
     while (*child).command_ptr.is_null() || *(*child).command_ptr as ::core::ffi::c_int == 0 {
-        if (*child).command_line == (*(*(*child).file).cmds).ncommand_lines as ::core::ffi::c_uint {
+        if (*child).command_line
+            == (*child)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .cmds
+                .as_ref()
+                .expect("a child being run has a recipe")
+                .ncommand_lines as ::core::ffi::c_uint
+        {
             (*child).command_ptr = ::core::ptr::null_mut::<::core::ffi::c_char>();
-            (*(*(*child).file).cmds).fileinfo.offset = 0;
+            (*child)
+                .file
+                .as_ref()
+                .expect("a child always has a file")
+                .cmds
+                .as_mut()
+                .expect("a child being run has a recipe")
+                .fileinfo
+                .offset = 0;
             return 0;
         } else {
             let fresh15 = (*child).command_line;
@@ -1621,8 +1782,15 @@ pub unsafe fn job_next_command(child: *mut child) -> ::core::ffi::c_int {
             (*child).command_ptr = *(*child).command_lines.offset(fresh15 as isize);
         }
     }
-    (*(*(*child).file).cmds).fileinfo.offset =
-        (*child).command_line.wrapping_sub(1) as ::core::ffi::c_ulong;
+    (*child)
+        .file
+        .as_ref()
+        .expect("a child always has a file")
+        .cmds
+        .as_mut()
+        .expect("a child being run has a recipe")
+        .fileinfo
+        .offset = (*child).command_line.wrapping_sub(1) as ::core::ffi::c_ulong;
     1
 }
 pub const LOAD_WEIGHT_A: ::core::ffi::c_double = 0.25f64;
