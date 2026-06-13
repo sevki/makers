@@ -1210,55 +1210,34 @@ pub unsafe fn decode_debug_flags() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+/// Map an `--output-sync` argument value to its `OUTPUT_SYNC_*` mode, or
+/// `None` if it names no known mode.
+fn classify_output_sync(value: &[u8]) -> Option<::core::ffi::c_int> {
+    match value {
+        b"none" => Some(OUTPUT_SYNC_NONE),
+        b"line" => Some(OUTPUT_SYNC_LINE),
+        b"target" => Some(OUTPUT_SYNC_TARGET),
+        b"recurse" => Some(OUTPUT_SYNC_RECURSE),
+        _ => None,
+    }
+}
+/// # Safety
+///
+/// Reads the global `output_sync_option` / `sync_mutex` C strings; both must be
+/// null or valid NUL-terminated strings, and this must run single-threaded
+/// during option decoding.
 pub unsafe fn decode_output_sync_flags() {
     if !output_sync_option.is_null() {
-        if *output_sync_option as ::core::ffi::c_int
-            == *(b"none\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
-            && (*output_sync_option as ::core::ffi::c_int == 0
-                || strcmp(
-                    output_sync_option.offset(1 as ::core::ffi::c_int as isize),
-                    (b"none\0" as *const u8 as *const ::core::ffi::c_char)
-                        .offset(1 as ::core::ffi::c_int as isize),
-                ) == 0)
-        {
-            output_sync = OUTPUT_SYNC_NONE;
-        } else if *output_sync_option as ::core::ffi::c_int
-            == *(b"line\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
-            && (*output_sync_option as ::core::ffi::c_int == 0
-                || strcmp(
-                    output_sync_option.offset(1 as ::core::ffi::c_int as isize),
-                    (b"line\0" as *const u8 as *const ::core::ffi::c_char)
-                        .offset(1 as ::core::ffi::c_int as isize),
-                ) == 0)
-        {
-            output_sync = OUTPUT_SYNC_LINE;
-        } else if *output_sync_option as ::core::ffi::c_int
-            == *(b"target\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
-            && (*output_sync_option as ::core::ffi::c_int == 0
-                || strcmp(
-                    output_sync_option.offset(1 as ::core::ffi::c_int as isize),
-                    (b"target\0" as *const u8 as *const ::core::ffi::c_char)
-                        .offset(1 as ::core::ffi::c_int as isize),
-                ) == 0)
-        {
-            output_sync = OUTPUT_SYNC_TARGET;
-        } else if *output_sync_option as ::core::ffi::c_int
-            == *(b"recurse\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
-            && (*output_sync_option as ::core::ffi::c_int == 0
-                || strcmp(
-                    output_sync_option.offset(1 as ::core::ffi::c_int as isize),
-                    (b"recurse\0" as *const u8 as *const ::core::ffi::c_char)
-                        .offset(1 as ::core::ffi::c_int as isize),
-                ) == 0)
-        {
-            output_sync = OUTPUT_SYNC_RECURSE;
-        } else {
-            fatal(
-                ::core::ptr::null_mut::<Floc>(),
-                strlen(output_sync_option) as size_t,
-                b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                output_sync_option,
-            );
+        match classify_output_sync(::core::ffi::CStr::from_ptr(output_sync_option).to_bytes()) {
+            Some(mode) => output_sync = mode,
+            None => {
+                fatal(
+                    ::core::ptr::null_mut::<Floc>(),
+                    strlen(output_sync_option) as size_t,
+                    b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                    output_sync_option,
+                );
+            }
         }
     }
     if !sync_mutex.is_null() {
@@ -4832,3 +4811,27 @@ unsafe extern "C" fn run_static_initializers() {
 #[cfg_attr(target_os = "windows", link_section = ".CRT$XIB")]
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
 static INIT_ARRAY: [unsafe extern "C" fn(); 1] = [run_static_initializers];
+
+#[cfg(test)]
+mod output_sync_tests {
+    use super::{
+        classify_output_sync, OUTPUT_SYNC_LINE, OUTPUT_SYNC_NONE, OUTPUT_SYNC_RECURSE,
+        OUTPUT_SYNC_TARGET,
+    };
+
+    #[test]
+    fn known_modes() {
+        assert_eq!(classify_output_sync(b"none"), Some(OUTPUT_SYNC_NONE));
+        assert_eq!(classify_output_sync(b"line"), Some(OUTPUT_SYNC_LINE));
+        assert_eq!(classify_output_sync(b"target"), Some(OUTPUT_SYNC_TARGET));
+        assert_eq!(classify_output_sync(b"recurse"), Some(OUTPUT_SYNC_RECURSE));
+    }
+
+    #[test]
+    fn unknown_modes() {
+        assert_eq!(classify_output_sync(b""), None);
+        assert_eq!(classify_output_sync(b"nonsense"), None);
+        assert_eq!(classify_output_sync(b"NONE"), None); // case-sensitive, like make
+        assert_eq!(classify_output_sync(b"none "), None); // exact match only
+    }
+}
