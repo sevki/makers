@@ -7,7 +7,7 @@
 //! through `#[repr(C)]`.
 
 use ::core::{
-    ffi::{c_char, c_double, c_int, c_uchar, c_uint, c_ulong, c_void},
+    ffi::{c_char, c_double, c_int, c_uint, c_ulong, c_void},
     ptr::null_mut,
 };
 
@@ -586,13 +586,10 @@ fn load_partial_word(bytes: &[u8]) -> c_uint {
     c_uint::from_ne_bytes(word)
 }
 
-/// Hash the NUL-terminated string `k` (lookup3 over words, mixing in the
-/// consumed length at the end).
-///
-/// # Safety
-/// `k` must be a valid NUL-terminated string.
-pub unsafe fn jhash_string(k: *const c_uchar) -> c_uint {
-    let bytes = ::core::ffi::CStr::from_ptr(k as *const c_char).to_bytes();
+/// Hash the byte string `bytes` (lookup3 over words, mixing in the consumed
+/// length at the end). Callers pass the string content without its NUL, e.g.
+/// `CStr::from_ptr(k).to_bytes()`.
+pub fn jhash_string(bytes: &[u8]) -> c_uint {
     let mut chunks = bytes.chunks_exact(UINTSZ);
 
     let mut a = JHASH_INITVAL;
@@ -629,7 +626,7 @@ pub unsafe fn jhash_string(k: *const c_uchar) -> c_uint {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::ffi::CString};
+    use super::*;
 
     #[test]
     fn round_up_2_known_values() {
@@ -793,8 +790,7 @@ mod tests {
             "abcdefghijklm",
             "target%pattern",
         ] {
-            let c_string = CString::new(input).unwrap();
-            let actual = unsafe { jhash_string(c_string.as_ptr() as *const c_uchar) };
+            let actual = jhash_string(input.as_bytes());
             assert_eq!(actual, legacy_jhash_string(input.as_bytes()), "{input:?}");
         }
     }

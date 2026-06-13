@@ -348,9 +348,8 @@ pub static mut snapped_deps: ::core::ffi::c_int = 0;
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
-    let mut _key_: *const ::core::ffi::c_uchar =
-        (*(key as *const file)).hname as *const ::core::ffi::c_uchar;
-    _result_ = _result_.wrapping_add(jhash_string(_key_) as ::core::ffi::c_ulong);
+    let _key_ = ::core::ffi::CStr::from_ptr((*(key as *const file)).hname);
+    _result_ = _result_.wrapping_add(jhash_string(_key_.to_bytes()) as ::core::ffi::c_ulong);
     _result_
 }
 /// # Safety
