@@ -1,97 +1,28 @@
+//! Implicit (pattern) rule search: `pattern_search` walks the pattern-rule
+//! database looking for a rule — or a chain of rules through intermediate
+//! files — that can build a given target.
+//!
+//! Port of `implicit.c`.
+
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{Dep, File};
 use crate::misc::free_ns_chain;
 use crate::misc::{lindex, print_spaces, skip_reference, xcalloc, xmalloc, xrealloc};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use c2rust_bitfields;
-use libc::{free, printf, strchr, strcmp, strcpy};
+use libc::{free, memcpy, memrchr, memset, printf, qsort, strchr, strcmp, strcpy, strlen, strncmp};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn qsort(
-        __base: *mut ::core::ffi::c_void,
-        __nmemb: size_t,
-        __size: size_t,
-        __compar: __compar_fn_t,
-    );
-    fn memcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn memset(
-        __s: *mut ::core::ffi::c_void,
-        __c: ::core::ffi::c_int,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn memrchr(
-        __s: *const ::core::ffi::c_void,
-        __c: ::core::ffi::c_int,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
-pub type __compar_fn_t = Option<
-    unsafe extern "C" fn(
-        *const ::core::ffi::c_void,
-        *const ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int,
->;
 pub type file = File;
-pub type cmd_state = ::core::ffi::c_uint;
-pub const cs_finished: cmd_state = 3;
-pub const cs_running: cmd_state = 2;
-pub const cs_deps_running: cmd_state = 1;
-pub const cs_not_started: cmd_state = 0;
-pub type update_status = ::core::ffi::c_uint;
-pub type update_status_0 = u32;
-pub const us_failed: update_status_0 = 3;
-pub const us_question: update_status_0 = 2;
-pub const us_none: update_status_0 = 1;
-pub const us_success: update_status_0 = 0;
-pub type variable_set_list = VariableSetList;
-pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
-pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
-pub type hash_func_t = crate::hash::hash_func_t;
 pub type dep = Dep;
-pub type commands = Commands;
-use crate::floc::Floc;
-
-pub const o_invalid: variable_origin = 7;
-pub const o_automatic: variable_origin = 6;
-pub const o_override: variable_origin = 5;
-pub const o_command: variable_origin = 4;
-pub const o_env_override: variable_origin = 3;
-pub const o_file: variable_origin = 2;
-pub const o_env: variable_origin = 1;
-pub const o_default: variable_origin = 0;
-pub use crate::variable::variable;
-pub type variable_export = ::core::ffi::c_uint;
-pub const v_ifset: variable_export = 3;
-pub const v_noexport: variable_export = 2;
-pub const v_export: variable_export = 1;
-pub const v_default: variable_export = 0;
-pub type variable_origin = ::core::ffi::c_uint;
-pub type variable_flavor = ::core::ffi::c_uint;
-pub const f_append_value: variable_flavor = 6;
-pub const f_shell: variable_flavor = 5;
-pub const f_append: variable_flavor = 4;
-pub const f_expand: variable_flavor = 3;
-pub const f_recursive: variable_flavor = 2;
-pub const f_simple: variable_flavor = 1;
-pub const f_bogus: variable_flavor = 0;
 use crate::ar::ar_name;
 use crate::commands::set_file_variables;
 use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
@@ -105,10 +36,65 @@ use crate::rule::{
     get_rule_defn, max_pattern_dep_length, max_pattern_deps, max_pattern_targets,
     num_pattern_rules, pattern_rules,
 };
+use crate::variable::o_automatic;
 use crate::variable::{
     define_variable_in_set, free_variable_set, initialize_file_variables, merge_variable_set_lists,
 };
 use crate::vpath::vpath_search;
+
+/// `DB_IMPLICIT`: `-d` implicit-rule tracing enabled in `db_level`.
+const DB_IMPLICIT: ::core::ffi::c_int = 0x8;
+/// Character-class bits in `stopchar_map` (see `makeint.h`).
+const MAP_NUL: ::core::ffi::c_int = 0x0001;
+const MAP_BLANK: ::core::ffi::c_int = 0x0002;
+const MAP_NEWLINE: ::core::ffi::c_int = 0x0004;
+const MAP_PIPE: ::core::ffi::c_int = 0x0100;
+/// `parse_file_seq` flags (see `dep.h`).
+const PARSEFS_ONEWORD: ::core::ffi::c_int = 0x20;
+const PARSEFS_WAIT: ::core::ffi::c_int = 0x40;
+
+/// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
+/// classes selected by `mask`?
+unsafe fn stop_set(c: ::core::ffi::c_char, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map[c as u8 as usize] as ::core::ffi::c_int & mask != 0
+}
+
+/// `DBS (DB_IMPLICIT, ...)` from the C original: print an indented trace
+/// line when implicit-rule debugging is enabled.
+macro_rules! dbs {
+    ($depth:expr, $fmt:expr $(, $arg:expr)* $(,)?) => {
+        if DB_IMPLICIT & db_level != 0 {
+            print_spaces($depth);
+            printf($fmt $(, $arg)*);
+            fflush(stdout);
+        }
+    };
+}
+
+/// The name a dep goes by: its own `name` if set, otherwise its file's name.
+/// Mirrors the C `dep_name` macro.
+unsafe fn dep_name(d: *const dep) -> *const ::core::ffi::c_char {
+    let d = d.as_ref().expect("dep_name requires a non-null dep");
+    if !d.name.is_null() {
+        d.name
+    } else {
+        d.file
+            .as_ref()
+            .expect("dep without a name must have a file")
+            .name
+    }
+}
+
+/// String equality via the C `streq` macro's shape: compare the first bytes,
+/// then fall back to `strcmp` on the remainder.
+unsafe fn streq(a: *const ::core::ffi::c_char, b: *const ::core::ffi::c_char) -> bool {
+    let a0 = *a.as_ref().expect("streq requires non-null strings");
+    let b0 = *b.as_ref().expect("streq requires non-null strings");
+    a0 == b0 && (a0 == 0 || strcmp(a.add(1), b.add(1)) == 0)
+}
+
+/// A prerequisite discovered while trying a pattern rule, together with the
+/// intermediate file that would build it (if any).
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct patdeps {
@@ -127,6 +113,7 @@ pub struct patdeps {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 7],
 }
+/// A candidate pattern rule recorded during the first matching pass.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct tryrule {
@@ -136,220 +123,202 @@ pub struct tryrule {
     pub order: ::core::ffi::c_uint,
     pub checked_lastslash: ::core::ffi::c_char,
 }
-pub const PATH_MAX: ::core::ffi::c_int = 4096 as ::core::ffi::c_int;
+pub const PATH_MAX: ::core::ffi::c_int = 4096;
 pub const GET_PATH_MAX: ::core::ffi::c_int = PATH_MAX;
-pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// Must run single-threaded; returns a zeroed malloc'd dep owned by the
+/// caller.
 pub unsafe fn alloc_dep() -> *mut dep {
     xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
 }
 #[inline]
-unsafe extern "C" fn free_dep_chain(d: *mut dep) {
+unsafe fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
-/// # Safety
+/// Search the implicit-rule database for a rule that can build `file`,
+/// retrying as an archive-member reference when the plain search fails.
+/// Returns 1 when a rule was found and applied to `file`.
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// # Safety
+/// `file` must point to a valid file entry; the rule database and all linked
+/// structures must be valid; must run single-threaded.
 pub unsafe fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> ::core::ffi::c_int {
-    if 0x8 as ::core::ffi::c_int & db_level != 0 {
-        print_spaces(depth);
-        printf(
-            b"Looking for an implicit rule for '%s'.\n\0" as *const u8
-                as *const ::core::ffi::c_char,
-            (*file).name,
-        );
-        fflush(stdout);
-    }
+    dbs!(
+        depth,
+        c"Looking for an implicit rule for '%s'.\n".as_ptr(),
+        (*file).name
+    );
     if pattern_search(file, 0, depth, 0, 0) != 0 {
         return 1;
     }
     if ar_name((*file).name) != 0 {
-        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-            print_spaces(depth);
-            printf(
-                b"Looking for archive-member implicit rule for '%s'.\n\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                (*file).name,
-            );
-            fflush(stdout);
-        }
+        dbs!(
+            depth,
+            c"Looking for archive-member implicit rule for '%s'.\n".as_ptr(),
+            (*file).name
+        );
         if pattern_search(file, 1, depth, 0, 0) != 0 {
             return 1;
         }
-        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-            print_spaces(depth);
-            printf(
-                b"No archive-member implicit rule found for '%s'.\n\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                (*file).name,
-            );
-            fflush(stdout);
-        }
+        dbs!(
+            depth,
+            c"No archive-member implicit rule found for '%s'.\n".as_ptr(),
+            (*file).name
+        );
     }
     0
 }
-unsafe extern "C" fn get_next_word(
+/// Scan past leading blanks to the next word of `buffer`, stopping at an
+/// unquoted blank, `|`, or NUL (skipping over `$(...)` references). Returns
+/// the word's start (storing its length through `length`), or null at EOL.
+unsafe fn get_next_word(
     buffer: *const ::core::ffi::c_char,
     length: *mut size_t,
 ) -> *const ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = buffer;
-    let beg: *const ::core::ffi::c_char;
-    let mut c: ::core::ffi::c_char;
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-        .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0
-    {
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+    while stop_set(*p, MAP_BLANK | MAP_NEWLINE) {
+        p = p.add(1);
     }
-    beg = p;
-    let fresh9 = p;
-    p = p.offset(1 as ::core::ffi::c_int as isize);
-    c = *fresh9;
-    if c as ::core::ffi::c_int == 0 {
-        return ::core::ptr::null::<::core::ffi::c_char>();
+    let beg: *const ::core::ffi::c_char = p;
+    let mut c: ::core::ffi::c_char = *p;
+    p = p.add(1);
+    if c == 0 {
+        return ::core::ptr::null();
     }
     loop {
-        match c as ::core::ffi::c_int {
-            0 | 32 | 9 => {
-                // back up over the terminating whitespace/EOL
-                p = p.offset(-(1 as ::core::ffi::c_int) as isize);
+        match c as u8 {
+            0 | b' ' | b'\t' => {
+                // Back up over the terminating whitespace/NUL.
+                p = p.sub(1);
                 break;
             }
-            36 => {
+            b'$' => {
                 p = skip_reference(p);
             }
-            124 => {
+            b'|' => {
                 break;
             }
             _ => {}
         }
-        let fresh10 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-        c = *fresh10;
+        c = *p;
+        p = p.add(1);
     }
-    if !length.is_null() {
-        *length = p.offset_from(beg) as ::core::ffi::c_long as size_t;
+    if let Some(len) = length.as_mut() {
+        *len = p.offset_from(beg) as size_t;
     }
     beg
 }
-/// # Safety
+/// qsort comparator ordering candidate rules by stem length, then by the
+/// order they appear in the database.
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// # Safety
+/// Both arguments must point to valid `tryrule`s (guaranteed by qsort).
 pub unsafe extern "C" fn stemlen_compare(
     v1: *const ::core::ffi::c_void,
     v2: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    let r1: *const tryrule = v1 as *const tryrule;
-    let r2: *const tryrule = v2 as *const tryrule;
-    let r: ::core::ffi::c_int = (*r1).stemlen.wrapping_sub((*r2).stemlen) as ::core::ffi::c_int;
+    let r1 = (v1 as *const tryrule)
+        .as_ref()
+        .expect("qsort passes valid elements");
+    let r2 = (v2 as *const tryrule)
+        .as_ref()
+        .expect("qsort passes valid elements");
+    let r = r1.stemlen.wrapping_sub(r2.stemlen) as ::core::ffi::c_int;
     if r != 0 {
         r
     } else {
-        (*r1).order.wrapping_sub((*r2).order) as ::core::ffi::c_int
+        r1.order.wrapping_sub(r2.order) as ::core::ffi::c_int
     }
 }
-unsafe extern "C" fn pattern_search(
+unsafe fn pattern_search(
     file: *mut file,
     archive: ::core::ffi::c_int,
     mut depth: ::core::ffi::c_uint,
     recursions: ::core::ffi::c_uint,
     allow_compat_rules: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
+    // The target name (inside the parens for an archive member reference).
     let filename: *const ::core::ffi::c_char = if archive != 0 {
-        strchr((*file).name, '(' as i32) as *const ::core::ffi::c_char
+        strchr((*file).name, '(' as i32)
     } else {
         (*file).name
     };
-    let namelen: size_t = strlen(filename) as size_t;
-    let lastslash: *const ::core::ffi::c_char;
-    let mut int_file: *mut file = ::core::ptr::null_mut::<file>();
+    let namelen: size_t = strlen(filename);
+    let mut int_file: *mut file = ::core::ptr::null_mut();
+    // Backing storage for the "intermediate file" scratch entries; entries
+    // may be linked into the patdeps list, so they must live until return.
+    let mut int_file_storage: Vec<Box<file>> = Vec::new();
     let mut max_deps: ::core::ffi::c_uint = max_pattern_deps;
     let mut deplist: *mut patdeps =
         xmalloc((max_deps as size_t).wrapping_mul(::core::mem::size_of::<patdeps>() as size_t))
             as *mut patdeps;
     let mut pat: *mut patdeps = deplist;
+    // Buffer big enough for any rule prerequisite with the stem substituted.
     let deplen: size_t = namelen.wrapping_add(max_pattern_dep_length).wrapping_add(4);
-    alloca_allocations.push(::std::vec::from_elem(0, deplen as usize));
-    let depname: *mut ::core::ffi::c_char =
-        alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    let dend: *mut ::core::ffi::c_char = depname.offset(deplen as isize);
-    let mut stem: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let mut depname_buf: Vec<u8> = vec![0; deplen];
+    let depname: *mut ::core::ffi::c_char = depname_buf.as_mut_ptr().cast();
+    let dend: *mut ::core::ffi::c_char = depname.add(deplen);
+    let mut stem: *const ::core::ffi::c_char = ::core::ptr::null();
     let mut stemlen: size_t = 0;
     let fullstemlen: size_t;
     let tryrules: *mut tryrule = xmalloc(
         (num_pattern_rules.wrapping_mul(max_pattern_targets) as size_t)
             .wrapping_mul(::core::mem::size_of::<tryrule>() as size_t),
     ) as *mut tryrule;
-    let mut nrules: ::core::ffi::c_uint;
+    let mut nrules: ::core::ffi::c_uint = 0;
     let foundrule: ::core::ffi::c_uint;
-    let mut intermed_ok: ::core::ffi::c_int;
     let mut file_vars_initialized: ::core::ffi::c_int = 0;
     let mut specific_rule_matched: ::core::ffi::c_int = 0;
     let mut ri: ::core::ffi::c_uint = 0;
     let mut found_compat_rule: ::core::ffi::c_int = 0;
     let mut rule: *mut rule;
-    let mut pathdir: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let pathlen: size_t;
-    let mut stem_str: [::core::ffi::c_char; 4097] = [0; 4097];
+    let mut pathdir: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
+    let mut pathdir_buf: Vec<u8> = Vec::new();
+    let mut stem_str: [::core::ffi::c_char; (PATH_MAX + 1) as usize] = [0; (PATH_MAX + 1) as usize];
+    let stem_str_ptr: *mut ::core::ffi::c_char = stem_str.as_mut_ptr();
     depth = depth.wrapping_add(1);
-    if archive != 0 || ar_name(filename) != 0 {
-        lastslash = ::core::ptr::null::<::core::ffi::c_char>();
+    // An archive member name has no directory part.
+    let lastslash: *const ::core::ffi::c_char = if archive != 0 || ar_name(filename) != 0 {
+        ::core::ptr::null()
     } else {
-        lastslash = memrchr(
-            filename as *const ::core::ffi::c_void,
-            '/' as i32,
-            (namelen as size_t).wrapping_sub(1),
-        ) as *const ::core::ffi::c_char;
-    }
-    pathlen = (if !lastslash.is_null() {
-        lastslash.offset_from(filename) as ::core::ffi::c_long + 1
+        memrchr(filename.cast(), '/' as i32, namelen.wrapping_sub(1)).cast()
+    };
+    let pathlen: size_t = if !lastslash.is_null() {
+        (lastslash.offset_from(filename) + 1) as size_t
     } else {
         0
-    }) as size_t;
-    nrules = 0;
+    };
+    // First pass: collect every pattern rule whose target matches the name.
     rule = pattern_rules;
-    while !rule.is_null() {
-        if !(!(*rule).deps.is_null() && (*rule).cmds.is_null()) {
-            if (*rule).in_use != 0 {
-                if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                    print_spaces(depth);
-                    printf(
-                        b"Avoiding implicit rule recursion for rule '%s'.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        get_rule_defn(rule),
-                    );
-                    fflush(stdout);
-                }
+    while let Some(r) = rule.as_ref() {
+        // A rule with prerequisites but no commands cannot be used directly.
+        if !(!r.deps.is_null() && r.cmds.is_null()) {
+            if r.in_use != 0 {
+                dbs!(
+                    depth,
+                    c"Avoiding implicit rule recursion for rule '%s'.\n".as_ptr(),
+                    get_rule_defn(rule)
+                );
             } else {
-                for ti in 0..(*rule).num as ::core::ffi::c_uint {
-                    let target: *const ::core::ffi::c_char = *(*rule).targets.offset(ti as isize);
-                    let suffix: *const ::core::ffi::c_char = *(*rule).suffixes.offset(ti as isize);
-                    // Skip non-terminal recursion guards and names too short to
-                    // hold the rule's fixed text.
-                    if recursions > 0
-                        && *target.offset(1) as ::core::ffi::c_int == 0
-                        && (*rule).terminal == 0
-                        || *(*rule).lens.offset(ti as isize) as size_t > namelen
+                for ti in 0..r.num as usize {
+                    let target: *const ::core::ffi::c_char = *r.targets.add(ti);
+                    let suffix: *const ::core::ffi::c_char = *r.suffixes.add(ti);
+                    // When recursing, only terminal rules may match "%" alone;
+                    // and the rule's fixed text must fit in the name.
+                    if recursions > 0 && *target.add(1) == 0 && r.terminal == 0
+                        || *r.lens.add(ti) as size_t > namelen
                     {
                         continue;
                     }
-                    stem = filename
-                        .offset((suffix.offset_from(target) as ::core::ffi::c_long - 1) as isize);
+                    stem = filename.offset(suffix.offset_from(target) - 1);
                     stemlen = namelen
-                        .wrapping_sub(*(*rule).lens.offset(ti as isize) as size_t)
+                        .wrapping_sub(*r.lens.add(ti) as size_t)
                         .wrapping_add(1);
+                    // A target pattern without a slash matches only the part
+                    // of the name after its last slash.
                     let check_lastslash: ::core::ffi::c_char = if !lastslash.is_null() {
-                        (strchr(target, '/' as i32)
-                            == ::core::ptr::null_mut::<::core::ffi::c_char>())
-                            as ::core::ffi::c_int as ::core::ffi::c_char
+                        strchr(target, '/' as i32).is_null() as ::core::ffi::c_char
                     } else {
                         0
                     };
@@ -358,785 +327,522 @@ unsafe extern "C" fn pattern_search(
                             continue;
                         }
                         stemlen = stemlen.wrapping_sub(pathlen);
-                        stem = stem.offset(pathlen as isize);
+                        stem = stem.add(pathlen);
                     }
                     // The target text before the stem must match the name
                     // (relative to the last slash when the target has none).
                     if check_lastslash != 0 {
-                        if stem > lastslash.offset(1)
+                        if stem > lastslash.add(1)
                             && strncmp(
                                 target,
-                                lastslash.offset(1),
-                                (stem.offset_from(lastslash) as ::core::ffi::c_long - 1) as size_t,
+                                lastslash.add(1),
+                                (stem.offset_from(lastslash) - 1) as size_t,
                             ) != 0
                         {
                             continue;
                         }
                     } else if stem > filename
-                        && strncmp(
-                            target,
-                            filename,
-                            stem.offset_from(filename) as ::core::ffi::c_long as size_t,
-                        ) != 0
+                        && strncmp(target, filename, stem.offset_from(filename) as size_t) != 0
                     {
                         continue;
                     }
                     // The text after the stem (the suffix) must also match.
-                    if *suffix as ::core::ffi::c_int
-                        != *stem.offset(stemlen as isize) as ::core::ffi::c_int
-                        || *suffix as ::core::ffi::c_int != 0
-                            && !(*suffix.offset(1) as ::core::ffi::c_int
-                                == *stem.offset(stemlen.wrapping_add(1) as isize)
-                                    as ::core::ffi::c_int
-                                && (*suffix.offset(1) as ::core::ffi::c_int == 0
-                                    || strcmp(
-                                        (suffix.offset(1) as *const ::core::ffi::c_char).offset(1),
-                                        (stem.offset(stemlen.wrapping_add(1) as isize)
-                                            as *const ::core::ffi::c_char)
-                                            .offset(1),
-                                    ) == 0))
-                    {
+                    let suffix_matches = *suffix == *stem.add(stemlen)
+                        && (*suffix == 0 || streq(suffix.add(1), stem.add(stemlen + 1)));
+                    if !suffix_matches {
                         continue;
                     }
-                    if *target.offset(1) as ::core::ffi::c_int != 0 {
+                    // A target with anything besides '%' is a specific rule.
+                    if *target.add(1) != 0 {
                         specific_rule_matched = 1;
                     }
-                    if !((*rule).deps.is_null() && (*rule).cmds.is_null()) {
-                        let fresh0 = &mut (*tryrules.offset(nrules as isize)).rule;
-                        *fresh0 = rule;
-                        (*tryrules.offset(nrules as isize)).matches = ti;
-                        (*tryrules.offset(nrules as isize)).stemlen =
-                            stemlen.wrapping_add(if check_lastslash as ::core::ffi::c_int != 0 {
-                                pathlen
-                            } else {
-                                0
-                            });
-                        (*tryrules.offset(nrules as isize)).order = nrules;
-                        (*tryrules.offset(nrules as isize)).checked_lastslash = check_lastslash;
+                    if !(r.deps.is_null() && r.cmds.is_null()) {
+                        let tr = tryrules
+                            .add(nrules as usize)
+                            .as_mut()
+                            .expect("tryrules allocation");
+                        tr.rule = rule;
+                        tr.matches = ti as ::core::ffi::c_uint;
+                        tr.stemlen =
+                            stemlen.wrapping_add(if check_lastslash != 0 { pathlen } else { 0 });
+                        tr.order = nrules;
+                        tr.checked_lastslash = check_lastslash;
                         nrules = nrules.wrapping_add(1);
                     }
                 }
             }
         }
-        rule = (*rule).next;
+        rule = r.next;
     }
-    if !(nrules == 0) {
+    if nrules != 0 {
+        // Shortest-stem (most specific) candidates first, stable by order.
         if nrules > 1 {
             qsort(
-                tryrules as *mut ::core::ffi::c_void,
+                tryrules.cast(),
                 nrules as size_t,
                 ::core::mem::size_of::<tryrule>() as size_t,
-                Some(
-                    stemlen_compare
-                        as unsafe extern "C" fn(
-                            *const ::core::ffi::c_void,
-                            *const ::core::ffi::c_void,
-                        ) -> ::core::ffi::c_int,
-                ),
+                Some(stemlen_compare),
             );
         }
+        // If a specific rule matched, discard non-terminal match-anything
+        // ("%") rules.
         if specific_rule_matched != 0 {
-            ri = 0;
-            while ri < nrules {
-                if (*(*tryrules.offset(ri as isize)).rule).terminal == 0 {
-                    let mut j: ::core::ffi::c_uint;
-                    j = 0;
-                    while j < (*(*tryrules.offset(ri as isize)).rule).num as ::core::ffi::c_uint {
-                        if *(*(*(*tryrules.offset(ri as isize)).rule)
-                            .targets
-                            .offset(j as isize))
-                        .offset(1) as ::core::ffi::c_int
-                            == 0
-                        {
-                            let fresh1 = &mut (*tryrules.offset(ri as isize)).rule;
-                            *fresh1 = ::core::ptr::null_mut::<rule>();
+            for ri in 0..nrules as usize {
+                let tr = tryrules.add(ri).as_mut().expect("tryrules allocation");
+                let r = tr.rule.as_ref().expect("collected rules are non-null");
+                if r.terminal == 0 {
+                    for j in 0..r.num as usize {
+                        if *(*r.targets.add(j)).add(1) == 0 {
+                            tr.rule = ::core::ptr::null_mut();
                             break;
-                        } else {
-                            j = j.wrapping_add(1);
                         }
                     }
                 }
-                ri = ri.wrapping_add(1);
             }
         }
-        intermed_ok = 0;
+        // Second pass: try each candidate; the first round requires every
+        // prerequisite to exist or "ought to exist", the second round
+        // ("trying harder") also accepts buildable intermediate files.
+        let mut intermed_ok: ::core::ffi::c_int = 0;
         while intermed_ok < 2 {
             pat = deplist;
-            if intermed_ok != 0 && 0x8 as ::core::ffi::c_int & db_level != 0 {
-                print_spaces(depth);
-                printf(b"Trying harder.\n\0" as *const u8 as *const ::core::ffi::c_char);
-                fflush(stdout);
+            if intermed_ok != 0 {
+                dbs!(depth, c"Trying harder.\n".as_ptr());
             }
             ri = 0;
             while ri < nrules {
-                let mut dep: *mut dep;
-                let check_lastslash_0: ::core::ffi::c_char;
                 let mut failed: ::core::ffi::c_uint = 0;
                 let mut file_variables_set: ::core::ffi::c_int = 0;
                 let mut deps_found: ::core::ffi::c_uint = 0;
-                let mut nptr: *const ::core::ffi::c_char;
                 let mut order_only: ::core::ffi::c_int = 0;
-                let matches: ::core::ffi::c_uint;
-                rule = (*tryrules.offset(ri as isize)).rule;
-                if !rule.is_null()
-                    && !(intermed_ok != 0 && (*rule).terminal as ::core::ffi::c_int != 0)
-                {
-                    matches = (*tryrules.offset(ri as isize)).matches;
+                let tr = *tryrules.add(ri as usize);
+                rule = tr.rule;
+                if !rule.is_null() && !(intermed_ok != 0 && (*rule).terminal != 0) {
+                    let matches = tr.matches as usize;
                     stem = filename
                         .offset(
-                            (*(*rule).suffixes.offset(matches as isize))
-                                .offset_from(*(*rule).targets.offset(matches as isize))
-                                as ::core::ffi::c_long as isize,
+                            (*(*rule).suffixes.add(matches))
+                                .offset_from(*(*rule).targets.add(matches)),
                         )
-                        .offset(-(1 as ::core::ffi::c_int as isize));
+                        .sub(1);
                     stemlen = namelen
-                        .wrapping_sub(*(*rule).lens.offset(matches as isize) as size_t)
+                        .wrapping_sub(*(*rule).lens.add(matches) as size_t)
                         .wrapping_add(1);
-                    check_lastslash_0 = (*tryrules.offset(ri as isize)).checked_lastslash;
-                    if check_lastslash_0 != 0 {
-                        stem = stem.offset(pathlen as isize);
+                    let check_lastslash: ::core::ffi::c_char = tr.checked_lastslash;
+                    if check_lastslash != 0 {
+                        stem = stem.add(pathlen);
                         stemlen = stemlen.wrapping_sub(pathlen);
                         if pathdir.is_null() {
-                            alloca_allocations
-                                .push(::std::vec::from_elem(0, pathlen.wrapping_add(1) as usize));
-                            pathdir = alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                                as *mut ::core::ffi::c_char;
-                            memcpy(
-                                pathdir as *mut ::core::ffi::c_void,
-                                filename as *const ::core::ffi::c_void,
-                                pathlen as size_t,
-                            );
-                            *pathdir.offset(pathlen as isize) = 0;
+                            // NUL-terminated copy of the directory prefix.
+                            pathdir_buf.resize(pathlen + 1, 0);
+                            pathdir = pathdir_buf.as_mut_ptr().cast();
+                            memcpy(pathdir.cast(), filename.cast(), pathlen);
+                            *pathdir.add(pathlen) = 0;
                         }
                     }
-                    if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                        print_spaces(depth);
-                        printf(
-                            b"Trying pattern rule '%s' with stem '%.*s'.\n\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            get_rule_defn(rule),
-                            stemlen as ::core::ffi::c_int,
-                            stem,
-                        );
-                        fflush(stdout);
-                    }
-                    if stemlen.wrapping_add(if check_lastslash_0 as ::core::ffi::c_int != 0 {
-                        pathlen
-                    } else {
-                        0
-                    }) > GET_PATH_MAX as size_t
+                    dbs!(
+                        depth,
+                        c"Trying pattern rule '%s' with stem '%.*s'.\n".as_ptr(),
+                        get_rule_defn(rule),
+                        stemlen as ::core::ffi::c_int,
+                        stem
+                    );
+                    if stemlen.wrapping_add(if check_lastslash != 0 { pathlen } else { 0 })
+                        > GET_PATH_MAX as size_t
                     {
-                        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                            print_spaces(depth);
-                            printf(
-                                b"Stem too long: '%s%.*s'.\n\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                if check_lastslash_0 as ::core::ffi::c_int != 0 {
-                                    pathdir as *const ::core::ffi::c_char
-                                } else {
-                                    b"\0" as *const u8 as *const ::core::ffi::c_char
-                                },
-                                stemlen as ::core::ffi::c_int,
-                                stem,
-                            );
-                            fflush(stdout);
-                        }
+                        dbs!(
+                            depth,
+                            c"Stem too long: '%s%.*s'.\n".as_ptr(),
+                            if check_lastslash != 0 {
+                                pathdir as *const ::core::ffi::c_char
+                            } else {
+                                c"".as_ptr()
+                            },
+                            stemlen as ::core::ffi::c_int,
+                            stem
+                        );
                     } else {
-                        if check_lastslash_0 == 0 {
-                            memcpy(
-                                &raw mut stem_str as *mut ::core::ffi::c_char
-                                    as *mut ::core::ffi::c_void,
-                                stem as *const ::core::ffi::c_void,
-                                stemlen as size_t,
-                            );
-                            stem_str[stemlen as usize] = 0;
+                        if check_lastslash == 0 {
+                            memcpy(stem_str_ptr.cast(), stem.cast(), stemlen);
+                            *stem_str_ptr.add(stemlen) = 0;
                         } else {
-                            memcpy(
-                                &raw mut stem_str as *mut ::core::ffi::c_char
-                                    as *mut ::core::ffi::c_void,
-                                filename as *const ::core::ffi::c_void,
-                                pathlen as size_t,
-                            );
-                            memcpy(
-                                (&raw mut stem_str as *mut ::core::ffi::c_char)
-                                    .offset(pathlen as isize)
-                                    as *mut ::core::ffi::c_void,
-                                stem as *const ::core::ffi::c_void,
-                                stemlen as size_t,
-                            );
-                            stem_str[pathlen.wrapping_add(stemlen) as usize] = 0;
+                            memcpy(stem_str_ptr.cast(), filename.cast(), pathlen);
+                            memcpy(stem_str_ptr.add(pathlen).cast(), stem.cast(), stemlen);
+                            *stem_str_ptr.add(pathlen.wrapping_add(stemlen)) = 0;
                         }
                         if (*rule).deps.is_null() {
+                            // A matching rule without prerequisites wins
+                            // immediately.
                             break;
                         }
                         (*rule).in_use = 1;
                         pat = deplist;
-                        dep = (*rule).deps;
-                        nptr = if !(*dep).name.is_null() {
-                            (*dep).name
-                        } else {
-                            (*(*dep).file).name
-                        };
+                        let mut dep: *mut dep = (*rule).deps;
+                        let mut nptr: *const ::core::ffi::c_char = dep_name(dep);
                         loop {
-                            let mut dl: *mut dep = ::core::ptr::null_mut::<dep>();
+                            let mut dl: *mut dep = ::core::ptr::null_mut();
                             let mut d: *mut dep;
                             if nptr.is_null() {
+                                // This dep is exhausted; move to the next.
                                 dep = (*dep).next;
                                 if dep.is_null() {
                                     break;
                                 }
-                                nptr = if !(*dep).name.is_null() {
-                                    (*dep).name
-                                } else {
-                                    (*(*dep).file).name
-                                };
+                                nptr = dep_name(dep);
                             }
                             if (*dep).need_2nd_expansion() == 0 {
-                                let mut p: *mut ::core::ffi::c_char;
+                                // No second expansion: substitute the stem
+                                // for '%' and parse the whole name at once.
                                 let mut is_explicit: ::core::ffi::c_int = 1;
                                 let cp: *const ::core::ffi::c_char = strchr(nptr, '%' as i32);
                                 if cp.is_null() {
                                     strcpy(depname, nptr);
                                 } else {
                                     let mut o: *mut ::core::ffi::c_char = depname;
-                                    if check_lastslash_0 != 0 {
-                                        o = mempcpy(
-                                            o as *mut ::core::ffi::c_void,
-                                            filename as *const ::core::ffi::c_void,
-                                            pathlen as size_t,
-                                        )
-                                            as *mut ::core::ffi::c_char;
+                                    if check_lastslash != 0 {
+                                        o = mempcpy(o.cast(), filename.cast(), pathlen).cast();
                                     }
                                     o = mempcpy(
-                                        o as *mut ::core::ffi::c_void,
-                                        nptr as *const ::core::ffi::c_void,
-                                        cp.offset_from(nptr) as ::core::ffi::c_long as size_t,
+                                        o.cast(),
+                                        nptr.cast(),
+                                        cp.offset_from(nptr) as size_t,
                                     )
-                                        as *mut ::core::ffi::c_char;
-                                    o = mempcpy(
-                                        o as *mut ::core::ffi::c_void,
-                                        stem as *const ::core::ffi::c_void,
-                                        stemlen as size_t,
-                                    )
-                                        as *mut ::core::ffi::c_char;
-                                    strcpy(o, cp.offset(1 as ::core::ffi::c_int as isize));
+                                    .cast();
+                                    o = mempcpy(o.cast(), stem.cast(), stemlen).cast();
+                                    strcpy(o, cp.add(1));
                                     is_explicit = 0;
                                 }
-                                p = depname;
+                                let mut p: *mut ::core::ffi::c_char = depname;
                                 dl = parse_file_seq(
                                     &raw mut p,
                                     ::core::mem::size_of::<dep>() as size_t,
-                                    0x1 as ::core::ffi::c_int,
-                                    ::core::ptr::null::<::core::ffi::c_char>(),
-                                    0x20 as ::core::ffi::c_int | 0x40 as ::core::ffi::c_int,
+                                    MAP_NUL,
+                                    ::core::ptr::null(),
+                                    PARSEFS_ONEWORD | PARSEFS_WAIT,
                                 ) as *mut dep;
                                 d = dl;
                                 while !d.is_null() {
                                     deps_found = deps_found.wrapping_add(1);
-                                    (*d).set_ignore_mtime(
-                                        (*dep).ignore_mtime() as ::core::ffi::c_uint
-                                    );
-                                    (*d).set_ignore_automatic_vars(
-                                        (*dep).ignore_automatic_vars() as ::core::ffi::c_uint
-                                    );
-                                    (*d).set_wait_here(
-                                        (*d).wait_here()
-                                            | (*dep).wait_here() as ::core::ffi::c_int
-                                                as ::core::ffi::c_uint,
-                                    );
-                                    (*d).set_is_explicit(
-                                        is_explicit as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                    );
+                                    (*d).set_ignore_mtime((*dep).ignore_mtime());
+                                    (*d).set_ignore_automatic_vars((*dep).ignore_automatic_vars());
+                                    (*d).set_wait_here((*d).wait_here() | (*dep).wait_here());
+                                    (*d).set_is_explicit(is_explicit as ::core::ffi::c_uint);
                                     d = (*d).next;
                                 }
-                                nptr = ::core::ptr::null::<::core::ffi::c_char>();
+                                nptr = ::core::ptr::null();
                             } else {
+                                // Second expansion: take one word at a time,
+                                // replace '%' with $* (or $(*F)), expand, and
+                                // parse the result.
                                 let mut add_dir: ::core::ffi::c_int = 0;
                                 let mut len: size_t = 0;
-                                let end: *const ::core::ffi::c_char;
-                                let mut dptr: *mut *mut dep;
-                                let is_explicit_0: ::core::ffi::c_int;
-                                let mut cp_0: *const ::core::ffi::c_char;
-                                let mut p_0: *mut ::core::ffi::c_char;
                                 nptr = get_next_word(nptr, &raw mut len);
                                 if nptr.is_null() {
                                     continue;
                                 }
-                                end = nptr.offset(len as isize);
+                                let end: *const ::core::ffi::c_char = nptr.add(len);
                                 if order_only == 0
                                     && len == 1
-                                    && *nptr.offset(0 as ::core::ffi::c_int as isize)
-                                        as ::core::ffi::c_int
-                                        == '|' as i32
+                                    && *nptr == '|' as ::core::ffi::c_char
                                 {
                                     order_only = 1;
                                     nptr = end;
                                     continue;
+                                }
+                                let is_explicit: ::core::ffi::c_int;
+                                let mut cp: *const ::core::ffi::c_char =
+                                    lindex(nptr, end, '%' as i32);
+                                if cp.is_null() {
+                                    memcpy(depname.cast(), nptr.cast(), len);
+                                    *depname.add(len) = 0;
+                                    is_explicit = 1;
                                 } else {
-                                    cp_0 = lindex(nptr, end, '%' as i32);
-                                    if cp_0.is_null() {
-                                        memcpy(
-                                            depname as *mut ::core::ffi::c_void,
-                                            nptr as *const ::core::ffi::c_void,
-                                            len as size_t,
-                                        );
-                                        *depname.offset(len as isize) = 0;
-                                        is_explicit_0 = 1;
+                                    let mut o: *mut ::core::ffi::c_char = depname;
+                                    is_explicit = 0;
+                                    loop {
+                                        let i: size_t = cp.offset_from(nptr) as size_t;
+                                        assert!(o.add(i) < dend, "dep name buffer overflow");
+                                        o = mempcpy(o.cast(), nptr.cast(), i).cast();
+                                        if check_lastslash != 0 {
+                                            add_dir = 1;
+                                            assert!(o.add(5) < dend, "dep name buffer overflow");
+                                            o = mempcpy(o.cast(), c"$(*F)".as_ptr().cast(), 5)
+                                                .cast();
+                                        } else {
+                                            assert!(o.add(2) < dend, "dep name buffer overflow");
+                                            o = mempcpy(o.cast(), c"$*".as_ptr().cast(), 2).cast();
+                                        }
+                                        assert!(o < dend, "dep name buffer overflow");
+                                        cp = cp.add(1);
+                                        assert!(cp <= end, "dep name scan overran the word");
+                                        nptr = cp;
+                                        if nptr == end {
+                                            break;
+                                        }
+                                        // Skip over a variable reference so a
+                                        // '%' inside one is not substituted.
+                                        while cp < end
+                                            && !stop_set(*cp, MAP_BLANK | MAP_NEWLINE | MAP_NUL)
+                                        {
+                                            cp = cp.add(1);
+                                        }
+                                        cp = lindex(cp, end, '%' as i32);
+                                        if cp.is_null() {
+                                            break;
+                                        }
+                                    }
+                                    len = end.offset_from(nptr) as size_t;
+                                    memcpy(o.cast(), nptr.cast(), len);
+                                    *o.add(len) = 0;
+                                }
+                                nptr = end;
+                                // The automatic variables ($*, $@, ...) must
+                                // be in place before expanding the dep.
+                                if file_vars_initialized == 0 {
+                                    initialize_file_variables(file, 0);
+                                    set_file_variables(file, stem_str_ptr);
+                                    file_vars_initialized = 1;
+                                } else if file_variables_set == 0 {
+                                    define_variable_in_set(
+                                        c"*".as_ptr(),
+                                        1,
+                                        stem_str_ptr,
+                                        o_automatic,
+                                        0,
+                                        (*(*file).variables).set,
+                                        ::core::ptr::null_mut(),
+                                    );
+                                    file_variables_set = 1;
+                                }
+                                let mut p: *mut ::core::ffi::c_char =
+                                    expand_string_for_file(depname, file);
+                                let mut dptr: *mut *mut dep = &raw mut dl;
+                                loop {
+                                    let dp: *mut dep = parse_file_seq(
+                                        &raw mut p,
+                                        ::core::mem::size_of::<dep>() as size_t,
+                                        if order_only != 0 { MAP_NUL } else { MAP_PIPE },
+                                        if add_dir != 0 {
+                                            pathdir
+                                        } else {
+                                            ::core::ptr::null_mut()
+                                        },
+                                        PARSEFS_WAIT,
+                                    )
+                                        as *mut dep;
+                                    *dptr = dp;
+                                    d = dp;
+                                    while !d.is_null() {
+                                        deps_found = deps_found.wrapping_add(1);
+                                        if order_only != 0 {
+                                            (*d).set_ignore_mtime(1);
+                                        }
+                                        (*d).set_is_explicit(is_explicit as ::core::ffi::c_uint);
+                                        dptr = &raw mut (*d).next;
+                                        d = (*d).next;
+                                    }
+                                    if *p == '|' as ::core::ffi::c_char {
+                                        order_only = 1;
+                                        p = p.add(1);
+                                    }
+                                    if *p == 0 {
+                                        break;
+                                    }
+                                }
+                            }
+                            // Grow the patdeps list if this rule produced
+                            // more deps than any rule seen before.
+                            if deps_found > max_deps {
+                                let l: size_t = pat.offset_from(deplist) as size_t;
+                                max_pattern_deps = max_pattern_deps.max(deps_found);
+                                max_deps = max_pattern_deps;
+                                deplist = xrealloc(
+                                    deplist.cast(),
+                                    (max_deps as size_t)
+                                        .wrapping_mul(::core::mem::size_of::<patdeps>() as size_t),
+                                ) as *mut patdeps;
+                                pat = deplist.add(l);
+                            }
+                            // Check each expanded prerequisite for viability.
+                            d = dl;
+                            while !d.is_null() {
+                                let is_rule: ::core::ffi::c_int =
+                                    ((*d).name == dep_name(dep)) as ::core::ffi::c_int;
+                                let mut explicit: ::core::ffi::c_int = 0;
+                                let mut dp: *mut dep = ::core::ptr::null_mut();
+                                if file_impossible_p((*d).name) != 0 {
+                                    dbs!(
+                                        depth,
+                                        if is_rule != 0 {
+                                            c"Rejecting rule '%s' due to impossible rule prerequisite '%s'.\n".as_ptr()
+                                        } else {
+                                            c"Rejecting rule '%s' due to impossible implicit prerequisite '%s'.\n".as_ptr()
+                                        },
+                                        get_rule_defn(rule),
+                                        (*d).name
+                                    );
+                                    tryrules
+                                        .add(ri as usize)
+                                        .as_mut()
+                                        .expect("tryrules allocation")
+                                        .rule = ::core::ptr::null_mut();
+                                    failed = 1;
+                                    break;
+                                }
+                                memset(pat.cast(), 0, ::core::mem::size_of::<patdeps>() as size_t);
+                                (*pat).set_ignore_mtime((*d).ignore_mtime());
+                                (*pat).set_ignore_automatic_vars((*d).ignore_automatic_vars());
+                                (*pat).set_wait_here((*d).wait_here());
+                                (*pat).set_is_explicit((*d).is_explicit());
+                                dbs!(
+                                    depth,
+                                    if is_rule != 0 {
+                                        c"Trying rule prerequisite '%s'.\n".as_ptr()
                                     } else {
-                                        let mut o_0: *mut ::core::ffi::c_char = depname;
-                                        is_explicit_0 = 0;
-                                        loop {
-                                            let i: size_t = cp_0.offset_from(nptr)
-                                                as ::core::ffi::c_long
-                                                as size_t;
-                                            if o_0.offset(i as isize) < dend {
-                                            } else {
-                                                panic!("assertion failed: o + i < dend");
-                                            };
-                                            o_0 = mempcpy(
-                                                o_0 as *mut ::core::ffi::c_void,
-                                                nptr as *const ::core::ffi::c_void,
-                                                i as size_t,
-                                            )
-                                                as *mut ::core::ffi::c_char;
-                                            if check_lastslash_0 != 0 {
-                                                add_dir = 1;
-                                                if o_0.offset(5 as ::core::ffi::c_int as isize)
-                                                    < dend
+                                        c"Trying implicit prerequisite '%s'.\n".as_ptr()
+                                    },
+                                    (*d).name
+                                );
+                                let df: *mut file = lookup_file((*d).name);
+                                if !df.is_null() && (*df).is_explicit() != 0 {
+                                    (*pat).set_is_explicit(1);
+                                }
+                                if !df.is_null()
+                                    && (*df).is_explicit() == 0
+                                    && (*d).is_explicit() == 0
+                                {
+                                    (*df).set_intermediate(1);
+                                }
+                                // A prerequisite "ought to exist" if it is an
+                                // explicit target or a dep of our target.
+                                if !df.is_null() && (*df).is_target() != 0 {
+                                    explicit = 1;
+                                } else {
+                                    dp = (*file).deps;
+                                    while !dp.is_null() {
+                                        if streq((*d).name, dep_name(dp)) {
+                                            break;
+                                        }
+                                        dp = (*dp).next;
+                                    }
+                                }
+                                if explicit != 0 || !dp.is_null() {
+                                    (*pat).name = (*d).name;
+                                    pat = pat.add(1);
+                                    dbs!(depth, c"'%s' ought to exist.\n".as_ptr(), (*d).name);
+                                } else if file_exists_p((*d).name) != 0 {
+                                    (*pat).name = (*d).name;
+                                    pat = pat.add(1);
+                                    dbs!(depth, c"Found '%s'.\n".as_ptr(), (*d).name);
+                                } else if !df.is_null() && allow_compat_rules != 0 {
+                                    (*pat).name = (*d).name;
+                                    pat = pat.add(1);
+                                    dbs!(
+                                        depth,
+                                        c"Using compatibility rule '%s' due to '%s'.\n".as_ptr(),
+                                        get_rule_defn(rule),
+                                        (*d).name
+                                    );
+                                } else {
+                                    if !df.is_null() {
+                                        dbs!(
+                                            depth,
+                                            c"Prerequisite '%s' of rule '%s' does not qualify as ought to exist.\n".as_ptr(),
+                                            (*d).name,
+                                            get_rule_defn(rule)
+                                        );
+                                        found_compat_rule = 1;
+                                    }
+                                    let vname: *const ::core::ffi::c_char = vpath_search(
+                                        (*d).name,
+                                        ::core::ptr::null_mut::<uintmax_t>(),
+                                        ::core::ptr::null_mut::<::core::ffi::c_uint>(),
+                                        ::core::ptr::null_mut::<::core::ffi::c_uint>(),
+                                    );
+                                    if !vname.is_null() {
+                                        dbs!(
+                                            depth,
+                                            c"Found prerequisite '%s' as VPATH '%s'.\n".as_ptr(),
+                                            (*d).name,
+                                            vname
+                                        );
+                                        (*pat).name = (*d).name;
+                                        pat = pat.add(1);
+                                    } else {
+                                        // Last resort: recursively search for
+                                        // a rule chain that builds it as an
+                                        // intermediate file.
+                                        let mut found_intermediate = false;
+                                        if intermed_ok != 0 {
+                                            dbs!(
+                                                depth,
+                                                if (*d).is_explicit() != 0
+                                                    || !df.is_null() && (*df).is_explicit() != 0
                                                 {
+                                                    c"Looking for a rule with explicit file '%s'.\n"
+                                                        .as_ptr()
                                                 } else {
-                                                    panic!("assertion failed: o + 5 < dend");
-                                                };
-                                                o_0 = mempcpy(
-                                                    o_0 as *mut ::core::ffi::c_void,
-                                                    b"$(*F)\0" as *const u8
-                                                        as *const ::core::ffi::c_char
-                                                        as *const ::core::ffi::c_void,
-                                                    5,
-                                                )
-                                                    as *mut ::core::ffi::c_char;
-                                            } else {
-                                                if o_0.offset(2 as ::core::ffi::c_int as isize)
-                                                    < dend
-                                                {
-                                                } else {
-                                                    panic!("assertion failed: o + 2 < dend");
-                                                };
-                                                o_0 = mempcpy(
-                                                    o_0 as *mut ::core::ffi::c_void,
-                                                    b"$*\0" as *const u8
-                                                        as *const ::core::ffi::c_char
-                                                        as *const ::core::ffi::c_void,
-                                                    2,
-                                                )
-                                                    as *mut ::core::ffi::c_char;
+                                                    c"Looking for a rule with intermediate file '%s'.\n".as_ptr()
+                                                },
+                                                (*d).name
+                                            );
+                                            if int_file.is_null() {
+                                                int_file_storage
+                                                    .push(Box::new(::core::mem::zeroed::<file>()));
+                                                int_file = &raw mut **int_file_storage
+                                                    .last_mut()
+                                                    .expect("just pushed");
                                             }
-                                            if o_0 < dend {
-                                            } else {
-                                                panic!("assertion failed: o < dend");
-                                            };
-                                            cp_0 = cp_0.offset(1 as ::core::ffi::c_int as isize);
-                                            if cp_0 <= end {
-                                            } else {
-                                                panic!("assertion failed: cp <= end");
-                                            };
-                                            nptr = cp_0;
-                                            if nptr == end {
-                                                break;
-                                            }
-                                            while cp_0 < end
-                                                && !(*(&raw mut stopchar_map
-                                                    as *mut ::core::ffi::c_ushort)
-                                                    .offset(*cp_0 as ::core::ffi::c_uchar as isize)
-                                                    as ::core::ffi::c_int
-                                                    & (0x2 as ::core::ffi::c_int
-                                                        | 0x4 as ::core::ffi::c_int
-                                                        | 0x1 as ::core::ffi::c_int)
-                                                    != 0)
+                                            ::core::ptr::write_bytes(int_file, 0, 1);
+                                            (*int_file).name = (*d).name;
+                                            if pattern_search(
+                                                int_file,
+                                                0,
+                                                depth,
+                                                recursions.wrapping_add(1),
+                                                allow_compat_rules,
+                                            ) != 0
                                             {
-                                                cp_0 =
-                                                    cp_0.offset(1 as ::core::ffi::c_int as isize);
-                                            }
-                                            cp_0 = lindex(cp_0, end, '%' as i32);
-                                            if cp_0.is_null() {
-                                                break;
+                                                (*pat).pattern = (*int_file).name;
+                                                (*int_file).name = (*d).name;
+                                                (*pat).file = int_file;
+                                                int_file = ::core::ptr::null_mut();
+                                                (*pat).name = (*d).name;
+                                                pat = pat.add(1);
+                                                found_intermediate = true;
+                                            } else {
+                                                if !(*int_file).variables.is_null() {
+                                                    free_variable_set((*int_file).variables);
+                                                }
+                                                if !(*int_file).pat_variables.is_null() {
+                                                    free_variable_set((*int_file).pat_variables);
+                                                }
+                                                if df.is_null() {
+                                                    file_impossible((*d).name);
+                                                }
                                             }
                                         }
-                                        len =
-                                            end.offset_from(nptr) as ::core::ffi::c_long as size_t;
-                                        memcpy(
-                                            o_0 as *mut ::core::ffi::c_void,
-                                            nptr as *const ::core::ffi::c_void,
-                                            len as size_t,
-                                        );
-                                        *o_0.offset(len as isize) = 0;
-                                    }
-                                    nptr = end;
-                                    if file_vars_initialized == 0 {
-                                        initialize_file_variables(file, 0);
-                                        set_file_variables(
-                                            file,
-                                            &raw mut stem_str as *mut ::core::ffi::c_char,
-                                        );
-                                        file_vars_initialized = 1;
-                                    } else if file_variables_set == 0 {
-                                        define_variable_in_set(
-                                            b"*\0" as *const u8 as *const ::core::ffi::c_char,
-                                            1,
-                                            &raw mut stem_str as *mut ::core::ffi::c_char,
-                                            o_automatic,
-                                            0,
-                                            (*(*file).variables).set,
-                                            NILF,
-                                        );
-                                        file_variables_set = 1;
-                                    }
-                                    p_0 = expand_string_for_file(depname, file);
-                                    dptr = &raw mut dl;
-                                    loop {
-                                        let dp: *mut dep = parse_file_seq(
-                                            &raw mut p_0,
-                                            ::core::mem::size_of::<dep>() as size_t,
-                                            if order_only != 0 {
-                                                0x1 as ::core::ffi::c_int
+                                        if !found_intermediate {
+                                            if intermed_ok != 0 {
+                                                dbs!(
+                                                    depth,
+                                                    c"Rejecting rule '%s' due to impossible prerequisite '%s'.\n".as_ptr(),
+                                                    get_rule_defn(rule),
+                                                    (*d).name
+                                                );
                                             } else {
-                                                0x100 as ::core::ffi::c_int
-                                            },
-                                            if add_dir != 0 {
-                                                pathdir
-                                            } else {
-                                                ::core::ptr::null_mut::<::core::ffi::c_char>()
-                                            },
-                                            0x40 as ::core::ffi::c_int,
-                                        )
-                                            as *mut dep;
-                                        *dptr = dp;
-                                        d = dp;
-                                        while !d.is_null() {
-                                            deps_found = deps_found.wrapping_add(1);
-                                            if order_only != 0 {
-                                                (*d).set_ignore_mtime(
-                                                    1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
+                                                dbs!(
+                                                    depth,
+                                                    c"Not found '%s'.\n".as_ptr(),
+                                                    (*d).name
                                                 );
                                             }
-                                            (*d).set_is_explicit(
-                                                is_explicit_0 as ::core::ffi::c_uint
-                                                    as ::core::ffi::c_uint,
-                                            );
-                                            dptr = &raw mut (*d).next;
-                                            d = (*d).next;
-                                        }
-                                        if *p_0 as ::core::ffi::c_int == '|' as i32 {
-                                            order_only = 1;
-                                            p_0 = p_0.offset(1 as ::core::ffi::c_int as isize);
-                                        }
-                                        if !(*p_0 as ::core::ffi::c_int != 0) {
+                                            failed = 1;
                                             break;
                                         }
                                     }
                                 }
-                            }
-                            if deps_found > max_deps {
-                                let l: size_t =
-                                    pat.offset_from(deplist) as ::core::ffi::c_long as size_t;
-                                max_pattern_deps = if max_pattern_deps > deps_found {
-                                    max_pattern_deps
-                                } else {
-                                    deps_found
-                                };
-                                max_deps = max_pattern_deps;
-                                deplist = xrealloc(
-                                    deplist as *mut ::core::ffi::c_void,
-                                    (max_deps as size_t)
-                                        .wrapping_mul(::core::mem::size_of::<patdeps>() as size_t),
-                                ) as *mut patdeps;
-                                pat = deplist.offset(l as isize);
-                            }
-                            d = dl;
-                            while !d.is_null() {
-                                let df: *mut file;
-                                let is_rule: ::core::ffi::c_int = ((*d).name
-                                    == (if !(*dep).name.is_null() {
-                                        (*dep).name
-                                    } else {
-                                        (*(*dep).file).name
-                                    }))
-                                    as ::core::ffi::c_int;
-                                let mut explicit: ::core::ffi::c_int = 0;
-                                let mut dp_0: *mut dep = ::core::ptr::null_mut::<dep>();
-                                if file_impossible_p((*d).name) != 0 {
-                                    if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                        print_spaces(depth);
-                                        printf(
-                                            if is_rule != 0 {
-                                                b"Rejecting rule '%s' due to impossible rule prerequisite '%s'.\n\0"
-                                                    as *const u8 as *const ::core::ffi::c_char
-                                            } else {
-                                                b"Rejecting rule '%s' due to impossible implicit prerequisite '%s'.\n\0"
-                                                    as *const u8 as *const ::core::ffi::c_char
-                                            },
-                                            get_rule_defn(rule),
-                                            (*d).name,
-                                        );
-                                        fflush(stdout);
-                                    }
-                                    let fresh2 = &mut (*tryrules.offset(ri as isize)).rule;
-                                    *fresh2 = ::core::ptr::null_mut::<rule>();
-                                    failed = 1;
-                                    break;
-                                } else {
-                                    memset(
-                                        pat as *mut ::core::ffi::c_void,
-                                        0,
-                                        ::core::mem::size_of::<patdeps>() as size_t,
-                                    );
-                                    (*pat).set_ignore_mtime(
-                                        (*d).ignore_mtime() as ::core::ffi::c_uint
-                                    );
-                                    (*pat).set_ignore_automatic_vars(
-                                        (*d).ignore_automatic_vars() as ::core::ffi::c_uint
-                                    );
-                                    (*pat).set_wait_here((*d).wait_here() as ::core::ffi::c_uint);
-                                    (*pat)
-                                        .set_is_explicit((*d).is_explicit() as ::core::ffi::c_uint);
-                                    if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                        print_spaces(depth);
-                                        printf(
-                                            if is_rule != 0 {
-                                                b"Trying rule prerequisite '%s'.\n\0" as *const u8
-                                                    as *const ::core::ffi::c_char
-                                            } else {
-                                                b"Trying implicit prerequisite '%s'.\n\0"
-                                                    as *const u8
-                                                    as *const ::core::ffi::c_char
-                                            },
-                                            (*d).name,
-                                        );
-                                        fflush(stdout);
-                                    }
-                                    df = lookup_file((*d).name);
-                                    if !df.is_null()
-                                        && (*df).is_explicit() as ::core::ffi::c_int != 0
-                                    {
-                                        (*pat).set_is_explicit(
-                                            1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                        );
-                                    }
-                                    if !df.is_null()
-                                        && (*df).is_explicit() == 0
-                                        && (*d).is_explicit() == 0
-                                    {
-                                        (*df).set_intermediate(
-                                            1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                        );
-                                    }
-                                    if !df.is_null() && (*df).is_target() as ::core::ffi::c_int != 0
-                                    {
-                                        explicit = 1;
-                                    } else {
-                                        dp_0 = (*file).deps;
-                                        while !dp_0.is_null() {
-                                            if *(*d).name as ::core::ffi::c_int
-                                                == *(if !(*dp_0).name.is_null() {
-                                                    (*dp_0).name
-                                                } else {
-                                                    (*(*dp_0).file).name
-                                                })
-                                                    as ::core::ffi::c_int
-                                                && (*(*d).name as ::core::ffi::c_int == 0
-                                                    || strcmp(
-                                                        (*d).name.offset(
-                                                            1 as ::core::ffi::c_int as isize,
-                                                        ),
-                                                        (if !(*dp_0).name.is_null() {
-                                                            (*dp_0).name
-                                                        } else {
-                                                            (*(*dp_0).file).name
-                                                        })
-                                                        .offset(1 as ::core::ffi::c_int as isize),
-                                                    ) == 0)
-                                            {
-                                                break;
-                                            }
-                                            dp_0 = (*dp_0).next;
-                                        }
-                                    }
-                                    if explicit != 0 || !dp_0.is_null() {
-                                        let fresh3 = pat;
-                                        pat = pat.offset(1 as ::core::ffi::c_int as isize);
-                                        (*fresh3).name = (*d).name;
-                                        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                            print_spaces(depth);
-                                            printf(
-                                                b"'%s' ought to exist.\n\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                                (*d).name,
-                                            );
-                                            fflush(stdout);
-                                        }
-                                    } else if file_exists_p((*d).name) != 0 {
-                                        let fresh4 = pat;
-                                        pat = pat.offset(1 as ::core::ffi::c_int as isize);
-                                        (*fresh4).name = (*d).name;
-                                        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                            print_spaces(depth);
-                                            printf(
-                                                b"Found '%s'.\n\0" as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                                (*d).name,
-                                            );
-                                            fflush(stdout);
-                                        }
-                                    } else if !df.is_null() && allow_compat_rules != 0 {
-                                        let fresh5 = pat;
-                                        pat = pat.offset(1 as ::core::ffi::c_int as isize);
-                                        (*fresh5).name = (*d).name;
-                                        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                            print_spaces(depth);
-                                            printf(
-                                                b"Using compatibility rule '%s' due to '%s'.\n\0"
-                                                    as *const u8
-                                                    as *const ::core::ffi::c_char,
-                                                get_rule_defn(rule),
-                                                (*d).name,
-                                            );
-                                            fflush(stdout);
-                                        }
-                                    } else {
-                                        if !df.is_null() {
-                                            if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                                print_spaces(depth);
-                                                printf(
-                                                    b"Prerequisite '%s' of rule '%s' does not qualify as ought to exist.\n\0"
-                                                        as *const u8 as *const ::core::ffi::c_char,
-                                                    (*d).name,
-                                                    get_rule_defn(rule),
-                                                );
-                                                fflush(stdout);
-                                            }
-                                            found_compat_rule = 1;
-                                        }
-                                        let vname: *const ::core::ffi::c_char = vpath_search(
-                                            (*d).name,
-                                            ::core::ptr::null_mut::<uintmax_t>(),
-                                            ::core::ptr::null_mut::<::core::ffi::c_uint>(),
-                                            ::core::ptr::null_mut::<::core::ffi::c_uint>(),
-                                        );
-                                        if !vname.is_null() {
-                                            if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                                print_spaces(depth);
-                                                printf(
-                                                    b"Found prerequisite '%s' as VPATH '%s'.\n\0"
-                                                        as *const u8
-                                                        as *const ::core::ffi::c_char,
-                                                    (*d).name,
-                                                    vname,
-                                                );
-                                                fflush(stdout);
-                                            }
-                                            let fresh6 = pat;
-                                            pat = pat.offset(1 as ::core::ffi::c_int as isize);
-                                            (*fresh6).name = (*d).name;
-                                        } else {
-                                            let mut found_intermediate = false;
-                                            if intermed_ok != 0 {
-                                                if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                                    print_spaces(depth);
-                                                    printf(
-                                                        if (*d).is_explicit() as ::core::ffi::c_int
-                                                            != 0
-                                                            || !df.is_null()
-                                                                && (*df).is_explicit()
-                                                                    as ::core::ffi::c_int
-                                                                    != 0
-                                                        {
-                                                            b"Looking for a rule with explicit file '%s'.\n\0"
-                                                                as *const u8 as *const ::core::ffi::c_char
-                                                        } else {
-                                                            b"Looking for a rule with intermediate file '%s'.\n\0"
-                                                                as *const u8 as *const ::core::ffi::c_char
-                                                        },
-                                                        (*d).name,
-                                                    );
-                                                    fflush(stdout);
-                                                }
-                                                if int_file.is_null() {
-                                                    alloca_allocations.push(::std::vec::from_elem(
-                                                        0,
-                                                        ::core::mem::size_of::<file>() as usize,
-                                                    ));
-                                                    int_file = alloca_allocations
-                                                        .last_mut()
-                                                        .unwrap()
-                                                        .as_mut_ptr()
-                                                        as *mut file;
-                                                }
-                                                memset(
-                                                    int_file as *mut ::core::ffi::c_void,
-                                                    0,
-                                                    ::core::mem::size_of::<file>() as size_t,
-                                                );
-                                                (*int_file).name = (*d).name;
-                                                if pattern_search(
-                                                    int_file,
-                                                    0,
-                                                    depth,
-                                                    recursions.wrapping_add(1),
-                                                    allow_compat_rules,
-                                                ) != 0
-                                                {
-                                                    (*pat).pattern = (*int_file).name;
-                                                    (*int_file).name = (*d).name;
-                                                    (*pat).file = int_file;
-                                                    int_file = ::core::ptr::null_mut::<file>();
-                                                    let fresh7 = pat;
-                                                    pat = pat
-                                                        .offset(1 as ::core::ffi::c_int as isize);
-                                                    (*fresh7).name = (*d).name;
-                                                    found_intermediate = true;
-                                                } else {
-                                                    if !(*int_file).variables.is_null() {
-                                                        free_variable_set((*int_file).variables);
-                                                    }
-                                                    if !(*int_file).pat_variables.is_null() {
-                                                        free_variable_set(
-                                                            (*int_file).pat_variables,
-                                                        );
-                                                    }
-                                                    if df.is_null() {
-                                                        file_impossible((*d).name);
-                                                    }
-                                                }
-                                            }
-                                            if !found_intermediate {
-                                                if intermed_ok != 0 {
-                                                    if 0x8 as ::core::ffi::c_int & db_level != 0 {
-                                                        print_spaces(depth);
-                                                        printf(
-                                                            b"Rejecting rule '%s' due to impossible prerequisite '%s'.\n\0"
-                                                                as *const u8 as *const ::core::ffi::c_char,
-                                                            get_rule_defn(rule),
-                                                            (*d).name,
-                                                        );
-                                                        fflush(stdout);
-                                                    }
-                                                } else if 0x8 as ::core::ffi::c_int & db_level != 0
-                                                {
-                                                    print_spaces(depth);
-                                                    printf(
-                                                        b"Not found '%s'.\n\0" as *const u8
-                                                            as *const ::core::ffi::c_char,
-                                                        (*d).name,
-                                                    );
-                                                    fflush(stdout);
-                                                }
-                                                failed = 1;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    d = (*d).next;
-                                }
+                                d = (*d).next;
                             }
                             free_dep_chain(dl);
                             if failed != 0 {
@@ -1145,6 +851,7 @@ unsafe extern "C" fn pattern_search(
                         }
                         (*rule).in_use = 0;
                         if failed == 0 {
+                            // Every prerequisite checked out: use this rule.
                             break;
                         }
                     }
@@ -1154,25 +861,24 @@ unsafe extern "C" fn pattern_search(
             if ri < nrules {
                 break;
             }
-            rule = ::core::ptr::null_mut::<rule>();
+            rule = ::core::ptr::null_mut();
             intermed_ok += 1;
         }
         if !rule.is_null() {
             foundrule = ri;
+            let found_tr = *tryrules.add(foundrule as usize);
+            // When recursing, give the file the matched target pattern as its
+            // name; the caller uses it to build the real name from the stem.
             if recursions > 0 {
-                (*file).name = *(*rule)
-                    .targets
-                    .offset((*tryrules.offset(foundrule as isize)).matches as isize);
+                (*file).name = *(*rule).targets.add(found_tr.matches as usize);
             }
-            loop {
-                let fresh8 = pat;
-                pat = pat.offset(-(1 as ::core::ffi::c_int) as isize);
-                if !(fresh8 > deplist) {
-                    break;
-                }
-                let mut dep_0: *mut dep;
-                let s: *const ::core::ffi::c_char;
+            // Walk the recorded prerequisites backwards, entering each one as
+            // a dep of the target (so the final list is in rule order).
+            while pat > deplist {
+                pat = pat.sub(1);
                 if !(*pat).file.is_null() {
+                    // An intermediate file: merge the scratch entry into the
+                    // real file table.
                     let mut imf: *mut file = (*pat).file;
                     let mut f: *mut file = lookup_file((*imf).name);
                     if f.is_null() {
@@ -1183,216 +889,166 @@ unsafe extern "C" fn pattern_search(
                     (*f).stem = (*imf).stem;
                     merge_variable_set_lists(&raw mut (*f).variables, (*imf).variables);
                     (*f).pat_variables = (*imf).pat_variables;
-                    (*f).set_pat_searched((*imf).pat_searched() as ::core::ffi::c_uint);
+                    (*f).set_pat_searched((*imf).pat_searched());
                     (*f).also_make = (*imf).also_make;
-                    (*f).set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    (*f).set_is_target(1);
                     (*f).set_is_explicit(
                         (*f).is_explicit()
-                            | ((*imf).is_explicit() as ::core::ffi::c_int != 0
-                                || (*pat).is_explicit() as ::core::ffi::c_int != 0)
-                                as ::core::ffi::c_int
+                            | ((*imf).is_explicit() != 0 || (*pat).is_explicit() != 0)
                                 as ::core::ffi::c_uint,
                     );
                     (*f).set_notintermediate(
                         (*f).notintermediate()
-                            | ((*imf).notintermediate() as ::core::ffi::c_int != 0
-                                || no_intermediates != 0)
-                                as ::core::ffi::c_int
+                            | ((*imf).notintermediate() != 0 || no_intermediates != 0)
                                 as ::core::ffi::c_uint,
                     );
                     (*f).set_intermediate(
                         (*f).intermediate()
                             | ((*f).is_explicit() == 0 && (*f).notintermediate() == 0)
-                                as ::core::ffi::c_int
                                 as ::core::ffi::c_uint,
                     );
-                    (*f).set_tried_implicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    (*f).set_tried_implicit(1);
                     imf = lookup_file((*pat).pattern);
-                    if !imf.is_null() && (*imf).precious() as ::core::ffi::c_int != 0 {
-                        (*f).set_precious(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    if !imf.is_null() && (*imf).precious() != 0 {
+                        (*f).set_precious(1);
                     }
-                    dep_0 = (*f).deps;
-                    while !dep_0.is_null() {
-                        (*dep_0).file = enter_file((*dep_0).name);
-                        (*dep_0).name = ::core::ptr::null::<::core::ffi::c_char>();
-                        (*(*dep_0).file).set_tried_implicit(
-                            (*(*dep_0).file).tried_implicit()
-                                | (*dep_0).changed() as ::core::ffi::c_int as ::core::ffi::c_uint,
-                        );
-                        dep_0 = (*dep_0).next;
+                    let mut d: *mut dep = (*f).deps;
+                    while !d.is_null() {
+                        (*d).file = enter_file((*d).name);
+                        (*d).name = ::core::ptr::null();
+                        (*(*d).file)
+                            .set_tried_implicit((*(*d).file).tried_implicit() | (*d).changed());
+                        d = (*d).next;
                     }
                 }
-                dep_0 = alloc_dep();
-                (*dep_0).set_ignore_mtime((*pat).ignore_mtime() as ::core::ffi::c_uint);
-                (*dep_0).set_is_explicit((*pat).is_explicit() as ::core::ffi::c_uint);
-                (*dep_0).set_ignore_automatic_vars(
-                    (*pat).ignore_automatic_vars() as ::core::ffi::c_uint
-                );
-                (*dep_0).set_wait_here((*pat).wait_here() as ::core::ffi::c_uint);
-                s = strcache_add((*pat).name);
+                let new_dep: *mut dep = alloc_dep();
+                (*new_dep).set_ignore_mtime((*pat).ignore_mtime());
+                (*new_dep).set_is_explicit((*pat).is_explicit());
+                (*new_dep).set_ignore_automatic_vars((*pat).ignore_automatic_vars());
+                (*new_dep).set_wait_here((*pat).wait_here());
+                let s: *const ::core::ffi::c_char = strcache_add((*pat).name);
                 if recursions != 0 {
-                    (*dep_0).name = s;
+                    (*new_dep).name = s;
                 } else {
-                    (*dep_0).file = lookup_file(s);
-                    if (*dep_0).file.is_null() {
-                        (*dep_0).file = enter_file(s);
+                    (*new_dep).file = lookup_file(s);
+                    if (*new_dep).file.is_null() {
+                        (*new_dep).file = enter_file(s);
                     }
                 }
-                if (*pat).file.is_null()
-                    && (*(*tryrules.offset(foundrule as isize)).rule).terminal as ::core::ffi::c_int
-                        != 0
-                {
-                    if (*dep_0).file.is_null() {
-                        (*dep_0).set_changed(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                if (*pat).file.is_null() && (*found_tr.rule).terminal != 0 {
+                    // A terminal rule's non-intermediate prerequisites must
+                    // exist as-is; mark them so they are not built.
+                    if (*new_dep).file.is_null() {
+                        (*new_dep).set_changed(1);
                     } else {
-                        (*(*dep_0).file)
-                            .set_tried_implicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                        (*(*new_dep).file).set_tried_implicit(1);
                     }
                 }
-                (*dep_0).next = (*file).deps;
-                (*file).deps = dep_0;
-                (*file).set_was_shuffled(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                (*new_dep).next = (*file).deps;
+                (*file).deps = new_dep;
+                (*file).set_was_shuffled(0);
             }
             if (*file).was_shuffled() == 0 {
-                crate::shuffle::shuffle_deps_recursive((*file).deps as *mut crate::file::Dep);
+                crate::shuffle::shuffle_deps_recursive((*file).deps);
             }
-            if (*tryrules.offset(foundrule as isize)).checked_lastslash == 0 {
+            if found_tr.checked_lastslash == 0 {
                 (*file).stem = strcache_add_len(stem, stemlen);
                 fullstemlen = stemlen;
             } else {
+                // The rule matched only the basename: the stem includes the
+                // directory part.
                 fullstemlen = pathlen.wrapping_add(stemlen);
-                memcpy(
-                    &raw mut stem_str as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                    filename as *const ::core::ffi::c_void,
-                    pathlen as size_t,
-                );
-                memcpy(
-                    (&raw mut stem_str as *mut ::core::ffi::c_char).offset(pathlen as isize)
-                        as *mut ::core::ffi::c_void,
-                    stem as *const ::core::ffi::c_void,
-                    stemlen as size_t,
-                );
-                stem_str[fullstemlen as usize] = 0;
-                (*file).stem = strcache_add(&raw mut stem_str as *mut ::core::ffi::c_char);
+                memcpy(stem_str_ptr.cast(), filename.cast(), pathlen);
+                memcpy(stem_str_ptr.add(pathlen).cast(), stem.cast(), stemlen);
+                *stem_str_ptr.add(fullstemlen) = 0;
+                (*file).stem = strcache_add(stem_str_ptr);
             }
             (*file).cmds = (*rule).cmds;
-            (*file).set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            let f_0: *mut file = lookup_file(
-                *(*rule)
-                    .targets
-                    .offset((*tryrules.offset(foundrule as isize)).matches as isize),
-            );
-            if !f_0.is_null() {
-                if (*f_0).precious() != 0 {
-                    (*file).set_precious(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            (*file).set_is_target(1);
+            // Inherit .PRECIOUS and .NOTINTERMEDIATE from the target pattern.
+            let pattern_file: *mut file =
+                lookup_file(*(*rule).targets.add(found_tr.matches as usize));
+            if !pattern_file.is_null() {
+                if (*pattern_file).precious() != 0 {
+                    (*file).set_precious(1);
                 }
-                if (*f_0).notintermediate() as ::core::ffi::c_int != 0 || no_intermediates != 0 {
-                    (*file).set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                if (*pattern_file).notintermediate() != 0 || no_intermediates != 0 {
+                    (*file).set_notintermediate(1);
                 }
             }
-            if (*rule).num as ::core::ffi::c_int > 1 {
-                ri = 0;
-                while ri < (*rule).num as ::core::ffi::c_uint {
-                    if ri != (*tryrules.offset(foundrule as isize)).matches {
-                        alloca_allocations.push(::std::vec::from_elem(
-                            0,
-                            (*(*rule).lens.offset(ri as isize) as size_t)
-                                .wrapping_add(fullstemlen)
-                                .wrapping_add(1) as usize,
-                        ));
-                        let nm: *mut ::core::ffi::c_char =
-                            alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                                as *mut ::core::ffi::c_char;
-                        let mut p_1: *mut ::core::ffi::c_char = nm;
-                        let f_1: *mut file;
-                        let new: *mut dep = alloc_dep();
-                        p_1 = mempcpy(
-                            p_1 as *mut ::core::ffi::c_void,
-                            *(*rule).targets.offset(ri as isize) as *const ::core::ffi::c_void,
-                            ((*(*rule).suffixes.offset(ri as isize))
-                                .offset_from(*(*rule).targets.offset(ri as isize))
-                                as ::core::ffi::c_long
-                                - 1) as size_t,
-                        ) as *mut ::core::ffi::c_char;
-                        p_1 = mempcpy(
-                            p_1 as *mut ::core::ffi::c_void,
-                            (*file).stem as *const ::core::ffi::c_void,
-                            fullstemlen as size_t,
-                        ) as *mut ::core::ffi::c_char;
-                        memcpy(
-                            p_1 as *mut ::core::ffi::c_void,
-                            *(*rule).suffixes.offset(ri as isize) as *const ::core::ffi::c_void,
-                            (*(*rule).lens.offset(ri as isize) as ::core::ffi::c_long
-                                - (*(*rule).suffixes.offset(ri as isize))
-                                    .offset_from(*(*rule).targets.offset(ri as isize))
-                                    as ::core::ffi::c_long
-                                + 1) as size_t,
-                        );
-                        (*new).name = strcache_add(nm);
-                        (*new).file = enter_file((*new).name);
-                        (*new).next = (*file).also_make;
-                        f_1 = lookup_file(*(*rule).targets.offset(ri as isize));
-                        if !f_1.is_null() {
-                            if (*f_1).precious() != 0 {
-                                (*(*new).file)
-                                    .set_precious(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            }
-                            if (*f_1).notintermediate() as ::core::ffi::c_int != 0
-                                || no_intermediates != 0
-                            {
-                                (*(*new).file).set_notintermediate(
-                                    1 as ::core::ffi::c_uint as ::core::ffi::c_uint,
-                                );
-                            }
-                        }
-                        (*(*new).file)
-                            .set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                        (*file).also_make = new;
+            // A multi-target rule also makes the other targets (with the same
+            // stem substituted).
+            if (*rule).num > 1 {
+                for ti in 0..(*rule).num as usize {
+                    if ti == found_tr.matches as usize {
+                        continue;
                     }
-                    ri = ri.wrapping_add(1);
+                    let target: *const ::core::ffi::c_char = *(*rule).targets.add(ti);
+                    let suffix: *const ::core::ffi::c_char = *(*rule).suffixes.add(ti);
+                    let target_len = *(*rule).lens.add(ti) as size_t;
+                    let mut nm: Vec<u8> = vec![0; target_len.wrapping_add(fullstemlen) + 1];
+                    let mut p: *mut ::core::ffi::c_char = nm.as_mut_ptr().cast();
+                    let new_dep: *mut dep = alloc_dep();
+                    p = mempcpy(
+                        p.cast(),
+                        target.cast(),
+                        (suffix.offset_from(target) - 1) as size_t,
+                    )
+                    .cast();
+                    p = mempcpy(p.cast(), (*file).stem.cast(), fullstemlen).cast();
+                    memcpy(
+                        p.cast(),
+                        suffix.cast(),
+                        (target_len as isize - suffix.offset_from(target) + 1) as size_t,
+                    );
+                    (*new_dep).name = strcache_add(nm.as_ptr().cast());
+                    (*new_dep).file = enter_file((*new_dep).name);
+                    (*new_dep).next = (*file).also_make;
+                    let other: *mut file = lookup_file(target);
+                    if !other.is_null() {
+                        if (*other).precious() != 0 {
+                            (*(*new_dep).file).set_precious(1);
+                        }
+                        if (*other).notintermediate() != 0 || no_intermediates != 0 {
+                            (*(*new_dep).file).set_notintermediate(1);
+                        }
+                    }
+                    (*(*new_dep).file).set_is_target(1);
+                    (*file).also_make = new_dep;
                 }
             }
         }
+    } else {
+        rule = ::core::ptr::null_mut();
     }
-    free(tryrules as *mut ::core::ffi::c_void);
-    free(deplist as *mut ::core::ffi::c_void);
+    free(tryrules.cast());
+    free(deplist.cast());
     depth = depth.wrapping_sub(1);
     if !rule.is_null() {
-        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-            print_spaces(depth);
-            printf(
-                b"Found implicit rule '%s' for '%s'.\n\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                get_rule_defn(rule),
-                filename,
-            );
-            fflush(stdout);
-        }
+        dbs!(
+            depth,
+            c"Found implicit rule '%s' for '%s'.\n".as_ptr(),
+            get_rule_defn(rule),
+            filename
+        );
         return 1;
     }
     if found_compat_rule != 0 {
-        if 0x8 as ::core::ffi::c_int & db_level != 0 {
-            print_spaces(depth);
-            printf(
-                b"Searching for a compatibility rule for '%s'.\n\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                filename,
-            );
-            fflush(stdout);
-        }
-        if allow_compat_rules == 0 {
-        } else {
-            panic!("assertion failed: allow_compat_rules == 0");
-        };
+        dbs!(
+            depth,
+            c"Searching for a compatibility rule for '%s'.\n".as_ptr(),
+            filename
+        );
+        assert!(
+            allow_compat_rules == 0,
+            "compatibility-rule retry must not recurse"
+        );
         return pattern_search(file, archive, depth, recursions, 1);
     }
-    if 0x8 as ::core::ffi::c_int & db_level != 0 {
-        print_spaces(depth);
-        printf(
-            b"No implicit rule found for '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-            filename,
-        );
-        fflush(stdout);
-    }
+    dbs!(
+        depth,
+        c"No implicit rule found for '%s'.\n".as_ptr(),
+        filename
+    );
     0
 }
