@@ -116,7 +116,10 @@ unsafe fn define_automatic(file: &mut File, name: &CStr, value: *const c_char) {
         value,
         o_automatic,
         0,
-        (*file.variables).set,
+        file.variables
+            .as_ref()
+            .expect("file variables must be initialized before setting automatics")
+            .set,
         null::<Floc>(),
     );
 }

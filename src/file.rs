@@ -1068,11 +1068,11 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     if no_intermediates != 0 && (*f).intermediate() == 0 && (*f).secondary() == 0 {
         (*f).set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if !(*f).variables.is_null() {
+    if let Some(file_vars) = (*f).variables.as_ref() {
         prereqs = expand_extra_prereqs(lookup_variable_in_set(
             b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-            (*(*f).variables).set,
+            file_vars.set,
         ));
         if second_expansion != 0 {
             d = prereqs;
