@@ -1504,7 +1504,7 @@ unsafe fn main_0(
                     stdio_traced = 1;
                     ep = ep.offset(1 as ::core::ffi::c_int as isize);
                 }
-                restarts = make_toui(ep, ::core::ptr::null_mut::<*const ::core::ffi::c_char>());
+                restarts = make_toui(::core::ffi::CStr::from_ptr(ep)).0;
                 export = v_noexport;
             }
             v = define_variable_in_set(
@@ -1669,10 +1669,7 @@ unsafe fn main_0(
         && *(*v_0).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
             != '-' as i32
     {
-        makelevel = make_toui(
-            (*v_0).value,
-            ::core::ptr::null_mut::<*const ::core::ffi::c_char>(),
-        );
+        makelevel = make_toui(::core::ffi::CStr::from_ptr((*v_0).value)).0;
     } else {
         makelevel = 0;
     }
@@ -3252,10 +3249,8 @@ unsafe extern "C" fn decode_switches(
                             }
                             if !(doit == 0) {
                                 if !coptarg.is_null() {
-                                    let mut err: *const ::core::ffi::c_char =
-                                        ::core::ptr::null::<::core::ffi::c_char>();
-                                    let i: ::core::ffi::c_uint = make_toui(coptarg, &raw mut err);
-                                    if !err.is_null() || i == 0 {
+                                    let (i, err) = make_toui(::core::ffi::CStr::from_ptr(coptarg));
+                                    if err || i == 0 {
                                         error(
                                             NILF,
                                             0,

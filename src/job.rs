@@ -1873,10 +1873,10 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
                         .wrapping_sub('0' as i32 as ::core::ffi::c_uint)
                         <= 9
                 {
-                    let cnt: ::core::ffi::c_uint = make_toui(
+                    let cnt: ::core::ffi::c_uint = make_toui(::core::ffi::CStr::from_ptr(
                         p.offset(1 as ::core::ffi::c_int as isize),
-                        ::core::ptr::null_mut::<*const ::core::ffi::c_char>(),
-                    );
+                    ))
+                    .0;
                     if 0x4 as ::core::ffi::c_int & db_level != 0 {
                         printf(
                             b"Running: system = %u / make = %u (max requested = %f)\n\0"
