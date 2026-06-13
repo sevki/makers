@@ -302,29 +302,30 @@ static mut global_setlist: variable_set_list = variable_set_list {
 };
 pub static mut current_variable_set_list: *mut variable_set_list =
     &raw const global_setlist as *mut variable_set_list;
+/// Character-class bits in `stopchar_map` (see `makeint.h`).
+const MAP_BLANK: ::core::ffi::c_int = 0x2;
+const MAP_NEWLINE: ::core::ffi::c_int = 0x4;
+
+/// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
+/// classes selected by `mask`?
+unsafe fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
+}
+
 unsafe extern "C" fn check_valid_name(
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) {
-    let mut cp: *const ::core::ffi::c_char;
-    let end: *const ::core::ffi::c_char;
     if !(warning::is_active(Type::InvalidVar)) {
         return;
     }
-    cp = name;
-    end = name.offset(length as isize);
-    while cp < end {
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*cp as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-            != 0
-        {
-            break;
-        }
-        cp = cp.offset(1 as ::core::ffi::c_int as isize);
-    }
-    if cp == end {
+    // The name is valid unless it contains an unquoted blank or newline.
+    let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length);
+    if !name_bytes
+        .iter()
+        .any(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE))
+    {
         return;
     }
     if warning::is_active(Type::InvalidVar) {
@@ -624,24 +625,15 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
     var
 }
 unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, length: size_t) {
-    let mut cp: *const ::core::ffi::c_char;
-    let end: *const ::core::ffi::c_char;
     if !(warning::is_active(Type::InvalidRef)) {
         return;
     }
-    cp = name;
-    end = name.offset(length as isize);
-    while cp < end {
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*cp as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-            != 0
-        {
-            break;
-        }
-        cp = cp.offset(1 as ::core::ffi::c_int as isize);
-    }
-    if cp == end {
+    // The reference is valid unless it contains an unquoted blank or newline.
+    let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length);
+    if !name_bytes
+        .iter()
+        .any(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE))
+    {
         return;
     }
     if warning::is_active(Type::InvalidRef) {
