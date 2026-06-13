@@ -249,9 +249,11 @@ pub const EXP_COUNT_MAX: ::core::ffi::c_int = ((1) << EXP_COUNT_BITS) - 1;
 unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let key: *const function_table_entry = keyv as *const function_table_entry;
     let mut _result_: ::core::ffi::c_ulong = 0;
-    let mut _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
-    _result_ = _result_
-        .wrapping_add(jhash(_key_, (*key).len as ::core::ffi::c_int) as ::core::ffi::c_ulong);
+    let _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
+    _result_ = _result_.wrapping_add(jhash(::core::slice::from_raw_parts(
+        _key_,
+        (*key).len as usize,
+    )) as ::core::ffi::c_ulong);
     _result_
 }
 unsafe fn function_table_entry_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {

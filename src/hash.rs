@@ -539,14 +539,8 @@ macro_rules! jhash_final {
 ///
 /// # Safety
 /// `k` must be valid for reads of `length` bytes.
-pub unsafe fn jhash(k: *const c_uchar, length: c_int) -> c_uint {
-    assert!(length >= 0, "jhash length must not be negative");
-    let bytes = if length == 0 {
-        &[][..]
-    } else {
-        ::core::slice::from_raw_parts(k, length as usize)
-    };
-    let mut c = JHASH_INITVAL.wrapping_add(length as c_uint);
+pub fn jhash(bytes: &[u8]) -> c_uint {
+    let mut c = JHASH_INITVAL.wrapping_add(bytes.len() as c_uint);
     let mut b = c;
     let mut a = b;
 
@@ -726,7 +720,7 @@ mod tests {
             b"abcdefghijklm",
             b"abcdefghijklmnopqrstuvw",
         ] {
-            let actual = unsafe { jhash(input.as_ptr(), input.len() as c_int) };
+            let actual = jhash(input);
             assert_eq!(actual, legacy_jhash(input), "{input:?}");
         }
     }
