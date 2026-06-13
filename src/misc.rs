@@ -60,17 +60,30 @@ unsafe fn free_ns(n: *mut nameseq) {
     free(n as *mut c_void);
 }
 
+/// Why [`make_toui`] rejected its input, mirroring C `make_toui`'s two error
+/// messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MakeToUiError {
+    /// The string was empty (C "Missing value").
+    Missing,
+    /// No digits, or trailing non-digit characters (C "Invalid value").
+    Invalid,
+}
+
 /// Parse the leading base-10 unsigned integer of `bytes` with C `strtoul`
 /// semantics: skip leading whitespace and an optional `+`/`-` sign, then take
-/// the run of decimal digits. Returns `None` when there are no digits or any
-/// trailing non-digit characters remain (the C "Missing value"/"Invalid value"
-/// cases), and `Some(value)` otherwise.
+/// the run of decimal digits. Returns `Err(Missing)` for empty input and
+/// `Err(Invalid)` when there are no digits or any trailing non-digit characters
+/// remain (the C "Missing value"/"Invalid value" cases), else `Ok(value)`.
 ///
 /// On this target `c_ulong` is `u64`, so the magnitude is accumulated in `u64`
 /// and saturated exactly as `strtoul` clamps to `ULONG_MAX`, then truncated to
 /// `u32` like the `(unsigned int)` cast in C `make_toui`; a `-` sign wraps
 /// through that cast the same way.
-fn parse_uint_strtoul(bytes: &[u8]) -> Option<u32> {
+fn parse_uint_strtoul(bytes: &[u8]) -> Result<u32, MakeToUiError> {
+    if bytes.is_empty() {
+        return Err(MakeToUiError::Missing);
+    }
     // C-locale isspace, which `strtoul` skips: space, \t, \n, \v, \f, \r.
     const WS: &[u8] = b" \t\n\x0b\x0c\r";
     let mut rest = bytes;
@@ -87,19 +100,19 @@ fn parse_uint_strtoul(bytes: &[u8]) -> Option<u32> {
     }
     let ndigits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
     if ndigits == 0 || ndigits != rest.len() {
-        return None;
+        return Err(MakeToUiError::Invalid);
     }
     let mut mag: u64 = 0;
     for &d in &rest[..ndigits] {
         mag = mag.saturating_mul(10).saturating_add(u64::from(d - b'0'));
     }
-    Some(if negate { 0u64.wrapping_sub(mag) } else { mag } as u32)
+    Ok(if negate { 0u64.wrapping_sub(mag) } else { mag } as u32)
 }
 
 /// Safe port of make's `make_toui`: parse `s` as a base-10 unsigned integer,
-/// returning `None` for the C "Missing value"/"Invalid value" cases. See
+/// returning `Err` for the C "Missing value"/"Invalid value" cases. See
 /// [`parse_uint_strtoul`] for the exact `strtoul`-matching semantics.
-pub fn make_toui(s: &::core::ffi::CStr) -> Option<u32> {
+pub fn make_toui(s: &::core::ffi::CStr) -> Result<u32, MakeToUiError> {
     parse_uint_strtoul(s.to_bytes())
 }
 
@@ -789,33 +802,34 @@ pub unsafe fn get_tmpfile(name: *mut *mut c_char) -> *mut FILE {
 
 #[cfg(test)]
 mod make_toui_tests {
-    use super::make_toui;
+    use super::{make_toui, MakeToUiError};
 
     #[test]
     fn parses_plain_decimals() {
-        assert_eq!(make_toui(c"0"), Some(0));
-        assert_eq!(make_toui(c"42"), Some(42));
-        assert_eq!(make_toui(c"007"), Some(7));
-        assert_eq!(make_toui(c"4294967295"), Some(u32::MAX));
+        assert_eq!(make_toui(c"0"), Ok(0));
+        assert_eq!(make_toui(c"42"), Ok(42));
+        assert_eq!(make_toui(c"007"), Ok(7));
+        assert_eq!(make_toui(c"4294967295"), Ok(u32::MAX));
     }
 
     #[test]
     fn skips_leading_ws_and_sign() {
-        assert_eq!(make_toui(c"  12"), Some(12));
-        assert_eq!(make_toui(c"\t\n5"), Some(5));
-        assert_eq!(make_toui(c"+5"), Some(5));
+        assert_eq!(make_toui(c"  12"), Ok(12));
+        assert_eq!(make_toui(c"\t\n5"), Ok(5));
+        assert_eq!(make_toui(c"+5"), Ok(5));
         // strtoul negates into the unsigned range, then the cast truncates.
-        assert_eq!(make_toui(c"-1"), Some(u32::MAX));
+        assert_eq!(make_toui(c"-1"), Ok(u32::MAX));
     }
 
     #[test]
-    fn rejects_empty_and_garbage() {
-        assert_eq!(make_toui(c""), None); // "Missing value"
-        assert_eq!(make_toui(c"abc"), None); // no digits
-        assert_eq!(make_toui(c"+"), None); // lone sign, no digits
-        assert_eq!(make_toui(c"-"), None);
-        assert_eq!(make_toui(c"12abc"), None); // trailing junk
-        assert_eq!(make_toui(c"12 "), None); // trailing ws is not consumed
+    fn reports_missing_and_invalid() {
+        assert_eq!(make_toui(c""), Err(MakeToUiError::Missing)); // empty
+        assert_eq!(make_toui(c"abc"), Err(MakeToUiError::Invalid)); // no digits
+        assert_eq!(make_toui(c"+"), Err(MakeToUiError::Invalid)); // lone sign
+        assert_eq!(make_toui(c"-"), Err(MakeToUiError::Invalid));
+        assert_eq!(make_toui(c"12abc"), Err(MakeToUiError::Invalid)); // trailing junk
+        assert_eq!(make_toui(c"12 "), Err(MakeToUiError::Invalid)); // trailing ws kept
+        assert_eq!(make_toui(c"   "), Err(MakeToUiError::Invalid)); // ws-only is not Missing
     }
 
     #[test]
@@ -823,8 +837,8 @@ mod make_toui_tests {
         // On this (64-bit) target `c_ulong` is `u64`: strtoul accumulates in
         // u64 and the `(unsigned int)` cast truncates, so a value that is valid
         // in u64 but overflows u32 wraps rather than erroring.
-        assert_eq!(make_toui(c"4294967296"), Some(0)); // u32::MAX + 1 -> 0
-                                                       // True u64 overflow saturates to ULONG_MAX, whose low 32 bits are all-ones.
-        assert_eq!(make_toui(c"99999999999999999999999"), Some(u32::MAX));
+        assert_eq!(make_toui(c"4294967296"), Ok(0)); // u32::MAX + 1 -> 0
+                                                     // True u64 overflow saturates to ULONG_MAX, whose low 32 bits are all-ones.
+        assert_eq!(make_toui(c"99999999999999999999999"), Ok(u32::MAX));
     }
 }

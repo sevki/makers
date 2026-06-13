@@ -2923,3 +2923,19 @@ pub unsafe fn construct_command_argv(
     free(ifs as *mut ::core::ffi::c_void);
     argv
 }
+
+#[cfg(test)]
+mod load_too_high_tests {
+    use super::{load_too_high, max_load_average};
+
+    #[test]
+    fn returns_zero_without_load_limit() {
+        // With no `-l` load limit (max_load_average < 0, the default),
+        // load_too_high() short-circuits to 0 without probing /proc/loadavg or
+        // the system load average — a safe, deterministic path to cover.
+        unsafe {
+            max_load_average = -1.0;
+            assert_eq!(load_too_high(), 0);
+        }
+    }
+}
