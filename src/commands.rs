@@ -82,7 +82,7 @@ unsafe fn dep_name(d: *const Dep) -> *const c_char {
 /// `key` must point to a valid `dep` whose name (or file name) is a
 /// NUL-terminated string.
 pub unsafe fn dep_hash_1(key: *const c_void) -> c_ulong {
-    jhash_string(dep_name(key as *const dep) as *const c_uchar) as c_ulong
+    jhash_string(::core::ffi::CStr::from_ptr(dep_name(key as *const dep)).to_bytes()) as c_ulong
 }
 
 /// # Safety
