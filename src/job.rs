@@ -332,22 +332,30 @@ pub static mut job_counter: ::core::ffi::c_ulong = 0;
 pub static mut jobserver_tokens: ::core::ffi::c_uint = 0;
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 /// Safe port of make's `is_bourne_compatible_shell`: is the program named by
-/// `path` one of the known Bourne-compatible shells, by its basename (the part
-/// after the last directory separator)? On this target `ISDIRSEP` is just `/`
-/// (only `/` carries `MAP_DIRSEP` in `stopchar_map`), so the basename is the
-/// tail after the final `/`.
-pub fn is_bourne_compatible_shell(path: &::core::ffi::CStr) -> bool {
+/// `path` one of the known Bourne-compatible shells, compared by its file stem
+/// (the basename with any extension stripped)? On this target `ISDIRSEP` is just
+/// `/` (only `/` carries `MAP_DIRSEP` in `stopchar_map`), which matches
+/// `Path`'s component splitting.
+pub fn is_bourne_compatible_shell(path: &::std::path::Path) -> bool {
     // List of known POSIX (or POSIX-ish) shells.
-    const UNIX_SHELLS: [&[u8]; 7] = [b"sh", b"bash", b"dash", b"ksh", b"rksh", b"zsh", b"ash"];
-    let bytes = path.to_bytes();
-    let basename = match bytes.iter().rposition(|&c| c == b'/') {
-        Some(i) => &bytes[i + 1..],
-        None => bytes,
-    };
-    UNIX_SHELLS.contains(&basename)
+    const UNIX_SHELLS: [&str; 7] = ["sh", "bash", "dash", "ksh", "rksh", "zsh", "ash"];
+    match path.file_stem().and_then(|s| s.to_str()) {
+        Some(stem) => UNIX_SHELLS.contains(&stem),
+        None => false,
+    }
+}
+/// Borrow a NUL-terminated C string as a filesystem [`Path`](std::path::Path).
+///
+/// # Safety
+///
+/// `ptr` must point to a valid NUL-terminated C string that stays alive for
+/// the lifetime `'a`.
+unsafe fn path_from_cstr<'a>(ptr: *const ::core::ffi::c_char) -> &'a ::std::path::Path {
+    use ::std::os::unix::ffi::OsStrExt;
+    ::std::path::Path::new(::std::ffi::OsStr::from_bytes(
+        ::core::ffi::CStr::from_ptr(ptr).to_bytes(),
+    ))
 }
 /// # Safety
 ///
@@ -1132,7 +1140,7 @@ pub unsafe fn start_job_command(child: *mut child) {
             }
             commands_started = commands_started.wrapping_add(1);
             if !(*argv.offset(0 as ::core::ffi::c_int as isize)).is_null()
-                && is_bourne_compatible_shell(::core::ffi::CStr::from_ptr(
+                && is_bourne_compatible_shell(path_from_cstr(
                     *argv.offset(0 as ::core::ffi::c_int as isize),
                 ))
                 && (!(*argv.offset(1 as ::core::ffi::c_int as isize)).is_null()
@@ -2613,7 +2621,7 @@ unsafe extern "C" fn construct_command_argv_internal(
         0
     };
     if one_shell != 0 {
-        if is_bourne_compatible_shell(::core::ffi::CStr::from_ptr(shell)) {
+        if is_bourne_compatible_shell(path_from_cstr(shell)) {
             let mut f: *const ::core::ffi::c_char = line;
             let mut t: *mut ::core::ffi::c_char = line;
             while *f.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 {
@@ -2932,31 +2940,41 @@ mod loadavg_tests {
 #[cfg(test)]
 mod is_bourne_compatible_shell_tests {
     use super::is_bourne_compatible_shell;
+    use std::path::Path;
+
+    fn is_shell(s: &str) -> bool {
+        is_bourne_compatible_shell(Path::new(s))
+    }
 
     #[test]
     fn recognizes_known_shells_by_basename() {
-        assert!(is_bourne_compatible_shell(c"sh"));
-        assert!(is_bourne_compatible_shell(c"bash"));
-        assert!(is_bourne_compatible_shell(c"/bin/sh"));
-        assert!(is_bourne_compatible_shell(c"/usr/bin/bash"));
-        assert!(is_bourne_compatible_shell(c"/usr/local/bin/dash"));
-        assert!(is_bourne_compatible_shell(c"ksh"));
-        assert!(is_bourne_compatible_shell(c"rksh"));
-        assert!(is_bourne_compatible_shell(c"zsh"));
-        assert!(is_bourne_compatible_shell(c"ash"));
+        assert!(is_shell("sh"));
+        assert!(is_shell("bash"));
+        assert!(is_shell("/bin/sh"));
+        assert!(is_shell("/usr/bin/bash"));
+        assert!(is_shell("/usr/local/bin/dash"));
+        assert!(is_shell("ksh"));
+        assert!(is_shell("rksh"));
+        assert!(is_shell("zsh"));
+        assert!(is_shell("ash"));
     }
 
     #[test]
     fn rejects_non_bourne_shells() {
-        assert!(!is_bourne_compatible_shell(c"/bin/csh"));
-        assert!(!is_bourne_compatible_shell(c"tcsh"));
-        assert!(!is_bourne_compatible_shell(c"/usr/bin/fish"));
-        assert!(!is_bourne_compatible_shell(c"powershell"));
-        assert!(!is_bourne_compatible_shell(c""));
-        // Exact basename match only: a name containing a shell isn't a match.
-        assert!(!is_bourne_compatible_shell(c"/bin/bashful"));
-        assert!(!is_bourne_compatible_shell(c"notsh"));
-        // Trailing separator => empty basename => not a shell.
-        assert!(!is_bourne_compatible_shell(c"/bin/sh/"));
+        assert!(!is_shell("/bin/csh"));
+        assert!(!is_shell("tcsh"));
+        assert!(!is_shell("/usr/bin/fish"));
+        assert!(!is_shell("powershell"));
+        assert!(!is_shell(""));
+        // A name merely containing a shell isn't a match.
+        assert!(!is_shell("/bin/bashful"));
+        assert!(!is_shell("notsh"));
+    }
+
+    #[test]
+    fn path_normalizes_trailing_separator() {
+        // `Path` treats a trailing separator as part of the same final
+        // component, so the stem of "/bin/sh/" is still "sh".
+        assert!(is_shell("/bin/sh/"));
     }
 }
