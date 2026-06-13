@@ -1752,50 +1752,95 @@ unsafe fn func_sort(
     }
     o
 }
-unsafe extern "C" fn parse_textint(
+/// Outcome of parsing a textual integer with [`parse_textint`].
+enum TextInt {
+    /// The (post-whitespace) value is empty.
+    Empty,
+    /// The value is not a well-formed integer (no digits, or trailing junk).
+    NotNumeric,
+    /// A valid integer. `sign` is `-1`/`0`/`+1` for negative-nonzero / zero /
+    /// positive-nonzero; `num_start..num_end` is the run of significant digits
+    /// (leading zeros stripped), as offsets into the token slice.
+    Parsed {
+        sign: i32,
+        num_start: usize,
+        num_end: usize,
+    },
+}
+
+/// Pure mirror of make's `parse_textint` digit/sign parsing, over the token
+/// slice `t` (the bytes from `next_token(number)`, without the NUL).
+fn classify_textint(t: &[u8]) -> TextInt {
+    if t.is_empty() {
+        return TextInt::Empty;
+    }
+    let negative = t[0] == b'-';
+    let mut i = 0;
+    if negative || t[0] == b'+' {
+        i = 1;
+    }
+    let after_sign = i;
+    while i < t.len() && t[i] == b'0' {
+        i += 1;
+    }
+    let num_start = i;
+    while i < t.len() && t[i].is_ascii_digit() {
+        i += 1;
+    }
+    let num_end = i;
+    // No digits at all after the sign, or non-whitespace trailing the number.
+    // `char::is_whitespace` (Unicode White_Space) covers make's MAP_SPACE set
+    // (space, tab, newline, vertical tab, form feed, carriage return).
+    let trailing_ok = t[num_end..].iter().all(|&c| (c as char).is_whitespace());
+    if num_end == after_sign || !trailing_ok {
+        return TextInt::NotNumeric;
+    }
+    let nonzero = (num_start != num_end) as i32;
+    let sign = if negative { -nonzero } else { nonzero };
+    TextInt::Parsed {
+        sign,
+        num_start,
+        num_end,
+    }
+}
+
+/// # Safety
+///
+/// C-style API operating on raw pointers; `number` and `msg` must be valid
+/// NUL-terminated strings and the out-parameters must be valid for writes.
+/// Aborts via [`fatal`] on an empty or non-numeric value.
+unsafe fn parse_textint(
     number: *const ::core::ffi::c_char,
     msg: *const ::core::ffi::c_char,
     sign: *mut ::core::ffi::c_int,
     numstart: *mut *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
-    let after_sign: *const ::core::ffi::c_char;
-    let after_number: *const ::core::ffi::c_char;
-    let mut p: *const ::core::ffi::c_char = next_token(number);
-    let negative: ::core::ffi::c_int =
-        (*p as ::core::ffi::c_int == '-' as i32) as ::core::ffi::c_int;
-    let nonzero: ::core::ffi::c_int;
-    if *p as ::core::ffi::c_int == 0 {
-        fatal(
+    let p: *const ::core::ffi::c_char = next_token(number);
+    let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
+    match classify_textint(t) {
+        TextInt::Empty => fatal(
             *expanding_var,
             strlen(msg) as size_t,
             b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
             msg,
-        );
-    }
-    p = p.offset(
-        (negative != 0 || *p as ::core::ffi::c_int == '+' as i32) as ::core::ffi::c_int as isize,
-    );
-    after_sign = p;
-    while *p as ::core::ffi::c_int == '0' as i32 {
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-    }
-    *numstart = p;
-    while (*p as ::core::ffi::c_uint).wrapping_sub('0' as i32 as ::core::ffi::c_uint) <= 9 {
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-    }
-    after_number = p;
-    nonzero = (*numstart != after_number) as ::core::ffi::c_int;
-    *sign = if negative != 0 { -nonzero } else { nonzero };
-    if after_number == after_sign || *next_token(p) as ::core::ffi::c_int != 0 {
-        fatal(
+        ),
+        TextInt::NotNumeric => fatal(
             *expanding_var,
             (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
             b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
             msg,
             number,
-        );
+        ),
+        TextInt::Parsed {
+            sign: s,
+            num_start,
+            num_end,
+        } => {
+            *sign = s;
+            *numstart = p.add(num_start);
+            p.add(num_end)
+        }
     }
-    after_number
 }
 unsafe fn func_intcmp(
     mut o: *mut ::core::ffi::c_char,
@@ -3169,5 +3214,60 @@ mod parse_numeric_tests {
         assert_eq!(classify_numeric(b"12abc"), NumParse::Invalid); // trailing junk
         assert_eq!(classify_numeric(b"0x10"), NumParse::Invalid); // base 10 only
         assert_eq!(classify_numeric(b"1 2"), NumParse::Invalid); // internal whitespace
+    }
+}
+
+#[cfg(test)]
+mod classify_textint_tests {
+    use super::{classify_textint, TextInt};
+
+    /// Reduce a parse to `(sign, significant_digits)` for easy assertions, or
+    /// a marker string for the error cases.
+    fn parse(s: &str) -> Result<(i32, &str), &'static str> {
+        match classify_textint(s.as_bytes()) {
+            TextInt::Empty => Err("empty"),
+            TextInt::NotNumeric => Err("not-numeric"),
+            TextInt::Parsed {
+                sign,
+                num_start,
+                num_end,
+            } => Ok((sign, &s[num_start..num_end])),
+        }
+    }
+
+    #[test]
+    fn parses_signs_and_strips_leading_zeros() {
+        assert_eq!(parse("12"), Ok((1, "12")));
+        assert_eq!(parse("+12"), Ok((1, "12")));
+        assert_eq!(parse("-12"), Ok((-1, "12")));
+        assert_eq!(parse("0012"), Ok((1, "12"))); // leading zeros stripped
+        assert_eq!(parse("-0012"), Ok((-1, "12")));
+    }
+
+    #[test]
+    fn zero_has_sign_zero_and_no_significant_digits() {
+        assert_eq!(parse("0"), Ok((0, "")));
+        assert_eq!(parse("000"), Ok((0, "")));
+        assert_eq!(parse("-0"), Ok((0, "")));
+        assert_eq!(parse("+000"), Ok((0, "")));
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_allowed() {
+        // The token slice begins after next_token, but trailing whitespace
+        // (any MAP_SPACE byte, including vertical tab) is still permitted.
+        assert_eq!(parse("12\t"), Ok((1, "12")));
+        assert_eq!(parse("12\u{0b}"), Ok((1, "12"))); // vertical tab
+        assert_eq!(parse("7 "), Ok((1, "7")));
+    }
+
+    #[test]
+    fn empty_and_non_numeric_are_rejected() {
+        assert_eq!(parse(""), Err("empty"));
+        assert_eq!(parse("-"), Err("not-numeric")); // sign with no digits
+        assert_eq!(parse("+"), Err("not-numeric"));
+        assert_eq!(parse("abc"), Err("not-numeric"));
+        assert_eq!(parse("12abc"), Err("not-numeric")); // trailing junk
+        assert_eq!(parse("1 2"), Err("not-numeric")); // internal whitespace
     }
 }
