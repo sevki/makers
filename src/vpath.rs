@@ -262,11 +262,15 @@ pub unsafe fn construct_vpath_list(pattern: *mut c_char, dirpath: *mut c_char) {
     vpaths = path;
     (*path).pattern = strcache_add(pattern);
     (*path).patlen = strlen(pattern);
-    // The cached pattern is byte-identical, so `%` is at the same position.
+    // `find_percent` already unquoted `pattern` in place, and the cached copy
+    // is byte-identical, so the `%` sits at the same offset. Reuse that
+    // offset rather than re-parsing: a second `find_percent` pass would
+    // re-unquote the string and mutate the shared cache entry.
     (*path).percent = if percent.is_null() {
         null()
     } else {
-        find_percent((*path).pattern as *mut c_char)
+        let off = percent as usize - pattern as usize;
+        cstr_bytes((*path).pattern)[off..].as_ptr() as *const c_char
     };
 }
 
