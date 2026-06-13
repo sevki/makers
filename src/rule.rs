@@ -10,7 +10,7 @@ use crate::misc::free_ns_chain;
 use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xstrdup};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add_len;
-use libc::{abort, free, memcpy, printf, putchar, puts, strchr, strcmp, strlen, strrchr};
+use libc::{abort, free, memcpy, printf, putchar, puts, strchr, strlen, strrchr};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
@@ -73,12 +73,9 @@ unsafe fn dep_name(d: *const dep) -> *const ::core::ffi::c_char {
             .name
     }
 }
-/// String equality via the C `streq` macro's shape: compare the first bytes,
-/// then fall back to `strcmp` on the remainder.
-unsafe fn streq(a: *const ::core::ffi::c_char, b: *const ::core::ffi::c_char) -> bool {
-    let a0 = *a.as_ref().expect("streq requires non-null strings");
-    let b0 = *b.as_ref().expect("streq requires non-null strings");
-    a0 == b0 && (a0 == 0 || strcmp(a.add(1), b.add(1)) == 0)
+/// Byte-for-byte equality of two NUL-terminated strings (the C `streq` macro).
+fn streq(a: &::core::ffi::CStr, b: &::core::ffi::CStr) -> bool {
+    a == b
 }
 /// Append the NUL-terminated string `s` to `buf` (without the NUL).
 unsafe fn push_cstr(buf: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
@@ -357,7 +354,12 @@ pub unsafe fn convert_to_pattern() {
         while let Some(d2r) = d2.as_ref() {
             let s2len = strlen(dep_name(d2));
             // Skip the pairing of a suffix with itself.
-            if !(slen == s2len && streq(dep_name(d), dep_name(d2))) {
+            if !(slen == s2len
+                && streq(
+                    ::core::ffi::CStr::from_ptr(dep_name(d)),
+                    ::core::ffi::CStr::from_ptr(dep_name(d2)),
+                ))
+            {
                 memcpy(rulename.add(slen).cast(), dep_name(d2).cast(), s2len + 1);
                 if let Some(f) = lookup_file(rulename).as_mut() {
                     if let Some(cmds) = f.cmds.as_mut() {
@@ -411,7 +413,10 @@ unsafe fn new_pattern_rule(rule: *mut rule, override_0: ::core::ffi::c_int) -> :
             let mut j = 0usize;
             while j < rr.num as usize {
                 let target_j = *rr.targets.add(j).as_ref().expect("rule target slot");
-                if !streq(target_i, target_j) {
+                if !streq(
+                    ::core::ffi::CStr::from_ptr(target_i),
+                    ::core::ffi::CStr::from_ptr(target_j),
+                ) {
                     break;
                 }
                 j += 1;
@@ -421,7 +426,10 @@ unsafe fn new_pattern_rule(rule: *mut rule, override_0: ::core::ffi::c_int) -> :
                 let mut d: *mut dep = new_rule.deps;
                 let mut d2: *mut dep = rr.deps;
                 while let (Some(dr), Some(d2r)) = (d.as_ref(), d2.as_ref()) {
-                    if !streq(dep_name(d), dep_name(d2)) {
+                    if !streq(
+                        ::core::ffi::CStr::from_ptr(dep_name(d)),
+                        ::core::ffi::CStr::from_ptr(dep_name(d2)),
+                    ) {
                         break;
                     }
                     d = dr.next;
@@ -621,5 +629,25 @@ pub unsafe fn print_rule_data_base() {
             num_pattern_rules,
             rules,
         );
+    }
+}
+
+#[cfg(test)]
+mod streq_tests {
+    use super::streq;
+
+    #[test]
+    fn equal_and_unequal_strings() {
+        assert!(streq(c"", c""));
+        assert!(streq(c"%.o", c"%.o"));
+        assert!(streq(c"target%pattern", c"target%pattern"));
+
+        assert!(!streq(c"", c"x"));
+        assert!(!streq(c"x", c""));
+        assert!(!streq(c"%.o", c"%.c"));
+        // Equal prefix, differing length.
+        assert!(!streq(c"abc", c"abcd"));
+        // Differing first byte (the C macro's fast path).
+        assert!(!streq(c"a", c"b"));
     }
 }
