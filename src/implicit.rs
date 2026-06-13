@@ -11,7 +11,7 @@ use crate::misc::{print_spaces, skip_reference, xcalloc};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use c2rust_bitfields;
-use libc::{printf, strchr, strcmp, strlen};
+use libc::{printf, strchr, strlen};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -85,12 +85,9 @@ unsafe fn cstr_bytes<'a>(s: *const ::core::ffi::c_char) -> &'a [u8] {
     ::core::slice::from_raw_parts(s.cast::<u8>(), strlen(s))
 }
 
-/// String equality via the C `streq` macro's shape: compare the first bytes,
-/// then fall back to `strcmp` on the remainder.
-unsafe fn streq(a: *const ::core::ffi::c_char, b: *const ::core::ffi::c_char) -> bool {
-    let a0 = *a.as_ref().expect("streq requires non-null strings");
-    let b0 = *b.as_ref().expect("streq requires non-null strings");
-    a0 == b0 && (a0 == 0 || strcmp(a.add(1), b.add(1)) == 0)
+/// String equality, mirroring make's `streq` macro (`strcmp(a, b) == 0`).
+fn streq(a: &::core::ffi::CStr, b: &::core::ffi::CStr) -> bool {
+    a == b
 }
 
 /// A prerequisite discovered while trying a pattern rule, together with the
@@ -672,7 +669,10 @@ unsafe fn pattern_search(
                                 } else {
                                     dp = file_ref.deps;
                                     while let Some(dpr) = dp.as_ref() {
-                                        if streq(dr.name, dep_name(dp)) {
+                                        if streq(
+                                            ::core::ffi::CStr::from_ptr(dr.name),
+                                            ::core::ffi::CStr::from_ptr(dep_name(dp)),
+                                        ) {
                                             break;
                                         }
                                         dp = dpr.next;
@@ -1031,4 +1031,18 @@ unsafe fn pattern_search(
         filename
     );
     0
+}
+
+#[cfg(test)]
+mod streq_tests {
+    use super::streq;
+
+    #[test]
+    fn equality_matches_strcmp() {
+        assert!(streq(c"foo.o", c"foo.o"));
+        assert!(streq(c"", c""));
+        assert!(!streq(c"foo.o", c"bar.o"));
+        assert!(!streq(c"foo", c"foobar")); // prefix is not equal
+        assert!(!streq(c"", c"x"));
+    }
 }
