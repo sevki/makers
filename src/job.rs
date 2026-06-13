@@ -2928,14 +2928,24 @@ pub unsafe fn construct_command_argv(
 mod load_too_high_tests {
     use super::{load_too_high, max_load_average};
 
+    // A single test (not several) because these all mutate the process-global
+    // `max_load_average` and `load_too_high`'s cached `proc_fd`; running them as
+    // one body keeps them off separate parallel test threads.
     #[test]
-    fn returns_zero_without_load_limit() {
-        // With no `-l` load limit (max_load_average < 0, the default),
-        // load_too_high() short-circuits to 0 without probing /proc/loadavg or
-        // the system load average — a safe, deterministic path to cover.
+    fn load_too_high_paths() {
         unsafe {
+            // No `-l` limit (the default): short-circuit to 0 without probing.
             max_load_average = -1.0;
             assert_eq!(load_too_high(), 0);
+
+            // With a very high limit, exercise the /proc/loadavg parse path
+            // (which runs make_toui on the running-process field) where it is
+            // available; a huge limit means we never report "load too high".
+            if std::path::Path::new("/proc/loadavg").exists() {
+                max_load_average = 1.0e9;
+                assert_eq!(load_too_high(), 0);
+            }
+            max_load_average = -1.0; // restore the default for any later code
         }
     }
 }
