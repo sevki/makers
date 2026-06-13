@@ -3,7 +3,7 @@ pub use crate::ffi_types::{
     __syscall_slong_t, __time_t, __uid_t, intmax_t, off_t, size_t, ssize_t, uintmax_t,
 };
 use crate::misc::{make_toui, readbuf, writebuf};
-use libc::{__errno_location, close, open, strcmp, strrchr};
+use libc::{__errno_location, close, open, strcmp};
 extern "C" {
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
     fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
@@ -26,11 +26,6 @@ extern "C" {
     fn memcmp(
         __s1: *const ::core::ffi::c_void,
         __s2: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
         __n: size_t,
     ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
@@ -421,41 +416,53 @@ pub unsafe fn ar_scan(
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_name_equal(
-    mut name: *const ::core::ffi::c_char,
+    name: *const ::core::ffi::c_char,
     mem: *const ::core::ffi::c_char,
     truncated: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
-    let p: *const ::core::ffi::c_char;
-    if *name as ::core::ffi::c_int == *mem as ::core::ffi::c_int
-        && (*name as ::core::ffi::c_int == 0
-            || strcmp(
-                name.offset(1 as ::core::ffi::c_int as isize),
-                mem.offset(1 as ::core::ffi::c_int as isize),
-            ) == 0)
-    {
-        return 1;
+    let name = ::core::ffi::CStr::from_ptr(name).to_bytes();
+    let mem = ::core::ffi::CStr::from_ptr(mem).to_bytes();
+    ar_name_equal_bytes(name, mem, truncated != 0) as ::core::ffi::c_int
+}
+
+/// Number of significant `ar_name` bytes a truncated (System V/GNU short)
+/// archive member name is compared on: `sizeof ar_hdr.ar_name - 1`.
+const AR_NAME_CMP_LEN: usize = 15;
+
+/// Does archive member `name` refer to header member `mem`? Pure mirror of
+/// make's `ar_name_equal`: try a full match first, then retry on `name`'s
+/// basename, comparing only the first [`AR_NAME_CMP_LEN`] bytes when the
+/// archive format truncates member names.
+fn ar_name_equal_bytes(name: &[u8], mem: &[u8], truncated: bool) -> bool {
+    if name == mem {
+        return true;
     }
-    p = strrchr(name, '/' as i32);
-    if !p.is_null() {
-        name = p.offset(1 as ::core::ffi::c_int as isize);
+    // An archive member name has no directory part: retry on the basename.
+    let name = match name.iter().rposition(|&c| c == b'/') {
+        Some(i) => &name[i + 1..],
+        None => name,
+    };
+    if truncated {
+        strncmp_eq(name, mem, AR_NAME_CMP_LEN)
+    } else {
+        name == mem
     }
-    if truncated != 0 {
-        let mut _hdr: ar_hdr = ar_hdr {
-            ar_name: [0; 16],
-            ar_date: [0; 12],
-            ar_uid: [0; 6],
-            ar_gid: [0; 6],
-            ar_mode: [0; 8],
-            ar_size: [0; 10],
-            ar_fmag: [0; 2],
-        };
-        return (strncmp(
-            name,
-            mem,
-            (::core::mem::size_of::<[::core::ffi::c_char; 16]>() as size_t).wrapping_sub(1),
-        ) == 0) as ::core::ffi::c_int;
+}
+
+/// Equivalent of `strncmp(a, b, n) == 0` for NUL-terminated strings supplied as
+/// their NUL-free byte slices: the end of a slice acts as the terminating NUL.
+fn strncmp_eq(a: &[u8], b: &[u8], n: usize) -> bool {
+    for i in 0..n {
+        let ca = a.get(i).copied().unwrap_or(0);
+        let cb = b.get(i).copied().unwrap_or(0);
+        if ca != cb {
+            return false;
+        }
+        if ca == 0 {
+            break;
+        }
     }
-    (strcmp(name, mem) == 0) as ::core::ffi::c_int
+    true
 }
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
@@ -615,3 +622,53 @@ pub unsafe fn ar_member_touch(
 }
 pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
 pub const __INT_MAX__: ::core::ffi::c_int = 2147483647 as ::core::ffi::c_int;
+
+#[cfg(test)]
+mod ar_name_equal_tests {
+    use super::ar_name_equal_bytes;
+
+    #[test]
+    fn exact_match() {
+        assert!(ar_name_equal_bytes(b"foo.o", b"foo.o", false));
+        assert!(ar_name_equal_bytes(b"", b"", false));
+    }
+
+    #[test]
+    fn basename_is_compared_when_name_has_directory() {
+        // The header member name has no directory part, so `name`'s leading
+        // directory is stripped before comparing.
+        assert!(ar_name_equal_bytes(b"dir/foo.o", b"foo.o", false));
+        assert!(ar_name_equal_bytes(b"a/b/c/foo.o", b"foo.o", false));
+        assert!(!ar_name_equal_bytes(b"dir/foo.o", b"bar.o", false));
+    }
+
+    #[test]
+    fn untruncated_requires_full_equality() {
+        // 16-char basenames differ only past byte 15; without truncation they
+        // are distinct.
+        assert!(!ar_name_equal_bytes(
+            b"abcdefghijklmno1",
+            b"abcdefghijklmno2",
+            false,
+        ));
+    }
+
+    #[test]
+    fn truncated_compares_only_first_15_bytes() {
+        // Same first 15 bytes, differing 16th: equal under truncation.
+        assert!(ar_name_equal_bytes(
+            b"abcdefghijklmno1",
+            b"abcdefghijklmno2",
+            true,
+        ));
+        // A difference within the first 15 bytes is still caught.
+        assert!(!ar_name_equal_bytes(
+            b"abcdefghijklmnX",
+            b"abcdefghijklmnY",
+            true
+        ));
+        // Shorter-but-equal names match under truncation too.
+        assert!(ar_name_equal_bytes(b"short.o", b"short.o", true));
+        assert!(!ar_name_equal_bytes(b"short.o", b"shorter.o", true));
+    }
+}
