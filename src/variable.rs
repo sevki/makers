@@ -321,7 +321,7 @@ unsafe extern "C" fn check_valid_name(
         return;
     }
     // The name is valid unless it contains an unquoted blank or newline.
-    let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length as usize);
+    let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length);
     if !name_bytes
         .iter()
         .any(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE))
@@ -629,7 +629,7 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
         return;
     }
     // The reference is valid unless it contains an unquoted blank or newline.
-    let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length as usize);
+    let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length);
     if !name_bytes
         .iter()
         .any(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE))
