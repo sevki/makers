@@ -5,8 +5,13 @@ on:
     push:
         branches: [main]
 
+# contents:read to check out and read the baseline; pull-requests:write so the
+# same job can post the cargo-crap report comment. (This single-job design only
+# posts comments for same-repo PRs — fork PRs run with a read-only token. This
+# repo's PRs come from same-repo branches, so that's fine.)
 permissions:
     contents: read
+    pull-requests: write
 
 concurrency:
     group: change-risk-${{ github.ref }}
@@ -16,12 +21,6 @@ concurrency:
 # slow/unreachable from CI, so use a GitHub mirror (same as coverage.yml).
 env:
     GNULIB_URL: https://github.com/sevki/gnulib.git
-
-# Read-only: this job only checks out code and reports. The PR comment is
-# posted by the companion change-risk-comment.yml workflow, which holds the
-# pull-requests:write scope.
-permissions:
-    contents: read
 
 jobs:
     cargo-crap:
@@ -72,8 +71,7 @@ jobs:
             # PR worktree. Otherwise a PR could raise a function's CRAP score and
             # bump .cargo-crap-baseline.json in the same diff, so --fail-regression
             # would compare new-vs-new and never fire. We resolve the baseline
-            # from origin/main; until main carries one (e.g. this bootstrapping
-            # PR), fall back to the in-tree file.
+            # from origin/main; until main carries one, fall back to the in-tree file.
             - name: Resolve trusted baseline
               run: |
                   git fetch --depth=1 origin main:refs/remotes/origin/main || true
@@ -88,32 +86,52 @@ jobs:
             # integration test fails, so the CRAP gate scores real data.
             - run: cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info
 
-            # Render the PR-comment report (deltas vs baseline). Generated
-            # before the gate so a regression failure still publishes the
-            # comment. The pr-comment format emits its own
-            # `<!-- cargo-crap-report -->` marker, which the companion workflow
-            # uses to find and update an existing comment instead of stacking
-            # new ones. Function and Location cells auto-link to source via
-            # GITHUB_SERVER_URL / GITHUB_REPOSITORY / GITHUB_SHA, set by Actions.
+            # Render the PR-comment report (deltas vs baseline). Generated before
+            # the gate so a regression failure still publishes the comment. The
+            # pr-comment format emits its own `<!-- cargo-crap-report -->` marker,
+            # which the post step below uses to update an existing comment instead
+            # of stacking new ones. Function and Location cells auto-link to source
+            # via GITHUB_SERVER_URL / GITHUB_REPOSITORY / GITHUB_SHA, set by Actions.
             - name: Render PR comment
               if: github.event_name == 'pull_request'
               run: |
                   cargo crap --lcov lcov.info \
                     --baseline main-baseline.json \
                     --format pr-comment --output crap-comment.md
-                  echo "${{ github.event.pull_request.number }}" > pr-number.txt
 
-            # Uploaded for the privileged workflow_run job to post. The CI run
-            # itself only has read access on fork PRs, so commenting is deferred.
-            - name: Upload PR comment artifact
+            # Post or update the report comment in this same job. Same-repo PRs
+            # carry pull-requests:write, so no companion workflow_run is needed.
+            - name: Post or update PR comment
               if: github.event_name == 'pull_request'
-              uses: actions/upload-artifact@v4
+              uses: actions/github-script@v7
               with:
-                  name: crap-pr-comment
-                  path: |
-                      crap-comment.md
-                      pr-number.txt
-                  if-no-files-found: error
+                  script: |
+                      const fs = require('fs');
+                      if (!fs.existsSync('crap-comment.md')) return;
+                      const body = fs.readFileSync('crap-comment.md', 'utf8');
+                      const prNumber = context.payload.pull_request.number;
+                      const marker = '<!-- cargo-crap-report -->';
+                      const { data: comments } = await github.rest.issues.listComments({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: prNumber,
+                      });
+                      const existing = comments.find(c => c.body.startsWith(marker));
+                      if (existing) {
+                        await github.rest.issues.updateComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          comment_id: existing.id,
+                          body,
+                        });
+                      } else {
+                        await github.rest.issues.createComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          issue_number: prNumber,
+                          body,
+                        });
+                      }
 
             # Gate on regressions, not absolute score: the codebase already
             # carries debt above threshold 30, so blocking on --fail-above
