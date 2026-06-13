@@ -1592,7 +1592,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
     if just_print_flag != 0 {
         return us_success;
     }
-    if ar_name((*file).name) != 0 {
+    if ar_name(::core::ffi::CStr::from_ptr((*file).name)) {
         return (if ar_touch((*file).name) != 0 {
             us_failed as ::core::ffi::c_int
         } else {
@@ -1761,7 +1761,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
     let propagate_timestamp: ::core::ffi::c_uint;
     // Checked view of FILE; a null argument is a caller bug.
     let mut file = file.as_mut().expect("f_mtime: null file");
-    if ar_name(file.name) != 0 {
+    if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
         let memmtime: uintmax_t;
         let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();

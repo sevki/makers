@@ -4098,7 +4098,9 @@ pub unsafe fn parse_file_seq(
                         name = tildep;
                     }
                 }
-                if !(flags & 0x2 as ::core::ffi::c_int != 0) && ar_name(name) != 0 {
+                if !(flags & 0x2 as ::core::ffi::c_int != 0)
+                    && ar_name(::core::ffi::CStr::from_ptr(name))
+                {
                     ar_parse_name(name, &raw mut arname, &raw mut memname);
                     name = arname;
                 }

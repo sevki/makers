@@ -140,7 +140,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     let mut percent_buf: Vec<u8>;
     let at: *const c_char;
     let percent: *const c_char;
-    if ar_name(file.name) != 0 {
+    if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
         let paren = strchr(file.name, '(' as c_int);
         let lib_len = paren.offset_from(file.name) as usize;
         at_buf = ::core::slice::from_raw_parts(file.name as *const u8, lib_len).to_vec();
@@ -161,7 +161,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     if stem.is_null() {
         let name: *const c_char;
         let len: size_t;
-        if ar_name(file.name) != 0 {
+        if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
             name = strchr(file.name, '(' as c_int).add(1);
             len = strlen(name) - 1;
         } else {
@@ -263,7 +263,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         {
             let mut c = dep_name(d);
             let len;
-            if ar_name(c) != 0 {
+            if ar_name(::core::ffi::CStr::from_ptr(c)) {
                 c = strchr(c, '(' as c_int).add(1);
                 len = strlen(c) - 1;
             } else {
@@ -341,7 +341,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         {
             let mut c = dep_name(d);
             let len;
-            if ar_name(c) != 0 {
+            if ar_name(::core::ffi::CStr::from_ptr(c)) {
                 c = strchr(c, '(' as c_int).add(1);
                 len = strlen(c) - 1;
             } else {
@@ -607,7 +607,7 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
     }
 
     // An archive member can't be unlinked; just warn if it looks touched.
-    if ar_name(file.name) != 0 {
+    if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
         let file_date: time_t = if file.last_mtime == NONEXISTENT_MTIME as uintmax_t {
             -1
         } else {
