@@ -80,7 +80,7 @@ pub enum MakeToUiError {
 /// and saturated exactly as `strtoul` clamps to `ULONG_MAX`, then truncated to
 /// `u32` like the `(unsigned int)` cast in C `make_toui`; a `-` sign wraps
 /// through that cast the same way.
-fn parse_uint_strtoul(bytes: &[u8]) -> Result<u32, MakeToUiError> {
+pub(crate) fn parse_uint_strtoul(bytes: &[u8]) -> Result<u32, MakeToUiError> {
     if bytes.is_empty() {
         return Err(MakeToUiError::Missing);
     }
