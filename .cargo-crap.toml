@@ -1,0 +1,22 @@
+# cargo-crap configuration
+# CRAP (Change Risk Anti-Patterns) metric: flags functions that are both
+# highly complex and poorly tested. https://minikin.me/blog/cargo-crap
+#
+# Run with coverage for a real score:
+#   ./scripts/crap.sh
+# Or a quick complexity-only look (treats everything as 0% covered):
+#   cargo crap
+
+# CRAP score above which a function is considered "crappy".
+threshold = 30
+
+# How to treat functions with complexity data but no coverage data.
+# pessimistic = assume 0% covered (safest default).
+missing = "pessimistic"
+
+# Files skipped at walk time (this is a C2Rust port; some modules are
+# mechanically generated and not meaningful CRAP targets).
+exclude = [
+    "tests/**",
+    "proc-macros/**",
+]
