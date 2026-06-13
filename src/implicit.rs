@@ -179,38 +179,51 @@ unsafe fn get_next_word(
     buffer: *const ::core::ffi::c_char,
     length: *mut size_t,
 ) -> *const ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char = buffer;
-    while stop_set(*p as u8, MAP_BLANK | MAP_NEWLINE) {
-        p = p.add(1);
+    // View the NUL-terminated buffer as a byte slice (excluding the NUL) so the
+    // scan walks indices instead of dereferencing raw pointers.
+    let bytes: &[u8] = ::core::ffi::CStr::from_ptr(buffer).to_bytes();
+    let n = bytes.len();
+    let mut i = 0usize;
+    // Skip any leading blanks or newlines.
+    while i < n && stop_set(bytes[i], MAP_BLANK | MAP_NEWLINE) {
+        i += 1;
     }
-    let beg: *const ::core::ffi::c_char = p;
-    let mut c: ::core::ffi::c_char = *p;
-    p = p.add(1);
-    if c == 0 {
+    let beg = i;
+    if i >= n {
+        // The first non-blank byte is the terminating NUL: no word remains.
         return ::core::ptr::null();
     }
+    // Consume the first byte of the word.
+    let mut c = bytes[i];
+    i += 1;
     loop {
-        match c as u8 {
+        match c {
             0 | b' ' | b'\t' => {
                 // Back up over the terminating whitespace/NUL.
-                p = p.sub(1);
+                i -= 1;
                 break;
             }
             b'$' => {
-                p = skip_reference(p);
+                // `skip_reference` consumes a `$(...)`/`${...}` reference. It
+                // takes the byte following the `$`; hand it a borrowed
+                // sub-pointer and translate the result back to an index via
+                // address subtraction (no pointer arithmetic).
+                let after = skip_reference(bytes[i..].as_ptr() as *const ::core::ffi::c_char);
+                i = (after as usize) - (bytes.as_ptr() as usize);
             }
             b'|' => {
                 break;
             }
             _ => {}
         }
-        c = *p;
-        p = p.add(1);
+        // Read the next byte, treating the position past the slice as the NUL.
+        c = if i < n { bytes[i] } else { 0 };
+        i += 1;
     }
     if let Some(len) = length.as_mut() {
-        *len = p.offset_from(beg) as size_t;
+        *len = (i - beg) as size_t;
     }
-    beg
+    bytes[beg..].as_ptr() as *const ::core::ffi::c_char
 }
 /// The per-target views of a rule needed for matching: the target string,
 /// its bytes, and the index of its `%`.
@@ -243,10 +256,13 @@ unsafe fn pattern_search(
     // Byte view of the target name (without the NUL); the underlying string
     // lives in the string cache and is never mutated during the search.
     let name: &[u8] = ::core::slice::from_raw_parts(filename.cast::<u8>(), namelen);
-    let mut int_file: *mut file = ::core::ptr::null_mut();
     // Backing storage for the "intermediate file" scratch entries; entries
     // may be linked into the patdeps list, so they must live until return.
     let mut int_file_storage: Vec<Box<file>> = Vec::new();
+    // A scratch entry kept for reuse when the previous intermediate search
+    // failed. Holding it in an `Option` (rather than a nullable raw pointer)
+    // keeps the pointer always valid storage-backed, never a null sentinel.
+    let mut int_file_reuse: Option<*mut file> = None;
     let mut max_deps: ::core::ffi::c_uint = max_pattern_deps;
     // The viable prerequisites recorded while trying a rule.
     let mut deplist: Vec<patdeps> = Vec::with_capacity(max_deps as usize);
@@ -724,16 +740,29 @@ unsafe fn pattern_search(
                                                 },
                                                 dr.name
                                             );
-                                            if int_file.is_null() {
-                                                int_file_storage
-                                                    .push(Box::new(::core::mem::zeroed::<file>()));
-                                                int_file = &raw mut **int_file_storage
-                                                    .last_mut()
-                                                    .expect("just pushed");
+                                            // Reuse the scratch entry kept from a previous failed
+                                            // search, or allocate a fresh one. Either way `int_file`
+                                            // comes from valid storage and is never a null sentinel.
+                                            let int_file: *mut file = match int_file_reuse.take() {
+                                                Some(p) => p,
+                                                None => {
+                                                    int_file_storage.push(Box::new(
+                                                        ::core::mem::zeroed::<file>(),
+                                                    ));
+                                                    &raw mut **int_file_storage
+                                                        .last_mut()
+                                                        .expect("just pushed")
+                                                }
+                                            };
+                                            // Reset the scratch entry to a zeroed file before
+                                            // reusing it (replaces a raw `write_bytes`).
+                                            {
+                                                let int_ref = int_file
+                                                    .as_mut()
+                                                    .expect("scratch entry is storage-backed");
+                                                *int_ref = ::core::mem::zeroed::<file>();
+                                                int_ref.name = dr.name;
                                             }
-                                            ::core::ptr::write_bytes(int_file, 0, 1);
-                                            int_file.as_mut().expect("allocated just above").name =
-                                                dr.name;
                                             if pattern_search(
                                                 int_file,
                                                 0,
@@ -744,18 +773,17 @@ unsafe fn pattern_search(
                                             {
                                                 let int_ref = int_file
                                                     .as_mut()
-                                                    .expect("allocated just above");
+                                                    .expect("scratch entry is storage-backed");
                                                 pe.pattern = int_ref.name;
                                                 int_ref.name = dr.name;
                                                 pe.file = int_file;
-                                                int_file = ::core::ptr::null_mut();
                                                 pe.name = dr.name;
                                                 deplist.push(pe);
                                                 found_intermediate = true;
                                             } else {
                                                 let int_ref = int_file
                                                     .as_mut()
-                                                    .expect("allocated just above");
+                                                    .expect("scratch entry is storage-backed");
                                                 if !int_ref.variables.is_null() {
                                                     free_variable_set(int_ref.variables);
                                                 }
@@ -765,6 +793,8 @@ unsafe fn pattern_search(
                                                 if df.is_null() {
                                                     file_impossible(dr.name);
                                                 }
+                                                // Keep this scratch entry to reuse next iteration.
+                                                int_file_reuse = Some(int_file);
                                             }
                                         }
                                         if !found_intermediate {
@@ -822,12 +852,17 @@ unsafe fn pattern_search(
                     // An intermediate file: merge the scratch entry into the
                     // real file table.
                     let imf = pe.file.as_mut().expect("checked non-null");
-                    let f = match lookup_file(imf.name).as_mut() {
-                        Some(f) => f,
-                        None => enter_file(imf.name)
-                            .as_mut()
-                            .expect("enter_file returns a file"),
+                    // Resolve the real file for this intermediate, creating it
+                    // if absent. Use an explicit null check (not `as_mut`) so the
+                    // looked-up pointer is treated as a validated, non-null
+                    // pointer before it is dereferenced.
+                    let found: *mut file = lookup_file(imf.name);
+                    let f_ptr: *mut file = if found.is_null() {
+                        enter_file(imf.name)
+                    } else {
+                        found
                     };
+                    let f = f_ptr.as_mut().expect("looked up or just entered");
                     f.deps = imf.deps;
                     f.cmds = imf.cmds;
                     f.stem = imf.stem;
