@@ -805,9 +805,8 @@ unsafe fn func_notdir_suffix(
     let mut p2: *const ::core::ffi::c_char;
     let mut doneany: ::core::ffi::c_int = 0;
     let mut len: size_t = 0;
-    let is_suffix: ::core::ffi::c_int = (*funcname.offset(0 as ::core::ffi::c_int as isize)
-        as ::core::ffi::c_int
-        == 's' as i32) as ::core::ffi::c_int;
+    let is_suffix: ::core::ffi::c_int =
+        (*funcname as ::core::ffi::c_int == 's' as i32) as ::core::ffi::c_int;
     let is_notdir: ::core::ffi::c_int = (is_suffix == 0) as ::core::ffi::c_int;
     let stop: ::core::ffi::c_int = MAP_DIRSEP | (if is_suffix != 0 { MAP_DOT } else { 0 });
     loop {
@@ -815,34 +814,40 @@ unsafe fn func_notdir_suffix(
         if p2.is_null() {
             break;
         }
-        let mut p: *const ::core::ffi::c_char = p2
-            .offset(len as isize)
-            .offset(-(1 as ::core::ffi::c_int as isize));
-        while p >= p2
-            && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-                & stop
-                != 0)
-        {
-            p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-        }
-        if p >= p2 {
-            if is_notdir != 0 {
-                p = p.offset(1 as ::core::ffi::c_int as isize);
-            } else if *p as ::core::ffi::c_int != '.' as i32 {
-                continue;
+        // The token is `len` bytes at p2; scan back to the last separator
+        // (or '.' for $(suffix)) by index rather than walking pointers.
+        let tok = ::core::slice::from_raw_parts(p2 as *const u8, len as usize);
+        match tok.iter().rposition(|&c| stop_set(c, stop)) {
+            Some(pos) => {
+                if is_notdir != 0 {
+                    o = variable_buffer_output(
+                        o,
+                        tok[pos + 1..].as_ptr() as *const ::core::ffi::c_char,
+                        (tok.len() - pos - 1) as size_t,
+                    );
+                } else if tok[pos] != b'.' {
+                    continue;
+                } else {
+                    o = variable_buffer_output(
+                        o,
+                        tok[pos..].as_ptr() as *const ::core::ffi::c_char,
+                        (tok.len() - pos) as size_t,
+                    );
+                }
+                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+                doneany = 1;
             }
-            o = variable_buffer_output(
-                o,
-                p,
-                len.wrapping_sub(p.offset_from(p2) as ::core::ffi::c_long as size_t),
-            );
-        } else if is_notdir != 0 {
-            o = variable_buffer_output(o, p2, len);
-        }
-        if is_notdir != 0 || p >= p2 {
-            o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-            doneany = 1;
+            None => {
+                if is_notdir != 0 {
+                    o = variable_buffer_output(o, p2, len);
+                    o = variable_buffer_output(
+                        o,
+                        b" \0" as *const u8 as *const ::core::ffi::c_char,
+                        1,
+                    );
+                    doneany = 1;
+                }
+            }
         }
     }
     if doneany != 0 {
@@ -859,9 +864,8 @@ unsafe fn func_basename_dir(
     let mut p2: *const ::core::ffi::c_char;
     let mut doneany: ::core::ffi::c_int = 0;
     let mut len: size_t = 0;
-    let is_basename: ::core::ffi::c_int = (*funcname.offset(0 as ::core::ffi::c_int as isize)
-        as ::core::ffi::c_int
-        == 'b' as i32) as ::core::ffi::c_int;
+    let is_basename: ::core::ffi::c_int =
+        (*funcname as ::core::ffi::c_int == 'b' as i32) as ::core::ffi::c_int;
     let is_dir: ::core::ffi::c_int = (is_basename == 0) as ::core::ffi::c_int;
     let stop: ::core::ffi::c_int =
         MAP_DIRSEP | (if is_basename != 0 { MAP_DOT } else { 0 }) | MAP_NUL;
@@ -870,26 +874,28 @@ unsafe fn func_basename_dir(
         if p2.is_null() {
             break;
         }
-        let mut p: *const ::core::ffi::c_char = p2
-            .offset(len as isize)
-            .offset(-(1 as ::core::ffi::c_int as isize));
-        while p >= p2
-            && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-                & stop
-                != 0)
-        {
-            p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-        }
-        if p >= p2 && is_dir != 0 {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
-            o = variable_buffer_output(o, p2, p.offset_from(p2) as ::core::ffi::c_long as size_t);
-        } else if p >= p2 && *p as ::core::ffi::c_int == '.' as i32 {
-            o = variable_buffer_output(o, p2, p.offset_from(p2) as ::core::ffi::c_long as size_t);
-        } else if is_dir != 0 {
-            o = variable_buffer_output(o, b"./\0" as *const u8 as *const ::core::ffi::c_char, 2);
-        } else {
-            o = variable_buffer_output(o, p2, len);
+        // Scan the token back to the last separator (or '.' for $(basename))
+        // by index instead of walking pointers.
+        let tok = ::core::slice::from_raw_parts(p2 as *const u8, len as usize);
+        match tok.iter().rposition(|&c| stop_set(c, stop)) {
+            Some(pos) if is_dir != 0 => {
+                // Keep the directory part, including the separator.
+                o = variable_buffer_output(o, p2, (pos + 1) as size_t);
+            }
+            Some(pos) if tok[pos] == b'.' => {
+                // $(basename): drop the extension from the last '.'.
+                o = variable_buffer_output(o, p2, pos as size_t);
+            }
+            _ if is_dir != 0 => {
+                o = variable_buffer_output(
+                    o,
+                    b"./\0" as *const u8 as *const ::core::ffi::c_char,
+                    2,
+                );
+            }
+            _ => {
+                o = variable_buffer_output(o, p2, len);
+            }
         }
         o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         doneany = 1;
