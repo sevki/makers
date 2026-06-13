@@ -14,6 +14,14 @@ When choosing what to clean up next, prefer these, in order. Every change
 must preserve behavior and be differential-tested against the in-tree C
 oracle (`./make`).
 
+**Always raise coverage.** Every pass must include tests that exercise the
+code it touches — a `#[cfg(test)]` unit test for the converted function
+and/or an integration case in `tests/rs_integration.rs` that
+differential-checks the relevant `make` behavior against the C oracle. The
+`cargo-llvm-cov` coverage delta for a pass must be `>= 0`; never merge a
+change that lowers coverage. Prefer targets that are currently untested so
+the conversion also closes a coverage gap.
+
 1. **Remove raw pointer arithmetic** outside `ffi/`. Replace
    `.add()` / `.sub()` / `.offset()` / `.offset_from()` and walked `*p`
    cursors with slices, iterators, and indexing (`from_raw_parts`,
