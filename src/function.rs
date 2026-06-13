@@ -229,7 +229,9 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
 pub const MAP_BLANK: ::core::ffi::c_int = 0x2 as ::core::ffi::c_int;
 pub const MAP_NEWLINE: ::core::ffi::c_int = 0x4 as ::core::ffi::c_int;
+pub const MAP_VARSEP: ::core::ffi::c_int = 0x80 as ::core::ffi::c_int;
 pub const MAP_DOT: ::core::ffi::c_int = 0x200 as ::core::ffi::c_int;
+pub const MAP_COMMA: ::core::ffi::c_int = 0x400 as ::core::ffi::c_int;
 pub const MAP_DIRSEP: ::core::ffi::c_int = 0x8000 as ::core::ffi::c_int;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
@@ -571,28 +573,28 @@ pub unsafe fn pattern_matches(
 unsafe extern "C" fn find_next_argument(
     startparen: ::core::ffi::c_char,
     endparen: ::core::ffi::c_char,
-    mut ptr: *const ::core::ffi::c_char,
+    ptr: *const ::core::ffi::c_char,
     end: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut count: ::core::ffi::c_int = 0;
-    while ptr < end {
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*ptr as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x80 as ::core::ffi::c_int | 0x400 as ::core::ffi::c_int)
-            != 0
-        {
-            if *ptr as ::core::ffi::c_int == startparen as ::core::ffi::c_int {
+    // Scan the [ptr, end) range by index instead of walking raw pointers.
+    // Address subtraction (not pointer arithmetic) gives the span length.
+    let span = end as usize - ptr as usize;
+    let bytes = ::core::slice::from_raw_parts(ptr as *const u8, span);
+    for (i, &c) in bytes.iter().enumerate() {
+        // MAP_VARSEP|MAP_COMMA pre-filters to the structural characters.
+        if stop_set(c, MAP_VARSEP | MAP_COMMA) {
+            if c as ::core::ffi::c_int == startparen as ::core::ffi::c_int {
                 count += 1;
-            } else if *ptr as ::core::ffi::c_int == endparen as ::core::ffi::c_int {
+            } else if c as ::core::ffi::c_int == endparen as ::core::ffi::c_int {
                 count -= 1;
                 if count < 0 {
                     return ::core::ptr::null_mut::<::core::ffi::c_char>();
                 }
-            } else if *ptr as ::core::ffi::c_int == ',' as i32 && count == 0 {
-                return ptr as *mut ::core::ffi::c_char;
+            } else if c as ::core::ffi::c_int == ',' as i32 && count == 0 {
+                return bytes[i..].as_ptr() as *mut ::core::ffi::c_char;
             }
         }
-        ptr = ptr.offset(1 as ::core::ffi::c_int as isize);
     }
     ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
