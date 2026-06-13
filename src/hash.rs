@@ -155,7 +155,10 @@ pub unsafe fn hash_load(
 /// # Safety
 /// `ht` must be initialized and `key` valid for its callbacks.
 pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *mut c_void {
-    let mut deleted_slot: *mut *mut c_void = null_mut();
+    // Index of the first deleted slot seen, reused for insertion. Tracking it
+    // as an `Option<usize>` rather than a nullable raw pointer keeps the
+    // returned slot pointer always valid (never a null sentinel).
+    let mut deleted_idx: Option<usize> = None;
     let mut hash_2: c_uint = 0;
     let mut hash_1 = (*ht).ht_hash_1.expect("hash table without ht_hash_1")(key) as c_uint;
 
@@ -163,27 +166,26 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
         hash_1 = (hash_1 as c_ulong & ((*ht).ht_size - 1)) as c_uint;
-        let slot = table_slots_mut(ht)
-            .get_mut(hash_1 as usize)
+        let idx = hash_1 as usize;
+        let slot_val = *table_slots_mut(ht)
+            .get(idx)
             .expect("hash index within table size");
 
-        if (*slot).is_null() {
-            return if !deleted_slot.is_null() {
-                deleted_slot
-            } else {
-                &raw mut *slot
-            };
+        if slot_val.is_null() {
+            // Empty slot: insert here, or reuse an earlier deleted slot.
+            let target = deleted_idx.unwrap_or(idx);
+            return &raw mut table_slots_mut(ht)[target];
         }
-        if ::core::ptr::eq(*slot, hash_deleted_item as *mut c_void) {
-            if deleted_slot.is_null() {
-                deleted_slot = &raw mut *slot;
+        if ::core::ptr::eq(slot_val, hash_deleted_item as *mut c_void) {
+            if deleted_idx.is_none() {
+                deleted_idx = Some(idx);
             }
         } else {
-            if ::core::ptr::eq(key, *slot) {
-                return &raw mut *slot;
+            if ::core::ptr::eq(key, slot_val) {
+                return &raw mut table_slots_mut(ht)[idx];
             }
-            if (*ht).ht_compare.expect("hash table without ht_compare")(key, *slot) == 0 {
-                return &raw mut *slot;
+            if (*ht).ht_compare.expect("hash table without ht_compare")(key, slot_val) == 0 {
+                return &raw mut table_slots_mut(ht)[idx];
             }
             (*ht).ht_collisions = (*ht).ht_collisions.wrapping_add(1);
         }
