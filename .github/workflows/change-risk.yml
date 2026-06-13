@@ -1,4 +1,4 @@
-name: change-risk
+name: Change Risk
 
 on:
     pull_request:
@@ -23,7 +23,7 @@ env:
     GNULIB_URL: https://github.com/sevki/gnulib.git
 
 jobs:
-    cargo-crap:
+    CRAP:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
