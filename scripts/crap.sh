@@ -8,7 +8,8 @@
 #
 # Usage: ./scripts/crap.sh [extra cargo-crap args...]
 #   ./scripts/crap.sh --top 20
-#   ./scripts/crap.sh --fail-above        # CI gate
+#   ./scripts/crap.sh --baseline .cargo-crap-baseline.json   # show deltas
+#   ./scripts/crap.sh --format json --output .cargo-crap-baseline.json  # refresh baseline
 #
 # Requires: cargo-crap, cargo-llvm-cov (+ llvm-tools-preview component).
 #   cargo install cargo-crap cargo-llvm-cov

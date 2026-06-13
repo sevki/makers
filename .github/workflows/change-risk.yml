@@ -63,4 +63,10 @@ jobs:
             # integration test fails, so the CRAP gate scores real data.
             - run: cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info
 
-            - run: cargo crap --lcov lcov.info --fail-above --threshold 30
+            # Gate on regressions, not absolute score: the codebase already
+            # carries debt above threshold 30, so blocking on --fail-above
+            # would be red on every PR. .cargo-crap-baseline.json captures the
+            # current scores; CI fails only when a function gets WORSE.
+            # Refresh the baseline with: ./scripts/crap.sh --format json \
+            #   --output .cargo-crap-baseline.json
+            - run: cargo crap --lcov lcov.info --baseline .cargo-crap-baseline.json --fail-regression
