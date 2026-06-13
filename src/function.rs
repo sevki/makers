@@ -1752,6 +1752,14 @@ unsafe fn func_sort(
     }
     o
 }
+/// Is `c` whitespace in make's `MAP_SPACE` class (`next_token`'s skip set):
+/// space, tab, newline, vertical tab, form feed, or carriage return? This is
+/// the ASCII `isspace` set; it deliberately does not use Unicode whitespace,
+/// which would widen make's language definition (e.g. U+00A0).
+fn is_map_space(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+}
+
 /// Outcome of parsing a textual integer with [`parse_textint`].
 enum TextInt {
     /// The (post-whitespace) value is empty.
@@ -1789,9 +1797,7 @@ fn classify_textint(t: &[u8]) -> TextInt {
     }
     let num_end = i;
     // No digits at all after the sign, or non-whitespace trailing the number.
-    // `char::is_whitespace` (Unicode White_Space) covers make's MAP_SPACE set
-    // (space, tab, newline, vertical tab, form feed, carriage return).
-    let trailing_ok = t[num_end..].iter().all(|&c| (c as char).is_whitespace());
+    let trailing_ok = t[num_end..].iter().all(|&c| is_map_space(c));
     if num_end == after_sign || !trailing_ok {
         return TextInt::NotNumeric;
     }
