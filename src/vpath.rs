@@ -8,9 +8,7 @@
 use ::core::ffi::{c_char, c_int, c_uint, c_void};
 use ::core::ptr::{null, null_mut};
 
-use libc::{
-    __errno_location, free, memcpy, mempcpy, printf, puts, strcmp, strlen, strncmp, strrchr,
-};
+use libc::{__errno_location, free, printf, puts, strcmp, strlen};
 
 use crate::dir::{dir_file_exists_p, dir_name};
 use crate::expand::expand_variable_buf;
@@ -18,7 +16,7 @@ use crate::ffi_types::{size_t, time_t, uintmax_t};
 use crate::file::{file_timestamp_cons, lookup_file};
 use crate::function::pattern_matches;
 use crate::make_main::stopchar_map;
-use crate::misc::{xmalloc, xrealloc};
+use crate::misc::xmalloc;
 use crate::read::find_percent;
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
@@ -41,8 +39,13 @@ const PATH_SEPARATOR_CHAR: c_int = ':' as i32;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-unsafe fn stop_set(c: c_char, mask: c_int) -> bool {
-    stopchar_map[c as u8 as usize] as c_int & mask != 0
+fn stop_set(c: u8, mask: c_int) -> bool {
+    unsafe { stopchar_map[c as usize] as c_int & mask != 0 }
+}
+
+/// Borrow a NUL-terminated C string as a byte slice (without the NUL).
+unsafe fn cstr_bytes<'a>(s: *const c_char) -> &'a [u8] {
+    ::core::slice::from_raw_parts(s as *const u8, strlen(s))
 }
 
 /// `file->last_mtime` value meaning the modtime has not been checked yet
@@ -64,8 +67,11 @@ struct Vpath {
     /// Pointer into `pattern` at the `%`, or null if there is none.
     percent: *const c_char,
     patlen: size_t,
-    /// Null-terminated array of cached directory names, owned via `xmalloc`.
+    /// Array of cached directory names, owned via `xmalloc`. It carries a
+    /// trailing null entry for legacy reasons, but `npaths` is authoritative.
     searchpath: *mut *const c_char,
+    /// Number of directory entries in `searchpath`.
+    npaths: size_t,
     /// Length of the longest entry in `searchpath`.
     maxlen: size_t,
 }
@@ -77,6 +83,22 @@ static mut vpaths: *mut Vpath = null_mut();
 static mut general_vpath: *mut Vpath = null_mut();
 /// The pseudo-vpath built from the `GPATH` variable.
 static mut gpaths: *mut Vpath = null_mut();
+
+/// The `searchpath` directory entries of a `Vpath` as a slice.
+unsafe fn searchpath_entries<'a>(path: *const Vpath) -> &'a [*const c_char] {
+    ::core::slice::from_raw_parts((*path).searchpath as *const *const c_char, (*path).npaths)
+}
+
+/// The byte offset of the `%` within a pattern, or `None` when there is none.
+/// Address subtraction (not pointer arithmetic) is used only to compare the
+/// `%` positions of two patterns during de-duplication.
+fn percent_off(pattern: *const c_char, percent: *const c_char) -> Option<usize> {
+    if percent.is_null() {
+        None
+    } else {
+        Some(percent as usize - pattern as usize)
+    }
+}
 
 /// Reverse the chain of vpath directives and build the `VPATH`/`GPATH`
 /// pseudo-vpaths from the variables' current values.
@@ -109,28 +131,36 @@ pub unsafe fn build_vpath_lists() {
 /// its value, leaving the directive-built `vpaths` chain untouched. Returns
 /// `None` when the value is empty or whitespace-only.
 unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
-    let mut p = expand_variable_buf(
+    let p = expand_variable_buf(
         null_mut(),
         name.as_ptr() as *const c_char,
         (name.len() - 1) as size_t,
     );
-    while stop_set(*p, MAP_SPACE) {
-        p = p.add(1);
-    }
-    if *p == 0 {
+    // The expansion lives in a mutable buffer that construct_vpath_list may
+    // overwrite in place; view it (plus its NUL) as a byte slice.
+    let len = strlen(p);
+    let buf = ::core::slice::from_raw_parts_mut(p as *mut u8, len + 1);
+    // Skip leading whitespace; an all-whitespace (or empty) value is ignored.
+    let start = buf[..len]
+        .iter()
+        .position(|&c| !stop_set(c, MAP_SPACE))
+        .unwrap_or(len);
+    if start == len {
         return None;
     }
     let saved = vpaths;
     vpaths = null_mut();
     let mut pattern = *b"%\0";
-    construct_vpath_list(pattern.as_mut_ptr() as *mut c_char, p);
+    construct_vpath_list(
+        pattern.as_mut_ptr() as *mut c_char,
+        buf[start..].as_mut_ptr() as *mut c_char,
+    );
     let list = vpaths;
     vpaths = saved;
     Some(list)
 }
 
 /// Construct the `Vpath` listing for the pattern and search path given.
-/// `pattern` and `dirpath` may be overwritten in place.
 ///
 /// If `dirpath` is null, remove all previous listings with the same pattern.
 /// If `pattern` is null too, remove all `Vpath` listings. The existing
@@ -140,11 +170,12 @@ unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
 /// # Safety
 /// `pattern` and `dirpath` must be null or valid nul-terminated strings,
 /// and the caller must be single-threaded with respect to the vpath chains.
-pub unsafe fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_char) {
-    let mut percent: *const c_char = null();
-    if !pattern.is_null() {
-        percent = find_percent(pattern);
-    }
+pub unsafe fn construct_vpath_list(pattern: *mut c_char, dirpath: *mut c_char) {
+    let percent: *const c_char = if pattern.is_null() {
+        null()
+    } else {
+        find_percent(pattern)
+    };
 
     if dirpath.is_null() {
         // Remove matching listings from the chain.
@@ -153,9 +184,7 @@ pub unsafe fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_cha
         while !path.is_null() {
             let next = (*path).next;
             let matches = pattern.is_null()
-                || ((percent.is_null() && (*path).percent.is_null()
-                    || percent.offset_from(pattern)
-                        == (*path).percent.offset_from((*path).pattern))
+                || (percent_off(pattern, percent) == percent_off((*path).pattern, (*path).percent)
                     && strcmp(pattern, (*path).pattern) == 0);
             if matches {
                 // Unlink and free this entry.
@@ -174,85 +203,75 @@ pub unsafe fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_cha
         return;
     }
 
-    // Skip over any initial separators and blanks.
-    while stop_set(*dirpath, MAP_BLANK | MAP_PATHSEP) {
-        dirpath = dirpath.add(1);
-    }
-
-    // Figure out the maximum number of VPATH entries and allocate a vector
-    // for them: one for every separator plus one for the final entry, plus
-    // one for the null terminator.
-    let mut maxelem: c_uint = 2;
-    let mut p = dirpath;
-    while *p != 0 {
-        let c = *p;
-        p = p.add(1);
-        if stop_set(c, MAP_BLANK | MAP_PATHSEP) {
-            maxelem += 1;
-        }
-    }
-
-    let mut searchpath =
-        xmalloc(maxelem as size_t * ::core::mem::size_of::<*const c_char>()) as *mut *const c_char;
+    // Tokenize the search path into its directory entries.
+    let bytes = cstr_bytes(dirpath);
+    let mut entries: Vec<*const c_char> = Vec::new();
     let mut maxvpath: size_t = 0;
-    let mut elem: c_uint = 0;
-
-    p = dirpath;
-    while *p != 0 {
+    let mut i = 0;
+    // Skip leading separators and blanks.
+    while i < bytes.len() && stop_set(bytes[i], MAP_BLANK | MAP_PATHSEP) {
+        i += 1;
+    }
+    while i < bytes.len() {
         // Find the end of this entry.
-        let v = p;
-        while *p != 0 && *p as c_int != PATH_SEPARATOR_CHAR && !stop_set(*p, MAP_BLANK) {
-            p = p.add(1);
+        let start = i;
+        while i < bytes.len()
+            && bytes[i] as c_int != PATH_SEPARATOR_CHAR
+            && !stop_set(bytes[i], MAP_BLANK)
+        {
+            i += 1;
         }
-
-        let mut len = p.offset_from(v) as size_t;
+        let mut len = i - start;
         // Omit a trailing slash, unless the entry is just "/".
-        if len > 1 && *p.sub(1) as c_int == '/' as i32 {
+        if len > 1 && bytes[start + len - 1] == b'/' {
             len -= 1;
         }
-
         // Skip "." entries: searching "." is implicit.
-        if len > 1 || *v as c_int != '.' as i32 {
-            *searchpath.add(elem as usize) = dir_name(strcache_add_len(v, len));
-            elem += 1;
-            if len > maxvpath {
-                maxvpath = len;
+        if len > 1 || bytes[start] != b'.' {
+            let cached = strcache_add_len(bytes[start..].as_ptr() as *const c_char, len as size_t);
+            entries.push(dir_name(cached));
+            if len as size_t > maxvpath {
+                maxvpath = len as size_t;
             }
         }
-
         // Skip over separators and blanks between entries.
-        while stop_set(*p, MAP_BLANK | MAP_PATHSEP) {
-            p = p.add(1);
+        while i < bytes.len() && stop_set(bytes[i], MAP_BLANK | MAP_PATHSEP) {
+            i += 1;
         }
     }
 
-    if elem > 0 {
-        // Usually fewer entries than estimated; shrink, keeping room for
-        // the null terminator.
-        if elem < maxelem - 1 {
-            searchpath = xrealloc(
-                searchpath as *mut c_void,
-                (elem as size_t + 1) * ::core::mem::size_of::<*const c_char>(),
-            ) as *mut *const c_char;
-        }
-        *searchpath.add(elem as usize) = null();
-
-        let path = xmalloc(::core::mem::size_of::<Vpath>()) as *mut Vpath;
-        (*path).searchpath = searchpath;
-        (*path).maxlen = maxvpath;
-        (*path).next = vpaths;
-        vpaths = path;
-        (*path).pattern = strcache_add(pattern);
-        (*path).patlen = strlen(pattern);
-        (*path).percent = if !percent.is_null() {
-            (*path).pattern.offset(percent.offset_from(pattern))
-        } else {
-            null()
-        };
-    } else {
+    if entries.is_empty() {
         // There were no entries; forget the whole thing.
-        free(searchpath as *mut c_void);
+        return;
     }
+
+    // Copy the gathered entries into an xmalloc'd, null-terminated array
+    // (freed with free() when the listing is later removed).
+    let n = entries.len();
+    let searchpath =
+        xmalloc((n + 1) * ::core::mem::size_of::<*const c_char>()) as *mut *const c_char;
+    let slots = ::core::slice::from_raw_parts_mut(searchpath, n + 1);
+    slots[..n].copy_from_slice(&entries);
+    slots[n] = null();
+
+    let path = xmalloc(::core::mem::size_of::<Vpath>()) as *mut Vpath;
+    (*path).searchpath = searchpath;
+    (*path).npaths = n;
+    (*path).maxlen = maxvpath;
+    (*path).next = vpaths;
+    vpaths = path;
+    (*path).pattern = strcache_add(pattern);
+    (*path).patlen = strlen(pattern);
+    // `find_percent` already unquoted `pattern` in place, and the cached copy
+    // is byte-identical, so the `%` sits at the same offset. Reuse that
+    // offset rather than re-parsing: a second `find_percent` pass would
+    // re-unquote the string and mutate the shared cache entry.
+    (*path).percent = if percent.is_null() {
+        null()
+    } else {
+        let off = percent as usize - pattern as usize;
+        cstr_bytes((*path).pattern)[off..].as_ptr() as *const c_char
+    };
 }
 
 /// Search the `GPATH` list for a pathname (`file` of length `len`, which is
@@ -262,12 +281,12 @@ pub unsafe fn construct_vpath_list(pattern: *mut c_char, mut dirpath: *mut c_cha
 /// `file` must point to at least `len` readable bytes.
 pub unsafe fn gpath_search(file: *const c_char, len: size_t) -> c_int {
     if !gpaths.is_null() && len <= (*gpaths).maxlen {
-        let mut gp = (*gpaths).searchpath;
-        while !(*gp).is_null() {
-            if strncmp(*gp, file, len) == 0 && *(*gp).add(len) == 0 {
+        let needle = ::core::slice::from_raw_parts(file as *const u8, len);
+        for &entry in searchpath_entries(gpaths) {
+            // The GPATH entry must equal exactly the first `len` bytes.
+            if cstr_bytes(entry) == needle {
                 return 1;
             }
-            gp = gp.add(1);
         }
     }
     0
@@ -283,7 +302,6 @@ unsafe fn selective_vpath_search(
     mut mtime_ptr: *mut uintmax_t,
     path_index: *mut c_uint,
 ) -> *const c_char {
-    let searchpath = (*path).searchpath;
     let maxvpath = (*path).maxlen;
 
     // If and only if *FILE is NOT a target, accept prospective files that
@@ -294,49 +312,47 @@ unsafe fn selective_vpath_search(
     };
 
     // Split *FILE into a directory prefix and a name-within-directory:
-    // NAME_DPLEN is the length of the prefix, FILENAME points at the
+    // NAME_DPLEN is the length of the prefix, FNAME_START indexes the
     // name-within-directory, and FLEN is its length.
-    let mut flen = strlen(file);
-    let n = strrchr(file, '/' as i32);
-    let name_dplen: size_t = if n.is_null() {
-        0
-    } else {
-        n.offset_from(file) as size_t
+    let file_bytes = cstr_bytes(file);
+    let (name_dplen, fname_start) = match file_bytes.iter().rposition(|&b| b == b'/') {
+        Some(slash) => (slash, slash + 1),
+        None => (0, 0),
     };
-    let filename = if name_dplen > 0 { n.add(1) } else { file };
-    if name_dplen > 0 {
-        flen -= name_dplen + 1;
-    }
+    let filename = file_bytes[fname_start..].as_ptr() as *const c_char;
+    let fname_bytes = &file_bytes[fname_start..];
+    let flen = fname_bytes.len();
 
     // Scratch buffer with room for the biggest VPATH entry, a slash, the
     // directory prefix that came with *FILE, another slash (not always
     // needed), the filename, and a null terminator.
     let mut name_buf = vec![0u8; maxvpath + 1 + name_dplen + 1 + flen + 1];
-    let name = name_buf.as_mut_ptr() as *mut c_char;
 
     // Try each VPATH entry.
-    let mut i: c_uint = 0;
-    while !(*searchpath.add(i as usize)).is_null() {
-        let entry = *searchpath.add(i as usize);
+    for (i, &entry) in searchpath_entries(path).iter().enumerate() {
+        let entry_b = cstr_bytes(entry);
 
-        // Put the next VPATH entry into NAME at P and advance P past it.
-        let mut p = name;
-        p = mempcpy(p as *mut c_void, entry as *const c_void, strlen(entry)) as *mut c_char;
-
-        // Add the directory prefix already in *FILE.
+        // Lay down "<entry>[/<dirprefix>]" and remember P: the index of the
+        // separator before the filename (or where the filename starts).
+        let mut p = entry_b.len();
+        name_buf[..p].copy_from_slice(entry_b);
         if name_dplen > 0 {
-            *p = '/' as c_char;
-            p = p.add(1);
-            p = mempcpy(p as *mut c_void, file as *const c_void, name_dplen) as *mut c_char;
+            name_buf[p] = b'/';
+            p += 1;
+            name_buf[p..p + name_dplen].copy_from_slice(&file_bytes[..name_dplen]);
+            p += name_dplen;
         }
 
         // Now add the name-within-directory at the end of NAME.
-        if p != name && *p.sub(1) as c_int != '/' as i32 {
-            *p = '/' as c_char;
-            memcpy(p.add(1) as *mut c_void, filename as *const c_void, flen + 1);
+        if p != 0 && name_buf[p - 1] != b'/' {
+            name_buf[p] = b'/';
+            name_buf[p + 1..p + 1 + flen].copy_from_slice(fname_bytes);
+            name_buf[p + 1 + flen] = 0;
         } else {
-            memcpy(p as *mut c_void, filename as *const c_void, flen + 1);
+            name_buf[p..p + flen].copy_from_slice(fname_bytes);
+            name_buf[p + flen] = 0;
         }
+        let name = name_buf.as_mut_ptr() as *mut c_char;
 
         // Check whether the file is mentioned in a makefile. If *FILE is
         // not a target, that is enough for us to decide this file exists.
@@ -357,18 +373,18 @@ unsafe fn selective_vpath_search(
 
         let mut exists_in_cache = false;
         if !exists {
-            // The file wasn't mentioned in the makefile. Clobber a null
-            // into NAME at the last slash, so NAME is the directory to look
-            // in (the directory cache knows it already), and ask the cache
+            // The file wasn't mentioned in the makefile. Clobber a null into
+            // NAME at the last slash, so NAME is the directory to look in
+            // (the directory cache knows it already), and ask the cache
             // whether the file exists there.
-            *p = 0;
+            name_buf[p] = 0;
             exists = dir_file_exists_p(name, filename) != 0;
             exists_in_cache = exists;
         }
 
         if exists {
             // Put the slash back in NAME.
-            *p = '/' as c_char;
+            name_buf[p] = b'/';
 
             if exists_in_cache {
                 // The directory cache may be out of date; check that the
@@ -383,8 +399,8 @@ unsafe fn selective_vpath_search(
                     }
                 }
                 if e != 0 {
-                    // Stale cache entry: keep searching the remaining
-                    // vpath entries instead of returning it.
+                    // Stale cache entry: keep searching the remaining vpath
+                    // entries instead of returning it.
                     exists = false;
                 } else if let Some(slot) = mtime_ptr.as_mut() {
                     *slot =
@@ -400,13 +416,11 @@ unsafe fn selective_vpath_search(
             if let Some(slot) = mtime_ptr.as_mut() {
                 *slot = UNKNOWN_MTIME;
             }
-            if !path_index.is_null() {
-                *path_index = i;
+            if let Some(slot) = path_index.as_mut() {
+                *slot = i as c_uint;
             }
-            return strcache_add_len(name, p.add(1).offset_from(name) as size_t + flen);
+            return strcache_add_len(name, (p + 1 + flen) as size_t);
         }
-
-        i += 1;
     }
 
     null()
@@ -474,7 +488,7 @@ pub unsafe fn print_vpath_data_base() {
     while !v.is_null() {
         nvpaths += 1;
         printf(c"vpath %s ".as_ptr(), (*v).pattern);
-        print_search_path((*v).searchpath);
+        print_search_path(v);
         v = (*v).next;
     }
 
@@ -491,21 +505,20 @@ pub unsafe fn print_vpath_data_base() {
             c"\n# General ('VPATH' variable) search path:\n# ".as_ptr(),
             stdout,
         );
-        print_search_path((*general_vpath).searchpath);
+        print_search_path(general_vpath);
     }
 }
 
-/// Print a null-terminated array of directory names separated by the path
-/// separator, ending with a newline.
-unsafe fn print_search_path(path: *mut *const c_char) {
-    let mut i: isize = 0;
-    while !(*path.offset(i)).is_null() {
-        let sep = if (*path.offset(i + 1)).is_null() {
+/// Print a `Vpath`'s directory entries separated by the path separator,
+/// ending with a newline.
+unsafe fn print_search_path(path: *const Vpath) {
+    let entries = searchpath_entries(path);
+    for (idx, &entry) in entries.iter().enumerate() {
+        let sep = if idx + 1 == entries.len() {
             '\n' as c_int
         } else {
             PATH_SEPARATOR_CHAR
         };
-        printf(c"%s%c".as_ptr(), *path.offset(i), sep);
-        i += 1;
+        printf(c"%s%c".as_ptr(), entry, sep);
     }
 }
