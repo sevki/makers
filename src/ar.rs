@@ -304,34 +304,56 @@ unsafe fn ar_glob_match(
     }
     0 as intmax_t
 }
-unsafe extern "C" fn ar_glob_pattern_p(
-    pattern: *const ::core::ffi::c_char,
-    quote: ::core::ffi::c_int,
-) -> ::core::ffi::c_int {
-    let mut p: *const ::core::ffi::c_char;
-    let mut opened: ::core::ffi::c_int = 0;
-    p = pattern;
-    while *p as ::core::ffi::c_int != 0 {
-        match *p as ::core::ffi::c_int {
-            63 | 42 => return 1,
-            92 => {
-                if quote != 0 {
-                    p = p.offset(1 as ::core::ffi::c_int as isize);
-                }
-            }
-            91 => {
-                opened = 1;
-            }
-            93 => {
-                if opened != 0 {
-                    return 1;
-                }
-            }
+/// Does `pattern` contain shell glob metacharacters (`?`, `*`, or a balanced
+/// `[`…`]`)? When `quote` is set, a backslash escapes the following byte, so it
+/// is skipped rather than treated as a metacharacter. Pure mirror of make's
+/// `ar_glob_pattern_p`.
+fn ar_glob_pattern_p(pattern: &[u8], quote: bool) -> bool {
+    let mut opened = false;
+    let mut i = 0;
+    while i < pattern.len() {
+        match pattern[i] {
+            b'?' | b'*' => return true,
+            // Skip the escaped byte; bounded indexing avoids the C version's
+            // read past the NUL when a trailing backslash is escaped.
+            b'\\' if quote => i += 1,
+            b'[' => opened = true,
+            b']' if opened => return true,
             _ => {}
         }
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+        i += 1;
     }
-    0
+    false
+}
+
+#[cfg(test)]
+mod ar_glob_pattern_p_tests {
+    use super::ar_glob_pattern_p;
+
+    #[test]
+    fn detects_glob_metacharacters() {
+        assert!(ar_glob_pattern_p(b"*.o", true));
+        assert!(ar_glob_pattern_p(b"foo?", true));
+        assert!(ar_glob_pattern_p(b"foo[abc].o", true));
+    }
+
+    #[test]
+    fn plain_names_are_not_patterns() {
+        assert!(!ar_glob_pattern_p(b"", true));
+        assert!(!ar_glob_pattern_p(b"foo.o", true));
+        // A ']' without a preceding '[' is not a class.
+        assert!(!ar_glob_pattern_p(b"foo].o", true));
+    }
+
+    #[test]
+    fn backslash_quoting() {
+        // With quoting on, the escaped '*' is consumed, not matched.
+        assert!(!ar_glob_pattern_p(b"foo\\*", true));
+        // With quoting off, the backslash is inert and the '*' still matches.
+        assert!(ar_glob_pattern_p(b"foo\\*", false));
+        // A trailing backslash must not read past the end of the slice.
+        assert!(!ar_glob_pattern_p(b"foo\\", true));
+    }
 }
 /// # Safety
 ///
@@ -353,7 +375,7 @@ pub unsafe fn ar_glob(
     let mut n: *mut nameseq;
     let names: *mut *const ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
-    if ar_glob_pattern_p(member_pattern, 1) == 0 {
+    if !ar_glob_pattern_p(::core::ffi::CStr::from_ptr(member_pattern).to_bytes(), true) {
         return ::core::ptr::null_mut::<nameseq>();
     }
     state.arname = arname;
