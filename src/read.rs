@@ -174,6 +174,7 @@ use crate::variable::{
     parse_variable_definition, try_variable_definition, undefine_variable_in_set,
 };
 use crate::vpath::construct_vpath_list;
+use ::core::ffi::CStr;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct goaldep {
@@ -4098,9 +4099,7 @@ pub unsafe fn parse_file_seq(
                         name = tildep;
                     }
                 }
-                if !(flags & 0x2 as ::core::ffi::c_int != 0)
-                    && ar_name(::core::ffi::CStr::from_ptr(name))
-                {
+                if !(flags & 0x2 as ::core::ffi::c_int != 0) && ar_name(CStr::from_ptr(name)) {
                     ar_parse_name(name, &raw mut arname, &raw mut memname);
                     name = arname;
                 }
