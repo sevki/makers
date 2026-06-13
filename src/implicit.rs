@@ -7,19 +7,14 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Dep, File};
 use crate::misc::free_ns_chain;
-use crate::misc::{lindex, print_spaces, skip_reference, xcalloc, xmalloc, xrealloc};
+use crate::misc::{print_spaces, skip_reference, xcalloc};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use c2rust_bitfields;
-use libc::{free, memcpy, memrchr, memset, printf, qsort, strchr, strcmp, strcpy, strlen, strncmp};
+use libc::{printf, strchr, strcmp, strlen};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn mempcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
 }
 pub type file = File;
 pub type dep = Dep;
@@ -55,8 +50,8 @@ const PARSEFS_WAIT: ::core::ffi::c_int = 0x40;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-unsafe fn stop_set(c: ::core::ffi::c_char, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map[c as u8 as usize] as ::core::ffi::c_int & mask != 0
+unsafe fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
 }
 
 /// `DBS (DB_IMPLICIT, ...)` from the C original: print an indented trace
@@ -83,6 +78,11 @@ unsafe fn dep_name(d: *const dep) -> *const ::core::ffi::c_char {
             .expect("dep without a name must have a file")
             .name
     }
+}
+
+/// Borrow a NUL-terminated C string as a byte slice (without the NUL).
+unsafe fn cstr_bytes<'a>(s: *const ::core::ffi::c_char) -> &'a [u8] {
+    ::core::slice::from_raw_parts(s.cast::<u8>(), strlen(s))
 }
 
 /// String equality via the C `streq` macro's shape: compare the first bytes,
@@ -115,16 +115,15 @@ pub struct patdeps {
 }
 /// A candidate pattern rule recorded during the first matching pass.
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub struct tryrule {
     pub rule: *mut rule,
     pub stemlen: size_t,
     pub matches: ::core::ffi::c_uint,
     pub order: ::core::ffi::c_uint,
-    pub checked_lastslash: ::core::ffi::c_char,
+    pub checked_lastslash: bool,
 }
-pub const PATH_MAX: ::core::ffi::c_int = 4096;
-pub const GET_PATH_MAX: ::core::ffi::c_int = PATH_MAX;
+pub const PATH_MAX: usize = 4096;
+pub const GET_PATH_MAX: usize = PATH_MAX;
 /// # Safety
 ///
 /// Must run single-threaded; returns a zeroed malloc'd dep owned by the
@@ -181,7 +180,7 @@ unsafe fn get_next_word(
     length: *mut size_t,
 ) -> *const ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = buffer;
-    while stop_set(*p, MAP_BLANK | MAP_NEWLINE) {
+    while stop_set(*p as u8, MAP_BLANK | MAP_NEWLINE) {
         p = p.add(1);
     }
     let beg: *const ::core::ffi::c_char = p;
@@ -213,27 +212,18 @@ unsafe fn get_next_word(
     }
     beg
 }
-/// qsort comparator ordering candidate rules by stem length, then by the
-/// order they appear in the database.
-///
-/// # Safety
-/// Both arguments must point to valid `tryrule`s (guaranteed by qsort).
-pub unsafe extern "C" fn stemlen_compare(
-    v1: *const ::core::ffi::c_void,
-    v2: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_int {
-    let r1 = (v1 as *const tryrule)
-        .as_ref()
-        .expect("qsort passes valid elements");
-    let r2 = (v2 as *const tryrule)
-        .as_ref()
-        .expect("qsort passes valid elements");
-    let r = r1.stemlen.wrapping_sub(r2.stemlen) as ::core::ffi::c_int;
-    if r != 0 {
-        r
-    } else {
-        r1.order.wrapping_sub(r2.order) as ::core::ffi::c_int
-    }
+/// The per-target views of a rule needed for matching: the target string,
+/// its bytes, and the index of its `%`.
+unsafe fn rule_target(r: &rule, ti: usize) -> (*const ::core::ffi::c_char, &[u8], usize) {
+    let targets = ::core::slice::from_raw_parts(r.targets, r.num as usize);
+    let lens = ::core::slice::from_raw_parts(r.lens, r.num as usize);
+    let target = targets[ti];
+    let bytes = ::core::slice::from_raw_parts(target.cast::<u8>(), lens[ti] as usize);
+    let percent = bytes
+        .iter()
+        .position(|&b| b == b'%')
+        .expect("pattern rule target must contain a '%'");
+    (target, bytes, percent)
 }
 unsafe fn pattern_search(
     file: *mut file,
@@ -250,49 +240,43 @@ unsafe fn pattern_search(
         file_ref.name
     };
     let namelen: size_t = strlen(filename);
+    // Byte view of the target name (without the NUL); the underlying string
+    // lives in the string cache and is never mutated during the search.
+    let name: &[u8] = ::core::slice::from_raw_parts(filename.cast::<u8>(), namelen);
     let mut int_file: *mut file = ::core::ptr::null_mut();
     // Backing storage for the "intermediate file" scratch entries; entries
     // may be linked into the patdeps list, so they must live until return.
     let mut int_file_storage: Vec<Box<file>> = Vec::new();
     let mut max_deps: ::core::ffi::c_uint = max_pattern_deps;
-    let mut deplist: *mut patdeps =
-        xmalloc((max_deps as size_t).wrapping_mul(::core::mem::size_of::<patdeps>() as size_t))
-            as *mut patdeps;
-    let mut pat: *mut patdeps = deplist;
-    // Buffer big enough for any rule prerequisite with the stem substituted.
-    let deplen: size_t = namelen.wrapping_add(max_pattern_dep_length).wrapping_add(4);
-    let mut depname_buf: Vec<u8> = vec![0; deplen];
-    let depname: *mut ::core::ffi::c_char = depname_buf.as_mut_ptr().cast();
-    let dend: *mut ::core::ffi::c_char = depname.add(deplen);
-    let mut stem: *const ::core::ffi::c_char = ::core::ptr::null();
+    // The viable prerequisites recorded while trying a rule.
+    let mut deplist: Vec<patdeps> = Vec::with_capacity(max_deps as usize);
+    // Scratch buffer for a prerequisite name with the stem substituted.
+    let mut depname: Vec<u8> =
+        Vec::with_capacity(namelen.wrapping_add(max_pattern_dep_length).wrapping_add(4));
+    let mut stem_off: usize = 0;
     let mut stemlen: size_t = 0;
     let fullstemlen: size_t;
-    let tryrules: *mut tryrule = xmalloc(
-        (num_pattern_rules.wrapping_mul(max_pattern_targets) as size_t)
-            .wrapping_mul(::core::mem::size_of::<tryrule>() as size_t),
-    ) as *mut tryrule;
-    let mut nrules: ::core::ffi::c_uint = 0;
-    let foundrule: ::core::ffi::c_uint;
+    // Candidate rules whose targets match the name.
+    let mut tryrules: Vec<tryrule> =
+        Vec::with_capacity(num_pattern_rules.wrapping_mul(max_pattern_targets) as usize);
+    let foundrule: usize;
     let mut file_vars_initialized: ::core::ffi::c_int = 0;
-    let mut specific_rule_matched: ::core::ffi::c_int = 0;
-    let mut ri: ::core::ffi::c_uint = 0;
+    let mut specific_rule_matched: bool = false;
+    let mut ri: usize = 0;
     let mut found_compat_rule: ::core::ffi::c_int = 0;
     let mut rule: *mut rule;
     let mut pathdir: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
     let mut pathdir_buf: Vec<u8> = Vec::new();
-    let mut stem_str: [::core::ffi::c_char; (PATH_MAX + 1) as usize] = [0; (PATH_MAX + 1) as usize];
-    let stem_str_ptr: *mut ::core::ffi::c_char = stem_str.as_mut_ptr();
+    let mut stem_str: [u8; PATH_MAX + 1] = [0; PATH_MAX + 1];
     depth = depth.wrapping_add(1);
     // An archive member name has no directory part.
-    let lastslash: *const ::core::ffi::c_char = if archive != 0 || ar_name(filename) != 0 {
-        ::core::ptr::null()
-    } else {
-        memrchr(filename.cast(), '/' as i32, namelen.wrapping_sub(1)).cast()
-    };
-    let pathlen: size_t = if !lastslash.is_null() {
-        (lastslash.offset_from(filename) + 1) as size_t
-    } else {
+    let pathlen: usize = if archive != 0 || ar_name(filename) != 0 {
         0
+    } else {
+        name[..namelen.saturating_sub(1)]
+            .iter()
+            .rposition(|&b| b == b'/')
+            .map_or(0, |slash| slash + 1)
     };
     // First pass: collect every pattern rule whose target matches the name.
     rule = pattern_rules;
@@ -307,102 +291,66 @@ unsafe fn pattern_search(
                 );
             } else {
                 for ti in 0..r.num as usize {
-                    let target: *const ::core::ffi::c_char =
-                        *r.targets.add(ti).as_ref().expect("rule target slot");
-                    let suffix: *const ::core::ffi::c_char =
-                        *r.suffixes.add(ti).as_ref().expect("rule suffix slot");
-                    let target_len = *r.lens.add(ti).as_ref().expect("rule length slot");
+                    let (_, target, percent) = rule_target(r, ti);
                     // When recursing, only terminal rules may match "%" alone;
                     // and the rule's fixed text must fit in the name.
-                    if recursions > 0 && *target.add(1) == 0 && r.terminal == 0
-                        || target_len as size_t > namelen
+                    if recursions > 0 && target.len() == 1 && r.terminal == 0
+                        || target.len() > namelen
                     {
                         continue;
                     }
-                    stem = filename.offset(suffix.offset_from(target) - 1);
-                    stemlen = namelen.wrapping_sub(target_len as size_t).wrapping_add(1);
+                    stem_off = percent;
+                    stemlen = namelen.wrapping_sub(target.len()).wrapping_add(1);
                     // A target pattern without a slash matches only the part
                     // of the name after its last slash.
-                    let check_lastslash: ::core::ffi::c_char = if !lastslash.is_null() {
-                        strchr(target, '/' as i32).is_null() as ::core::ffi::c_char
-                    } else {
-                        0
-                    };
-                    if check_lastslash != 0 {
+                    let check_lastslash = pathlen > 0 && !target.contains(&b'/');
+                    if check_lastslash {
                         if pathlen > stemlen {
                             continue;
                         }
-                        stemlen = stemlen.wrapping_sub(pathlen);
-                        stem = stem.add(pathlen);
+                        stemlen -= pathlen;
+                        stem_off += pathlen;
                     }
                     // The target text before the stem must match the name
                     // (relative to the last slash when the target has none).
-                    if check_lastslash != 0 {
-                        if stem > lastslash.add(1)
-                            && strncmp(
-                                target,
-                                lastslash.add(1),
-                                (stem.offset_from(lastslash) - 1) as size_t,
-                            ) != 0
-                        {
-                            continue;
-                        }
-                    } else if stem > filename
-                        && strncmp(target, filename, stem.offset_from(filename) as size_t) != 0
-                    {
+                    let prefix_start = if check_lastslash { pathlen } else { 0 };
+                    if target[..percent] != name[prefix_start..stem_off] {
                         continue;
                     }
                     // The text after the stem (the suffix) must also match.
-                    let suffix_matches = *suffix == *stem.add(stemlen)
-                        && (*suffix == 0 || streq(suffix.add(1), stem.add(stemlen + 1)));
-                    if !suffix_matches {
+                    if target[percent + 1..] != name[stem_off + stemlen..] {
                         continue;
                     }
                     // A target with anything besides '%' is a specific rule.
-                    if *target.add(1) != 0 {
-                        specific_rule_matched = 1;
+                    if target.len() > 1 {
+                        specific_rule_matched = true;
                     }
                     if !(r.deps.is_null() && r.cmds.is_null()) {
-                        let tr = tryrules
-                            .add(nrules as usize)
-                            .as_mut()
-                            .expect("tryrules allocation");
-                        tr.rule = rule;
-                        tr.matches = ti as ::core::ffi::c_uint;
-                        tr.stemlen =
-                            stemlen.wrapping_add(if check_lastslash != 0 { pathlen } else { 0 });
-                        tr.order = nrules;
-                        tr.checked_lastslash = check_lastslash;
-                        nrules = nrules.wrapping_add(1);
+                        tryrules.push(tryrule {
+                            rule,
+                            matches: ti as ::core::ffi::c_uint,
+                            stemlen: stemlen + if check_lastslash { pathlen } else { 0 },
+                            order: tryrules.len() as ::core::ffi::c_uint,
+                            checked_lastslash: check_lastslash,
+                        });
                     }
                 }
             }
         }
         rule = r.next;
     }
-    if nrules != 0 {
+    if !tryrules.is_empty() {
         // Shortest-stem (most specific) candidates first, stable by order.
-        if nrules > 1 {
-            qsort(
-                tryrules.cast(),
-                nrules as size_t,
-                ::core::mem::size_of::<tryrule>() as size_t,
-                Some(stemlen_compare),
-            );
-        }
+        tryrules.sort_by_key(|tr| (tr.stemlen, tr.order));
         // If a specific rule matched, discard non-terminal match-anything
         // ("%") rules.
-        if specific_rule_matched != 0 {
-            for ri in 0..nrules as usize {
-                let tr = tryrules.add(ri).as_mut().expect("tryrules allocation");
+        if specific_rule_matched {
+            for tr in &mut tryrules {
                 let r = tr.rule.as_ref().expect("collected rules are non-null");
                 if r.terminal == 0 {
-                    for j in 0..r.num as usize {
-                        let target = *r.targets.add(j).as_ref().expect("rule target slot");
-                        if *target.add(1) == 0 {
-                            tr.rule = ::core::ptr::null_mut();
-                            break;
-                        }
+                    let lens = ::core::slice::from_raw_parts(r.lens, r.num as usize);
+                    if lens.contains(&1) {
+                        tr.rule = ::core::ptr::null_mut();
                     }
                 }
             }
@@ -412,49 +360,35 @@ unsafe fn pattern_search(
         // ("trying harder") also accepts buildable intermediate files.
         let mut intermed_ok: ::core::ffi::c_int = 0;
         while intermed_ok < 2 {
-            pat = deplist;
+            deplist.clear();
             if intermed_ok != 0 {
                 dbs!(depth, c"Trying harder.\n".as_ptr());
             }
             ri = 0;
-            while ri < nrules {
-                let mut failed: ::core::ffi::c_uint = 0;
+            while ri < tryrules.len() {
+                let mut failed = false;
                 let mut file_variables_set: ::core::ffi::c_int = 0;
                 let mut deps_found: ::core::ffi::c_uint = 0;
                 let mut order_only: ::core::ffi::c_int = 0;
-                let tr = *tryrules.add(ri as usize);
+                let tr = tryrules[ri];
                 rule = tr.rule;
                 let rule_terminal = rule.as_ref().map_or(0, |r| r.terminal);
                 if !rule.is_null() && !(intermed_ok != 0 && rule_terminal != 0) {
                     let rule_ref = rule.as_mut().expect("checked non-null above");
                     let matches = tr.matches as usize;
-                    let target_m = *rule_ref
-                        .targets
-                        .add(matches)
-                        .as_ref()
-                        .expect("rule target slot");
-                    let suffix_m = *rule_ref
-                        .suffixes
-                        .add(matches)
-                        .as_ref()
-                        .expect("rule suffix slot");
-                    let len_m = *rule_ref
-                        .lens
-                        .add(matches)
-                        .as_ref()
-                        .expect("rule length slot");
-                    stem = filename.offset(suffix_m.offset_from(target_m)).sub(1);
-                    stemlen = namelen.wrapping_sub(len_m as size_t).wrapping_add(1);
-                    let check_lastslash: ::core::ffi::c_char = tr.checked_lastslash;
-                    if check_lastslash != 0 {
-                        stem = stem.add(pathlen);
-                        stemlen = stemlen.wrapping_sub(pathlen);
+                    let (_, target, percent) = rule_target(rule_ref, matches);
+                    stem_off = percent;
+                    stemlen = namelen.wrapping_sub(target.len()).wrapping_add(1);
+                    let check_lastslash = tr.checked_lastslash;
+                    if check_lastslash {
+                        stem_off += pathlen;
+                        stemlen -= pathlen;
                         if pathdir.is_null() {
                             // NUL-terminated copy of the directory prefix.
-                            pathdir_buf.resize(pathlen + 1, 0);
+                            pathdir_buf.clear();
+                            pathdir_buf.extend_from_slice(&name[..pathlen]);
+                            pathdir_buf.push(0);
                             pathdir = pathdir_buf.as_mut_ptr().cast();
-                            memcpy(pathdir.cast(), filename.cast(), pathlen);
-                            *pathdir.add(pathlen) = 0;
                         }
                     }
                     dbs!(
@@ -462,30 +396,30 @@ unsafe fn pattern_search(
                         c"Trying pattern rule '%s' with stem '%.*s'.\n".as_ptr(),
                         get_rule_defn(rule),
                         stemlen as ::core::ffi::c_int,
-                        stem
+                        name[stem_off..].as_ptr()
                     );
-                    if stemlen.wrapping_add(if check_lastslash != 0 { pathlen } else { 0 })
-                        > GET_PATH_MAX as size_t
-                    {
+                    if stemlen + if check_lastslash { pathlen } else { 0 } > GET_PATH_MAX {
                         dbs!(
                             depth,
                             c"Stem too long: '%s%.*s'.\n".as_ptr(),
-                            if check_lastslash != 0 {
+                            if check_lastslash {
                                 pathdir as *const ::core::ffi::c_char
                             } else {
                                 c"".as_ptr()
                             },
                             stemlen as ::core::ffi::c_int,
-                            stem
+                            name[stem_off..].as_ptr()
                         );
                     } else {
-                        if check_lastslash == 0 {
-                            memcpy(stem_str_ptr.cast(), stem.cast(), stemlen);
-                            *stem_str_ptr.add(stemlen) = 0;
+                        if !check_lastslash {
+                            stem_str[..stemlen]
+                                .copy_from_slice(&name[stem_off..stem_off + stemlen]);
+                            stem_str[stemlen] = 0;
                         } else {
-                            memcpy(stem_str_ptr.cast(), filename.cast(), pathlen);
-                            memcpy(stem_str_ptr.add(pathlen).cast(), stem.cast(), stemlen);
-                            *stem_str_ptr.add(pathlen.wrapping_add(stemlen)) = 0;
+                            stem_str[..pathlen].copy_from_slice(&name[..pathlen]);
+                            stem_str[pathlen..pathlen + stemlen]
+                                .copy_from_slice(&name[stem_off..stem_off + stemlen]);
+                            stem_str[pathlen + stemlen] = 0;
                         }
                         if rule_ref.deps.is_null() {
                             // A matching rule without prerequisites wins
@@ -493,7 +427,7 @@ unsafe fn pattern_search(
                             break;
                         }
                         rule_ref.in_use = 1;
-                        pat = deplist;
+                        deplist.clear();
                         let mut dep: *mut dep = rule_ref.deps;
                         let mut nptr: *const ::core::ffi::c_char = dep_name(dep);
                         loop {
@@ -512,25 +446,21 @@ unsafe fn pattern_search(
                                 // No second expansion: substitute the stem
                                 // for '%' and parse the whole name at once.
                                 let mut is_explicit: ::core::ffi::c_int = 1;
-                                let cp: *const ::core::ffi::c_char = strchr(nptr, '%' as i32);
-                                if cp.is_null() {
-                                    strcpy(depname, nptr);
-                                } else {
-                                    let mut o: *mut ::core::ffi::c_char = depname;
-                                    if check_lastslash != 0 {
-                                        o = mempcpy(o.cast(), filename.cast(), pathlen).cast();
+                                let dep_bytes = cstr_bytes(nptr);
+                                depname.clear();
+                                if let Some(cp) = dep_bytes.iter().position(|&b| b == b'%') {
+                                    if check_lastslash {
+                                        depname.extend_from_slice(&name[..pathlen]);
                                     }
-                                    o = mempcpy(
-                                        o.cast(),
-                                        nptr.cast(),
-                                        cp.offset_from(nptr) as size_t,
-                                    )
-                                    .cast();
-                                    o = mempcpy(o.cast(), stem.cast(), stemlen).cast();
-                                    strcpy(o, cp.add(1));
+                                    depname.extend_from_slice(&dep_bytes[..cp]);
+                                    depname.extend_from_slice(&name[stem_off..stem_off + stemlen]);
+                                    depname.extend_from_slice(&dep_bytes[cp + 1..]);
                                     is_explicit = 0;
+                                } else {
+                                    depname.extend_from_slice(dep_bytes);
                                 }
-                                let mut p: *mut ::core::ffi::c_char = depname;
+                                depname.push(0);
+                                let mut p: *mut ::core::ffi::c_char = depname.as_mut_ptr().cast();
                                 dl = parse_file_seq(
                                     &raw mut p,
                                     ::core::mem::size_of::<dep>() as size_t,
@@ -558,73 +488,70 @@ unsafe fn pattern_search(
                                 if nptr.is_null() {
                                     continue;
                                 }
+                                let word: &[u8] =
+                                    ::core::slice::from_raw_parts(nptr.cast::<u8>(), len);
                                 let end: *const ::core::ffi::c_char = nptr.add(len);
-                                if order_only == 0
-                                    && len == 1
-                                    && *nptr == '|' as ::core::ffi::c_char
-                                {
+                                if order_only == 0 && word == b"|" {
                                     order_only = 1;
                                     nptr = end;
                                     continue;
                                 }
                                 let is_explicit: ::core::ffi::c_int;
-                                let mut cp: *const ::core::ffi::c_char =
-                                    lindex(nptr, end, '%' as i32);
-                                if cp.is_null() {
-                                    memcpy(depname.cast(), nptr.cast(), len);
-                                    *depname.add(len) = 0;
-                                    is_explicit = 1;
-                                } else {
-                                    let mut o: *mut ::core::ffi::c_char = depname;
-                                    is_explicit = 0;
-                                    loop {
-                                        let i: size_t = cp.offset_from(nptr) as size_t;
-                                        assert!(o.add(i) < dend, "dep name buffer overflow");
-                                        o = mempcpy(o.cast(), nptr.cast(), i).cast();
-                                        if check_lastslash != 0 {
-                                            add_dir = 1;
-                                            assert!(o.add(5) < dend, "dep name buffer overflow");
-                                            o = mempcpy(o.cast(), c"$(*F)".as_ptr().cast(), 5)
-                                                .cast();
-                                        } else {
-                                            assert!(o.add(2) < dend, "dep name buffer overflow");
-                                            o = mempcpy(o.cast(), c"$*".as_ptr().cast(), 2).cast();
-                                        }
-                                        assert!(o < dend, "dep name buffer overflow");
-                                        cp = cp.add(1);
-                                        assert!(cp <= end, "dep name scan overran the word");
-                                        nptr = cp;
-                                        if nptr == end {
-                                            break;
-                                        }
-                                        // Skip over a variable reference so a
-                                        // '%' inside one is not substituted.
-                                        while cp < end
-                                            && !stop_set(*cp, MAP_BLANK | MAP_NEWLINE | MAP_NUL)
-                                        {
-                                            cp = cp.add(1);
-                                        }
-                                        cp = lindex(cp, end, '%' as i32);
-                                        if cp.is_null() {
-                                            break;
-                                        }
+                                depname.clear();
+                                match word.iter().position(|&b| b == b'%') {
+                                    None => {
+                                        depname.extend_from_slice(word);
+                                        is_explicit = 1;
                                     }
-                                    len = end.offset_from(nptr) as size_t;
-                                    memcpy(o.cast(), nptr.cast(), len);
-                                    *o.add(len) = 0;
+                                    Some(first_percent) => {
+                                        is_explicit = 0;
+                                        let mut percent = first_percent;
+                                        let mut start = 0;
+                                        loop {
+                                            depname.extend_from_slice(&word[start..percent]);
+                                            if check_lastslash {
+                                                add_dir = 1;
+                                                depname.extend_from_slice(b"$(*F)");
+                                            } else {
+                                                depname.extend_from_slice(b"$*");
+                                            }
+                                            start = percent + 1;
+                                            if start == word.len() {
+                                                break;
+                                            }
+                                            // Skip the rest of this token so a
+                                            // '%' inside a reference is not
+                                            // substituted.
+                                            let mut scan = start;
+                                            while scan < word.len()
+                                                && !stop_set(
+                                                    word[scan],
+                                                    MAP_BLANK | MAP_NEWLINE | MAP_NUL,
+                                                )
+                                            {
+                                                scan += 1;
+                                            }
+                                            match word[scan..].iter().position(|&b| b == b'%') {
+                                                None => break,
+                                                Some(k) => percent = scan + k,
+                                            }
+                                        }
+                                        depname.extend_from_slice(&word[start..]);
+                                    }
                                 }
+                                depname.push(0);
                                 nptr = end;
                                 // The automatic variables ($*, $@, ...) must
                                 // be in place before expanding the dep.
                                 if file_vars_initialized == 0 {
                                     initialize_file_variables(file, 0);
-                                    set_file_variables(file, stem_str_ptr);
+                                    set_file_variables(file, stem_str.as_mut_ptr().cast());
                                     file_vars_initialized = 1;
                                 } else if file_variables_set == 0 {
                                     define_variable_in_set(
                                         c"*".as_ptr(),
                                         1,
-                                        stem_str_ptr,
+                                        stem_str.as_mut_ptr().cast(),
                                         o_automatic,
                                         0,
                                         file_ref
@@ -637,7 +564,7 @@ unsafe fn pattern_search(
                                     file_variables_set = 1;
                                 }
                                 let mut p: *mut ::core::ffi::c_char =
-                                    expand_string_for_file(depname, file);
+                                    expand_string_for_file(depname.as_mut_ptr().cast(), file);
                                 let mut dptr: *mut *mut dep = &raw mut dl;
                                 loop {
                                     let dp: *mut dep = parse_file_seq(
@@ -672,30 +599,22 @@ unsafe fn pattern_search(
                                     }
                                 }
                             }
-                            // Grow the patdeps list if this rule produced
-                            // more deps than any rule seen before.
+                            // Track the most deps any rule has produced (the
+                            // Vec grows on its own).
                             if deps_found > max_deps {
-                                let l: size_t = pat.offset_from(deplist) as size_t;
                                 max_pattern_deps = max_pattern_deps.max(deps_found);
                                 max_deps = max_pattern_deps;
-                                deplist = xrealloc(
-                                    deplist.cast(),
-                                    (max_deps as size_t)
-                                        .wrapping_mul(::core::mem::size_of::<patdeps>() as size_t),
-                                ) as *mut patdeps;
-                                pat = deplist.add(l);
                             }
                             // Check each expanded prerequisite for viability.
                             d = dl;
                             while let Some(dr) = d.as_mut() {
-                                let is_rule: ::core::ffi::c_int =
-                                    (dr.name == dep_name(dep)) as ::core::ffi::c_int;
-                                let mut explicit: ::core::ffi::c_int = 0;
+                                let is_rule = dr.name == dep_name(dep);
+                                let mut explicit = false;
                                 let mut dp: *mut dep = ::core::ptr::null_mut();
                                 if file_impossible_p(dr.name) != 0 {
                                     dbs!(
                                         depth,
-                                        if is_rule != 0 {
+                                        if is_rule {
                                             c"Rejecting rule '%s' due to impossible rule prerequisite '%s'.\n".as_ptr()
                                         } else {
                                             c"Rejecting rule '%s' due to impossible implicit prerequisite '%s'.\n".as_ptr()
@@ -703,23 +622,18 @@ unsafe fn pattern_search(
                                         get_rule_defn(rule),
                                         dr.name
                                     );
-                                    tryrules
-                                        .add(ri as usize)
-                                        .as_mut()
-                                        .expect("tryrules allocation")
-                                        .rule = ::core::ptr::null_mut();
-                                    failed = 1;
+                                    tryrules[ri].rule = ::core::ptr::null_mut();
+                                    failed = true;
                                     break;
                                 }
-                                memset(pat.cast(), 0, ::core::mem::size_of::<patdeps>() as size_t);
-                                let pe = pat.as_mut().expect("patdeps entry");
+                                let mut pe: patdeps = ::core::mem::zeroed();
                                 pe.set_ignore_mtime(dr.ignore_mtime());
                                 pe.set_ignore_automatic_vars(dr.ignore_automatic_vars());
                                 pe.set_wait_here(dr.wait_here());
                                 pe.set_is_explicit(dr.is_explicit());
                                 dbs!(
                                     depth,
-                                    if is_rule != 0 {
+                                    if is_rule {
                                         c"Trying rule prerequisite '%s'.\n".as_ptr()
                                     } else {
                                         c"Trying implicit prerequisite '%s'.\n".as_ptr()
@@ -738,7 +652,7 @@ unsafe fn pattern_search(
                                 // A prerequisite "ought to exist" if it is an
                                 // explicit target or a dep of our target.
                                 if df.as_ref().is_some_and(|f| f.is_target() != 0) {
-                                    explicit = 1;
+                                    explicit = true;
                                 } else {
                                     dp = file_ref.deps;
                                     while let Some(dpr) = dp.as_ref() {
@@ -748,17 +662,17 @@ unsafe fn pattern_search(
                                         dp = dpr.next;
                                     }
                                 }
-                                if explicit != 0 || !dp.is_null() {
+                                if explicit || !dp.is_null() {
                                     pe.name = dr.name;
-                                    pat = pat.add(1);
+                                    deplist.push(pe);
                                     dbs!(depth, c"'%s' ought to exist.\n".as_ptr(), dr.name);
                                 } else if file_exists_p(dr.name) != 0 {
                                     pe.name = dr.name;
-                                    pat = pat.add(1);
+                                    deplist.push(pe);
                                     dbs!(depth, c"Found '%s'.\n".as_ptr(), dr.name);
                                 } else if !df.is_null() && allow_compat_rules != 0 {
                                     pe.name = dr.name;
-                                    pat = pat.add(1);
+                                    deplist.push(pe);
                                     dbs!(
                                         depth,
                                         c"Using compatibility rule '%s' due to '%s'.\n".as_ptr(),
@@ -789,7 +703,7 @@ unsafe fn pattern_search(
                                             vname
                                         );
                                         pe.name = dr.name;
-                                        pat = pat.add(1);
+                                        deplist.push(pe);
                                     } else {
                                         // Last resort: recursively search for
                                         // a rule chain that builds it as an
@@ -836,7 +750,7 @@ unsafe fn pattern_search(
                                                 pe.file = int_file;
                                                 int_file = ::core::ptr::null_mut();
                                                 pe.name = dr.name;
-                                                pat = pat.add(1);
+                                                deplist.push(pe);
                                                 found_intermediate = true;
                                             } else {
                                                 let int_ref = int_file
@@ -864,7 +778,7 @@ unsafe fn pattern_search(
                                             } else {
                                                 dbs!(depth, c"Not found '%s'.\n".as_ptr(), dr.name);
                                             }
-                                            failed = 1;
+                                            failed = true;
                                             break;
                                         }
                                     }
@@ -872,20 +786,20 @@ unsafe fn pattern_search(
                                 d = dr.next;
                             }
                             free_dep_chain(dl);
-                            if failed != 0 {
+                            if failed {
                                 break;
                             }
                         }
                         rule_ref.in_use = 0;
-                        if failed == 0 {
+                        if !failed {
                             // Every prerequisite checked out: use this rule.
                             break;
                         }
                     }
                 }
-                ri = ri.wrapping_add(1);
+                ri += 1;
             }
-            if ri < nrules {
+            if ri < tryrules.len() {
                 break;
             }
             rule = ::core::ptr::null_mut();
@@ -893,21 +807,17 @@ unsafe fn pattern_search(
         }
         if let Some(found_rule) = rule.as_ref() {
             foundrule = ri;
-            let found_tr = *tryrules.add(foundrule as usize);
+            let found_tr = tryrules[foundrule];
             // When recursing, give the file the matched target pattern as its
             // name; the caller uses it to build the real name from the stem.
             if recursions > 0 {
-                file_ref.name = *found_rule
-                    .targets
-                    .add(found_tr.matches as usize)
-                    .as_ref()
-                    .expect("rule target slot");
+                let targets =
+                    ::core::slice::from_raw_parts(found_rule.targets, found_rule.num as usize);
+                file_ref.name = targets[found_tr.matches as usize];
             }
             // Walk the recorded prerequisites backwards, entering each one as
             // a dep of the target (so the final list is in rule order).
-            while pat > deplist {
-                pat = pat.sub(1);
-                let pe = pat.as_mut().expect("patdeps entry");
+            while let Some(pe) = deplist.pop() {
                 if !pe.file.is_null() {
                     // An intermediate file: merge the scratch entry into the
                     // real file table.
@@ -996,28 +906,23 @@ unsafe fn pattern_search(
             if file_ref.was_shuffled() == 0 {
                 crate::shuffle::shuffle_deps_recursive(file_ref.deps);
             }
-            if found_tr.checked_lastslash == 0 {
-                file_ref.stem = strcache_add_len(stem, stemlen);
+            if !found_tr.checked_lastslash {
+                file_ref.stem = strcache_add_len(name[stem_off..].as_ptr().cast(), stemlen);
                 fullstemlen = stemlen;
             } else {
                 // The rule matched only the basename: the stem includes the
                 // directory part.
-                fullstemlen = pathlen.wrapping_add(stemlen);
-                memcpy(stem_str_ptr.cast(), filename.cast(), pathlen);
-                memcpy(stem_str_ptr.add(pathlen).cast(), stem.cast(), stemlen);
-                *stem_str_ptr.add(fullstemlen) = 0;
-                file_ref.stem = strcache_add(stem_str_ptr);
+                fullstemlen = pathlen + stemlen;
+                stem_str[..pathlen].copy_from_slice(&name[..pathlen]);
+                stem_str[pathlen..fullstemlen].copy_from_slice(&name[stem_off..stem_off + stemlen]);
+                stem_str[fullstemlen] = 0;
+                file_ref.stem = strcache_add(stem_str.as_ptr().cast());
             }
             file_ref.cmds = found_rule.cmds;
             file_ref.set_is_target(1);
             // Inherit .PRECIOUS and .NOTINTERMEDIATE from the target pattern.
-            let pattern_file: *mut file = lookup_file(
-                *found_rule
-                    .targets
-                    .add(found_tr.matches as usize)
-                    .as_ref()
-                    .expect("rule target slot"),
-            );
+            let (found_target, _, _) = rule_target(found_rule, found_tr.matches as usize);
+            let pattern_file: *mut file = lookup_file(found_target);
             if let Some(pf) = pattern_file.as_ref() {
                 if pf.precious() != 0 {
                     file_ref.set_precious(1);
@@ -1033,39 +938,21 @@ unsafe fn pattern_search(
                     if ti == found_tr.matches as usize {
                         continue;
                     }
-                    let target: *const ::core::ffi::c_char = *found_rule
-                        .targets
-                        .add(ti)
-                        .as_ref()
-                        .expect("rule target slot");
-                    let suffix: *const ::core::ffi::c_char = *found_rule
-                        .suffixes
-                        .add(ti)
-                        .as_ref()
-                        .expect("rule suffix slot");
-                    let target_len =
-                        *found_rule.lens.add(ti).as_ref().expect("rule length slot") as size_t;
-                    let mut nm: Vec<u8> = vec![0; target_len.wrapping_add(fullstemlen) + 1];
-                    let mut p: *mut ::core::ffi::c_char = nm.as_mut_ptr().cast();
+                    let (target_ptr, target, percent) = rule_target(found_rule, ti);
+                    let stem_bytes =
+                        ::core::slice::from_raw_parts(file_ref.stem.cast::<u8>(), fullstemlen);
+                    let mut nm: Vec<u8> = Vec::with_capacity(target.len() + fullstemlen + 1);
+                    nm.extend_from_slice(&target[..percent]);
+                    nm.extend_from_slice(stem_bytes);
+                    nm.extend_from_slice(&target[percent + 1..]);
+                    nm.push(0);
                     let new_dep: *mut dep = alloc_dep();
                     let nd = new_dep.as_mut().expect("xcalloc returned null");
-                    p = mempcpy(
-                        p.cast(),
-                        target.cast(),
-                        (suffix.offset_from(target) - 1) as size_t,
-                    )
-                    .cast();
-                    p = mempcpy(p.cast(), file_ref.stem.cast(), fullstemlen).cast();
-                    memcpy(
-                        p.cast(),
-                        suffix.cast(),
-                        (target_len as isize - suffix.offset_from(target) + 1) as size_t,
-                    );
                     nd.name = strcache_add(nm.as_ptr().cast());
                     nd.file = enter_file(nd.name);
                     nd.next = file_ref.also_make;
                     let other_file = nd.file.as_mut().expect("just entered");
-                    if let Some(other) = lookup_file(target).as_ref() {
+                    if let Some(other) = lookup_file(target_ptr).as_ref() {
                         if other.precious() != 0 {
                             other_file.set_precious(1);
                         }
@@ -1081,8 +968,6 @@ unsafe fn pattern_search(
     } else {
         rule = ::core::ptr::null_mut();
     }
-    free(tryrules.cast());
-    free(deplist.cast());
     depth = depth.wrapping_sub(1);
     if !rule.is_null() {
         dbs!(
