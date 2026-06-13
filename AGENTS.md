@@ -8,6 +8,40 @@
 3. Replace C patterns with Rust abstractions
 4. Never preserve C architecture blindly
 
+## Conversion Priorities (work order)
+
+When choosing what to clean up next, prefer these, in order. Every change
+must preserve behavior and be differential-tested against the in-tree C
+oracle (`./make`).
+
+1. **Remove raw pointer arithmetic** outside `ffi/`. Replace
+   `.add()` / `.sub()` / `.offset()` / `.offset_from()` and walked `*p`
+   cursors with slices, iterators, and indexing (`from_raw_parts`,
+   `iter()`, `position()`/`rposition()`, `while let`). Computing a span as
+   an address difference (`end as usize - start as usize`) is acceptable;
+   producing a sub-pointer for a C call via `slice[i..].as_ptr()` is
+   acceptable.
+2. **Remove C ABI / FFI type leakage from internal (all-Rust-caller)
+   APIs:**
+   - `c_int` / `c_uint` -> `i32` / `u32` / `usize` / `bool`
+     (semantic boolean flags become `bool`; indices and lengths become
+     `usize`; choose unsigned when the value is never negative).
+   - `*const c_char` (+ length) -> `&str`, `&[u8]`, or `&CStr`.
+   - null-pointer sentinels -> `Option<T>`.
+   - raw `*const` / `*mut` parameters -> references (`&` / `&mut`) when
+     every caller is Rust.
+   - drop needless `unsafe extern "C"` on functions that are not an FFI
+     boundary.
+3. Everything in **Required Refactors** below (RAII, `Result`, enums,
+   newtypes, iterator/loop simplification).
+
+### Constraints when changing types
+- Do **not** alter `#[repr(C)]` struct layouts or real `extern "C"` ABI
+  boundaries (e.g. the hash table's `void *`, c2rust-shared structs)
+  without explicit ABI analysis.
+- Integer width or signedness changes require overflow/range analysis;
+  runtime behavior must remain identical.
+
 ## Forbidden Patterns
 - libc malloc/free ownership in Rust-facing APIs
 - raw pointer arithmetic outside ffi/
