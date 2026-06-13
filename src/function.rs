@@ -227,8 +227,16 @@ pub const GET_PATH_MAX: ::core::ffi::c_int = PATH_MAX;
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
+pub const MAP_BLANK: ::core::ffi::c_int = 0x2 as ::core::ffi::c_int;
+pub const MAP_NEWLINE: ::core::ffi::c_int = 0x4 as ::core::ffi::c_int;
 pub const MAP_DOT: ::core::ffi::c_int = 0x200 as ::core::ffi::c_int;
 pub const MAP_DIRSEP: ::core::ffi::c_int = 0x8000 as ::core::ffi::c_int;
+
+/// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
+/// classes selected by `mask`?
+unsafe fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
+}
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const INTSTR_LENGTH: usize = (53 as usize)
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
@@ -1541,37 +1549,35 @@ unsafe fn func_strip(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
-    let mut doneany: ::core::ffi::c_int = 0;
-    while *p as ::core::ffi::c_int != 0 {
-        let mut i: ::core::ffi::c_int;
-        let word_start: *const ::core::ffi::c_char;
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-            != 0
-        {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
+    // View the argument as a byte slice and walk it by index, so word
+    // boundaries are found without raw pointer arithmetic or dereferences.
+    let s: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
+    let bytes = ::core::ffi::CStr::from_ptr(s).to_bytes();
+    let mut idx = 0usize;
+    let mut doneany = false;
+    while idx < bytes.len() {
+        // Skip the whitespace separating words.
+        while idx < bytes.len() && stop_set(bytes[idx], MAP_BLANK | MAP_NEWLINE) {
+            idx += 1;
         }
-        word_start = p;
-        i = 0;
-        while *p as ::core::ffi::c_int != 0
-            && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-                & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                != 0)
-        {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
-            i += 1;
+        let word_start = idx;
+        while idx < bytes.len() && !stop_set(bytes[idx], MAP_BLANK | MAP_NEWLINE) {
+            idx += 1;
         }
-        if i == 0 {
+        let word_len = idx - word_start;
+        if word_len == 0 {
             break;
         }
-        o = variable_buffer_output(o, word_start, i as size_t);
+        o = variable_buffer_output(
+            o,
+            bytes[word_start..].as_ptr() as *const ::core::ffi::c_char,
+            word_len as size_t,
+        );
         o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-        doneany = 1;
+        doneany = true;
     }
-    if doneany != 0 {
+    if doneany {
+        // Drop the trailing separator space appended after the last word.
         o = o.offset(-(1 as ::core::ffi::c_int) as isize);
     }
     o
