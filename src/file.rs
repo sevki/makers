@@ -477,7 +477,10 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
         );
     } else {
         (*new).double_colon = f;
-        (*(*f).last).prev = new;
+        (*f).last
+            .as_mut()
+            .expect("a double-colon chain head has a last entry")
+            .prev = new;
         (*f).last = new;
     }
     new
@@ -544,20 +547,29 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
             (*to_file).cmds = (*from_file).cmds;
         } else if (*from_file).cmds != (*to_file).cmds {
             let mut l: size_t = strlen((*from_file).name) as size_t;
-            if !(*(*to_file).cmds).fileinfo.filenm.is_null() {
+            let from_cmds = (*from_file)
+                .cmds
+                .as_mut()
+                .expect("from_file recipe is non-null in this branch");
+            let to_cmds = (*to_file)
+                .cmds
+                .as_ref()
+                .expect("to_file recipe is non-null in this branch");
+            let from_floc = &raw mut from_cmds.fileinfo;
+            if !to_cmds.fileinfo.filenm.is_null() {
                 error(
-                    &raw mut (*(*from_file).cmds).fileinfo,
-                    l.wrapping_add(strlen((*(*to_file).cmds).fileinfo.filenm) as size_t)
+                    from_floc,
+                    l.wrapping_add(strlen(to_cmds.fileinfo.filenm) as size_t)
                         .wrapping_add(INTSTR_LENGTH),
                     b"recipe was specified for file '%s' at %s:%lu,\0" as *const u8
                         as *const ::core::ffi::c_char,
                     (*from_file).name,
-                    (*(*from_file).cmds).fileinfo.filenm,
-                    (*(*from_file).cmds).fileinfo.lineno,
+                    from_cmds.fileinfo.filenm,
+                    from_cmds.fileinfo.lineno,
                 );
             } else {
                 error(
-                    &raw mut (*(*from_file).cmds).fileinfo,
+                    from_floc,
                     l,
                     b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -566,7 +578,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
             }
             l = l.wrapping_add(strlen(to_hname) as size_t);
             error(
-                &raw mut (*(*from_file).cmds).fileinfo,
+                from_floc,
                 l,
                 b"but '%s' is now considered the same file as '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -574,7 +586,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
                 to_hname,
             );
             error(
-                &raw mut (*(*from_file).cmds).fileinfo,
+                from_floc,
                 l,
                 b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -903,7 +915,11 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
             (*d1).set_staticpattern(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             (*d1).name = ::core::ptr::null::<::core::ffi::c_char>();
             if stem.is_null() {
-                (*(*d1).file).set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                (*d1)
+                    .file
+                    .as_mut()
+                    .expect("dep file was just entered above")
+                    .set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             }
         }
         d1 = (*d1).next;
@@ -1010,7 +1026,9 @@ pub unsafe fn expand_deps(f: *mut file) {
                     (*d).name = ::core::ptr::null::<::core::ffi::c_char>();
                     (*d).stem = fstem;
                     if fstem.is_null() {
-                        (*(*d).file)
+                        (*d).file
+                            .as_mut()
+                            .expect("dep file was just entered above")
                             .set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                     }
                     dp = &raw mut (*d).next;
@@ -1068,17 +1086,22 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     if no_intermediates != 0 && (*f).intermediate() == 0 && (*f).secondary() == 0 {
         (*f).set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if !(*f).variables.is_null() {
+    if let Some(file_vars) = (*f).variables.as_ref() {
         prereqs = expand_extra_prereqs(lookup_variable_in_set(
             b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-            (*(*f).variables).set,
+            file_vars.set,
         ));
         if second_expansion != 0 {
             d = prereqs;
             while !d.is_null() {
                 if (*d).name.is_null() {
-                    (*d).name = xstrdup((*(*d).file).name);
+                    (*d).name = xstrdup(
+                        (*d).file
+                            .as_ref()
+                            .expect("a nameless prereq has a file")
+                            .name,
+                    );
                 }
                 (*d).set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 d = (*d).next;
@@ -1299,7 +1322,7 @@ pub unsafe fn snap_deps() {
                 f2 = (*d).file;
                 while !f2.is_null() {
                     if !(*f2).deps.is_null() {
-                        d2 = (*(*f2).deps).next;
+                        d2 = (*f2).deps.as_ref().expect("checked non-null above").next;
                         while !d2.is_null() {
                             (*d2).set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                             d2 = (*d2).next;
@@ -1337,8 +1360,12 @@ pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
     (*file).set_command_state(state as cmd_state as cmd_state);
     d = (*file).also_make;
     while !d.is_null() {
-        if state as ::core::ffi::c_uint > (*(*d).file).command_state() as ::core::ffi::c_uint {
-            (*(*d).file).set_command_state(state as cmd_state as cmd_state);
+        let dfile = (*d)
+            .file
+            .as_mut()
+            .expect("an also_make dep always has a file");
+        if state as ::core::ffi::c_uint > dfile.command_state() as ::core::ffi::c_uint {
+            dfile.set_command_state(state as cmd_state as cmd_state);
         }
         d = (*d).next;
     }
@@ -1564,7 +1591,11 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
                 if !(*deps).name.is_null() {
                     (*deps).name
                 } else {
-                    (*(*deps).file).name
+                    (*deps)
+                        .file
+                        .as_ref()
+                        .expect("a nameless dep has a file")
+                        .name
                 },
             );
         } else if ood.is_null() {
@@ -1583,7 +1614,11 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
             if !(*ood).name.is_null() {
                 (*ood).name
             } else {
-                (*(*ood).file).name
+                (*ood)
+                    .file
+                    .as_ref()
+                    .expect("a nameless dep has a file")
+                    .name
             },
         );
         ood = (*ood).next;
@@ -1599,7 +1634,11 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
                     if !(*ood).name.is_null() {
                         (*ood).name
                     } else {
-                        (*(*ood).file).name
+                        (*ood)
+                            .file
+                            .as_ref()
+                            .expect("a nameless dep has a file")
+                            .name
                     },
                 );
             }
@@ -1618,14 +1657,20 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
         return;
     }
     putchar('\n' as i32);
-    if !(*f).cmds.is_null()
-        && (*(*f).cmds).recipe_prefix as ::core::ffi::c_int != cmd_prefix as ::core::ffi::c_int
+    if (*f)
+        .cmds
+        .as_ref()
+        .is_some_and(|c| c.recipe_prefix as ::core::ffi::c_int != cmd_prefix as ::core::ffi::c_int)
     {
         fputs(
             b".RECIPEPREFIX = \0" as *const u8 as *const ::core::ffi::c_char,
             stdout,
         );
-        cmd_prefix = (*(*f).cmds).recipe_prefix;
+        cmd_prefix = (*f)
+            .cmds
+            .as_ref()
+            .expect("cmds is non-null when its recipe_prefix differs")
+            .recipe_prefix;
         if cmd_prefix as ::core::ffi::c_int != RECIPEPREFIX_DEFAULT {
             putchar(cmd_prefix as ::core::ffi::c_int);
         }
@@ -1716,7 +1761,7 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
                 if !(*d).name.is_null() {
                     (*d).name
                 } else {
-                    (*(*d).file).name
+                    (*d).file.as_ref().expect("a nameless dep has a file").name
                 },
             );
             d = (*d).next;
@@ -1816,31 +1861,11 @@ pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
     if (*f).is_target() == 0 || (*f).suffix() as ::core::ffi::c_int != 0 {
         return;
     }
-    if *(*f).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '.' as i32
-        && *(*__ctype_b_loc()).offset(*(*f).name.offset(1 as ::core::ffi::c_int as isize)
-            as ::core::ffi::c_uchar as ::core::ffi::c_int
-            as isize) as ::core::ffi::c_int
-            & _ISupper as ::core::ffi::c_int as ::core::ffi::c_ushort as ::core::ffi::c_int
-            != 0
-    {
-        let mut cp: *const ::core::ffi::c_char = (*f).name.offset(1 as ::core::ffi::c_int as isize);
-        loop {
-            cp = cp.offset(1 as ::core::ffi::c_int as isize);
-            if !(*cp as ::core::ffi::c_int != 0) {
-                break;
-            }
-            if *(*__ctype_b_loc())
-                .offset(*cp as ::core::ffi::c_uchar as ::core::ffi::c_int as isize)
-                as ::core::ffi::c_int
-                & _ISupper as ::core::ffi::c_int as ::core::ffi::c_ushort as ::core::ffi::c_int
-                == 0
-            {
-                break;
-            }
-        }
-        if *cp as ::core::ffi::c_int == 0 {
-            return;
-        }
+    // Skip built-in special targets, whose names are a dot followed by one
+    // or more all-uppercase letters (e.g. `.SUFFIXES`, `.PHONY`).
+    let name = ::core::ffi::CStr::from_ptr((*f).name).to_bytes();
+    if name.len() >= 2 && name[0] == b'.' && name[1..].iter().all(u8::is_ascii_uppercase) {
+        return;
     }
     puts((*f).name);
 }
