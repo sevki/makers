@@ -580,31 +580,23 @@ fn recipe_var_assignment_prefix_uses_shell() {
 
 #[test]
 fn func_word_wordlist_words() {
-    // Exercises parse_numeric + func_words / func_word / func_wordlist, none of
-    // which were previously covered. Expected output follows GNU make semantics:
-    // word indices are 1-based; word past the end is empty; wordlist clamps the
-    // stop index to the last word and yields empty when start is past the end.
-    let mk = "\
-L := alpha beta gamma delta epsilon
-all: ; @printf 'n=[%s] w3=[%s] first=[%s] last=[%s] wl=[%s] tail=[%s] oob=[%s]\\n' \
-'$(words $(L))' '$(word 3,$(L))' '$(word 1,$(L))' '$(word 5,$(L))' \
-'$(wordlist 2,4,$(L))' '$(wordlist 3,99,$(L))' '$(wordlist 9,10,$(L))'
-";
-    let (out, code) = run_make(mk, &[], &[]);
-    assert_eq!(code, Some(0), "stdout: {out}");
-    assert_eq!(
-        out.trim_end(),
-        "n=[5] w3=[gamma] first=[alpha] last=[epsilon] wl=[beta gamma delta] tail=[gamma delta epsilon] oob=[]"
-    );
+    // Differential (C oracle vs Rust) coverage for parse_numeric + func_words /
+    // func_word / func_wordlist, none of which were previously exercised. The
+    // fixture probes word-count, 1-based indexing, $(word N) past the end, and
+    // $(wordlist) stop-index clamping / empty-when-start-past-end.
+    check("wordfuncs", "12_wordfuncs.mk", "all", &[]);
 }
 
 #[test]
-fn func_word_invalid_index_errors() {
-    // Drives the fatal-error branches: index 0 trips func_word's `i < 1` guard,
-    // and a non-numeric index trips parse_numeric's validation. GNU make aborts
-    // with exit code 2 in both cases.
-    let (out, code) = run_make("all: ; @echo $(word 0,a b c)\n", &[], &[]);
-    assert_eq!(code, Some(2), "stdout: {out}");
-    let (out2, code2) = run_make("all: ; @echo $(word x,a b c)\n", &[], &[]);
-    assert_eq!(code2, Some(2), "stdout: {out2}");
+fn func_word_zero_index_errors() {
+    // Index 0 trips func_word's `i < 1` guard; compare the C oracle's fatal
+    // message and exit code against the Rust port byte-for-byte.
+    check("word-zero", "12_wordfuncs.mk", "badzero", &[]);
+}
+
+#[test]
+fn func_word_nonnumeric_index_errors() {
+    // A non-numeric index drives parse_numeric's (now safe) validation path;
+    // both binaries must abort identically.
+    check("word-nan", "12_wordfuncs.mk", "badnan", &[]);
 }
