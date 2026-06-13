@@ -71,35 +71,56 @@ pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const FNM_PATHNAME: ::core::ffi::c_int = (1) << 0;
 pub const FNM_PERIOD: ::core::ffi::c_int = (1) << 2;
-/// # Safety
+/// Classification of a target name with respect to the `archive(member)`
+/// syntax recognized by [`ar_name`].
+enum ArName {
+    /// Not an archive reference: no usable `(member)` suffix.
+    Plain,
+    /// A well-formed `archive(member)` reference.
+    Member,
+    /// The unsupported nested `archive((member))` form.
+    Unsupported,
+}
+
+/// Classify `bytes` (a target name, without its terminating NUL) as an archive
+/// reference. Pure mirror of make's `ar_name` parsing logic.
+fn classify_ar_name(bytes: &[u8]) -> ArName {
+    // Find the first '('; it must exist and not be the very first byte.
+    let lp = match bytes.iter().position(|&c| c == b'(') {
+        None | Some(0) => return ArName::Plain,
+        Some(i) => i,
+    };
+    // The name must end with ')', and the member must be non-empty (the ')'
+    // cannot sit immediately after the '(').
+    let last = bytes.len() - 1;
+    if bytes[last] != b')' || last == lp + 1 {
+        return ArName::Plain;
+    }
+    // `archive((member))` is the unsupported nested form.
+    if bytes[lp + 1] == b'(' && bytes[last - 1] == b')' {
+        return ArName::Unsupported;
+    }
+    ArName::Member
+}
+
+/// Does `name` refer to an `archive(member)` target?
 ///
-/// C-style API operating on raw pointers; all pointer arguments must be
-/// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_name(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
-    let p: *const ::core::ffi::c_char = strchr(name, '(' as i32);
-    let end: *const ::core::ffi::c_char;
-    if p.is_null() || p == name {
-        return 0;
+/// Aborts via [`fatal`] on the unsupported nested `archive((member))` form,
+/// matching make's behavior.
+pub fn ar_name(name: &::core::ffi::CStr) -> bool {
+    match classify_ar_name(name.to_bytes()) {
+        ArName::Plain => false,
+        ArName::Member => true,
+        ArName::Unsupported => unsafe {
+            fatal(
+                ::core::ptr::null_mut::<Floc>(),
+                name.to_bytes().len() as size_t,
+                b"attempt to use unsupported feature: '%s'\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                name.as_ptr(),
+            )
+        },
     }
-    end = p
-        .offset(strlen(p) as isize)
-        .offset(-(1 as ::core::ffi::c_int as isize));
-    if *end as ::core::ffi::c_int != ')' as i32 || end == p.offset(1 as ::core::ffi::c_int as isize)
-    {
-        return 0;
-    }
-    if *p.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '(' as i32
-        && *end.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == ')' as i32
-    {
-        fatal(
-            ::core::ptr::null_mut::<Floc>(),
-            strlen(name) as size_t,
-            b"attempt to use unsupported feature: '%s'\0" as *const u8
-                as *const ::core::ffi::c_char,
-            name,
-        );
-    }
-    1
 }
 /// # Safety
 ///
@@ -381,3 +402,47 @@ pub unsafe fn ar_glob(
     state.chain
 }
 pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
+
+#[cfg(test)]
+mod ar_name_tests {
+    use super::{classify_ar_name, ArName};
+
+    fn kind(s: &str) -> &'static str {
+        match classify_ar_name(s.as_bytes()) {
+            ArName::Plain => "plain",
+            ArName::Member => "member",
+            ArName::Unsupported => "unsupported",
+        }
+    }
+
+    #[test]
+    fn plain_names_are_not_archives() {
+        assert_eq!(kind("foo.o"), "plain"); // no parenthesis
+        assert_eq!(kind(""), "plain"); // empty
+        assert_eq!(kind("(member)"), "plain"); // '(' at the very start
+        assert_eq!(kind("lib("), "plain"); // no closing ')'
+        assert_eq!(kind("lib(member"), "plain"); // missing ')'
+        assert_eq!(kind("lib()"), "plain"); // empty member
+        assert_eq!(kind("lib(member)x"), "plain"); // ')' is not the last byte
+    }
+
+    #[test]
+    fn well_formed_archive_members() {
+        assert_eq!(kind("lib.a(member.o)"), "member");
+        assert_eq!(kind("lib(m)"), "member");
+        assert_eq!(kind("a(bc)"), "member");
+    }
+
+    #[test]
+    fn nested_form_is_unsupported() {
+        assert_eq!(kind("lib((member))"), "unsupported");
+        assert_eq!(kind("a((b))"), "unsupported");
+    }
+
+    #[test]
+    fn single_inner_open_paren_is_a_member() {
+        // Only the unsupported form needs both an inner '(' and a matching
+        // inner ')'. A lone inner '(' is treated as part of the member name.
+        assert_eq!(kind("lib((member)"), "member");
+    }
+}

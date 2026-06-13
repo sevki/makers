@@ -509,7 +509,7 @@ unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *con
 /// `name` must be NUL-terminated; the directory tables must be
 /// initialized.
 pub unsafe fn file_exists_p(name: *const c_char) -> c_int {
-    if crate::ar::ar_name(name) != 0 {
+    if crate::ar::ar_name(::core::ffi::CStr::from_ptr(name)) {
         return (crate::ar::ar_member_date(name) != -1) as c_int;
     }
     match split_dir(name) {

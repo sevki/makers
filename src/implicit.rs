@@ -155,7 +155,7 @@ pub unsafe fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> 
     if pattern_search(file, 0, depth, 0, 0) != 0 {
         return 1;
     }
-    if ar_name(name) != 0 {
+    if ar_name(::core::ffi::CStr::from_ptr(name)) {
         dbs!(
             depth,
             c"Looking for archive-member implicit rule for '%s'.\n".as_ptr(),
@@ -286,7 +286,7 @@ unsafe fn pattern_search(
     let mut stem_str: [u8; PATH_MAX + 1] = [0; PATH_MAX + 1];
     depth = depth.wrapping_add(1);
     // An archive member name has no directory part.
-    let pathlen: usize = if archive != 0 || ar_name(filename) != 0 {
+    let pathlen: usize = if archive != 0 || ar_name(::core::ffi::CStr::from_ptr(filename)) {
         0
     } else {
         name[..namelen.saturating_sub(1)]
