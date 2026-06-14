@@ -206,6 +206,14 @@ fn builtin_functions() {
 }
 
 #[test]
+fn func_abspath_matches_c_oracle() {
+    // Differential coverage for the rewritten abspath/abspath_into path
+    // normalizer. Absolute inputs make the result independent of the working
+    // directory, so the C oracle and Rust port compare byte-for-byte.
+    check("abspath", "13_abspath.mk", "all", &[]);
+}
+
+#[test]
 fn recipes_and_autovars() {
     // The per-target header `@echo` and its `for`-loop steps flush through
     // different paths, so their interleaving jitters (see `check_unordered`).
@@ -426,19 +434,6 @@ all: ; @printf 'REC=[%s] SIM=[%s] EXPND=[%s] APP=[%s] SHL=[%s] COND=[%s]\\n' '$(
         out.trim_end(),
         "REC=[ab] SIM=[simple-ab] EXPND=[expanded-ab] APP=[first second ] SHL=[from-shell] COND=[conditional]"
     );
-}
-
-#[test]
-fn func_abspath_normalizes_paths() {
-    // Exercises func_abspath -> abspath_into: separator collapsing, "." and
-    // ".." resolution, trailing-slash stripping, and multiple tokens. Absolute
-    // inputs keep the result independent of the (tempdir) working directory.
-    let mk = "\
-all: ; @printf '[%s]\\n' '$(abspath /usr//lib/../bin /tmp/./x /a/b/c/.. /)'
-";
-    let (out, code) = run_make(mk, &[], &[]);
-    assert_eq!(code, Some(0), "stdout: {out}");
-    assert_eq!(out.trim_end(), "[/usr/bin /tmp/x /a/b /]");
 }
 
 #[test]
