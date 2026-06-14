@@ -75,6 +75,22 @@ unsafe fn join_path(
     buf
 }
 
+/// Split a `:`-separated search `path` into its directory elements, mapping
+/// each empty element to "." (the current directory), exactly as gnulib's
+/// PATH walk does. Pure: borrows the byte view and yields sub-slices, with no
+/// pointer cursor or length arithmetic.
+fn path_dir_elements(path: &[u8]) -> Vec<&[u8]> {
+    path.split(|&b| b == b':')
+        .map(|elem| {
+            if elem.is_empty() {
+                b".".as_slice()
+            } else {
+                elem
+            }
+        })
+        .collect()
+}
+
 /// Locate `progname` using the directory list `path` (a `:`-separated string).
 ///
 /// Returns a `malloc`ed pathname to the executable (owned by the caller), the
@@ -116,23 +132,14 @@ pub unsafe fn find_in_given_path(
 
     // ENOENT unless we hit an existing-but-non-executable match (EACCES).
     let mut failure_errno = libc::ENOENT;
-    let mut elem = path;
-    loop {
-        let sep = libc::strchr(elem, b':' as c_int);
-        let mut dir = elem;
-        let mut dir_len = if sep.is_null() {
-            libc::strlen(elem)
-        } else {
-            sep.offset_from(elem) as usize
-        };
-        // An empty PATH element denotes the current directory.
-        let dot = b".\0";
-        if dir_len == 0 {
-            dir = dot.as_ptr() as *const c_char;
-            dir_len = 1;
-        }
+    let path_bytes = ::core::ffi::CStr::from_ptr(path).to_bytes();
+    for elem in path_dir_elements(path_bytes) {
+        // `elem` is never empty (empty PATH entries map to "."), so the byte
+        // pointer and length are a valid `(dir, dir_len)` pair for join_path.
+        let dir = elem.as_ptr() as *const c_char;
+        let dir_len = elem.len();
 
-        let base = if !directory.is_null() && *dir != b'/' as c_char {
+        let base = if !directory.is_null() && elem[0] != b'/' {
             directory
         } else {
             ::core::ptr::null()
@@ -147,13 +154,52 @@ pub unsafe fn find_in_given_path(
             }
             libc::free(candidate as *mut _);
         }
-
-        if sep.is_null() {
-            break;
-        }
-        elem = sep.add(1);
     }
 
     *libc::__errno_location() = failure_errno;
     ::core::ptr::null()
+}
+
+#[cfg(test)]
+mod path_dir_elements_tests {
+    use super::path_dir_elements;
+
+    #[test]
+    fn single_element() {
+        assert_eq!(path_dir_elements(b"/usr/bin"), vec![b"/usr/bin".as_slice()]);
+    }
+
+    #[test]
+    fn multiple_elements() {
+        assert_eq!(
+            path_dir_elements(b"/usr/bin:/bin:/usr/local/bin"),
+            vec![
+                b"/usr/bin".as_slice(),
+                b"/bin".as_slice(),
+                b"/usr/local/bin".as_slice(),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_element_becomes_dot() {
+        // A leading, embedded, or trailing empty element all denote ".".
+        assert_eq!(
+            path_dir_elements(b":/bin:"),
+            vec![b".".as_slice(), b"/bin".as_slice(), b".".as_slice()]
+        );
+    }
+
+    #[test]
+    fn empty_path_is_single_dot() {
+        assert_eq!(path_dir_elements(b""), vec![b".".as_slice()]);
+    }
+
+    #[test]
+    fn consecutive_separators_each_dot() {
+        assert_eq!(
+            path_dir_elements(b"a::b"),
+            vec![b"a".as_slice(), b".".as_slice(), b"b".as_slice()]
+        );
+    }
 }
