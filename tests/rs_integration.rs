@@ -206,6 +206,14 @@ fn builtin_functions() {
 }
 
 #[test]
+fn func_subst_matches_c_oracle() {
+    // Differential coverage for the index-based subst_expand rewrite: $(subst)
+    // edge cases (multiple/overlapping/empty/no matches, start/end, longer
+    // replacement) plus the whole-word no-% $(patsubst) boundary path.
+    check("subst", "15_subst.mk", "all", &[]);
+}
+
+#[test]
 fn func_abspath_matches_c_oracle() {
     // Differential coverage for the rewritten abspath/abspath_into path
     // normalizer. Absolute inputs make the result independent of the working
