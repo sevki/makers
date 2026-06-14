@@ -1154,7 +1154,12 @@ unsafe fn func_word(
     }
     let bytes =
         ::core::ffi::CStr::from_ptr(*argv.offset(1 as ::core::ffi::c_int as isize)).to_bytes();
-    if let Some(w) = tokens(bytes).nth((i - 1) as usize) {
+    // `i >= 1` here; an index too large for `usize` (only reachable on 32-bit
+    // targets) scans past the end and yields the empty string, as in C make.
+    if let Some(w) = usize::try_from(i - 1)
+        .ok()
+        .and_then(|n| tokens(bytes).nth(n))
+    {
         o = variable_buffer_output(
             o,
             w.as_ptr() as *const ::core::ffi::c_char,
