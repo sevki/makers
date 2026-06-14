@@ -1709,7 +1709,12 @@ unsafe fn func_error(
 /// Pure mirror of `misc::alpha_compare` for NUL-free word slices.
 fn alpha_cmp(a: &[u8], b: &[u8]) -> ::core::cmp::Ordering {
     match (a.first(), b.first()) {
-        (Some(&x), Some(&y)) if x != y => (x as i8).cmp(&(y as i8)),
+        // Mirror `misc::alpha_compare`'s `*s1 as c_int - *s2 as c_int`: the
+        // first differing byte is promoted through `c_char`, so its sign
+        // follows the target's `char` signedness (signed on x86, unsigned on
+        // e.g. aarch64) rather than always being signed.
+        (Some(&x), Some(&y)) if x != y => (x as ::core::ffi::c_char as ::core::ffi::c_int)
+            .cmp(&(y as ::core::ffi::c_char as ::core::ffi::c_int)),
         // Equal first byte (or an empty operand): fall back to strcmp, i.e. an
         // unsigned lexicographic comparison (words contain no interior NUL).
         _ => a.cmp(b),
@@ -3446,12 +3451,16 @@ mod alpha_cmp_tests {
     }
 
     #[test]
-    fn differing_first_byte_uses_signed_order() {
-        // 0x80 is -128 as i8, so it sorts before ASCII 'A' (matching make's
-        // alpha_compare, which subtracts signed `char` values).
-        assert_eq!(alpha_cmp(&[0x80], b"A"), Ordering::Less);
-        assert_eq!(alpha_cmp(b"A", &[0x80]), Ordering::Greater);
-        // Two high bytes still order by signed value.
+    fn differing_first_byte_follows_char_signedness() {
+        // The first differing byte is promoted through `c_char`, so the order
+        // of a high-bit byte vs. ASCII tracks the target's char signedness
+        // (matching make's alpha_compare). Derive the expectation the same way
+        // so the test holds on both signed- and unsigned-char targets.
+        let hi = 0x80u8 as ::core::ffi::c_char as ::core::ffi::c_int;
+        let a = b'A' as ::core::ffi::c_int;
+        assert_eq!(alpha_cmp(&[0x80], b"A"), hi.cmp(&a));
+        assert_eq!(alpha_cmp(b"A", &[0x80]), a.cmp(&hi));
+        // Two high bytes order by their (equally-promoted) values.
         assert_eq!(alpha_cmp(&[0x81], &[0x82]), Ordering::Less);
     }
 
