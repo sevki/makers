@@ -2910,7 +2910,7 @@ unsafe extern "C" fn record_files(
     are_also_makes: ::core::ffi::c_int,
     pattern: *const ::core::ffi::c_char,
     pattern_percent: *const ::core::ffi::c_char,
-    mut depstr: *mut ::core::ffi::c_char,
+    depstr: *mut ::core::ffi::c_char,
     cmds_started: ::core::ffi::c_uint,
     commands: *mut ::core::ffi::c_char,
     commands_idx: size_t,
@@ -2953,7 +2953,13 @@ unsafe extern "C" fn record_files(
     if depstr.is_null() {
         deps = ::core::ptr::null_mut::<dep>();
     } else {
-        depstr = unescape_char(depstr, ':' as i32);
+        // Unescape `\:` in the dependency list in place. `depstr` is a
+        // NUL-terminated C string; the safe helper rewrites it shorter and we
+        // re-terminate at the new length, leaving the same pointer valid.
+        let dep_len = strlen(depstr);
+        let dep_buf = ::core::slice::from_raw_parts_mut(depstr as *mut u8, dep_len + 1);
+        let dep_new = unescape_char_bytes(&mut dep_buf[..dep_len], b':');
+        dep_buf[dep_new] = 0;
         if second_expansion != 0 && !strchr(depstr, '$' as i32).is_null() {
             deps = alloc_dep();
             (*deps).name = depstr;
@@ -3351,22 +3357,6 @@ fn unescape_char_bytes(buf: &mut [u8], c: u8) -> usize {
         s += 1;
     }
     p
-}
-
-/// # Safety
-///
-/// `string` must be a valid, writable NUL-terminated string.
-unsafe fn unescape_char(
-    string: *mut ::core::ffi::c_char,
-    c: ::core::ffi::c_int,
-) -> *mut ::core::ffi::c_char {
-    let len = strlen(string);
-    // Include the existing NUL slot so the new terminator is written by
-    // indexing rather than raw pointer arithmetic.
-    let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
-    let new_len = unescape_char_bytes(&mut buf[..len], c as u8);
-    buf[new_len] = 0;
-    string
 }
 /// # Safety
 ///
