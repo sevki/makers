@@ -299,49 +299,67 @@ pub unsafe fn subst_expand(
     rlen: size_t,
     by_word: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
-    let mut t: *const ::core::ffi::c_char = text;
-    let mut p: *const ::core::ffi::c_char;
+    // `text` is NUL-terminated; view it as a byte slice so the scan runs over
+    // indices instead of walking raw pointers. `subst`/`replace` are emitted
+    // straight to the output buffer, which is the genuine FFI boundary.
+    let text_bytes = ::core::ffi::CStr::from_ptr(text).to_bytes();
+    let subst_bytes = ::core::slice::from_raw_parts(subst as *const u8, slen);
     if slen == 0 && by_word == 0 {
-        o = variable_buffer_output(o, t, strlen(t) as size_t);
+        o = variable_buffer_output(o, text, text_bytes.len());
         if rlen > 0 {
             o = variable_buffer_output(o, replace, rlen);
         }
         return o;
     }
+    // `ti` is the offset of the C cursor `t` within `text_bytes`.
+    let mut ti: usize = 0;
     loop {
+        // `p` is the offset of the next match (or token end, in word mode).
+        let p: usize;
         if by_word != 0 && slen == 0 {
-            p = end_of_token(next_token(t));
+            // p = end_of_token(next_token(t)); recover its offset by address
+            // difference (an accepted span computation, not pointer arithmetic).
+            let t_ptr = text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char;
+            let p_ptr = end_of_token(next_token(t_ptr));
+            p = p_ptr as usize - text_bytes.as_ptr() as usize;
         } else {
-            p = strstr(t, subst);
-            if p.is_null() {
-                o = variable_buffer_output(o, t, strlen(t) as size_t);
-                return o;
+            // p = strstr(t, subst)
+            match text_bytes[ti..]
+                .windows(subst_bytes.len())
+                .position(|w| w == subst_bytes)
+            {
+                Some(rel) => p = ti + rel,
+                None => {
+                    o = variable_buffer_output(
+                        o,
+                        text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
+                        text_bytes.len() - ti,
+                    );
+                    return o;
+                }
             }
         }
-        if p > t {
-            o = variable_buffer_output(o, t, p.offset_from(t) as ::core::ffi::c_long as size_t);
+        if p > ti {
+            o = variable_buffer_output(
+                o,
+                text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
+                p - ti,
+            );
         }
-        if by_word != 0
-            && (p > text
-                && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
-                    *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize,
-                ) as ::core::ffi::c_int
-                    & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                    != 0)
-                || !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                    .offset(*p.offset(slen as isize) as ::core::ffi::c_uchar as isize)
-                    as ::core::ffi::c_int
-                    & (0x2 as ::core::ffi::c_int
-                        | 0x4 as ::core::ffi::c_int
-                        | 0x1 as ::core::ffi::c_int)
-                    != 0))
-        {
+        // Whole-word boundary test (word mode only): keep the original `subst`
+        // when the match is not a standalone word — preceded by a non-blank
+        // (and not at the start), or followed by a non-blank, non-terminator.
+        let prev_breaks = p > 0 && !stop_set(text_bytes[p - 1], MAP_BLANK | MAP_NEWLINE);
+        let after = text_bytes.get(p + slen).copied().unwrap_or(0);
+        let after_breaks = !stop_set(after, MAP_BLANK | MAP_NEWLINE | MAP_NUL);
+        if by_word != 0 && (prev_breaks || after_breaks) {
             o = variable_buffer_output(o, subst, slen);
         } else if rlen > 0 {
             o = variable_buffer_output(o, replace, rlen);
         }
-        t = p.offset(slen as isize);
-        if !(*t as ::core::ffi::c_int != 0) {
+        // Advance past the match; stop when the cursor reaches the NUL.
+        ti = p + slen;
+        if ti >= text_bytes.len() {
             break;
         }
     }
