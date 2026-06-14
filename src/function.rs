@@ -562,9 +562,12 @@ pub unsafe fn pattern_matches(
         }
         pattern = new_chars;
     }
-    let prefix =
-        ::core::slice::from_raw_parts(pattern.cast::<u8>(), percent.offset_from(pattern) as usize);
-    let suffix = ::core::ffi::CStr::from_ptr(percent.add(1)).to_bytes();
+    // `percent` points at the `%` inside `pattern`; split the pattern's byte
+    // view there (the `% ` itself is dropped) instead of forming sub-pointers.
+    let pattern_bytes = ::core::ffi::CStr::from_ptr(pattern).to_bytes();
+    let percent_idx = percent as usize - pattern as usize;
+    let prefix = &pattern_bytes[..percent_idx];
+    let suffix = &pattern_bytes[percent_idx + 1..];
     pattern_matches_parts(prefix, suffix, s) as ::core::ffi::c_int
 }
 unsafe extern "C" fn find_next_argument(
