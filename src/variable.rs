@@ -1225,38 +1225,52 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
 }
+/// Pure decision behind [`should_export`]: given a variable's export mode,
+/// origin, whether it is exportable, and the global `export_all_variables`
+/// flag, decide whether the variable belongs in a child process's
+/// environment.
+fn should_export_decision(
+    export: variable_export,
+    origin: variable_origin,
+    exportable: bool,
+    export_all: bool,
+) -> bool {
+    match export {
+        // v_noexport: never export.
+        2 => false,
+        // v_ifset: export only if the variable was actually set somewhere.
+        3 => origin != o_default,
+        // v_default: export an exportable variable unless its origin forbids
+        // it (default/automatic vars, or non-command/env vars when
+        // `export_all_variables` is off).
+        0 => {
+            origin != o_default
+                && origin != o_automatic
+                && exportable
+                && (export_all
+                    || origin == o_command
+                    || origin == o_env
+                    || origin == o_env_override)
+        }
+        // v_export (1) and any unexpected value: export.
+        _ => true,
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn should_export(v: *const variable) -> ::core::ffi::c_int {
-    match (*v).export() as ::core::ffi::c_int {
-        2 => return 0,
-        3 => {
-            if (*v).origin() as ::core::ffi::c_int == o_default as ::core::ffi::c_int {
-                return 0;
-            }
-        }
-        0 => {
-            if (*v).origin() as ::core::ffi::c_int == o_default as ::core::ffi::c_int
-                || (*v).origin() as ::core::ffi::c_int == o_automatic as ::core::ffi::c_int
-            {
-                return 0;
-            }
-            if (*v).exportable() == 0 {
-                return 0;
-            }
-            if export_all_variables == 0
-                && (*v).origin() as ::core::ffi::c_int != o_command as ::core::ffi::c_int
-                && (*v).origin() as ::core::ffi::c_int != o_env as ::core::ffi::c_int
-                && (*v).origin() as ::core::ffi::c_int != o_env_override as ::core::ffi::c_int
-            {
-                return 0;
-            }
-        }
-        1 | _ => {}
-    }
-    1
+    let v = v
+        .as_ref()
+        .expect("should_export requires a non-null variable");
+    should_export_decision(
+        v.export(),
+        v.origin(),
+        v.exportable() != 0,
+        export_all_variables != 0,
+    ) as ::core::ffi::c_int
 }
 /// # Safety
 ///
@@ -2364,3 +2378,53 @@ unsafe extern "C" fn run_static_initializers() {
 #[cfg_attr(target_os = "windows", link_section = ".CRT$XIB")]
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
 static INIT_ARRAY: [unsafe extern "C" fn(); 1] = [run_static_initializers];
+
+#[cfg(test)]
+mod should_export_tests {
+    use super::{
+        o_automatic, o_command, o_default, o_env, o_env_override, should_export_decision,
+        v_default, v_export, v_ifset, v_noexport,
+    };
+
+    #[test]
+    fn noexport_never_exports() {
+        // v_noexport wins regardless of origin / exportable / export_all.
+        assert!(!should_export_decision(v_noexport, o_command, true, true));
+        assert!(!should_export_decision(v_noexport, o_env, true, false));
+    }
+
+    #[test]
+    fn export_always_exports() {
+        assert!(should_export_decision(v_export, o_default, false, false));
+        assert!(should_export_decision(v_export, o_automatic, false, false));
+    }
+
+    #[test]
+    fn ifset_exports_unless_default_origin() {
+        assert!(!should_export_decision(v_ifset, o_default, true, true));
+        assert!(should_export_decision(v_ifset, o_command, false, false));
+        assert!(should_export_decision(v_ifset, o_env, false, false));
+    }
+
+    #[test]
+    fn default_mode_respects_origin_and_export_all() {
+        // Not exportable -> never.
+        assert!(!should_export_decision(v_default, o_command, false, true));
+        // default / automatic origins -> never, even if exportable & export_all.
+        assert!(!should_export_decision(v_default, o_default, true, true));
+        assert!(!should_export_decision(v_default, o_automatic, true, true));
+        // command / env / env_override always export when exportable.
+        assert!(should_export_decision(v_default, o_command, true, false));
+        assert!(should_export_decision(v_default, o_env, true, false));
+        assert!(should_export_decision(
+            v_default,
+            o_env_override,
+            true,
+            false
+        ));
+        // Other origins (e.g. file/makefile) only export when export_all is set.
+        let o_file = 2; // some non-command/env origin
+        assert!(!should_export_decision(v_default, o_file, true, false));
+        assert!(should_export_decision(v_default, o_file, true, true));
+    }
+}
