@@ -429,6 +429,37 @@ all: ; @printf 'REC=[%s] SIM=[%s] EXPND=[%s] APP=[%s] SHL=[%s] COND=[%s]\\n' '$(
 }
 
 #[test]
+fn func_abspath_normalizes_paths() {
+    // Exercises func_abspath -> abspath_into: separator collapsing, "." and
+    // ".." resolution, trailing-slash stripping, and multiple tokens. Absolute
+    // inputs keep the result independent of the (tempdir) working directory.
+    let mk = "\
+all: ; @printf '[%s]\\n' '$(abspath /usr//lib/../bin /tmp/./x /a/b/c/.. /)'
+";
+    let (out, code) = run_make(mk, &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out.trim_end(), "[/usr/bin /tmp/x /a/b /]");
+}
+
+#[test]
+fn func_abspath_resolves_relative_against_cwd() {
+    // A relative argument is anchored at the working directory; ".." climbs out
+    // of it. Run from a fresh tempdir and compare against that directory.
+    let dir = tempdir();
+    let mk = "all: ; @printf '%s\\n' '$(abspath sub/./file)'\n";
+    std::fs::write(dir.join("Makefile"), mk).unwrap();
+    let out = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to spawn make");
+    assert_eq!(out.status.code(), Some(0));
+    let cwd = std::fs::canonicalize(&dir).unwrap();
+    let expected = format!("{}/sub/file\n", cwd.display());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+}
+
+#[test]
 fn recipe_runs_path_and_absolute_commands() {
     // child_execute_job fast path: a simple command is resolved on PATH, and an
     // absolute path is exec'd directly. Separate recipe lines so each is its own

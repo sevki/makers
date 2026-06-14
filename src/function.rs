@@ -10,8 +10,7 @@ use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
 use libc::{
-    __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strchr, strcpy,
-    strerror, strstr,
+    __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strerror, strstr,
 };
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -2281,115 +2280,94 @@ unsafe fn func_shell(
     func_shell_base(o, argv, 1)
 }
 pub const ROOT_LEN: ::core::ffi::c_int = 1;
-unsafe extern "C" fn abspath(
-    mut name: *const ::core::ffi::c_char,
-    apath: *mut ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
-    let mut dest: *mut ::core::ffi::c_char;
-    let mut start: *const ::core::ffi::c_char;
-    let mut end: *const ::core::ffi::c_char;
-    let apath_limit: *const ::core::ffi::c_char;
-    let root_len: ::core::ffi::c_ulong = ROOT_LEN as ::core::ffi::c_ulong;
-    if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
-        return ::core::ptr::null_mut::<::core::ffi::c_char>();
+/// Normalize a path into `out`, mirroring GNU make's `abspath`.
+///
+/// `name` is the input path token (no trailing NUL required). `starting_dir`
+/// is the process working directory used to resolve relative paths; an empty
+/// slice means it is unavailable. The result (with a trailing NUL) is written
+/// to `out`, which must hold at least `GET_PATH_MAX + 1` bytes.
+///
+/// Returns `Some(len)` where `out[..len]` is the normalized path, or `None`
+/// when the input is empty, a relative path cannot be resolved, or the result
+/// would not fit. This is a pure byte transform over slices with no raw
+/// pointers; the only `unsafe` boundary lives in the caller that supplies the
+/// argv token and the working-directory global.
+fn abspath_into(name: &[u8], starting_dir: &[u8], out: &mut [u8]) -> Option<usize> {
+    const ROOT: usize = ROOT_LEN as usize;
+    // `apath_limit = apath + GET_PATH_MAX`: the index just past the last
+    // writable byte, leaving room for the trailing NUL in `out`.
+    let limit = out.len().saturating_sub(1);
+    if name.is_empty() || name[0] == 0 {
+        return None;
     }
-    apath_limit = apath.offset(GET_PATH_MAX as isize);
-    if !(*name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32) {
-        if starting_directory.is_null() {
-            return ::core::ptr::null_mut::<::core::ffi::c_char>();
+    let mut dest: usize;
+    // Cursor into `name`, advanced component by component.
+    let mut i: usize;
+    if name[0] != b'/' {
+        // Relative path: seed `out` with the working directory.
+        if starting_dir.is_empty() {
+            return None;
         }
-        strcpy(apath, starting_directory);
-        dest = strchr(apath, 0);
+        let n = starting_dir.len();
+        if n >= limit {
+            return None;
+        }
+        out[..n].copy_from_slice(starting_dir);
+        out[n] = 0;
+        dest = n;
+        i = 0;
     } else {
-        memcpy(
-            apath as *mut ::core::ffi::c_void,
-            name as *const ::core::ffi::c_void,
-            root_len as size_t,
-        );
-        *apath.offset(root_len as isize) = 0;
-        dest = apath.offset(root_len as isize);
-        name = name.offset(root_len as isize);
+        // Absolute path: copy the leading root separator.
+        out[..ROOT].copy_from_slice(&name[..ROOT]);
+        out[ROOT] = 0;
+        dest = ROOT;
+        i = ROOT;
     }
-    end = name;
-    start = end;
-    while *start as ::core::ffi::c_int != 0 {
-        let len: ptrdiff_t;
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*start as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & 0x8000 as ::core::ffi::c_int
-            != 0
-        {
-            start = start.offset(1 as ::core::ffi::c_int as isize);
+    while i < name.len() && name[i] != 0 {
+        // Skip directory separators (MAP_DIRSEP).
+        while i < name.len() && name[i] == b'/' {
+            i += 1;
         }
-        end = start;
-        while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-            .offset(*end as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x8000 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
-            != 0)
-        {
-            end = end.offset(1 as ::core::ffi::c_int as isize);
+        // Scan one component up to the next separator or NUL.
+        let start = i;
+        while i < name.len() && name[i] != b'/' && name[i] != 0 {
+            i += 1;
         }
-        len = end.offset_from(start) as ::core::ffi::c_long as ptrdiff_t;
-        if len == 0 as ptrdiff_t {
+        let len = i - start;
+        if len == 0 {
             break;
         }
-        if !(len == 1 as ptrdiff_t
-            && *start.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '.' as i32)
-        {
-            if len == 2 as ptrdiff_t
-                && *start.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == '.' as i32
-                && *start.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == '.' as i32
-            {
-                if dest > apath.offset(root_len as isize) {
-                    dest = dest.offset(-(1 as ::core::ffi::c_int) as isize);
-                    while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                        .offset(*dest.offset(-(1 as ::core::ffi::c_int) as isize)
-                            as ::core::ffi::c_uchar as isize)
-                        as ::core::ffi::c_int
-                        & 0x8000 as ::core::ffi::c_int
-                        != 0)
-                    {
-                        dest = dest.offset(-(1 as ::core::ffi::c_int) as isize);
-                    }
+        let comp = &name[start..i];
+        if len == 1 && comp[0] == b'.' {
+            // "." — current directory, drop it.
+        } else if len == 2 && comp[0] == b'.' && comp[1] == b'.' {
+            // ".." — back up over the previous component.
+            if dest > ROOT {
+                dest -= 1;
+                while dest > 0 && out[dest - 1] != b'/' {
+                    dest -= 1;
                 }
-            } else {
-                if !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
-                    .offset(*dest.offset(-(1 as ::core::ffi::c_int) as isize)
-                        as ::core::ffi::c_uchar as isize)
-                    as ::core::ffi::c_int
-                    & 0x8000 as ::core::ffi::c_int
-                    != 0)
-                {
-                    let fresh5 = dest;
-                    dest = dest.offset(1 as ::core::ffi::c_int as isize);
-                    *fresh5 = '/' as i32 as ::core::ffi::c_char;
-                }
-                if apath_limit.offset_from(dest) as ptrdiff_t <= len {
-                    return ::core::ptr::null_mut::<::core::ffi::c_char>();
-                }
-                dest = mempcpy(
-                    dest as *mut ::core::ffi::c_void,
-                    start as *const ::core::ffi::c_void,
-                    len as size_t,
-                ) as *mut ::core::ffi::c_char;
-                *dest = 0;
             }
+        } else {
+            // Ordinary component: add a separator unless one is already there.
+            if !(dest > 0 && out[dest - 1] == b'/') {
+                out[dest] = b'/';
+                dest += 1;
+            }
+            if limit - dest <= len {
+                return None;
+            }
+            out[dest..dest + len].copy_from_slice(comp);
+            dest += len;
+            out[dest] = 0;
         }
-        start = end;
     }
-    if dest > apath.offset(root_len as isize)
-        && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
-            *dest.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar as isize,
-        ) as ::core::ffi::c_int
-            & 0x8000 as ::core::ffi::c_int
-            != 0
-    {
-        dest = dest.offset(-(1 as ::core::ffi::c_int) as isize);
+    // Strip a trailing separator, but keep the root.
+    if dest > ROOT && out[dest - 1] == b'/' {
+        dest -= 1;
     }
-    *dest = 0;
-    apath
+    out[dest] = 0;
+    Some(dest)
 }
 unsafe fn func_realpath(
     mut o: *mut ::core::ffi::c_char,
@@ -2691,30 +2669,27 @@ unsafe fn func_abspath(
     let mut path: *const ::core::ffi::c_char;
     let mut doneany: ::core::ffi::c_int = 0;
     let mut len: size_t = 0;
+    // Resolve the working-directory global once, as bytes, at the FFI edge.
+    let starting_dir: &[u8] = if starting_directory.is_null() {
+        &[]
+    } else {
+        ::core::ffi::CStr::from_ptr(starting_directory).to_bytes()
+    };
     loop {
         path = find_next_token(&raw mut p, &raw mut len);
         if path.is_null() {
             break;
         }
         if len < GET_PATH_MAX as size_t {
-            let mut in_0: [::core::ffi::c_char; 4097] = [0; 4097];
-            let mut out: [::core::ffi::c_char; 4097] = [0; 4097];
-            let inend: *mut ::core::ffi::c_char = mempcpy(
-                &raw mut in_0 as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                path as *const ::core::ffi::c_void,
-                len as size_t,
-            ) as *mut ::core::ffi::c_char;
-            *inend = 0;
-            if !abspath(
-                &raw mut in_0 as *mut ::core::ffi::c_char,
-                &raw mut out as *mut ::core::ffi::c_char,
-            )
-            .is_null()
-            {
+            let mut out: [u8; 4097] = [0; 4097];
+            // The argv token is borrowed as a byte slice at the FFI edge; the
+            // path normalization itself runs entirely in safe code.
+            let name = ::core::slice::from_raw_parts(path as *const u8, len as usize);
+            if let Some(out_len) = abspath_into(name, starting_dir, &mut out) {
                 o = variable_buffer_output(
                     o,
-                    &raw mut out as *mut ::core::ffi::c_char,
-                    strlen(&raw mut out as *mut ::core::ffi::c_char) as size_t,
+                    out.as_ptr() as *mut ::core::ffi::c_char,
+                    out_len as size_t,
                 );
                 o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
                 doneany = 1;
@@ -3626,5 +3601,70 @@ mod fold_newlines_tests {
         let mut buf = b"a\nb\0c\nd".to_vec();
         let n = fold_newlines_bytes(&mut buf, true);
         assert_eq!(&buf[..n], b"a b");
+    }
+}
+
+#[cfg(test)]
+mod abspath_tests {
+    use super::abspath_into;
+
+    /// Normalize `name` against `cwd` and return the result as a `String`.
+    fn abs(name: &[u8], cwd: &[u8]) -> Option<String> {
+        let mut out = [0u8; 4097];
+        abspath_into(name, cwd, &mut out).map(|n| String::from_utf8(out[..n].to_vec()).unwrap())
+    }
+
+    #[test]
+    fn absolute_paths_are_collapsed() {
+        assert_eq!(abs(b"/usr/bin", b"/home"), Some("/usr/bin".into()));
+        // Redundant separators collapse to one.
+        assert_eq!(abs(b"/usr//bin", b"/home"), Some("/usr/bin".into()));
+        assert_eq!(abs(b"/", b"/home"), Some("/".into()));
+        // A trailing slash is stripped (but the root is preserved above).
+        assert_eq!(abs(b"/usr/bin/", b"/home"), Some("/usr/bin".into()));
+    }
+
+    #[test]
+    fn dot_components_are_dropped() {
+        assert_eq!(abs(b"/usr/./bin", b"/home"), Some("/usr/bin".into()));
+        assert_eq!(abs(b"/./usr", b"/home"), Some("/usr".into()));
+    }
+
+    #[test]
+    fn dotdot_backs_up_one_component() {
+        assert_eq!(abs(b"/usr/lib/../bin", b"/home"), Some("/usr/bin".into()));
+        // ".." at the root stays at the root.
+        assert_eq!(abs(b"/../usr", b"/home"), Some("/usr".into()));
+        assert_eq!(abs(b"/..", b"/home"), Some("/".into()));
+    }
+
+    #[test]
+    fn relative_paths_resolve_against_cwd() {
+        assert_eq!(abs(b"bin", b"/usr"), Some("/usr/bin".into()));
+        assert_eq!(abs(b"./bin", b"/usr"), Some("/usr/bin".into()));
+        assert_eq!(abs(b"../lib", b"/usr/bin"), Some("/usr/lib".into()));
+    }
+
+    #[test]
+    fn empty_input_or_missing_cwd_yields_none() {
+        assert_eq!(abs(b"", b"/home"), None);
+        assert_eq!(abs(&[0], b"/home"), None);
+        // A relative path with no working directory cannot be resolved.
+        assert_eq!(abs(b"bin", b""), None);
+    }
+
+    #[test]
+    fn input_stops_at_embedded_nul() {
+        // The token is logically NUL-terminated, mirroring the C scan.
+        assert_eq!(abs(b"/usr\0/bin", b"/home"), Some("/usr".into()));
+    }
+
+    #[test]
+    fn overflowing_result_yields_none() {
+        // A component that would not fit before the limit returns None rather
+        // than writing past the buffer.
+        let mut out = [0u8; 8]; // limit == 7
+        let long = b"/aaaaaaaaaa";
+        assert_eq!(abspath_into(long, b"/home", &mut out), None);
     }
 }
