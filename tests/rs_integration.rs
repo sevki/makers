@@ -437,6 +437,14 @@ all: ; @printf 'REC=[%s] SIM=[%s] EXPND=[%s] APP=[%s] SHL=[%s] COND=[%s]\\n' '$(
 }
 
 #[test]
+fn func_realpath_matches_c_oracle() {
+    // Differential coverage for the rewritten realpath (now std::fs::canonicalize).
+    // Absolute, existing inputs make the result cwd-independent, so the C oracle
+    // and Rust port — both delegating to libc realpath — match byte-for-byte.
+    check("realpath", "14_realpath.mk", "all", &[]);
+}
+
+#[test]
 fn func_abspath_resolves_relative_against_cwd() {
     // A relative argument is anchored at the working directory; ".." climbs out
     // of it. Run from a fresh tempdir and compare against that directory.
