@@ -124,6 +124,17 @@ unsafe fn define_automatic(file: &mut File, name: &CStr, value: *const c_char) {
     );
 }
 
+/// Split an archive reference `lib(member)` into its library and member byte
+/// slices. The member excludes the trailing `)`. Pure: indexes the byte view,
+/// with no pointer arithmetic. Returns `None` when there is no `(`.
+fn split_archive_ref(name: &[u8]) -> Option<(&[u8], &[u8])> {
+    let paren = name.iter().position(|&b| b == b'(')?;
+    let lib = &name[..paren];
+    // The member runs from just after '(' up to the trailing ')'.
+    let member = &name[paren + 1..name.len().saturating_sub(1)];
+    Some((lib, member))
+}
+
 /// Set the automatic variables (`$@`, `$<`, `$*`, `$%`, `$^`, `$+`, `$?`,
 /// `$|`) in `file`'s variable set, computing the stem first if needed.
 ///
@@ -141,15 +152,13 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     let at: *const c_char;
     let percent: *const c_char;
     if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
-        let paren = strchr(file.name, '(' as c_int);
-        let lib_len = paren.offset_from(file.name) as usize;
-        at_buf = ::core::slice::from_raw_parts(file.name as *const u8, lib_len).to_vec();
+        let (lib, member) = split_archive_ref(CStr::from_ptr(file.name).to_bytes())
+            .expect("ar_name guarantees a lib(member) reference");
+        at_buf = lib.to_vec();
         at_buf.push(0);
         at = at_buf.as_ptr() as *const c_char;
 
-        let member = paren.add(1);
-        let member_len = strlen(member) as usize - 1; // drop the ')'
-        percent_buf = ::core::slice::from_raw_parts(member as *const u8, member_len).to_vec();
+        percent_buf = member.to_vec();
         percent_buf.push(0);
         percent = percent_buf.as_ptr() as *const c_char;
     } else {
@@ -733,3 +742,39 @@ pub unsafe fn print_commands(cmds: *const commands) {
 }
 
 pub const FILE_TIMESTAMP_HI_RES: c_int = 1;
+
+#[cfg(test)]
+mod split_archive_ref_tests {
+    use super::split_archive_ref;
+
+    #[test]
+    fn splits_lib_and_member() {
+        assert_eq!(
+            split_archive_ref(b"libfoo.a(bar.o)"),
+            Some((b"libfoo.a".as_slice(), b"bar.o".as_slice()))
+        );
+    }
+
+    #[test]
+    fn empty_library_part() {
+        // "(member)" — nothing before the paren.
+        assert_eq!(
+            split_archive_ref(b"(bar.o)"),
+            Some((b"".as_slice(), b"bar.o".as_slice()))
+        );
+    }
+
+    #[test]
+    fn empty_member_part() {
+        // "lib()" — the member between '(' and ')' is empty.
+        assert_eq!(
+            split_archive_ref(b"lib()"),
+            Some((b"lib".as_slice(), b"".as_slice()))
+        );
+    }
+
+    #[test]
+    fn no_paren_returns_none() {
+        assert_eq!(split_archive_ref(b"plainfile.o"), None);
+    }
+}
