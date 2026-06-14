@@ -22,7 +22,7 @@ use ::core::ptr::{null, null_mut};
 
 use libc::{
     __errno_location, closedir, free, memcpy, opendir, printf, puts, readdir, strcmp, strerror,
-    strlen, strrchr, DIR, EINTR,
+    strlen, DIR, EINTR,
 };
 
 pub use crate::sys_stat::{stat, timespec};
@@ -483,23 +483,29 @@ pub unsafe fn dir_file_exists_p(dirname: *const c_char, filename: *const c_char)
     dir_contents_file_exists_p(find_directory(dirname), filename)
 }
 
-/// Split `name` at its final slash, returning `(dirname, basename)` plus
-/// the owned buffer (if any) keeping `dirname` alive.
-unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *const c_char)> {
-    let dirend = strrchr(name, '/' as c_int);
-    if dirend.is_null() {
-        return None;
-    }
-    let (buf, dirname): (Vec<u8>, *const c_char) = if ::core::ptr::eq(dirend, name as *mut c_char) {
-        (Vec::new(), c"/".as_ptr())
+/// Compute how `name` splits at its final slash.
+///
+/// Returns `(dirname, base_offset)` where `dirname` is the directory part as
+/// a NUL-terminated byte buffer (a lone leading slash becomes `/`) and the
+/// basename begins at `name[base_offset]`. Returns `None` when there is no
+/// slash. Pure: operates purely on the byte view, with no pointer state.
+fn split_dir_parts(name: &[u8]) -> Option<(Vec<u8>, usize)> {
+    let slash = name.iter().rposition(|&b| b == b'/')?;
+    let mut dirname = if slash == 0 {
+        b"/".to_vec()
     } else {
-        let len = dirend.offset_from(name) as usize;
-        let mut buf = ::core::slice::from_raw_parts(name as *const u8, len).to_vec();
-        buf.push(0);
-        let p = buf.as_ptr() as *const c_char;
-        (buf, p)
+        name[..slash].to_vec()
     };
-    Some((buf, dirname, dirend.add(1)))
+    dirname.push(0);
+    Some((dirname, slash + 1))
+}
+
+/// Split `name` at its final slash, returning `(dirname, basename)` plus
+/// the owned buffer keeping `dirname` alive.
+unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *const c_char)> {
+    let (buf, base_off) = split_dir_parts(::core::ffi::CStr::from_ptr(name).to_bytes())?;
+    let dirname = buf.as_ptr() as *const c_char;
+    Some((buf, dirname, name.add(base_off)))
 }
 
 /// Does file `name` (with optional directory part) exist?
@@ -802,4 +808,39 @@ pub unsafe fn hash_init_directories() {
         Some(directory_contents_hash_2),
         Some(directory_contents_hash_cmp),
     );
+}
+
+#[cfg(test)]
+mod split_dir_tests {
+    use super::split_dir_parts;
+
+    #[test]
+    fn no_slash_returns_none() {
+        assert_eq!(split_dir_parts(b"foo.c"), None);
+        assert_eq!(split_dir_parts(b""), None);
+    }
+
+    #[test]
+    fn leading_slash_only_becomes_root() {
+        // "/foo": the only slash is at index 0, so the dirname is "/".
+        assert_eq!(split_dir_parts(b"/foo"), Some((b"/\0".to_vec(), 1)));
+    }
+
+    #[test]
+    fn nested_path_splits_at_final_slash() {
+        // "a/b/c": final slash at index 3, dirname "a/b", base offset 4.
+        assert_eq!(split_dir_parts(b"a/b/c"), Some((b"a/b\0".to_vec(), 4)));
+    }
+
+    #[test]
+    fn trailing_slash_yields_empty_basename_offset() {
+        // "dir/": slash at index 3, base offset 4 points at the NUL.
+        assert_eq!(split_dir_parts(b"dir/"), Some((b"dir\0".to_vec(), 4)));
+    }
+
+    #[test]
+    fn absolute_nested_keeps_leading_slash_in_dirname() {
+        // "/usr/bin": final slash at index 4, dirname "/usr", base offset 5.
+        assert_eq!(split_dir_parts(b"/usr/bin"), Some((b"/usr\0".to_vec(), 5)));
+    }
 }
