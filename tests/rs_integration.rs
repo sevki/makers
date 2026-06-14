@@ -206,6 +206,14 @@ fn builtin_functions() {
 }
 
 #[test]
+fn func_patsubst_matches_c_oracle() {
+    // Differential coverage for patsubst_expand_pat: the %-pattern path of
+    // $(patsubst) — prefix/suffix/both, stem capture (incl. empty stem),
+    // whole-token %, no-% replacement, and non-matching passthrough.
+    check("patsubst", "16_patsubst.mk", "all", &[]);
+}
+
+#[test]
 fn func_subst_matches_c_oracle() {
     // Differential coverage for the index-based subst_expand rewrite: $(subst)
     // edge cases (multiple/overlapping/empty/no matches, start/end, longer
