@@ -3316,48 +3316,56 @@ unsafe extern "C" fn find_char_unquote(
         }
     }
 }
-unsafe extern "C" fn unescape_char(
-    string: *mut ::core::ffi::c_char,
-    c: ::core::ffi::c_int,
-) -> *mut ::core::ffi::c_char {
-    let mut p: *mut ::core::ffi::c_char = string;
-    let mut s: *mut ::core::ffi::c_char = string;
-    while *s as ::core::ffi::c_int != 0 {
-        if *s as ::core::ffi::c_int == '\\' as i32 {
-            let mut e: *mut ::core::ffi::c_char = s;
-            let mut l: size_t;
-            while *e as ::core::ffi::c_int == '\\' as i32 {
-                e = e.offset(1 as ::core::ffi::c_int as isize);
+/// Remove the backslashes that escape `c` from `buf` in place, returning the
+/// new length. A run of `n` backslashes before `c` is halved when it is odd
+/// (so `\c` -> `c`, `\\\c` -> `\c`); an even run, or a run before any other
+/// byte, is copied verbatim. The write cursor never overtakes the read cursor,
+/// so the in-place rewrite is sound. Pure port of [`unescape_char`].
+fn unescape_char_bytes(buf: &mut [u8], c: u8) -> usize {
+    let mut p = 0usize;
+    let mut s = 0usize;
+    while s < buf.len() {
+        if buf[s] == b'\\' {
+            let mut e = s;
+            while e < buf.len() && buf[e] == b'\\' {
+                e += 1;
             }
-            l = e.offset_from(s) as ::core::ffi::c_long as size_t;
-            if *e as ::core::ffi::c_int != c || l.wrapping_rem(2) == 0 {
-                memmove(
-                    p as *mut ::core::ffi::c_void,
-                    s as *const ::core::ffi::c_void,
-                    l as size_t,
-                );
-                p = p.offset(l as isize);
-                if *e as ::core::ffi::c_int == 0 {
+            let mut l = e - s;
+            // The byte after the run; the terminating NUL when at end of input.
+            let e_char = if e < buf.len() { buf[e] } else { 0 };
+            if e_char != c || l.is_multiple_of(2) {
+                buf.copy_within(s..s + l, p);
+                p += l;
+                if e_char == 0 {
                     break;
                 }
             } else if l > 1 {
-                l = l.wrapping_div(2);
-                memmove(
-                    p as *mut ::core::ffi::c_void,
-                    s as *const ::core::ffi::c_void,
-                    l as size_t,
-                );
-                p = p.offset(l as isize);
+                l /= 2;
+                buf.copy_within(s..s + l, p);
+                p += l;
             }
             s = e;
         }
-        let fresh21 = s;
-        s = s.offset(1 as ::core::ffi::c_int as isize);
-        let fresh22 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-        *fresh22 = *fresh21;
+        buf[p] = buf[s];
+        p += 1;
+        s += 1;
     }
-    *p = 0;
+    p
+}
+
+/// # Safety
+///
+/// `string` must be a valid, writable NUL-terminated string.
+unsafe fn unescape_char(
+    string: *mut ::core::ffi::c_char,
+    c: ::core::ffi::c_int,
+) -> *mut ::core::ffi::c_char {
+    let len = strlen(string);
+    // Include the existing NUL slot so the new terminator is written by
+    // indexing rather than raw pointer arithmetic.
+    let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
+    let new_len = unescape_char_bytes(&mut buf[..len], c as u8);
+    buf[new_len] = 0;
     string
 }
 /// # Safety
@@ -4226,4 +4234,50 @@ pub unsafe fn parse_file_seq(
     }
     *stringp = p;
     new as *mut ::core::ffi::c_void
+}
+
+#[cfg(test)]
+mod unescape_char_tests {
+    use super::unescape_char_bytes;
+
+    /// Unescape a copy of `s` for target byte `c` and return the result.
+    fn unescape(s: &[u8], c: u8) -> Vec<u8> {
+        let mut buf = s.to_vec();
+        let n = unescape_char_bytes(&mut buf, c);
+        buf.truncate(n);
+        buf
+    }
+
+    #[test]
+    fn single_backslash_before_target_is_removed() {
+        assert_eq!(unescape(b"a\\:b", b':'), b"a:b");
+        assert_eq!(unescape(b"\\:", b':'), b":");
+    }
+
+    #[test]
+    fn even_run_before_target_is_kept_verbatim() {
+        // Even backslash run does not escape: copied as-is, target stays.
+        assert_eq!(unescape(b"a\\\\:b", b':'), b"a\\\\:b");
+    }
+
+    #[test]
+    fn odd_run_before_target_is_halved() {
+        // Three backslashes + ':' -> one backslash + ':' (odd run, halved).
+        assert_eq!(unescape(b"\\\\\\:", b':'), b"\\:");
+    }
+
+    #[test]
+    fn backslashes_before_other_bytes_are_untouched() {
+        // A backslash not escaping the target byte is left alone.
+        assert_eq!(unescape(b"a\\b:c", b':'), b"a\\b:c");
+        // Trailing backslashes (no following byte) are kept verbatim.
+        assert_eq!(unescape(b"a\\\\", b':'), b"a\\\\");
+        assert_eq!(unescape(b"a\\", b':'), b"a\\");
+    }
+
+    #[test]
+    fn no_backslashes_is_unchanged() {
+        assert_eq!(unescape(b"a:b:c", b':'), b"a:b:c");
+        assert_eq!(unescape(b"", b':'), b"");
+    }
 }
