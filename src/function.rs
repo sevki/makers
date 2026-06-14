@@ -1047,23 +1047,18 @@ unsafe fn func_words(
     );
     o
 }
-/// Trim make-whitespace from both ends of the inclusive byte span `s` that the
-/// C `strip_whitespace` walks between its two cursors. Returns `(lead, trail)`:
-/// how many bytes to drop from the front and from the back. The whitespace set
-/// is `is_map_space` (the C `isspace` set): `stopchar_map[c] & (MAP_BLANK |
-/// MAP_NEWLINE)` is nonzero for exactly those bytes, since the map tags space
-/// and tab as `MAP_BLANK` and every other `isspace` byte as `MAP_NEWLINE`.
+/// Trim whitespace from both ends of the inclusive byte span `s` that the C
+/// `strip_whitespace` walks between its two cursors. `is_ws` is the whitespace
+/// classifier (the wrapper passes the runtime `stopchar_map` test so any
+/// locale-specific classification is honoured). Returns `(lead, trail)`: how
+/// many bytes to drop from the front and from the back.
 ///
 /// Mirrors the cursor walk exactly: the leading scan may consume the whole span
 /// (`lead == s.len()` when every byte is whitespace), after which nothing
 /// remains for the trailing scan (`trail == 0`).
-fn trim_whitespace_span(s: &[u8]) -> (usize, usize) {
-    let lead = s.iter().take_while(|&&c| is_map_space(c)).count();
-    let trail = s[lead..]
-        .iter()
-        .rev()
-        .take_while(|&&c| is_map_space(c))
-        .count();
+fn trim_whitespace_span(s: &[u8], is_ws: impl Fn(u8) -> bool) -> (usize, usize) {
+    let lead = s.iter().take_while(|&&c| is_ws(c)).count();
+    let trail = s[lead..].iter().rev().take_while(|&&c| is_ws(c)).count();
     (lead, trail)
 }
 
@@ -1080,12 +1075,15 @@ pub unsafe fn strip_whitespace(
     // `[beg, end]` is an inclusive span; it is empty when `end < beg` (e.g. an
     // empty argument, where the caller sets `end = beg - 1`). Only touch the
     // cursors when the span is non-empty, matching the C loops' `<=`/`>=`
-    // guards. Forming the span length as an address difference is the accepted
-    // FFI-boundary pattern.
+    // guards. The span length is an address difference (the accepted boundary
+    // pattern); `c_char` is one byte so this is the element count.
     if !beg.is_null() && end >= beg {
-        let len = end.offset_from(beg) as usize + 1;
+        let len = (end as usize - beg as usize) + 1;
         let span = ::core::slice::from_raw_parts(beg as *const u8, len);
-        let (lead, trail) = trim_whitespace_span(span);
+        // Classify whitespace via the runtime `stopchar_map` (MAP_BLANK |
+        // MAP_NEWLINE), exactly as the C loops did, preserving any locale
+        // bytes `initialize_stopchar_map` tagged from `__ctype_b_loc()`.
+        let (lead, trail) = trim_whitespace_span(span, |c| stop_set(c, MAP_BLANK | MAP_NEWLINE));
         // When `lead == len` (all whitespace) `trail == 0`, so `endpp` stays put
         // while `begpp` advances one past the span — the empty-result state the
         // C loops leave behind.
@@ -3502,26 +3500,32 @@ mod alpha_cmp_tests {
 
 #[cfg(test)]
 mod trim_whitespace_span_tests {
-    use super::trim_whitespace_span;
+    use super::{is_map_space, trim_whitespace_span};
 
-    /// Trim `s` using the helper and return the surviving byte slice, mirroring
-    /// what `strip_whitespace` leaves between its cursors.
+    /// Trim under the C-locale `stopchar_map` classification (`is_map_space`),
+    /// which is what `strip_whitespace`'s runtime `stop_set` resolves to there.
+    fn trim(s: &[u8]) -> (usize, usize) {
+        trim_whitespace_span(s, is_map_space)
+    }
+
+    /// Trim `s` and return the surviving byte slice, mirroring what
+    /// `strip_whitespace` leaves between its cursors.
     fn trimmed(s: &[u8]) -> &[u8] {
-        let (lead, trail) = trim_whitespace_span(s);
+        let (lead, trail) = trim(s);
         &s[lead..s.len() - trail]
     }
 
     #[test]
     fn no_whitespace_is_unchanged() {
-        assert_eq!(trim_whitespace_span(b"abc"), (0, 0));
-        assert_eq!(trim_whitespace_span(b"a"), (0, 0));
+        assert_eq!(trim(b"abc"), (0, 0));
+        assert_eq!(trim(b"a"), (0, 0));
     }
 
     #[test]
     fn trims_each_end() {
-        assert_eq!(trim_whitespace_span(b"  abc"), (2, 0));
-        assert_eq!(trim_whitespace_span(b"abc  "), (0, 2));
-        assert_eq!(trim_whitespace_span(b" abc "), (1, 1));
+        assert_eq!(trim(b"  abc"), (2, 0));
+        assert_eq!(trim(b"abc  "), (0, 2));
+        assert_eq!(trim(b" abc "), (1, 1));
         assert_eq!(trimmed(b" \tabc\t "), b"abc");
     }
 
@@ -3529,17 +3533,24 @@ mod trim_whitespace_span_tests {
     fn all_whitespace_consumed_by_leading_scan() {
         // The leading scan eats the whole span, leaving nothing for the trailing
         // scan — exactly the empty-result state the C loops produce.
-        assert_eq!(trim_whitespace_span(b"   "), (3, 0));
+        assert_eq!(trim(b"   "), (3, 0));
         assert_eq!(trimmed(b"   "), b"");
-        assert_eq!(trim_whitespace_span(b""), (0, 0));
+        assert_eq!(trim(b""), (0, 0));
     }
 
     #[test]
     fn covers_full_isspace_set_but_not_nul() {
         // space, tab, newline, vtab, formfeed, carriage-return are whitespace;
         // NUL is not (stopchar_map[0] is MAP_NUL only).
-        assert_eq!(trim_whitespace_span(b"\t\n a \r\x0b"), (3, 3));
+        assert_eq!(trim(b"\t\n a \r\x0b"), (3, 3));
         assert_eq!(trimmed(b"\t\n a \r\x0b"), b"a");
-        assert_eq!(trim_whitespace_span(b"\0"), (0, 0));
+        assert_eq!(trim(b"\0"), (0, 0));
+    }
+
+    #[test]
+    fn classifier_is_honoured() {
+        // The helper trims whatever the injected predicate marks; here only 'x'
+        // is "whitespace", proving the wrapper's runtime classifier drives it.
+        assert_eq!(trim_whitespace_span(b"xxabcxx", |c| c == b'x'), (2, 2));
     }
 }
