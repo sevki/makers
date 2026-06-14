@@ -9,11 +9,8 @@ use crate::misc::{
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
-use libc::{
-    __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strerror, strstr,
-};
+use libc::{__errno_location, abort, close, free, pipe, printf, remove, sprintf, strerror, strstr};
 extern "C" {
-    fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
         -> ssize_t;
     static mut stdout: *mut FILE;
@@ -2369,6 +2366,27 @@ fn abspath_into(name: &[u8], starting_dir: &[u8], out: &mut [u8]) -> Option<usiz
     out[dest] = 0;
     Some(dest)
 }
+/// Resolve `token` to its canonical absolute path, mirroring make's
+/// `$(realpath)` (libc `realpath` followed by a `stat`): it yields a path only
+/// when every component exists. This is safe code with no raw pointers — the
+/// argv/FFI plumbing stays in the caller. Returns the resolved bytes (no
+/// trailing NUL), or `None` when resolution fails, the result no longer
+/// `stat`s, or it would overflow the `PATH_MAX` buffer libc `realpath` uses.
+fn realpath_token(token: &[u8]) -> Option<Vec<u8>> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let input = std::path::Path::new(std::ffi::OsStr::from_bytes(token));
+    let canon = std::fs::canonicalize(input).ok()?;
+    // C follows `realpath` with `stat(out)`; `canonicalize` already requires
+    // existence, but mirror the explicit check to match the C control flow.
+    std::fs::metadata(&canon).ok()?;
+    let bytes = canon.into_os_string().into_vec();
+    // libc `realpath` writes into a `PATH_MAX` buffer, so an over-long result
+    // would fail there (`ENAMETOOLONG`); reject it to match that behavior.
+    if bytes.len() >= GET_PATH_MAX as usize {
+        return None;
+    }
+    Some(bytes)
+}
 unsafe fn func_realpath(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
@@ -2384,73 +2402,16 @@ unsafe fn func_realpath(
             break;
         }
         if len < GET_PATH_MAX as size_t {
-            let mut rp: *mut ::core::ffi::c_char;
-            let inend: *mut ::core::ffi::c_char;
-            let mut st: stat = stat {
-                st_dev: 0,
-                st_ino: 0,
-                st_nlink: 0,
-                st_mode: 0,
-                st_uid: 0,
-                st_gid: 0,
-                __pad0: 0,
-                st_rdev: 0,
-                st_size: 0,
-                st_blksize: 0,
-                st_blocks: 0,
-                st_atim: timespec {
-                    tv_sec: 0,
-                    tv_nsec: 0,
-                },
-                st_mtim: timespec {
-                    tv_sec: 0,
-                    tv_nsec: 0,
-                },
-                st_ctim: timespec {
-                    tv_sec: 0,
-                    tv_nsec: 0,
-                },
-                __glibc_reserved: [0; 3],
-            };
-            let mut in_0: [::core::ffi::c_char; 4097] = [0; 4097];
-            let mut out: [::core::ffi::c_char; 4097] = [0; 4097];
-            inend = mempcpy(
-                &raw mut in_0 as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                path as *const ::core::ffi::c_void,
-                len as size_t,
-            ) as *mut ::core::ffi::c_char;
-            *inend = 0;
-            loop {
-                *__errno_location() = 0;
-                rp = realpath(
-                    &raw mut in_0 as *mut ::core::ffi::c_char,
-                    &raw mut out as *mut ::core::ffi::c_char,
+            // Borrow the argv token at the FFI edge; resolution is safe code.
+            let token = ::core::slice::from_raw_parts(path as *const u8, len as usize);
+            if let Some(resolved) = realpath_token(token) {
+                o = variable_buffer_output(
+                    o,
+                    resolved.as_ptr() as *const ::core::ffi::c_char,
+                    resolved.len() as size_t,
                 );
-                if !(rp.is_null() && *__errno_location() == EINTR) {
-                    break;
-                }
-            }
-            if !rp.is_null() {
-                let mut r: ::core::ffi::c_int;
-                loop {
-                    r = stat(&raw mut out as *mut ::core::ffi::c_char, &raw mut st);
-                    if !(r == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
-                        break;
-                    }
-                }
-                if r == 0 {
-                    o = variable_buffer_output(
-                        o,
-                        &raw mut out as *mut ::core::ffi::c_char,
-                        strlen(&raw mut out as *mut ::core::ffi::c_char) as size_t,
-                    );
-                    o = variable_buffer_output(
-                        o,
-                        b" \0" as *const u8 as *const ::core::ffi::c_char,
-                        1,
-                    );
-                    doneany = 1;
-                }
+                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+                doneany = 1;
             }
         }
     }
@@ -3666,5 +3627,34 @@ mod abspath_tests {
         let mut out = [0u8; 8]; // limit == 7
         let long = b"/aaaaaaaaaa";
         assert_eq!(abspath_into(long, b"/home", &mut out), None);
+    }
+}
+
+#[cfg(test)]
+mod realpath_tests {
+    use super::realpath_token;
+
+    #[test]
+    fn root_resolves_to_itself() {
+        // "/" is canonical and always exists.
+        assert_eq!(realpath_token(b"/"), Some(b"/".to_vec()));
+    }
+
+    #[test]
+    fn nonexistent_path_yields_none() {
+        assert_eq!(realpath_token(b"/no/such/path/xyzzy_makers_test"), None);
+    }
+
+    #[test]
+    fn resolves_real_directory_and_collapses_dots() {
+        // A directory that exists on every unix; "." / redundant separators are
+        // collapsed by canonicalization, matching libc realpath.
+        let tmp = std::env::temp_dir();
+        let canon = std::fs::canonicalize(&tmp).unwrap();
+        let expected = canon.as_os_str().as_encoded_bytes().to_vec();
+
+        let mut noisy = tmp.as_os_str().as_encoded_bytes().to_vec();
+        noisy.extend_from_slice(b"/./");
+        assert_eq!(realpath_token(&noisy), Some(expected));
     }
 }
