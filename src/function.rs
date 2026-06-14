@@ -36,12 +36,6 @@ extern "C" {
     fn feof(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn ferror(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn fileno(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn qsort(
-        __base: *mut ::core::ffi::c_void,
-        __nmemb: size_t,
-        __size: size_t,
-        __compar: __compar_fn_t,
-    );
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -167,7 +161,6 @@ use crate::hash::{
 pub use crate::job::childbase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
 use crate::make_main::{command_count, db_level, starting_directory, stopchar_map};
-use crate::misc::alpha_compare;
 pub use crate::output::output;
 use crate::output::{error, fatal, output_context, outputs};
 use crate::posixos::fd_noinherit;
@@ -1710,70 +1703,39 @@ unsafe fn func_error(
     }
     o
 }
+/// Order two words as make's `alpha_compare` does: by the signed difference of
+/// their first bytes when those differ (`char` is signed on the supported
+/// targets), otherwise by a `strcmp`-equivalent unsigned byte comparison.
+/// Pure mirror of `misc::alpha_compare` for NUL-free word slices.
+fn alpha_cmp(a: &[u8], b: &[u8]) -> ::core::cmp::Ordering {
+    match (a.first(), b.first()) {
+        (Some(&x), Some(&y)) if x != y => (x as i8).cmp(&(y as i8)),
+        // Equal first byte (or an empty operand): fall back to strcmp, i.e. an
+        // unsigned lexicographic comparison (words contain no interior NUL).
+        _ => a.cmp(b),
+    }
+}
+
 unsafe fn func_sort(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut t: *const ::core::ffi::c_char;
-    let mut wordi: ::core::ffi::c_int;
-    let mut p: *mut ::core::ffi::c_char;
-    let mut len: size_t = 0;
-    t = *argv.offset(0 as ::core::ffi::c_int as isize);
-    wordi = 0;
-    loop {
-        p = find_next_token(&raw mut t, ::core::ptr::null_mut::<size_t>());
-        if p.is_null() {
-            break;
+    let bytes =
+        ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)).to_bytes();
+    let mut words: Vec<&[u8]> = tokens(bytes).collect();
+    if !words.is_empty() {
+        words.sort_by(|a, b| alpha_cmp(a, b));
+        words.dedup(); // duplicates are byte-equal, hence adjacent after sorting
+        for w in words {
+            o = variable_buffer_output(
+                o,
+                w.as_ptr() as *const ::core::ffi::c_char,
+                w.len() as size_t,
+            );
+            o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         }
-        t = t.offset(1 as ::core::ffi::c_int as isize);
-        wordi += 1;
-    }
-    // Owned word-pointer table (was an xmalloc'd array freed at the end).
-    let mut words: Vec<*mut ::core::ffi::c_char> =
-        Vec::with_capacity(if wordi == 0 { 1 } else { wordi as usize });
-    t = *argv.offset(0 as ::core::ffi::c_int as isize);
-    wordi = 0;
-    loop {
-        p = find_next_token(&raw mut t, &raw mut len);
-        if p.is_null() {
-            break;
-        }
-        t = t.offset(1 as ::core::ffi::c_int as isize);
-        *p.offset(len as isize) = 0;
-        wordi += 1;
-        words.push(p);
-    }
-    if wordi != 0 {
-        let mut i: ::core::ffi::c_int;
-        qsort(
-            words.as_mut_ptr() as *mut ::core::ffi::c_void,
-            wordi as size_t,
-            ::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t,
-            Some(
-                alpha_compare
-                    as unsafe extern "C" fn(
-                        *const ::core::ffi::c_void,
-                        *const ::core::ffi::c_void,
-                    ) -> ::core::ffi::c_int,
-            ),
-        );
-        i = 0;
-        while i < wordi {
-            len = strlen(words[i as usize]) as size_t;
-            if i == wordi - 1
-                || strlen(words[(i + 1) as usize]) != len
-                || memcmp(
-                    words[i as usize] as *const ::core::ffi::c_void,
-                    words[(i + 1) as usize] as *const ::core::ffi::c_void,
-                    len as size_t,
-                ) != 0
-            {
-                o = variable_buffer_output(o, words[i as usize], len);
-                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-            }
-            i += 1;
-        }
+        // Drop the trailing separator space appended after the last word.
         o = o.offset(-(1 as ::core::ffi::c_int) as isize);
     }
     o
@@ -3467,5 +3429,43 @@ mod word_span_tests {
     fn empty_or_inverted_range_yields_none() {
         assert_eq!(word_span(b"a b c", 3, 2), None); // stop < start
         assert_eq!(word_span(b"a b c", 0, 2), None); // 0 is not a valid 1-based index
+    }
+}
+
+#[cfg(test)]
+mod alpha_cmp_tests {
+    use super::alpha_cmp;
+    use core::cmp::Ordering;
+
+    #[test]
+    fn ascii_is_lexicographic() {
+        assert_eq!(alpha_cmp(b"abc", b"abd"), Ordering::Less);
+        assert_eq!(alpha_cmp(b"abc", b"abc"), Ordering::Equal);
+        assert_eq!(alpha_cmp(b"ab", b"abc"), Ordering::Less); // strcmp: shorter < longer
+        assert_eq!(alpha_cmp(b"B", b"a"), Ordering::Less); // 'B'(66) < 'a'(97)
+    }
+
+    #[test]
+    fn differing_first_byte_uses_signed_order() {
+        // 0x80 is -128 as i8, so it sorts before ASCII 'A' (matching make's
+        // alpha_compare, which subtracts signed `char` values).
+        assert_eq!(alpha_cmp(&[0x80], b"A"), Ordering::Less);
+        assert_eq!(alpha_cmp(b"A", &[0x80]), Ordering::Greater);
+        // Two high bytes still order by signed value.
+        assert_eq!(alpha_cmp(&[0x81], &[0x82]), Ordering::Less);
+    }
+
+    #[test]
+    fn equal_first_byte_falls_back_to_unsigned_rest() {
+        // First bytes equal -> strcmp over the remainder (unsigned).
+        assert_eq!(alpha_cmp(&[b'a', 0x80], &[b'a', 0x10]), Ordering::Greater);
+    }
+
+    #[test]
+    fn sort_then_dedup_matches_word_set() {
+        let mut v: Vec<&[u8]> = vec![b"b".as_slice(), b"a", b"b", b"c", b"a"];
+        v.sort_by(|a, b| alpha_cmp(a, b));
+        v.dedup();
+        assert_eq!(v, vec![b"a".as_slice(), b"b", b"c"]);
     }
 }
