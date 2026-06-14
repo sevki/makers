@@ -77,18 +77,17 @@ unsafe fn join_path(
 
 /// Split a `:`-separated search `path` into its directory elements, mapping
 /// each empty element to "." (the current directory), exactly as gnulib's
-/// PATH walk does. Pure: borrows the byte view and yields sub-slices, with no
-/// pointer cursor or length arithmetic.
-fn path_dir_elements(path: &[u8]) -> Vec<&[u8]> {
-    path.split(|&b| b == b':')
-        .map(|elem| {
-            if elem.is_empty() {
-                b".".as_slice()
-            } else {
-                elem
-            }
-        })
-        .collect()
+/// PATH walk does. Pure and lazy: borrows the byte view and yields sub-slices
+/// on demand (no eager allocation), so the caller can stop at the first match,
+/// with no pointer cursor or length arithmetic.
+fn path_dir_elements(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+    path.split(|&b| b == b':').map(|elem| {
+        if elem.is_empty() {
+            b".".as_slice()
+        } else {
+            elem
+        }
+    })
 }
 
 /// Locate `progname` using the directory list `path` (a `:`-separated string).
@@ -164,15 +163,19 @@ pub unsafe fn find_in_given_path(
 mod path_dir_elements_tests {
     use super::path_dir_elements;
 
+    fn elements(path: &[u8]) -> Vec<&[u8]> {
+        path_dir_elements(path).collect()
+    }
+
     #[test]
     fn single_element() {
-        assert_eq!(path_dir_elements(b"/usr/bin"), vec![b"/usr/bin".as_slice()]);
+        assert_eq!(elements(b"/usr/bin"), vec![b"/usr/bin".as_slice()]);
     }
 
     #[test]
     fn multiple_elements() {
         assert_eq!(
-            path_dir_elements(b"/usr/bin:/bin:/usr/local/bin"),
+            elements(b"/usr/bin:/bin:/usr/local/bin"),
             vec![
                 b"/usr/bin".as_slice(),
                 b"/bin".as_slice(),
@@ -185,20 +188,20 @@ mod path_dir_elements_tests {
     fn empty_element_becomes_dot() {
         // A leading, embedded, or trailing empty element all denote ".".
         assert_eq!(
-            path_dir_elements(b":/bin:"),
+            elements(b":/bin:"),
             vec![b".".as_slice(), b"/bin".as_slice(), b".".as_slice()]
         );
     }
 
     #[test]
     fn empty_path_is_single_dot() {
-        assert_eq!(path_dir_elements(b""), vec![b".".as_slice()]);
+        assert_eq!(elements(b""), vec![b".".as_slice()]);
     }
 
     #[test]
     fn consecutive_separators_each_dot() {
         assert_eq!(
-            path_dir_elements(b"a::b"),
+            elements(b"a::b"),
             vec![b"a".as_slice(), b".".as_slice(), b"b".as_slice()]
         );
     }
