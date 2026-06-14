@@ -966,6 +966,42 @@ fn tokens(s: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> {
     s.split(|&b| is_map_space(b)).filter(|w| !w.is_empty())
 }
 
+/// Return the sub-slice of `s` spanning words `start..=stop` (1-based,
+/// whitespace-separated), preserving the original separators between them —
+/// the semantics of `$(wordlist start,stop,s)`. `stop` is clamped to the last
+/// word. Returns `None` when `stop < start` or there are fewer than `start`
+/// words. Pure: scans byte indices, no pointer arithmetic.
+fn word_span(s: &[u8], start: usize, stop: usize) -> Option<&[u8]> {
+    if start == 0 || stop < start {
+        return None;
+    }
+    let mut begin = None;
+    let mut end = 0;
+    let mut word = 0usize;
+    let mut i = 0;
+    while i < s.len() {
+        if is_map_space(s[i]) {
+            i += 1;
+            continue;
+        }
+        word += 1;
+        let ws = i;
+        while i < s.len() && !is_map_space(s[i]) {
+            i += 1;
+        }
+        if word == start {
+            begin = Some(ws);
+        }
+        if word >= start {
+            end = i; // end of the latest word within [start, stop]
+        }
+        if word >= stop {
+            break;
+        }
+    }
+    begin.map(|b| &s[b..end])
+}
+
 unsafe fn func_firstword(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
@@ -1176,7 +1212,7 @@ unsafe fn func_wordlist(
     let mut buf: [::core::ffi::c_char; 23] = [0; 23];
     let badfirst = c"invalid first argument to 'wordlist' function";
     let badsecond = c"invalid second argument to 'wordlist' function";
-    let mut start = parse_numeric(
+    let start = parse_numeric(
         ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
         badfirst,
     );
@@ -1208,31 +1244,20 @@ unsafe fn func_wordlist(
             make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char),
         );
     }
-    let mut count = stop - start + 1;
-    if count > 0 {
-        let mut p: *const ::core::ffi::c_char;
-        let mut end_p: *const ::core::ffi::c_char = *argv.offset(2 as ::core::ffi::c_int as isize);
-        loop {
-            p = find_next_token(&raw mut end_p, ::core::ptr::null_mut::<size_t>());
-            if !(!p.is_null() && {
-                start -= 1;
-                start != 0
-            }) {
-                break;
-            }
-        }
-        if !p.is_null() {
-            loop {
-                count -= 1;
-                if !(count != 0
-                    && !find_next_token(&raw mut end_p, ::core::ptr::null_mut::<size_t>())
-                        .is_null())
-                {
-                    break;
-                }
-            }
-            o = variable_buffer_output(o, p, end_p.offset_from(p) as ::core::ffi::c_long as size_t);
-        }
+    let bytes =
+        ::core::ffi::CStr::from_ptr(*argv.offset(2 as ::core::ffi::c_int as isize)).to_bytes();
+    // `start >= 1` and `stop >= 0` here. An index beyond `usize` (only
+    // reachable on 32-bit) falls off the end; `word_span` returns `None` when
+    // `stop < start`, matching the original `count > 0` guard.
+    let span = usize::try_from(start)
+        .ok()
+        .and_then(|start| word_span(bytes, start, usize::try_from(stop).unwrap_or(usize::MAX)));
+    if let Some(span) = span {
+        o = variable_buffer_output(
+            o,
+            span.as_ptr() as *const ::core::ffi::c_char,
+            span.len() as size_t,
+        );
     }
     o
 }
@@ -3408,5 +3433,39 @@ mod tokens_tests {
     fn all_six_map_space_bytes_separate() {
         // space, tab, newline, vtab, formfeed, carriage-return.
         assert_eq!(collect(b"a\x20b\x09c\x0ad\x0be\x0cf\x0dg").len(), 7);
+    }
+}
+
+#[cfg(test)]
+mod word_span_tests {
+    use super::word_span;
+
+    #[test]
+    fn spans_preserve_original_separators() {
+        let s = b"a  b\tc   d";
+        // words 2..=3 -> "b\tc" with the original tab between them.
+        assert_eq!(word_span(s, 2, 3), Some(b"b\tc".as_slice()));
+        // single word.
+        assert_eq!(word_span(s, 1, 1), Some(b"a".as_slice()));
+        // whole list (leading/trailing spaces trimmed to word bounds).
+        assert_eq!(word_span(s, 1, 4), Some(b"a  b\tc   d".as_slice()));
+    }
+
+    #[test]
+    fn stop_is_clamped_to_last_word() {
+        let s = b"one two three";
+        assert_eq!(word_span(s, 2, 99), Some(b"two three".as_slice()));
+    }
+
+    #[test]
+    fn start_past_end_yields_none() {
+        assert_eq!(word_span(b"a b", 3, 5), None);
+        assert_eq!(word_span(b"   ", 1, 2), None);
+    }
+
+    #[test]
+    fn empty_or_inverted_range_yields_none() {
+        assert_eq!(word_span(b"a b c", 3, 2), None); // stop < start
+        assert_eq!(word_span(b"a b c", 0, 2), None); // 0 is not a valid 1-based index
     }
 }
