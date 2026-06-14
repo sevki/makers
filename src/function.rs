@@ -2374,11 +2374,21 @@ fn abspath_into(name: &[u8], starting_dir: &[u8], out: &mut [u8]) -> Option<usiz
 /// `stat`s, or it would overflow the `PATH_MAX` buffer libc `realpath` uses.
 fn realpath_token(token: &[u8]) -> Option<Vec<u8>> {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    // Retry on EINTR, mirroring the C `realpath`/`stat` loops: a signal
+    // arriving mid-call must not silently drop the token.
+    fn retry_eintr<T>(mut f: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+        loop {
+            match f() {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                other => return other,
+            }
+        }
+    }
     let input = std::path::Path::new(std::ffi::OsStr::from_bytes(token));
-    let canon = std::fs::canonicalize(input).ok()?;
+    let canon = retry_eintr(|| std::fs::canonicalize(input)).ok()?;
     // C follows `realpath` with `stat(out)`; `canonicalize` already requires
     // existence, but mirror the explicit check to match the C control flow.
-    std::fs::metadata(&canon).ok()?;
+    retry_eintr(|| std::fs::metadata(&canon)).ok()?;
     let bytes = canon.into_os_string().into_vec();
     // libc `realpath` writes into a `PATH_MAX` buffer, so an over-long result
     // would fail there (`ENAMETOOLONG`); reject it to match that behavior.
