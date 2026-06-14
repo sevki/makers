@@ -11,9 +11,9 @@ use ::core::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use libc::{
-    __errno_location, calloc, free, getenv, getpid, malloc, memcpy, memmove, mkstemp, putchar,
-    read, realloc, sleep, sprintf, stpcpy, strchr, strcmp, strcpy, strdup, strerror, strlen,
-    strndup, umask, unlink, write, EINTR,
+    __errno_location, calloc, free, getenv, getpid, malloc, memcpy, mkstemp, putchar, read,
+    realloc, sleep, sprintf, stpcpy, strcmp, strcpy, strdup, strerror, strlen, strndup, umask,
+    unlink, write, EINTR,
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t, time_t};
@@ -179,26 +179,35 @@ pub unsafe extern "C" fn alpha_compare(v1: *const c_void, v2: *const c_void) -> 
     strcmp(s1, s2)
 }
 
-/// Discard each backslash-newline and any following white space, in place.
-/// Backslash-backslash-newline pairs become backslash-newlines.
-/// # Safety
-/// `line` must be a valid, writable NUL-terminated string.
-pub unsafe fn collapse_continuations(line: *mut c_char) {
-    let mut out: *mut c_char = line;
-    let mut in_0: *mut c_char = line;
-
-    let mut q = strchr(in_0, '\n' as i32);
-    if q.is_null() {
-        return;
-    }
-
+/// Collapse backslash-newline continuations in `buf` in place, returning the
+/// new length. `is_blank` classifies `MAP_BLANK` bytes (space/tab) and
+/// `posix_pedantic` selects POSIX whitespace handling.
+///
+/// Pure port of [`collapse_continuations`]: the write cursor `out` never
+/// overtakes the read cursor `in_0`, so the in-place rewrite — and the backward
+/// scans over the already-written output — are sound. Mirrors the C exactly,
+/// including the trailing-backslash halving (a run is shortened by copying
+/// fewer bytes), the odd-`$` escape (`$\n` collapses to nothing), and the
+/// non-POSIX trimming of whitespace before a folded newline.
+fn collapse_continuations_bytes(
+    buf: &mut [u8],
+    posix: bool,
+    is_blank: impl Fn(u8) -> bool,
+) -> usize {
+    let mut out = 0usize;
+    let mut in_0 = 0usize;
+    // First newline, or leave the line untouched when there is none.
+    let mut q = match buf.iter().position(|&c| c == b'\n') {
+        Some(i) => i,
+        None => return buf.len(),
+    };
     loop {
-        let p: *mut c_char = q;
-        // Count the preceding backslashes: i becomes -(their count).
+        let p = q;
+        // Count the preceding backslashes: `i` ends as 1 - (their count).
         let mut i: c_int;
-        if q > line && *q.sub(1) as c_int == '\\' as i32 {
+        if p > 0 && buf[p - 1] == b'\\' {
             i = -2;
-            while p.offset(i as isize) >= line && *p.offset(i as isize) as c_int == '\\' as i32 {
+            while p as isize + i as isize >= 0 && buf[(p as isize + i as isize) as usize] == b'\\' {
                 i -= 1;
             }
             i += 1;
@@ -206,56 +215,76 @@ pub unsafe fn collapse_continuations(line: *mut c_char) {
             i = 0;
         }
 
-        // Output the line up to the newline, halving any run of backslashes.
-        let out_line_length = (p.offset_from(in_0) + i as isize - (i / 2) as isize) as size_t;
+        // Output up to the newline, halving any trailing backslash run.
+        let out_line_length = (p as isize - in_0 as isize + i as isize - (i / 2) as isize) as usize;
         if out != in_0 {
-            memmove(out as *mut c_void, in_0 as *const c_void, out_line_length);
+            buf.copy_within(in_0..in_0 + out_line_length, out);
         }
-        out = out.add(out_line_length);
-        in_0 = q.add(1);
+        out += out_line_length;
+        in_0 = q + 1;
 
         if i & 1 != 0 {
-            // Backslash/newline handling: skip the newline and any leading
-            // whitespace on the next line.
-            while stop_set(*in_0, MAP_BLANK) {
-                in_0 = in_0.add(1);
+            // Escaped newline: skip it and any leading whitespace on the next
+            // line.
+            while in_0 < buf.len() && is_blank(buf[in_0]) {
+                in_0 += 1;
             }
 
-            // If the newline is preceded by an odd number of '$'s, it was
-            // escaped: $\n turns into nothing rather than a space.
-            let mut dp: *const c_char = out;
-            while dp > line as *const c_char && *dp.sub(1) as c_int == '$' as i32 {
-                dp = dp.sub(1);
+            // A newline preceded by an odd number of '$'s is escaped: `$\n`
+            // turns into nothing rather than a space.
+            let mut dp = out;
+            while dp > 0 && buf[dp - 1] == b'$' {
+                dp -= 1;
             }
-            let dollar = out.offset_from(dp) % 2 != 0;
+            let dollar = !(out - dp).is_multiple_of(2);
             if dollar {
-                out = out.sub(1);
+                out -= 1;
             }
 
             // Unless in POSIX mode, also collapse preceding whitespace.
-            if posix_pedantic == 0 {
-                while out > line && stop_set(*out.sub(1), MAP_BLANK) {
-                    out = out.sub(1);
+            if !posix {
+                while out > 0 && is_blank(buf[out - 1]) {
+                    out -= 1;
                 }
             }
 
             if !dollar {
-                *out = ' ' as c_char;
-                out = out.add(1);
+                buf[out] = b' ';
+                out += 1;
             }
         } else {
             // The newline was not escaped: keep it.
-            *out = '\n' as c_char;
-            out = out.add(1);
+            buf[out] = b'\n';
+            out += 1;
         }
 
-        q = strchr(in_0, '\n' as i32);
-        if q.is_null() {
-            break;
+        match buf[in_0..].iter().position(|&c| c == b'\n') {
+            Some(rel) => q = in_0 + rel,
+            None => break,
         }
     }
 
-    memmove(out as *mut c_void, in_0 as *const c_void, strlen(in_0) + 1);
+    // Copy the remaining tail down.
+    let tail = buf.len() - in_0;
+    if out != in_0 {
+        buf.copy_within(in_0..buf.len(), out);
+    }
+    out + tail
+}
+
+/// Discard each backslash-newline and any following white space, in place.
+/// Backslash-backslash-newline pairs become backslash-newlines.
+/// # Safety
+/// `line` must be a valid, writable NUL-terminated string.
+pub unsafe fn collapse_continuations(line: *mut c_char) {
+    let len = strlen(line);
+    // Include the existing NUL slot so the new terminator is written by
+    // indexing rather than raw pointer arithmetic.
+    let buf = ::core::slice::from_raw_parts_mut(line as *mut u8, len + 1);
+    let new_len = collapse_continuations_bytes(&mut buf[..len], posix_pedantic != 0, |c| {
+        stop_set(c as c_char, MAP_BLANK)
+    });
+    buf[new_len] = 0;
 }
 
 /// Write `n` spaces to stdout.
@@ -878,5 +907,60 @@ mod alpha_compare_tests {
             assert!(cmp(c"B", c"a") < 0);
             assert!(cmp(c"a", c"B") > 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod collapse_continuations_tests {
+    use super::collapse_continuations_bytes;
+
+    /// Collapse a copy of `s` (MAP_BLANK = space/tab) and return the result.
+    fn collapse(s: &[u8], posix: bool) -> Vec<u8> {
+        let mut buf = s.to_vec();
+        let n = collapse_continuations_bytes(&mut buf, posix, |c| c == b' ' || c == b'\t');
+        buf.truncate(n);
+        buf
+    }
+
+    #[test]
+    fn no_newline_is_unchanged() {
+        assert_eq!(collapse(b"abc", false), b"abc");
+        assert_eq!(collapse(b"", false), b"");
+    }
+
+    #[test]
+    fn unescaped_newline_is_kept() {
+        assert_eq!(collapse(b"a\nb", false), b"a\nb");
+    }
+
+    #[test]
+    fn backslash_newline_folds_to_space() {
+        assert_eq!(collapse(b"a\\\nb", false), b"a b");
+        // Leading whitespace on the continued line is dropped.
+        assert_eq!(collapse(b"a\\\n\t b", false), b"a b");
+        // Multiple continuations in a row.
+        assert_eq!(collapse(b"a\\\nb\\\nc", false), b"a b c");
+    }
+
+    #[test]
+    fn even_backslash_run_keeps_the_newline() {
+        // `\\` is an escaped backslash, so the newline is literal: one
+        // backslash survives and the newline is kept.
+        assert_eq!(collapse(b"a\\\\\nb", false), b"a\\\nb");
+    }
+
+    #[test]
+    fn whitespace_before_fold_trimmed_only_outside_posix() {
+        // Non-POSIX collapses the space preceding the fold into the single
+        // separator; POSIX keeps it (original space + folded space).
+        assert_eq!(collapse(b"a \\\nb", false), b"a b");
+        assert_eq!(collapse(b"a \\\nb", true), b"a  b");
+    }
+
+    #[test]
+    fn odd_dollar_escapes_the_continuation_to_nothing() {
+        // A '$' immediately before the backslash-newline (odd count) escapes
+        // it: both the '$' and the continuation vanish.
+        assert_eq!(collapse(b"a$\\\nb", false), b"ab");
     }
 }
