@@ -842,3 +842,41 @@ mod make_toui_tests {
         assert_eq!(make_toui(c"99999999999999999999999"), Ok(u32::MAX));
     }
 }
+
+#[cfg(test)]
+mod alpha_compare_tests {
+    use super::alpha_compare;
+    use ::core::ffi::{c_char, c_void, CStr};
+
+    // `alpha_compare` takes `const void *` arguments that each point to a
+    // `char *` (the qsort element type), so pass the address of a string
+    // pointer.
+    unsafe fn cmp(a: &CStr, b: &CStr) -> i32 {
+        let pa: *const c_char = a.as_ptr();
+        let pb: *const c_char = b.as_ptr();
+        alpha_compare(
+            (&pa as *const *const c_char).cast::<c_void>(),
+            (&pb as *const *const c_char).cast::<c_void>(),
+        )
+    }
+
+    #[test]
+    fn equal_first_byte_falls_back_to_strcmp() {
+        unsafe {
+            assert!(cmp(c"abc", c"abd") < 0);
+            assert_eq!(cmp(c"abc", c"abc"), 0);
+            assert!(cmp(c"abd", c"abc") > 0);
+            // A NUL (end of the shorter string) sorts before any byte.
+            assert!(cmp(c"ab", c"abc") < 0);
+        }
+    }
+
+    #[test]
+    fn differing_first_byte_orders_by_that_byte() {
+        unsafe {
+            // 'B' (66) sorts before 'a' (97): the first-byte fast path.
+            assert!(cmp(c"B", c"a") < 0);
+            assert!(cmp(c"a", c"B") > 0);
+        }
+    }
+}
