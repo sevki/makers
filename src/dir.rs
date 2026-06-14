@@ -174,7 +174,7 @@ pub unsafe fn directory_hash_1(key: *const c_void) -> c_ulong {
     let key = (key as *const directory)
         .as_ref()
         .expect("hash callback got a null key");
-    jhash_string(key.name as *const c_uchar) as c_ulong
+    jhash_string(::core::ffi::CStr::from_ptr(key.name).to_bytes()) as c_ulong
 }
 
 /// Secondary hash for [`directory`] keys; always zero, kept for the
@@ -215,7 +215,7 @@ pub unsafe fn dirfile_hash_1(key: *const c_void) -> c_ulong {
     let key = (key as *const dirfile)
         .as_ref()
         .expect("hash callback got a null key");
-    jhash_string(key.name as *const c_uchar) as c_ulong
+    jhash_string(::core::ffi::CStr::from_ptr(key.name).to_bytes()) as c_ulong
 }
 
 /// Secondary hash for [`dirfile`] keys; always zero, kept for the
