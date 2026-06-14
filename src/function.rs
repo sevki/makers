@@ -3,9 +3,7 @@ pub use crate::ffi_types::{
     __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
 };
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
-use crate::misc::{
-    end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
-};
+use crate::misc::{end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xstrndup};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
@@ -576,51 +574,32 @@ unsafe extern "C" fn find_next_argument(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
-    static mut result: *mut ::core::ffi::c_char =
-        ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-    static mut length: size_t = 0;
-    let mut chain: *mut nameseq;
-    let mut idx: size_t;
-    chain = parse_file_seq(
+pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> Vec<u8> {
+    // `parse_file_seq` returns a malloc'd `nameseq` chain (FFI ownership); walk
+    // it, copy each name into an owned buffer, and free the nodes. The join
+    // itself uses a `Vec<u8>` instead of a grown `static` C buffer, dropping the
+    // xmalloc/xrealloc/memcpy pointer bookkeeping.
+    let mut chain: *mut nameseq = parse_file_seq(
         &raw mut line,
         ::core::mem::size_of::<nameseq>() as size_t,
         0x1 as ::core::ffi::c_int,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x1 as ::core::ffi::c_int | 0x10 as ::core::ffi::c_int | 0x8 as ::core::ffi::c_int,
     ) as *mut nameseq;
-    if result.is_null() {
-        length = 100;
-        result = xmalloc(100) as *mut ::core::ffi::c_char;
-    }
-    idx = 0;
+    let mut out: Vec<u8> = Vec::new();
     while !chain.is_null() {
         let next: *mut nameseq = (*chain).next;
-        let len: size_t = strlen((*chain).name) as size_t;
-        if idx.wrapping_add(len).wrapping_add(1) > length {
-            length = length.wrapping_add(len.wrapping_add(1 as size_t).wrapping_mul(2));
-            result =
-                xrealloc(result as *mut ::core::ffi::c_void, length) as *mut ::core::ffi::c_char;
-        }
-        memcpy(
-            result.offset(idx as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-            (*chain).name as *const ::core::ffi::c_void,
-            len as size_t,
-        );
-        idx = idx.wrapping_add(len);
-        let fresh2 = idx;
-        idx = idx.wrapping_add(1);
-        *result.offset(fresh2 as isize) = ' ' as i32 as ::core::ffi::c_char;
+        out.extend_from_slice(::core::ffi::CStr::from_ptr((*chain).name).to_bytes());
+        out.push(b' ');
         free((*chain).name as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void);
         free(chain as *mut ::core::ffi::c_void);
         chain = next;
     }
-    if idx == 0 {
-        *result.offset(0 as ::core::ffi::c_int as isize) = 0;
-    } else {
-        *result.offset(idx.wrapping_sub(1) as isize) = 0;
-    }
-    result
+    // C overwrites the final separating space with a NUL; here we simply drop
+    // it, leaving the names single-space-joined with no trailing separator (and
+    // an empty result when there were no names).
+    out.pop();
+    out
 }
 unsafe fn func_patsubst(
     mut o: *mut ::core::ffi::c_char,
@@ -2008,8 +1987,8 @@ unsafe fn func_wildcard(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let p: *mut ::core::ffi::c_char = string_glob(*argv.offset(0 as ::core::ffi::c_int as isize));
-    o = variable_buffer_output(o, p, strlen(p) as size_t);
+    let g = string_glob(*argv.offset(0 as ::core::ffi::c_int as isize));
+    o = variable_buffer_output(o, g.as_ptr() as *const ::core::ffi::c_char, g.len());
     o
 }
 unsafe fn func_eval(

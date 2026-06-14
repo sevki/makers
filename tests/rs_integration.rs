@@ -576,12 +576,13 @@ both: $(OBJS)
 
 #[test]
 fn wildcard_function_and_nomatch() {
-    // parse_file_seq glob handling: $(wildcard) matches existing files and
-    // yields empty on no match.
-    let mk = "all: ; @echo \"got=[$(sort $(wildcard *.in))] none=[$(wildcard *.nope)]\"\n";
+    // parse_file_seq glob handling + string_glob join: $(wildcard) space-joins
+    // matched files (no trailing space), yields a lone name with no separator,
+    // and is empty on no match.
+    let mk = "all: ; @echo \"got=[$(sort $(wildcard *.in))] one=[$(wildcard a.in)] none=[$(wildcard *.nope)]\"\n";
     let (out, code) = run_make(mk, &[("a.in", ""), ("b.in", "")], &[]);
     assert_eq!(code, Some(0), "stdout: {out}");
-    assert_eq!(out, "got=[a.in b.in] none=[]\n");
+    assert_eq!(out, "got=[a.in b.in] one=[a.in] none=[]\n");
 }
 
 // construct_command_argv_internal: fast-path (exec directly) vs. shell decision
