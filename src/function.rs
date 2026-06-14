@@ -1847,6 +1847,30 @@ unsafe fn parse_textint(
         }
     }
 }
+/// Compare two integers parsed by `parse_textint`, given each one's sign
+/// (`-1`, `0`, or `+1`) and the byte span of its magnitude digits as the
+/// parser delimited them. Returns a value `< 0`, `0`, or `> 0` following
+/// `intcmp`'s rules: order by sign first, then by digit count, then by a
+/// byte-wise comparison of the digits, flipping the result for negatives.
+/// Pure: depends only on its arguments.
+fn compare_textint(lsign: i32, ldigits: &[u8], rsign: i32, rdigits: &[u8]) -> i32 {
+    let mut cmp = lsign - rsign;
+    if cmp == 0 {
+        cmp = (ldigits.len() > rdigits.len()) as i32 - (ldigits.len() < rdigits.len()) as i32;
+        if cmp == 0 {
+            cmp = match ldigits.cmp(rdigits) {
+                ::core::cmp::Ordering::Less => -1,
+                ::core::cmp::Ordering::Equal => 0,
+                ::core::cmp::Ordering::Greater => 1,
+            };
+        }
+        if lsign < 0 {
+            cmp = -cmp;
+        }
+    }
+    cmp
+}
+
 unsafe fn func_intcmp(
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
@@ -1878,22 +1902,12 @@ unsafe fn func_intcmp(
         &raw mut rsign,
         &raw mut rnum,
     );
-    let llen: ptrdiff_t = llim.offset_from(lnum) as ptrdiff_t;
-    let rlen: ptrdiff_t = rlim.offset_from(rnum) as ptrdiff_t;
-    let mut cmp: ::core::ffi::c_int = lsign - rsign;
-    if cmp == 0 {
-        cmp = (llen > rlen) as ::core::ffi::c_int - (llen < rlen) as ::core::ffi::c_int;
-        if cmp == 0 {
-            cmp = memcmp(
-                lnum as *const ::core::ffi::c_void,
-                rnum as *const ::core::ffi::c_void,
-                llen as size_t,
-            );
-        }
-        if lsign < 0 {
-            cmp *= -(1 as ::core::ffi::c_int);
-        }
-    }
+    // `parse_textint` hands back end pointers; form the digit spans once at the
+    // boundary and let the pure comparator do the rest.
+    let ldigits = ::core::slice::from_raw_parts(lnum as *const u8, llim.offset_from(lnum) as usize);
+    let rdigits = ::core::slice::from_raw_parts(rnum as *const u8, rlim.offset_from(rnum) as usize);
+    let llen: ptrdiff_t = ldigits.len() as ptrdiff_t;
+    let cmp: ::core::ffi::c_int = compare_textint(lsign, ldigits, rsign, rdigits);
     argv = argv.offset(2 as ::core::ffi::c_int as isize);
     if (*argv).is_null() && cmp == 0 {
         if lsign < 0 {
@@ -3309,5 +3323,49 @@ mod pattern_matches_tests {
                                        // Overlapping literals must not match a too-short string.
         assert!(!matches("ab%bc", "abc"));
         assert!(matches("ab%bc", "abbc"));
+    }
+}
+
+#[cfg(test)]
+mod compare_textint_tests {
+    use super::compare_textint;
+
+    fn sgn(x: i32) -> i32 {
+        x.signum()
+    }
+
+    #[test]
+    fn positive_beats_negative_and_zero() {
+        assert_eq!(sgn(compare_textint(1, b"3", -1, b"3")), 1);
+        assert_eq!(sgn(compare_textint(1, b"3", 0, b"0")), 1);
+        assert_eq!(sgn(compare_textint(0, b"0", -1, b"3")), 1);
+        assert_eq!(sgn(compare_textint(-1, b"3", 1, b"3")), -1);
+    }
+
+    #[test]
+    fn equal_values_compare_equal() {
+        assert_eq!(compare_textint(1, b"42", 1, b"42"), 0);
+        assert_eq!(compare_textint(0, b"0", 0, b"0"), 0);
+        assert_eq!(compare_textint(-1, b"7", -1, b"7"), 0);
+    }
+
+    #[test]
+    fn longer_magnitude_is_larger_when_positive() {
+        // 100 > 99: more digits wins before any byte compare.
+        assert_eq!(sgn(compare_textint(1, b"100", 1, b"99")), 1);
+        assert_eq!(sgn(compare_textint(1, b"99", 1, b"100")), -1);
+    }
+
+    #[test]
+    fn equal_length_falls_back_to_digit_bytes() {
+        assert_eq!(sgn(compare_textint(1, b"19", 1, b"21")), -1);
+        assert_eq!(sgn(compare_textint(1, b"21", 1, b"19")), 1);
+    }
+
+    #[test]
+    fn negative_magnitude_order_is_reversed() {
+        // -100 < -99: the larger magnitude is the smaller number.
+        assert_eq!(sgn(compare_textint(-1, b"100", -1, b"99")), -1);
+        assert_eq!(sgn(compare_textint(-1, b"19", -1, b"21")), 1);
     }
 }
