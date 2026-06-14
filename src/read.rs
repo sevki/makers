@@ -3327,7 +3327,10 @@ unsafe fn find_char_unquote(
     let len = strlen(string);
     let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
     match find_char_unquote_bytes(buf, stop as u8) {
-        Some(idx) => buf[idx..].as_mut_ptr() as *mut ::core::ffi::c_char,
+        // Return the result relative to the original `string` pointer (the
+        // C return is `string`-derived); a slice-derived `as_mut_ptr()` here
+        // confuses CodeQL's pointer-provenance analysis.
+        Some(idx) => string.add(idx),
         None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
     }
 }
