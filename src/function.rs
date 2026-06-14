@@ -42,11 +42,6 @@ extern "C" {
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -377,19 +372,18 @@ pub unsafe fn patsubst_expand_pat(
     pattern_percent: *const ::core::ffi::c_char,
     replace_percent: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let pattern_prepercent_len: size_t;
-    let pattern_postpercent_len: size_t;
-    let replace_prepercent_len: size_t;
-    let replace_postpercent_len: size_t;
-    let mut t: *const ::core::ffi::c_char;
     let mut len: size_t = 0;
     let mut doneany: ::core::ffi::c_int = 0;
+    // Replacement halves around the '%'. `replace`/`replace_percent` are emitted
+    // straight to the output buffer; only their split lengths are needed here.
+    // The '%' offset is an address difference, not pointer arithmetic.
+    let replace_prepercent_len: usize;
+    let replace_postpercent_len: usize;
     if !replace_percent.is_null() {
-        replace_prepercent_len =
-            (replace_percent.offset_from(replace) as ::core::ffi::c_long - 1) as size_t;
-        replace_postpercent_len = strlen(replace_percent) as size_t;
+        replace_prepercent_len = (replace_percent as usize - replace as usize) - 1;
+        replace_postpercent_len = strlen(replace_percent) as usize;
     } else {
-        replace_prepercent_len = strlen(replace) as size_t;
+        replace_prepercent_len = strlen(replace) as usize;
         replace_postpercent_len = 0;
     }
     if pattern_percent.is_null() {
@@ -403,67 +397,40 @@ pub unsafe fn patsubst_expand_pat(
             1,
         );
     }
-    pattern_prepercent_len =
-        (pattern_percent.offset_from(pattern) as ::core::ffi::c_long - 1) as size_t;
-    pattern_postpercent_len = strlen(pattern_percent) as size_t;
+    // Split the pattern into its prefix and suffix around the '%' and match
+    // each token against them by slice comparison instead of walking pointers.
+    let pat = ::core::ffi::CStr::from_ptr(pattern).to_bytes();
+    let prepercent_len = (pattern_percent as usize - pattern as usize) - 1;
+    let pat_prefix = &pat[..prepercent_len];
+    let pat_suffix = &pat[prepercent_len + 1..];
+    let postpercent_len = pat_suffix.len();
     loop {
-        t = find_next_token(&raw mut text, &raw mut len);
+        let t = find_next_token(&raw mut text, &raw mut len);
         if t.is_null() {
             break;
         }
-        let t0 = match t.as_ref() {
-            Some(&b) => b,
-            None => break,
-        };
-        let mut fail: ::core::ffi::c_int = 0;
-        if len < pattern_prepercent_len.wrapping_add(pattern_postpercent_len) {
-            fail = 1;
-        }
-        if fail == 0
-            && pattern_prepercent_len > 0
-            && (t0 as ::core::ffi::c_int != *pattern as ::core::ffi::c_int
-                || *t.offset(pattern_prepercent_len.wrapping_sub(1) as isize) as ::core::ffi::c_int
-                    != *pattern_percent.offset(-(2 as ::core::ffi::c_int) as isize)
-                        as ::core::ffi::c_int
-                || !(strncmp(
-                    t.offset(1 as ::core::ffi::c_int as isize),
-                    pattern.offset(1 as ::core::ffi::c_int as isize),
-                    (pattern_prepercent_len as size_t).wrapping_sub(1),
-                ) == 0))
-        {
-            fail = 1;
-        }
-        if fail == 0
-            && pattern_postpercent_len > 0
-            && (*t.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
-                != *pattern_percent.offset(pattern_postpercent_len.wrapping_sub(1) as isize)
-                    as ::core::ffi::c_int
-                || *t.offset(len.wrapping_sub(pattern_postpercent_len) as isize)
-                    as ::core::ffi::c_int
-                    != *pattern_percent as ::core::ffi::c_int
-                || !(strncmp(
-                    t.offset(len.wrapping_sub(pattern_postpercent_len) as isize)
-                        as *const ::core::ffi::c_char,
-                    pattern_percent,
-                    (pattern_postpercent_len as size_t).wrapping_sub(1),
-                ) == 0))
-        {
-            fail = 1;
-        }
-        if fail != 0 {
-            o = variable_buffer_output(o, t, len);
-        } else {
+        let tok = ::core::slice::from_raw_parts(t as *const u8, len as usize);
+        // A token matches `prefix % suffix` when it is long enough and both
+        // ends line up; `&&` short-circuits so the slices stay in bounds.
+        let matched = tok.len() >= prepercent_len + postpercent_len
+            && tok[..prepercent_len] == *pat_prefix
+            && tok[tok.len() - postpercent_len..] == *pat_suffix;
+        if matched {
             o = variable_buffer_output(o, replace, replace_prepercent_len);
             if !replace_percent.is_null() {
+                // The stem is what '%' captured: the token minus prefix/suffix.
+                let stem = &tok[prepercent_len..tok.len() - postpercent_len];
                 o = variable_buffer_output(
                     o,
-                    t.offset(pattern_prepercent_len as isize),
-                    len.wrapping_sub(pattern_prepercent_len.wrapping_add(pattern_postpercent_len)),
+                    stem.as_ptr() as *const ::core::ffi::c_char,
+                    stem.len(),
                 );
                 o = variable_buffer_output(o, replace_percent, replace_postpercent_len);
             }
+        } else {
+            o = variable_buffer_output(o, t, len);
         }
-        if fail != 0
+        if !matched
             || replace_prepercent_len > 0
             || !replace_percent.is_null() && len.wrapping_add(replace_postpercent_len) > 0
         {
