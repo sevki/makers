@@ -2096,16 +2096,20 @@ fn fold_newlines_bytes(buf: &mut [u8], trim_newlines: bool) -> usize {
 
 /// # Safety
 ///
-/// `buffer` must be valid for reads and writes of `*length` bytes (plus the
-/// terminating NUL written at the new length); `length` must be valid.
+/// `buffer` must be valid for reads and writes of `*length + 1` bytes — the
+/// content plus the one extra slot for the terminating NUL the caller already
+/// reserves; `length` must be valid.
 unsafe fn fold_newlines(
     buffer: *mut ::core::ffi::c_char,
     length: *mut size_t,
     trim_newlines: ::core::ffi::c_int,
 ) {
-    let buf = ::core::slice::from_raw_parts_mut(buffer as *mut u8, *length);
-    let new_len = fold_newlines_bytes(buf, trim_newlines != 0);
-    *buffer.add(new_len) = 0;
+    let len = *length;
+    // Include the caller's reserved NUL slot so the terminator is written by
+    // indexing rather than raw pointer arithmetic.
+    let buf = ::core::slice::from_raw_parts_mut(buffer as *mut u8, len + 1);
+    let new_len = fold_newlines_bytes(&mut buf[..len], trim_newlines != 0);
+    buf[new_len] = 0;
     *length = new_len as size_t;
 }
 pub static mut shell_function_pid: pid_t = 0 as pid_t;
