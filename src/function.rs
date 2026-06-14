@@ -2060,39 +2060,53 @@ unsafe fn func_value(
     }
     o
 }
-unsafe extern "C" fn fold_newlines(
+/// Fold the first `buf.len()` bytes in place: each `\n` becomes a single space
+/// and the `\r` of a `\r\n` pair is dropped. The write cursor never overtakes
+/// the read cursor, so the rewrite is safe in place. Returns the new length.
+///
+/// With `trim_newlines` the result is cut immediately after the last
+/// non-newline byte (dropping every trailing folded space); otherwise at most
+/// one trailing space is kept. Mirrors the C `fold_newlines` exactly, including
+/// its `last_nonnl == buffer - 1` "no non-newline seen" sentinel (here the
+/// signed index `-1`) and the `dst - 2` trailing-space rule.
+fn fold_newlines_bytes(buf: &mut [u8], trim_newlines: bool) -> usize {
+    let mut dst = 0usize;
+    let mut last_nonnl: isize = -1;
+    let mut src = 0usize;
+    while src < buf.len() && buf[src] != 0 {
+        // A `\r` immediately followed by `\n` is skipped (the `\n` that follows
+        // becomes the space); a trailing lone `\r` is a normal byte.
+        let is_crlf = buf[src] == b'\r' && src + 1 < buf.len() && buf[src + 1] == b'\n';
+        if !is_crlf {
+            if buf[src] == b'\n' {
+                buf[dst] = b' ';
+            } else {
+                last_nonnl = dst as isize;
+                buf[dst] = buf[src];
+            }
+            dst += 1;
+        }
+        src += 1;
+    }
+    if !trim_newlines && last_nonnl < dst as isize - 2 {
+        last_nonnl = dst as isize - 2;
+    }
+    (last_nonnl + 1) as usize
+}
+
+/// # Safety
+///
+/// `buffer` must be valid for reads and writes of `*length` bytes (plus the
+/// terminating NUL written at the new length); `length` must be valid.
+unsafe fn fold_newlines(
     buffer: *mut ::core::ffi::c_char,
     length: *mut size_t,
     trim_newlines: ::core::ffi::c_int,
 ) {
-    let mut dst: *mut ::core::ffi::c_char = buffer;
-    let mut src: *mut ::core::ffi::c_char = buffer;
-    let mut last_nonnl: *mut ::core::ffi::c_char =
-        buffer.offset(-(1 as ::core::ffi::c_int as isize));
-    *src.offset(*length as isize) = 0;
-    while *src as ::core::ffi::c_int != 0 {
-        if !(*src.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '\r' as i32
-            && *src.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '\n' as i32)
-        {
-            if *src as ::core::ffi::c_int == '\n' as i32 {
-                let fresh0 = dst;
-                dst = dst.offset(1 as ::core::ffi::c_int as isize);
-                *fresh0 = ' ' as i32 as ::core::ffi::c_char;
-            } else {
-                last_nonnl = dst;
-                let fresh1 = dst;
-                dst = dst.offset(1 as ::core::ffi::c_int as isize);
-                *fresh1 = *src;
-            }
-        }
-        src = src.offset(1 as ::core::ffi::c_int as isize);
-    }
-    if trim_newlines == 0 && last_nonnl < dst.offset(-(2 as ::core::ffi::c_int as isize)) {
-        last_nonnl = dst.offset(-(2 as ::core::ffi::c_int as isize));
-    }
-    last_nonnl = last_nonnl.offset(1 as ::core::ffi::c_int as isize);
-    *last_nonnl = 0;
-    *length = last_nonnl.offset_from(buffer) as ::core::ffi::c_long as size_t;
+    let buf = ::core::slice::from_raw_parts_mut(buffer as *mut u8, *length);
+    let new_len = fold_newlines_bytes(buf, trim_newlines != 0);
+    *buffer.add(new_len) = 0;
+    *length = new_len as size_t;
 }
 pub static mut shell_function_pid: pid_t = 0 as pid_t;
 static mut shell_function_completed: ::core::ffi::c_int = 0;
@@ -3552,5 +3566,61 @@ mod trim_whitespace_span_tests {
         // The helper trims whatever the injected predicate marks; here only 'x'
         // is "whitespace", proving the wrapper's runtime classifier drives it.
         assert_eq!(trim_whitespace_span(b"xxabcxx", |c| c == b'x'), (2, 2));
+    }
+}
+
+#[cfg(test)]
+mod fold_newlines_tests {
+    use super::fold_newlines_bytes;
+
+    /// Fold a copy of `s` and return the resulting bytes as a `String`.
+    fn fold(s: &[u8], trim: bool) -> String {
+        let mut buf = s.to_vec();
+        let n = fold_newlines_bytes(&mut buf, trim);
+        String::from_utf8(buf[..n].to_vec()).unwrap()
+    }
+
+    #[test]
+    fn internal_newline_becomes_space() {
+        // Internal newlines fold to single spaces; the trailing newline is
+        // dropped under trim and kept-as-nothing here too ("a b" either way).
+        assert_eq!(fold(b"a\nb\n", true), "a b");
+        assert_eq!(fold(b"a\nb\n", false), "a b");
+        assert_eq!(fold(b"abc", true), "abc");
+    }
+
+    #[test]
+    fn crlf_drops_the_cr() {
+        // "\r\n" folds to one space; an internal CRLF yields a single space.
+        assert_eq!(fold(b"a\r\nb", true), "a b");
+        assert_eq!(fold(b"\r\n", true), "");
+        // A lone trailing '\r' is an ordinary (non-newline) byte, so it stays.
+        assert_eq!(fold(b"a\rb", true), "a\rb");
+    }
+
+    #[test]
+    fn trim_controls_trailing_spaces() {
+        // trim cuts right after the last non-newline byte; without trim at most
+        // one folded space survives a single trailing newline...
+        assert_eq!(fold(b"a\n\n", true), "a");
+        assert_eq!(fold(b"a\n\n", false), "a ");
+        // ...and the C `dst - 2` rule keeps two for a longer trailing run.
+        assert_eq!(fold(b"ab\n\n\n", true), "ab");
+        assert_eq!(fold(b"ab\n\n\n", false), "ab  ");
+    }
+
+    #[test]
+    fn empty_and_all_newlines() {
+        assert_eq!(fold(b"", true), "");
+        assert_eq!(fold(b"\n", true), "");
+        assert_eq!(fold(b"\n", false), "");
+    }
+
+    #[test]
+    fn stops_at_embedded_nul() {
+        // The C loop runs `while *src`, so an embedded NUL ends processing.
+        let mut buf = b"a\nb\0c\nd".to_vec();
+        let n = fold_newlines_bytes(&mut buf, true);
+        assert_eq!(&buf[..n], b"a b");
     }
 }
