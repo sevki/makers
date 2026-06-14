@@ -3279,47 +3279,56 @@ unsafe extern "C" fn find_map_unquote(
     }
     ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
-unsafe extern "C" fn find_char_unquote(
-    string: *mut ::core::ffi::c_char,
-    stop: ::core::ffi::c_int,
-) -> *mut ::core::ffi::c_char {
-    let mut string_len: size_t = 0;
-    let mut p: *mut ::core::ffi::c_char = string;
+/// Find the next unquoted `stop` byte in `buf`, collapsing the escaping
+/// backslash run in place, and return its index (or `None`). `buf` includes the
+/// trailing NUL, so `buf.len() - 1` is the original content length the C
+/// `find_char_unquote` holds as `string_len`. A run of `n` backslashes before a
+/// `stop` is halved: an even run leaves the `stop` unquoted (its index is
+/// returned), an odd run escapes it (the run is halved, the `stop` kept literal,
+/// and the search continues past it). The write cursor stays at or behind the
+/// read cursor, so the in-place collapse is sound.
+fn find_char_unquote_bytes(buf: &mut [u8], stop: u8) -> Option<usize> {
+    let mut p = 0usize;
     loop {
-        p = strchr(p, stop);
-        if p.is_null() {
-            return ::core::ptr::null_mut::<::core::ffi::c_char>();
+        // strchr(p, stop): the next `stop` before the live NUL.
+        match buf[p..].iter().position(|&b| b == stop || b == 0) {
+            Some(off) if buf[p + off] == stop => p += off,
+            _ => return None,
         }
-        if p > string
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '\\' as i32
-        {
-            let mut i: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
-            while p.offset(i as isize) as *mut ::core::ffi::c_char >= string
-                && *p.offset(i as isize) as ::core::ffi::c_int == '\\' as i32
-            {
+        if p > 0 && buf[p - 1] == b'\\' {
+            // Count the preceding backslashes: `i` ends as `-n`.
+            let mut i: isize = -2;
+            while p as isize + i >= 0 && buf[(p as isize + i) as usize] == b'\\' {
                 i -= 1;
             }
             i += 1;
-            if string_len == 0 {
-                string_len = strlen(string) as size_t;
-            }
-            let hi: ::core::ffi::c_int = -(i / 2);
-            memmove(
-                p.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                p.offset((i / 2) as isize) as *mut ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                (string_len as size_t)
-                    .wrapping_sub(p.offset_from(string) as ::core::ffi::c_long as size_t)
-                    .wrapping_add(hi as size_t)
-                    .wrapping_add(1),
-            );
-            p = p.offset((i / 2) as isize);
+            // memmove(p+i, p+i/2, string_len - p + (-i/2) + 1): the source run
+            // always ends at the buffer's NUL slot, i.e. `src..buf.len()`.
+            let dest = (p as isize + i) as usize;
+            let src = (p as isize + i / 2) as usize;
+            buf.copy_within(src..buf.len(), dest);
+            p = (p as isize + i / 2) as usize;
             if i % 2 == 0 {
-                return p;
+                return Some(p);
             }
         } else {
-            return p;
+            return Some(p);
         }
+    }
+}
+
+/// # Safety
+///
+/// `string` must be a valid, writable NUL-terminated string.
+unsafe fn find_char_unquote(
+    string: *mut ::core::ffi::c_char,
+    stop: ::core::ffi::c_int,
+) -> *mut ::core::ffi::c_char {
+    let len = strlen(string);
+    let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
+    match find_char_unquote_bytes(buf, stop as u8) {
+        Some(idx) => buf[idx..].as_mut_ptr() as *mut ::core::ffi::c_char,
+        None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
     }
 }
 /// Remove the backslashes that escape `c` from `buf` in place, returning the
@@ -4269,5 +4278,49 @@ mod unescape_char_tests {
     fn no_backslashes_is_unchanged() {
         assert_eq!(unescape(b"a:b:c", b':'), b"a:b:c");
         assert_eq!(unescape(b"", b':'), b"");
+    }
+}
+
+#[cfg(test)]
+mod find_char_unquote_tests {
+    use super::find_char_unquote_bytes;
+
+    /// Run on a NUL-terminated copy; return the found index and the collapsed
+    /// content (up to the live NUL).
+    fn run(s: &[u8], stop: u8) -> (Option<usize>, Vec<u8>) {
+        let mut buf = s.to_vec();
+        buf.push(0);
+        let pos = find_char_unquote_bytes(&mut buf, stop);
+        let nul = buf.iter().position(|&b| b == 0).unwrap();
+        (pos, buf[..nul].to_vec())
+    }
+
+    #[test]
+    fn unescaped_stop_is_found() {
+        assert_eq!(run(b"a;b", b';'), (Some(1), b"a;b".to_vec()));
+    }
+
+    #[test]
+    fn no_stop_returns_none() {
+        assert_eq!(run(b"abc", b';'), (None, b"abc".to_vec()));
+        assert_eq!(run(b"", b';'), (None, b"".to_vec()));
+    }
+
+    #[test]
+    fn single_backslash_escapes_stop_and_is_removed() {
+        // `\;` -> literal `;`, backslash removed, no unescaped `;` remains.
+        assert_eq!(run(b"a\\;b", b';'), (None, b"a;b".to_vec()));
+    }
+
+    #[test]
+    fn double_backslash_leaves_stop_unescaped() {
+        // `\\;` -> `\;`: one literal backslash, `;` unescaped at its new index.
+        assert_eq!(run(b"a\\\\;b", b';'), (Some(2), b"a\\;b".to_vec()));
+    }
+
+    #[test]
+    fn second_stop_found_after_escaped_first() {
+        // First `;` escaped (backslash removed, kept literal); second unescaped.
+        assert_eq!(run(b"a\\;b;c", b';'), (Some(3), b"a;b;c".to_vec()));
     }
 }
