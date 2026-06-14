@@ -958,16 +958,27 @@ unsafe fn func_subst(
     );
     o
 }
+/// Iterate the whitespace-separated tokens of `s`, matching make's
+/// `find_next_token`/`next_token`/`end_of_token`: each token is a maximal run
+/// of bytes that are not in `MAP_SPACE`. Pure: borrows the byte view and
+/// yields sub-slices in order.
+fn tokens(s: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> {
+    s.split(|&b| is_map_space(b)).filter(|w| !w.is_empty())
+}
+
 unsafe fn func_firstword(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut i: size_t = 0;
-    let mut words: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
-    let p: *const ::core::ffi::c_char = find_next_token(&raw mut words, &raw mut i);
-    if !p.is_null() {
-        o = variable_buffer_output(o, p, i);
+    let bytes =
+        ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)).to_bytes();
+    if let Some(w) = tokens(bytes).next() {
+        o = variable_buffer_output(
+            o,
+            w.as_ptr() as *const ::core::ffi::c_char,
+            w.len() as size_t,
+        );
     }
     o
 }
@@ -976,19 +987,14 @@ unsafe fn func_lastword(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut i: size_t = 0;
-    let mut words: *const ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
-    let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut t: *const ::core::ffi::c_char;
-    loop {
-        t = find_next_token(&raw mut words, &raw mut i);
-        if t.is_null() {
-            break;
-        }
-        p = t;
-    }
-    if !p.is_null() {
-        o = variable_buffer_output(o, p, i);
+    let bytes =
+        ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)).to_bytes();
+    if let Some(w) = tokens(bytes).next_back() {
+        o = variable_buffer_output(
+            o,
+            w.as_ptr() as *const ::core::ffi::c_char,
+            w.len() as size_t,
+        );
     }
     o
 }
@@ -997,13 +1003,10 @@ unsafe fn func_words(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut i: ::core::ffi::c_uint = 0;
-    let mut word_iterator: *const ::core::ffi::c_char =
-        *argv.offset(0 as ::core::ffi::c_int as isize);
+    let bytes =
+        ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)).to_bytes();
+    let i = tokens(bytes).count() as ::core::ffi::c_uint;
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
-    while !find_next_token(&raw mut word_iterator, ::core::ptr::null_mut::<size_t>()).is_null() {
-        i = i.wrapping_add(1);
-    }
     o = variable_buffer_output(
         o,
         &raw mut buf as *mut ::core::ffi::c_char,
@@ -1138,8 +1141,7 @@ unsafe fn func_word(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char;
-    let mut i = parse_numeric(
+    let i = parse_numeric(
         ::core::ffi::CStr::from_ptr(*argv.offset(0 as ::core::ffi::c_int as isize)),
         c"invalid first argument to 'word' function",
     );
@@ -1150,19 +1152,14 @@ unsafe fn func_word(
             c"first argument to 'word' function must be greater than 0".as_ptr(),
         );
     }
-    let mut end_p: *const ::core::ffi::c_char = *argv.offset(1 as ::core::ffi::c_int as isize);
-    loop {
-        p = find_next_token(&raw mut end_p, ::core::ptr::null_mut::<size_t>());
-        if p.is_null() {
-            break;
-        }
-        i -= 1;
-        if i == 0 {
-            break;
-        }
-    }
-    if i == 0 {
-        o = variable_buffer_output(o, p, end_p.offset_from(p) as ::core::ffi::c_long as size_t);
+    let bytes =
+        ::core::ffi::CStr::from_ptr(*argv.offset(1 as ::core::ffi::c_int as isize)).to_bytes();
+    if let Some(w) = tokens(bytes).nth((i - 1) as usize) {
+        o = variable_buffer_output(
+            o,
+            w.as_ptr() as *const ::core::ffi::c_char,
+            w.len() as size_t,
+        );
     }
     o
 }
@@ -3367,5 +3364,44 @@ mod compare_textint_tests {
         // -100 < -99: the larger magnitude is the smaller number.
         assert_eq!(sgn(compare_textint(-1, b"100", -1, b"99")), -1);
         assert_eq!(sgn(compare_textint(-1, b"19", -1, b"21")), 1);
+    }
+}
+
+#[cfg(test)]
+mod tokens_tests {
+    use super::tokens;
+
+    fn collect(s: &[u8]) -> Vec<&[u8]> {
+        tokens(s).collect()
+    }
+
+    #[test]
+    fn splits_on_runs_of_whitespace() {
+        assert_eq!(
+            collect(b"  foo\tbar \n baz  "),
+            vec![b"foo".as_slice(), b"bar".as_slice(), b"baz".as_slice()]
+        );
+    }
+
+    #[test]
+    fn empty_and_all_whitespace_yield_nothing() {
+        assert_eq!(tokens(b"").count(), 0);
+        assert_eq!(tokens(b" \t\n\x0b\x0c\r ").count(), 0);
+    }
+
+    #[test]
+    fn count_first_last_and_nth_match_word_semantics() {
+        let s = b"alpha beta gamma delta";
+        assert_eq!(tokens(s).count(), 4);
+        assert_eq!(tokens(s).next(), Some(b"alpha".as_slice())); // $(firstword ...)
+        assert_eq!(tokens(s).next_back(), Some(b"delta".as_slice())); // $(lastword ...)
+        assert_eq!(tokens(s).nth(2), Some(b"gamma".as_slice())); // $(word 3,...) -> nth(2)
+        assert_eq!(tokens(s).nth(99), None);
+    }
+
+    #[test]
+    fn all_six_map_space_bytes_separate() {
+        // space, tab, newline, vtab, formfeed, carriage-return.
+        assert_eq!(collect(b"a\x20b\x09c\x0ad\x0be\x0cf\x0dg").len(), 7);
     }
 }
