@@ -10,8 +10,8 @@ use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
 use libc::{
-    __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strchr, strcmp,
-    strcpy, strerror, strstr,
+    __errno_location, abort, close, free, pipe, printf, realpath, remove, sprintf, strchr, strcpy,
+    strerror, strstr,
 };
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -522,6 +522,16 @@ unsafe extern "C" fn lookup_function(s: *const ::core::ffi::c_char) -> *const fu
         &raw mut function_table_entry_key as *const ::core::ffi::c_void,
     ) as *const function_table_entry
 }
+/// Does `s` match a `%`-pattern whose literal text before the `%` is
+/// `prefix` and whose literal text after it is `suffix`? The `%` stands for
+/// any (possibly empty) run, so `s` must be at least `prefix.len() +
+/// suffix.len()` bytes long and bookended by the two literals. The length
+/// guard matters when the literals would otherwise overlap (e.g. pattern
+/// `ab%bc` must not match `abc`).
+fn pattern_matches_parts(prefix: &[u8], suffix: &[u8], s: &[u8]) -> bool {
+    s.len() >= prefix.len() + suffix.len() && s.starts_with(prefix) && s.ends_with(suffix)
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -531,9 +541,8 @@ pub unsafe fn pattern_matches(
     mut percent: *const ::core::ffi::c_char,
     str: *const ::core::ffi::c_char,
 ) -> ::core::ffi::c_int {
+    let s = ::core::ffi::CStr::from_ptr(str).to_bytes();
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let sfxlen: size_t;
-    let strlength: size_t;
     if percent.is_null() {
         let len: size_t = (strlen(pattern) as size_t).wrapping_add(1);
         alloca_allocations.push(::std::vec::from_elem(0, len as usize));
@@ -544,33 +553,19 @@ pub unsafe fn pattern_matches(
             pattern as *const ::core::ffi::c_void,
             len as size_t,
         );
+        // `find_percent` collapses backslash escapes in place, so it needs the
+        // writable copy made above.
         percent = find_percent(new_chars);
         if percent.is_null() {
-            return (*new_chars as ::core::ffi::c_int == *str as ::core::ffi::c_int
-                && (*new_chars as ::core::ffi::c_int == 0
-                    || strcmp(
-                        new_chars.offset(1 as ::core::ffi::c_int as isize),
-                        str.offset(1 as ::core::ffi::c_int as isize),
-                    ) == 0)) as ::core::ffi::c_int;
+            // No wildcard: the pattern must equal `str` outright.
+            return (::core::ffi::CStr::from_ptr(new_chars).to_bytes() == s) as ::core::ffi::c_int;
         }
         pattern = new_chars;
     }
-    sfxlen = strlen(percent.offset(1 as ::core::ffi::c_int as isize)) as size_t;
-    strlength = strlen(str) as size_t;
-    if strlength
-        < (percent.offset_from(pattern) as ::core::ffi::c_long as size_t).wrapping_add(sfxlen)
-        || !(strncmp(
-            pattern,
-            str,
-            percent.offset_from(pattern) as ::core::ffi::c_long as size_t,
-        ) == 0)
-    {
-        return 0;
-    }
-    (strcmp(
-        percent.offset(1 as ::core::ffi::c_int as isize),
-        str.offset(strlength.wrapping_sub(sfxlen) as isize),
-    ) == 0) as ::core::ffi::c_int
+    let prefix =
+        ::core::slice::from_raw_parts(pattern.cast::<u8>(), percent.offset_from(pattern) as usize);
+    let suffix = ::core::ffi::CStr::from_ptr(percent.add(1)).to_bytes();
+    pattern_matches_parts(prefix, suffix, s) as ::core::ffi::c_int
 }
 unsafe extern "C" fn find_next_argument(
     startparen: ::core::ffi::c_char,
@@ -3276,5 +3271,40 @@ mod classify_textint_tests {
         assert_eq!(parse("abc"), Err("not-numeric"));
         assert_eq!(parse("12abc"), Err("not-numeric")); // trailing junk
         assert_eq!(parse("1 2"), Err("not-numeric")); // internal whitespace
+    }
+}
+
+#[cfg(test)]
+mod pattern_matches_tests {
+    use super::pattern_matches_parts;
+
+    /// Match `pattern` (containing a single `%`) against `s` using the same
+    /// prefix/suffix split that `pattern_matches` computes.
+    fn matches(pattern: &str, s: &str) -> bool {
+        let (prefix, suffix) = pattern.split_once('%').expect("pattern needs a %");
+        pattern_matches_parts(prefix.as_bytes(), suffix.as_bytes(), s.as_bytes())
+    }
+
+    #[test]
+    fn percent_matches_any_run() {
+        // "%" alone matches everything, including the empty string.
+        assert!(matches("%", ""));
+        assert!(matches("%", "anything"));
+        // Prefix + suffix with the wildcard filled in.
+        assert!(matches("%.o", "foo.o"));
+        assert!(matches("lib%.a", "libfoo.a"));
+        // The wildcard may match an empty run.
+        assert!(matches("%.o", ".o"));
+        assert!(matches("a%b", "ab"));
+    }
+
+    #[test]
+    fn non_matches() {
+        assert!(!matches("%.o", "foo.c")); // wrong suffix
+        assert!(!matches("lib%.a", "foo.a")); // wrong prefix
+        assert!(!matches("%.o", "o")); // suffix longer than string
+                                       // Overlapping literals must not match a too-short string.
+        assert!(!matches("ab%bc", "abc"));
+        assert!(matches("ab%bc", "abbc"));
     }
 }
