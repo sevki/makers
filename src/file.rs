@@ -11,6 +11,7 @@ use libc::{
     __errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink,
 };
 use std::ffi::CStr;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 extern "C" {
     static mut stdout: *mut FILE;
@@ -394,7 +395,15 @@ struct RehashedFile {
 unsafe impl Send for RehashedFile {}
 
 static REHASHED_FILES: Mutex<Vec<RehashedFile>> = Mutex::new(Vec::new());
-static mut all_secondary: ::core::ffi::c_int = 0;
+/// Set once `.SECONDARY` is declared with no prerequisites, marking every
+/// target as secondary. Stored in an atomic so its reads are plain safe
+/// operations; all access is single-threaded, so `Relaxed` preserves the
+/// original program order.
+static ALL_SECONDARY: AtomicI32 = AtomicI32::new(0);
+
+fn all_secondary() -> bool {
+    ALL_SECONDARY.load(Ordering::Relaxed) != 0
+}
 
 fn stop_set_byte(c: u8, mask: ::core::ffi::c_int) -> bool {
     stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
@@ -708,7 +717,7 @@ pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
     let mut doneany: ::core::ffi::c_int = 0;
-    if question_flag != 0 || touch_flag != 0 || all_secondary != 0 || no_intermediates != 0 {
+    if question_flag != 0 || touch_flag != 0 || all_secondary() || no_intermediates != 0 {
         return;
     }
     if sig != 0 && just_print_flag != 0 {
@@ -1077,7 +1086,7 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     if second_expansion == 0 {
         (*f).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if all_secondary != 0 && (*f).notintermediate() == 0 {
+    if all_secondary() && (*f).notintermediate() == 0 {
         (*f).set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     if no_intermediates != 0 && (*f).intermediate() == 0 && (*f).secondary() == 0 {
@@ -1260,11 +1269,11 @@ pub unsafe fn snap_deps() {
                 d = (*d).next;
             }
         } else {
-            all_secondary = 1;
+            ALL_SECONDARY.store(1, Ordering::Relaxed);
         }
         f = (*f).prev;
     }
-    if no_intermediates != 0 && all_secondary != 0 {
+    if no_intermediates != 0 && all_secondary() {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
             0,
@@ -2090,5 +2099,21 @@ mod tests {
                 b"src/file"
             );
         }
+    }
+
+    /// `all_secondary()` reflects the `ALL_SECONDARY` flag: false while unset
+    /// (the default), true once stored. Restores the prior value so it stays
+    /// isolated from other tests.
+    #[test]
+    fn all_secondary_tracks_flag() {
+        let saved = ALL_SECONDARY.load(Ordering::Relaxed);
+
+        ALL_SECONDARY.store(0, Ordering::Relaxed);
+        assert!(!all_secondary(), "zero is unset");
+
+        ALL_SECONDARY.store(1, Ordering::Relaxed);
+        assert!(all_secondary(), "non-zero is set");
+
+        ALL_SECONDARY.store(saved, Ordering::Relaxed);
     }
 }
