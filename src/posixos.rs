@@ -895,3 +895,28 @@ pub unsafe fn os_anontmp() -> c_int {
     }
     fd
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `osync_enabled` reflects the sign of the output-sync handle: a
+    /// negative handle (the unset default) means disabled, a non-negative
+    /// fd means enabled. This exercises the safe predicate over the
+    /// `AtomicI32` directly, without touching the FFI setup/clear paths.
+    #[test]
+    fn osync_enabled_tracks_handle_sign() {
+        let saved = OSYNC_HANDLE.load(Ordering::Relaxed);
+
+        OSYNC_HANDLE.store(-1, Ordering::Relaxed);
+        assert_eq!(osync_enabled(), 0, "negative handle is disabled");
+
+        OSYNC_HANDLE.store(0, Ordering::Relaxed);
+        assert_eq!(osync_enabled(), 1, "fd 0 is enabled");
+
+        OSYNC_HANDLE.store(7, Ordering::Relaxed);
+        assert_eq!(osync_enabled(), 1, "positive fd is enabled");
+
+        OSYNC_HANDLE.store(saved, Ordering::Relaxed);
+    }
+}
