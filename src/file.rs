@@ -398,8 +398,8 @@ unsafe impl Send for RehashedFile {}
 static REHASHED_FILES: Mutex<Vec<RehashedFile>> = Mutex::new(Vec::new());
 static mut all_secondary: ::core::ffi::c_int = 0;
 
-unsafe fn stop_set_byte(c: u8, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set_byte(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
 }
 
 unsafe fn normalize_lookup_name(name: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char {

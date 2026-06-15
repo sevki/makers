@@ -1013,7 +1013,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                 flags |= COMMANDS_RECURSE;
             } else if *p as ::core::ffi::c_int == '-' as i32 {
                 (*child).set_noerror(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            } else if !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+            } else if !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                 .offset(*p as ::core::ffi::c_uchar as isize)
                 as ::core::ffi::c_int
                 & 0x2 as ::core::ffi::c_int
@@ -1433,7 +1433,7 @@ pub unsafe fn new_job(file: *mut file) {
                             *fresh3 = *fresh2;
                         } else {
                             in_0 = in_0.offset(2 as ::core::ffi::c_int as isize);
-                            while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                                 .offset(*in_0 as ::core::ffi::c_uchar as isize)
                                 as ::core::ffi::c_int
                                 & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
@@ -1442,7 +1442,7 @@ pub unsafe fn new_job(file: *mut file) {
                                 in_0 = in_0.offset(1 as ::core::ffi::c_int as isize);
                             }
                             while out > outref
-                                && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
+                                && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
                                     *out.offset(-(1 as ::core::ffi::c_int) as isize)
                                         as ::core::ffi::c_uchar
                                         as isize,
@@ -2348,7 +2348,7 @@ unsafe extern "C" fn construct_command_argv_internal(
     if !restp.is_null() {
         *restp = ::core::ptr::null_mut::<::core::ffi::c_char>();
     }
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*line as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & 0x2 as ::core::ffi::c_int
         != 0
@@ -2488,11 +2488,11 @@ unsafe extern "C" fn construct_command_argv_internal(
                         {
                             p = p.offset(1 as ::core::ffi::c_int as isize);
                             if ap == *new_argv.offset(i as isize) {
-                                while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
-                                    *p.offset(1 as ::core::ffi::c_int as isize)
+                                while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
+                                    .offset(*p.offset(1 as ::core::ffi::c_int as isize)
                                         as ::core::ffi::c_uchar
-                                        as isize,
-                                ) as ::core::ffi::c_int
+                                        as isize)
+                                    as ::core::ffi::c_int
                                     & 0x2 as ::core::ffi::c_int
                                     != 0
                                 {
@@ -2554,7 +2554,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                                 j += 1;
                             }
                         }
-                        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                             .offset(*p.offset(1 as ::core::ffi::c_int as isize)
                                 as ::core::ffi::c_uchar
                                 as isize) as ::core::ffi::c_int
@@ -2626,7 +2626,7 @@ unsafe extern "C" fn construct_command_argv_internal(
             let mut t: *mut ::core::ffi::c_char = line;
             while *f.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 {
                 let mut esc: ::core::ffi::c_int = 0;
-                while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                     .offset(*f as ::core::ffi::c_uchar as isize)
                     as ::core::ffi::c_int
                     & 0x2 as ::core::ffi::c_int
@@ -2801,7 +2801,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                     && (*p as ::core::ffi::c_int == '\\' as i32
                         || *p as ::core::ffi::c_int == '\'' as i32
                         || *p as ::core::ffi::c_int == '"' as i32
-                        || *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                        || *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                             .offset(*p as ::core::ffi::c_uchar as isize)
                             as ::core::ffi::c_int
                             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)

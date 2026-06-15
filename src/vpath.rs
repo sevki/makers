@@ -40,7 +40,7 @@ const PATH_SEPARATOR_CHAR: c_int = ':' as i32;
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
 fn stop_set(c: u8, mask: c_int) -> bool {
-    unsafe { stopchar_map[c as usize] as c_int & mask != 0 }
+    stopchar_map()[c as usize] as c_int & mask != 0
 }
 
 /// Borrow a NUL-terminated C string as a byte slice (without the NUL).
