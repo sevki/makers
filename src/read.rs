@@ -2212,10 +2212,8 @@ unsafe extern "C" fn conditional_line(
     let o: ::core::ffi::c_uint;
     // Classify the directive keyword (the line's first `len` bytes) via the
     // typed AST layer instead of a wall of `strncmp`/`size_of` comparisons.
-    let directive = crate::parser::Directive::from_word(::core::slice::from_raw_parts(
-        line as *const u8,
-        len as usize,
-    ));
+    let directive =
+        crate::parser::Directive::from_word(::core::slice::from_raw_parts(line as *const u8, len));
     match directive {
         Some(d) => {
             cmdtype = directive_cmdtype(d);
@@ -2304,7 +2302,7 @@ unsafe extern "C" fn conditional_line(
             // `else`, or any non-directive, is extraneous text.
             let next = crate::parser::Directive::from_word(::core::slice::from_raw_parts(
                 line as *const u8,
-                len as usize,
+                len,
             ));
             if matches!(
                 next,
