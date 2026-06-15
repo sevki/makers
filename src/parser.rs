@@ -277,18 +277,18 @@ struct ParserDb {
 #[salsa::db]
 impl salsa::Database for ParserDb {}
 
-/// A source line interned in the parser database, so identical lines are stored
-/// once and their parse is memoized.
+/// An assignment AST node interned in the parser database. Interning is keyed by
+/// the node's offsets/flavor — not the source bytes — so the database holds at
+/// most one entry per distinct assignment shape and never retains a per-line
+/// byte copy.
 #[salsa::interned]
-struct Line<'db> {
-    #[returns(ref)]
-    bytes: Vec<u8>,
-}
-
-/// Salsa query: derive the assignment AST for an interned line.
-#[salsa::tracked]
-fn assignment_query<'db>(db: &'db dyn salsa::Database, line: Line<'db>) -> Option<Assignment> {
-    parse_assignment(line.bytes(db))
+struct AssignmentNode<'db> {
+    name_start: usize,
+    name_len: usize,
+    flavor: Flavor,
+    conditional: bool,
+    op_end: usize,
+    value_start: usize,
 }
 
 static DB: OnceLock<Mutex<ParserDb>> = OnceLock::new();
@@ -297,13 +297,36 @@ fn db() -> &'static Mutex<ParserDb> {
     DB.get_or_init(|| Mutex::new(ParserDb::default()))
 }
 
-/// Parse `bytes` as a variable assignment through the salsa database, interning
-/// the line and memoizing its AST. Equivalent to [`parse_assignment`] but cached
-/// across repeated identical lines.
+/// Parse `bytes` as a variable assignment, returning the typed [`Assignment`] or
+/// `None`.
+///
+/// The reader probes this for *every* candidate line, and most lines (rules,
+/// directives, comments) are not assignments. Those are parsed by the safe
+/// [`parse_assignment`] and returned immediately, so they never enter the salsa
+/// database — interning them would copy each mostly-unique line into static
+/// storage retained until process exit. Only lines that actually parse as
+/// assignments are interned, which both bounds memory and routes genuine AST
+/// nodes through salsa.
 pub fn assignment_ast(bytes: &[u8]) -> Option<Assignment> {
+    let parsed = parse_assignment(bytes)?;
     let db = db().lock().unwrap_or_else(|e| e.into_inner());
-    let line = Line::new(&*db, bytes.to_vec());
-    assignment_query(&*db, line)
+    let node = AssignmentNode::new(
+        &*db,
+        parsed.name_start,
+        parsed.name_len,
+        parsed.flavor,
+        parsed.conditional,
+        parsed.op_end,
+        parsed.value_start,
+    );
+    Some(Assignment {
+        name_start: node.name_start(&*db),
+        name_len: node.name_len(&*db),
+        flavor: node.flavor(&*db),
+        conditional: node.conditional(&*db),
+        op_end: node.op_end(&*db),
+        value_start: node.value_start(&*db),
+    })
 }
 
 #[cfg(test)]
