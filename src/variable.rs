@@ -1,6 +1,6 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
-use crate::misc::{next_token, skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
 use c2rust_bitfields;
 use libc::{abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, strstr};
@@ -1835,126 +1835,23 @@ pub unsafe fn parse_variable_definition(
     str: *const ::core::ffi::c_char,
     var: *mut variable,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char = str;
-    let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-        .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0
-    {
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-    }
-    (*var).name = p as *mut ::core::ffi::c_char;
-    (*var).length = 0;
-    (*var).set_conditional(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    loop {
-        let start: *const ::core::ffi::c_char;
-        let fresh5 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-        let mut c: ::core::ffi::c_int = *fresh5 as ::core::ffi::c_int;
-        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(c as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x8 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
-            != 0
-        {
-            return ::core::ptr::null_mut::<::core::ffi::c_char>();
-        }
-        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(c as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & 0x2 as ::core::ffi::c_int
-            != 0
-        {
-            if !end.is_null() {
-                return ::core::ptr::null_mut::<::core::ffi::c_char>();
-            }
-            end = p.offset(-(1 as ::core::ffi::c_int as isize));
-            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-                & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                != 0
-            {
-                p = p.offset(1 as ::core::ffi::c_int as isize);
-            }
-        } else {
-            start = p.offset(-(1 as ::core::ffi::c_int as isize));
-            if c == '?' as i32 {
-                (*var).set_conditional(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                let fresh6 = p;
-                p = p.offset(1 as ::core::ffi::c_int as isize);
-                c = *fresh6 as ::core::ffi::c_int;
-            }
-            if c == '=' as i32 {
-                if end.is_null() {
-                    end = start;
-                }
-                (*var).set_flavor(f_recursive as variable_flavor);
-                break;
-            } else if c == ':' as i32 {
-                if end.is_null() {
-                    end = start;
-                }
-                let fresh7 = p;
-                p = p.offset(1 as ::core::ffi::c_int as isize);
-                c = *fresh7 as ::core::ffi::c_int;
-                if c == '=' as i32 {
-                    (*var).set_flavor(f_simple as variable_flavor);
-                    break;
-                } else {
-                    if c == ':' as i32 {
-                        let fresh8 = p;
-                        p = p.offset(1 as ::core::ffi::c_int as isize);
-                        c = *fresh8 as ::core::ffi::c_int;
-                        if c == '=' as i32 {
-                            (*var).set_flavor(f_simple as variable_flavor);
-                            break;
-                        } else if c == ':' as i32 && {
-                            let fresh9 = p;
-                            p = p.offset(1 as ::core::ffi::c_int as isize);
-                            *fresh9 as ::core::ffi::c_int == '=' as i32
-                        } {
-                            (*var).set_flavor(f_expand as variable_flavor);
-                            break;
-                        }
-                    }
-                    return ::core::ptr::null_mut::<::core::ffi::c_char>();
-                }
-            } else {
-                if *p as ::core::ffi::c_int == '=' as i32 {
-                    match c {
-                        43 => {
-                            // '+=' : append
-                            (*var).set_flavor(f_append as variable_flavor);
-                            if end.is_null() {
-                                end = start;
-                            }
-                            p = p.offset(1 as ::core::ffi::c_int as isize);
-                            break;
-                        }
-                        33 => {
-                            // '!=' : shell-assignment
-                            (*var).set_flavor(f_shell as variable_flavor);
-                            if end.is_null() {
-                                end = start;
-                            }
-                            p = p.offset(1 as ::core::ffi::c_int as isize);
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                if !end.is_null() {
-                    return ::core::ptr::null_mut::<::core::ffi::c_char>();
-                }
-                if c == '$' as i32 {
-                    p = skip_reference(p);
-                }
-                (*var).set_conditional(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            }
+    // The operator-detection state machine now lives in the typed AST layer
+    // (`crate::parser`), which parses the line as a safe byte slice. Here we
+    // only marshal the result back into the C-facing `struct variable`: the
+    // name points into the original buffer (it is not copied or terminated),
+    // and the returned pointer is the address just past the operator.
+    let bytes = ::core::ffi::CStr::from_ptr(str).to_bytes();
+    match crate::parser::assignment_ast(bytes) {
+        None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        Some(a) => {
+            (*var).name = str.add(a.name_start) as *mut ::core::ffi::c_char;
+            (*var).length = a.name_len as ::core::ffi::c_uint;
+            (*var).set_conditional(a.conditional as ::core::ffi::c_uint);
+            (*var).set_flavor(a.flavor.to_variable_flavor());
+            (*var).value = str.add(a.value_start) as *mut ::core::ffi::c_char;
+            str.add(a.op_end) as *mut ::core::ffi::c_char
         }
     }
-    (*var).length = end.offset_from((*var).name) as ::core::ffi::c_long as ::core::ffi::c_uint;
-    (*var).value = next_token(p);
-    p as *mut ::core::ffi::c_char
 }
 /// # Safety
 ///

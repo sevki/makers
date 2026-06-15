@@ -32,6 +32,7 @@ pub mod loadapi;
 pub mod make_main;
 pub mod misc;
 pub mod output;
+pub mod parser;
 pub mod posixos;
 pub mod read;
 pub mod remake;
