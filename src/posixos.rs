@@ -111,7 +111,7 @@ static mut fifo_name: *mut c_char = null_mut();
 
 /// On POSIX with pselect there is no need for a separate read dup; the
 /// blocking read is interruptible already.
-unsafe fn make_job_rfd() -> c_int {
+fn make_job_rfd() -> c_int {
     0
 }
 
