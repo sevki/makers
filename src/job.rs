@@ -517,11 +517,10 @@ static DEAD_CHILDREN: AtomicU32 = AtomicU32::new(0);
 fn dead_children() -> ::core::ffi::c_uint {
     DEAD_CHILDREN.load(Ordering::Relaxed)
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe extern "C" fn child_handler(mut _sig: ::core::ffi::c_int) {
+/// `SIGCHLD` handler: record a reaped child and wake any blocked jobserver
+/// acquire. Async-signal-safe (an atomic increment plus `jobserver_signal`'s
+/// `close`).
+pub extern "C" fn child_handler(mut _sig: ::core::ffi::c_int) {
     DEAD_CHILDREN.fetch_add(1, Ordering::Relaxed);
     jobserver_signal();
 }
