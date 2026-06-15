@@ -81,6 +81,61 @@ impl Assignment {
     }
 }
 
+/// A conditional directive keyword (`ifdef`, `ifeq`, `else`, `endif`, …).
+///
+/// Classifying the keyword is a pure function of the line's first word, so it
+/// belongs in the AST layer. Unlike [`Assignment`], a directive carries no
+/// variable-length data and has only six possible values, so there is nothing
+/// to dedup — it is classified directly by [`Directive::from_word`] rather than
+/// interned through the salsa database (which would only add a lock to this hot
+/// path).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Directive {
+    /// `ifdef`
+    Ifdef,
+    /// `ifndef`
+    Ifndef,
+    /// `ifeq`
+    Ifeq,
+    /// `ifneq`
+    Ifneq,
+    /// `else`
+    Else,
+    /// `endif`
+    Endif,
+}
+
+impl Directive {
+    /// Classify `word` (a line's leading token) as a conditional directive, or
+    /// `None` if it is not one. Matching is exact, mirroring make's
+    /// `conditional_line`, which only accepts a word whose length equals the
+    /// keyword's.
+    pub fn from_word(word: &[u8]) -> Option<Directive> {
+        Some(match word {
+            b"ifdef" => Directive::Ifdef,
+            b"ifndef" => Directive::Ifndef,
+            b"ifeq" => Directive::Ifeq,
+            b"ifneq" => Directive::Ifneq,
+            b"else" => Directive::Else,
+            b"endif" => Directive::Endif,
+            _ => return None,
+        })
+    }
+
+    /// The NUL-terminated keyword, matching the C `cmdname` used verbatim in
+    /// make's diagnostics (`extraneous text after '%s' directive`, etc.).
+    pub fn name(self) -> &'static core::ffi::CStr {
+        match self {
+            Directive::Ifdef => c"ifdef",
+            Directive::Ifndef => c"ifndef",
+            Directive::Ifeq => c"ifeq",
+            Directive::Ifneq => c"ifneq",
+            Directive::Else => c"else",
+            Directive::Endif => c"endif",
+        }
+    }
+}
+
 /// `stopchar_map` class bits for byte `b`.
 fn flags(b: u8) -> i32 {
     stopchar_map()[b as usize] as i32
@@ -473,5 +528,43 @@ mod tests {
                 "salsa query and pure parser disagree on {line:?}"
             );
         }
+    }
+
+    #[test]
+    fn conditional_directives_classify() {
+        assert_eq!(Directive::from_word(b"ifdef"), Some(Directive::Ifdef));
+        assert_eq!(Directive::from_word(b"ifndef"), Some(Directive::Ifndef));
+        assert_eq!(Directive::from_word(b"ifeq"), Some(Directive::Ifeq));
+        assert_eq!(Directive::from_word(b"ifneq"), Some(Directive::Ifneq));
+        assert_eq!(Directive::from_word(b"else"), Some(Directive::Else));
+        assert_eq!(Directive::from_word(b"endif"), Some(Directive::Endif));
+    }
+
+    #[test]
+    fn non_directives_are_rejected() {
+        // Matching is exact: prefixes, suffixes, and unrelated words are not
+        // directives.
+        for w in [
+            &b""[..],
+            b"if",
+            b"ifdefx",
+            b"xifdef",
+            b"IFDEF",
+            b"endi",
+            b"endiff",
+            b"target",
+        ] {
+            assert_eq!(Directive::from_word(w), None, "{:?} must not classify", w);
+        }
+    }
+
+    #[test]
+    fn directive_names_are_the_keywords() {
+        assert_eq!(Directive::Ifdef.name().to_bytes(), b"ifdef");
+        assert_eq!(Directive::Ifndef.name().to_bytes(), b"ifndef");
+        assert_eq!(Directive::Ifeq.name().to_bytes(), b"ifeq");
+        assert_eq!(Directive::Ifneq.name().to_bytes(), b"ifneq");
+        assert_eq!(Directive::Else.name().to_bytes(), b"else");
+        assert_eq!(Directive::Endif.name().to_bytes(), b"endif");
     }
 }

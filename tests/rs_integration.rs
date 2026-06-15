@@ -201,6 +201,35 @@ fn conditionals_debug() {
 }
 
 #[test]
+fn conditionals_else_if_chain_default() {
+    // `else ifeq` / `else ifdef` chain in conditional_line, falling through to
+    // the final plain `else`.
+    check("cond-chain-default", "15_cond_chain.mk", "all", &[]);
+}
+
+#[test]
+fn conditionals_else_if_chain_release() {
+    // Takes the `else ifeq ($(MODE),release)` branch.
+    check(
+        "cond-chain-release",
+        "15_cond_chain.mk",
+        "all",
+        &["MODE=release"],
+    );
+}
+
+#[test]
+fn conditionals_else_if_chain_fallback() {
+    // Takes the `else ifdef FALLBACK` branch and the `else` of the second block.
+    check(
+        "cond-chain-fallback",
+        "15_cond_chain.mk",
+        "all",
+        &["FALLBACK=x", "HIDE=1"],
+    );
+}
+
+#[test]
 fn builtin_functions() {
     check("funcs", "05_funcs.mk", "all", &[]);
 }
