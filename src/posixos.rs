@@ -122,7 +122,11 @@ static JOB_ROOT: AtomicBool = AtomicBool::new(false);
 /// The token pipe/fifo: `[read end, write end]`.
 static mut job_fds: [c_int; 2] = [-1, -1];
 /// A private dup of the read side (closed by a fatal signal to wake us).
-static mut job_rfd: c_int = -1;
+static JOB_RFD: AtomicI32 = AtomicI32::new(-1);
+
+fn job_rfd() -> c_int {
+    JOB_RFD.load(Ordering::Relaxed)
+}
 /// The token character written for each available job slot.
 static mut token: c_char = b'+' as c_char;
 static mut fifo_name: *mut c_char = null_mut();
@@ -417,11 +421,12 @@ pub unsafe fn jobserver_clear() {
     if job_fds[1] >= 0 {
         close(job_fds[1]);
     }
-    if job_rfd >= 0 {
-        close(job_rfd);
+    let rfd = job_rfd();
+    if rfd >= 0 {
+        close(rfd);
     }
     job_fds = [-1, -1];
-    job_rfd = -1;
+    JOB_RFD.store(-1, Ordering::Relaxed);
 
     if !fifo_name.is_null() {
         if JOB_ROOT.load(Ordering::Relaxed) {
@@ -529,9 +534,10 @@ pub unsafe fn jobserver_post_child(recursive: c_int) {
 /// # Safety
 /// Async-signal-safe (only `close`).
 pub unsafe fn jobserver_signal() {
-    if job_rfd >= 0 {
-        close(job_rfd);
-        job_rfd = -1;
+    let rfd = job_rfd();
+    if rfd >= 0 {
+        close(rfd);
+        JOB_RFD.store(-1, Ordering::Relaxed);
     }
 }
 
@@ -540,7 +546,7 @@ pub unsafe fn jobserver_signal() {
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_pre_acquire() {
-    if job_rfd < 0 && job_fds[0] >= 0 && make_job_rfd() < 0 {
+    if job_rfd() < 0 && job_fds[0] >= 0 && make_job_rfd() < 0 {
         pfatal_with_name(c"duping jobs pipe".as_ptr());
     }
 }
@@ -982,5 +988,21 @@ mod tests {
         }
 
         JS_TYPE.store(saved, Ordering::Relaxed);
+    }
+
+    /// `job_rfd()` reflects the `JOB_RFD` atomic: negative when there is no
+    /// private read dup (the default), the fd value once set. Restores the
+    /// prior value so it stays isolated from other tests.
+    #[test]
+    fn job_rfd_tracks_atomic() {
+        let saved = JOB_RFD.load(Ordering::Relaxed);
+
+        JOB_RFD.store(-1, Ordering::Relaxed);
+        assert_eq!(job_rfd(), -1, "default is unset");
+
+        JOB_RFD.store(5, Ordering::Relaxed);
+        assert_eq!(job_rfd(), 5, "reflects the stored fd");
+
+        JOB_RFD.store(saved, Ordering::Relaxed);
     }
 }
