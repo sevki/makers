@@ -2186,6 +2186,19 @@ unsafe extern "C" fn do_define(
     free(n as *mut ::core::ffi::c_void);
     v
 }
+/// Map a typed conditional [`crate::parser::Directive`] to make's internal
+/// `cmdtype` code, the discriminant the rest of `conditional_line` switches on.
+fn directive_cmdtype(d: crate::parser::Directive) -> C2RustUnnamed {
+    use crate::parser::Directive;
+    match d {
+        Directive::Ifdef => c_ifdef,
+        Directive::Ifndef => c_ifndef,
+        Directive::Ifeq => c_ifeq,
+        Directive::Ifneq => c_ifneq,
+        Directive::Else => c_else,
+        Directive::Endif => c_endif,
+    }
+}
 unsafe extern "C" fn conditional_line(
     mut line: *mut ::core::ffi::c_char,
     mut len: size_t,
@@ -2197,67 +2210,18 @@ unsafe extern "C" fn conditional_line(
     let cmdtype: C2RustUnnamed;
     let mut i: ::core::ffi::c_uint;
     let o: ::core::ffi::c_uint;
-    if len == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize).wrapping_sub(1 as usize)
-        && strncmp(
-            b"ifdef\0" as *const u8 as *const ::core::ffi::c_char,
-            line,
-            (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-        ) == 0
-    {
-        cmdtype = c_ifdef;
-        cmdname = b"ifdef\0" as *const u8 as *const ::core::ffi::c_char;
-    } else if len
-        == (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize).wrapping_sub(1 as usize)
-        && strncmp(
-            b"ifndef\0" as *const u8 as *const ::core::ffi::c_char,
-            line,
-            (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-        ) == 0
-    {
-        cmdtype = c_ifndef;
-        cmdname = b"ifndef\0" as *const u8 as *const ::core::ffi::c_char;
-    } else if len
-        == (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as usize).wrapping_sub(1 as usize)
-        && strncmp(
-            b"ifeq\0" as *const u8 as *const ::core::ffi::c_char,
-            line,
-            (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-        ) == 0
-    {
-        cmdtype = c_ifeq;
-        cmdname = b"ifeq\0" as *const u8 as *const ::core::ffi::c_char;
-    } else if len
-        == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize).wrapping_sub(1 as usize)
-        && strncmp(
-            b"ifneq\0" as *const u8 as *const ::core::ffi::c_char,
-            line,
-            (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-        ) == 0
-    {
-        cmdtype = c_ifneq;
-        cmdname = b"ifneq\0" as *const u8 as *const ::core::ffi::c_char;
-    } else if len
-        == (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as usize).wrapping_sub(1 as usize)
-        && strncmp(
-            b"else\0" as *const u8 as *const ::core::ffi::c_char,
-            line,
-            (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-        ) == 0
-    {
-        cmdtype = c_else;
-        cmdname = b"else\0" as *const u8 as *const ::core::ffi::c_char;
-    } else if len
-        == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize).wrapping_sub(1 as usize)
-        && strncmp(
-            b"endif\0" as *const u8 as *const ::core::ffi::c_char,
-            line,
-            (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-        ) == 0
-    {
-        cmdtype = c_endif;
-        cmdname = b"endif\0" as *const u8 as *const ::core::ffi::c_char;
-    } else {
-        return -(2 as ::core::ffi::c_int);
+    // Classify the directive keyword (the line's first `len` bytes) via the
+    // typed AST layer instead of a wall of `strncmp`/`size_of` comparisons.
+    let directive = crate::parser::Directive::from_word(::core::slice::from_raw_parts(
+        line as *const u8,
+        len as usize,
+    ));
+    match directive {
+        Some(d) => {
+            cmdtype = directive_cmdtype(d);
+            cmdname = d.name().as_ptr();
+        }
+        None => return -(2 as ::core::ffi::c_int),
     }
     if initial_tab != 0 {
         error(
@@ -2335,24 +2299,17 @@ unsafe extern "C" fn conditional_line(
                 p = p.offset(1 as ::core::ffi::c_int as isize);
             }
             len = p.offset_from(line) as ::core::ffi::c_long as size_t;
-            if len
-                == (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as usize)
-                    .wrapping_sub(1 as usize)
-                && strncmp(
-                    b"else\0" as *const u8 as *const ::core::ffi::c_char,
-                    line,
-                    (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-                ) == 0
-                || len
-                    == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize)
-                        .wrapping_sub(1 as usize)
-                    && strncmp(
-                        b"endif\0" as *const u8 as *const ::core::ffi::c_char,
-                        line,
-                        (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
-                            .wrapping_sub(1),
-                    ) == 0
-                || conditional_line(line, len, flocp, 0) < 0
+            // `else <directive>` is only valid when the trailing directive is a
+            // fresh conditional (`else ifeq …`); a bare `else`/`endif` after
+            // `else`, or any non-directive, is extraneous text.
+            let next = crate::parser::Directive::from_word(::core::slice::from_raw_parts(
+                line as *const u8,
+                len as usize,
+            ));
+            if matches!(
+                next,
+                Some(crate::parser::Directive::Else | crate::parser::Directive::Endif)
+            ) || conditional_line(line, len, flocp, 0) < 0
             {
                 error(
                     flocp,
