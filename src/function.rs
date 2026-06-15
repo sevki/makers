@@ -220,8 +220,8 @@ pub const MAP_DIRSEP: ::core::ffi::c_int = 0x8000 as ::core::ffi::c_int;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-unsafe fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
 }
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const INTSTR_LENGTH: usize = (53 as usize)
@@ -474,7 +474,7 @@ unsafe extern "C" fn lookup_function(s: *const ::core::ffi::c_char) -> *const fu
         c2rust_padding: [0; 4],
     };
     let mut e: *const ::core::ffi::c_char = s;
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*e as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & 0x2000 as ::core::ffi::c_int
         != 0
@@ -482,7 +482,7 @@ unsafe extern "C" fn lookup_function(s: *const ::core::ffi::c_char) -> *const fu
         e = e.offset(1 as ::core::ffi::c_int as isize);
     }
     if e == s
-        || !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        || !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*e as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x1 as ::core::ffi::c_int | (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int))
             != 0)
@@ -1345,7 +1345,7 @@ unsafe fn func_let(
     let mut vlen: size_t = 0;
     push_new_variable_scope();
     vp = find_next_token(&raw mut vp_next, &raw mut vlen);
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*vp_next as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
         != 0
@@ -1373,7 +1373,7 @@ unsafe fn func_let(
             NILF,
         );
         vp = find_next_token(&raw mut vp_next, &raw mut vlen);
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*vp_next as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
             != 0
@@ -2805,7 +2805,7 @@ pub unsafe fn handle_function(
         return 0;
     }
     beg = beg.offset((*entry_p).len as ::core::ffi::c_int as isize);
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*beg as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
         != 0
@@ -2815,7 +2815,7 @@ pub unsafe fn handle_function(
     nargs = 1;
     end = beg;
     while *end as ::core::ffi::c_int != 0 {
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*end as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x80 as ::core::ffi::c_int | 0x400 as ::core::ffi::c_int)
             != 0
@@ -3008,7 +3008,7 @@ pub unsafe fn define_new_function(
     let mut e: *const ::core::ffi::c_char = name;
     let mut ent: *mut function_table_entry;
     let len: size_t;
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*e as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & 0x2000 as ::core::ffi::c_int
         != 0
@@ -3490,7 +3490,7 @@ mod trim_whitespace_span_tests {
     #[test]
     fn covers_full_isspace_set_but_not_nul() {
         // space, tab, newline, vtab, formfeed, carriage-return are whitespace;
-        // NUL is not (stopchar_map[0] is MAP_NUL only).
+        // NUL is not (stopchar_map()[0] is MAP_NUL only).
         assert_eq!(trim(b"\t\n a \r\x0b"), (3, 3));
         assert_eq!(trimmed(b"\t\n a \r\x0b"), b"a");
         assert_eq!(trim(b"\0"), (0, 0));

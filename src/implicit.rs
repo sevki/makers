@@ -50,8 +50,8 @@ const PARSEFS_WAIT: ::core::ffi::c_int = 0x40;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-unsafe fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
 }
 
 /// `DBS (DB_IMPLICIT, ...)` from the C original: print an indented trace

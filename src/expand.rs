@@ -73,8 +73,8 @@ const MAP_NEWLINE: ::core::ffi::c_int = 0x0004;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-unsafe fn stop_set(c: ::core::ffi::c_char, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map[c as u8 as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set(c: ::core::ffi::c_char, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map()[c as u8 as usize] as ::core::ffi::c_int & mask != 0
 }
 pub static mut expanding_var: *mut *const Floc = &raw const reading_file as *mut *const Floc;
 pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5;

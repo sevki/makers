@@ -684,264 +684,18 @@ pub static mut one_shell: ::core::ffi::c_int = 0;
 pub static mut output_sync: ::core::ffi::c_int = OUTPUT_SYNC_NONE;
 pub static mut not_parallel: ::core::ffi::c_int = 0;
 pub static mut clock_skew_detected: ::core::ffi::c_int = 0;
-pub static mut stopchar_map: [::core::ffi::c_ushort; 256] = [
-    0 as ::core::ffi::c_int as ::core::ffi::c_ushort,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-];
+/// Per-byte classification bitmap (`MAP_*` flags), computed once at startup by
+/// [`initialize_stopchar_map`]. Held behind a `OnceLock` so it is a safe
+/// `static`; reads before initialization see a zeroed map, matching the C
+/// `static`'s zero-initialized state.
+static STOPCHAR_MAP: ::std::sync::OnceLock<[::core::ffi::c_ushort; 256]> =
+    ::std::sync::OnceLock::new();
+/// Borrow the classification map. Returns a zeroed map until
+/// [`initialize_stopchar_map`] has run.
+pub fn stopchar_map() -> &'static [::core::ffi::c_ushort; 256] {
+    static ZERO: [::core::ffi::c_ushort; 256] = [0; 256];
+    STOPCHAR_MAP.get().unwrap_or(&ZERO)
+}
 pub static mut make_sync: output = output {
     out: 0,
     err: 0,
@@ -1020,44 +774,46 @@ pub unsafe fn initialize_global_hash_tables() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_stopchar_map() {
-    let mut i: ::core::ffi::c_int;
-    stopchar_map[0 as usize] = MAP_NUL as ::core::ffi::c_ushort;
-    stopchar_map['#' as i32 as usize] = MAP_COMMENT as ::core::ffi::c_ushort;
-    stopchar_map[';' as i32 as usize] = MAP_SEMI as ::core::ffi::c_ushort;
-    stopchar_map['=' as i32 as usize] = MAP_EQUALS as ::core::ffi::c_ushort;
-    stopchar_map[':' as i32 as usize] = MAP_COLON as ::core::ffi::c_ushort;
-    stopchar_map['|' as i32 as usize] = MAP_PIPE as ::core::ffi::c_ushort;
-    stopchar_map['.' as i32 as usize] = (MAP_DOT | MAP_USERFUNC) as ::core::ffi::c_ushort;
-    stopchar_map[',' as i32 as usize] = MAP_COMMA as ::core::ffi::c_ushort;
-    stopchar_map['(' as i32 as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
-    stopchar_map['{' as i32 as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
-    stopchar_map['}' as i32 as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
-    stopchar_map[')' as i32 as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
-    stopchar_map['$' as i32 as usize] = MAP_VARIABLE as ::core::ffi::c_ushort;
-    stopchar_map['-' as i32 as usize] = MAP_USERFUNC as ::core::ffi::c_ushort;
-    stopchar_map['_' as i32 as usize] = MAP_USERFUNC as ::core::ffi::c_ushort;
-    stopchar_map[' ' as i32 as usize] = MAP_BLANK as ::core::ffi::c_ushort;
-    stopchar_map['\t' as i32 as usize] = MAP_BLANK as ::core::ffi::c_ushort;
-    stopchar_map['/' as i32 as usize] = MAP_DIRSEP as ::core::ffi::c_ushort;
-    i = 1;
+pub fn initialize_stopchar_map() {
+    let mut map = [0 as ::core::ffi::c_ushort; 256];
+    map[0] = MAP_NUL as ::core::ffi::c_ushort;
+    map['#' as usize] = MAP_COMMENT as ::core::ffi::c_ushort;
+    map[';' as usize] = MAP_SEMI as ::core::ffi::c_ushort;
+    map['=' as usize] = MAP_EQUALS as ::core::ffi::c_ushort;
+    map[':' as usize] = MAP_COLON as ::core::ffi::c_ushort;
+    map['|' as usize] = MAP_PIPE as ::core::ffi::c_ushort;
+    map['.' as usize] = (MAP_DOT | MAP_USERFUNC) as ::core::ffi::c_ushort;
+    map[',' as usize] = MAP_COMMA as ::core::ffi::c_ushort;
+    map['(' as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
+    map['{' as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
+    map['}' as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
+    map[')' as usize] = MAP_VARSEP as ::core::ffi::c_ushort;
+    map['$' as usize] = MAP_VARIABLE as ::core::ffi::c_ushort;
+    map['-' as usize] = MAP_USERFUNC as ::core::ffi::c_ushort;
+    map['_' as usize] = MAP_USERFUNC as ::core::ffi::c_ushort;
+    map[' ' as usize] = MAP_BLANK as ::core::ffi::c_ushort;
+    map['\t' as usize] = MAP_BLANK as ::core::ffi::c_ushort;
+    map['/' as usize] = MAP_DIRSEP as ::core::ffi::c_ushort;
+    // Locale-dependent classes from the C ctype table (the only unsafe access).
+    let ctype = unsafe { *__ctype_b_loc() };
+    let mut i: ::core::ffi::c_int = 1;
     while i <= UCHAR_MAX {
-        if *(*__ctype_b_loc()).offset(i as isize) as ::core::ffi::c_int
-            & _ISspace as ::core::ffi::c_int as ::core::ffi::c_ushort as ::core::ffi::c_int
-            != 0
-            && !(stopchar_map[i as usize] as ::core::ffi::c_int & 0x2 as ::core::ffi::c_int != 0)
+        let cls = unsafe { *ctype.offset(i as isize) } as ::core::ffi::c_int;
+        if cls & _ISspace as ::core::ffi::c_int as ::core::ffi::c_ushort as ::core::ffi::c_int != 0
+            && map[i as usize] as ::core::ffi::c_int & 0x2 as ::core::ffi::c_int == 0
         {
-            stopchar_map[i as usize] = (stopchar_map[i as usize] as ::core::ffi::c_int
-                | MAP_NEWLINE) as ::core::ffi::c_ushort;
-        } else if *(*__ctype_b_loc()).offset(i as isize) as ::core::ffi::c_int
+            map[i as usize] =
+                (map[i as usize] as ::core::ffi::c_int | MAP_NEWLINE) as ::core::ffi::c_ushort;
+        } else if cls
             & _ISalnum as ::core::ffi::c_int as ::core::ffi::c_ushort as ::core::ffi::c_int
             != 0
         {
-            stopchar_map[i as usize] = (stopchar_map[i as usize] as ::core::ffi::c_int
-                | MAP_USERFUNC) as ::core::ffi::c_ushort;
+            map[i as usize] =
+                (map[i as usize] as ::core::ffi::c_int | MAP_USERFUNC) as ::core::ffi::c_ushort;
         }
         i += 1;
     }
+    let _ = STOPCHAR_MAP.set(map);
 }
 /// # Safety
 ///
@@ -1461,7 +1217,7 @@ unsafe fn main_0(
         let mut ep: *const ::core::ffi::c_char = *envp.offset(i as isize);
         let mut export: variable_export = v_export;
         let len: size_t;
-        while !(stopchar_map[*ep as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
+        while !(stopchar_map()[*ep as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
             & (0x20 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
             != 0)
         {
@@ -3347,7 +3103,7 @@ unsafe extern "C" fn decode_env_switches(
     let mut argc: ::core::ffi::c_int;
     let argv: *mut *const ::core::ffi::c_char;
     value = expand_variable_buf(::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len);
-    while stopchar_map[*value as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
+    while stopchar_map()[*value as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
         != 0
     {
@@ -3376,7 +3132,7 @@ unsafe extern "C" fn decode_env_switches(
             && *value.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
         {
             value = value.offset(1 as ::core::ffi::c_int as isize);
-        } else if stopchar_map[*value as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
+        } else if stopchar_map()[*value as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
             & 0x2 as ::core::ffi::c_int
             != 0
         {
@@ -3388,7 +3144,7 @@ unsafe extern "C" fn decode_env_switches(
             *fresh3 = p;
             loop {
                 value = value.offset(1 as ::core::ffi::c_int as isize);
-                if !(stopchar_map[*value as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
+                if !(stopchar_map()[*value as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
                     & 0x2 as ::core::ffi::c_int
                     != 0)
                 {
@@ -3435,7 +3191,7 @@ unsafe extern "C" fn quote_for_env(
             let fresh29 = out;
             out = out.offset(1 as ::core::ffi::c_int as isize);
             *fresh29 = '$' as i32 as ::core::ffi::c_char;
-        } else if stopchar_map[*in_0 as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
+        } else if stopchar_map()[*in_0 as ::core::ffi::c_uchar as usize] as ::core::ffi::c_int
             & 0x2 as ::core::ffi::c_int
             != 0
             || *in_0 as ::core::ffi::c_int == '\\' as i32

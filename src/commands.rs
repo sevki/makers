@@ -61,8 +61,8 @@ const MAP_NEWLINE: c_int = 0x0004;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-unsafe fn stop_set(c: c_char, mask: c_int) -> bool {
-    stopchar_map[c as u8 as usize] as c_int & mask != 0
+fn stop_set(c: c_char, mask: c_int) -> bool {
+    stopchar_map()[c as u8 as usize] as c_int & mask != 0
 }
 
 /// The name a dependency goes by: its own name, or its file's name when

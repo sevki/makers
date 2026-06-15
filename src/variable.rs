@@ -310,8 +310,8 @@ const MAP_NEWLINE: ::core::ffi::c_int = 0x4;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-unsafe fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map[c as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
+    stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
 }
 
 unsafe extern "C" fn check_valid_name(
@@ -1838,7 +1838,7 @@ pub unsafe fn parse_variable_definition(
 ) -> *mut ::core::ffi::c_char {
     let mut p: *const ::core::ffi::c_char = str;
     let mut end: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
         != 0
@@ -1853,14 +1853,14 @@ pub unsafe fn parse_variable_definition(
         let fresh5 = p;
         p = p.offset(1 as ::core::ffi::c_int as isize);
         let mut c: ::core::ffi::c_int = *fresh5 as ::core::ffi::c_int;
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(c as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x8 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
             != 0
         {
             return ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(c as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & 0x2 as ::core::ffi::c_int
             != 0
@@ -1869,7 +1869,7 @@ pub unsafe fn parse_variable_definition(
                 return ::core::ptr::null_mut::<::core::ffi::c_char>();
             }
             end = p.offset(-(1 as ::core::ffi::c_int as isize));
-            while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                 .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
                 & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
                 != 0

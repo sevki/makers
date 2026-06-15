@@ -506,7 +506,7 @@ unsafe extern "C" fn eval_makefile(
         && (*deps).error == ENOENT
         && !include_directories.is_null()
         && flags as ::core::ffi::c_int & (1) << 1 != 0
-        && !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        && !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*filename as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & 0x8000 as ::core::ffi::c_int
             != 0)
@@ -642,7 +642,7 @@ unsafe extern "C" fn parse_var_assignment(
         0,
         ::core::mem::size_of::<vmodifiers>() as size_t,
     );
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*line as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
         != 0
@@ -915,7 +915,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
         collapse_continuations(collapsed);
         remove_comments(collapsed);
         p = collapsed;
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
             != 0
@@ -992,7 +992,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
             }
             p2 = end_of_token(p);
             wlen = p2.offset_from(p) as ::core::ffi::c_long as size_t;
-            while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                 .offset(*p2 as ::core::ffi::c_uchar as isize)
                 as ::core::ffi::c_int
                 & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
@@ -1017,7 +1017,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
                             .wrapping_sub(1),
                     ) == 0
-                    && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                    && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                         .offset(*p2 as ::core::ffi::c_uchar as isize)
                         as ::core::ffi::c_int
                         & (0x8 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
@@ -1666,7 +1666,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             b"neq\0" as *const u8 as *const ::core::ffi::c_char,
                                             3,
                                         ) == 0
-                                            && !(*(&raw mut stopchar_map
+                                            && !(*(stopchar_map().as_ptr()
                                                 as *mut ::core::ffi::c_ushort)
                                                 .offset(
                                                     *p2.offset(5 as ::core::ffi::c_int as isize)
@@ -1682,7 +1682,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                 b"eq\0" as *const u8 as *const ::core::ffi::c_char,
                                                 2,
                                             ) == 0
-                                                && !(*(&raw mut stopchar_map
+                                                && !(*(stopchar_map().as_ptr()
                                                     as *mut ::core::ffi::c_ushort)
                                                     .offset(
                                                         *p2.offset(4 as ::core::ffi::c_int as isize)
@@ -2010,7 +2010,7 @@ unsafe extern "C" fn do_undefine(
         .offset(strlen(name) as isize)
         .offset(-(1 as ::core::ffi::c_int as isize));
     while p > name
-        && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & 0x2 as ::core::ffi::c_int
             != 0
@@ -2085,7 +2085,7 @@ unsafe extern "C" fn do_define(
         .offset(strlen(name) as isize)
         .offset(-(1 as ::core::ffi::c_int as isize));
     while p > name
-        && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & 0x2 as ::core::ffi::c_int
             != 0
@@ -2118,7 +2118,7 @@ unsafe extern "C" fn do_define(
             len = strlen(p) as size_t;
             if (len == 6
                 || len > 6
-                    && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
+                    && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
                         *p.offset(6 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar
                             as isize,
                     ) as ::core::ffi::c_int
@@ -2129,7 +2129,7 @@ unsafe extern "C" fn do_define(
                 nlevels += 1;
             } else if (len == 5
                 || len > 5
-                    && *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
+                    && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
                         *p.offset(5 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar
                             as isize,
                     ) as ::core::ffi::c_int
@@ -2268,7 +2268,7 @@ unsafe extern "C" fn conditional_line(
         );
     }
     line = line.offset(len as isize);
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*line as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
         != 0
@@ -2326,7 +2326,7 @@ unsafe extern "C" fn conditional_line(
             *(*conditionals).seen_else.offset(o as isize) = 1;
         } else {
             p = line.offset(1 as ::core::ffi::c_int as isize);
-            while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+            while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                 .offset(*p as ::core::ffi::c_uchar as isize)
                 as ::core::ffi::c_int
                 & (0x2 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
@@ -2411,7 +2411,7 @@ unsafe extern "C" fn conditional_line(
             var = allocated_expand_string_for_file(line, ::core::ptr::null_mut::<file>());
             p_0 = end_of_token(var);
             l = p_0.offset_from(var) as ::core::ffi::c_long as size_t;
-            while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                 .offset(*p_0 as ::core::ffi::c_uchar as isize)
                 as ::core::ffi::c_int
                 & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
@@ -2464,7 +2464,7 @@ unsafe extern "C" fn conditional_line(
                 let fresh27 = line;
                 line = line.offset(1 as ::core::ffi::c_int as isize);
                 let mut p_1: *mut ::core::ffi::c_char = fresh27;
-                while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort).offset(
+                while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
                     *p_1.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar
                         as isize,
                 ) as ::core::ffi::c_int
@@ -2493,7 +2493,7 @@ unsafe extern "C" fn conditional_line(
                 (l_0 as size_t).wrapping_add(1),
             );
             if termin as ::core::ffi::c_int != ',' as i32 {
-                while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                     .offset(*line as ::core::ffi::c_uchar as isize)
                     as ::core::ffi::c_int
                     & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
@@ -2543,7 +2543,7 @@ unsafe extern "C" fn conditional_line(
             let fresh29 = line;
             line = line.offset(1 as ::core::ffi::c_int as isize);
             *fresh29 = 0;
-            while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                 .offset(*line as ::core::ffi::c_uchar as isize)
                 as ::core::ffi::c_int
                 & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
@@ -3228,7 +3228,7 @@ unsafe extern "C" fn find_map_unquote(
     let mut p: *mut ::core::ffi::c_char = string;
     stopmap |= MAP_NUL;
     loop {
-        while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & stopmap
             != 0)
@@ -3569,7 +3569,7 @@ unsafe extern "C" fn get_next_mword(
     let mut p: *mut ::core::ffi::c_char = buffer;
     let beg: *mut ::core::ffi::c_char;
     let mut c: ::core::ffi::c_char;
-    while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
         & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
         != 0
@@ -3613,7 +3613,7 @@ unsafe extern "C" fn get_next_mword(
     }
     if scan_static {
         wtype = w_static;
-        while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(c as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
             != 0)
@@ -3950,14 +3950,14 @@ pub unsafe fn parse_file_seq(
         let mut nlen: size_t;
         let mut tot: ::core::ffi::c_int = 0;
         let mut i: ::core::ffi::c_int;
-        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
             != 0
         {
             p = p.offset(1 as ::core::ffi::c_int as isize);
         }
-        if *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & stopmap
             != 0
@@ -4018,7 +4018,7 @@ pub unsafe fn parse_file_seq(
                     let mut e: *const ::core::ffi::c_char = p;
                     loop {
                         let o: *const ::core::ffi::c_char = e;
-                        while *(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                             .offset(*e as ::core::ffi::c_uchar as isize)
                             as ::core::ffi::c_int
                             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
@@ -4026,7 +4026,7 @@ pub unsafe fn parse_file_seq(
                         {
                             e = e.offset(1 as ::core::ffi::c_int as isize);
                         }
-                        while !(*(&raw mut stopchar_map as *mut ::core::ffi::c_ushort)
+                        while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                             .offset(*e as ::core::ffi::c_uchar as isize)
                             as ::core::ffi::c_int
                             & findmap
