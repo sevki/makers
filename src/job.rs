@@ -11,7 +11,7 @@ use libc::{
     __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
     strchr, strcmp, strerror, strsignal,
 };
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -508,13 +508,21 @@ unsafe extern "C" fn child_error(
     }
     output_context = ::core::ptr::null_mut::<output>();
 }
-static mut dead_children: ::core::ffi::c_uint = 0;
+/// Count of children reaped by the `SIGCHLD` handler and not yet processed
+/// by the reap loop. Written from the signal handler and read on the main
+/// path, so it must be an atomic rather than a `static mut` (a plain global
+/// would be a data race); `Relaxed` suffices as it only gates a retry.
+static DEAD_CHILDREN: AtomicU32 = AtomicU32::new(0);
+
+fn dead_children() -> ::core::ffi::c_uint {
+    DEAD_CHILDREN.load(Ordering::Relaxed)
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn child_handler(mut _sig: ::core::ffi::c_int) {
-    dead_children = dead_children.wrapping_add(1);
+    DEAD_CHILDREN.fetch_add(1, Ordering::Relaxed);
     jobserver_signal();
 }
 /// # Safety
@@ -549,8 +557,8 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             }
             printed = 1;
         }
-        if dead_children > 0 {
-            dead_children = dead_children.wrapping_sub(1);
+        if dead_children() > 0 {
+            DEAD_CHILDREN.fetch_sub(1, Ordering::Relaxed);
         }
         any_remote = 0;
         any_local = (shell_function_pid != 0) as ::core::ffi::c_int;
@@ -3005,5 +3013,31 @@ mod good_stdin_used_tests {
         assert!(good_stdin_used(), "non-zero means stdin already claimed");
 
         GOOD_STDIN_USED.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod dead_children_tests {
+    use super::{dead_children, DEAD_CHILDREN};
+    use std::sync::atomic::Ordering;
+
+    /// `dead_children()` reflects the `DEAD_CHILDREN` counter and the atomic
+    /// add/sub used by the signal handler and reap loop round-trip. Restores
+    /// the prior value so it stays isolated from other tests.
+    #[test]
+    fn dead_children_counts_round_trip() {
+        let saved = DEAD_CHILDREN.load(Ordering::Relaxed);
+
+        DEAD_CHILDREN.store(0, Ordering::Relaxed);
+        assert_eq!(dead_children(), 0);
+
+        DEAD_CHILDREN.fetch_add(1, Ordering::Relaxed);
+        DEAD_CHILDREN.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(dead_children(), 2, "two reaped children pending");
+
+        DEAD_CHILDREN.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(dead_children(), 1, "one processed");
+
+        DEAD_CHILDREN.store(saved, Ordering::Relaxed);
     }
 }
