@@ -529,14 +529,13 @@ pub unsafe fn jobserver_post_child(recursive: c_int) {
 }
 
 /// Called from the SIGCHLD handler: close the private read dup so a
-/// blocked acquire wakes up.
-///
-/// # Safety
-/// Async-signal-safe (only `close`).
-pub unsafe fn jobserver_signal() {
+/// blocked acquire wakes up. Async-signal-safe (only `close`).
+pub fn jobserver_signal() {
     let rfd = job_rfd();
     if rfd >= 0 {
-        close(rfd);
+        // SAFETY: `close` is async-signal-safe, and closing a file descriptor
+        // is not a Rust memory-safety hazard; any `c_int` is a valid argument.
+        unsafe { close(rfd) };
         JOB_RFD.store(-1, Ordering::Relaxed);
     }
 }
@@ -923,6 +922,10 @@ mod tests {
     /// test's read between set and assert.
     static JS_TYPE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Serializes tests that mutate the shared `JOB_RFD` global so a parallel
+    /// test can't observe (or close) a transient fd another test installed.
+    static JOB_RFD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// `osync_enabled` reflects the sign of the output-sync handle: a
     /// negative handle (the unset default) means disabled, a non-negative
     /// fd means enabled. This exercises the safe predicate over the
@@ -995,6 +998,7 @@ mod tests {
     /// prior value so it stays isolated from other tests.
     #[test]
     fn job_rfd_tracks_atomic() {
+        let _guard = JOB_RFD_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = JOB_RFD.load(Ordering::Relaxed);
 
         JOB_RFD.store(-1, Ordering::Relaxed);
@@ -1002,6 +1006,22 @@ mod tests {
 
         JOB_RFD.store(5, Ordering::Relaxed);
         assert_eq!(job_rfd(), 5, "reflects the stored fd");
+
+        JOB_RFD.store(saved, Ordering::Relaxed);
+    }
+
+    /// `jobserver_signal` is now a safe `fn`: callable from safe code, and a
+    /// no-op when no private read dup is installed (`JOB_RFD < 0`), so it
+    /// closes nothing and leaves the atomic unset. Guarded against parallel
+    /// `JOB_RFD` mutators so a transient fd can't make it call `close`.
+    #[test]
+    fn jobserver_signal_is_noop_when_unset() {
+        let _guard = JOB_RFD_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = JOB_RFD.load(Ordering::Relaxed);
+
+        JOB_RFD.store(-1, Ordering::Relaxed);
+        jobserver_signal();
+        assert_eq!(job_rfd(), -1, "stays unset; nothing was closed");
 
         JOB_RFD.store(saved, Ordering::Relaxed);
     }
