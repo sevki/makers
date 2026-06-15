@@ -11,6 +11,7 @@ use libc::{
     __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
     strchr, strcmp, strerror, strsignal,
 };
+use std::sync::atomic::{AtomicI32, Ordering};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -325,7 +326,14 @@ pub unsafe fn pid2str(pid: pid_t) -> *const ::core::ffi::c_char {
 }
 pub static mut children: *mut child = ::core::ptr::null::<child>() as *mut child;
 pub static mut job_slots_used: ::core::ffi::c_uint = 0;
-static mut good_stdin_used: ::core::ffi::c_int = 0;
+/// Set once a child has been handed the real stdin, so later children get a
+/// dummy one. Stored in an atomic to keep its reads plain safe operations;
+/// access is single-threaded, so `Relaxed` preserves the original order.
+static GOOD_STDIN_USED: AtomicI32 = AtomicI32::new(0);
+
+fn good_stdin_used() -> bool {
+    GOOD_STDIN_USED.load(Ordering::Relaxed) != 0
+}
 static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child;
 pub static mut unixy_shell: ::core::ffi::c_int = 1;
 pub static mut job_counter: ::core::ffi::c_ulong = 0;
@@ -782,7 +790,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             (*c).sh_batch_file = ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
         if (*c).good_stdin() != 0 {
-            good_stdin_used = 0;
+            GOOD_STDIN_USED.store(0, Ordering::Relaxed);
         }
         dontcare = (*c).dontcare() as ::core::ffi::c_int;
         if child_failed != 0 && (*c).noerror() == 0 && ignore_errors_flag == 0 {
@@ -1188,12 +1196,11 @@ pub unsafe fn start_job_command(child: *mut child) {
                 crate::output::output_start();
                 fflush(stdout);
                 fflush(stderr);
-                (*child).set_good_stdin(
-                    (good_stdin_used == 0) as ::core::ffi::c_int as ::core::ffi::c_uint
-                        as ::core::ffi::c_uint,
-                );
+                (*child).set_good_stdin(!good_stdin_used() as ::core::ffi::c_int
+                    as ::core::ffi::c_uint
+                    as ::core::ffi::c_uint);
                 if (*child).good_stdin() != 0 {
-                    good_stdin_used = 1;
+                    GOOD_STDIN_USED.store(1, Ordering::Relaxed);
                 }
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
@@ -1232,7 +1239,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                         if (*child).good_stdin() as ::core::ffi::c_int != 0 && used_stdin == 0 {
                             (*child)
                                 .set_good_stdin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            good_stdin_used = 0;
+                            GOOD_STDIN_USED.store(0, Ordering::Relaxed);
                         }
                         (*child)
                             .set_remote(is_remote as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2976,5 +2983,27 @@ mod is_bourne_compatible_shell_tests {
         // `Path` treats a trailing separator as part of the same final
         // component, so the stem of "/bin/sh/" is still "sh".
         assert!(is_shell("/bin/sh/"));
+    }
+}
+
+#[cfg(test)]
+mod good_stdin_used_tests {
+    use super::{good_stdin_used, GOOD_STDIN_USED};
+    use std::sync::atomic::Ordering;
+
+    /// `good_stdin_used()` reflects the `GOOD_STDIN_USED` flag: false while
+    /// unset (stdin still available), true once a child has claimed it.
+    /// Restores the prior value so it stays isolated from other tests.
+    #[test]
+    fn good_stdin_used_tracks_flag() {
+        let saved = GOOD_STDIN_USED.load(Ordering::Relaxed);
+
+        GOOD_STDIN_USED.store(0, Ordering::Relaxed);
+        assert!(!good_stdin_used(), "zero means stdin still available");
+
+        GOOD_STDIN_USED.store(1, Ordering::Relaxed);
+        assert!(good_stdin_used(), "non-zero means stdin already claimed");
+
+        GOOD_STDIN_USED.store(saved, Ordering::Relaxed);
     }
 }
