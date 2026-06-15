@@ -738,7 +738,7 @@ unsafe extern "C" fn bsd_signal(
     }
     oact.__sigaction_handler.sa_handler as bsd_signal_ret_t
 }
-unsafe fn signal_handler_addr(handler: bsd_signal_ret_t) -> usize {
+fn signal_handler_addr(handler: bsd_signal_ret_t) -> usize {
     handler.map_or(0, |handler| handler as usize)
 }
 
