@@ -135,8 +135,6 @@ pub unsafe fn make_ulltoa(val: c_ulonglong, buf: *mut c_char) -> *mut c_char {
 static MK_STATE: AtomicU32 = AtomicU32::new(0);
 
 /// Seed the xorshift PRNG used by `--shuffle`.
-/// # Safety
-/// Always safe; unsafe only for C-API signature compatibility.
 pub fn make_seed(seed: c_uint) {
     MK_STATE.store(seed, Ordering::Relaxed);
 }
