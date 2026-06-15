@@ -393,10 +393,7 @@ pub unsafe fn jobserver_get_auth() -> *mut c_char {
 /// The auth value handed to non-recursive children so they detect — and
 /// warn about — using the jobserver without a `+` prefix. Fifo-style
 /// jobservers have no such marker.
-///
-/// # Safety
-/// Always safe; unsafe only for C-API signature compatibility.
-pub unsafe fn jobserver_get_invalid_auth() -> *const c_char {
+pub fn jobserver_get_invalid_auth() -> *const c_char {
     if js_type_get() == JsType::Fifo {
         return null();
     }
@@ -954,6 +951,28 @@ mod tests {
         js_type_set(JsType::Fifo);
         assert!(js_type_get() == JsType::Fifo);
         assert_eq!(jobserver_enabled(), 1, "Fifo is enabled");
+
+        JS_TYPE.store(saved, Ordering::Relaxed);
+    }
+
+    /// `jobserver_get_invalid_auth` returns null for fifo jobservers (which
+    /// carry no `+`-prefix marker) and the sentinel `--jobserver-auth=-2,-2`
+    /// string otherwise.
+    #[test]
+    fn invalid_auth_is_null_only_for_fifo() {
+        let saved = JS_TYPE.load(Ordering::Relaxed);
+
+        js_type_set(JsType::Fifo);
+        assert!(jobserver_get_invalid_auth().is_null(), "fifo has no marker");
+
+        for t in [JsType::None, JsType::Pipe] {
+            js_type_set(t);
+            let p = jobserver_get_invalid_auth();
+            assert!(!p.is_null(), "non-fifo returns the sentinel auth");
+            // SAFETY: `p` points at a `&'static CStr` literal when non-null.
+            let s = unsafe { CStr::from_ptr(p) };
+            assert_eq!(s.to_bytes(), b" --jobserver-auth=-2,-2");
+        }
 
         JS_TYPE.store(saved, Ordering::Relaxed);
     }
