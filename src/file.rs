@@ -352,11 +352,9 @@ pub unsafe fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulo
     _result_ = _result_.wrapping_add(jhash_string(_key_.to_bytes()) as ::core::ffi::c_ulong);
     _result_
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+/// Secondary hash for file keys; always zero, kept for the callback ABI.
+/// The raw key pointer is accepted to match the signature but never inspected.
+pub fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }

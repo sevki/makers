@@ -178,12 +178,8 @@ pub unsafe fn directory_hash_1(key: *const c_void) -> c_ulong {
 }
 
 /// Secondary hash for [`directory`] keys; always zero, kept for the
-/// callback ABI.
-///
-/// # Safety
-///
-/// Never dereferences `key`; any pointer value is acceptable.
-pub unsafe fn directory_hash_2(_key: *const c_void) -> c_ulong {
+/// callback ABI. Never dereferences `key`; any pointer value is acceptable.
+pub fn directory_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
@@ -219,12 +215,8 @@ pub unsafe fn dirfile_hash_1(key: *const c_void) -> c_ulong {
 }
 
 /// Secondary hash for [`dirfile`] keys; always zero, kept for the
-/// callback ABI.
-///
-/// # Safety
-///
-/// Never dereferences `key`; any pointer value is acceptable.
-pub unsafe fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
+/// callback ABI. Never dereferences `key`; any pointer value is acceptable.
+pub fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
