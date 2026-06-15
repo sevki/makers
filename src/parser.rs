@@ -174,6 +174,41 @@ impl VarModifier {
     }
 }
 
+/// A file/path directive keyword recognized while parsing a target line
+/// (`include`, `vpath`, `load`, …).
+///
+/// `-include` and `sinclude` are the error-tolerant form of `include`, and map
+/// to the same [`FileDirective::IncludeOpt`]. Like the other keyword classifiers
+/// this is a small fixed set, matched directly rather than interned.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum FileDirective {
+    /// `vpath`
+    Vpath,
+    /// `include` (missing file is an error)
+    Include,
+    /// `-include` / `sinclude` (missing file is silently ignored)
+    IncludeOpt,
+    /// `load` (missing object is an error)
+    Load,
+    /// `-load` (missing object is silently ignored)
+    LoadOpt,
+}
+
+impl FileDirective {
+    /// Classify `word` (a line's leading token) as a file/path directive, or
+    /// `None` if it is not one. Matching is exact, mirroring make's `eval`.
+    pub fn from_word(word: &[u8]) -> Option<FileDirective> {
+        Some(match word {
+            b"vpath" => FileDirective::Vpath,
+            b"include" => FileDirective::Include,
+            b"-include" | b"sinclude" => FileDirective::IncludeOpt,
+            b"load" => FileDirective::Load,
+            b"-load" => FileDirective::LoadOpt,
+            _ => return None,
+        })
+    }
+}
+
 /// `stopchar_map` class bits for byte `b`.
 fn flags(b: u8) -> i32 {
     stopchar_map()[b as usize] as i32
@@ -640,6 +675,53 @@ mod tests {
             b"FOO",
         ] {
             assert_eq!(VarModifier::from_word(w), None, "{:?} must not classify", w);
+        }
+    }
+
+    #[test]
+    fn file_directives_classify() {
+        assert_eq!(
+            FileDirective::from_word(b"vpath"),
+            Some(FileDirective::Vpath)
+        );
+        assert_eq!(
+            FileDirective::from_word(b"include"),
+            Some(FileDirective::Include)
+        );
+        // `-include` and `sinclude` are the same error-tolerant include.
+        assert_eq!(
+            FileDirective::from_word(b"-include"),
+            Some(FileDirective::IncludeOpt)
+        );
+        assert_eq!(
+            FileDirective::from_word(b"sinclude"),
+            Some(FileDirective::IncludeOpt)
+        );
+        assert_eq!(FileDirective::from_word(b"load"), Some(FileDirective::Load));
+        assert_eq!(
+            FileDirective::from_word(b"-load"),
+            Some(FileDirective::LoadOpt)
+        );
+    }
+
+    #[test]
+    fn non_file_directives_are_rejected() {
+        for w in [
+            &b""[..],
+            b"vpaths",
+            b"includ",
+            b"includes",
+            b"VPATH",
+            b"loaded",
+            b"export",
+            b"FOO",
+        ] {
+            assert_eq!(
+                FileDirective::from_word(w),
+                None,
+                "{:?} must not classify",
+                w
+            );
         }
     }
 }
