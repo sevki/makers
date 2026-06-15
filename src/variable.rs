@@ -248,11 +248,10 @@ pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::
     )) as ::core::ffi::c_ulong);
     _result_
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+/// Secondary hash for [`variable`] keys; always zero, kept for the callback
+/// ABI. The raw key pointer is accepted to match the signature but never
+/// inspected.
+pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
     let mut _key: *const variable = keyv as *const variable;
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_

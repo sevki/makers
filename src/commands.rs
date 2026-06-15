@@ -85,13 +85,9 @@ pub unsafe fn dep_hash_1(key: *const c_void) -> c_ulong {
     jhash_string(::core::ffi::CStr::from_ptr(dep_name(key as *const dep)).to_bytes()) as c_ulong
 }
 
-/// # Safety
-///
-/// This is a C hash-table callback. The raw key pointer is accepted to match the
-/// callback ABI, but this secondary hash intentionally does not inspect it.
-pub unsafe fn dep_hash_2(_key: *const c_void) -> c_ulong {
-    // SAFETY: No raw memory is accessed here; the pointer is ignored because the
-    // old secondary hash always returned zero.
+/// Secondary hash for [`dep`] keys; always zero, kept for the callback ABI.
+/// The raw key pointer is accepted to match the signature but never inspected.
+pub fn dep_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
