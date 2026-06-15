@@ -230,6 +230,25 @@ fn conditionals_else_if_chain_fallback() {
 }
 
 #[test]
+fn variable_modifiers() {
+    // Exercises eval's modifier classification: export/unexport/override/
+    // private/define-endef/undefine.
+    check("varmod", "16_varmod.mk", "all", &[]);
+}
+
+#[test]
+fn variable_modifiers_override_from_cmdline() {
+    // `override OVR = …` keeps the makefile value even when OVR is set on the
+    // command line.
+    check(
+        "varmod-override",
+        "16_varmod.mk",
+        "all",
+        &["OVR=from-cmdline"],
+    );
+}
+
+#[test]
 fn builtin_functions() {
     check("funcs", "05_funcs.mk", "all", &[]);
 }

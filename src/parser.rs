@@ -136,6 +136,44 @@ impl Directive {
     }
 }
 
+/// A variable-definition modifier keyword that may prefix an assignment
+/// (`export FOO = 1`, `override BAR := 2`, `define`, …).
+///
+/// Like [`Directive`], these are a small fixed set classified directly from the
+/// line's leading word rather than interned through salsa.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum VarModifier {
+    /// `export`
+    Export,
+    /// `unexport`
+    Unexport,
+    /// `override`
+    Override,
+    /// `private`
+    Private,
+    /// `define`
+    Define,
+    /// `undefine`
+    Undefine,
+}
+
+impl VarModifier {
+    /// Classify `word` (a line's leading token) as a variable-definition
+    /// modifier, or `None` if it is not one. Matching is exact, mirroring make's
+    /// `eval`, which compares the whole first word against each keyword.
+    pub fn from_word(word: &[u8]) -> Option<VarModifier> {
+        Some(match word {
+            b"export" => VarModifier::Export,
+            b"unexport" => VarModifier::Unexport,
+            b"override" => VarModifier::Override,
+            b"private" => VarModifier::Private,
+            b"define" => VarModifier::Define,
+            b"undefine" => VarModifier::Undefine,
+            _ => return None,
+        })
+    }
+}
+
 /// `stopchar_map` class bits for byte `b`.
 fn flags(b: u8) -> i32 {
     stopchar_map()[b as usize] as i32
@@ -566,5 +604,42 @@ mod tests {
         assert_eq!(Directive::Ifneq.name().to_bytes(), b"ifneq");
         assert_eq!(Directive::Else.name().to_bytes(), b"else");
         assert_eq!(Directive::Endif.name().to_bytes(), b"endif");
+    }
+
+    #[test]
+    fn var_modifiers_classify() {
+        assert_eq!(VarModifier::from_word(b"export"), Some(VarModifier::Export));
+        assert_eq!(
+            VarModifier::from_word(b"unexport"),
+            Some(VarModifier::Unexport)
+        );
+        assert_eq!(
+            VarModifier::from_word(b"override"),
+            Some(VarModifier::Override)
+        );
+        assert_eq!(
+            VarModifier::from_word(b"private"),
+            Some(VarModifier::Private)
+        );
+        assert_eq!(VarModifier::from_word(b"define"), Some(VarModifier::Define));
+        assert_eq!(
+            VarModifier::from_word(b"undefine"),
+            Some(VarModifier::Undefine)
+        );
+    }
+
+    #[test]
+    fn non_modifiers_are_rejected() {
+        for w in [
+            &b""[..],
+            b"exp",
+            b"exports",
+            b"EXPORT",
+            b"definex",
+            b"ifdef",
+            b"FOO",
+        ] {
+            assert_eq!(VarModifier::from_word(w), None, "{:?} must not classify", w);
+        }
     }
 }
