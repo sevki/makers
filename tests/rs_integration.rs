@@ -249,6 +249,14 @@ fn variable_modifiers_override_from_cmdline() {
 }
 
 #[test]
+fn func_shell_waits_for_completion() {
+    // $(shell ...) runs a child and func_shell spin-waits on the
+    // shell_function_completed flag (now an atomic) until the reaper callback
+    // fires. Output is deterministic and byte-checked against the C oracle.
+    check("shell", "19_shell.mk", "all", &[]);
+}
+
+#[test]
 fn file_directives_vpath_and_optional_include() {
     // eval's file-directive classification: `vpath` plus the error-tolerant
     // `-include`/`sinclude` of missing files (silently ignored).

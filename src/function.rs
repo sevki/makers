@@ -10,6 +10,7 @@ use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
 use libc::{__errno_location, abort, close, free, pipe, printf, remove, sprintf, strerror, strstr};
+use std::sync::atomic::{AtomicI32, Ordering};
 extern "C" {
     fn read(__fd: ::core::ffi::c_int, __buf: *mut ::core::ffi::c_void, __nbytes: size_t)
         -> ssize_t;
@@ -2092,7 +2093,42 @@ unsafe fn fold_newlines(
     *length = new_len as size_t;
 }
 pub static mut shell_function_pid: pid_t = 0 as pid_t;
-static mut shell_function_completed: ::core::ffi::c_int = 0;
+/// Set by the `$(shell)` child's reaper callback ([`shell_completed`], which is
+/// also reached from the `SIGCHLD` handler) and spin-waited on by `func_shell`,
+/// so it is shared between a signal-adjacent writer and the main flow. An atomic
+/// gives that sharing defined semantics (and keeps the spin-loop's load from
+/// being hoisted) — the original `static mut` had neither.
+static SHELL_FUNCTION_COMPLETED: AtomicI32 = AtomicI32::new(0);
+
+/// Read the `$(shell)` completion flag: `0` while the child is still running,
+/// `1` on success, `-1` when the shell could not be started.
+fn shell_function_completed() -> ::core::ffi::c_int {
+    SHELL_FUNCTION_COMPLETED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod shell_function_completed_tests {
+    use super::*;
+
+    /// `shell_function_completed()` reflects the `SHELL_FUNCTION_COMPLETED`
+    /// atomic across the three states the reaper callback can leave it in.
+    /// Restores the prior value so the global stays isolated from other tests.
+    #[test]
+    fn accessor_tracks_atomic() {
+        let saved = SHELL_FUNCTION_COMPLETED.load(Ordering::Relaxed);
+
+        SHELL_FUNCTION_COMPLETED.store(0, Ordering::Relaxed);
+        assert_eq!(shell_function_completed(), 0, "pending");
+
+        SHELL_FUNCTION_COMPLETED.store(1, Ordering::Relaxed);
+        assert_eq!(shell_function_completed(), 1, "completed ok");
+
+        SHELL_FUNCTION_COMPLETED.store(-1, Ordering::Relaxed);
+        assert_eq!(shell_function_completed(), -1, "failed to start");
+
+        SHELL_FUNCTION_COMPLETED.store(saved, Ordering::Relaxed);
+    }
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -2101,9 +2137,9 @@ pub unsafe fn shell_completed(mut exit_code: ::core::ffi::c_int, exit_sig: ::cor
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     shell_function_pid = 0 as ::core::ffi::c_int as pid_t;
     if exit_sig == 0 && exit_code == 127 {
-        shell_function_completed = -(1 as ::core::ffi::c_int);
+        SHELL_FUNCTION_COMPLETED.store(-(1 as ::core::ffi::c_int), Ordering::Relaxed);
     } else {
-        shell_function_completed = 1;
+        SHELL_FUNCTION_COMPLETED.store(1, Ordering::Relaxed);
     }
     if exit_code == 0 && exit_sig > 0 {
         exit_code = 128 + exit_sig;
@@ -2188,7 +2224,7 @@ pub unsafe fn func_shell_base(
             let mut i: size_t;
             let mut cc: ::core::ffi::c_int;
             shell_function_pid = pid;
-            shell_function_completed = 0;
+            SHELL_FUNCTION_COMPLETED.store(0, Ordering::Relaxed);
             if pipedes[1 as ::core::ffi::c_int as usize] >= 0 {
                 close(pipedes[1 as ::core::ffi::c_int as usize]);
             }
@@ -2221,7 +2257,7 @@ pub unsafe fn func_shell_base(
             }
             *buffer.as_mut_ptr().add(i as usize) = 0;
             close(pipedes[0 as ::core::ffi::c_int as usize]);
-            while shell_function_completed == 0 {
+            while shell_function_completed() == 0 {
                 reap_children(1, 0);
             }
             if !batch_filename.is_null() {
