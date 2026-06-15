@@ -8,7 +8,7 @@
 use ::core::ffi::{c_char, c_int, c_longlong, c_uint, c_void, CStr};
 use ::core::ptr::{null, null_mut};
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU8, Ordering};
 
 use libc::{
     __errno_location, close, dup, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, printf,
@@ -91,11 +91,30 @@ pub unsafe fn check_io_state() -> c_uint {
 
 const FIFO_PREFIX: &CStr = c"fifo:";
 
+#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum JsType {
-    None,
-    Pipe,
-    Fifo,
+    None = 0,
+    Pipe = 1,
+    Fifo = 2,
+}
+
+/// The active jobserver style. Stored as an `AtomicU8` so the pure
+/// predicate `jobserver_enabled` can be a safe `fn`; all access is
+/// single-threaded (startup / under the job lock), so `Relaxed` ordering
+/// preserves the original program order.
+static JS_TYPE: AtomicU8 = AtomicU8::new(JsType::None as u8);
+
+fn js_type_get() -> JsType {
+    match JS_TYPE.load(Ordering::Relaxed) {
+        x if x == JsType::Pipe as u8 => JsType::Pipe,
+        x if x == JsType::Fifo as u8 => JsType::Fifo,
+        _ => JsType::None,
+    }
+}
+
+fn js_type_set(t: JsType) {
+    JS_TYPE.store(t as u8, Ordering::Relaxed);
 }
 
 /// True in the process that created the jobserver (and so owns the fifo).
@@ -106,7 +125,6 @@ static mut job_fds: [c_int; 2] = [-1, -1];
 static mut job_rfd: c_int = -1;
 /// The token character written for each available job slot.
 static mut token: c_char = b'+' as c_char;
-static mut js_type: JsType = JsType::None;
 static mut fifo_name: *mut c_char = null_mut();
 
 /// On POSIX with pselect there is no need for a separate read dup; the
@@ -214,11 +232,11 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
                     strerror(*__errno_location()),
                 );
             }
-            js_type = JsType::Fifo;
+            js_type_set(JsType::Fifo);
         }
     }
 
-    if js_type == JsType::None {
+    if js_type_get() == JsType::None {
         if !style.is_null() && strcmp(style, c"pipe".as_ptr()) != 0 {
             fatal(
                 null::<Floc>(),
@@ -236,7 +254,7 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
         if r < 0 {
             pfatal_with_name(c"creating jobs pipe".as_ptr());
         }
-        js_type = JsType::Pipe;
+        js_type_set(JsType::Pipe);
     }
 
     fd_noinherit(job_fds[0]);
@@ -319,7 +337,7 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
             );
             return 0;
         }
-        js_type = JsType::Fifo;
+        js_type_set(JsType::Fifo);
     } else if sscanf(auth, c"%d,%d".as_ptr(), &mut rfd, &mut wfd) == 2 {
         // A simple pipe; reject the "invalid" marker and dead descriptors.
         if rfd == -2 || wfd == -2 {
@@ -330,7 +348,7 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
         }
         job_fds[0] = rfd;
         job_fds[1] = wfd;
-        js_type = JsType::Pipe;
+        js_type_set(JsType::Pipe);
     } else {
         error(
             null::<Floc>(),
@@ -361,7 +379,7 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_get_auth() -> *mut c_char {
-    if js_type == JsType::Fifo {
+    if js_type_get() == JsType::Fifo {
         let auth = xmalloc(strlen(fifo_name) + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
         sprintf(auth, c"fifo:%s".as_ptr(), fifo_name);
         auth
@@ -379,18 +397,15 @@ pub unsafe fn jobserver_get_auth() -> *mut c_char {
 /// # Safety
 /// Always safe; unsafe only for C-API signature compatibility.
 pub unsafe fn jobserver_get_invalid_auth() -> *const c_char {
-    if js_type == JsType::Fifo {
+    if js_type_get() == JsType::Fifo {
         return null();
     }
     c" --jobserver-auth=-2,-2".as_ptr()
 }
 
 /// Whether a jobserver is active.
-///
-/// # Safety
-/// Always safe; unsafe only for C-API signature compatibility.
-pub unsafe fn jobserver_enabled() -> c_uint {
-    (js_type != JsType::None) as c_uint
+pub fn jobserver_enabled() -> c_uint {
+    (js_type_get() != JsType::None) as c_uint
 }
 
 /// Close down the jobserver, unlinking the fifo if we created it.
@@ -427,7 +442,7 @@ pub unsafe fn jobserver_clear() {
         }
     }
 
-    js_type = JsType::None;
+    js_type_set(JsType::None);
 }
 
 /// Return a token to the jobserver. When `is_fatal`, die on failure;
@@ -494,7 +509,7 @@ pub unsafe fn jobserver_acquire_all() -> c_uint {
 /// # Safety
 /// Must run single-threaded around fork/exec.
 pub unsafe fn jobserver_pre_child(recursive: c_int) {
-    if recursive != 0 && js_type == JsType::Pipe {
+    if recursive != 0 && js_type_get() == JsType::Pipe {
         fd_inherit(job_fds[0]);
         fd_inherit(job_fds[1]);
     }
@@ -505,7 +520,7 @@ pub unsafe fn jobserver_pre_child(recursive: c_int) {
 /// # Safety
 /// Must run single-threaded around fork/exec.
 pub unsafe fn jobserver_post_child(recursive: c_int) {
-    if recursive != 0 && js_type == JsType::Pipe {
+    if recursive != 0 && js_type_get() == JsType::Pipe {
         fd_noinherit(job_fds[0]);
         fd_noinherit(job_fds[1]);
     }
@@ -918,5 +933,28 @@ mod tests {
         assert_eq!(osync_enabled(), 1, "positive fd is enabled");
 
         OSYNC_HANDLE.store(saved, Ordering::Relaxed);
+    }
+
+    /// `jobserver_enabled` is true for any active style and false for
+    /// `None`, and the `JS_TYPE` atomic round-trips through
+    /// `js_type_get`/`js_type_set` for every variant. Exercises the safe
+    /// predicate without touching the FFI setup paths.
+    #[test]
+    fn jobserver_enabled_tracks_js_type() {
+        let saved = JS_TYPE.load(Ordering::Relaxed);
+
+        js_type_set(JsType::None);
+        assert!(js_type_get() == JsType::None);
+        assert_eq!(jobserver_enabled(), 0, "None is disabled");
+
+        js_type_set(JsType::Pipe);
+        assert!(js_type_get() == JsType::Pipe);
+        assert_eq!(jobserver_enabled(), 1, "Pipe is enabled");
+
+        js_type_set(JsType::Fifo);
+        assert!(js_type_get() == JsType::Fifo);
+        assert_eq!(jobserver_enabled(), 1, "Fifo is enabled");
+
+        JS_TYPE.store(saved, Ordering::Relaxed);
     }
 }
