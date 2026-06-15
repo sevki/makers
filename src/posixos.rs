@@ -605,17 +605,14 @@ pub unsafe fn jobserver_acquire(timeout: c_int) -> c_uint {
 
 const MUTEX_PREFIX: &CStr = c"fnm:";
 
-static mut osync_handle: c_int = -1;
+static OSYNC_HANDLE: AtomicI32 = AtomicI32::new(-1);
 static mut osync_tmpfile: *mut c_char = null_mut();
 /// True in the process that created the lock file (and so unlinks it).
 static SYNC_ROOT: AtomicBool = AtomicBool::new(false);
 
 /// Whether the output-sync mutex is available.
-///
-/// # Safety
-/// Always safe; unsafe only for C-API signature compatibility.
-pub unsafe fn osync_enabled() -> c_uint {
-    (osync_handle >= 0) as c_uint
+pub fn osync_enabled() -> c_uint {
+    (OSYNC_HANDLE.load(Ordering::Relaxed) >= 0) as c_uint
 }
 
 /// Create the output-sync lock file.
@@ -623,8 +620,9 @@ pub unsafe fn osync_enabled() -> c_uint {
 /// # Safety
 /// Must run single-threaded during startup.
 pub unsafe fn osync_setup() {
-    osync_handle = get_tmpfd(&raw mut osync_tmpfile);
-    fd_noinherit(osync_handle);
+    let h = get_tmpfd(&raw mut osync_tmpfile);
+    OSYNC_HANDLE.store(h, Ordering::Relaxed);
+    fd_noinherit(h);
     SYNC_ROOT.store(true, Ordering::Relaxed);
 }
 
@@ -663,12 +661,13 @@ pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
     osync_tmpfile = xstrdup(mutex.add(MUTEX_PREFIX.to_bytes().len()));
 
     loop {
-        osync_handle = open(osync_tmpfile, O_WRONLY);
-        if !(osync_handle == -1 && *__errno_location() == EINTR) {
+        let h = open(osync_tmpfile, O_WRONLY);
+        OSYNC_HANDLE.store(h, Ordering::Relaxed);
+        if !(h == -1 && *__errno_location() == EINTR) {
             break;
         }
     }
-    if osync_handle < 0 {
+    if OSYNC_HANDLE.load(Ordering::Relaxed) < 0 {
         fatal(
             null::<Floc>(),
             strlen(osync_tmpfile) + strlen(strerror(*__errno_location())),
@@ -677,7 +676,7 @@ pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
             strerror(*__errno_location()),
         );
     }
-    fd_noinherit(osync_handle);
+    fd_noinherit(OSYNC_HANDLE.load(Ordering::Relaxed));
     1
 }
 
@@ -686,9 +685,10 @@ pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
 /// # Safety
 /// Must run single-threaded.
 pub unsafe fn osync_clear() {
-    if osync_handle >= 0 {
-        close(osync_handle);
-        osync_handle = -1;
+    let h = OSYNC_HANDLE.load(Ordering::Relaxed);
+    if h >= 0 {
+        close(h);
+        OSYNC_HANDLE.store(-1, Ordering::Relaxed);
     }
     if SYNC_ROOT.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
         let mut r: c_int;
@@ -715,7 +715,7 @@ pub unsafe fn osync_acquire() -> c_uint {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(osync_handle, F_SETLKW, &mut fl) == -1 {
+        if fcntl(OSYNC_HANDLE.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
             perror(c"fcntl()".as_ptr());
             return 0;
         }
@@ -734,7 +734,7 @@ pub unsafe fn osync_release() {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(osync_handle, F_SETLKW, &mut fl) == -1 {
+        if fcntl(OSYNC_HANDLE.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
             perror(c"fcntl()".as_ptr());
         }
     }
