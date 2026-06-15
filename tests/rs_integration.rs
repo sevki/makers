@@ -249,6 +249,33 @@ fn variable_modifiers_override_from_cmdline() {
 }
 
 #[test]
+fn file_directives_vpath_and_optional_include() {
+    // eval's file-directive classification: `vpath` plus the error-tolerant
+    // `-include`/`sinclude` of missing files (silently ignored).
+    check("directives", "17_directives.mk", "all", &[]);
+}
+
+#[test]
+fn strict_include_of_missing_file_fails() {
+    // Strict `include` of a missing file must fail identically to the C oracle
+    // (exit code and stderr).
+    check("include-missing", "18_include_missing.mk", "all", &[]);
+}
+
+#[test]
+fn include_pulls_in_aux_file() {
+    // `include sub.mk` brings in the included file's variables. Rust-only (the
+    // differential harness runs in a fresh tempdir without aux files).
+    let (out, code) = run_make(
+        "include sub.mk\nall: ; @echo from-sub=$(FROM_SUB)\n",
+        &[("sub.mk", "FROM_SUB = included-value\n")],
+        &[],
+    );
+    assert_eq!(code, Some(0), "stdout: {out}");
+    assert_eq!(out.trim_end(), "from-sub=included-value");
+}
+
+#[test]
 fn builtin_functions() {
     check("funcs", "05_funcs.mk", "all", &[]);
 }

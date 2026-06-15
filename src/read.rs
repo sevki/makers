@@ -1002,27 +1002,18 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                     if ignoring != 0 {
                         continue;
                     }
-                    if wlen
-                        == (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize)
-                            .wrapping_sub(1 as usize)
-                        && memcmp(
-                            b"export\0" as *const u8 as *const ::core::ffi::c_char
-                                as *const ::core::ffi::c_void,
-                            p as *const ::core::ffi::c_void,
-                            (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t)
-                                .wrapping_sub(1),
-                        ) == 0
-                        || wlen
-                            == (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize)
-                                .wrapping_sub(1 as usize)
-                            && memcmp(
-                                b"unexport\0" as *const u8 as *const ::core::ffi::c_char
-                                    as *const ::core::ffi::c_void,
-                                p as *const ::core::ffi::c_void,
-                                (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                                    .wrapping_sub(1),
-                            ) == 0
-                    {
+                    // The leading directive keyword classified once through the
+                    // typed AST layer, replacing the per-keyword memcmp walls in
+                    // this dispatch (export/unexport, vpath, include-family,
+                    // load-family).
+                    let dword = ::core::slice::from_raw_parts(p as *const u8, wlen);
+                    if matches!(
+                        crate::parser::VarModifier::from_word(dword),
+                        Some(
+                            crate::parser::VarModifier::Export
+                                | crate::parser::VarModifier::Unexport
+                        )
+                    ) {
                         let exporting: ::core::ffi::c_int =
                             if *p as ::core::ffi::c_int == 'u' as i32 {
                                 0
@@ -1105,16 +1096,8 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             }
                             free(ap as *mut ::core::ffi::c_void);
                         }
-                    } else if wlen
-                        == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize)
-                            .wrapping_sub(1 as usize)
-                        && memcmp(
-                            b"vpath\0" as *const u8 as *const ::core::ffi::c_char
-                                as *const ::core::ffi::c_void,
-                            p as *const ::core::ffi::c_void,
-                            (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
-                                .wrapping_sub(1),
-                        ) == 0
+                    } else if crate::parser::FileDirective::from_word(dword)
+                        == Some(crate::parser::FileDirective::Vpath)
                     {
                         let mut cp_0: *const ::core::ffi::c_char;
                         let vpat: *mut ::core::ffi::c_char;
@@ -1164,37 +1147,13 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         }
                         construct_vpath_list(vpat, p);
                         free(vpat as *mut ::core::ffi::c_void);
-                    } else if wlen
-                        == (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as usize)
-                            .wrapping_sub(1 as usize)
-                        && memcmp(
-                            b"include\0" as *const u8 as *const ::core::ffi::c_char
-                                as *const ::core::ffi::c_void,
-                            p as *const ::core::ffi::c_void,
-                            (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t)
-                                .wrapping_sub(1),
-                        ) == 0
-                        || wlen
-                            == (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize)
-                                .wrapping_sub(1 as usize)
-                            && memcmp(
-                                b"-include\0" as *const u8 as *const ::core::ffi::c_char
-                                    as *const ::core::ffi::c_void,
-                                p as *const ::core::ffi::c_void,
-                                (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                                    .wrapping_sub(1),
-                            ) == 0
-                        || wlen
-                            == (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize)
-                                .wrapping_sub(1 as usize)
-                            && memcmp(
-                                b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
-                                    as *const ::core::ffi::c_void,
-                                p as *const ::core::ffi::c_void,
-                                (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t)
-                                    .wrapping_sub(1),
-                            ) == 0
-                    {
+                    } else if matches!(
+                        crate::parser::FileDirective::from_word(dword),
+                        Some(
+                            crate::parser::FileDirective::Include
+                                | crate::parser::FileDirective::IncludeOpt
+                        )
+                    ) {
                         let save: *mut conditionals;
                         let mut new_conditionals: conditionals = conditionals {
                             if_cmds: 0,
@@ -1303,27 +1262,13 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             }
                             restore_conditionals(save);
                         }
-                    } else if (wlen
-                        == (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as usize)
-                            .wrapping_sub(1 as usize)
-                        && memcmp(
-                            b"load\0" as *const u8 as *const ::core::ffi::c_char
-                                as *const ::core::ffi::c_void,
-                            p as *const ::core::ffi::c_void,
-                            (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
-                                .wrapping_sub(1),
-                        ) == 0
-                        || wlen
-                            == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize)
-                                .wrapping_sub(1 as usize)
-                            && memcmp(
-                                b"-load\0" as *const u8 as *const ::core::ffi::c_char
-                                    as *const ::core::ffi::c_void,
-                                p as *const ::core::ffi::c_void,
-                                (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
-                                    .wrapping_sub(1),
-                            ) == 0)
-                        && is_rule == 0
+                    } else if matches!(
+                        crate::parser::FileDirective::from_word(dword),
+                        Some(
+                            crate::parser::FileDirective::Load
+                                | crate::parser::FileDirective::LoadOpt
+                        )
+                    ) && is_rule == 0
                     {
                         let mut files_0: *mut nameseq;
                         let noerror_0: ::core::ffi::c_int =
