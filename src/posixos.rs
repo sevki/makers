@@ -912,6 +912,11 @@ pub unsafe fn os_anontmp() -> c_int {
 mod tests {
     use super::*;
 
+    /// Serializes tests that mutate the shared `JS_TYPE` global so the
+    /// parallel test harness can't interleave a `js_type_set` with another
+    /// test's read between set and assert.
+    static JS_TYPE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// `osync_enabled` reflects the sign of the output-sync handle: a
     /// negative handle (the unset default) means disabled, a non-negative
     /// fd means enabled. This exercises the safe predicate over the
@@ -938,6 +943,7 @@ mod tests {
     /// predicate without touching the FFI setup paths.
     #[test]
     fn jobserver_enabled_tracks_js_type() {
+        let _guard = JS_TYPE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = JS_TYPE.load(Ordering::Relaxed);
 
         js_type_set(JsType::None);
@@ -960,6 +966,7 @@ mod tests {
     /// string otherwise.
     #[test]
     fn invalid_auth_is_null_only_for_fifo() {
+        let _guard = JS_TYPE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = JS_TYPE.load(Ordering::Relaxed);
 
         js_type_set(JsType::Fifo);
