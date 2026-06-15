@@ -673,96 +673,57 @@ unsafe extern "C" fn parse_var_assignment(
         }
         p2 = end_of_token(p);
         wlen = p2.offset_from(p) as ::core::ffi::c_long as size_t;
-        if wlen
-            == (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize)
-                .wrapping_sub(1 as usize)
-            && memcmp(
-                b"export\0" as *const u8 as *const ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                p as *const ::core::ffi::c_void,
-                (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-            ) == 0
-        {
-            (*vmod).set_export_v(v_export as variable_export);
-        } else if wlen
-            == (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize)
-                .wrapping_sub(1 as usize)
-            && memcmp(
-                b"unexport\0" as *const u8 as *const ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                p as *const ::core::ffi::c_void,
-                (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
-            ) == 0
-        {
-            (*vmod).set_export_v(v_noexport as variable_export);
-        } else if wlen
-            == (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize)
-                .wrapping_sub(1 as usize)
-            && memcmp(
-                b"override\0" as *const u8 as *const ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                p as *const ::core::ffi::c_void,
-                (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
-            ) == 0
-        {
-            (*vmod).set_override_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        } else if wlen
-            == (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as usize)
-                .wrapping_sub(1 as usize)
-            && memcmp(
-                b"private\0" as *const u8 as *const ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                p as *const ::core::ffi::c_void,
-                (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t).wrapping_sub(1),
-            ) == 0
-        {
-            (*vmod).set_private_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        } else if targvar == 0
-            && (wlen
-                == (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize)
-                    .wrapping_sub(1 as usize)
-                && memcmp(
-                    b"define\0" as *const u8 as *const ::core::ffi::c_char
-                        as *const ::core::ffi::c_void,
-                    p as *const ::core::ffi::c_void,
-                    (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-                ) == 0)
-        {
-            if !flocp.is_null() {
-                error(
-                    flocp,
-                    0,
-                    b"warning: directive lines cannot start with TAB\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+        // Classify the leading modifier keyword (the first `wlen` bytes) through
+        // the typed AST layer instead of a wall of `memcmp`/`size_of` checks.
+        // `define`/`undefine` only act as modifiers outside a target-specific
+        // variable context (`targvar == 0`); otherwise the word is a plain name
+        // and the loop returns the line unchanged.
+        let modifier = crate::parser::VarModifier::from_word(::core::slice::from_raw_parts(
+            p as *const u8,
+            wlen,
+        ));
+        match modifier {
+            Some(crate::parser::VarModifier::Export) => {
+                (*vmod).set_export_v(v_export as variable_export);
             }
-            (*vmod).set_define_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            p = next_token(p2);
-            break;
-        } else if targvar == 0
-            && (wlen
-                == (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as usize)
-                    .wrapping_sub(1 as usize)
-                && memcmp(
-                    b"undefine\0" as *const u8 as *const ::core::ffi::c_char
-                        as *const ::core::ffi::c_void,
-                    p as *const ::core::ffi::c_void,
-                    (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
-                ) == 0)
-        {
-            if !flocp.is_null() {
-                error(
-                    flocp,
-                    0,
-                    b"warning: directive lines cannot start with TAB\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+            Some(crate::parser::VarModifier::Unexport) => {
+                (*vmod).set_export_v(v_noexport as variable_export);
             }
-            (*vmod).set_undefine_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            p = next_token(p2);
-            break;
-        } else {
-            return line as *mut ::core::ffi::c_char;
+            Some(crate::parser::VarModifier::Override) => {
+                (*vmod).set_override_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            }
+            Some(crate::parser::VarModifier::Private) => {
+                (*vmod).set_private_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            }
+            Some(crate::parser::VarModifier::Define) if targvar == 0 => {
+                if !flocp.is_null() {
+                    error(
+                        flocp,
+                        0,
+                        b"warning: directive lines cannot start with TAB\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    );
+                }
+                (*vmod).set_define_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                p = next_token(p2);
+                break;
+            }
+            Some(crate::parser::VarModifier::Undefine) if targvar == 0 => {
+                if !flocp.is_null() {
+                    error(
+                        flocp,
+                        0,
+                        b"warning: directive lines cannot start with TAB\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                    );
+                }
+                (*vmod).set_undefine_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                p = next_token(p2);
+                break;
+            }
+            _ => {
+                return line as *mut ::core::ffi::c_char;
+            }
         }
         if !flocp.is_null() {
             error(
