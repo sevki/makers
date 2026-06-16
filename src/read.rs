@@ -830,15 +830,18 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                 }
             }
         }
-        if *line.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
+        // Classify the line by its first byte through the typed AST: empty
+        // line, recipe line (begins with `cmd_prefix`), or a line to parse.
+        let first_byte = *line.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar;
+        let line_kind =
+            crate::parser::LineKind::classify(first_byte, cmd_prefix as ::core::ffi::c_uchar);
+        if line_kind == crate::parser::LineKind::Blank {
             continue;
         }
-        initial_tab = (*line.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-            == '\t' as i32) as ::core::ffi::c_int as ::core::ffi::c_uint;
+        initial_tab = (first_byte as ::core::ffi::c_int == '\t' as i32) as ::core::ffi::c_int
+            as ::core::ffi::c_uint;
         linelen = strlen(line) as size_t;
-        if *line.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-            == cmd_prefix as ::core::ffi::c_int
-        {
+        if line_kind == crate::parser::LineKind::Recipe {
             if no_targets != 0 {
                 continue;
             }
