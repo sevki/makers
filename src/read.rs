@@ -656,18 +656,12 @@ unsafe extern "C" fn parse_var_assignment(
         }
         None => {}
     }
-    if scan.mods.over {
-        (*vmod).set_override_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    }
-    if scan.mods.private {
-        (*vmod).set_private_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    }
-    if scan.mods.define {
-        (*vmod).set_define_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    }
-    if scan.mods.undefine {
-        (*vmod).set_undefine_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    }
+    // These are booleans into a freshly-zeroed bitfield, so set each directly
+    // from the flag rather than branching (`bool` -> the setter's integer).
+    (*vmod).set_override_v(scan.mods.over.into());
+    (*vmod).set_private_v(scan.mods.private.into());
+    (*vmod).set_define_v(scan.mods.define.into());
+    (*vmod).set_undefine_v(scan.mods.undefine.into());
     if scan.had_modifier && !flocp.is_null() {
         error(
             flocp,
