@@ -237,6 +237,14 @@ fn variable_modifiers() {
 }
 
 #[test]
+fn call_function_args() {
+    // Exercises func_call's `max_args` save/restore (now an atomic): `$(call)`
+    // with varying arg counts and a nested call, byte-checked against the C
+    // oracle (the `$N` automatics must clear correctly between calls).
+    check("call-args", "26_call_args.mk", "all", &[]);
+}
+
+#[test]
 fn recipe_prefix_override() {
     // Exercises eval's leading-byte line classification (LineKind) with a
     // custom `.RECIPEPREFIX` of `>`: recipe lines begin with `>` instead of a
