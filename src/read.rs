@@ -1466,12 +1466,9 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                         continue;
                                     }
                                     if cmd_prefix as ::core::ffi::c_int == '\t' as i32
-                                        && strncmp(
-                                            line,
-                                            b"        \0" as *const u8
-                                                as *const ::core::ffi::c_char,
-                                            8,
-                                        ) == 0
+                                        && crate::parser::starts_with_eight_spaces(
+                                            ::std::ffi::CStr::from_ptr(line).to_bytes(),
+                                        )
                                     {
                                         fatal(
                                             fstart,

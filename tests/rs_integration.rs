@@ -254,6 +254,15 @@ fn parse_file_seq_wait_and_dotslash() {
 }
 
 #[test]
+fn eval_eight_space_indent_separator() {
+    // eval's "missing separator (did you mean TAB instead of 8 spaces?)"
+    // diagnostic (now classified in the typed AST layer): a recipe line
+    // indented with eight spaces must produce the specific hint identically
+    // across both binaries.
+    check("eight-space-indent", "37_eight_space_indent.mk", "all", &[]);
+}
+
+#[test]
 fn eval_ifeq_missing_separator() {
     // eval's "ifeq/ifneq must be followed by whitespace" diagnostic (now
     // classified in the typed AST layer): `ifeq(a,a)` with no separating space

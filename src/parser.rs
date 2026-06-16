@@ -520,6 +520,13 @@ pub fn is_wait_token(token: &[u8]) -> bool {
     token == b".WAIT"
 }
 
+/// Whether a line begins with eight space characters — the heuristic make uses
+/// (when the command prefix is a TAB) to suggest "did you mean TAB instead of 8
+/// spaces?" on a missing-separator error. Mirrors `strncmp(line, "        ", 8)`.
+pub fn starts_with_eight_spaces(line: &[u8]) -> bool {
+    line.get(..8) == Some(b"        ".as_slice())
+}
+
 /// How many leading bytes of a file-sequence token make's `parse_file_seq`
 /// strips as redundant `./` prefixes (when `PARSEFS_NOSTRIP` is not set):
 /// repeatedly drop a `./` pair followed by any run of `/`, as long as more than
@@ -1886,6 +1893,16 @@ mod tests {
         // `ifeqfoo` / `ifneqbar` (longer words) still count as unseparated.
         assert!(ifeq_ifneq_without_separator(b"ifeqfoo"));
         assert!(ifeq_ifneq_without_separator(b"ifneqbar"));
+    }
+
+    #[test]
+    fn eight_space_indent_classifier() {
+        assert!(starts_with_eight_spaces(b"        @echo hi")); // 8 spaces
+        assert!(starts_with_eight_spaces(b"        ")); // exactly 8
+        assert!(!starts_with_eight_spaces(b"       x")); // 7 spaces
+        assert!(!starts_with_eight_spaces(b"\t@echo hi")); // a tab
+        assert!(!starts_with_eight_spaces(b"")); // empty
+        assert!(!starts_with_eight_spaces(b"    ")); // 4 spaces, too short
     }
 
     #[test]
