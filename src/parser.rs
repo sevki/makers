@@ -488,6 +488,13 @@ pub fn trimmed_token(bytes: &[u8]) -> Option<Range<usize>> {
     Some(start..end)
 }
 
+/// Whether `bytes` is empty or only whitespace — the first significant byte
+/// (after skipping leading blanks/newlines) is the NUL terminator. Mirrors
+/// make's `*next_token(p) == '\0'` "nothing left on this line" check.
+pub fn rest_is_blank(bytes: &[u8]) -> bool {
+    at(bytes, next_token_off(bytes, 0)) == 0
+}
+
 /// If `bytes` is a single leading token optionally followed by only trailing
 /// blanks, return the token's length; otherwise `None`.
 ///
@@ -1645,6 +1652,16 @@ mod tests {
             cargs("\"a\" \"b\"  junk"),
             Some(("a".into(), "b".into(), true))
         );
+    }
+
+    #[test]
+    fn rest_is_blank_cases() {
+        ensure_map();
+        assert!(rest_is_blank(b""));
+        assert!(rest_is_blank(b"   "));
+        assert!(rest_is_blank(b" \t "));
+        assert!(!rest_is_blank(b"x"));
+        assert!(!rest_is_blank(b"   x"));
     }
 
     #[test]
