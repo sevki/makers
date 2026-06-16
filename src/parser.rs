@@ -406,6 +406,26 @@ fn next_token_off(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
+/// The byte range of the name in `bytes`: skip leading whitespace, then trim
+/// trailing blanks, returning `None` when the input is empty or all whitespace.
+///
+/// This mirrors the `next_token` + trailing-blank-trim that make's `do_define`
+/// and `do_undefine` apply to isolate an (already-expanded) variable name; an
+/// empty result is make's "empty variable name" fatal. Only blanks are trimmed
+/// from the tail (not newlines), and at least one byte is always kept, matching
+/// make's `while (p > name && ...)` loop.
+pub fn trimmed_token(bytes: &[u8]) -> Option<Range<usize>> {
+    let start = next_token_off(bytes, 0);
+    if at(bytes, start) == 0 {
+        return None;
+    }
+    let mut end = bytes.len();
+    while end - 1 > start && map_set(at(bytes, end - 1), MAP_BLANK) {
+        end -= 1;
+    }
+    Some(start..end)
+}
+
 /// If `bytes` is a single leading token optionally followed by only trailing
 /// blanks, return the token's length; otherwise `None`.
 ///
@@ -1563,6 +1583,23 @@ mod tests {
             cargs("\"a\" \"b\"  junk"),
             Some(("a".into(), "b".into(), true))
         );
+    }
+
+    #[test]
+    fn trimmed_token_cases() {
+        ensure_map();
+        fn tt(s: &str) -> Option<String> {
+            let r = trimmed_token(s.as_bytes())?;
+            Some(String::from_utf8(s.as_bytes()[r].to_vec()).unwrap())
+        }
+        assert_eq!(tt("FOO").as_deref(), Some("FOO"));
+        assert_eq!(tt("  FOO  ").as_deref(), Some("FOO"));
+        // A second word is kept (the name is everything up to the trailing
+        // blanks); only leading and trailing blanks are stripped.
+        assert_eq!(tt("FOO BAR").as_deref(), Some("FOO BAR"));
+        // Empty or all-whitespace is "empty variable name" (None → fatal).
+        assert_eq!(tt(""), None);
+        assert_eq!(tt("   "), None);
     }
 
     #[test]

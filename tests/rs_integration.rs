@@ -230,6 +230,13 @@ fn conditionals_else_if_chain_fallback() {
 }
 
 #[test]
+fn define_and_undefine_names() {
+    // do_define / do_undefine name isolation (typed AST layer): a define whose
+    // name is produced by expansion, and an undefine of a set variable.
+    check("define-undefine", "33_define_undefine.mk", "all", &[]);
+}
+
+#[test]
 fn conditional_ifdef_token() {
     // conditional_line's ifdef/ifndef single-token extraction (typed AST layer):
     // defined/undefined names and a name produced by expansion.
