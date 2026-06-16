@@ -324,7 +324,7 @@ use crate::load::load_file;
 use crate::misc::concat;
 pub use crate::output::output;
 use crate::output::{
-    error, fatal, output_context, perror_with_name, pfatal_with_name, stdio_traced,
+    error, fatal, output_context, perror_with_name, pfatal_with_name, stdio_traced, STDIO_TRACED,
 };
 use crate::posixos::{
     check_io_state, jobserver_acquire_all, jobserver_clear, jobserver_enabled, jobserver_get_auth,
@@ -1267,7 +1267,7 @@ unsafe fn main_0(
                 ) == 0
             {
                 if *ep as ::core::ffi::c_int == '-' as i32 {
-                    stdio_traced = 1;
+                    STDIO_TRACED.store(true, Ordering::Relaxed);
                     ep = ep.offset(1 as ::core::ffi::c_int as isize);
                 }
                 restarts = make_toui(::core::ffi::CStr::from_ptr(ep)).unwrap_or(0);
@@ -2399,7 +2399,7 @@ unsafe fn main_0(
                     sprintf(
                         *p_4,
                         b"MAKE_RESTARTS=%s%u\0" as *const u8 as *const ::core::ffi::c_char,
-                        if stdio_traced != 0 {
+                        if stdio_traced() {
                             b"-\0" as *const u8 as *const ::core::ffi::c_char
                         } else {
                             b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -2420,7 +2420,7 @@ unsafe fn main_0(
                 sprintf(
                     b,
                     b"MAKE_RESTARTS=%s%u\0" as *const u8 as *const ::core::ffi::c_char,
-                    if stdio_traced != 0 {
+                    if stdio_traced() {
                         b"-\0" as *const u8 as *const ::core::ffi::c_char
                     } else {
                         b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -4686,5 +4686,27 @@ mod posix_pedantic_tests {
         assert!(posix_pedantic(), "enabled by .POSIX");
 
         POSIX_PEDANTIC.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod stdio_traced_tests {
+    use crate::output::{stdio_traced, STDIO_TRACED};
+    use std::sync::atomic::Ordering;
+
+    /// `stdio_traced()` reflects the `STDIO_TRACED` one-shot flag set once the
+    /// working-directory enter trace has been logged. Restores the prior value
+    /// so it stays isolated from other tests.
+    #[test]
+    fn stdio_traced_tracks_atomic() {
+        let saved = STDIO_TRACED.load(Ordering::Relaxed);
+
+        STDIO_TRACED.store(false, Ordering::Relaxed);
+        assert!(!stdio_traced(), "not yet traced");
+
+        STDIO_TRACED.store(true, Ordering::Relaxed);
+        assert!(stdio_traced(), "trace emitted");
+
+        STDIO_TRACED.store(saved, Ordering::Relaxed);
     }
 }
