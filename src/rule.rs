@@ -169,7 +169,7 @@ pub unsafe fn snap_implicit_rules() {
     while let Some(dr) = d.as_mut() {
         let mut name: *const ::core::ffi::c_char = dep_name(d);
         let mut len: size_t = strlen(name);
-        if second_expansion() != 0 {
+        if second_expansion() {
             if dr.name.is_null() {
                 dr.name = xstrdup(
                     dr.file
@@ -340,7 +340,7 @@ pub unsafe fn convert_to_pattern() {
             if let Some(cmds) = f.cmds.as_mut() {
                 if f.deps.is_null() {
                     f.set_suffix(1);
-                } else if posix_pedantic() == 0 {
+                } else if !posix_pedantic() {
                     error(
                         &raw mut cmds.fileinfo,
                         0,
@@ -367,7 +367,7 @@ pub unsafe fn convert_to_pattern() {
                         // ignored (skip); otherwise warn and still convert the rule.
                         let mut skip = false;
                         if !f.deps.is_null() {
-                            if posix_pedantic() != 0 {
+                            if posix_pedantic() {
                                 skip = true;
                             } else {
                                 error(

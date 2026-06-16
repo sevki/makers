@@ -2531,7 +2531,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
     t = files;
     while !t.is_null() {
         let nm: *const ::core::ffi::c_char = (*t).name;
-        if posix_pedantic() == 0
+        if !posix_pedantic()
             && (*nm as ::core::ffi::c_int
                 == *(b".POSIX\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
                 && (*nm as ::core::ffi::c_int == 0
@@ -2541,7 +2541,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
                             .offset(1 as ::core::ffi::c_int as isize),
                     ) == 0))
         {
-            crate::make_main::POSIX_PEDANTIC.store(1, ::std::sync::atomic::Ordering::Relaxed);
+            crate::make_main::POSIX_PEDANTIC.store(true, ::std::sync::atomic::Ordering::Relaxed);
             define_variable_in_set(
                 b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
                 (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),
@@ -2605,7 +2605,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
                 (*current_variable_set_list).set,
                 NILF,
             );
-        } else if second_expansion() == 0
+        } else if !second_expansion()
             && (*nm as ::core::ffi::c_int
                 == *(b".SECONDEXPANSION\0" as *const u8 as *const ::core::ffi::c_char)
                     as ::core::ffi::c_int
@@ -2616,7 +2616,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
                             .offset(1 as ::core::ffi::c_int as isize),
                     ) == 0))
         {
-            crate::make_main::SECOND_EXPANSION.store(1, ::std::sync::atomic::Ordering::Relaxed);
+            crate::make_main::SECOND_EXPANSION.store(true, ::std::sync::atomic::Ordering::Relaxed);
         } else if one_shell == 0
             && (*nm as ::core::ffi::c_int
                 == *(b".ONESHELL\0" as *const u8 as *const ::core::ffi::c_char)
@@ -2811,7 +2811,7 @@ unsafe extern "C" fn record_files(
         deps = ::core::ptr::null_mut::<dep>();
     } else {
         depstr = unescape_char(depstr, ':' as i32);
-        if second_expansion() != 0 && !strchr(depstr, '$' as i32).is_null() {
+        if second_expansion() && !strchr(depstr, '$' as i32).is_null() {
             deps = alloc_dep();
             (*deps).name = depstr;
             (*deps).set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
