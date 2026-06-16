@@ -822,3 +822,18 @@ fn wait_special_target_warns() {
     // stdout/stderr/exit against the C oracle.
     check("wait-special", "27_wait_special.mk", "all", &[]);
 }
+
+#[test]
+fn nothing_to_be_done() {
+    // 'noop' has no recipe and no prerequisites, so make's commands_started
+    // counter (now an atomic) never advances and it prints "Nothing to be done
+    // for 'noop'."; byte-check the message and exit against the C oracle.
+    check("nothing-todo", "28_nothing_todo.mk", "noop", &[]);
+}
+
+#[test]
+fn recipe_runs_advances_commands_started() {
+    // Contrast: 'done' has a recipe, so commands_started advances and the recipe
+    // actually runs (no "Nothing to be done"). Byte-checked against the oracle.
+    check("recipe-runs", "28_nothing_todo.mk", "done", &[]);
+}
