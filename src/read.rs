@@ -1486,44 +1486,14 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                         );
                                     }
                                     p2 = next_token(line);
-                                    if strncmp(
-                                        p2,
-                                        b"if\0" as *const u8 as *const ::core::ffi::c_char,
-                                        2,
-                                    ) == 0
-                                        && (strncmp(
-                                            p2.offset(2 as ::core::ffi::c_int as isize)
-                                                as *mut ::core::ffi::c_char,
-                                            b"neq\0" as *const u8 as *const ::core::ffi::c_char,
-                                            3,
-                                        ) == 0
-                                            && !(*(stopchar_map().as_ptr()
-                                                as *mut ::core::ffi::c_ushort)
-                                                .offset(
-                                                    *p2.offset(5 as ::core::ffi::c_int as isize)
-                                                        as ::core::ffi::c_uchar
-                                                        as isize,
-                                                )
-                                                as ::core::ffi::c_int
-                                                & 0x2 as ::core::ffi::c_int
-                                                != 0)
-                                            || strncmp(
-                                                p2.offset(2 as ::core::ffi::c_int as isize)
-                                                    as *mut ::core::ffi::c_char,
-                                                b"eq\0" as *const u8 as *const ::core::ffi::c_char,
-                                                2,
-                                            ) == 0
-                                                && !(*(stopchar_map().as_ptr()
-                                                    as *mut ::core::ffi::c_ushort)
-                                                    .offset(
-                                                        *p2.offset(4 as ::core::ffi::c_int as isize)
-                                                            as ::core::ffi::c_uchar
-                                                            as isize,
-                                                    )
-                                                    as ::core::ffi::c_int
-                                                    & 0x2 as ::core::ffi::c_int
-                                                    != 0))
-                                    {
+                                    // The more specific "ifeq/ifneq must be
+                                    // followed by whitespace" diagnostic is a
+                                    // pure byte classification on the token —
+                                    // lift it into the typed parser layer
+                                    // instead of the c2rust strncmp wall.
+                                    if crate::parser::ifeq_ifneq_without_separator(
+                                        ::std::ffi::CStr::from_ptr(p2).to_bytes(),
+                                    ) {
                                         fatal(
                                             fstart,
                                             0,
