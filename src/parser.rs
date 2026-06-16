@@ -299,6 +299,150 @@ impl SpecialTarget {
     }
 }
 
+/// Which export state a leading `export`/`unexport` modifier requests.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ExportMode {
+    /// `export`
+    Export,
+    /// `unexport`
+    NoExport,
+}
+
+/// The variable-definition modifiers (`export`/`override`/`private`/`define`/…)
+/// that may stack in front of an assignment or `define` line — the owned,
+/// pure-data result of scanning a line's leading modifier keywords. Mirrors the
+/// `vmodifiers` bitfield make's `parse_var_assignment` fills, but as plain data
+/// with no pointers or side effects.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct VarModifiers {
+    /// `export` / `unexport`, if present.
+    pub export: Option<ExportMode>,
+    /// `override` seen.
+    pub over: bool,
+    /// `private` seen.
+    pub private: bool,
+    /// `define` seen (opens a multi-line definition).
+    pub define: bool,
+    /// `undefine` seen.
+    pub undefine: bool,
+}
+
+/// The result of [`scan_var_modifiers`]: the modifiers consumed at the front of
+/// a line, whether the remainder is a variable definition, and the byte offset
+/// where the remainder begins (relative to the original line).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct VarModScan {
+    /// The modifier flags accumulated from the leading keywords.
+    pub mods: VarModifiers,
+    /// At least one modifier keyword was consumed. (Make warns once,
+    /// "directive lines cannot start with TAB", when this holds and the line
+    /// began with a tab.)
+    pub had_modifier: bool,
+    /// The text after the modifiers is a variable definition (`assign_v`).
+    pub assign: bool,
+    /// Offset into the original line of the returned position: the start of the
+    /// definition when `assign`, otherwise the first non-blank byte of the line.
+    pub rest: usize,
+}
+
+/// Advance past a token (to the first blank/newline/NUL), mirroring make's
+/// `end_of_token`.
+fn end_of_token_off(bytes: &[u8], mut i: usize) -> usize {
+    while !map_set(at(bytes, i), MAP_BLANK | MAP_NEWLINE | MAP_NUL) {
+        i += 1;
+    }
+    i
+}
+
+/// Skip leading blanks/newlines, mirroring make's `next_token`.
+fn next_token_off(bytes: &[u8], mut i: usize) -> usize {
+    while map_set(at(bytes, i), MAP_BLANK | MAP_NEWLINE) {
+        i += 1;
+    }
+    i
+}
+
+/// Scan the leading variable-definition modifiers of a line, a pure,
+/// offset-based reproduction of make's `parse_var_assignment` (`read.c`).
+///
+/// `targvar` is true in a target-specific variable context, where `define` /
+/// `undefine` are *not* treated as modifiers (they are plain names). The scan
+/// tries the assignment detector ([`parse_assignment`]) at each step *before*
+/// classifying a modifier keyword, so `export = 1` is an assignment to the
+/// variable `export`, while `export FOO = 1` consumes `export` as a modifier.
+pub fn scan_var_modifiers(bytes: &[u8], targvar: bool) -> VarModScan {
+    let mut i = next_token_off(bytes, 0);
+    let line_start = i;
+    let mut mods = VarModifiers::default();
+    let mut had_modifier = false;
+    if at(bytes, i) == 0 {
+        return VarModScan {
+            mods,
+            had_modifier,
+            assign: false,
+            rest: line_start,
+        };
+    }
+    loop {
+        // An assignment at the current position ends the scan (the remainder is
+        // a definition, not another modifier).
+        if parse_assignment(&bytes[i..]).is_some() {
+            return VarModScan {
+                mods,
+                had_modifier,
+                assign: true,
+                rest: i,
+            };
+        }
+        let w_end = end_of_token_off(bytes, i);
+        let word = &bytes[i..w_end];
+        match VarModifier::from_word(word) {
+            Some(VarModifier::Export) => mods.export = Some(ExportMode::Export),
+            Some(VarModifier::Unexport) => mods.export = Some(ExportMode::NoExport),
+            Some(VarModifier::Override) => mods.over = true,
+            Some(VarModifier::Private) => mods.private = true,
+            Some(VarModifier::Define) if !targvar => {
+                mods.define = true;
+                return VarModScan {
+                    mods,
+                    had_modifier: true,
+                    assign: true,
+                    rest: next_token_off(bytes, w_end),
+                };
+            }
+            Some(VarModifier::Undefine) if !targvar => {
+                mods.undefine = true;
+                return VarModScan {
+                    mods,
+                    had_modifier: true,
+                    assign: true,
+                    rest: next_token_off(bytes, w_end),
+                };
+            }
+            // Any other word (including `define`/`undefine` in a target-var
+            // context) means this is not a modifier-led definition.
+            _ => {
+                return VarModScan {
+                    mods,
+                    had_modifier,
+                    assign: false,
+                    rest: line_start,
+                };
+            }
+        }
+        had_modifier = true;
+        i = next_token_off(bytes, w_end);
+        if at(bytes, i) == 0 {
+            return VarModScan {
+                mods,
+                had_modifier,
+                assign: false,
+                rest: line_start,
+            };
+        }
+    }
+}
+
 /// `stopchar_map` class bits for byte `b`.
 fn flags(b: u8) -> i32 {
     stopchar_map()[b as usize] as i32
@@ -888,6 +1032,75 @@ mod tests {
             SpecialTarget::from_name(b".ONESHELL"),
             Some(SpecialTarget::OneShell)
         );
+    }
+
+    fn scan(s: &str) -> VarModScan {
+        ensure_map();
+        scan_var_modifiers(s.as_bytes(), false)
+    }
+
+    #[test]
+    fn var_modifiers_plain_assignment() {
+        // No modifiers; the whole line is a definition.
+        let r = scan("FOO = 1");
+        assert_eq!(r.mods, VarModifiers::default());
+        assert!(!r.had_modifier);
+        assert!(r.assign);
+        assert_eq!(r.rest, 0);
+    }
+
+    #[test]
+    fn var_modifiers_export_is_a_name_when_assigned() {
+        // `export = 1` assigns the variable named `export`; it is not a modifier.
+        let r = scan("export = 1");
+        assert_eq!(r.mods.export, None);
+        assert!(!r.had_modifier);
+        assert!(r.assign);
+        assert_eq!(r.rest, 0);
+    }
+
+    #[test]
+    fn var_modifiers_single_and_stacked() {
+        let r = scan("export FOO = 1");
+        assert_eq!(r.mods.export, Some(ExportMode::Export));
+        assert!(r.had_modifier);
+        assert!(r.assign);
+        assert_eq!(r.rest, "export ".len());
+
+        let r = scan("override private BAR := 2");
+        assert!(r.mods.over && r.mods.private);
+        assert!(r.assign);
+        assert_eq!(r.rest, "override private ".len());
+    }
+
+    #[test]
+    fn var_modifiers_define_and_undefine() {
+        let r = scan("define X");
+        assert!(r.mods.define && r.assign && r.had_modifier);
+        assert_eq!(r.rest, "define ".len());
+
+        let r = scan("undefine Y");
+        assert!(r.mods.undefine && r.assign);
+        assert_eq!(r.rest, "undefine ".len());
+    }
+
+    #[test]
+    fn var_modifiers_define_is_plain_name_in_targetvar() {
+        // In a target-specific context, `define`/`undefine` are plain names.
+        let r = scan_var_modifiers(b"define X", true);
+        assert!(!r.mods.define);
+        assert!(!r.assign);
+        assert_eq!(r.rest, 0);
+    }
+
+    #[test]
+    fn var_modifiers_rule_line_is_not_assignment() {
+        // A modifier followed by a non-definition (a rule) keeps the flag but is
+        // not an assignment, and rewinds to the line start.
+        let r = scan("override foo: bar");
+        assert!(r.mods.over);
+        assert!(!r.assign);
+        assert_eq!(r.rest, 0);
     }
 
     #[test]
