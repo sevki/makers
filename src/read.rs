@@ -2052,7 +2052,6 @@ unsafe extern "C" fn conditional_line(
     flocp: *const Floc,
     initial_tab: ::core::ffi::c_uint,
 ) -> ::core::ffi::c_int {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let cmdname: *const ::core::ffi::c_char;
     let cmdtype: C2RustUnnamed;
     let mut i: ::core::ffi::c_uint;
@@ -2236,61 +2235,55 @@ unsafe extern "C" fn conditional_line(
         } else {
             // The `ifeq`/`ifneq` argument forms — `(a,b)`, `"a" "b"`, `'a' 'b'`
             // — are parsed structurally (reference-aware) through the typed AST
-            // layer, replacing the in-place pointer/NUL delimiter scan.
-            // Expansion of each argument and the string comparison stay here.
-            let args = match crate::parser::parse_conditional_args(
-                ::std::ffi::CStr::from_ptr(line).to_bytes(),
-            ) {
-                Some(a) => a,
-                None => return -(1 as ::core::ffi::c_int),
-            };
-            // Terminate each argument in place at its parsed end (the second end
-            // lies past the first, so this never clobbers the first argument).
-            *line.add(args.arg1.end) = 0;
-            let arg1_ptr = line.add(args.arg1.start);
-            *line.add(args.arg2.end) = 0;
-            let arg2_ptr = line.add(args.arg2.start);
-            if args.trailing_text {
-                error(
-                    flocp,
-                    strlen(cmdname) as size_t,
-                    b"extraneous text after '%s' directive\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    cmdname,
+            // layer, replacing the in-place pointer/NUL delimiter scan. Each
+            // argument is NUL-terminated in place at its parsed end, expanded,
+            // and the two expansions compared as owned byte strings.
+            use crate::parser::ConditionalArgs;
+            // Expand the argument occupying `range` (terminating it in place)
+            // and return the expansion as an owned byte string.
+            let expand_arg = |range: ::core::ops::Range<usize>| -> Vec<u8> {
+                *line.add(range.end) = 0;
+                let p = expand_string_buf(
+                    ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                    line.add(range.start),
+                    SIZE_MAX as size_t,
                 );
+                ::std::ffi::CStr::from_ptr(p).to_bytes().to_vec()
+            };
+            match crate::parser::parse_conditional_args(::std::ffi::CStr::from_ptr(line).to_bytes())
+            {
+                ConditionalArgs::Error => return -(1 as ::core::ffi::c_int),
+                ConditionalArgs::FirstArgOnly { arg1 } => {
+                    // make expands the first argument (for its side effects)
+                    // before reporting the second-argument syntax error.
+                    expand_arg(arg1);
+                    return -(1 as ::core::ffi::c_int);
+                }
+                ConditionalArgs::Both {
+                    arg1,
+                    arg2,
+                    trailing_text,
+                } => {
+                    if trailing_text {
+                        error(
+                            flocp,
+                            strlen(cmdname) as size_t,
+                            b"extraneous text after '%s' directive\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            cmdname,
+                        );
+                    }
+                    // Expand the first argument to an owned string before
+                    // expanding the second (they share one scratch buffer).
+                    let a1 = expand_arg(arg1);
+                    let a2 = expand_arg(arg2);
+                    *(*conditionals).ignoring.offset(o as isize) = ((a1 == a2)
+                        == (cmdtype as ::core::ffi::c_uint
+                            == c_ifneq as ::core::ffi::c_int as ::core::ffi::c_uint))
+                        as ::core::ffi::c_int
+                        as ::core::ffi::c_char;
+                }
             }
-            // `expand_string_buf` reuses a shared buffer, so the expanded first
-            // argument must be copied out before expanding the second.
-            let e1 = expand_string_buf(
-                ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                arg1_ptr,
-                SIZE_MAX as size_t,
-            );
-            let l_0 = strlen(e1) as size_t;
-            alloca_allocations.push(::std::vec::from_elem(0, l_0.wrapping_add(1) as usize));
-            let s1 =
-                alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-            memcpy(
-                s1 as *mut ::core::ffi::c_void,
-                e1 as *const ::core::ffi::c_void,
-                l_0.wrapping_add(1),
-            );
-            let s2 = expand_string_buf(
-                ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                arg2_ptr,
-                SIZE_MAX as size_t,
-            );
-            *(*conditionals).ignoring.offset(o as isize) =
-                ((*s1 as ::core::ffi::c_int == *s2 as ::core::ffi::c_int
-                    && (*s1 as ::core::ffi::c_int == 0
-                        || strcmp(
-                            s1.offset(1 as ::core::ffi::c_int as isize),
-                            s2.offset(1 as ::core::ffi::c_int as isize),
-                        ) == 0)) as ::core::ffi::c_int
-                    == (cmdtype as ::core::ffi::c_uint
-                        == c_ifneq as ::core::ffi::c_int as ::core::ffi::c_uint)
-                        as ::core::ffi::c_int) as ::core::ffi::c_int
-                    as ::core::ffi::c_char;
         }
     }
     i = 0;
