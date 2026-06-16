@@ -8,6 +8,7 @@
 
 use ::core::ffi::{c_char, c_int, c_uint, c_void};
 use ::core::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use libc::{
     __errno_location, close, exit, ftruncate, lseek, perror, read, sprintf, strcat, strerror,
@@ -73,7 +74,18 @@ const IO_STDOUT_OK: c_uint = 0x0008;
 const IO_STDERR_OK: c_uint = 0x0010;
 
 pub static mut output_context: *mut output = ::core::ptr::null::<output>() as *mut output;
-pub static mut stdio_traced: ::core::ffi::c_uint = 0;
+/// Set once make has logged the working-directory "Entering directory" trace,
+/// so the matching "Leaving directory" is emitted and `MAKE_RESTARTS` is
+/// prefixed with `-`. It is a one-shot boolean, stored in an atomic so its
+/// reads are plain safe operations; all access is single-threaded, so
+/// `Relaxed` preserves the original program order. `pub` because writes also
+/// occur in `main.rs`.
+pub static STDIO_TRACED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the working-directory enter trace has been emitted.
+pub fn stdio_traced() -> bool {
+    STDIO_TRACED.load(Ordering::Relaxed)
+}
 pub const OUTPUT_NONE: ::core::ffi::c_int = -1;
 unsafe extern "C" fn _outputs(
     out: *mut output,
@@ -353,7 +365,7 @@ pub unsafe fn output_init(out: *mut output) {
 /// single-threaded.
 pub unsafe fn output_close(out: *mut output) {
     if out.is_null() {
-        if stdio_traced != 0 {
+        if stdio_traced() {
             log_working_directory(0);
         }
         fd_reset_append(fileno(stdout), stdout_flags);
@@ -382,10 +394,10 @@ pub unsafe fn output_start() {
         setup_tmpfile(output_context);
     }
     if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE)
-        && stdio_traced == 0
+        && !stdio_traced()
         && should_print_dir() != 0
     {
-        stdio_traced = log_working_directory(1) as ::core::ffi::c_uint;
+        STDIO_TRACED.store(log_working_directory(1) != 0, Ordering::Relaxed);
     }
 }
 /// Write `msg` to stdout or stderr (or the sync temp file), starting
