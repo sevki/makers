@@ -246,6 +246,14 @@ fn tilde_expand_user_branch() {
 }
 
 #[test]
+fn parse_file_seq_wait_and_dotslash() {
+    // parse_file_seq token normalization (now via pure parser helpers): the
+    // `.WAIT` ordering marker and `./` prefix stripping must behave identically
+    // across the C oracle and the Rust port.
+    check("wait-dotslash", "36_wait_dotslash.mk", "all", &[]);
+}
+
+#[test]
 fn eval_ifeq_missing_separator() {
     // eval's "ifeq/ifneq must be followed by whitespace" diagnostic (now
     // classified in the typed AST layer): `ifeq(a,a)` with no separating space

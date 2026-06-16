@@ -513,6 +513,29 @@ pub fn ifeq_ifneq_without_separator(bytes: &[u8]) -> bool {
         || (bytes.get(2..4) == Some(b"eq".as_slice()) && non_blank(4))
 }
 
+/// Whether a parsed file-sequence token is exactly `.WAIT` — the special
+/// prerequisite ordering marker make recognizes when `PARSEFS_WAIT` is set.
+/// Mirrors `parse_file_seq`'s `(p - s) == 5 && memcmp(s, ".WAIT", 5) == 0`.
+pub fn is_wait_token(token: &[u8]) -> bool {
+    token == b".WAIT"
+}
+
+/// How many leading bytes of a file-sequence token make's `parse_file_seq`
+/// strips as redundant `./` prefixes (when `PARSEFS_NOSTRIP` is not set):
+/// repeatedly drop a `./` pair followed by any run of `/`, as long as more than
+/// two bytes of the original token remain. Returns the offset to advance the
+/// token start by. Mirrors the c2rust pointer loop without mutating the buffer.
+pub fn strip_dot_slash_prefix(token: &[u8]) -> usize {
+    let mut i = 0;
+    while token.len() - i > 2 && token.get(i) == Some(&b'.') && token.get(i + 1) == Some(&b'/') {
+        i += 2;
+        while token.get(i) == Some(&b'/') {
+            i += 1;
+        }
+    }
+    i
+}
+
 /// If `bytes` is a single leading token optionally followed by only trailing
 /// blanks, return the token's length; otherwise `None`.
 ///
@@ -1863,5 +1886,36 @@ mod tests {
         // `ifeqfoo` / `ifneqbar` (longer words) still count as unseparated.
         assert!(ifeq_ifneq_without_separator(b"ifeqfoo"));
         assert!(ifeq_ifneq_without_separator(b"ifneqbar"));
+    }
+
+    #[test]
+    fn wait_token_classifier() {
+        assert!(is_wait_token(b".WAIT"));
+        assert!(!is_wait_token(b".wait"));
+        assert!(!is_wait_token(b".WAITX"));
+        assert!(!is_wait_token(b".WAI"));
+        assert!(!is_wait_token(b""));
+    }
+
+    #[test]
+    fn dot_slash_prefix_stripping() {
+        // No prefix to strip.
+        assert_eq!(strip_dot_slash_prefix(b"foo"), 0);
+        assert_eq!(strip_dot_slash_prefix(b"./"), 0); // <= 2 bytes: untouched
+        assert_eq!(strip_dot_slash_prefix(b".x"), 0);
+        // A single `./` before a longer name.
+        assert_eq!(strip_dot_slash_prefix(b"./foo"), 2);
+        // Repeated `./` pairs.
+        assert_eq!(strip_dot_slash_prefix(b"././foo"), 4);
+        // `./` followed by a run of extra slashes.
+        assert_eq!(strip_dot_slash_prefix(b".//foo"), 3);
+        assert_eq!(strip_dot_slash_prefix(b".///foo"), 4);
+        // `./a` is 3 bytes, so the first `> 2` check passes and the pair is
+        // stripped; the next iteration sees only 1 byte left and stops.
+        assert_eq!(strip_dot_slash_prefix(b"./a"), 2);
+        // `./` alone (2 bytes) fails the `> 2` guard immediately.
+        assert_eq!(strip_dot_slash_prefix(b"./"), 0);
+        // A leading slash that is not part of `./` is left alone.
+        assert_eq!(strip_dot_slash_prefix(b"/foo"), 0);
     }
 }
