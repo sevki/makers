@@ -757,13 +757,17 @@ pub fn assignment_ast(bytes: &[u8]) -> Option<Assignment> {
 }
 
 /// Classify a whole logical (non-recipe) line into its [`LineClass`], mirroring
-/// the dispatch order at the top of make's `eval`: a conditional directive is
-/// recognised first (by its leading word), then a file/path directive (also by
-/// leading word — `include FOO = 1` is an include of the file `FOO = 1`, not an
-/// assignment, exactly as make treats it), and only then does the line fall back
-/// to the modifier/assignment scan. Anything that is neither a keyword line nor a
-/// definition is [`LineClass::Plain`] (a rule or other line the reader handles
-/// elsewhere).
+/// the dispatch order at the top of make's `eval`. make runs the modifier/
+/// assignment scan (`parse_var_assignment`) *first*, so a line whose variable
+/// name happens to be a keyword — `include = x`, `vpath = x`, `ifdef = x` — is a
+/// genuine assignment, not a directive. Only when the line is **not** an
+/// assignment do the directive arms run, in `eval`'s order: a conditional
+/// directive, then a file/path directive (both keyed off the leading word). A
+/// multi-word keyword line such as `include FOO = 1` is *not* an assignment (the
+/// scan rejects the embedded blank), so it still falls through to
+/// [`LineClass::File`]. A modifier-led line that is not itself a definition
+/// (bare `export`, `override foo: bar`) is reported as a [`LineClass::VarDef`]
+/// carrying the consumed modifiers. Everything else is [`LineClass::Plain`].
 ///
 /// Only the variable-definition variant carries an offset payload, so it is the
 /// only one interned (through [`VarDefNode`]); the keyword variants are small
@@ -773,6 +777,13 @@ pub fn assignment_ast(bytes: &[u8]) -> Option<Assignment> {
 /// `targvar` is true in a target-specific variable context, where `define` /
 /// `undefine` are plain names rather than modifiers (see [`scan_var_modifiers`]).
 pub fn classify_line(bytes: &[u8], targvar: bool) -> LineClass {
+    // make's `eval` probes for a variable definition before any directive
+    // dispatch, so a genuine assignment wins even when its name is a keyword.
+    let scan = scan_var_modifiers(bytes, targvar);
+    if scan.assign {
+        return var_def(scan);
+    }
+    // Not an assignment: the directive arms run, keyed off the leading word.
     let i = next_token_off(bytes, 0);
     let w_end = end_of_token_off(bytes, i);
     let word = &bytes[i..w_end];
@@ -782,34 +793,41 @@ pub fn classify_line(bytes: &[u8], targvar: bool) -> LineClass {
     if let Some(f) = FileDirective::from_word(word) {
         return LineClass::File(f);
     }
-    let scan = scan_var_modifiers(bytes, targvar);
-    if scan.assign || scan.had_modifier {
-        let db = db().lock().unwrap_or_else(|e| e.into_inner());
-        let node = VarDefNode::new(
-            &*db,
-            scan.mods.export,
-            scan.mods.over,
-            scan.mods.private,
-            scan.mods.define,
-            scan.mods.undefine,
-            scan.had_modifier,
-            scan.assign,
-            scan.rest,
-        );
-        return LineClass::VarDef(VarLine {
-            mods: VarModifiers {
-                export: node.export(&*db),
-                over: node.over(&*db),
-                private: node.private(&*db),
-                define: node.define(&*db),
-                undefine: node.undefine(&*db),
-            },
-            had_modifier: node.had_modifier(&*db),
-            assign: node.assign(&*db),
-            rest: node.rest(&*db),
-        });
+    // A modifier keyword was consumed but the remainder is not a definition
+    // (bare `export`, `override foo: bar`): still a variable-definition line.
+    if scan.had_modifier {
+        return var_def(scan);
     }
     LineClass::Plain
+}
+
+/// Intern a variable-definition [`VarModScan`] as a [`VarDefNode`] and return the
+/// owned [`LineClass::VarDef`] for it.
+fn var_def(scan: VarModScan) -> LineClass {
+    let db = db().lock().unwrap_or_else(|e| e.into_inner());
+    let node = VarDefNode::new(
+        &*db,
+        scan.mods.export,
+        scan.mods.over,
+        scan.mods.private,
+        scan.mods.define,
+        scan.mods.undefine,
+        scan.had_modifier,
+        scan.assign,
+        scan.rest,
+    );
+    LineClass::VarDef(VarLine {
+        mods: VarModifiers {
+            export: node.export(&*db),
+            over: node.over(&*db),
+            private: node.private(&*db),
+            define: node.define(&*db),
+            undefine: node.undefine(&*db),
+        },
+        had_modifier: node.had_modifier(&*db),
+        assign: node.assign(&*db),
+        rest: node.rest(&*db),
+    })
 }
 
 #[cfg(test)]
@@ -1275,13 +1293,30 @@ mod tests {
     }
 
     #[test]
-    fn classify_file_directive_beats_assignment() {
-        // `include FOO = 1` is an include of the file `FOO = 1`, recognised by
-        // its leading word before any assignment parsing — exactly make's order.
+    fn classify_multiword_keyword_is_file_directive() {
+        // `include FOO = 1` is an include of the file `FOO = 1`: the embedded
+        // blank stops it from parsing as an assignment, so it falls through to
+        // the file-directive arm — exactly make's behavior.
         assert_eq!(
             classify("include FOO = 1"),
             LineClass::File(FileDirective::Include)
         );
+    }
+
+    #[test]
+    fn classify_assignment_beats_keyword() {
+        // make's `eval` probes for an assignment before the directive dispatch,
+        // so a keyword used as a bare variable name is an assignment, not a
+        // directive (`include = x`, `vpath = x`, `ifdef = x`).
+        for line in ["include = x", "vpath = x", "ifdef = x"] {
+            match classify(line) {
+                LineClass::VarDef(vl) => assert!(
+                    vl.assign && !vl.had_modifier,
+                    "{line:?} should be a plain assignment"
+                ),
+                other => panic!("{line:?} expected VarDef, got {other:?}"),
+            }
+        }
     }
 
     #[test]
