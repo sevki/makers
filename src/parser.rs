@@ -672,38 +672,57 @@ pub fn parse_assignment(bytes: &[u8]) -> Option<Assignment> {
     })
 }
 
-/// The two argument byte-ranges of an `ifeq`/`ifneq` conditional, parsed from
-/// the (unexpanded) text after the directive keyword.
+/// The result of [`parse_conditional_args`]: the byte-ranges of an `ifeq`/`ifneq`
+/// conditional's two arguments, parsed from the (unexpanded) text after the
+/// directive keyword.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct ConditionalArgs {
-    /// Byte range of the first argument within the line.
-    pub arg1: Range<usize>,
-    /// Byte range of the second argument.
-    pub arg2: Range<usize>,
-    /// Non-blank text follows the closing delimiter. make warns `extraneous
-    /// text after '%s' directive` but still evaluates the conditional.
-    pub trailing_text: bool,
+pub enum ConditionalArgs {
+    /// Both arguments parsed successfully.
+    Both {
+        /// Byte range of the first argument within the line.
+        arg1: Range<usize>,
+        /// Byte range of the second argument.
+        arg2: Range<usize>,
+        /// Non-blank text follows the closing delimiter. make warns `extraneous
+        /// text after '%s' directive` but still evaluates the conditional.
+        trailing_text: bool,
+    },
+    /// The first argument parsed, but the second is malformed. make expands the
+    /// first argument (firing any `$(info)`/`$(warning)`/`$(error)`/`$(file)`
+    /// side effects) *before* it validates the second delimiter, so the caller
+    /// must still expand `arg1` before reporting the syntax error.
+    FirstArgOnly {
+        /// Byte range of the (well-formed) first argument.
+        arg1: Range<usize>,
+    },
+    /// The line is malformed before a complete first argument; make reports the
+    /// syntax error without expanding anything.
+    Error,
 }
 
 /// Parse the argument forms of an `ifeq`/`ifneq` line — `(a,b)`, `"a" "b"`,
-/// `'a' 'b'` — returning the two (still-unexpanded) argument byte-ranges, or
-/// `None` for a syntax error (make's `-1`, "invalid syntax in conditional").
+/// `'a' 'b'`.
 ///
 /// `bytes` begins at the first argument character (the opening `(` or quote).
 /// This is a safe, slice-based reproduction of the reference-aware delimiter
 /// scan in make's `conditional_line`: a `$` begins a `$(...)`/`${...}` reference
 /// skipped via [`skip_reference`], the comma form trims trailing blanks of the
 /// first argument and balances parentheses while scanning the second, and the
-/// quoted forms take everything up to the matching quote verbatim. The caller
-/// expands and compares the two ranges.
-pub fn parse_conditional_args(bytes: &[u8]) -> Option<ConditionalArgs> {
+/// quoted forms take everything up to the matching quote verbatim.
+///
+/// The result distinguishes the two syntax-error positions make has, because
+/// they differ observably: a failure *after* the first argument is complete
+/// still expands the first argument (see [`ConditionalArgs::FirstArgOnly`]),
+/// while a failure before it expands nothing ([`ConditionalArgs::Error`]).
+pub fn parse_conditional_args(bytes: &[u8]) -> ConditionalArgs {
     let mut p = 0usize;
     // Opening delimiter: `(` selects the comma-separated form; a quote selects
     // the quoted form (the same quote closes the argument).
     let first = at(bytes, p);
-    let mut termin = if first == b'(' { b',' } else { first };
+    let comma_form = first == b'(';
+    let mut termin = if comma_form { b',' } else { first };
     if termin != b',' && termin != b'"' && termin != b'\'' {
-        return None;
+        return ConditionalArgs::Error;
     }
     p += 1;
     let arg1_start = p;
@@ -715,9 +734,9 @@ pub fn parse_conditional_args(bytes: &[u8]) -> Option<ConditionalArgs> {
         }
     }
     if at(bytes, p) == 0 {
-        return None;
+        return ConditionalArgs::Error;
     }
-    let arg1_end = if termin == b',' {
+    let arg1_end = if comma_form {
         // Trim trailing blanks of the first argument before the comma.
         let mut e = p;
         while map_set(at(bytes, e - 1), MAP_BLANK) {
@@ -730,17 +749,20 @@ pub fn parse_conditional_args(bytes: &[u8]) -> Option<ConditionalArgs> {
         p += 1; // past the closing quote
         e
     };
+    let arg1 = arg1_start..arg1_end;
 
-    // Second delimiter. For the quoted form, skip the blanks between the two
+    // From here the first argument is complete, so any failure is reported as
+    // `FirstArgOnly` (make has already expanded it by this point).
+    // Second delimiter: the quoted form skips the blanks between the two
     // strings; the comma form expects a balanced `)`.
-    if termin != b',' {
+    if !comma_form {
         while map_set(at(bytes, p), MAP_BLANK | MAP_NEWLINE) {
             p += 1;
         }
     }
-    termin = if termin == b',' { b')' } else { at(bytes, p) };
+    termin = if comma_form { b')' } else { at(bytes, p) };
     if termin != b')' && termin != b'"' && termin != b'\'' {
-        return None;
+        return ConditionalArgs::FirstArgOnly { arg1 };
     }
     let arg2_start;
     if termin == b')' {
@@ -770,18 +792,18 @@ pub fn parse_conditional_args(bytes: &[u8]) -> Option<ConditionalArgs> {
         }
     }
     if at(bytes, p) == 0 {
-        return None;
+        return ConditionalArgs::FirstArgOnly { arg1 };
     }
     let arg2_end = p;
     p += 1; // past the closing delimiter
     while map_set(at(bytes, p), MAP_BLANK | MAP_NEWLINE) {
         p += 1;
     }
-    Some(ConditionalArgs {
-        arg1: arg1_start..arg1_end,
+    ConditionalArgs::Both {
+        arg1,
         arg2: arg2_start..arg2_end,
         trailing_text: at(bytes, p) != 0,
-    })
+    }
 }
 
 // --- salsa front-end -------------------------------------------------------
@@ -1463,15 +1485,24 @@ mod tests {
 
     /// Parse a conditional argument line and return the two argument substrings
     /// plus the trailing-text flag, or `None` for a syntax error.
+    /// Parse `s` and, for a [`ConditionalArgs::Both`] result, return the two
+    /// argument substrings and the trailing-text flag; `None` for the other
+    /// (error) variants.
     fn cargs(s: &str) -> Option<(String, String, bool)> {
         ensure_map();
         let b = s.as_bytes();
-        let a = parse_conditional_args(b)?;
-        Some((
-            String::from_utf8(b[a.arg1].to_vec()).unwrap(),
-            String::from_utf8(b[a.arg2].to_vec()).unwrap(),
-            a.trailing_text,
-        ))
+        match parse_conditional_args(b) {
+            ConditionalArgs::Both {
+                arg1,
+                arg2,
+                trailing_text,
+            } => Some((
+                String::from_utf8(b[arg1].to_vec()).unwrap(),
+                String::from_utf8(b[arg2].to_vec()).unwrap(),
+                trailing_text,
+            )),
+            _ => None,
+        }
     }
 
     #[test]
@@ -1517,10 +1548,32 @@ mod tests {
     }
 
     #[test]
-    fn conditional_syntax_errors() {
-        // Bad opener, unterminated argument, missing second delimiter.
-        for s in ["x a b", "(a,b", "(a)", "\"a\"", "(a", "", "\"a\" b"] {
-            assert_eq!(cargs(s), None, "{s:?} should be a syntax error");
+    fn conditional_error_before_first_arg() {
+        // A bad opener or an unterminated/incomplete first argument expands
+        // nothing — make reports the syntax error immediately.
+        ensure_map();
+        for s in ["x a b", "(a)", "(a", ""] {
+            assert_eq!(
+                parse_conditional_args(s.as_bytes()),
+                ConditionalArgs::Error,
+                "{s:?} should be Error"
+            );
+        }
+    }
+
+    #[test]
+    fn conditional_first_arg_only_on_second_arg_error() {
+        // The first argument is well-formed but the second is malformed: make
+        // still expands the first (for its side effects), so the parser reports
+        // the first argument's range rather than a bare error.
+        ensure_map();
+        for (s, want_arg1) in [("(a,b", "a"), ("\"a\"", "a"), ("\"a\" b", "a")] {
+            match parse_conditional_args(s.as_bytes()) {
+                ConditionalArgs::FirstArgOnly { arg1 } => {
+                    assert_eq!(&s.as_bytes()[arg1], want_arg1.as_bytes(), "{s:?}")
+                }
+                other => panic!("{s:?} expected FirstArgOnly, got {other:?}"),
+            }
         }
     }
 
