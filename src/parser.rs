@@ -672,6 +672,118 @@ pub fn parse_assignment(bytes: &[u8]) -> Option<Assignment> {
     })
 }
 
+/// The two argument byte-ranges of an `ifeq`/`ifneq` conditional, parsed from
+/// the (unexpanded) text after the directive keyword.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ConditionalArgs {
+    /// Byte range of the first argument within the line.
+    pub arg1: Range<usize>,
+    /// Byte range of the second argument.
+    pub arg2: Range<usize>,
+    /// Non-blank text follows the closing delimiter. make warns `extraneous
+    /// text after '%s' directive` but still evaluates the conditional.
+    pub trailing_text: bool,
+}
+
+/// Parse the argument forms of an `ifeq`/`ifneq` line — `(a,b)`, `"a" "b"`,
+/// `'a' 'b'` — returning the two (still-unexpanded) argument byte-ranges, or
+/// `None` for a syntax error (make's `-1`, "invalid syntax in conditional").
+///
+/// `bytes` begins at the first argument character (the opening `(` or quote).
+/// This is a safe, slice-based reproduction of the reference-aware delimiter
+/// scan in make's `conditional_line`: a `$` begins a `$(...)`/`${...}` reference
+/// skipped via [`skip_reference`], the comma form trims trailing blanks of the
+/// first argument and balances parentheses while scanning the second, and the
+/// quoted forms take everything up to the matching quote verbatim. The caller
+/// expands and compares the two ranges.
+pub fn parse_conditional_args(bytes: &[u8]) -> Option<ConditionalArgs> {
+    let mut p = 0usize;
+    // Opening delimiter: `(` selects the comma-separated form; a quote selects
+    // the quoted form (the same quote closes the argument).
+    let first = at(bytes, p);
+    let mut termin = if first == b'(' { b',' } else { first };
+    if termin != b',' && termin != b'"' && termin != b'\'' {
+        return None;
+    }
+    p += 1;
+    let arg1_start = p;
+    while at(bytes, p) != 0 && at(bytes, p) != termin {
+        if at(bytes, p) == b'$' {
+            p = skip_reference(bytes, p + 1);
+        } else {
+            p += 1;
+        }
+    }
+    if at(bytes, p) == 0 {
+        return None;
+    }
+    let arg1_end = if termin == b',' {
+        // Trim trailing blanks of the first argument before the comma.
+        let mut e = p;
+        while map_set(at(bytes, e - 1), MAP_BLANK) {
+            e -= 1;
+        }
+        p += 1; // past the comma
+        e
+    } else {
+        let e = p;
+        p += 1; // past the closing quote
+        e
+    };
+
+    // Second delimiter. For the quoted form, skip the blanks between the two
+    // strings; the comma form expects a balanced `)`.
+    if termin != b',' {
+        while map_set(at(bytes, p), MAP_BLANK | MAP_NEWLINE) {
+            p += 1;
+        }
+    }
+    termin = if termin == b',' { b')' } else { at(bytes, p) };
+    if termin != b')' && termin != b'"' && termin != b'\'' {
+        return None;
+    }
+    let arg2_start;
+    if termin == b')' {
+        // Skip leading blanks, then scan to the matching close paren.
+        while map_set(at(bytes, p), MAP_BLANK | MAP_NEWLINE) {
+            p += 1;
+        }
+        arg2_start = p;
+        let mut count: i32 = 0;
+        while at(bytes, p) != 0 {
+            let c = at(bytes, p);
+            if c == b'(' {
+                count += 1;
+            } else if c == b')' {
+                if count <= 0 {
+                    break;
+                }
+                count -= 1;
+            }
+            p += 1;
+        }
+    } else {
+        p += 1; // skip the opening quote
+        arg2_start = p;
+        while at(bytes, p) != 0 && at(bytes, p) != termin {
+            p += 1;
+        }
+    }
+    if at(bytes, p) == 0 {
+        return None;
+    }
+    let arg2_end = p;
+    p += 1; // past the closing delimiter
+    while map_set(at(bytes, p), MAP_BLANK | MAP_NEWLINE) {
+        p += 1;
+    }
+    Some(ConditionalArgs {
+        arg1: arg1_start..arg1_end,
+        arg2: arg2_start..arg2_end,
+        trailing_text: at(bytes, p) != 0,
+    })
+}
+
 // --- salsa front-end -------------------------------------------------------
 
 #[salsa::db]
@@ -1346,6 +1458,69 @@ mod tests {
                 assert!(vl.assign && !vl.had_modifier);
             }
             other => panic!("expected VarDef, got {other:?}"),
+        }
+    }
+
+    /// Parse a conditional argument line and return the two argument substrings
+    /// plus the trailing-text flag, or `None` for a syntax error.
+    fn cargs(s: &str) -> Option<(String, String, bool)> {
+        ensure_map();
+        let b = s.as_bytes();
+        let a = parse_conditional_args(b)?;
+        Some((
+            String::from_utf8(b[a.arg1].to_vec()).unwrap(),
+            String::from_utf8(b[a.arg2].to_vec()).unwrap(),
+            a.trailing_text,
+        ))
+    }
+
+    #[test]
+    fn conditional_paren_form() {
+        assert_eq!(cargs("(a,b)"), Some(("a".into(), "b".into(), false)));
+        // Only the first argument's *trailing* blanks (before the comma) are
+        // trimmed — its leading blank is kept; the second argument drops leading
+        // blanks but keeps trailing ones (mirroring make's exact scan).
+        assert_eq!(cargs("( a , b )"), Some((" a".into(), "b ".into(), false)));
+        assert_eq!(cargs("(,)"), Some(("".into(), "".into(), false)));
+    }
+
+    #[test]
+    fn conditional_quoted_forms() {
+        assert_eq!(cargs("\"a\" \"b\""), Some(("a".into(), "b".into(), false)));
+        assert_eq!(cargs("'a' 'b'"), Some(("a".into(), "b".into(), false)));
+        // A quoted argument keeps its inner blanks verbatim.
+        assert_eq!(
+            cargs("\"a b\" \"c\""),
+            Some(("a b".into(), "c".into(), false))
+        );
+    }
+
+    #[test]
+    fn conditional_references_and_balanced_parens() {
+        // A `$(...)` reference inside an argument is skipped whole, so a comma
+        // or paren inside it does not terminate the argument.
+        assert_eq!(
+            cargs("($(x,y),b)"),
+            Some(("$(x,y)".into(), "b".into(), false))
+        );
+        // The second argument balances parentheses up to the matching close.
+        assert_eq!(cargs("(a,b(c))"), Some(("a".into(), "b(c)".into(), false)));
+    }
+
+    #[test]
+    fn conditional_trailing_text() {
+        assert_eq!(cargs("(a,b) x"), Some(("a".into(), "b".into(), true)));
+        assert_eq!(
+            cargs("\"a\" \"b\"  junk"),
+            Some(("a".into(), "b".into(), true))
+        );
+    }
+
+    #[test]
+    fn conditional_syntax_errors() {
+        // Bad opener, unterminated argument, missing second delimiter.
+        for s in ["x a b", "(a,b", "(a)", "\"a\"", "(a", "", "\"a\" b"] {
+            assert_eq!(cargs(s), None, "{s:?} should be a syntax error");
         }
     }
 
