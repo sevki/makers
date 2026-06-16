@@ -1940,7 +1940,7 @@ unsafe extern "C" fn do_define(
                 Some(crate::parser::DefineKeyword::Endef) => {
                     p = p.add(word_end);
                     remove_comments(p);
-                    if *next_token(p) as ::core::ffi::c_int != 0 {
+                    if !crate::parser::rest_is_blank(::std::ffi::CStr::from_ptr(p).to_bytes()) {
                         error(
                             &raw mut (*ebuf).floc,
                             0,
