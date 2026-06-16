@@ -1845,33 +1845,24 @@ unsafe extern "C" fn do_undefine(
     origin: variable_origin,
     ebuf: *mut ebuffer,
 ) {
-    let mut p: *mut ::core::ffi::c_char;
-    let var: *mut ::core::ffi::c_char;
-    var = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
-    name = next_token(var);
-    if *name as ::core::ffi::c_int == 0 {
-        fatal(
+    let var: *mut ::core::ffi::c_char =
+        allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
+    // Isolate the variable name (skip leading blanks, trim trailing blanks) via
+    // the typed AST layer; an empty name is fatal.
+    let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
+        Some(s) => s,
+        None => fatal(
             &raw mut (*ebuf).floc,
             0,
             b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        );
-    }
-    p = name
-        .offset(strlen(name) as isize)
-        .offset(-(1 as ::core::ffi::c_int as isize));
-    while p > name
-        && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & 0x2 as ::core::ffi::c_int
-            != 0
-    {
-        p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-    }
-    *p.offset(1 as ::core::ffi::c_int as isize) = 0;
+        ),
+    };
+    name = var.add(span.start);
+    *var.add(span.end) = 0;
     undefine_variable_in_set(
         &raw mut (*ebuf).floc,
         name,
-        (p.offset_from(name) as ::core::ffi::c_long + 1) as size_t,
+        (span.end - span.start) as size_t,
         origin,
         ::core::ptr::null_mut::<variable_set>(),
     );
@@ -1923,26 +1914,18 @@ unsafe extern "C" fn do_define(
         *var.name.offset(var.length as isize) = 0;
     }
     n = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
-    name = next_token(n);
-    if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
-        fatal(
+    // Isolate the variable name (skip leading blanks, trim trailing blanks) via
+    // the typed AST layer; an empty name is fatal.
+    let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(n).to_bytes()) {
+        Some(s) => s,
+        None => fatal(
             &raw mut defstart,
             0,
             b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        );
-    }
-    p = name
-        .offset(strlen(name) as isize)
-        .offset(-(1 as ::core::ffi::c_int as isize));
-    while p > name
-        && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & 0x2 as ::core::ffi::c_int
-            != 0
-    {
-        p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-    }
-    *p.offset(1 as ::core::ffi::c_int as isize) = 0;
+        ),
+    };
+    name = n.add(span.start);
+    *n.add(span.end) = 0;
     loop {
         let line: *mut ::core::ffi::c_char;
         let nlines: ::core::ffi::c_long = readline(ebuf);
