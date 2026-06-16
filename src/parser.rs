@@ -520,6 +520,13 @@ pub fn is_wait_token(token: &[u8]) -> bool {
     token == b".WAIT"
 }
 
+/// Whether a prerequisite string needs second expansion: under
+/// `.SECONDEXPANSION` it is re-expanded only if it actually contains a `$`.
+/// Mirrors `record_files`' `strchr(depstr, '$') != NULL` test.
+pub fn prereq_needs_second_expansion(depstr: &[u8]) -> bool {
+    depstr.contains(&b'$')
+}
+
 /// Whether a line begins with eight space characters — the heuristic make uses
 /// (when the command prefix is a TAB) to suggest "did you mean TAB instead of 8
 /// spaces?" on a missing-separator error. Mirrors `strncmp(line, "        ", 8)`.
@@ -1903,6 +1910,15 @@ mod tests {
         assert!(!starts_with_eight_spaces(b"\t@echo hi")); // a tab
         assert!(!starts_with_eight_spaces(b"")); // empty
         assert!(!starts_with_eight_spaces(b"    ")); // 4 spaces, too short
+    }
+
+    #[test]
+    fn second_expansion_prereq_classifier() {
+        assert!(prereq_needs_second_expansion(b"$$(VAR)"));
+        assert!(prereq_needs_second_expansion(b"a $(x) b"));
+        assert!(prereq_needs_second_expansion(b"$"));
+        assert!(!prereq_needs_second_expansion(b"plain dep1 dep2"));
+        assert!(!prereq_needs_second_expansion(b""));
     }
 
     #[test]

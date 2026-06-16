@@ -2502,7 +2502,11 @@ unsafe extern "C" fn record_files(
         deps = ::core::ptr::null_mut::<dep>();
     } else {
         depstr = unescape_char(depstr, ':' as i32);
-        if second_expansion() && !strchr(depstr, '$' as i32).is_null() {
+        if second_expansion()
+            && crate::parser::prereq_needs_second_expansion(
+                ::std::ffi::CStr::from_ptr(depstr).to_bytes(),
+            )
+        {
             deps = alloc_dep();
             (*deps).name = depstr;
             (*deps).set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);

@@ -246,6 +246,14 @@ fn tilde_expand_user_branch() {
 }
 
 #[test]
+fn record_files_second_expansion_prereq() {
+    // record_files' second-expansion prereq check (now via
+    // parser::prereq_needs_second_expansion): under .SECONDEXPANSION a `$$`
+    // prereq is re-expanded, so both binaries build dep1 then all.
+    check("second-expansion", "41_second_expansion.mk", "all", &[]);
+}
+
+#[test]
 fn check_specials_suffix_rule_default_goal() {
     // check_specials' default-goal suffix-rule rejection (now comparing names as
     // CStr byte slices): `ab` = suffix `a` + suffix `b` is a suffix rule, so it
