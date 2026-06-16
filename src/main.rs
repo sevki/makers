@@ -691,7 +691,16 @@ pub static mut makelevel: ::core::ffi::c_uint = 0;
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
 pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut file;
 pub static mut posix_pedantic: ::core::ffi::c_int = 0;
-pub static mut second_expansion: ::core::ffi::c_int = 0;
+/// Set once the `.SECONDEXPANSION` special target has been seen, enabling a
+/// second expansion pass over prerequisite lists. Stored in an atomic so its
+/// reads are plain safe operations; all access is single-threaded, so
+/// `Relaxed` preserves the original program order.
+pub static SECOND_EXPANSION: AtomicI32 = AtomicI32::new(0);
+
+/// Whether `.SECONDEXPANSION` is in effect.
+pub fn second_expansion() -> ::core::ffi::c_int {
+    SECOND_EXPANSION.load(Ordering::Relaxed)
+}
 pub static mut one_shell: ::core::ffi::c_int = 0;
 pub static mut output_sync: ::core::ffi::c_int = OUTPUT_SYNC_NONE;
 pub static mut not_parallel: ::core::ffi::c_int = 0;
@@ -4623,5 +4632,27 @@ mod rebuilding_makefiles_tests {
         assert_eq!(rebuilding_makefiles(), 1, "remaking makefiles");
 
         REBUILDING_MAKEFILES.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod second_expansion_tests {
+    use super::{second_expansion, SECOND_EXPANSION};
+    use std::sync::atomic::Ordering;
+
+    /// `second_expansion()` reflects the `SECOND_EXPANSION` flag set when the
+    /// `.SECONDEXPANSION` special target is seen. Restores the prior value so
+    /// it stays isolated from other tests.
+    #[test]
+    fn second_expansion_tracks_atomic() {
+        let saved = SECOND_EXPANSION.load(Ordering::Relaxed);
+
+        SECOND_EXPANSION.store(0, Ordering::Relaxed);
+        assert_eq!(second_expansion(), 0, "not enabled");
+
+        SECOND_EXPANSION.store(1, Ordering::Relaxed);
+        assert_eq!(second_expansion(), 1, "enabled by .SECONDEXPANSION");
+
+        SECOND_EXPANSION.store(saved, Ordering::Relaxed);
     }
 }
