@@ -2987,7 +2987,6 @@ unsafe fn func_call(
     let fname: *mut ::core::ffi::c_char;
     let flen: size_t;
     let mut i: ::core::ffi::c_uint;
-    let saved_args: ::core::ffi::c_int;
     let entry_p: *const function_table_entry;
     let v: *mut variable;
     fname = next_token(*argv.offset(0 as ::core::ffi::c_int as isize));
@@ -3054,7 +3053,7 @@ unsafe fn func_call(
         i = i.wrapping_add(1);
     }
     (*v).set_exp_count(EXP_COUNT_MAX as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    saved_args = MAX_ARGS.load(Ordering::Relaxed) as ::core::ffi::c_int;
+    let saved_args = MAX_ARGS.load(Ordering::Relaxed) as ::core::ffi::c_int;
     MAX_ARGS.store(i, Ordering::Relaxed);
     o = expand_variable_output(o, fname, flen);
     MAX_ARGS.store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
