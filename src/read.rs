@@ -2380,11 +2380,13 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
         {
             let mut d: *mut dep;
             let mut reject: ::core::ffi::c_int = 0;
-            if !strchr(nm, '%' as i32).is_null() {
+            // Pattern targets (containing `%`) are never the default goal; test
+            // the name as a byte slice via CStr rather than strchr.
+            let nm_bytes = ::std::ffi::CStr::from_ptr(nm).to_bytes();
+            if nm_bytes.contains(&b'%') {
                 break;
             }
-            if !(*nm as ::core::ffi::c_int == '.' as i32 && strchr(nm, '/' as i32).is_null()) {
-                let nm_bytes = ::std::ffi::CStr::from_ptr(nm).to_bytes();
+            if !(nm_bytes.first() == Some(&b'.') && !nm_bytes.contains(&b'/')) {
                 d = (*suffix_file).deps;
                 while !d.is_null() {
                     // A target is a suffix rule (and so must not become the

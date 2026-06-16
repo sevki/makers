@@ -246,6 +246,18 @@ fn tilde_expand_user_branch() {
 }
 
 #[test]
+fn check_specials_pattern_default_goal() {
+    // check_specials' default-goal pattern check (now via a CStr byte slice): a
+    // `%`-pattern first target is skipped, so the goal falls through to `show`.
+    check(
+        "pattern-default-goal",
+        "42_pattern_default_goal.mk",
+        "show",
+        &[],
+    );
+}
+
+#[test]
 fn record_files_second_expansion_prereq() {
     // record_files' second-expansion prereq check (now via
     // parser::prereq_needs_second_expansion): under .SECONDEXPANSION a `$$`
