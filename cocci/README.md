@@ -6,7 +6,8 @@ for the recurring `static mut` → atomic conversions in this c2rust port.
 ## Install `cfr`
 
 ```sh
-git clone https://gitlab.inria.fr/coccinelle/coccinelleforrust && cd coccinelleforrust
+# upstream: https://gitlab.inria.fr/coccinelle/coccinelleforrust
+git clone https://github.com/sevki/CoccinelleForRust && cd CoccinelleForRust
 cargo build --release
 cp target/release/cfr ~/.local/bin/
 ```
@@ -22,21 +23,26 @@ cp target/release/cfr ~/.local/bin/
 
 Each patch is a **template written for one concrete symbol**. Coccinelle can't
 invent the new `SCREAMING_CASE` storage name or the accessor, so you edit the
-two/four tokens at the top of the `.cocci` for your flag, then run it over each
-file that mentions the symbol:
+tokens at the top of the `.cocci` for your flag, then run it over each file
+that mentions the symbol:
 
 ```sh
-cfr --rule-file cocci/static_mut_bool_to_atomic.cocci --rs-file src/output.rs --o-place .
+cfr -c cocci/static_mut_bool_to_atomic.cocci src/output.rs          # prints a diff
+cfr -c cocci/static_mut_bool_to_atomic.cocci src/output.rs --apply  # rewrites in place
 ```
 
-`--o-place .` rewrites in place; drop it to print the patch to stdout for review.
+Default prints a unified diff for review; `--apply` edits the file. `cfr` also
+accepts a directory as the target to sweep a whole tree.
 
 ## Caveats
 
-- **Not validated in this repo's CI.** They were written against the documented
-  SmPL-for-Rust subset; `cfr`'s upstream host was unreachable from the
-  environment they were authored in, so **review every diff** and run
-  `cargo build && cargo clippy --lib && cargo test` afterwards.
+- **Validated against `cfr`** (built from the mirror above): both patches apply
+  cleanly to the worked-example symbols. Still **review the diff** and run
+  `cargo build && cargo clippy --lib && cargo test` afterwards — the patches are
+  the mechanical bulk, not a guarantee of correctness.
+- `cfr` re-tokenizes the edited items, so the output loses original spacing and
+  blank lines (e.g. the accessor collapses onto one line) — run **`cargo fmt`**
+  after applying.
 - `cfr` does not reliably rewrite doc-comments / attributes attached to items —
   add the accessor's `///` doc-comment by hand after the run.
 - The bool read-site rules (`flag != 0` / `flag == 0`) use the **literal** flag
