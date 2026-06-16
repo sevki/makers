@@ -271,7 +271,6 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
             };
             file = dchead;
             while !file.is_null() {
-                let ocommands_started: ::core::ffi::c_uint;
                 let fail: update_status;
                 fref_mut(file).set_dontcare(
                     (g_flags as ::core::ffi::c_int & (1) << 2 != 0) as ::core::ffi::c_int
@@ -291,7 +290,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         touch_flag = question_flag;
                     }
                 }
-                ocommands_started = commands_started();
+                let ocommands_started = commands_started();
                 stop = 0;
                 wait = (file == dchead && g_wait as ::core::ffi::c_int != 0 && running != 0)
                     as ::core::ffi::c_int;
