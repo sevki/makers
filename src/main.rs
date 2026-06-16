@@ -3699,10 +3699,8 @@ pub unsafe fn clean_jobserver(status: ::core::ffi::c_int) {
             );
         } else {
             loop {
-                let remaining = JOBSERVER_TOKENS
-                    .fetch_sub(1, Ordering::Relaxed)
-                    .wrapping_sub(1);
-                if remaining == 0 {
+                JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
+                if jobserver_tokens() == 0 {
                     break;
                 }
                 jobserver_release(0);
