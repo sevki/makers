@@ -3734,7 +3734,7 @@ pub unsafe fn die(status: ::core::ffi::c_int) -> ! {
         }
         temp_stdin_unlink();
         err = (status != 0) as ::core::ffi::c_int;
-        while job_slots_used > 0 {
+        while job_slots_used() > 0 {
             reap_children(1, err);
         }
         remote_cleanup();
