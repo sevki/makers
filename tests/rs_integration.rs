@@ -246,6 +246,26 @@ fn tilde_expand_user_branch() {
 }
 
 #[test]
+fn check_specials_suffix_rule_default_goal() {
+    // check_specials' default-goal suffix-rule rejection (now comparing names as
+    // CStr byte slices): `ab` = suffix `a` + suffix `b` is a suffix rule and
+    // must not become the default goal, so both binaries report "No targets".
+    check(
+        "suffix-rule-default-goal",
+        "39_suffix_rule_default_goal.mk",
+        "",
+        &[],
+    );
+}
+
+#[test]
+fn check_specials_normal_default_goal() {
+    // Companion: a normal first target still runs the suffix-rule check loop
+    // (without matching) and becomes the default goal.
+    check("default-goal-normal", "40_default_goal_normal.mk", "", &[]);
+}
+
+#[test]
 fn check_special_file_wait_prereqs() {
     // check_special_file (now using parser::is_wait_token): a `.WAIT` target
     // with prerequisites must emit ".WAIT should not have prerequisites"
