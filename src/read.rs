@@ -47,11 +47,6 @@ extern "C" {
         __c: ::core::ffi::c_int,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn memcmp(
-        __s1: *const ::core::ffi::c_void,
-        __s2: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
@@ -3580,29 +3575,19 @@ pub unsafe fn parse_file_seq(
             p = s.offset(strlen(s) as isize);
         }
         if flags & 0x40 as ::core::ffi::c_int != 0
-            && p.offset_from(s) as ::core::ffi::c_long as usize
-                == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize)
-                    .wrapping_sub(1 as usize)
-            && memcmp(
-                s as *const ::core::ffi::c_void,
-                b".WAIT\0" as *const u8 as *const ::core::ffi::c_char as *const ::core::ffi::c_void,
-                (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-            ) == 0
+            && crate::parser::is_wait_token(::core::slice::from_raw_parts(
+                s as *const u8,
+                p.offset_from(s) as usize,
+            ))
         {
             found_wait = 1;
         } else {
             if !(flags & 0x1 as ::core::ffi::c_int != 0) {
-                while p.offset_from(s) as ::core::ffi::c_long > 2
-                    && *s.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                        == '.' as i32
-                    && *s.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                        == '/' as i32
-                {
-                    s = s.offset(2 as ::core::ffi::c_int as isize);
-                    while *s as ::core::ffi::c_int == '/' as i32 {
-                        s = s.offset(1 as ::core::ffi::c_int as isize);
-                    }
-                }
+                // Strip redundant leading `./` prefixes via the pure parser
+                // helper instead of walking the buffer with raw pointers.
+                let token =
+                    ::core::slice::from_raw_parts(s as *const u8, p.offset_from(s) as usize);
+                s = s.add(crate::parser::strip_dot_slash_prefix(token));
             }
             if s == p {
                 *tp.offset(0 as ::core::ffi::c_int as isize) = '.' as i32 as ::core::ffi::c_char;
