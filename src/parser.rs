@@ -209,6 +209,31 @@ impl FileDirective {
     }
 }
 
+/// A `define`/`endef` block keyword.
+///
+/// `define` opens a multi-line variable definition and `endef` closes it; the
+/// reader nests them while scanning a define body. Like the other keyword
+/// classifiers this is a small fixed set, matched directly rather than interned.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum DefineKeyword {
+    /// `define` — opens a multi-line definition.
+    Define,
+    /// `endef` — closes a multi-line definition.
+    Endef,
+}
+
+impl DefineKeyword {
+    /// Classify `word` (a line's leading token) as a define-block keyword, or
+    /// `None` if it is not one. Matching is exact, mirroring make's reader.
+    pub fn from_word(word: &[u8]) -> Option<DefineKeyword> {
+        Some(match word {
+            b"define" => DefineKeyword::Define,
+            b"endef" => DefineKeyword::Endef,
+            _ => return None,
+        })
+    }
+}
+
 /// `stopchar_map` class bits for byte `b`.
 fn flags(b: u8) -> i32 {
     stopchar_map()[b as usize] as i32
@@ -718,6 +743,44 @@ mod tests {
         ] {
             assert_eq!(
                 FileDirective::from_word(w),
+                None,
+                "{:?} must not classify",
+                w
+            );
+        }
+    }
+
+    #[test]
+    fn define_keywords_classify() {
+        assert_eq!(
+            DefineKeyword::from_word(b"define"),
+            Some(DefineKeyword::Define)
+        );
+        assert_eq!(
+            DefineKeyword::from_word(b"endef"),
+            Some(DefineKeyword::Endef)
+        );
+    }
+
+    #[test]
+    fn non_define_keywords_are_rejected() {
+        // Prefixes, suffixes, case variants, and the trailing-NUL form (the
+        // slice excludes the C string's NUL) must all fail to classify.
+        for w in [
+            &b""[..],
+            b"defin",
+            b"defines",
+            b"Define",
+            b"DEFINE",
+            b"endefs",
+            b"ende",
+            b"Endef",
+            b"define\0",
+            b"undefine",
+            b"export",
+        ] {
+            assert_eq!(
+                DefineKeyword::from_word(w),
                 None,
                 "{:?} must not classify",
                 w
