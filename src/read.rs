@@ -968,16 +968,13 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         == ':' as i32) as ::core::ffi::c_int
                 as ::core::ffi::c_uint;
             if in_ignored_define != 0 {
-                if wlen
-                    == (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as usize)
-                        .wrapping_sub(1 as usize)
-                    && memcmp(
-                        b"endef\0" as *const u8 as *const ::core::ffi::c_char
-                            as *const ::core::ffi::c_void,
-                        p as *const ::core::ffi::c_void,
-                        (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t)
-                            .wrapping_sub(1),
-                    ) == 0
+                // The line's leading word (`p`, length `wlen`) closes the
+                // ignored define only when it is exactly `endef` and the next
+                // token is a comment or end-of-line.
+                if crate::parser::DefineKeyword::from_word(::core::slice::from_raw_parts(
+                    p as *const u8,
+                    wlen as usize,
+                )) == Some(crate::parser::DefineKeyword::Endef)
                     && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
                         .offset(*p2 as ::core::ffi::c_uchar as isize)
                         as ::core::ffi::c_int
@@ -2000,7 +1997,7 @@ unsafe extern "C" fn do_define(
     }
     *p.offset(1 as ::core::ffi::c_int as isize) = 0;
     loop {
-        let mut len: size_t;
+        let len: size_t;
         let line: *mut ::core::ffi::c_char;
         let nlines: ::core::ffi::c_long = readline(ebuf);
         if nlines < 0 {
@@ -2021,42 +2018,40 @@ unsafe extern "C" fn do_define(
             != cmd_prefix as ::core::ffi::c_int
         {
             p = next_token(line);
-            len = strlen(p) as size_t;
-            if (len == 6
-                || len > 6
-                    && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
-                        *p.offset(6 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar
-                            as isize,
-                    ) as ::core::ffi::c_int
-                        & 0x2 as ::core::ffi::c_int
-                        != 0)
-                && strncmp(p, b"define\0" as *const u8 as *const ::core::ffi::c_char, 6) == 0
+            // Classify the leading word (delimited by a blank or end-of-line,
+            // matching make's `define`/`endef` scan) through the typed AST
+            // instead of a strncmp/size_of wall.
+            let mut wend = p;
+            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
+                .offset(*wend as ::core::ffi::c_uchar as isize)
+                as ::core::ffi::c_int
+                & (MAP_BLANK | MAP_NUL)
+                == 0
             {
-                nlevels += 1;
-            } else if (len == 5
-                || len > 5
-                    && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
-                        *p.offset(5 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar
-                            as isize,
-                    ) as ::core::ffi::c_int
-                        & 0x2 as ::core::ffi::c_int
-                        != 0)
-                && strncmp(p, b"endef\0" as *const u8 as *const ::core::ffi::c_char, 5) == 0
-            {
-                p = p.offset(5 as ::core::ffi::c_int as isize);
-                remove_comments(p);
-                if *next_token(p) as ::core::ffi::c_int != 0 {
-                    error(
-                        &raw mut (*ebuf).floc,
-                        0,
-                        b"extraneous text after 'endef' directive\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
+                wend = wend.offset(1);
+            }
+            let dword = ::core::slice::from_raw_parts(p as *const u8, wend.offset_from(p) as usize);
+            match crate::parser::DefineKeyword::from_word(dword) {
+                Some(crate::parser::DefineKeyword::Define) => {
+                    nlevels += 1;
                 }
-                nlevels -= 1;
-                if nlevels == 0 {
-                    break;
+                Some(crate::parser::DefineKeyword::Endef) => {
+                    p = wend;
+                    remove_comments(p);
+                    if *next_token(p) as ::core::ffi::c_int != 0 {
+                        error(
+                            &raw mut (*ebuf).floc,
+                            0,
+                            b"extraneous text after 'endef' directive\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                        );
+                    }
+                    nlevels -= 1;
+                    if nlevels == 0 {
+                        break;
+                    }
                 }
+                None => {}
             }
         }
         len = strlen(line) as size_t;

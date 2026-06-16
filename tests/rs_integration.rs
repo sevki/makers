@@ -249,6 +249,15 @@ fn variable_modifiers_override_from_cmdline() {
 }
 
 #[test]
+fn define_nested_and_ignored() {
+    // Exercises the define/endef block scanner: a nested define inside a define
+    // body (nlevels nesting), an endef with a trailing comment, and a define
+    // skipped inside a false conditional (the in_ignored_define path). Output
+    // is deterministic and byte-checked against the C oracle.
+    check("define-nested", "21_define_nested.mk", "all", &[]);
+}
+
+#[test]
 fn func_shell_waits_for_completion() {
     // $(shell ...) runs a child and func_shell spin-waits on the
     // shell_function_completed flag (now an atomic) until the reaper callback
