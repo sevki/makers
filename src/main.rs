@@ -714,7 +714,17 @@ pub fn second_expansion() -> bool {
 pub static mut one_shell: ::core::ffi::c_int = 0;
 pub static mut output_sync: ::core::ffi::c_int = OUTPUT_SYNC_NONE;
 pub static mut not_parallel: ::core::ffi::c_int = 0;
-pub static mut clock_skew_detected: ::core::ffi::c_int = 0;
+/// Set once make notices a prerequisite with a timestamp in the future
+/// (clock skew), so the "Clock skew detected" warning is printed once at the
+/// end. A one-shot boolean, stored in an atomic so its reads are plain safe
+/// operations; all access is single-threaded, so `Relaxed` preserves the
+/// original program order. `pub` because the lone write is in `remake.rs`.
+pub static CLOCK_SKEW_DETECTED: AtomicBool = AtomicBool::new(false);
+
+/// Whether a future-timestamped (clock-skewed) prerequisite has been seen.
+pub fn clock_skew_detected() -> bool {
+    CLOCK_SKEW_DETECTED.load(Ordering::Relaxed)
+}
 /// Per-byte classification bitmap (`MAP_*` flags), computed once at startup by
 /// [`initialize_stopchar_map`]. Held behind a `OnceLock` so it is a safe
 /// `static`; reads before initialization see a zeroed map, matching the C
@@ -2550,7 +2560,7 @@ unsafe fn main_0(
         }
         1 | 0 | _ => {}
     }
-    if clock_skew_detected != 0 {
+    if clock_skew_detected() {
         error(
             ::core::ptr::null_mut::<Floc>(),
             0,
@@ -4708,5 +4718,27 @@ mod stdio_traced_tests {
         assert!(stdio_traced(), "trace emitted");
 
         STDIO_TRACED.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod clock_skew_detected_tests {
+    use crate::make_main::{clock_skew_detected, CLOCK_SKEW_DETECTED};
+    use std::sync::atomic::Ordering;
+
+    /// `clock_skew_detected()` reflects the `CLOCK_SKEW_DETECTED` one-shot flag
+    /// set when a future-timestamped prerequisite is seen. Restores the prior
+    /// value so it stays isolated from other tests.
+    #[test]
+    fn clock_skew_detected_tracks_atomic() {
+        let saved = CLOCK_SKEW_DETECTED.load(Ordering::Relaxed);
+
+        CLOCK_SKEW_DETECTED.store(false, Ordering::Relaxed);
+        assert!(!clock_skew_detected(), "no skew yet");
+
+        CLOCK_SKEW_DETECTED.store(true, Ordering::Relaxed);
+        assert!(clock_skew_detected(), "skew detected");
+
+        CLOCK_SKEW_DETECTED.store(saved, Ordering::Relaxed);
     }
 }
