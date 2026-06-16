@@ -2531,16 +2531,9 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
     t = files;
     while !t.is_null() {
         let nm: *const ::core::ffi::c_char = (*t).name;
-        if !posix_pedantic()
-            && (*nm as ::core::ffi::c_int
-                == *(b".POSIX\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
-                && (*nm as ::core::ffi::c_int == 0
-                    || strcmp(
-                        nm.offset(1 as ::core::ffi::c_int as isize),
-                        (b".POSIX\0" as *const u8 as *const ::core::ffi::c_char)
-                            .offset(1 as ::core::ffi::c_int as isize),
-                    ) == 0))
-        {
+        let special =
+            crate::parser::SpecialTarget::from_name(::std::ffi::CStr::from_ptr(nm).to_bytes());
+        if !posix_pedantic() && special == Some(crate::parser::SpecialTarget::Posix) {
             crate::make_main::POSIX_PEDANTIC.store(true, ::std::sync::atomic::Ordering::Relaxed);
             define_variable_in_set(
                 b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2606,28 +2599,10 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
                 NILF,
             );
         } else if !second_expansion()
-            && (*nm as ::core::ffi::c_int
-                == *(b".SECONDEXPANSION\0" as *const u8 as *const ::core::ffi::c_char)
-                    as ::core::ffi::c_int
-                && (*nm as ::core::ffi::c_int == 0
-                    || strcmp(
-                        nm.offset(1 as ::core::ffi::c_int as isize),
-                        (b".SECONDEXPANSION\0" as *const u8 as *const ::core::ffi::c_char)
-                            .offset(1 as ::core::ffi::c_int as isize),
-                    ) == 0))
+            && special == Some(crate::parser::SpecialTarget::SecondExpansion)
         {
             crate::make_main::SECOND_EXPANSION.store(true, ::std::sync::atomic::Ordering::Relaxed);
-        } else if one_shell == 0
-            && (*nm as ::core::ffi::c_int
-                == *(b".ONESHELL\0" as *const u8 as *const ::core::ffi::c_char)
-                    as ::core::ffi::c_int
-                && (*nm as ::core::ffi::c_int == 0
-                    || strcmp(
-                        nm.offset(1 as ::core::ffi::c_int as isize),
-                        (b".ONESHELL\0" as *const u8 as *const ::core::ffi::c_char)
-                            .offset(1 as ::core::ffi::c_int as isize),
-                    ) == 0))
-        {
+        } else if one_shell == 0 && special == Some(crate::parser::SpecialTarget::OneShell) {
             one_shell = 1;
         } else if set_default != 0
             && *(*default_goal_var).value.offset(0) as ::core::ffi::c_int == 0
