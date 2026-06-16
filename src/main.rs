@@ -317,7 +317,9 @@ use crate::file::{
 };
 use crate::function::hash_init_function_table;
 use crate::guile::guile_gmake_setup;
-use crate::job::{child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children};
+use crate::job::{
+    child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children, JOBSERVER_TOKENS,
+};
 use crate::load::load_file;
 use crate::misc::concat;
 pub use crate::output::output;
@@ -3686,19 +3688,19 @@ pub unsafe fn print_data_base() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn clean_jobserver(status: ::core::ffi::c_int) {
-    if jobserver_enabled() != 0 && jobserver_tokens != 0 {
+    if jobserver_enabled() != 0 && jobserver_tokens() != 0 {
         if status != 2 {
             error(
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH,
                 b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
                     as *const ::core::ffi::c_char,
-                jobserver_tokens,
+                jobserver_tokens(),
             );
         } else {
             loop {
-                jobserver_tokens = jobserver_tokens.wrapping_sub(1);
-                if !(jobserver_tokens != 0) {
+                JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
+                if jobserver_tokens() == 0 {
                     break;
                 }
                 jobserver_release(0);
