@@ -406,6 +406,24 @@ fn next_token_off(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
+/// If `bytes` is a single leading token optionally followed by only trailing
+/// blanks, return the token's length; otherwise `None`.
+///
+/// This is the pure check make's `conditional_line` performs on the (expanded)
+/// argument of `ifdef`/`ifndef`: it takes the first token (`end_of_token`),
+/// skips any trailing whitespace, and requires the string to end there — a
+/// second token is a syntax error (make's `-1`, "invalid syntax in
+/// conditional"). The token starts at offset 0 (the caller has already expanded
+/// the argument, which has no leading blanks).
+pub fn lone_token(bytes: &[u8]) -> Option<usize> {
+    let end = end_of_token_off(bytes, 0);
+    if at(bytes, next_token_off(bytes, end)) == 0 {
+        Some(end)
+    } else {
+        None
+    }
+}
+
 /// Scan the leading variable-definition modifiers of a line, a pure,
 /// offset-based reproduction of make's `parse_var_assignment` (`read.c`).
 ///
@@ -1545,6 +1563,19 @@ mod tests {
             cargs("\"a\" \"b\"  junk"),
             Some(("a".into(), "b".into(), true))
         );
+    }
+
+    #[test]
+    fn lone_token_cases() {
+        ensure_map();
+        let lone = |s: &str| lone_token(s.as_bytes());
+        // A single token, with or without trailing blanks, yields its length.
+        assert_eq!(lone("FOO"), Some(3));
+        assert_eq!(lone("FOO   "), Some(3));
+        assert_eq!(lone(""), Some(0));
+        // A second token is a syntax error.
+        assert_eq!(lone("FOO BAR"), None);
+        assert_eq!(lone("FOO  BAR  "), None);
     }
 
     #[test]
