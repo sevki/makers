@@ -1997,7 +1997,6 @@ unsafe extern "C" fn do_define(
     }
     *p.offset(1 as ::core::ffi::c_int as isize) = 0;
     loop {
-        let len: size_t;
         let line: *mut ::core::ffi::c_char;
         let nlines: ::core::ffi::c_long = readline(ebuf);
         if nlines < 0 {
@@ -2054,7 +2053,7 @@ unsafe extern "C" fn do_define(
                 None => {}
             }
         }
-        len = strlen(line) as size_t;
+        let len = strlen(line) as size_t;
         if idx.wrapping_add(len).wrapping_add(1) > length {
             length = idx.wrapping_add(len).wrapping_mul(2);
             def_buf.resize(length.wrapping_add(1) as usize, 0);
