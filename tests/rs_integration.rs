@@ -813,3 +813,12 @@ fn func_word_nonnumeric_index_errors() {
     // both binaries must abort identically.
     check("word-nan", "12_wordfuncs.mk", "badnan", &[]);
 }
+
+#[test]
+fn wait_special_target_warns() {
+    // `.WAIT` declared as a target with prerequisites and commands trips both
+    // one-shot warnings in check_special_file (now AtomicBool guards). The
+    // warnings go to stderr and the build still completes; byte-check the whole
+    // stdout/stderr/exit against the C oracle.
+    check("wait-special", "27_wait_special.mk", "all", &[]);
+}

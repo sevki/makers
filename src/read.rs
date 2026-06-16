@@ -2742,23 +2742,24 @@ pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
                     .offset(1 as ::core::ffi::c_int as isize),
             ) == 0)
     {
-        static mut wpre: ::core::ffi::c_uint = 0;
-        static mut wcmd: ::core::ffi::c_uint = 0;
-        if wpre == 0 && !(*file).deps.is_null() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static WPRE: AtomicBool = AtomicBool::new(false);
+        static WCMD: AtomicBool = AtomicBool::new(false);
+        if !WPRE.load(Ordering::Relaxed) && !(*file).deps.is_null() {
             error(
                 flocp,
                 0,
                 b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
             );
-            wpre = 1;
+            WPRE.store(true, Ordering::Relaxed);
         }
-        if wcmd == 0 && !(*file).cmds.is_null() {
+        if !WCMD.load(Ordering::Relaxed) && !(*file).cmds.is_null() {
             error(
                 flocp,
                 0,
                 b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
             );
-            wcmd = 1;
+            WCMD.store(true, Ordering::Relaxed);
         }
     }
 }
