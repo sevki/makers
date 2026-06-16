@@ -2784,7 +2784,7 @@ unsafe extern "C" fn record_files(
     let mut also_make: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut implicit_percent: *const ::core::ffi::c_char;
     let mut name: *const ::core::ffi::c_char;
-    if snapped_deps != 0 {
+    if snapped_deps() {
         fatal(
             flocp,
             0,
