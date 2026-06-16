@@ -410,6 +410,25 @@ fn jobserver_parallel() {
     assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
 }
 
+#[test]
+fn job_slots_capped_parallel() {
+    // -j 3 with six independent recipes forces make to fill all three slots,
+    // block in reap_children until one frees, then spawn more — exercising the
+    // job_slots_used increment/decrement and the `== job_slots` wait. Output
+    // ordering varies under parallelism, so compare the sorted line multiset.
+    let fixture = fixtures_dir().join("20_job_slots.mk");
+    let c = c_make();
+    let r = std::path::PathBuf::from(RUST_MAKE);
+    let c_out = run(&c, &fixture, "all", &["-j", "3"]);
+    let r_out = run(&r, &fixture, "all", &["-j", "3"]);
+    assert_eq!(c_out.code, r_out.code, "exit code mismatch");
+    let mut c_lines: Vec<_> = c_out.stdout.split(|&b| b == b'\n').collect();
+    let mut r_lines: Vec<_> = r_out.stdout.split(|&b| b == b'\n').collect();
+    c_lines.sort();
+    r_lines.sort();
+    assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With

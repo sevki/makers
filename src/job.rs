@@ -325,7 +325,15 @@ pub unsafe fn pid2str(pid: pid_t) -> *const ::core::ffi::c_char {
     &raw mut pidstring as *mut ::core::ffi::c_char
 }
 pub static mut children: *mut child = ::core::ptr::null::<child>() as *mut child;
-pub static mut job_slots_used: ::core::ffi::c_uint = 0;
+/// Count of job slots currently in use. Stored in an atomic so its reads are
+/// plain safe operations; all access is single-threaded, so `Relaxed`
+/// preserves the original program order.
+static JOB_SLOTS_USED: AtomicU32 = AtomicU32::new(0);
+
+/// Number of job slots currently in use.
+pub fn job_slots_used() -> ::core::ffi::c_uint {
+    JOB_SLOTS_USED.load(Ordering::Relaxed)
+}
 /// Set once a child has been handed the real stdin, so later children get a
 /// dummy one. Stored in an atomic to keep its reads plain safe operations;
 /// access is single-threaded, so `Relaxed` preserves the original order.
@@ -890,8 +898,11 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             );
             fflush(stdout);
         }
-        if job_slots_used > 0 {
-            job_slots_used = job_slots_used.wrapping_sub((*c).jobslot());
+        if job_slots_used() > 0 {
+            JOB_SLOTS_USED.store(
+                job_slots_used().wrapping_sub((*c).jobslot()),
+                Ordering::Relaxed,
+            );
         }
         if lastc.is_null() {
             children = (*c).next;
@@ -1300,7 +1311,7 @@ pub unsafe fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
     (*c).set_remote(
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
-    if (*c).remote() == 0 && (job_slots_used > 0 && load_too_high() != 0) {
+    if (*c).remote() == 0 && (job_slots_used() > 0 && load_too_high() != 0) {
         set_command_state(f, cs_running);
         (*c).next = waiting_jobs;
         waiting_jobs = c;
@@ -1329,7 +1340,7 @@ pub unsafe fn start_waiting_job(c: *mut child) -> ::core::ffi::c_int {
                     );
                     fflush(stdout);
                 }
-                job_slots_used = job_slots_used.wrapping_add(1);
+                JOB_SLOTS_USED.fetch_add(1, Ordering::Relaxed);
                 if (*c).jobslot() as ::core::ffi::c_int == 0 {
                 } else {
                     panic!("assertion failed: c->jobslot == 0");
@@ -1505,7 +1516,7 @@ pub unsafe fn new_job(file: *mut file) {
     (*c).command_lines = lines;
     job_next_command(c);
     if job_slots != 0 {
-        while job_slots_used == job_slots {
+        while job_slots_used() == job_slots {
             reap_children(1, 0);
         }
     } else if jobserver_enabled() != 0 {
@@ -1888,7 +1899,7 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
                                 as *const u8
                                 as *const ::core::ffi::c_char,
                             cnt,
-                            job_slots_used,
+                            job_slots_used(),
                             max_load_average,
                         );
                         fflush(stdout);
@@ -3038,5 +3049,31 @@ mod dead_children_tests {
         assert_eq!(dead_children(), 1, "one processed");
 
         DEAD_CHILDREN.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod job_slots_used_tests {
+    use super::{job_slots_used, JOB_SLOTS_USED};
+    use std::sync::atomic::Ordering;
+
+    /// `job_slots_used()` reflects the `JOB_SLOTS_USED` counter, and the
+    /// add/sub used by the start/reap paths round-trip through it. Restores the
+    /// prior value so it stays isolated from other tests.
+    #[test]
+    fn job_slots_used_counts_round_trip() {
+        let saved = JOB_SLOTS_USED.load(Ordering::Relaxed);
+
+        JOB_SLOTS_USED.store(0, Ordering::Relaxed);
+        assert_eq!(job_slots_used(), 0);
+
+        JOB_SLOTS_USED.fetch_add(1, Ordering::Relaxed);
+        JOB_SLOTS_USED.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(job_slots_used(), 2, "two slots in use");
+
+        JOB_SLOTS_USED.store(job_slots_used().wrapping_sub(1), Ordering::Relaxed);
+        assert_eq!(job_slots_used(), 1, "one slot freed");
+
+        JOB_SLOTS_USED.store(saved, Ordering::Relaxed);
     }
 }

@@ -581,11 +581,11 @@ pub unsafe extern "C" fn fatal_error_signal(sig: c_int) {
             c = (*c).next;
         }
         // Wait for them all to die before cleaning up.
-        while job_slots_used > 0 {
+        while job_slots_used() > 0 {
             reap_children(1, 0);
         }
     } else {
-        while job_slots_used > 0 {
+        while job_slots_used() > 0 {
             reap_children(1, 1);
         }
     }
