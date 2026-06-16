@@ -2234,126 +2234,23 @@ unsafe extern "C" fn conditional_line(
                     as ::core::ffi::c_char;
             free(var as *mut ::core::ffi::c_void);
         } else {
-            let mut s1: *mut ::core::ffi::c_char;
-            let mut s2: *mut ::core::ffi::c_char;
-            let l_0: size_t;
-            let mut termin: ::core::ffi::c_char = (if *line as ::core::ffi::c_int == '(' as i32 {
-                ',' as i32
-            } else {
-                *line as ::core::ffi::c_int
-            }) as ::core::ffi::c_char;
-            if termin as ::core::ffi::c_int != ',' as i32
-                && termin as ::core::ffi::c_int != '"' as i32
-                && termin as ::core::ffi::c_int != '\'' as i32
-            {
-                return -(1 as ::core::ffi::c_int);
-            }
-            line = line.offset(1 as ::core::ffi::c_int as isize);
-            s1 = line;
-            while *line as ::core::ffi::c_int != 0
-                && *line as ::core::ffi::c_int != termin as ::core::ffi::c_int
-            {
-                if *line as ::core::ffi::c_int == '$' as i32 {
-                    line = skip_reference(line.offset(1 as ::core::ffi::c_int as isize));
-                } else {
-                    line = line.offset(1 as ::core::ffi::c_int as isize);
-                }
-            }
-            if *line as ::core::ffi::c_int == 0 {
-                return -(1 as ::core::ffi::c_int);
-            }
-            if termin as ::core::ffi::c_int == ',' as i32 {
-                let fresh27 = line;
-                line = line.offset(1 as ::core::ffi::c_int as isize);
-                let mut p_1: *mut ::core::ffi::c_char = fresh27;
-                while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
-                    *p_1.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_uchar
-                        as isize,
-                ) as ::core::ffi::c_int
-                    & 0x2 as ::core::ffi::c_int
-                    != 0
-                {
-                    p_1 = p_1.offset(-(1 as ::core::ffi::c_int) as isize);
-                }
-                *p_1 = 0;
-            } else {
-                let fresh28 = line;
-                line = line.offset(1 as ::core::ffi::c_int as isize);
-                *fresh28 = 0;
-            }
-            s2 = expand_string_buf(
-                ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                s1,
-                SIZE_MAX as size_t,
-            );
-            l_0 = strlen(s2) as size_t;
-            alloca_allocations.push(::std::vec::from_elem(0, l_0.wrapping_add(1) as usize));
-            s1 = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-            memcpy(
-                s1 as *mut ::core::ffi::c_void,
-                s2 as *const ::core::ffi::c_void,
-                (l_0 as size_t).wrapping_add(1),
-            );
-            if termin as ::core::ffi::c_int != ',' as i32 {
-                while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                    .offset(*line as ::core::ffi::c_uchar as isize)
-                    as ::core::ffi::c_int
-                    & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                    != 0
-                {
-                    line = line.offset(1 as ::core::ffi::c_int as isize);
-                }
-            }
-            termin = (if termin as ::core::ffi::c_int == ',' as i32 {
-                ')' as i32
-            } else {
-                *line as ::core::ffi::c_int
-            }) as ::core::ffi::c_char;
-            if termin as ::core::ffi::c_int != ')' as i32
-                && termin as ::core::ffi::c_int != '"' as i32
-                && termin as ::core::ffi::c_int != '\'' as i32
-            {
-                return -(1 as ::core::ffi::c_int);
-            }
-            if termin as ::core::ffi::c_int == ')' as i32 {
-                let mut count: ::core::ffi::c_int = 0;
-                s2 = next_token(line);
-                line = s2;
-                while *line as ::core::ffi::c_int != 0 {
-                    if *line as ::core::ffi::c_int == '(' as i32 {
-                        count += 1;
-                    } else if *line as ::core::ffi::c_int == ')' as i32 {
-                        if count <= 0 {
-                            break;
-                        }
-                        count -= 1;
-                    }
-                    line = line.offset(1 as ::core::ffi::c_int as isize);
-                }
-            } else {
-                line = line.offset(1 as ::core::ffi::c_int as isize);
-                s2 = line;
-                while *line as ::core::ffi::c_int != 0
-                    && *line as ::core::ffi::c_int != termin as ::core::ffi::c_int
-                {
-                    line = line.offset(1 as ::core::ffi::c_int as isize);
-                }
-            }
-            if *line as ::core::ffi::c_int == 0 {
-                return -(1 as ::core::ffi::c_int);
-            }
-            let fresh29 = line;
-            line = line.offset(1 as ::core::ffi::c_int as isize);
-            *fresh29 = 0;
-            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                .offset(*line as ::core::ffi::c_uchar as isize)
-                as ::core::ffi::c_int
-                & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                != 0
-            {
-                line = line.offset(1 as ::core::ffi::c_int as isize);
-            }
-            if *line as ::core::ffi::c_int != 0 {
+            // The `ifeq`/`ifneq` argument forms — `(a,b)`, `"a" "b"`, `'a' 'b'`
+            // — are parsed structurally (reference-aware) through the typed AST
+            // layer, replacing the in-place pointer/NUL delimiter scan.
+            // Expansion of each argument and the string comparison stay here.
+            let args = match crate::parser::parse_conditional_args(
+                ::std::ffi::CStr::from_ptr(line).to_bytes(),
+            ) {
+                Some(a) => a,
+                None => return -(1 as ::core::ffi::c_int),
+            };
+            // Terminate each argument in place at its parsed end (the second end
+            // lies past the first, so this never clobbers the first argument).
+            *line.add(args.arg1.end) = 0;
+            let arg1_ptr = line.add(args.arg1.start);
+            *line.add(args.arg2.end) = 0;
+            let arg2_ptr = line.add(args.arg2.start);
+            if args.trailing_text {
                 error(
                     flocp,
                     strlen(cmdname) as size_t,
@@ -2362,9 +2259,25 @@ unsafe extern "C" fn conditional_line(
                     cmdname,
                 );
             }
-            s2 = expand_string_buf(
+            // `expand_string_buf` reuses a shared buffer, so the expanded first
+            // argument must be copied out before expanding the second.
+            let e1 = expand_string_buf(
                 ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                s2,
+                arg1_ptr,
+                SIZE_MAX as size_t,
+            );
+            let l_0 = strlen(e1) as size_t;
+            alloca_allocations.push(::std::vec::from_elem(0, l_0.wrapping_add(1) as usize));
+            let s1 =
+                alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
+            memcpy(
+                s1 as *mut ::core::ffi::c_void,
+                e1 as *const ::core::ffi::c_void,
+                l_0.wrapping_add(1),
+            );
+            let s2 = expand_string_buf(
+                ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                arg2_ptr,
                 SIZE_MAX as size_t,
             );
             *(*conditionals).ignoring.offset(o as isize) =
