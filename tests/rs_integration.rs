@@ -230,6 +230,13 @@ fn conditionals_else_if_chain_fallback() {
 }
 
 #[test]
+fn conditional_ifdef_token() {
+    // conditional_line's ifdef/ifndef single-token extraction (typed AST layer):
+    // defined/undefined names and a name produced by expansion.
+    check("ifdef-token", "32_ifdef_token.mk", "all", &[]);
+}
+
+#[test]
 fn conditional_ifeq_argument_forms() {
     // conditional_line's ifeq/ifneq argument scan (now in the typed AST layer):
     // paren form with references and spaces, double/single quoted forms, and a

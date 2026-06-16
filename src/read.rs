@@ -2205,25 +2205,18 @@ unsafe extern "C" fn conditional_line(
             || cmdtype as ::core::ffi::c_uint
                 == c_ifndef as ::core::ffi::c_int as ::core::ffi::c_uint
         {
-            let l: size_t;
-            let var: *mut ::core::ffi::c_char;
             let v: *mut variable;
-            let mut p_0: *mut ::core::ffi::c_char;
-            var = allocated_expand_string_for_file(line, ::core::ptr::null_mut::<file>());
-            p_0 = end_of_token(var);
-            l = p_0.offset_from(var) as ::core::ffi::c_long as size_t;
-            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                .offset(*p_0 as ::core::ffi::c_uchar as isize)
-                as ::core::ffi::c_int
-                & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                != 0
-            {
-                p_0 = p_0.offset(1 as ::core::ffi::c_int as isize);
-            }
-            if *p_0 as ::core::ffi::c_int != 0 {
-                return -(1 as ::core::ffi::c_int);
-            }
-            *var.offset(l as isize) = 0;
+            let var: *mut ::core::ffi::c_char =
+                allocated_expand_string_for_file(line, ::core::ptr::null_mut::<file>());
+            // The condition is a single variable name: take the lone token (a
+            // trailing second token is a syntax error) via the typed AST layer,
+            // replacing the `end_of_token` + manual whitespace scan.
+            let l: size_t =
+                match crate::parser::lone_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
+                    Some(l) => l as size_t,
+                    None => return -(1 as ::core::ffi::c_int),
+                };
+            *var.add(l) = 0;
             v = lookup_variable(var, l);
             *(*conditionals).ignoring.offset(o as isize) =
                 ((!v.is_null() && *(*v).value as ::core::ffi::c_int != 0) as ::core::ffi::c_int
