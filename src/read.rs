@@ -5,8 +5,8 @@ pub use crate::ffi_types::{
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::free_ns_chain;
 use crate::misc::{
-    collapse_continuations, copy_dep, copy_dep_chain, end_of_token, find_next_token, next_token,
-    skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup,
+    collapse_continuations, copy_dep, copy_dep_chain, find_next_token, next_token, skip_reference,
+    xcalloc, xmalloc, xrealloc, xstrdup, xstrndup,
 };
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
@@ -886,22 +886,13 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
             if *p as ::core::ffi::c_int == 0 {
                 continue;
             }
-            p2 = end_of_token(p);
-            wlen = p2.offset_from(p) as ::core::ffi::c_long as size_t;
-            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                .offset(*p2 as ::core::ffi::c_uchar as isize)
-                as ::core::ffi::c_int
-                & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-                != 0
-            {
-                p2 = p2.offset(1 as ::core::ffi::c_int as isize);
-            }
-            is_rule = (*p2 as ::core::ffi::c_int == ':' as i32
-                || (*p2 as ::core::ffi::c_int == '&' as i32
-                    || *p2 as ::core::ffi::c_int == '|' as i32)
-                    && *p2.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                        == ':' as i32) as ::core::ffi::c_int
-                as ::core::ffi::c_uint;
+            // Measure the first token, skip its trailing blanks, and decide
+            // whether the line is a rule (`:`/`&:`/`|:`) through the typed AST
+            // layer. `p2` is left at the text after the token, as before.
+            let probe = crate::parser::rule_probe(::std::ffi::CStr::from_ptr(p).to_bytes());
+            wlen = probe.word_len as size_t;
+            p2 = p.add(probe.rest);
+            is_rule = probe.is_rule as ::core::ffi::c_uint;
             if in_ignored_define != 0 {
                 // The line's leading word (`p`, length `wlen`) closes the
                 // ignored define only when it is exactly `endef` and the next
