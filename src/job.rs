@@ -531,7 +531,7 @@ pub extern "C" fn child_handler(mut _sig: ::core::ffi::c_int) {
 pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_int) {
     let mut status: ::core::ffi::c_int = 0;
     let mut reap_more: ::core::ffi::c_int = 1;
-    while (!children.is_null() || shell_function_pid != 0) && (block != 0 || reap_more != 0) {
+    while (!children.is_null() || shell_function_pid() != 0) && (block != 0 || reap_more != 0) {
         let mut remote: ::core::ffi::c_uint = 0;
         let mut pid: pid_t;
         let mut exit_code: ::core::ffi::c_int = 0;
@@ -560,7 +560,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             DEAD_CHILDREN.fetch_sub(1, Ordering::Relaxed);
         }
         any_remote = 0;
-        any_local = (shell_function_pid != 0) as ::core::ffi::c_int;
+        any_local = (shell_function_pid() != 0) as ::core::ffi::c_int;
         lastc = ::core::ptr::null_mut::<child>();
         c = children;
         // Set when we find a child that already failed to launch (pid < 0);
@@ -667,7 +667,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                 }
             }
             command_count = command_count.wrapping_add(1);
-            if remote == 0 && pid == shell_function_pid {
+            if remote == 0 && pid == shell_function_pid() {
                 shell_completed(exit_code, exit_sig);
                 break;
             } else {
