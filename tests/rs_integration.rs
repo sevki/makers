@@ -237,6 +237,15 @@ fn define_and_undefine_names() {
 }
 
 #[test]
+fn tilde_expand_user_branch() {
+    // tilde_expand's `~user` branch (slice/CString-based): `~root/<suffix>` is
+    // expanded via getpwnam("root") + the suffix and then included. The file is
+    // absent, so both binaries must emit the identical expanded path in their
+    // "No such file or directory" error.
+    check("tilde-user", "34_tilde_user.mk", "all", &[]);
+}
+
+#[test]
 fn conditional_ifdef_token() {
     // conditional_line's ifdef/ifndef single-token extraction (typed AST layer):
     // defined/undefined names and a name produced by expansion.

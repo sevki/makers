@@ -3495,26 +3495,33 @@ pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi
             return new;
         }
     } else {
-        let pwent: *mut passwd;
-        let userend: *mut ::core::ffi::c_char =
-            strchr(name.offset(1 as ::core::ffi::c_int as isize), '/' as i32);
-        if !userend.is_null() {
-            *userend = 0;
-        }
-        pwent = getpwnam(name.offset(1 as ::core::ffi::c_int as isize));
+        // `~user` / `~user/suffix`: split the name (after `~`) at the first `/`
+        // through a slice view instead of `strchr` + in-place NUL/restore, and
+        // look the user up with an owned `CString` rather than mutating the
+        // caller's buffer.
+        let after_tilde = ::std::ffi::CStr::from_ptr(name)
+            .to_bytes()
+            .get(1..)
+            .unwrap_or(&[]);
+        let slash = after_tilde.iter().position(|&b| b == b'/');
+        let user = &after_tilde[..slash.unwrap_or(after_tilde.len())];
+        let user_c = ::std::ffi::CString::new(user).expect("CStr bytes have no interior NUL");
+        let pwent: *mut passwd = getpwnam(user_c.as_ptr());
         if !pwent.is_null() {
-            if userend.is_null() {
-                return xstrdup((*pwent).pw_dir);
+            match slash {
+                // `~user` — just the user's home directory.
+                None => return xstrdup((*pwent).pw_dir),
+                // `~user/suffix` — home + the `/suffix` tail (the byte at `i` is
+                // the `/`, so the tail after it starts at `1 + i + 1`).
+                Some(i) => {
+                    return xstrdup(concat(
+                        3,
+                        (*pwent).pw_dir,
+                        b"/\0" as *const u8 as *const ::core::ffi::c_char,
+                        name.add(1 + i + 1),
+                    ));
+                }
             }
-            *userend = '/' as i32 as ::core::ffi::c_char;
-            return xstrdup(concat(
-                3,
-                (*pwent).pw_dir,
-                b"/\0" as *const u8 as *const ::core::ffi::c_char,
-                userend.offset(1 as ::core::ffi::c_int as isize),
-            ));
-        } else if !userend.is_null() {
-            *userend = '/' as i32 as ::core::ffi::c_char;
         }
     }
     ::core::ptr::null_mut::<::core::ffi::c_char>()
