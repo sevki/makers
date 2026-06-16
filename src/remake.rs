@@ -71,7 +71,7 @@ use crate::job::{reap_children, start_waiting_jobs};
 use crate::make_main::{
     always_make_flag, check_symlink_flag, clock_skew_detected, command_count, db_level,
     default_file, just_print_flag, keep_going_flag, no_intermediates, question_flag,
-    rebuilding_makefiles, run_silent, second_expansion, touch_flag,
+    rebuilding_makefiles, run_silent, second_expansion, touch_flag, CLOCK_SKEW_DETECTED,
 };
 use crate::output::{error, fatal, message, perror_with_name};
 use crate::read::find_percent;
@@ -1900,7 +1900,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             }
         }
     }
-    if clock_skew_detected == 0
+    if !clock_skew_detected()
         && mtime != NONEXISTENT_MTIME as uintmax_t
         && mtime
             != (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
@@ -1961,7 +1961,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                     (*file).name,
                     &raw mut from_now_string as *mut ::core::ffi::c_char,
                 );
-                clock_skew_detected = 1;
+                CLOCK_SKEW_DETECTED.store(true, Ordering::Relaxed);
             }
         }
     }
