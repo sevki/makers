@@ -11,6 +11,7 @@ use libc::{
     __errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror,
     strrchr,
 };
+use std::sync::atomic::{AtomicU32, Ordering};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -106,7 +107,18 @@ pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
 pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
 pub const OLD_MTIME: ::core::ffi::c_int = 2;
 pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
-pub static mut commands_started: ::core::ffi::c_uint = 0;
+/// Running count of recipes make has started executing. Compared against a
+/// saved snapshot to decide whether a target's update actually ran any
+/// commands (driving the "Nothing to be done" / "is up to date" messages).
+/// A monotonic counter, stored in an atomic so its reads are plain safe
+/// operations; all access is single-threaded, so `Relaxed` preserves the
+/// original program order. `pub` because `job.rs` also bumps it.
+pub static COMMANDS_STARTED: AtomicU32 = AtomicU32::new(0);
+
+/// The number of recipes started so far.
+pub fn commands_started() -> ::core::ffi::c_uint {
+    COMMANDS_STARTED.load(Ordering::Relaxed)
+}
 static mut goal_list: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 static mut goal_dep: *mut dep = ::core::ptr::null::<dep>() as *mut dep;
 static mut considered: ::core::ffi::c_uint = 0;
@@ -279,7 +291,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         touch_flag = question_flag;
                     }
                 }
-                ocommands_started = commands_started;
+                ocommands_started = commands_started();
                 stop = 0;
                 wait = (file == dchead && g_wait as ::core::ffi::c_int != 0 && running != 0)
                     as ::core::ffi::c_int;
@@ -304,7 +316,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         || fref(file).command_state() as ::core::ffi::c_int
                             == cs_deps_running as ::core::ffi::c_int)
                         as ::core::ffi::c_int;
-                    if commands_started > ocommands_started {
+                    if commands_started() > ocommands_started {
                         if let Some(gm) = g.as_mut() {
                             gm.set_changed(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                         }
@@ -1335,7 +1347,7 @@ pub unsafe fn notice_finished_file(file: *mut file) {
                 (*file).set_update_status(us_success as update_status);
             } else if !(*file).cmds.is_null() {
                 (*file).set_update_status(touch_file(file) as update_status as update_status);
-                commands_started = commands_started.wrapping_add(1);
+                COMMANDS_STARTED.fetch_add(1, Ordering::Relaxed);
                 touched = 1;
             }
         }
@@ -2266,3 +2278,25 @@ pub const LIBDIR: [::core::ffi::c_char; 15] =
 pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
 pub const __LONG_MAX__: ::core::ffi::c_long = 9223372036854775807 as ::core::ffi::c_long;
 pub const FILE_TIMESTAMP_HI_RES: ::core::ffi::c_int = 1;
+
+#[cfg(test)]
+mod commands_started_tests {
+    use super::{commands_started, COMMANDS_STARTED};
+    use std::sync::atomic::Ordering;
+
+    /// `commands_started()` reflects the `COMMANDS_STARTED` counter that is
+    /// bumped each time a recipe is started. Restores the prior value so it
+    /// stays isolated from other tests.
+    #[test]
+    fn commands_started_tracks_atomic() {
+        let saved = COMMANDS_STARTED.load(Ordering::Relaxed);
+
+        COMMANDS_STARTED.store(7, Ordering::Relaxed);
+        assert_eq!(commands_started(), 7);
+
+        COMMANDS_STARTED.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(commands_started(), 8);
+
+        COMMANDS_STARTED.store(saved, Ordering::Relaxed);
+    }
+}
