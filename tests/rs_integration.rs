@@ -837,3 +837,11 @@ fn recipe_runs_advances_commands_started() {
     // actually runs (no "Nothing to be done"). Byte-checked against the oracle.
     check("recipe-runs", "28_nothing_todo.mk", "done", &[]);
 }
+
+#[test]
+fn oneshell_special() {
+    // `.ONESHELL` (recognised by the SpecialTarget classifier in check_specials)
+    // runs all of a target's recipe lines in one shell, so a variable set on the
+    // first line is visible on the next. Byte-checked against the C oracle.
+    check("oneshell", "29_oneshell.mk", "all", &[]);
+}

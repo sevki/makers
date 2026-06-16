@@ -268,6 +268,37 @@ impl LineKind {
     }
 }
 
+/// A built-in special target whose *declaration as a target* toggles a global
+/// reader mode, recognised by name in `check_specials`. These are the
+/// mode-setting specials make acts on the moment the target is seen (as opposed
+/// to specials like `.PHONY`/`.SUFFIXES` whose effect is on their prerequisite
+/// list, handled later in `snap_deps`).
+///
+/// Matching the name is a pure function of the bytes, so it belongs in the AST
+/// layer rather than as inlined `strcmp` chains in the reader.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum SpecialTarget {
+    /// `.POSIX` — enables POSIX-conformant (`pedantic`) mode.
+    Posix,
+    /// `.SECONDEXPANSION` — enables a second expansion pass over prerequisites.
+    SecondExpansion,
+    /// `.ONESHELL` — run each recipe in a single shell invocation.
+    OneShell,
+}
+
+impl SpecialTarget {
+    /// Classify a target `name` as a reader-mode special target, or `None` if it
+    /// is not one of them. Matching is exact, mirroring make's reader.
+    pub fn from_name(name: &[u8]) -> Option<SpecialTarget> {
+        Some(match name {
+            b".POSIX" => SpecialTarget::Posix,
+            b".SECONDEXPANSION" => SpecialTarget::SecondExpansion,
+            b".ONESHELL" => SpecialTarget::OneShell,
+            _ => return None,
+        })
+    }
+}
+
 /// `stopchar_map` class bits for byte `b`.
 fn flags(b: u8) -> i32 {
     stopchar_map()[b as usize] as i32
@@ -841,5 +872,45 @@ mod tests {
         assert_eq!(LineKind::classify(b'\t', b'>'), LineKind::Other);
         // The empty-line test still wins regardless of the prefix.
         assert_eq!(LineKind::classify(0, b'>'), LineKind::Blank);
+    }
+
+    #[test]
+    fn special_targets_classify() {
+        assert_eq!(
+            SpecialTarget::from_name(b".POSIX"),
+            Some(SpecialTarget::Posix)
+        );
+        assert_eq!(
+            SpecialTarget::from_name(b".SECONDEXPANSION"),
+            Some(SpecialTarget::SecondExpansion)
+        );
+        assert_eq!(
+            SpecialTarget::from_name(b".ONESHELL"),
+            Some(SpecialTarget::OneShell)
+        );
+    }
+
+    #[test]
+    fn non_special_targets_are_rejected() {
+        // Other targets (including other dotted specials handled elsewhere),
+        // case variants, and the trailing-NUL form must all fail to classify.
+        for w in [
+            &b""[..],
+            b".POSIXX",
+            b".posix",
+            b".POSIX\0",
+            b".ONESHELLX",
+            b".PHONY",
+            b".SUFFIXES",
+            b"all",
+            b".",
+        ] {
+            assert_eq!(
+                SpecialTarget::from_name(w),
+                None,
+                "{:?} must not classify",
+                w
+            );
+        }
     }
 }
