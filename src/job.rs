@@ -345,7 +345,17 @@ fn good_stdin_used() -> bool {
 static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child;
 pub static mut unixy_shell: ::core::ffi::c_int = 1;
 pub static mut job_counter: ::core::ffi::c_ulong = 0;
-pub static mut jobserver_tokens: ::core::ffi::c_uint = 0;
+/// Count of jobserver tokens this make instance currently holds (the implicit
+/// token for its own slot plus one per running child). Stored in an atomic so
+/// its reads are plain safe operations; all access is single-threaded, so
+/// `Relaxed` preserves the original program order. `pub` because `main`'s
+/// `clean_jobserver` drains it on exit.
+pub static JOBSERVER_TOKENS: AtomicU32 = AtomicU32::new(0);
+
+/// Number of jobserver tokens currently held.
+pub fn jobserver_tokens() -> ::core::ffi::c_uint {
+    JOBSERVER_TOKENS.load(Ordering::Relaxed)
+}
 /// # Safety
 ///
 /// Safe port of make's `is_bourne_compatible_shell`: is the program named by
@@ -944,7 +954,7 @@ pub unsafe fn free_childbase(child: *mut childbase) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn free_child(child: *mut child) {
     crate::output::output_close(&raw mut (*child).output);
-    if jobserver_tokens == 0 {
+    if jobserver_tokens() == 0 {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
             INTSTR_LENGTH.wrapping_add(strlen(
@@ -964,7 +974,7 @@ pub unsafe fn free_child(child: *mut child) {
                 .name,
         );
     }
-    if jobserver_enabled() != 0 && jobserver_tokens > 1 {
+    if jobserver_enabled() != 0 && jobserver_tokens() > 1 {
         jobserver_release(1);
         if 0x4 as ::core::ffi::c_int & db_level != 0 {
             printf(
@@ -979,7 +989,7 @@ pub unsafe fn free_child(child: *mut child) {
             fflush(stdout);
         }
     }
-    jobserver_tokens = jobserver_tokens.wrapping_sub(1);
+    JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
     if handling_fatal_signal != 0 {
         return;
     }
@@ -1534,13 +1544,13 @@ pub unsafe fn new_job(file: *mut file) {
                 );
                 fflush(stdout);
             }
-            if jobserver_tokens == 0 {
+            if jobserver_tokens() == 0 {
                 break;
             }
             jobserver_pre_acquire();
             reap_children(0, 0);
             start_waiting_jobs();
-            if jobserver_tokens == 0 {
+            if jobserver_tokens() == 0 {
                 break;
             }
             if children.is_null() {
@@ -1569,7 +1579,7 @@ pub unsafe fn new_job(file: *mut file) {
             break;
         }
     }
-    jobserver_tokens = jobserver_tokens.wrapping_add(1);
+    JOBSERVER_TOKENS.fetch_add(1, Ordering::Relaxed);
     if 0x20 as ::core::ffi::c_int & db_level != 0 {
         // Owns the concatenated also-make name list when one is built below;
         // stays empty (no allocation) when the target has no also_make set.
@@ -3075,5 +3085,31 @@ mod job_slots_used_tests {
         assert_eq!(job_slots_used(), 1, "one slot freed");
 
         JOB_SLOTS_USED.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod jobserver_tokens_tests {
+    use super::{jobserver_tokens, JOBSERVER_TOKENS};
+    use std::sync::atomic::Ordering;
+
+    /// `jobserver_tokens()` reflects the `JOBSERVER_TOKENS` counter, and the
+    /// add/sub used by the acquire/free paths round-trip through it. Restores
+    /// the prior value so it stays isolated from other tests.
+    #[test]
+    fn jobserver_tokens_counts_round_trip() {
+        let saved = JOBSERVER_TOKENS.load(Ordering::Relaxed);
+
+        JOBSERVER_TOKENS.store(0, Ordering::Relaxed);
+        assert_eq!(jobserver_tokens(), 0);
+
+        JOBSERVER_TOKENS.fetch_add(1, Ordering::Relaxed);
+        JOBSERVER_TOKENS.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(jobserver_tokens(), 2, "two tokens held");
+
+        JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(jobserver_tokens(), 1, "one released");
+
+        JOBSERVER_TOKENS.store(saved, Ordering::Relaxed);
     }
 }

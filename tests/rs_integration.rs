@@ -438,6 +438,17 @@ fn job_slots_capped_parallel() {
     assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
 }
 
+#[test]
+fn jobserver_tokens_recycled() {
+    // -j 2 with six independent recipes forces make to acquire and release
+    // jobserver tokens repeatedly: it holds the implicit slot plus one token
+    // per running child, releasing each as a child is reaped (free_child) and
+    // re-acquiring for the next — exercising the jobserver_tokens add/sub now
+    // routed through the atomic. Output ordering varies, so compare the sorted
+    // line multiset; the token count must drain to zero (no INTERNAL error).
+    check_unordered("jobserver-tokens", "20_job_slots.mk", "all", &["-j", "2"]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
