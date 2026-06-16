@@ -406,6 +406,23 @@ fn next_token_off(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
+/// Whether `bytes` (a logical line) closes an *ignored* `define` body: its
+/// first token is exactly `endef` and only a comment or end-of-line follows.
+///
+/// Mirrors the check make's `eval` applies while skipping the body of a `define`
+/// it is ignoring (inside a false conditional): the body is consumed verbatim
+/// until a line that is a bare `endef`.
+pub fn closes_ignored_define(bytes: &[u8]) -> bool {
+    let word_end = end_of_token_off(bytes, 0);
+    if DefineKeyword::from_word(&bytes[..word_end]) != Some(DefineKeyword::Endef) {
+        return false;
+    }
+    map_set(
+        at(bytes, next_token_off(bytes, word_end)),
+        MAP_COMMENT | MAP_NUL,
+    )
+}
+
 /// The result of [`rule_probe`]: where a line's first token ends, where the
 /// text after it (its trailing blanks skipped) begins, and whether the line is
 /// a rule.
@@ -1613,6 +1630,20 @@ mod tests {
             cargs("\"a\" \"b\"  junk"),
             Some(("a".into(), "b".into(), true))
         );
+    }
+
+    #[test]
+    fn closes_ignored_define_cases() {
+        ensure_map();
+        let c = |s: &str| closes_ignored_define(s.as_bytes());
+        assert!(c("endef"));
+        assert!(c("endef   "));
+        assert!(c("endef # comment"));
+        // Not a bare endef.
+        assert!(!c("endef x"));
+        assert!(!c("define X"));
+        assert!(!c("endefx"));
+        assert!(!c(""));
     }
 
     #[test]
