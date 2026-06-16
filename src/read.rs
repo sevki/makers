@@ -12,8 +12,7 @@ use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use c2rust_bitfields;
 use libc::{
-    __errno_location, free, getenv, getlogin, printf, puts, strchr, strcmp, strcpy, strerror,
-    strpbrk,
+    __errno_location, free, getenv, getlogin, printf, puts, strchr, strcpy, strerror, strpbrk,
 };
 extern "C" {
     pub type dirent;
@@ -47,11 +46,6 @@ extern "C" {
         __c: ::core::ffi::c_int,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn strncmp(
-        __s1: *const ::core::ffi::c_char,
-        __s2: *const ::core::ffi::c_char,
-        __n: size_t,
-    ) -> ::core::ffi::c_int;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn glob(
         __pattern: *const ::core::ffi::c_char,
@@ -2284,6 +2278,21 @@ unsafe extern "C" fn record_target_var(
         filenames = nextf;
     }
 }
+/// The name of a dependency as a byte slice: the `name` field if set, else the
+/// linked `file`'s name. Used by the suffix-rule check in [`check_specials`] to
+/// compare names as slices rather than via raw `c_char` pointers.
+///
+/// # Safety
+/// `dp` must be a valid `dep` whose `name`/`file` pointers are valid NUL-
+/// terminated C strings; the returned slice borrows that C string.
+unsafe fn dep_name_bytes<'a>(dp: *mut dep) -> &'a [u8] {
+    ::std::ffi::CStr::from_ptr(if !(*dp).name.is_null() {
+        (*dp).name
+    } else {
+        (*(*dp).file).name
+    })
+    .to_bytes()
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -2375,79 +2384,31 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
                 break;
             }
             if !(*nm as ::core::ffi::c_int == '.' as i32 && strchr(nm, '/' as i32).is_null()) {
+                let nm_bytes = ::std::ffi::CStr::from_ptr(nm).to_bytes();
                 d = (*suffix_file).deps;
                 while !d.is_null() {
-                    let mut d2: *mut dep;
-                    if *(if !(*d).name.is_null() {
-                        (*d).name
-                    } else {
-                        (*(*d).file).name
-                    }) as ::core::ffi::c_int
-                        != '.' as i32
-                        && (*nm as ::core::ffi::c_int
-                            == *(if !(*d).name.is_null() {
-                                (*d).name
-                            } else {
-                                (*(*d).file).name
-                            }) as ::core::ffi::c_int
-                            && (*nm as ::core::ffi::c_int == 0
-                                || strcmp(
-                                    nm.offset(1 as ::core::ffi::c_int as isize),
-                                    (if !(*d).name.is_null() {
-                                        (*d).name
-                                    } else {
-                                        (*(*d).file).name
-                                    })
-                                    .offset(1),
-                                ) == 0))
-                    {
+                    // A target is a suffix rule (and so must not become the
+                    // default goal) when its name is itself a known suffix, or
+                    // the concatenation of two known suffixes (e.g. `.c` + `.o`
+                    // => `.c.o`). Compare names as byte slices via CStr rather
+                    // than the c2rust first-char + strcmp / strncmp idioms.
+                    let dname = dep_name_bytes(d);
+                    if dname.first() != Some(&b'.') && nm_bytes == dname {
                         reject = 1;
                         break;
-                    } else {
-                        d2 = (*suffix_file).deps;
-                        while !d2.is_null() {
-                            let l: size_t = strlen(if !(*d2).name.is_null() {
-                                (*d2).name
-                            } else {
-                                (*(*d2).file).name
-                            }) as size_t;
-                            if strncmp(
-                                nm,
-                                if !(*d2).name.is_null() {
-                                    (*d2).name
-                                } else {
-                                    (*(*d2).file).name
-                                },
-                                l as size_t,
-                            ) == 0
-                                && *nm.offset(l as isize) as ::core::ffi::c_int
-                                    == *(if !(*d).name.is_null() {
-                                        (*d).name
-                                    } else {
-                                        (*(*d).file).name
-                                    }) as ::core::ffi::c_int
-                                && (*nm.offset(l as isize) as ::core::ffi::c_int == 0
-                                    || strcmp(
-                                        nm.offset(l as isize)
-                                            .offset(1 as ::core::ffi::c_int as isize),
-                                        (if !(*d).name.is_null() {
-                                            (*d).name
-                                        } else {
-                                            (*(*d).file).name
-                                        })
-                                        .offset(1),
-                                    ) == 0)
-                            {
-                                reject = 1;
-                                break;
-                            }
-                            d2 = (*d2).next;
-                        }
-                        if reject != 0 {
+                    }
+                    let mut d2: *mut dep = (*suffix_file).deps;
+                    while !d2.is_null() {
+                        if nm_bytes.strip_prefix(dep_name_bytes(d2)) == Some(dname) {
+                            reject = 1;
                             break;
                         }
-                        d = (*d).next;
+                        d2 = (*d2).next;
                     }
+                    if reject != 0 {
+                        break;
+                    }
+                    d = (*d).next;
                 }
                 if reject == 0 {
                     define_variable_in_set(
