@@ -234,6 +234,40 @@ impl DefineKeyword {
     }
 }
 
+/// The coarse kind of a logical line, decided from its first byte before any
+/// further parsing — the very top of make's `eval` dispatch.
+///
+/// This is the first, purely-leading-byte slice of a whole-line classifier: a
+/// recipe line begins with the recipe prefix (normally a tab, overridable via
+/// `.RECIPEPREFIX`); an empty line has nothing on it; everything else is a line
+/// the reader must parse further (assignment, directive, rule, …). It is a pure
+/// function of the first byte, so it lives in the AST layer rather than as raw
+/// byte comparisons in the reader.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LineKind {
+    /// An empty line (the first byte is the NUL terminator).
+    Blank,
+    /// A recipe line (begins with the recipe prefix character).
+    Recipe,
+    /// Any other line — parsed further by the reader.
+    Other,
+}
+
+impl LineKind {
+    /// Classify a logical line from its `first_byte` and the active recipe
+    /// `prefix` (`cmd_prefix`, normally `\t`). Mirrors `eval`'s opening checks:
+    /// the empty-line test comes first, then the recipe-prefix test.
+    pub fn classify(first_byte: u8, prefix: u8) -> LineKind {
+        if first_byte == 0 {
+            LineKind::Blank
+        } else if first_byte == prefix {
+            LineKind::Recipe
+        } else {
+            LineKind::Other
+        }
+    }
+}
+
 /// `stopchar_map` class bits for byte `b`.
 fn flags(b: u8) -> i32 {
     stopchar_map()[b as usize] as i32
@@ -786,5 +820,26 @@ mod tests {
                 w
             );
         }
+    }
+
+    #[test]
+    fn line_kind_classifies_leading_byte() {
+        // With the default tab prefix: NUL is blank, a leading tab is a recipe,
+        // anything else parses further.
+        assert_eq!(LineKind::classify(0, b'\t'), LineKind::Blank);
+        assert_eq!(LineKind::classify(b'\t', b'\t'), LineKind::Recipe);
+        assert_eq!(LineKind::classify(b'a', b'\t'), LineKind::Other);
+        assert_eq!(LineKind::classify(b' ', b'\t'), LineKind::Other);
+        assert_eq!(LineKind::classify(b'#', b'\t'), LineKind::Other);
+    }
+
+    #[test]
+    fn line_kind_honors_recipe_prefix_override() {
+        // `.RECIPEPREFIX` can change the recipe character: with `>` as the
+        // prefix, a leading `>` is a recipe and a leading tab is just `Other`.
+        assert_eq!(LineKind::classify(b'>', b'>'), LineKind::Recipe);
+        assert_eq!(LineKind::classify(b'\t', b'>'), LineKind::Other);
+        // The empty-line test still wins regardless of the prefix.
+        assert_eq!(LineKind::classify(0, b'>'), LineKind::Blank);
     }
 }

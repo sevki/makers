@@ -237,6 +237,15 @@ fn variable_modifiers() {
 }
 
 #[test]
+fn recipe_prefix_override() {
+    // Exercises eval's leading-byte line classification (LineKind) with a
+    // custom `.RECIPEPREFIX` of `>`: recipe lines begin with `>` instead of a
+    // tab, blank lines are skipped, and other lines parse as normal syntax.
+    // Output is deterministic and byte-checked against the C oracle.
+    check("recipe-prefix", "22_recipeprefix.mk", "all", &[]);
+}
+
+#[test]
 fn variable_modifiers_override_from_cmdline() {
     // `override OVR = …` keeps the makefile value even when OVR is set on the
     // command line.
