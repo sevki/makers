@@ -26,7 +26,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -510,7 +510,17 @@ static mut warn_flags: *mut stringlist = ::core::ptr::null::<stringlist>() as *m
 static mut warn_undefined_variables_flag: ::core::ffi::c_int = 0;
 static mut always_make_set: ::core::ffi::c_int = 0;
 pub static mut always_make_flag: ::core::ffi::c_int = 0;
-pub static mut rebuilding_makefiles: ::core::ffi::c_int = 0;
+/// Set while `update_goal_chain` is remaking the makefiles themselves (the
+/// first goal-chain pass), so the remake logic can treat makefile targets
+/// specially. Stored in an atomic so its reads are plain safe operations; all
+/// access is single-threaded, so `Relaxed` preserves the original program
+/// order.
+static REBUILDING_MAKEFILES: AtomicI32 = AtomicI32::new(0);
+
+/// Whether make is currently remaking the makefiles themselves.
+pub fn rebuilding_makefiles() -> ::core::ffi::c_int {
+    REBUILDING_MAKEFILES.load(Ordering::Relaxed)
+}
 pub static mut shell_var: variable = variable {
     name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -1988,9 +1998,9 @@ unsafe fn main_0(
         if 0x100 as ::core::ffi::c_int & db_level == 0 {
             db_level = DB_NONE;
         }
-        rebuilding_makefiles = 1;
+        REBUILDING_MAKEFILES.store(1, Ordering::Relaxed);
         status = update_goal_chain(read_files) as update_status;
-        rebuilding_makefiles = 0;
+        REBUILDING_MAKEFILES.store(0, Ordering::Relaxed);
         db_level = orig_db_level;
         while !skipped_makefiles.is_null() {
             let d_1: *mut goaldep = skipped_makefiles;
@@ -2712,7 +2722,7 @@ pub unsafe fn reset_makeflags(origin: variable_origin) {
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
     });
     disable_builtins();
-    define_makeflags(rebuilding_makefiles);
+    define_makeflags(rebuilding_makefiles());
 }
 unsafe extern "C" fn decode_switches(
     argc: ::core::ffi::c_int,
@@ -4591,5 +4601,27 @@ mod output_sync_tests {
         assert_eq!(classify_output_sync(b"nonsense"), None);
         assert_eq!(classify_output_sync(b"NONE"), None); // case-sensitive, like make
         assert_eq!(classify_output_sync(b"none "), None); // exact match only
+    }
+}
+
+#[cfg(test)]
+mod rebuilding_makefiles_tests {
+    use super::{rebuilding_makefiles, REBUILDING_MAKEFILES};
+    use std::sync::atomic::Ordering;
+
+    /// `rebuilding_makefiles()` reflects the `REBUILDING_MAKEFILES` flag set
+    /// around the makefile-remaking goal-chain pass. Restores the prior value
+    /// so it stays isolated from other tests.
+    #[test]
+    fn rebuilding_makefiles_tracks_atomic() {
+        let saved = REBUILDING_MAKEFILES.load(Ordering::Relaxed);
+
+        REBUILDING_MAKEFILES.store(0, Ordering::Relaxed);
+        assert_eq!(rebuilding_makefiles(), 0, "not remaking makefiles");
+
+        REBUILDING_MAKEFILES.store(1, Ordering::Relaxed);
+        assert_eq!(rebuilding_makefiles(), 1, "remaking makefiles");
+
+        REBUILDING_MAKEFILES.store(saved, Ordering::Relaxed);
     }
 }

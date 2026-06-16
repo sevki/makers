@@ -207,10 +207,10 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     let n: ::core::ffi::c_int = just_print_flag;
     let mut status: update_status = us_none;
     let depth: ::core::ffi::c_uint =
-        (if rebuilding_makefiles != 0 { 1 } else { 0 }) as ::core::ffi::c_uint;
+        (if rebuilding_makefiles() != 0 { 1 } else { 0 }) as ::core::ffi::c_uint;
     let goals_orig: *mut dep = copy_dep_chain(goaldeps as *mut dep);
     let mut goals: *mut dep = goals_orig;
-    goal_list = if rebuilding_makefiles != 0 {
+    goal_list = if rebuilding_makefiles() != 0 {
         goaldeps
     } else {
         ::core::ptr::null_mut::<goaldep>()
@@ -268,7 +268,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                 while !fref(file).renamed.is_null() {
                     file = fref(file).renamed;
                 }
-                if rebuilding_makefiles != 0 {
+                if rebuilding_makefiles() != 0 {
                     if fref(file).cmd_target() != 0 {
                         touch_flag = t;
                         question_flag = q;
@@ -318,10 +318,10 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                             status = fref(file).update_status() as update_status;
                             stop = (question_flag != 0
                                 && keep_going_flag == 0
-                                && rebuilding_makefiles == 0)
+                                && rebuilding_makefiles() == 0)
                                 as ::core::ffi::c_int;
                         } else {
-                            let mtime: uintmax_t = if rebuilding_makefiles != 0 {
+                            let mtime: uintmax_t = if rebuilding_makefiles() != 0 {
                                 if fref(file).last_mtime == UNKNOWN_MTIME as uintmax_t {
                                     f_mtime(file, 0)
                                 } else {
@@ -338,12 +338,12 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                             if fref(file).updated() as ::core::ffi::c_int != 0
                                 && mtime != fref(file).mtime_before_update
                             {
-                                if rebuilding_makefiles == 0
+                                if rebuilding_makefiles() == 0
                                     || just_print_flag == 0 && question_flag == 0
                                 {
                                     status = us_success;
                                 }
-                                if rebuilding_makefiles != 0
+                                if rebuilding_makefiles() != 0
                                     && fref(file).dontcare() as ::core::ffi::c_int != 0
                                 {
                                     stop = 1;
@@ -365,7 +365,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
             }
             let g_changed = g.as_ref().map_or(0, |gd| gd.changed());
             if stop != 0 || all_updated != 0 {
-                if rebuilding_makefiles == 0
+                if rebuilding_makefiles() == 0
                     && fref(file).update_status() as ::core::ffi::c_int
                         == us_success as ::core::ffi::c_int
                     && g_changed == 0
@@ -404,7 +404,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
         }
     }
     free_dep_chain(goals_orig);
-    if rebuilding_makefiles != 0 {
+    if rebuilding_makefiles() != 0 {
         touch_flag = t;
         question_flag = q;
         just_print_flag = n;
@@ -893,7 +893,7 @@ unsafe extern "C" fn update_file_1(
             } else {
                 (*(*d).file).parent = file;
                 maybe_make = must_make;
-                if rebuilding_makefiles != 0 {
+                if rebuilding_makefiles() != 0 {
                     dontcare = (*(*d).file).dontcare() as ::core::ffi::c_int;
                     (*(*d).file).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
                 }
@@ -901,7 +901,7 @@ unsafe extern "C" fn update_file_1(
                 if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new;
                 }
-                if rebuilding_makefiles != 0 {
+                if rebuilding_makefiles() != 0 {
                     (*(*d).file)
                         .set_dontcare(dontcare as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 }
@@ -969,7 +969,7 @@ unsafe extern "C" fn update_file_1(
                     (*d).file = (*(*d).file).renamed;
                 }
                 (*(*d).file).parent = file;
-                if rebuilding_makefiles != 0 {
+                if rebuilding_makefiles() != 0 {
                     dontcare_0 = (*(*d).file).dontcare() as ::core::ffi::c_int;
                     (*(*d).file).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
                 }
@@ -978,7 +978,7 @@ unsafe extern "C" fn update_file_1(
                 if new_0 as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new_0;
                 }
-                if rebuilding_makefiles != 0 {
+                if rebuilding_makefiles() != 0 {
                     (*(*d).file)
                         .set_dontcare(dontcare_0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 }
@@ -1734,7 +1734,7 @@ pub unsafe fn remake_file(file: *mut file) {
         } else if (*file).is_target() != 0 {
             (*file).set_update_status(us_success as update_status);
         } else {
-            if rebuilding_makefiles == 0 || (*file).dontcare() == 0 {
+            if rebuilding_makefiles() == 0 || (*file).dontcare() == 0 {
                 complain(file);
             }
             (*file).set_update_status(us_failed as update_status);
