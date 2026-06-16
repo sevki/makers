@@ -939,6 +939,17 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                     // this dispatch (export/unexport, vpath, include-family,
                     // load-family).
                     let dword = ::core::slice::from_raw_parts(p as *const u8, wlen);
+                    // The whole-line classification through the typed AST layer,
+                    // used to recognise the file/path directive arms below as a
+                    // single interned line node. `export`/`unexport` keep their
+                    // dedicated bare-word check (make recognises them before any
+                    // assignment parsing, so `export = 1` exports rather than
+                    // assigning — a distinction `classify_line` deliberately
+                    // leaves to the modifier scan).
+                    let line_class = crate::parser::classify_line(
+                        ::std::ffi::CStr::from_ptr(p).to_bytes(),
+                        false,
+                    );
                     if matches!(
                         crate::parser::VarModifier::from_word(dword),
                         Some(
@@ -1028,9 +1039,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             }
                             free(ap as *mut ::core::ffi::c_void);
                         }
-                    } else if crate::parser::FileDirective::from_word(dword)
-                        == Some(crate::parser::FileDirective::Vpath)
-                    {
+                    } else if matches!(
+                        line_class,
+                        crate::parser::LineClass::File(crate::parser::FileDirective::Vpath)
+                    ) {
                         let mut cp_0: *const ::core::ffi::c_char;
                         let vpat: *mut ::core::ffi::c_char;
                         let mut l_0: size_t = 0;
@@ -1080,8 +1092,8 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         construct_vpath_list(vpat, p);
                         free(vpat as *mut ::core::ffi::c_void);
                     } else if matches!(
-                        crate::parser::FileDirective::from_word(dword),
-                        Some(
+                        line_class,
+                        crate::parser::LineClass::File(
                             crate::parser::FileDirective::Include
                                 | crate::parser::FileDirective::IncludeOpt
                         )
@@ -1195,8 +1207,8 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             restore_conditionals(save);
                         }
                     } else if matches!(
-                        crate::parser::FileDirective::from_word(dword),
-                        Some(
+                        line_class,
+                        crate::parser::LineClass::File(
                             crate::parser::FileDirective::Load
                                 | crate::parser::FileDirective::LoadOpt
                         )

@@ -314,6 +314,14 @@ fn file_directives_vpath_and_optional_include() {
 }
 
 #[test]
+fn file_directives_with_export_arm() {
+    // The file-directive arms classify through the interned whole-line node
+    // while `export` keeps its bare-word arm: stacking them must stay identical
+    // to the C oracle.
+    check("filedir-export", "30_filedir_export.mk", "all", &[]);
+}
+
+#[test]
 fn strict_include_of_missing_file_fails() {
     // Strict `include` of a missing file must fail identically to the C oracle
     // (exit code and stderr).

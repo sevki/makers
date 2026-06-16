@@ -299,6 +299,50 @@ impl SpecialTarget {
     }
 }
 
+/// The typed classification of a whole logical (non-recipe) line: which of
+/// make's four `eval` dispatch arms the line takes. It is composed from the
+/// leading-word classifiers in make's `eval` order — conditional directives are
+/// recognised first, then variable definitions (with their stackable leading
+/// modifiers), then file/path directives, and finally everything else (a rule or
+/// other plain line).
+///
+/// This unifies the per-keyword classifiers ([`Directive`], [`VarModifier`],
+/// [`FileDirective`]) and the modifier/assignment scan into a single pure entry
+/// point, so the reader can classify a line through one typed AST call rather
+/// than re-deriving the dispatch inline. The variable-definition variant is
+/// interned through salsa (see [`classify_line`]); the others are small `Copy`
+/// enums matched directly, as interning them would only add lock traffic on a
+/// hot path.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LineClass {
+    /// A conditional directive line (`ifdef`/`ifeq`/`else`/`endif`/…).
+    Conditional(Directive),
+    /// A variable definition, carrying its leading modifiers and the offset of
+    /// the definition tail.
+    VarDef(VarLine),
+    /// A file/path directive line (`include`/`vpath`/`load`/…).
+    File(FileDirective),
+    /// Anything else — a rule or other plain line.
+    Plain,
+}
+
+/// The variable-definition payload of [`LineClass::VarDef`]: the leading
+/// modifiers consumed, whether any modifier was consumed, whether the remainder
+/// is an assignment, and the offset (into the original line) where the remainder
+/// begins. This is exactly the pure-data result of [`scan_var_modifiers`], lifted
+/// into the whole-line classification.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct VarLine {
+    /// The modifier flags accumulated from the leading keywords.
+    pub mods: VarModifiers,
+    /// At least one modifier keyword was consumed.
+    pub had_modifier: bool,
+    /// The text after the modifiers is a variable definition (`assign_v`).
+    pub assign: bool,
+    /// Offset into the original line where the definition tail begins.
+    pub rest: usize,
+}
+
 /// Which export state a leading `export`/`unexport` modifier requests.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ExportMode {
@@ -653,6 +697,27 @@ struct AssignmentNode<'db> {
     value_start: usize,
 }
 
+/// A variable-definition line node interned in the parser database. Like
+/// [`AssignmentNode`], interning is keyed by the node's pure-data fields (the
+/// modifier flags and the offset of the definition tail) rather than the source
+/// bytes, so the database holds at most one entry per distinct definition shape
+/// and never retains a per-line byte copy. Only lines that are genuine variable
+/// definitions (a leading modifier was consumed, or the tail parses as an
+/// assignment) are interned — the same "intern only real matches" discipline
+/// [`assignment_ast`] applies, keeping conditionals, rules and plain lines out of
+/// the database.
+#[salsa::interned]
+struct VarDefNode<'db> {
+    export: Option<ExportMode>,
+    over: bool,
+    private: bool,
+    define: bool,
+    undefine: bool,
+    had_modifier: bool,
+    assign: bool,
+    rest: usize,
+}
+
 static DB: OnceLock<Mutex<ParserDb>> = OnceLock::new();
 
 fn db() -> &'static Mutex<ParserDb> {
@@ -689,6 +754,62 @@ pub fn assignment_ast(bytes: &[u8]) -> Option<Assignment> {
         op_end: node.op_end(&*db),
         value_start: node.value_start(&*db),
     })
+}
+
+/// Classify a whole logical (non-recipe) line into its [`LineClass`], mirroring
+/// the dispatch order at the top of make's `eval`: a conditional directive is
+/// recognised first (by its leading word), then a file/path directive (also by
+/// leading word — `include FOO = 1` is an include of the file `FOO = 1`, not an
+/// assignment, exactly as make treats it), and only then does the line fall back
+/// to the modifier/assignment scan. Anything that is neither a keyword line nor a
+/// definition is [`LineClass::Plain`] (a rule or other line the reader handles
+/// elsewhere).
+///
+/// Only the variable-definition variant carries an offset payload, so it is the
+/// only one interned (through [`VarDefNode`]); the keyword variants are small
+/// `Copy` enums returned directly, the same "intern only the node with real
+/// variable-length state" discipline as [`assignment_ast`].
+///
+/// `targvar` is true in a target-specific variable context, where `define` /
+/// `undefine` are plain names rather than modifiers (see [`scan_var_modifiers`]).
+pub fn classify_line(bytes: &[u8], targvar: bool) -> LineClass {
+    let i = next_token_off(bytes, 0);
+    let w_end = end_of_token_off(bytes, i);
+    let word = &bytes[i..w_end];
+    if let Some(d) = Directive::from_word(word) {
+        return LineClass::Conditional(d);
+    }
+    if let Some(f) = FileDirective::from_word(word) {
+        return LineClass::File(f);
+    }
+    let scan = scan_var_modifiers(bytes, targvar);
+    if scan.assign || scan.had_modifier {
+        let db = db().lock().unwrap_or_else(|e| e.into_inner());
+        let node = VarDefNode::new(
+            &*db,
+            scan.mods.export,
+            scan.mods.over,
+            scan.mods.private,
+            scan.mods.define,
+            scan.mods.undefine,
+            scan.had_modifier,
+            scan.assign,
+            scan.rest,
+        );
+        return LineClass::VarDef(VarLine {
+            mods: VarModifiers {
+                export: node.export(&*db),
+                over: node.over(&*db),
+                private: node.private(&*db),
+                define: node.define(&*db),
+                undefine: node.undefine(&*db),
+            },
+            had_modifier: node.had_modifier(&*db),
+            assign: node.assign(&*db),
+            rest: node.rest(&*db),
+        });
+    }
+    LineClass::Plain
 }
 
 #[cfg(test)]
@@ -1101,6 +1222,115 @@ mod tests {
         assert!(r.mods.over);
         assert!(!r.assign);
         assert_eq!(r.rest, 0);
+    }
+
+    fn classify(s: &str) -> LineClass {
+        ensure_map();
+        classify_line(s.as_bytes(), false)
+    }
+
+    #[test]
+    fn classify_conditional_directive() {
+        assert_eq!(
+            classify("ifdef FOO"),
+            LineClass::Conditional(Directive::Ifdef)
+        );
+        assert_eq!(
+            classify("ifeq (a,b)"),
+            LineClass::Conditional(Directive::Ifeq)
+        );
+        assert_eq!(classify("endif"), LineClass::Conditional(Directive::Endif));
+        assert_eq!(
+            classify("  else  "),
+            LineClass::Conditional(Directive::Else)
+        );
+    }
+
+    #[test]
+    fn classify_file_directives() {
+        assert_eq!(
+            classify("vpath %.c src"),
+            LineClass::File(FileDirective::Vpath)
+        );
+        assert_eq!(
+            classify("include foo.mk"),
+            LineClass::File(FileDirective::Include)
+        );
+        assert_eq!(
+            classify("-include foo.mk"),
+            LineClass::File(FileDirective::IncludeOpt)
+        );
+        assert_eq!(
+            classify("sinclude foo.mk"),
+            LineClass::File(FileDirective::IncludeOpt)
+        );
+        assert_eq!(
+            classify("load plugin.so"),
+            LineClass::File(FileDirective::Load)
+        );
+        assert_eq!(
+            classify("-load plugin.so"),
+            LineClass::File(FileDirective::LoadOpt)
+        );
+    }
+
+    #[test]
+    fn classify_file_directive_beats_assignment() {
+        // `include FOO = 1` is an include of the file `FOO = 1`, recognised by
+        // its leading word before any assignment parsing — exactly make's order.
+        assert_eq!(
+            classify("include FOO = 1"),
+            LineClass::File(FileDirective::Include)
+        );
+    }
+
+    #[test]
+    fn classify_var_definitions() {
+        match classify("FOO = 1") {
+            LineClass::VarDef(vl) => {
+                assert_eq!(vl.mods, VarModifiers::default());
+                assert!(vl.assign && !vl.had_modifier);
+                assert_eq!(vl.rest, 0);
+            }
+            other => panic!("expected VarDef, got {other:?}"),
+        }
+        match classify("export FOO = 1") {
+            LineClass::VarDef(vl) => {
+                assert_eq!(vl.mods.export, Some(ExportMode::Export));
+                assert!(vl.assign && vl.had_modifier);
+                assert_eq!(vl.rest, "export ".len());
+            }
+            other => panic!("expected VarDef, got {other:?}"),
+        }
+        // `export = 1` assigns the variable named `export`; still a VarDef, but
+        // with no export modifier (the bare-word export arm in `eval` is what
+        // treats `export` as a directive — `classify_line` leaves it to the scan).
+        match classify("export = 1") {
+            LineClass::VarDef(vl) => {
+                assert_eq!(vl.mods.export, None);
+                assert!(vl.assign && !vl.had_modifier);
+            }
+            other => panic!("expected VarDef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_plain_lines() {
+        assert_eq!(classify("foo: bar"), LineClass::Plain);
+        assert_eq!(classify("\tnot reached here"), LineClass::Plain);
+        assert_eq!(classify(""), LineClass::Plain);
+    }
+
+    #[test]
+    fn classify_modifier_led_rule_is_vardef() {
+        // A modifier followed by a rule keeps the modifier flag (so the reader
+        // still emits make's TAB warning) but is not an assignment.
+        match classify("override foo: bar") {
+            LineClass::VarDef(vl) => {
+                assert!(vl.mods.over && vl.had_modifier && !vl.assign);
+            }
+            other => panic!("expected VarDef, got {other:?}"),
+        }
     }
 
     #[test]
