@@ -279,7 +279,7 @@ pub unsafe fn collapse_continuations(line: *mut c_char) {
     // Include the existing NUL slot so the new terminator is written by
     // indexing rather than raw pointer arithmetic.
     let buf = ::core::slice::from_raw_parts_mut(line as *mut u8, len + 1);
-    let new_len = collapse_continuations_bytes(&mut buf[..len], posix_pedantic() != 0, |c| {
+    let new_len = collapse_continuations_bytes(&mut buf[..len], posix_pedantic(), |c| {
         stop_set(c as c_char, MAP_BLANK)
     });
     buf[new_len] = 0;

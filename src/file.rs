@@ -11,7 +11,7 @@ use libc::{
     __errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink,
 };
 use std::ffi::CStr;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 extern "C" {
     static mut stdout: *mut FILE;
@@ -346,11 +346,11 @@ pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
 /// dependency snapshot is in place. Stored in an atomic so its reads are plain
 /// safe operations; all access is single-threaded, so `Relaxed` preserves the
 /// original program order.
-pub static SNAPPED_DEPS: AtomicI32 = AtomicI32::new(0);
+pub static SNAPPED_DEPS: AtomicBool = AtomicBool::new(false);
 
 /// Whether `snap_deps` has run.
 pub fn snapped_deps() -> bool {
-    SNAPPED_DEPS.load(Ordering::Relaxed) != 0
+    SNAPPED_DEPS.load(Ordering::Relaxed)
 }
 /// # Safety
 ///
@@ -408,10 +408,10 @@ static REHASHED_FILES: Mutex<Vec<RehashedFile>> = Mutex::new(Vec::new());
 /// target as secondary. Stored in an atomic so its reads are plain safe
 /// operations; all access is single-threaded, so `Relaxed` preserves the
 /// original program order.
-static ALL_SECONDARY: AtomicI32 = AtomicI32::new(0);
+static ALL_SECONDARY: AtomicBool = AtomicBool::new(false);
 
 fn all_secondary() -> bool {
-    ALL_SECONDARY.load(Ordering::Relaxed) != 0
+    ALL_SECONDARY.load(Ordering::Relaxed)
 }
 
 fn stop_set_byte(c: u8, mask: ::core::ffi::c_int) -> bool {
@@ -1092,7 +1092,7 @@ pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
 pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d: *mut dep;
-    if second_expansion() == 0 {
+    if !second_expansion() {
         (*f).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     if all_secondary() && (*f).notintermediate() == 0 {
@@ -1107,7 +1107,7 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
             (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
             file_vars.set,
         ));
-        if second_expansion() != 0 {
+        if second_expansion() {
             d = prereqs;
             while !d.is_null() {
                 if (*d).name.is_null() {
@@ -1168,7 +1168,7 @@ pub unsafe fn snap_deps() {
     let mut f: *mut file;
     let mut f2: *mut file;
     let mut d: *mut dep;
-    SNAPPED_DEPS.store(1, Ordering::Relaxed);
+    SNAPPED_DEPS.store(true, Ordering::Relaxed);
     f = lookup_file(b".PRECIOUS\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         d = (*f).deps;
@@ -1278,7 +1278,7 @@ pub unsafe fn snap_deps() {
                 d = (*d).next;
             }
         } else {
-            ALL_SECONDARY.store(1, Ordering::Relaxed);
+            ALL_SECONDARY.store(true, Ordering::Relaxed);
         }
         f = (*f).prev;
     }
@@ -2093,10 +2093,10 @@ mod tests {
     fn snapped_deps_tracks_atomic() {
         let saved = SNAPPED_DEPS.load(Ordering::Relaxed);
 
-        SNAPPED_DEPS.store(0, Ordering::Relaxed);
+        SNAPPED_DEPS.store(false, Ordering::Relaxed);
         assert!(!snapped_deps(), "not yet snapped");
 
-        SNAPPED_DEPS.store(1, Ordering::Relaxed);
+        SNAPPED_DEPS.store(true, Ordering::Relaxed);
         assert!(snapped_deps(), "snapped");
 
         SNAPPED_DEPS.store(saved, Ordering::Relaxed);
@@ -2133,10 +2133,10 @@ mod tests {
     fn all_secondary_tracks_flag() {
         let saved = ALL_SECONDARY.load(Ordering::Relaxed);
 
-        ALL_SECONDARY.store(0, Ordering::Relaxed);
+        ALL_SECONDARY.store(false, Ordering::Relaxed);
         assert!(!all_secondary(), "zero is unset");
 
-        ALL_SECONDARY.store(1, Ordering::Relaxed);
+        ALL_SECONDARY.store(true, Ordering::Relaxed);
         assert!(all_secondary(), "non-zero is set");
 
         ALL_SECONDARY.store(saved, Ordering::Relaxed);

@@ -26,7 +26,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -515,10 +515,10 @@ pub static mut always_make_flag: ::core::ffi::c_int = 0;
 /// specially. Stored in an atomic so its reads are plain safe operations; all
 /// access is single-threaded, so `Relaxed` preserves the original program
 /// order.
-static REBUILDING_MAKEFILES: AtomicI32 = AtomicI32::new(0);
+static REBUILDING_MAKEFILES: AtomicBool = AtomicBool::new(false);
 
 /// Whether make is currently remaking the makefiles themselves.
-pub fn rebuilding_makefiles() -> ::core::ffi::c_int {
+pub fn rebuilding_makefiles() -> bool {
     REBUILDING_MAKEFILES.load(Ordering::Relaxed)
 }
 pub static mut shell_var: variable = variable {
@@ -695,20 +695,20 @@ pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut fil
 /// plain safe operations; all access is single-threaded, so `Relaxed`
 /// preserves the original program order. `pub` because the lone write is in
 /// `read.rs`'s special-target handler.
-pub static POSIX_PEDANTIC: AtomicI32 = AtomicI32::new(0);
+pub static POSIX_PEDANTIC: AtomicBool = AtomicBool::new(false);
 
 /// Whether `.POSIX` pedantic mode is in effect.
-pub fn posix_pedantic() -> ::core::ffi::c_int {
+pub fn posix_pedantic() -> bool {
     POSIX_PEDANTIC.load(Ordering::Relaxed)
 }
 /// Set once the `.SECONDEXPANSION` special target has been seen, enabling a
 /// second expansion pass over prerequisite lists. Stored in an atomic so its
 /// reads are plain safe operations; all access is single-threaded, so
 /// `Relaxed` preserves the original program order.
-pub static SECOND_EXPANSION: AtomicI32 = AtomicI32::new(0);
+pub static SECOND_EXPANSION: AtomicBool = AtomicBool::new(false);
 
 /// Whether `.SECONDEXPANSION` is in effect.
-pub fn second_expansion() -> ::core::ffi::c_int {
+pub fn second_expansion() -> bool {
     SECOND_EXPANSION.load(Ordering::Relaxed)
 }
 pub static mut one_shell: ::core::ffi::c_int = 0;
@@ -2017,9 +2017,9 @@ unsafe fn main_0(
         if 0x100 as ::core::ffi::c_int & db_level == 0 {
             db_level = DB_NONE;
         }
-        REBUILDING_MAKEFILES.store(1, Ordering::Relaxed);
+        REBUILDING_MAKEFILES.store(true, Ordering::Relaxed);
         status = update_goal_chain(read_files) as update_status;
-        REBUILDING_MAKEFILES.store(0, Ordering::Relaxed);
+        REBUILDING_MAKEFILES.store(false, Ordering::Relaxed);
         db_level = orig_db_level;
         while !skipped_makefiles.is_null() {
             let d_1: *mut goaldep = skipped_makefiles;
@@ -2741,7 +2741,7 @@ pub unsafe fn reset_makeflags(origin: variable_origin) {
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
     });
     disable_builtins();
-    define_makeflags(rebuilding_makefiles());
+    define_makeflags(rebuilding_makefiles() as ::core::ffi::c_int);
 }
 unsafe extern "C" fn decode_switches(
     argc: ::core::ffi::c_int,
@@ -3584,7 +3584,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
             (::core::mem::size_of::<[::core::ffi::c_char; 21]>() as size_t).wrapping_sub(1),
         );
     }
-    let r: *const ::core::ffi::c_char = if posix_pedantic() != 0 {
+    let r: *const ::core::ffi::c_char = if posix_pedantic() {
         &raw const posixref as *const ::core::ffi::c_char
     } else {
         &raw const ref_0 as *const ::core::ffi::c_char
@@ -4635,11 +4635,11 @@ mod rebuilding_makefiles_tests {
     fn rebuilding_makefiles_tracks_atomic() {
         let saved = REBUILDING_MAKEFILES.load(Ordering::Relaxed);
 
-        REBUILDING_MAKEFILES.store(0, Ordering::Relaxed);
-        assert_eq!(rebuilding_makefiles(), 0, "not remaking makefiles");
+        REBUILDING_MAKEFILES.store(false, Ordering::Relaxed);
+        assert!(!rebuilding_makefiles(), "not remaking makefiles");
 
-        REBUILDING_MAKEFILES.store(1, Ordering::Relaxed);
-        assert_eq!(rebuilding_makefiles(), 1, "remaking makefiles");
+        REBUILDING_MAKEFILES.store(true, Ordering::Relaxed);
+        assert!(rebuilding_makefiles(), "remaking makefiles");
 
         REBUILDING_MAKEFILES.store(saved, Ordering::Relaxed);
     }
@@ -4657,11 +4657,11 @@ mod second_expansion_tests {
     fn second_expansion_tracks_atomic() {
         let saved = SECOND_EXPANSION.load(Ordering::Relaxed);
 
-        SECOND_EXPANSION.store(0, Ordering::Relaxed);
-        assert_eq!(second_expansion(), 0, "not enabled");
+        SECOND_EXPANSION.store(false, Ordering::Relaxed);
+        assert!(!second_expansion(), "not enabled");
 
-        SECOND_EXPANSION.store(1, Ordering::Relaxed);
-        assert_eq!(second_expansion(), 1, "enabled by .SECONDEXPANSION");
+        SECOND_EXPANSION.store(true, Ordering::Relaxed);
+        assert!(second_expansion(), "enabled by .SECONDEXPANSION");
 
         SECOND_EXPANSION.store(saved, Ordering::Relaxed);
     }
@@ -4679,11 +4679,11 @@ mod posix_pedantic_tests {
     fn posix_pedantic_tracks_atomic() {
         let saved = POSIX_PEDANTIC.load(Ordering::Relaxed);
 
-        POSIX_PEDANTIC.store(0, Ordering::Relaxed);
-        assert_eq!(posix_pedantic(), 0, "not pedantic");
+        POSIX_PEDANTIC.store(false, Ordering::Relaxed);
+        assert!(!posix_pedantic(), "not pedantic");
 
-        POSIX_PEDANTIC.store(1, Ordering::Relaxed);
-        assert_eq!(posix_pedantic(), 1, "enabled by .POSIX");
+        POSIX_PEDANTIC.store(true, Ordering::Relaxed);
+        assert!(posix_pedantic(), "enabled by .POSIX");
 
         POSIX_PEDANTIC.store(saved, Ordering::Relaxed);
     }

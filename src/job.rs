@@ -11,7 +11,7 @@ use libc::{
     __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
     strchr, strcmp, strerror, strsignal,
 };
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -337,10 +337,10 @@ pub fn job_slots_used() -> ::core::ffi::c_uint {
 /// Set once a child has been handed the real stdin, so later children get a
 /// dummy one. Stored in an atomic to keep its reads plain safe operations;
 /// access is single-threaded, so `Relaxed` preserves the original order.
-static GOOD_STDIN_USED: AtomicI32 = AtomicI32::new(0);
+static GOOD_STDIN_USED: AtomicBool = AtomicBool::new(false);
 
 fn good_stdin_used() -> bool {
-    GOOD_STDIN_USED.load(Ordering::Relaxed) != 0
+    GOOD_STDIN_USED.load(Ordering::Relaxed)
 }
 static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child;
 pub static mut unixy_shell: ::core::ffi::c_int = 1;
@@ -815,7 +815,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             (*c).sh_batch_file = ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
         if (*c).good_stdin() != 0 {
-            GOOD_STDIN_USED.store(0, Ordering::Relaxed);
+            GOOD_STDIN_USED.store(false, Ordering::Relaxed);
         }
         dontcare = (*c).dontcare() as ::core::ffi::c_int;
         if child_failed != 0 && (*c).noerror() == 0 && ignore_errors_flag == 0 {
@@ -1228,7 +1228,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                     as ::core::ffi::c_uint
                     as ::core::ffi::c_uint);
                 if (*child).good_stdin() != 0 {
-                    GOOD_STDIN_USED.store(1, Ordering::Relaxed);
+                    GOOD_STDIN_USED.store(true, Ordering::Relaxed);
                 }
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
@@ -1267,7 +1267,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                         if (*child).good_stdin() as ::core::ffi::c_int != 0 && used_stdin == 0 {
                             (*child)
                                 .set_good_stdin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            GOOD_STDIN_USED.store(0, Ordering::Relaxed);
+                            GOOD_STDIN_USED.store(false, Ordering::Relaxed);
                         }
                         (*child)
                             .set_remote(is_remote as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2924,7 +2924,7 @@ pub unsafe fn construct_command_argv(
     } else if (*var).origin() as ::core::ffi::c_int != o_default as ::core::ffi::c_int {
         allocflags = allocated_expand_string_for_file((*var).value, file);
         shellflags = allocflags;
-    } else if posix_pedantic() != 0 && ignore_errors_flag == 0 && !(cmd_flags & 4 != 0) {
+    } else if posix_pedantic() && ignore_errors_flag == 0 && !(cmd_flags & 4 != 0) {
         shellflags = b"-ec\0" as *const u8 as *const ::core::ffi::c_char;
     } else {
         shellflags = b"-c\0" as *const u8 as *const ::core::ffi::c_char;
@@ -3026,10 +3026,10 @@ mod good_stdin_used_tests {
     fn good_stdin_used_tracks_flag() {
         let saved = GOOD_STDIN_USED.load(Ordering::Relaxed);
 
-        GOOD_STDIN_USED.store(0, Ordering::Relaxed);
+        GOOD_STDIN_USED.store(false, Ordering::Relaxed);
         assert!(!good_stdin_used(), "zero means stdin still available");
 
-        GOOD_STDIN_USED.store(1, Ordering::Relaxed);
+        GOOD_STDIN_USED.store(true, Ordering::Relaxed);
         assert!(good_stdin_used(), "non-zero means stdin already claimed");
 
         GOOD_STDIN_USED.store(saved, Ordering::Relaxed);
