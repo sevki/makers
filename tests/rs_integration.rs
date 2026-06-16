@@ -246,6 +246,14 @@ fn tilde_expand_user_branch() {
 }
 
 #[test]
+fn eval_ifeq_missing_separator() {
+    // eval's "ifeq/ifneq must be followed by whitespace" diagnostic (now
+    // classified in the typed AST layer): `ifeq(a,a)` with no separating space
+    // must produce the specific error, byte-for-byte identical across binaries.
+    check("ifeq-no-separator", "35_ifeq_no_separator.mk", "all", &[]);
+}
+
+#[test]
 fn conditional_ifdef_token() {
     // conditional_line's ifdef/ifndef single-token extraction (typed AST layer):
     // defined/undefined names and a name produced by expansion.

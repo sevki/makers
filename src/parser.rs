@@ -495,6 +495,24 @@ pub fn rest_is_blank(bytes: &[u8]) -> bool {
     at(bytes, next_token_off(bytes, 0)) == 0
 }
 
+/// Whether a "missing separator" line begins with `ifeq`/`ifneq` that is *not*
+/// followed by whitespace — e.g. the user wrote `ifeq(...)` or `ifneq(...)`
+/// with no space, so `eval` should emit the more specific "ifeq/ifneq must be
+/// followed by whitespace" diagnostic instead of the bare "missing separator".
+///
+/// Mirrors make's c2rust `strncmp` wall: the line must start with `if`, then
+/// either `neq` followed by a non-blank byte, or `eq` followed by a non-blank
+/// byte. "Non-blank" tests only `MAP_BLANK` (matching the C `& 0x2`), so a NUL
+/// terminator past the token end counts as non-blank and still triggers.
+pub fn ifeq_ifneq_without_separator(bytes: &[u8]) -> bool {
+    if bytes.get(..2) != Some(b"if".as_slice()) {
+        return false;
+    }
+    let non_blank = |i: usize| !map_set(at(bytes, i), MAP_BLANK);
+    (bytes.get(2..5) == Some(b"neq".as_slice()) && non_blank(5))
+        || (bytes.get(2..4) == Some(b"eq".as_slice()) && non_blank(4))
+}
+
 /// If `bytes` is a single leading token optionally followed by only trailing
 /// blanks, return the token's length; otherwise `None`.
 ///
@@ -1820,5 +1838,30 @@ mod tests {
                 w
             );
         }
+    }
+
+    #[test]
+    fn ifeq_ifneq_separator_classifier() {
+        ensure_map();
+        // ifeq/ifneq with no separating whitespace → specific diagnostic.
+        assert!(ifeq_ifneq_without_separator(b"ifeq(a,b)"));
+        assert!(ifeq_ifneq_without_separator(b"ifneq(a,b)"));
+        // No trailing byte at all (token ends right after the keyword): the
+        // missing byte is treated as a NUL, which is non-blank → triggers.
+        assert!(ifeq_ifneq_without_separator(b"ifeq"));
+        assert!(ifeq_ifneq_without_separator(b"ifneq"));
+        // Followed by a blank → properly separated, so the generic diagnostic
+        // applies instead.
+        assert!(!ifeq_ifneq_without_separator(b"ifeq (a,b)"));
+        assert!(!ifeq_ifneq_without_separator(b"ifneq (a,b)"));
+        assert!(!ifeq_ifneq_without_separator(b"ifeq\t(a,b)"));
+        // Other tokens never match.
+        assert!(!ifeq_ifneq_without_separator(b"ifdef X"));
+        assert!(!ifeq_ifneq_without_separator(b"include x"));
+        assert!(!ifeq_ifneq_without_separator(b""));
+        assert!(!ifeq_ifneq_without_separator(b"if"));
+        // `ifeqfoo` / `ifneqbar` (longer words) still count as unseparated.
+        assert!(ifeq_ifneq_without_separator(b"ifeqfoo"));
+        assert!(ifeq_ifneq_without_separator(b"ifneqbar"));
     }
 }
