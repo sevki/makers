@@ -679,7 +679,7 @@ unsafe extern "C" fn parse_var_assignment(
     if scan.assign {
         (*vmod).set_assign_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    line.offset(scan.rest as isize) as *mut ::core::ffi::c_char
+    line.add(scan.rest) as *mut ::core::ffi::c_char
 }
 /// # Safety
 ///
