@@ -2531,7 +2531,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
     t = files;
     while !t.is_null() {
         let nm: *const ::core::ffi::c_char = (*t).name;
-        if posix_pedantic == 0
+        if posix_pedantic() == 0
             && (*nm as ::core::ffi::c_int
                 == *(b".POSIX\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
                 && (*nm as ::core::ffi::c_int == 0
@@ -2541,7 +2541,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
                             .offset(1 as ::core::ffi::c_int as isize),
                     ) == 0))
         {
-            posix_pedantic = 1;
+            crate::make_main::POSIX_PEDANTIC.store(1, ::std::sync::atomic::Ordering::Relaxed);
             define_variable_in_set(
                 b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
                 (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),

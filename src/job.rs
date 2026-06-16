@@ -2924,7 +2924,7 @@ pub unsafe fn construct_command_argv(
     } else if (*var).origin() as ::core::ffi::c_int != o_default as ::core::ffi::c_int {
         allocflags = allocated_expand_string_for_file((*var).value, file);
         shellflags = allocflags;
-    } else if posix_pedantic != 0 && ignore_errors_flag == 0 && !(cmd_flags & 4 != 0) {
+    } else if posix_pedantic() != 0 && ignore_errors_flag == 0 && !(cmd_flags & 4 != 0) {
         shellflags = b"-ec\0" as *const u8 as *const ::core::ffi::c_char;
     } else {
         shellflags = b"-c\0" as *const u8 as *const ::core::ffi::c_char;
