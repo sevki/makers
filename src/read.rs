@@ -894,19 +894,9 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
             p2 = p.add(probe.rest);
             is_rule = probe.is_rule as ::core::ffi::c_uint;
             if in_ignored_define != 0 {
-                // The line's leading word (`p`, length `wlen`) closes the
-                // ignored define only when it is exactly `endef` and the next
-                // token is a comment or end-of-line.
-                if crate::parser::DefineKeyword::from_word(::core::slice::from_raw_parts(
-                    p as *const u8,
-                    wlen as usize,
-                )) == Some(crate::parser::DefineKeyword::Endef)
-                    && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                        .offset(*p2 as ::core::ffi::c_uchar as isize)
-                        as ::core::ffi::c_int
-                        & (0x8 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
-                        != 0
-                {
+                // A bare `endef` (only a comment or end-of-line after it) closes
+                // the ignored define; classified through the typed AST layer.
+                if crate::parser::closes_ignored_define(::std::ffi::CStr::from_ptr(p).to_bytes()) {
                     in_ignored_define = 0;
                 }
             } else {
