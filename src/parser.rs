@@ -234,6 +234,21 @@ impl DefineKeyword {
     }
 }
 
+/// Classify the leading `define`/`endef` keyword of a line in a `define` body,
+/// returning the keyword (if any) and the offset just past the leading token.
+///
+/// The token is delimited by a blank or NUL only — *not* a newline — matching
+/// the scan make's `do_define` uses while reading a define body (where the
+/// keyword recognition deliberately differs from the general `end_of_token`).
+/// `bytes` begins at the line's first token (leading blanks already skipped).
+pub fn define_keyword(bytes: &[u8]) -> (Option<DefineKeyword>, usize) {
+    let mut i = 0;
+    while !map_set(at(bytes, i), MAP_BLANK | MAP_NUL) {
+        i += 1;
+    }
+    (DefineKeyword::from_word(&bytes[..i]), i)
+}
+
 /// The coarse kind of a logical line, decided from its first byte before any
 /// further parsing — the very top of make's `eval` dispatch.
 ///
@@ -1630,6 +1645,23 @@ mod tests {
             cargs("\"a\" \"b\"  junk"),
             Some(("a".into(), "b".into(), true))
         );
+    }
+
+    #[test]
+    fn define_keyword_cases() {
+        ensure_map();
+        assert_eq!(
+            define_keyword(b"define X"),
+            (Some(DefineKeyword::Define), 6)
+        );
+        assert_eq!(define_keyword(b"endef"), (Some(DefineKeyword::Endef), 5));
+        assert_eq!(
+            define_keyword(b"endef # c"),
+            (Some(DefineKeyword::Endef), 5)
+        );
+        // Not a define keyword (word still measured up to the blank/NUL).
+        assert_eq!(define_keyword(b"FOO = 1"), (None, 3));
+        assert_eq!(define_keyword(b"definex"), (None, 7));
     }
 
     #[test]

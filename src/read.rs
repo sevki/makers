@@ -1928,25 +1928,17 @@ unsafe extern "C" fn do_define(
             != cmd_prefix as ::core::ffi::c_int
         {
             p = next_token(line);
-            // Classify the leading word (delimited by a blank or end-of-line,
-            // matching make's `define`/`endef` scan) through the typed AST
-            // instead of a strncmp/size_of wall.
-            let mut wend = p;
-            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                .offset(*wend as ::core::ffi::c_uchar as isize)
-                as ::core::ffi::c_int
-                & (MAP_BLANK | MAP_NUL)
-                == 0
-            {
-                wend = wend.offset(1);
-            }
-            let dword = ::core::slice::from_raw_parts(p as *const u8, wend.offset_from(p) as usize);
-            match crate::parser::DefineKeyword::from_word(dword) {
+            // Classify the leading `define`/`endef` keyword through the typed
+            // AST layer (token delimited by a blank or NUL, matching make's
+            // define-body scan), replacing the manual pointer walk.
+            let (keyword, word_end) =
+                crate::parser::define_keyword(::std::ffi::CStr::from_ptr(p).to_bytes());
+            match keyword {
                 Some(crate::parser::DefineKeyword::Define) => {
                     nlevels += 1;
                 }
                 Some(crate::parser::DefineKeyword::Endef) => {
-                    p = wend;
+                    p = p.add(word_end);
                     remove_comments(p);
                     if *next_token(p) as ::core::ffi::c_int != 0 {
                         error(
