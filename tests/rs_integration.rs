@@ -246,6 +246,14 @@ fn tilde_expand_user_branch() {
 }
 
 #[test]
+fn check_special_file_wait_prereqs() {
+    // check_special_file (now using parser::is_wait_token): a `.WAIT` target
+    // with prerequisites must emit ".WAIT should not have prerequisites"
+    // identically across both binaries.
+    check("wait-special-file", "38_wait_special_file.mk", "all", &[]);
+}
+
+#[test]
 fn parse_file_seq_wait_and_dotslash() {
     // parse_file_seq token normalization (now via pure parser helpers): the
     // `.WAIT` ordering marker and `./` prefix stripping must behave identically

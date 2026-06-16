@@ -2470,15 +2470,7 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
-    if *(*file).name as ::core::ffi::c_int
-        == *(b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
-        && (*(*file).name as ::core::ffi::c_int == 0
-            || strcmp(
-                (*file).name.offset(1 as ::core::ffi::c_int as isize),
-                (b".WAIT\0" as *const u8 as *const ::core::ffi::c_char)
-                    .offset(1 as ::core::ffi::c_int as isize),
-            ) == 0)
-    {
+    if crate::parser::is_wait_token(::std::ffi::CStr::from_ptr((*file).name).to_bytes()) {
         use std::sync::atomic::{AtomicBool, Ordering};
         static WPRE: AtomicBool = AtomicBool::new(false);
         static WCMD: AtomicBool = AtomicBool::new(false);
