@@ -690,7 +690,17 @@ pub static mut starting_directory: *mut ::core::ffi::c_char =
 pub static mut makelevel: ::core::ffi::c_uint = 0;
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
 pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut file;
-pub static mut posix_pedantic: ::core::ffi::c_int = 0;
+/// Set once the `.POSIX` special target has been seen, selecting POSIX-pedantic
+/// behavior (e.g. whitespace handling). Stored in an atomic so its reads are
+/// plain safe operations; all access is single-threaded, so `Relaxed`
+/// preserves the original program order. `pub` because the lone write is in
+/// `read.rs`'s special-target handler.
+pub static POSIX_PEDANTIC: AtomicI32 = AtomicI32::new(0);
+
+/// Whether `.POSIX` pedantic mode is in effect.
+pub fn posix_pedantic() -> ::core::ffi::c_int {
+    POSIX_PEDANTIC.load(Ordering::Relaxed)
+}
 /// Set once the `.SECONDEXPANSION` special target has been seen, enabling a
 /// second expansion pass over prerequisite lists. Stored in an atomic so its
 /// reads are plain safe operations; all access is single-threaded, so
@@ -3574,7 +3584,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
             (::core::mem::size_of::<[::core::ffi::c_char; 21]>() as size_t).wrapping_sub(1),
         );
     }
-    let r: *const ::core::ffi::c_char = if posix_pedantic != 0 {
+    let r: *const ::core::ffi::c_char = if posix_pedantic() != 0 {
         &raw const posixref as *const ::core::ffi::c_char
     } else {
         &raw const ref_0 as *const ::core::ffi::c_char
@@ -4654,5 +4664,27 @@ mod second_expansion_tests {
         assert_eq!(second_expansion(), 1, "enabled by .SECONDEXPANSION");
 
         SECOND_EXPANSION.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod posix_pedantic_tests {
+    use super::{posix_pedantic, POSIX_PEDANTIC};
+    use std::sync::atomic::Ordering;
+
+    /// `posix_pedantic()` reflects the `POSIX_PEDANTIC` flag set when the
+    /// `.POSIX` special target is seen. Restores the prior value so it stays
+    /// isolated from other tests.
+    #[test]
+    fn posix_pedantic_tracks_atomic() {
+        let saved = POSIX_PEDANTIC.load(Ordering::Relaxed);
+
+        POSIX_PEDANTIC.store(0, Ordering::Relaxed);
+        assert_eq!(posix_pedantic(), 0, "not pedantic");
+
+        POSIX_PEDANTIC.store(1, Ordering::Relaxed);
+        assert_eq!(posix_pedantic(), 1, "enabled by .POSIX");
+
+        POSIX_PEDANTIC.store(saved, Ordering::Relaxed);
     }
 }

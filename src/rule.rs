@@ -340,7 +340,7 @@ pub unsafe fn convert_to_pattern() {
             if let Some(cmds) = f.cmds.as_mut() {
                 if f.deps.is_null() {
                     f.set_suffix(1);
-                } else if posix_pedantic == 0 {
+                } else if posix_pedantic() == 0 {
                     error(
                         &raw mut cmds.fileinfo,
                         0,
@@ -367,7 +367,7 @@ pub unsafe fn convert_to_pattern() {
                         // ignored (skip); otherwise warn and still convert the rule.
                         let mut skip = false;
                         if !f.deps.is_null() {
-                            if posix_pedantic != 0 {
+                            if posix_pedantic() != 0 {
                                 skip = true;
                             } else {
                                 error(
