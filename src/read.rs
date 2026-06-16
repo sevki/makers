@@ -790,7 +790,6 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
         let mut p: *mut ::core::ffi::c_char;
         let mut p2: *mut ::core::ffi::c_char;
         let is_rule: ::core::ffi::c_uint;
-        let initial_tab: ::core::ffi::c_uint;
         let mut vmod: vmodifiers = vmodifiers {
             assign_v_define_v_undefine_v_override_v_private_v_export_v: [0; 1],
             c2rust_padding: [0; 3],
@@ -838,7 +837,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
         if line_kind == crate::parser::LineKind::Blank {
             continue;
         }
-        initial_tab = (first_byte as ::core::ffi::c_int == '\t' as i32) as ::core::ffi::c_int
+        let initial_tab = (first_byte as ::core::ffi::c_int == '\t' as i32) as ::core::ffi::c_int
             as ::core::ffi::c_uint;
         linelen = strlen(line) as size_t;
         if line_kind == crate::parser::LineKind::Recipe {
