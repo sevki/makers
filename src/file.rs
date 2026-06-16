@@ -1092,7 +1092,7 @@ pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
 pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d: *mut dep;
-    if second_expansion == 0 {
+    if second_expansion() == 0 {
         (*f).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     if all_secondary() && (*f).notintermediate() == 0 {
@@ -1107,7 +1107,7 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
             (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
             file_vars.set,
         ));
-        if second_expansion != 0 {
+        if second_expansion() != 0 {
             d = prereqs;
             while !d.is_null() {
                 if (*d).name.is_null() {

@@ -813,7 +813,7 @@ unsafe extern "C" fn update_file_1(
     ad = &raw mut amake;
     while !ad.is_null() {
         let mut lastd: *mut dep = ::core::ptr::null_mut::<dep>();
-        if second_expansion != 0 {
+        if second_expansion() != 0 {
             expand_deps((*ad).file);
         }
         du = (*(*ad).file).deps;
@@ -1502,7 +1502,7 @@ unsafe extern "C" fn check_dep(
                 set_command_state(file, cs_not_started);
             }
             ld = ::core::ptr::null_mut::<dep>();
-            if second_expansion != 0 {
+            if second_expansion() != 0 {
                 expand_deps(file);
             }
             d = (*file).deps;

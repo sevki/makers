@@ -169,7 +169,7 @@ pub unsafe fn snap_implicit_rules() {
     while let Some(dr) = d.as_mut() {
         let mut name: *const ::core::ffi::c_char = dep_name(d);
         let mut len: size_t = strlen(name);
-        if second_expansion != 0 {
+        if second_expansion() != 0 {
             if dr.name.is_null() {
                 dr.name = xstrdup(
                     dr.file
