@@ -406,6 +406,36 @@ fn next_token_off(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
+/// The result of [`rule_probe`]: where a line's first token ends, where the
+/// text after it (its trailing blanks skipped) begins, and whether the line is
+/// a rule.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct RuleProbe {
+    /// Length of the leading token (`end_of_token`).
+    pub word_len: usize,
+    /// Offset of the first non-blank byte after the leading token.
+    pub rest: usize,
+    /// The line is a rule: a `:` (or `&:` / `|:`) follows the first token.
+    pub is_rule: bool,
+}
+
+/// Probe a target/rule line, mirroring make's `eval`: measure the first token,
+/// skip the blanks after it, and decide whether the line is a rule — its next
+/// significant character is `:`, or `&:` / `|:` (grouped/`.NOTPARALLEL`-style
+/// separators followed by the rule colon). `bytes` begins at the line's first
+/// non-blank byte.
+pub fn rule_probe(bytes: &[u8]) -> RuleProbe {
+    let word_len = end_of_token_off(bytes, 0);
+    let rest = next_token_off(bytes, word_len);
+    let c = at(bytes, rest);
+    let is_rule = c == b':' || ((c == b'&' || c == b'|') && at(bytes, rest + 1) == b':');
+    RuleProbe {
+        word_len,
+        rest,
+        is_rule,
+    }
+}
+
 /// The byte range of the name in `bytes`: skip leading whitespace, then trim
 /// trailing blanks, returning `None` when the input is empty or all whitespace.
 ///
@@ -1583,6 +1613,30 @@ mod tests {
             cargs("\"a\" \"b\"  junk"),
             Some(("a".into(), "b".into(), true))
         );
+    }
+
+    #[test]
+    fn rule_probe_cases() {
+        ensure_map();
+        let rp = |s: &str| rule_probe(s.as_bytes());
+        // The separator must follow the first token's trailing blanks: a `:`
+        // (or `&:` / `|:`) after at least one blank. (make's `end_of_token`
+        // stops only at whitespace/NUL, so a colon attached to the token —
+        // `all:` — is part of the word and is *not* detected by this probe; the
+        // real rule parse handles that case later.)
+        assert_eq!(rp("all : dep").is_rule, true);
+        assert_eq!(rp("all &: x").is_rule, true);
+        assert_eq!(rp("all |: x").is_rule, true);
+        // Not detected here.
+        assert_eq!(rp("all: dep").is_rule, false);
+        assert_eq!(rp("FOO = 1").is_rule, false);
+        assert_eq!(rp("all").is_rule, false);
+        assert_eq!(rp("a b &: x").is_rule, false);
+        // Word length and rest offset (blanks after the token skipped).
+        let r = rp("all : x");
+        assert_eq!(r.word_len, 3);
+        assert_eq!(r.rest, 4); // the ':'
+        assert!(r.is_rule);
     }
 
     #[test]
