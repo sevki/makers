@@ -631,116 +631,49 @@ pub unsafe fn eval_buffer(buffer: *mut ::core::ffi::c_char, flocp: *const Floc) 
     reading_file = curfile;
 }
 unsafe extern "C" fn parse_var_assignment(
-    mut line: *const ::core::ffi::c_char,
+    line: *const ::core::ffi::c_char,
     targvar: ::core::ffi::c_int,
-    mut flocp: *const Floc,
+    flocp: *const Floc,
     vmod: *mut vmodifiers,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char;
     memset(
         vmod as *mut ::core::ffi::c_void,
         0,
         ::core::mem::size_of::<vmodifiers>() as size_t,
     );
-    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-        .offset(*line as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0
-    {
-        line = line.offset(1 as ::core::ffi::c_int as isize);
+    // Scan the leading modifier keywords through the typed AST layer: a pure,
+    // offset-based reproduction of make's modifier loop, replacing the
+    // pointer-walking `parse_variable_definition`/`end_of_token`/`next_token`
+    // dance. The side effects (flag writes, the TAB warning) stay here.
+    let bytes = ::std::ffi::CStr::from_ptr(line).to_bytes();
+    let scan = crate::parser::scan_var_modifiers(bytes, targvar != 0);
+    match scan.mods.export {
+        Some(crate::parser::ExportMode::Export) => {
+            (*vmod).set_export_v(v_export as variable_export);
+        }
+        Some(crate::parser::ExportMode::NoExport) => {
+            (*vmod).set_export_v(v_noexport as variable_export);
+        }
+        None => {}
     }
-    if *line as ::core::ffi::c_int == 0 {
-        return line as *mut ::core::ffi::c_char;
+    // These are booleans into a freshly-zeroed bitfield, so set each directly
+    // from the flag rather than branching (`bool` -> the setter's integer).
+    (*vmod).set_override_v(scan.mods.over.into());
+    (*vmod).set_private_v(scan.mods.private.into());
+    (*vmod).set_define_v(scan.mods.define.into());
+    (*vmod).set_undefine_v(scan.mods.undefine.into());
+    if scan.had_modifier && !flocp.is_null() {
+        error(
+            flocp,
+            0,
+            b"warning: directive lines cannot start with TAB\0" as *const u8
+                as *const ::core::ffi::c_char,
+        );
     }
-    p = line;
-    loop {
-        let wlen: size_t;
-        let mut p2: *const ::core::ffi::c_char;
-        let mut v: variable = variable {
-            name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-            value: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-            fileinfo: Floc {
-                filenm: ::core::ptr::null::<::core::ffi::c_char>(),
-                lineno: 0,
-                offset: 0,
-            },
-            length: 0,
-            recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
-        };
-        p2 = parse_variable_definition(p, &raw mut v);
-        if !p2.is_null() {
-            break;
-        }
-        p2 = end_of_token(p);
-        wlen = p2.offset_from(p) as ::core::ffi::c_long as size_t;
-        // Classify the leading modifier keyword (the first `wlen` bytes) through
-        // the typed AST layer instead of a wall of `memcmp`/`size_of` checks.
-        // `define`/`undefine` only act as modifiers outside a target-specific
-        // variable context (`targvar == 0`); otherwise the word is a plain name
-        // and the loop returns the line unchanged.
-        let modifier = crate::parser::VarModifier::from_word(::core::slice::from_raw_parts(
-            p as *const u8,
-            wlen,
-        ));
-        match modifier {
-            Some(crate::parser::VarModifier::Export) => {
-                (*vmod).set_export_v(v_export as variable_export);
-            }
-            Some(crate::parser::VarModifier::Unexport) => {
-                (*vmod).set_export_v(v_noexport as variable_export);
-            }
-            Some(crate::parser::VarModifier::Override) => {
-                (*vmod).set_override_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            }
-            Some(crate::parser::VarModifier::Private) => {
-                (*vmod).set_private_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            }
-            Some(crate::parser::VarModifier::Define) if targvar == 0 => {
-                if !flocp.is_null() {
-                    error(
-                        flocp,
-                        0,
-                        b"warning: directive lines cannot start with TAB\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
-                }
-                (*vmod).set_define_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                p = next_token(p2);
-                break;
-            }
-            Some(crate::parser::VarModifier::Undefine) if targvar == 0 => {
-                if !flocp.is_null() {
-                    error(
-                        flocp,
-                        0,
-                        b"warning: directive lines cannot start with TAB\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                    );
-                }
-                (*vmod).set_undefine_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                p = next_token(p2);
-                break;
-            }
-            _ => {
-                return line as *mut ::core::ffi::c_char;
-            }
-        }
-        if !flocp.is_null() {
-            error(
-                flocp,
-                0,
-                b"warning: directive lines cannot start with TAB\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-            flocp = ::core::ptr::null::<Floc>();
-        }
-        p = next_token(p2);
-        if *p as ::core::ffi::c_int == 0 {
-            return line as *mut ::core::ffi::c_char;
-        }
+    if scan.assign {
+        (*vmod).set_assign_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    (*vmod).set_assign_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    p as *mut ::core::ffi::c_char
+    line.add(scan.rest) as *mut ::core::ffi::c_char
 }
 /// # Safety
 ///
