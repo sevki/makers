@@ -2835,8 +2835,10 @@ unsafe extern "C" fn expand_builtin_function(
         .alloc_func_ptr
         .expect("non-null function pointer")((*entry_p).name, argc, argv);
     if !p.is_null() {
-        o = variable_buffer_output(o, p, strlen(p) as size_t);
-        free(p as *mut ::core::ffi::c_void);
+        // The alloc-style builtin returns a freshly malloc'ed buffer we own;
+        // `ExpandedArg` frees it on drop instead of the manual `free` below.
+        let owned = ExpandedArg::from_raw(p);
+        o = variable_buffer_output(o, owned.as_ptr(), strlen(owned.as_ptr()) as size_t);
     }
     o
 }

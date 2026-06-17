@@ -288,6 +288,14 @@ fn recursive_substitution_reference() {
 }
 
 #[test]
+fn abspath_alloc_builtin() {
+    // expand_builtin_function alloc path (RAII ExpandedArg): $(abspath ...)
+    // returns an owned malloc'ed buffer. abspath normalizes lexically without
+    // touching the filesystem, so both binaries must agree byte-for-byte.
+    check("abspath-alloc", "47_abspath_alloc.mk", "all", &[]);
+}
+
+#[test]
 fn define_and_undefine_names() {
     // do_define / do_undefine name isolation (typed AST layer): a define whose
     // name is produced by expansion, and an undefine of a set variable.
