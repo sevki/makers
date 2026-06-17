@@ -833,6 +833,100 @@ fn skip_reference(bytes: &[u8], mut p: usize) -> usize {
     p
 }
 
+/// The classification make's `get_next_mword` assigns to the next word of a
+/// rule line: the special separators set their type directly; everything else
+/// is `Static` (or `Variable` if a `$ref` was crossed while scanning).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum MWordType {
+    Eol,
+    Static,
+    Variable,
+    Colon,
+    DColon,
+    Semicolon,
+    AmpColon,
+    AmpDColon,
+}
+
+/// Pure port of make's `get_next_mword`: scan the next "make word" out of a rule
+/// line, returning its type and its `[start, start + len)` span within `buf`.
+///
+/// Leading blanks/newlines are skipped; the first byte selects a separator
+/// (`;`, `:`/`::`, `&:`/`&::`, or end-of-line), otherwise a static word is
+/// scanned up to the next separator/blank, honoring `$(...)` references (which
+/// promote the word to [`MWordType::Variable`]) and `\`-escapes. Mirrors the
+/// c2rust pointer routine exactly, over byte indices, reusing [`skip_reference`].
+pub fn get_next_mword(buf: &[u8]) -> (MWordType, usize, usize) {
+    let mut p = 0usize;
+    while map_set(at(buf, p), MAP_BLANK | MAP_NEWLINE) {
+        p += 1;
+    }
+    let beg = p;
+    let mut c = at(buf, p);
+    p += 1;
+    let mut scan_static = false;
+    let mut wtype = MWordType::Eol;
+    match c {
+        0 => wtype = MWordType::Eol,
+        b';' => wtype = MWordType::Semicolon,
+        b':' => {
+            wtype = MWordType::Colon;
+            if at(buf, p) == b':' {
+                p += 1;
+                wtype = MWordType::DColon;
+            }
+        }
+        b'&' => {
+            if at(buf, p) == b':' {
+                p += 1;
+                if at(buf, p) != b':' {
+                    wtype = MWordType::AmpColon;
+                } else {
+                    p += 1;
+                    wtype = MWordType::AmpDColon;
+                }
+            } else {
+                scan_static = true;
+            }
+        }
+        _ => scan_static = true,
+    }
+    if scan_static {
+        wtype = MWordType::Static;
+        while !map_set(c, MAP_BLANK | MAP_NEWLINE | MAP_NUL) {
+            match c {
+                b':' => break,
+                b'$' => {
+                    c = at(buf, p);
+                    p += 1;
+                    if c != b'$' {
+                        if c == 0 {
+                            break;
+                        }
+                        wtype = MWordType::Variable;
+                        p = skip_reference(buf, p - 1);
+                    }
+                }
+                b'\\' => {
+                    if matches!(at(buf, p), b':' | b';' | b'=' | b'\\') {
+                        p += 1;
+                    }
+                }
+                b'&' => {
+                    if at(buf, p) == b':' {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            c = at(buf, p);
+            p += 1;
+        }
+        p -= 1;
+    }
+    (wtype, beg, p - beg)
+}
+
 /// Parse `bytes` (one logical line, without its trailing NUL) as a variable
 /// assignment, returning the typed [`Assignment`] or `None` when the line is not
 /// a definition.
@@ -2110,6 +2204,30 @@ mod tests {
             norm(find_percent_cached(b"a\\%b%c")),
             (Some(3), Some(b"a%b%c".to_vec()))
         );
+    }
+
+    #[test]
+    fn get_next_mword_classifies_and_spans() {
+        use super::MWordType::*;
+        // (type, start, len) for the first word.
+        // End-of-line spans the NUL terminator (length 1), matching the C scan.
+        assert_eq!(get_next_mword(b""), (Eol, 0, 1));
+        assert_eq!(get_next_mword(b"   "), (Eol, 3, 1));
+        // Leading blanks skipped; a plain word spans to the next separator.
+        assert_eq!(get_next_mword(b"  foo bar"), (Static, 2, 3));
+        assert_eq!(get_next_mword(b";rest"), (Semicolon, 0, 1));
+        assert_eq!(get_next_mword(b":x"), (Colon, 0, 1));
+        assert_eq!(get_next_mword(b"::x"), (DColon, 0, 2));
+        assert_eq!(get_next_mword(b"&:x"), (AmpColon, 0, 2));
+        assert_eq!(get_next_mword(b"&::x"), (AmpDColon, 0, 3));
+        // A bare `&` (not `&:`) is just a static word.
+        assert_eq!(get_next_mword(b"&x y"), (Static, 0, 2));
+        // A `$(...)` reference promotes the word to Variable and is spanned whole.
+        assert_eq!(get_next_mword(b"a$(V)b c"), (Variable, 0, 6));
+        // `\:` is escaped inside a static word, so the colon does not end it.
+        assert_eq!(get_next_mword(b"a\\:b:c"), (Static, 0, 4));
+        // A word ending exactly at end-of-string.
+        assert_eq!(get_next_mword(b"word"), (Static, 0, 4));
     }
 
     #[test]

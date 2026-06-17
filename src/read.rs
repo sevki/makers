@@ -3032,104 +3032,27 @@ unsafe extern "C" fn get_next_mword(
     startp: *mut *mut ::core::ffi::c_char,
     length: *mut size_t,
 ) -> make_word_type {
-    // True for words that need the static-text scan below; the special
-    // separators (eol, ';', ':', '&:') set their type directly and skip it.
-    let mut scan_static = false;
-    let mut wtype: make_word_type = w_bogus;
-    let mut p: *mut ::core::ffi::c_char = buffer;
-    let beg: *mut ::core::ffi::c_char;
-    let mut c: ::core::ffi::c_char;
-    while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-        .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
-        != 0
-    {
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-    }
-    beg = p;
-    let fresh23 = p;
-    p = p.offset(1 as ::core::ffi::c_int as isize);
-    c = *fresh23;
-    match c as ::core::ffi::c_int {
-        0 => {
-            wtype = w_eol;
-        }
-        59 => {
-            wtype = w_semicolon;
-        }
-        58 => {
-            wtype = w_colon;
-            if *p as ::core::ffi::c_int == ':' as i32 {
-                p = p.offset(1 as ::core::ffi::c_int as isize);
-                wtype = w_dcolon;
-            }
-        }
-        38 => {
-            if *p as ::core::ffi::c_int == ':' as i32 {
-                p = p.offset(1 as ::core::ffi::c_int as isize);
-                if *p as ::core::ffi::c_int != ':' as i32 {
-                    wtype = w_ampcolon;
-                } else {
-                    p = p.offset(1 as ::core::ffi::c_int as isize);
-                    wtype = w_ampdcolon;
-                }
-            } else {
-                scan_static = true;
-            }
-        }
-        _ => {
-            scan_static = true;
-        }
-    }
-    if scan_static {
-        wtype = w_static;
-        while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(c as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
-            != 0)
-        {
-            match c as ::core::ffi::c_int {
-                58 => {
-                    break;
-                }
-                36 => {
-                    let fresh24 = p;
-                    p = p.offset(1 as ::core::ffi::c_int as isize);
-                    c = *fresh24;
-                    if !(c as ::core::ffi::c_int == '$' as i32) {
-                        if c as ::core::ffi::c_int == 0 {
-                            break;
-                        }
-                        wtype = w_variable;
-                        p = skip_reference(p.offset(-(1 as ::core::ffi::c_int as isize)));
-                    }
-                }
-                92 => match *p as ::core::ffi::c_int {
-                    58 | 59 | 61 | 92 => {
-                        p = p.offset(1 as ::core::ffi::c_int as isize);
-                    }
-                    _ => {}
-                },
-                38 => {
-                    if *p as ::core::ffi::c_int == ':' as i32 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            let fresh25 = p;
-            p = p.offset(1 as ::core::ffi::c_int as isize);
-            c = *fresh25;
-        }
-        p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-    }
+    let bytes = ::std::ffi::CStr::from_ptr(buffer).to_bytes();
+    let total = bytes.len() + 1;
+    let (wtype, beg, len) = crate::parser::get_next_mword(bytes);
     if !startp.is_null() {
-        *startp = beg;
+        // Sub-pointer into the buffer at the word start (no raw arithmetic).
+        *startp = ::core::slice::from_raw_parts_mut(buffer as *mut u8, total)[beg..].as_mut_ptr()
+            as *mut ::core::ffi::c_char;
     }
     if !length.is_null() {
-        *length = p.offset_from(beg) as ::core::ffi::c_long as size_t;
+        *length = len as size_t;
     }
-    wtype
+    match wtype {
+        crate::parser::MWordType::Eol => w_eol,
+        crate::parser::MWordType::Static => w_static,
+        crate::parser::MWordType::Variable => w_variable,
+        crate::parser::MWordType::Colon => w_colon,
+        crate::parser::MWordType::DColon => w_dcolon,
+        crate::parser::MWordType::Semicolon => w_semicolon,
+        crate::parser::MWordType::AmpColon => w_ampcolon,
+        crate::parser::MWordType::AmpDColon => w_ampdcolon,
+    }
 }
 /// # Safety
 ///
