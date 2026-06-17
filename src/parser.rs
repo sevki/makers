@@ -912,11 +912,7 @@ pub fn get_next_mword(buf: &[u8]) -> (MWordType, usize, usize) {
                         p += 1;
                     }
                 }
-                b'&' => {
-                    if at(buf, p) == b':' {
-                        break;
-                    }
-                }
+                b'&' if at(buf, p) == b':' => break,
                 _ => {}
             }
             c = at(buf, p);
