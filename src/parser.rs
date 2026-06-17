@@ -549,25 +549,26 @@ pub fn find_char_unquote_idx(buf: &mut [u8], stop: u8) -> Option<usize> {
             return None;
         }
         if p > 0 && buf[p - 1] == b'\\' {
-            // Count the consecutive backslashes ending at p-1: `i` walks back
-            // from p-2 and ends as the negative offset -n (n backslashes).
-            let mut i: isize = -2;
-            while (p as isize + i) >= 0 && buf[(p as isize + i) as usize] == b'\\' {
-                i -= 1;
-            }
-            i += 1;
+            // Number of consecutive backslashes immediately before `p` (the C
+            // routine's `-i`). It is at most `p`, so all index math below stays
+            // in `usize` without any negative-to-unsigned casts.
+            let n = buf[..p].iter().rev().take_while(|&&b| b == b'\\').count();
             let slen = *string_len
                 .get_or_insert_with(|| buf.iter().position(|&b| b == 0).unwrap_or(buf.len()));
-            let hi = -(i / 2);
-            let dest = (p as isize + i) as usize;
-            let src = (p as isize + i / 2) as usize;
-            // len == slen - p + hi + 1; src + len == slen + 1 (within the slice).
-            let len = (slen - p).wrapping_add(hi as usize).wrapping_add(1);
+            // Collapse each pair of backslashes: shift the tail (from the first
+            // kept backslash, p - n/2) left over the escaping ones (to p - n).
+            let half = n / 2;
+            let dest = p - n;
+            let src = p - half;
+            // `src + len == slen + 1`, i.e. the whole tail including the NUL.
+            let len = slen - p + half + 1;
             buf.copy_within(src..src + len, dest);
-            p = (p as isize + i / 2) as usize;
-            if i % 2 == 0 {
+            p = src;
+            if n % 2 == 0 {
+                // Even run: the `stop` is unescaped.
                 return Some(p);
             }
+            // Odd run: the `stop` was escaped and consumed; keep scanning.
         } else {
             return Some(p);
         }

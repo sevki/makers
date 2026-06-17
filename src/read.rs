@@ -2840,13 +2840,12 @@ unsafe extern "C" fn find_char_unquote(
 ) -> *mut ::core::ffi::c_char {
     // Bridge to the pure parser routine over a byte slice covering the C string
     // plus its NUL terminator, instead of the c2rust strchr/strlen/memmove walk.
-    let mut len: usize = 0;
-    while *string.add(len) as ::core::ffi::c_int != 0 {
-        len += 1;
-    }
+    // No raw pointer arithmetic: the length comes from `CStr` and the result
+    // sub-pointer from `slice[i..].as_mut_ptr()` (per AGENTS.md).
+    let len = ::std::ffi::CStr::from_ptr(string).to_bytes().len();
     let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
     match crate::parser::find_char_unquote_idx(buf, stop as u8) {
-        Some(i) => string.add(i),
+        Some(i) => buf[i..].as_mut_ptr() as *mut ::core::ffi::c_char,
         None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
     }
 }
