@@ -302,18 +302,13 @@ pub unsafe fn expand_variable_output(
     // A recursive variable's value is freshly expanded and owned here; an
     // `OwnedCStr` reclaims it on drop instead of the manual `free` the C code
     // did. A non-recursive variable's value is borrowed from the variable.
-    let owned = if (*v).recursive() != 0 {
-        Some(OwnedCStr(recursively_expand_for_file(
+    let owned = ((*v).recursive() != 0).then(|| {
+        OwnedCStr(recursively_expand_for_file(
             v,
             ::core::ptr::null_mut::<file>(),
-        )))
-    } else {
-        None
-    };
-    let value = match &owned {
-        Some(o) => o.as_ptr(),
-        None => (*v).value,
-    };
+        ))
+    });
+    let value = owned.as_ref().map_or((*v).value, OwnedCStr::as_ptr);
     ptr = variable_buffer_output(ptr, value, strlen(value) as size_t);
     ptr
 }
@@ -485,18 +480,14 @@ pub unsafe fn expand_string_buf(
                                 // Recursive values are freshly expanded and
                                 // owned; `OwnedCStr` frees on drop in place of
                                 // the manual `free` below.
-                                let owned = if v.recursive() != 0 {
-                                    Some(OwnedCStr(recursively_expand_for_file(
+                                let owned = (v.recursive() != 0).then(|| {
+                                    OwnedCStr(recursively_expand_for_file(
                                         &raw mut *v,
                                         ::core::ptr::null_mut::<file>(),
-                                    )))
-                                } else {
-                                    None
-                                };
-                                let value: *mut ::core::ffi::c_char = match &owned {
-                                    Some(o) => o.as_ptr(),
-                                    None => v.value,
-                                };
+                                    ))
+                                });
+                                let value: *mut ::core::ffi::c_char =
+                                    owned.as_ref().map_or(v.value, OwnedCStr::as_ptr);
 
                                 // Prefix both sides with `%` so an explicit
                                 // percent in the makefile takes precedence.
