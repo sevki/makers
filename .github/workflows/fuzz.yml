@@ -5,6 +5,10 @@ on:
     - cron: "0 0 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   fuzz:
     runs-on: ubuntu-latest
@@ -21,10 +25,108 @@ jobs:
         run: cargo install cargo-fuzz
 
       - name: Run fuzz tests
+        id: fuzz
         # Seed from the existing makefile test fixtures (passed as a read-only
         # extra corpus dir) while new inputs are written to the fuzzer's own
         # corpus dir, so the fixtures aren't modified. Short, CI-friendly run.
+        # Capture the output so a crash can be reported as an issue below.
         run: |
+          set -o pipefail
           mkdir -p fuzz/corpus/parser
-          cargo +nightly fuzz run parser fuzz/corpus/parser tests/fixtures -- -max_total_time=30
+          cargo +nightly fuzz run parser fuzz/corpus/parser tests/fixtures -- -max_total_time=30 \
+            2>&1 | tee fuzz-output.log
         timeout-minutes: 10
+
+      - name: Upload crash artifacts
+        if: failure() && steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash
+          path: |
+            fuzz/artifacts/
+            fuzz-output.log
+          if-no-files-found: ignore
+
+      - name: File issue for fuzzing crash
+        if: failure() && steps.fuzz.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Grab the tail of the fuzzer log and any crash reproducer.
+            let log = '';
+            try {
+              log = fs.readFileSync('fuzz-output.log', 'utf8');
+            } catch (e) {}
+            const logTail = log.split('\n').slice(-120).join('\n');
+
+            let crashInput = '';
+            let crashFile = '';
+            try {
+              const dir = 'fuzz/artifacts/parser';
+              const files = fs.readdirSync(dir)
+                .filter(f => f.startsWith('crash-') || f.startsWith('oom-') ||
+                             f.startsWith('timeout-') || f.startsWith('leak-'));
+              if (files.length > 0) {
+                crashFile = files[0];
+                crashInput = fs.readFileSync(`${dir}/${crashFile}`).toString('base64');
+              }
+            } catch (e) {}
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                           `/actions/runs/${context.runId}`;
+
+            const title = crashFile
+              ? `Fuzzing crash: ${crashFile}`
+              : `Fuzzing run failed (${new Date().toISOString().slice(0, 10)})`;
+
+            let body = `The \`parser\` fuzz target crashed during a scheduled fuzzing run.\n\n`;
+            body += `- Workflow run: ${runUrl}\n`;
+            if (crashFile) {
+              body += `- Reproducer artifact: \`${crashFile}\` (also uploaded as the ` +
+                      `\`fuzz-crash\` workflow artifact)\n`;
+            }
+            body += `\n### Fuzzer output (tail)\n\n\`\`\`\n${logTail}\n\`\`\`\n`;
+            if (crashInput) {
+              body += `\n### Reproducer (base64)\n\nDecode and replay with ` +
+                      `\`cargo +nightly fuzz run parser <file>\`:\n\n` +
+                      `\`\`\`\n${crashInput}\n\`\`\`\n`;
+            }
+
+            // Avoid duplicate issues for the same reproducer.
+            const marker = `<!-- fuzz-crash:${crashFile || 'unknown'} -->`;
+            body += `\n${marker}\n`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'fuzzing',
+              per_page: 100,
+            });
+            const dup = existing.data.find(i => (i.body || '').includes(marker));
+            if (dup) {
+              core.info(`Existing issue #${dup.number} already tracks this crash.`);
+              return;
+            }
+
+            // Ensure the label exists, then open the issue.
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'fuzzing',
+                color: 'd73a4a',
+                description: 'Defects discovered by the fuzzing workflow',
+              });
+            } catch (e) { /* label probably already exists */ }
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['fuzzing', 'bug'],
+            });
+            core.info(`Opened issue #${issue.data.number}`);
