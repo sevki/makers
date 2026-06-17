@@ -2907,61 +2907,29 @@ pub unsafe fn find_percent(pattern: *mut ::core::ffi::c_char) -> *mut ::core::ff
 pub unsafe fn find_percent_cached(
     string: *mut *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let p: *const ::core::ffi::c_char = strchr(*string, '%' as i32);
-    let new: *mut ::core::ffi::c_char;
-    let mut np: *mut ::core::ffi::c_char;
-    let mut slen: size_t;
-    if p.is_null()
-        || p == *string
-        || *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '\\' as i32
-    {
-        return p;
-    }
-    slen = strlen(*string) as size_t;
-    alloca_allocations.push(::std::vec::from_elem(0, slen.wrapping_add(1) as usize));
-    new = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    memcpy(
-        new as *mut ::core::ffi::c_void,
-        *string as *const ::core::ffi::c_void,
-        (slen as size_t).wrapping_add(1),
-    );
-    np = new.offset(p.offset_from(*string) as ::core::ffi::c_long as isize);
-    loop {
-        let pp: *mut ::core::ffi::c_char = np;
-        let mut i: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
-        while np.offset(i as isize) as *mut ::core::ffi::c_char >= new
-            && *np.offset(i as isize) as ::core::ffi::c_int == '\\' as i32
-        {
-            i -= 1;
+    let s = ::std::ffi::CStr::from_ptr(*string).to_bytes();
+    match crate::parser::find_percent_cached(s) {
+        // No rewrite: the `%` (if any) is returned as a pointer into the
+        // unchanged interned string.
+        crate::parser::FindPercentCached::AsIs(None) => ::core::ptr::null::<::core::ffi::c_char>(),
+        crate::parser::FindPercentCached::AsIs(Some(i)) => {
+            ::core::slice::from_raw_parts(*string as *const u8, s.len())[i..].as_ptr()
+                as *const ::core::ffi::c_char
         }
-        i += 1;
-        let hi: ::core::ffi::c_int = -(i / 2);
-        memmove(
-            pp.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-            pp.offset((i / 2) as isize) as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
-            (slen as size_t)
-                .wrapping_sub(pp.offset_from(new) as ::core::ffi::c_long as size_t)
-                .wrapping_add(hi as size_t)
-                .wrapping_add(1),
-        );
-        slen = slen.wrapping_add((i / 2 + i % 2) as size_t);
-        np = np.offset((i / 2) as isize);
-        if i % 2 == 0 {
-            break;
+        // Escaped `%`: intern the collapsed copy, update the caller's pointer,
+        // and map the percent index back into the interned string.
+        crate::parser::FindPercentCached::Collapsed { buf, idx } => {
+            let cached = strcache_add(buf.as_ptr() as *const ::core::ffi::c_char);
+            *string = cached;
+            match idx {
+                Some(i) => {
+                    ::core::slice::from_raw_parts(cached as *const u8, strlen(cached) as size_t)
+                        [i..]
+                        .as_ptr() as *const ::core::ffi::c_char
+                }
+                None => ::core::ptr::null::<::core::ffi::c_char>(),
+            }
         }
-        np = strchr(np, '%' as i32);
-        if !(!np.is_null()
-            && *np.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '\\' as i32)
-        {
-            break;
-        }
-    }
-    *string = strcache_add(new);
-    if !np.is_null() {
-        (*string).offset(np.offset_from(new) as ::core::ffi::c_long as isize)
-    } else {
-        ::core::ptr::null::<::core::ffi::c_char>()
     }
 }
 /// # Safety

@@ -575,6 +575,46 @@ pub fn find_char_unquote_idx(buf: &mut [u8], stop: u8) -> Option<usize> {
     }
 }
 
+/// Result of [`find_percent_cached`]: either the input needs no rewrite (the
+/// `%`, if any, is already unquoted) or its backslashes were collapsed into a
+/// fresh buffer that the caller must intern.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FindPercentCached {
+    /// No rewrite needed; the `%` sits at this index in the original string, or
+    /// `None` if there is no `%` at all.
+    AsIs(Option<usize>),
+    /// The string contained an escaped `%`: `buf` is the NUL-terminated copy
+    /// with each preceding backslash run collapsed, and `idx` is the index of
+    /// the first now-unquoted `%` within it (`None` if none remains).
+    Collapsed { buf: Vec<u8>, idx: Option<usize> },
+}
+
+/// Pure port of make's `find_percent_cached`: locate the first *unquoted* `%` in
+/// a pattern, collapsing backslash escapes only when an escaped `%` is actually
+/// present.
+///
+/// `s` is the pattern bytes without the trailing NUL. If the first `%` is absent,
+/// at the start, or not preceded by `\`, no copy is made and the `%` index (or
+/// `None`) is returned as [`FindPercentCached::AsIs`] — the caller leaves the
+/// interned string untouched. Otherwise a NUL-terminated copy is collapsed via
+/// [`find_char_unquote_idx`] (the same routine `find_percent` already uses) and
+/// returned as [`FindPercentCached::Collapsed`] for the caller to intern. This
+/// mirrors the c2rust `strchr`/`memmove`/`strcache_add` pointer routine.
+pub fn find_percent_cached(s: &[u8]) -> FindPercentCached {
+    match s.iter().position(|&b| b == b'%') {
+        None => FindPercentCached::AsIs(None),
+        Some(0) => FindPercentCached::AsIs(Some(0)),
+        Some(p) if s[p - 1] != b'\\' => FindPercentCached::AsIs(Some(p)),
+        Some(_) => {
+            let mut buf = Vec::with_capacity(s.len() + 1);
+            buf.extend_from_slice(s);
+            buf.push(0);
+            let idx = find_char_unquote_idx(&mut buf, b'%');
+            FindPercentCached::Collapsed { buf, idx }
+        }
+    }
+}
+
 /// Whether a line begins with eight space characters — the heuristic make uses
 /// (when the command prefix is a TAB) to suggest "did you mean TAB instead of 8
 /// spaces?" on a missing-separator error. Mirrors `strncmp(line, "        ", 8)`.
@@ -1986,6 +2026,47 @@ mod tests {
         assert_eq!(run(b"a\\\\\\%b", b'%'), (None, b"a\\%b".to_vec()));
         // Backslash that does not precede the stop is left untouched.
         assert_eq!(run(b"a\\b%c", b'%'), (Some(3), b"a\\b%c".to_vec()));
+    }
+
+    #[test]
+    fn find_percent_cached_collapses_only_when_escaped() {
+        use super::FindPercentCached::*;
+
+        // Reduce a result to (index, collapsed C string up to the NUL); the
+        // `Collapsed` buffer may retain stale bytes past the NUL after the
+        // in-place collapse, so compare only the live C string.
+        fn norm(r: FindPercentCached) -> (Option<usize>, Option<Vec<u8>>) {
+            match r {
+                AsIs(idx) => (idx, None),
+                Collapsed { buf, idx } => {
+                    let end = buf.iter().position(|&b| b == 0).unwrap();
+                    (idx, Some(buf[..end].to_vec()))
+                }
+            }
+        }
+
+        // No-copy cases: the `%` (if any) is returned as-is at its index.
+        assert_eq!(norm(find_percent_cached(b"a%b")), (Some(1), None));
+        assert_eq!(norm(find_percent_cached(b"%abc")), (Some(0), None));
+        assert_eq!(norm(find_percent_cached(b"abc")), (None, None));
+        assert_eq!(norm(find_percent_cached(b"ab%c")), (Some(2), None));
+
+        // Escaped `%` (single backslash): collapsed, backslash removed, no
+        // unquoted `%` remains.
+        assert_eq!(
+            norm(find_percent_cached(b"a\\%b")),
+            (None, Some(b"a%b".to_vec()))
+        );
+        // Double backslash: one literal backslash kept, `%` unescaped at index 2.
+        assert_eq!(
+            norm(find_percent_cached(b"a\\\\%b")),
+            (Some(2), Some(b"a\\%b".to_vec()))
+        );
+        // A later `%` becomes the unquoted match after the escaped one collapses.
+        assert_eq!(
+            norm(find_percent_cached(b"a\\%b%c")),
+            (Some(3), Some(b"a%b%c".to_vec()))
+        );
     }
 
     #[test]

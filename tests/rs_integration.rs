@@ -187,6 +187,18 @@ fn rule_target_separators() {
 }
 
 #[test]
+fn escaped_percent_target() {
+    // `foo\%bar` is a literal-`%` target name, not a pattern rule; both binaries
+    // must unescape it (via find_percent_cached) to `foo%bar` and build it.
+    check(
+        "escaped_percent_target",
+        "44_escaped_percent_target.mk",
+        "all",
+        &[],
+    );
+}
+
+#[test]
 fn variable_expansion() {
     check("vars", "02_vars.mk", "all", &["FROMCMD=cli"]);
 }
