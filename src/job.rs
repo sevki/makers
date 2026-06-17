@@ -303,7 +303,11 @@ pub const MAKE_TROUBLE: ::core::ffi::c_int = 1;
 pub const MAKE_FAILURE: ::core::ffi::c_int = 2;
 pub static mut default_shell: *const ::core::ffi::c_char =
     b"/bin/sh\0" as *const u8 as *const ::core::ffi::c_char;
-pub static mut batch_mode_shell: ::core::ffi::c_int = 0;
+/// Batch-mode shell is a W32/DOS feature: the only writers in the C original
+/// are platform-specific, so the value is fixed at 0 in this POSIX port.
+/// Keeping it an immutable `static` lets the read sites access it from safe
+/// code.
+pub static batch_mode_shell: ::core::ffi::c_int = 0;
 pub const S_IXUSR: ::core::ffi::c_int = __S_IEXEC;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const POSIX_SPAWN_SETSIGMASK: ::core::ffi::c_int = 0x8 as ::core::ffi::c_int;
@@ -3126,5 +3130,17 @@ mod unixy_shell_tests {
     #[test]
     fn unixy_shell_is_one() {
         assert_eq!(unixy_shell, 1);
+    }
+}
+
+#[cfg(test)]
+mod batch_mode_shell_tests {
+    use super::batch_mode_shell;
+
+    /// `batch_mode_shell` is an immutable `static` fixed at 0 in this POSIX
+    /// port and is readable from safe code (no `unsafe` needed).
+    #[test]
+    fn batch_mode_shell_is_zero() {
+        assert_eq!(batch_mode_shell, 0);
     }
 }
