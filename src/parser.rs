@@ -575,6 +575,49 @@ pub fn find_char_unquote_idx(buf: &mut [u8], stop: u8) -> Option<usize> {
     }
 }
 
+/// Pure port of make's `unescape_char`: remove one level of `\` escaping in
+/// front of the byte `c`, returning the rewritten bytes (without a trailing
+/// NUL).
+///
+/// A run of `n` backslashes immediately preceding `c` escapes it only when `n`
+/// is odd; that run collapses to `n / 2` backslashes and the `c` is kept
+/// unescaped. Runs that are even, or that precede any other byte (or the end of
+/// string), are copied through verbatim — `c` itself is otherwise untouched.
+/// This mirrors the c2rust `memmove` pointer routine exactly, over byte indices.
+pub fn unescape_char(s: &[u8], c: u8) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] == b'\\' {
+            // Span the run of backslashes; `i` lands on the following byte.
+            let start = i;
+            while i < s.len() && s[i] == b'\\' {
+                i += 1;
+            }
+            let run = i - start;
+            let after = s.get(i).copied();
+            if after != Some(c) || run % 2 == 0 {
+                // Not an escape of `c`: copy the whole run verbatim. If it ran
+                // to the end of the string, we are done.
+                out.extend_from_slice(&s[start..i]);
+                if after.is_none() {
+                    return out;
+                }
+            } else if run > 1 {
+                // Odd run before `c`: collapse each pair, dropping the escaping
+                // backslash. (`run == 1` copies nothing — the lone `\` is gone.)
+                out.extend_from_slice(&s[start..start + run / 2]);
+            }
+            // Fall through to copy the byte after the run (the `c` or other).
+        }
+        if i < s.len() {
+            out.push(s[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Result of [`find_percent_cached`]: either the input needs no rewrite (the
 /// `%`, if any, is already unquoted) or its backslashes were collapsed into a
 /// fresh buffer that the caller must intern.
@@ -2067,6 +2110,28 @@ mod tests {
             norm(find_percent_cached(b"a\\%b%c")),
             (Some(3), Some(b"a%b%c".to_vec()))
         );
+    }
+
+    #[test]
+    fn unescape_char_removes_one_escape_level() {
+        let u = |s: &[u8]| unescape_char(s, b':');
+
+        // No backslashes: unchanged.
+        assert_eq!(u(b"a:b"), b"a:b".to_vec());
+        // Single backslash before `:` escapes it; the `\` is dropped.
+        assert_eq!(u(b"a\\:b"), b"a:b".to_vec());
+        // Two backslashes = even run: `:` is not escaped, both `\` kept.
+        assert_eq!(u(b"a\\\\:b"), b"a\\\\:b".to_vec());
+        // Three backslashes (odd) before `:`: collapse to one, keep `:`.
+        assert_eq!(u(b"a\\\\\\:b"), b"a\\:b".to_vec());
+        // Backslashes before a non-`:` byte are copied verbatim.
+        assert_eq!(u(b"a\\\\x"), b"a\\\\x".to_vec());
+        assert_eq!(u(b"a\\xb"), b"a\\xb".to_vec());
+        // Trailing backslash run not followed by `:` is preserved.
+        assert_eq!(u(b"abc\\"), b"abc\\".to_vec());
+        assert_eq!(u(b"abc\\\\"), b"abc\\\\".to_vec());
+        // Only `:` escapes are touched; other chars' backslashes stay.
+        assert_eq!(u(b"\\:\\;"), b":\\;".to_vec());
     }
 
     #[test]
