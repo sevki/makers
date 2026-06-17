@@ -174,6 +174,19 @@ fn basic() {
 }
 
 #[test]
+fn rule_target_separators() {
+    // Inline `;` recipe, `:` separator, and `&:` grouped targets all route
+    // through eval's rule-target tokenizer. Independent prereqs flush in any
+    // interleaving, so compare the line set (see `check_unordered`).
+    check_unordered(
+        "rule_target_separators",
+        "43_rule_target_separators.mk",
+        "all",
+        &[],
+    );
+}
+
+#[test]
 fn variable_expansion() {
     check("vars", "02_vars.mk", "all", &["FROMCMD=cli"]);
 }
