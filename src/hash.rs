@@ -66,13 +66,13 @@ pub static mut hash_deleted_item: *const c_void =
 
 /// Is `item` a real entry (not empty, not the deleted sentinel)?
 ///
-/// # Safety
-///
-/// Only compares the pointer value against null and the sentinel; `item`
-/// is never dereferenced, so any pointer value is acceptable. Unsafe only
-/// because it reads the `hash_deleted_item` static.
-pub unsafe fn is_real_item(item: *const c_void) -> bool {
-    !item.is_null() && item != hash_deleted_item
+/// Safe: `item` is never dereferenced — it is only compared against null and
+/// the deleted-item sentinel. The sentinel's value is its own address (it is
+/// initialized to `&hash_deleted_item` and never mutated), so we compare
+/// against that address via the safe `&raw const` operator instead of reading
+/// the `static mut`, which keeps the function free of `unsafe`.
+pub fn is_real_item(item: *const c_void) -> bool {
+    !item.is_null() && item != (&raw const hash_deleted_item).cast::<c_void>()
 }
 
 pub(crate) unsafe fn table_slots<'a>(ht: *const hash_table) -> &'a [*mut c_void] {
@@ -627,6 +627,18 @@ pub fn jhash_string(bytes: &[u8]) -> c_uint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_real_item_classifies_null_sentinel_and_real() {
+        // Safe `fn`: null and the deleted-item sentinel are not real; any other
+        // non-null pointer is. The sentinel is recognized by its own address.
+        assert!(!is_real_item(::core::ptr::null()));
+        let sentinel = (&raw const hash_deleted_item).cast::<c_void>();
+        assert!(!is_real_item(sentinel));
+        let local = 0u8;
+        let real = (&raw const local).cast::<c_void>();
+        assert!(is_real_item(real));
+    }
 
     #[test]
     fn round_up_2_known_values() {
