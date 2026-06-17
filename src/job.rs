@@ -343,7 +343,10 @@ fn good_stdin_used() -> bool {
     GOOD_STDIN_USED.load(Ordering::Relaxed)
 }
 static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child;
-pub static mut unixy_shell: ::core::ffi::c_int = 1;
+/// The shell is always "unixy" in this POSIX port: the only writers in the C
+/// original are W32/DOS-specific, so the value is fixed at 1 here. Keeping it
+/// an immutable `static` lets the read sites access it from safe code.
+pub static unixy_shell: ::core::ffi::c_int = 1;
 pub static mut job_counter: ::core::ffi::c_ulong = 0;
 /// Count of jobserver tokens this make instance currently holds (the implicit
 /// token for its own slot plus one per running child). Stored in an atomic so
@@ -3111,5 +3114,17 @@ mod jobserver_tokens_tests {
         assert_eq!(jobserver_tokens(), 1, "one released");
 
         JOBSERVER_TOKENS.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod unixy_shell_tests {
+    use super::unixy_shell;
+
+    /// `unixy_shell` is an immutable `static` fixed at 1 in this POSIX port and
+    /// is readable from safe code (no `unsafe` needed).
+    #[test]
+    fn unixy_shell_is_one() {
+        assert_eq!(unixy_shell, 1);
     }
 }
