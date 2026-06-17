@@ -26,7 +26,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -492,7 +492,16 @@ pub static mut print_version_flag: ::core::ffi::c_int = 0;
 static mut makefiles: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
 pub static mut job_slots: ::core::ffi::c_uint = 0;
 pub const INVALID_JOB_SLOTS: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-static mut master_job_slots: ::core::ffi::c_uint = 0;
+/// Number of job slots handed to the jobserver when this make is the master.
+/// Set once during jobserver setup and read while draining tokens at exit.
+/// Stored in an atomic so its reads/write are plain safe operations; all
+/// access is single-threaded, so `Relaxed` preserves the original order.
+static MASTER_JOB_SLOTS: AtomicU32 = AtomicU32::new(0);
+
+/// Jobserver master slot count (0 when this make is not the jobserver master).
+fn master_job_slots() -> ::core::ffi::c_uint {
+    MASTER_JOB_SLOTS.load(Ordering::Relaxed)
+}
 static mut arg_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
 /// Read-only default for the `-j`/`--jobs` option: only ever referenced via
 /// `&raw const` as the option table's `default_value`, never written. Keeping
@@ -1888,7 +1897,7 @@ unsafe fn main_0(
     {
         jobserver_auth = jobserver_get_auth();
         if !jobserver_auth.is_null() {
-            master_job_slots = job_slots;
+            MASTER_JOB_SLOTS.store(job_slots, Ordering::Relaxed);
             job_slots = 0;
         }
     }
@@ -3785,17 +3794,18 @@ pub unsafe fn clean_jobserver(status: ::core::ffi::c_int) {
             }
         }
     }
-    if master_job_slots != 0 {
+    let master_slots = master_job_slots();
+    if master_slots != 0 {
         let tokens: ::core::ffi::c_uint =
             (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all());
-        if tokens != master_job_slots {
+        if tokens != master_slots {
             error(
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH.wrapping_mul(2),
                 b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
                     as *const u8 as *const ::core::ffi::c_char,
                 tokens,
-                master_job_slots,
+                master_slots,
             );
         }
     }
@@ -4791,6 +4801,20 @@ mod default_job_slots_tests {
     #[test]
     fn default_job_slots_is_invalid_sentinel() {
         assert_eq!(default_job_slots, INVALID_JOB_SLOTS);
+    }
+}
+
+#[cfg(test)]
+mod master_job_slots_tests {
+    use super::{master_job_slots, MASTER_JOB_SLOTS};
+    use std::sync::atomic::Ordering;
+
+    /// `master_job_slots()` is a plain load of `MASTER_JOB_SLOTS`, so it agrees
+    /// with a direct load. Read-only to avoid disturbing the shared production
+    /// counter, keeping this safe under the parallel test harness.
+    #[test]
+    fn master_job_slots_reflects_the_counter() {
+        assert_eq!(master_job_slots(), MASTER_JOB_SLOTS.load(Ordering::Relaxed));
     }
 }
 
