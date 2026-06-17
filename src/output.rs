@@ -731,3 +731,22 @@ pub mod msg {
         unsafe { die(MAKE_FAILURE) }
     }
 }
+
+/// Print a `<prefix><msg>` line to stderr, formatting `msg` with `format!`
+/// syntax. Safe wrapper over [`msg::error`] — `$loc` is an `Option<&Floc>`.
+#[macro_export]
+macro_rules! error {
+    ($loc:expr, $($arg:tt)*) => {
+        $crate::output::msg::error($loc, &::std::format!($($arg)*))
+    };
+}
+
+/// Print a fatal `<prefix>*** <msg>.  Stop.` line to stderr and exit, formatting
+/// `msg` with `format!` syntax. Safe wrapper over [`msg::fatal`]; never returns.
+/// `$loc` is an `Option<&Floc>`.
+#[macro_export]
+macro_rules! fatal {
+    ($loc:expr, $($arg:tt)*) => {
+        $crate::output::msg::fatal($loc, &::std::format!($($arg)*))
+    };
+}

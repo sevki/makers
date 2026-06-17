@@ -73,20 +73,13 @@ pub fn set_mode(arg: &str) {
         } else {
             match arg.parse::<u32>() {
                 Ok(n) => n,
-                Err(_) => fatal_invalid(arg),
+                Err(_) => crate::fatal!(None, "invalid shuffle mode: Invalid value: '{arg}'"),
             }
         };
         cfg.mode = Mode::Random;
         cfg.seed = seed;
         cfg.shuffler = Some(random_shuffle);
     }
-}
-
-fn fatal_invalid(arg: &str) -> ! {
-    crate::output::msg::fatal(
-        None,
-        &format!("invalid shuffle mode: Invalid value: '{arg}'"),
-    )
 }
 
 fn random_shuffle(slice: &mut [*mut Dep]) {
