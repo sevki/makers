@@ -1557,7 +1557,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                 let l_2: size_t = p2.offset_from(variable_buffer)
                                                     as ::core::ffi::c_long
                                                     as size_t;
-                                                *semip = ';' as i32 as ::core::ffi::c_char;
+                                                ::core::slice::from_raw_parts_mut(
+                                                    semip as *mut u8,
+                                                    1,
+                                                )[0] = b';';
                                                 collapse_continuations(semip);
                                                 variable_buffer_output(
                                                     p2.offset(strlen(p2) as isize),
