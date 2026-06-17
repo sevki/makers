@@ -174,6 +174,19 @@ fn basic() {
 }
 
 #[test]
+fn eval_flags() {
+    // Exercises the `--eval` command-line path (the eval-strings buffer that
+    // now owns its scratch copy via RAII instead of xstrdup/free). Both
+    // binaries must apply the eval'd assignment and `$(info ...)` identically.
+    check(
+        "eval_flags",
+        "01_basic.mk",
+        "all",
+        &["--eval=EV := from_eval", "--eval=$(info eval-info $(EV))"],
+    );
+}
+
+#[test]
 fn rule_target_separators() {
     // Inline `;` recipe, `:` separator, and `&:` grouped targets all route
     // through eval's rule-target tokenizer. Independent prereqs flush in any
