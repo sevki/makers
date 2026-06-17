@@ -66,7 +66,8 @@ use crate::make_main::{
     shell_var, stopchar_map,
 };
 use crate::misc::concat;
-use crate::output::{error, fatal, format};
+use crate::output::fatal;
+use crate::output::msg;
 use crate::posixos::jobserver_get_invalid_auth;
 use crate::read::reading_file;
 use crate::remote_stub::remote_description;
@@ -313,53 +314,20 @@ fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
     stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
 }
 
-/// Owns a `malloc`ed C string and frees it on drop, replacing the manual
-/// `xstrdup(format(...))` + `free` message buffers in this module.
-struct OwnedCStr(*mut ::core::ffi::c_char);
-
-impl Drop for OwnedCStr {
-    fn drop(&mut self) {
-        unsafe { free(self.0 as *mut ::core::ffi::c_void) }
-    }
-}
-
 /// Emit the "invalid/undefined variable" diagnostic shared by the three
-/// `check_*`/`warn_undefined` warnings: format the message into an owned
-/// buffer (freed on drop via [`OwnedCStr`]), fataling first when the warning
-/// action is `Error`, then emitting it as a warning — mirroring the C code's
-/// `xstrdup(format(...))` ... `free(...)` sequence without a manual free.
-unsafe fn emit_var_name_warning(
-    flocp: *const Floc,
-    is_error: bool,
-    fmt: *const ::core::ffi::c_char,
-    len: ::core::ffi::c_int,
-    name: *const ::core::ffi::c_char,
-) {
-    let a = OwnedCStr(xstrdup(format(
-        ::core::ptr::null::<::core::ffi::c_char>(),
-        (53 as size_t)
-            .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
-            .wrapping_div(22)
-            .wrapping_add(3)
-            .wrapping_add(strlen(name) as size_t),
-        fmt,
-        len,
-        name,
-    )));
+/// `check_*`/`warn_undefined` warnings. Fully safe: the message is built with
+/// `format!` and routed through the safe [`msg`] wrappers (no `format`/
+/// `xstrdup`/`free`/`fatal`/`error` FFI). When the warning action is `Error`
+/// it fatals (which never returns); otherwise it emits a `warning:` line.
+///
+/// `kind` is the leading text (e.g. "invalid variable name") and `name` is the
+/// offending name bytes — together they reproduce the C `"... '%.*s'"` text.
+fn emit_var_name_warning(loc: Option<&Floc>, is_error: bool, kind: &str, name: &[u8]) {
+    let body = format!("{kind} '{}'", String::from_utf8_lossy(name));
     if is_error {
-        fatal(
-            flocp,
-            strlen(a.0) as size_t,
-            b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-            a.0,
-        );
+        msg::fatal(loc, &body);
     }
-    error(
-        flocp,
-        strlen(a.0) as size_t,
-        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        a.0,
-    );
+    msg::error(loc, &format!("warning: {body}"));
 }
 
 unsafe extern "C" fn check_valid_name(
@@ -380,11 +348,10 @@ unsafe extern "C" fn check_valid_name(
     }
     if warning::is_active(Type::InvalidVar) {
         emit_var_name_warning(
-            flocp,
+            flocp.as_ref(),
             warning::action(Type::InvalidVar) == Action::Error,
-            b"invalid variable name '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
-            length as ::core::ffi::c_int,
-            name,
+            "invalid variable name",
+            name_bytes,
         );
     }
 }
@@ -669,11 +636,10 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
     }
     if warning::is_active(Type::InvalidRef) {
         emit_var_name_warning(
-            *expanding_var,
+            (*expanding_var).as_ref(),
             warning::action(Type::InvalidRef) == Action::Error,
-            b"invalid variable reference '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
-            length as ::core::ffi::c_int,
-            name,
+            "invalid variable reference",
+            name_bytes,
         );
     }
 }
@@ -1966,12 +1932,10 @@ pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
         }
         if warning::is_active(Type::UndefinedVar) {
             emit_var_name_warning(
-                reading_file,
+                reading_file.as_ref(),
                 warning::action(Type::UndefinedVar) == Action::Error,
-                b"reference to undefined variable '%.*s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                len as ::core::ffi::c_int,
-                name,
+                "reference to undefined variable",
+                ::core::slice::from_raw_parts(name as *const u8, len),
             );
         }
     }
