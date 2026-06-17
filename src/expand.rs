@@ -299,16 +299,22 @@ pub unsafe fn expand_variable_output(
     {
         return ptr;
     }
-    let recursive = (*v).recursive();
-    let value = if recursive != 0 {
-        recursively_expand_for_file(v, ::core::ptr::null_mut::<file>())
+    // A recursive variable's value is freshly expanded and owned here; an
+    // `OwnedCStr` reclaims it on drop instead of the manual `free` the C code
+    // did. A non-recursive variable's value is borrowed from the variable.
+    let owned = if (*v).recursive() != 0 {
+        Some(OwnedCStr(recursively_expand_for_file(
+            v,
+            ::core::ptr::null_mut::<file>(),
+        )))
     } else {
-        (*v).value
+        None
+    };
+    let value = match &owned {
+        Some(o) => o.as_ptr(),
+        None => (*v).value,
     };
     ptr = variable_buffer_output(ptr, value, strlen(value) as size_t);
-    if recursive != 0 {
-        free(value as *mut ::core::ffi::c_void);
-    }
     ptr
 }
 /// # Safety
@@ -476,13 +482,20 @@ pub unsafe fn expand_string_buf(
                                 warn_undefined(beg, name_len);
                             }
                             if let Some(v) = v.filter(|v| *v.value != 0) {
-                                let value: *mut ::core::ffi::c_char = if v.recursive() != 0 {
-                                    recursively_expand_for_file(
+                                // Recursive values are freshly expanded and
+                                // owned; `OwnedCStr` frees on drop in place of
+                                // the manual `free` below.
+                                let owned = if v.recursive() != 0 {
+                                    Some(OwnedCStr(recursively_expand_for_file(
                                         &raw mut *v,
                                         ::core::ptr::null_mut::<file>(),
-                                    )
+                                    )))
                                 } else {
-                                    v.value
+                                    None
+                                };
+                                let value: *mut ::core::ffi::c_char = match &owned {
+                                    Some(o) => o.as_ptr(),
+                                    None => v.value,
                                 };
 
                                 // Prefix both sides with `%` so an explicit
@@ -510,9 +523,6 @@ pub unsafe fn expand_string_buf(
                                 o = patsubst_expand_pat(
                                     o, value, pattern, replace, ppercent, rpercent,
                                 );
-                                if v.recursive() != 0 {
-                                    free(value as *mut ::core::ffi::c_void);
-                                }
                             }
                         }
                     }
