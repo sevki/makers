@@ -601,6 +601,13 @@ fn shuffle_identity() {
 }
 
 #[test]
+fn load_directive_unsupported() {
+    // load.rs load_file (safe `fatal!`): the `load` directive is unsupported,
+    // so both binaries must abort with the identical diagnostic.
+    check("load-unsupported", "49_load_unsupported.mk", "all", &[]);
+}
+
+#[test]
 fn shuffle_invalid_mode() {
     // shuffle::fatal_invalid (safe `msg::fatal`): a non-numeric, non-keyword
     // --shuffle value aborts with the identical diagnostic from both binaries.
