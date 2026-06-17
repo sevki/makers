@@ -721,6 +721,16 @@ fn special_variables_dot_variables() {
     check("special-vars", "50_special_variables.mk", "all", &[]);
 }
 
+#[test]
+fn delete_on_error() {
+    // When a recipe fails under `.DELETE_ON_ERROR:`, make removes the partially
+    // built target. The reap path memoizes whether `.DELETE_ON_ERROR` is a
+    // target in a function-local atomic (-1 = uncomputed). The fixture touches
+    // the target then fails, so make must delete it and report it on stderr;
+    // compared byte-for-byte (including the non-zero exit) against the C oracle.
+    check("delete-on-error", "51_delete_on_error.mk", "out", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With

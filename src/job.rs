@@ -11,7 +11,7 @@ use libc::{
     __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
     strchr, strcmp, strerror, strsignal,
 };
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -826,7 +826,11 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
         }
         dontcare = (*c).dontcare() as ::core::ffi::c_int;
         if child_failed != 0 && (*c).noerror() == 0 && ignore_errors_flag == 0 {
-            static mut delete_on_error: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
+            // Caches whether `.DELETE_ON_ERROR` is a target: -1 = not yet
+            // computed, 0/1 = the looked-up answer. Atomic so the read/write are
+            // plain safe ops; access is single-threaded (children are reaped on
+            // the main thread), so `Relaxed` preserves the original order.
+            static DELETE_ON_ERROR: AtomicI32 = AtomicI32::new(-1);
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(c, exit_code, exit_sig, coredump, 0);
             }
@@ -840,13 +844,16 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                         us_question as ::core::ffi::c_int
                     }) as update_status as update_status,
                 );
-            if delete_on_error == -(1 as ::core::ffi::c_int) {
+            if DELETE_ON_ERROR.load(Ordering::Relaxed) == -(1 as ::core::ffi::c_int) {
                 let f: *mut file =
                     lookup_file(b".DELETE_ON_ERROR\0" as *const u8 as *const ::core::ffi::c_char);
-                delete_on_error = (!f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0)
-                    as ::core::ffi::c_int;
+                DELETE_ON_ERROR.store(
+                    (!f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0)
+                        as ::core::ffi::c_int,
+                    Ordering::Relaxed,
+                );
             }
-            if exit_sig != 0 || delete_on_error != 0 {
+            if exit_sig != 0 || DELETE_ON_ERROR.load(Ordering::Relaxed) != 0 {
                 delete_child_targets(c);
             }
         } else {
