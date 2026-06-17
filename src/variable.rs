@@ -142,7 +142,16 @@ pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
     unsafe { ::core::mem::transmute::<[u8; 10], [::core::ffi::c_char; 10]>(*b"MAKELEVEL\0") };
 pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
-pub static mut env_recursion: ::core::ffi::c_ulonglong = 0 as ::core::ffi::c_ulonglong;
+/// Depth of the in-progress environment-variable expansion (used to detect
+/// self-referential recursion). Stored in an atomic so its reads are plain
+/// safe operations; all access is single-threaded, so `Relaxed` preserves the
+/// original program order.
+pub static ENV_RECURSION: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
+
+/// Current environment-variable expansion recursion depth.
+pub fn env_recursion() -> u64 {
+    ENV_RECURSION.load(::std::sync::atomic::Ordering::Relaxed)
+}
 static mut variable_changenum: ::core::ffi::c_ulong = 0;
 static mut pattern_vars: *mut pattern_var = ::core::ptr::null::<pattern_var>() as *mut pattern_var;
 static mut last_pattern_vars: [*mut pattern_var; 256] =
@@ -1284,7 +1293,7 @@ pub unsafe fn target_environment(
     let mut found_mflags: ::core::ffi::c_int = 0;
     let mut found_makeflags: ::core::ffi::c_int = 0;
     if file.is_null() {
-        env_recursion = env_recursion.wrapping_add(1);
+        ENV_RECURSION.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     if recursive == 0 && !jobserver_auth.is_null() {
         invalid = jobserver_get_invalid_auth();
@@ -1529,7 +1538,7 @@ pub unsafe fn target_environment(
     *result = ::core::ptr::null_mut::<::core::ffi::c_char>();
     hash_free(&raw mut table, 0);
     if file.is_null() {
-        env_recursion = env_recursion.wrapping_sub(1);
+        ENV_RECURSION.fetch_sub(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     result_0
 }
@@ -2278,5 +2287,28 @@ mod should_export_tests {
         let o_file = 2; // some non-command/env origin
         assert!(!should_export_decision(v_default, o_file, true, false));
         assert!(should_export_decision(v_default, o_file, true, true));
+    }
+}
+
+#[cfg(test)]
+mod env_recursion_tests {
+    use super::{env_recursion, ENV_RECURSION};
+    use std::sync::atomic::Ordering;
+
+    /// `env_recursion()` reflects the `ENV_RECURSION` counter, and the
+    /// add/sub used by the enter/leave paths round-trip through it. Restores
+    /// the prior value so it stays isolated from other tests.
+    #[test]
+    fn env_recursion_counts_round_trip() {
+        let saved = ENV_RECURSION.load(Ordering::Relaxed);
+
+        ENV_RECURSION.store(0, Ordering::Relaxed);
+        assert_eq!(env_recursion(), 0);
+        ENV_RECURSION.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(env_recursion(), 1);
+        ENV_RECURSION.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(env_recursion(), 0);
+
+        ENV_RECURSION.store(saved, Ordering::Relaxed);
     }
 }
