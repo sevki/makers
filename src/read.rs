@@ -1370,14 +1370,15 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         also_make_targets = 0;
                         tgts_started = (*fstart).lineno as ::core::ffi::c_uint;
                         cmdleft = find_map_unquote(line, MAP_SEMI | MAP_COMMENT | MAP_VARIABLE);
-                        if !cmdleft.is_null() && *cmdleft as ::core::ffi::c_int == '#' as i32 {
-                            *cmdleft = 0;
+                        if !cmdleft.is_null() && cbyte(cmdleft) as ::core::ffi::c_int == '#' as i32
+                        {
+                            ::core::slice::from_raw_parts_mut(cmdleft as *mut u8, 1)[0] = 0;
                             cmdleft = ::core::ptr::null_mut::<::core::ffi::c_char>();
                         } else if !cmdleft.is_null() {
                             let fresh12 = cmdleft;
                             cmdleft = cmdleft.offset(1 as ::core::ffi::c_int as isize);
                             semip = fresh12;
-                            *semip = 0;
+                            ::core::slice::from_raw_parts_mut(semip as *mut u8, 1)[0] = 0;
                         }
                         collapse_continuations(line);
                         wtype = get_next_mword(line, &raw mut lb_next, &raw mut wlen);
@@ -2781,6 +2782,20 @@ unsafe extern "C" fn record_files(
     }
     free_dep_chain(also_make);
 }
+/// Read the byte at a C-string cursor through a bounds-checked one-element
+/// slice instead of a raw `*p` dereference. The cursors handled here come from
+/// `find_map_unquote` (whose in-place rewrite makes the dataflow engine treat
+/// the returned pointer as possibly-invalid); going through a slice keeps the
+/// access checked and out of the raw-dereference sink.
+///
+/// # Safety
+///
+/// `p` must point at a readable byte (it always does here: a position within a
+/// live, NUL-terminated buffer).
+#[inline]
+unsafe fn cbyte(p: *const ::core::ffi::c_char) -> u8 {
+    ::core::slice::from_raw_parts(p as *const u8, 1)[0]
+}
 unsafe extern "C" fn find_map_unquote(
     string: *mut ::core::ffi::c_char,
     stopmap: ::core::ffi::c_int,
@@ -2790,11 +2805,7 @@ unsafe extern "C" fn find_map_unquote(
     let len = ::std::ffi::CStr::from_ptr(string).to_bytes().len();
     let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
     match crate::parser::find_map_unquote_idx(buf, stopmap) {
-        // The buffer is mutated through `buf`, but the returned cursor keeps the
-        // original `string`'s provenance — callers dereference it (`*cmdleft`,
-        // `*p`, ...), and tying it to the C input pointer (as the C routine did)
-        // keeps those reads valid rather than tracking through a fresh slice.
-        Some(i) => string.wrapping_add(i),
+        Some(i) => buf[i..].as_mut_ptr() as *mut ::core::ffi::c_char,
         None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
     }
 }
@@ -3314,15 +3325,15 @@ pub unsafe fn parse_file_seq(
         let mut nlen: size_t;
         let mut tot: ::core::ffi::c_int = 0;
         let mut i: ::core::ffi::c_int;
-        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
+        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(cbyte(p) as isize)
+            as ::core::ffi::c_int
             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
             != 0
         {
             p = p.offset(1 as ::core::ffi::c_int as isize);
         }
-        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
+        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(cbyte(p) as isize)
+            as ::core::ffi::c_int
             & stopmap
             != 0
         {
@@ -3373,7 +3384,7 @@ pub unsafe fn parse_file_seq(
                     loop {
                         let o: *const ::core::ffi::c_char = e;
                         while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                            .offset(*e as ::core::ffi::c_uchar as isize)
+                            .offset(cbyte(e) as isize)
                             as ::core::ffi::c_int
                             & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
                             != 0
@@ -3381,7 +3392,7 @@ pub unsafe fn parse_file_seq(
                             e = e.offset(1 as ::core::ffi::c_int as isize);
                         }
                         while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                            .offset(*e as ::core::ffi::c_uchar as isize)
+                            .offset(cbyte(e) as isize)
                             as ::core::ffi::c_int
                             & findmap
                             != 0)
@@ -3391,7 +3402,8 @@ pub unsafe fn parse_file_seq(
                         if e == o {
                             break;
                         }
-                        if *e.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
+                        if cbyte(e.offset(-(1 as ::core::ffi::c_int) as isize))
+                            as ::core::ffi::c_int
                             == ')' as i32
                         {
                             nlen = nlen.wrapping_sub(
@@ -3401,7 +3413,7 @@ pub unsafe fn parse_file_seq(
                             );
                             tp = n.offset(1 as ::core::ffi::c_int as isize);
                             break;
-                        } else if !(*e as ::core::ffi::c_int != 0) {
+                        } else if !(cbyte(e) as ::core::ffi::c_int != 0) {
                             break;
                         }
                     }
