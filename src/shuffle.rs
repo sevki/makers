@@ -1,6 +1,7 @@
 use crate::file::{Dep, File};
 use std::sync::{Mutex, OnceLock};
 
+use crate::fatal;
 use crate::make_main::not_parallel;
 use crate::misc::{make_rand, make_seed};
 
@@ -73,7 +74,7 @@ pub fn set_mode(arg: &str) {
         } else {
             match arg.parse::<u32>() {
                 Ok(n) => n,
-                Err(_) => crate::fatal!(None, "invalid shuffle mode: Invalid value: '{arg}'"),
+                Err(_) => fatal!(None, "invalid shuffle mode: Invalid value: '{arg}'"),
             }
         };
         cfg.mode = Mode::Random;
