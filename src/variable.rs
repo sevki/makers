@@ -581,7 +581,11 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
     // rebuilt. Function-local atomic so the read/write are plain safe ops;
     // access is single-threaded, so `Relaxed` preserves the original order.
     static LAST_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
-    if variable_changenum != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
+    // `u64::from` keeps this width-agnostic: `variable_changenum` is `c_ulong`,
+    // which is u32 on some targets (e.g. 32-bit Linux) and u64 on others. On
+    // 64-bit targets the conversion is a no-op, so silence clippy there.
+    #[allow(clippy::useless_conversion)]
+    if u64::from(variable_changenum) != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
         && (*(*var).name as ::core::ffi::c_int
             == *(b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
             && (*(*var).name as ::core::ffi::c_int == 0
@@ -630,7 +634,11 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
             vp = vp.offset(1 as ::core::ffi::c_int as isize);
         }
         *p.offset(-(1 as ::core::ffi::c_int as isize)) = 0;
-        LAST_CHANGENUM.store(variable_changenum, ::std::sync::atomic::Ordering::Relaxed);
+        #[allow(clippy::useless_conversion)]
+        LAST_CHANGENUM.store(
+            u64::from(variable_changenum),
+            ::std::sync::atomic::Ordering::Relaxed,
+        );
     }
     var
 }
