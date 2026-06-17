@@ -734,7 +734,16 @@ pub fn one_shell() -> bool {
     ONE_SHELL.load(Ordering::Relaxed)
 }
 pub static mut output_sync: ::core::ffi::c_int = OUTPUT_SYNC_NONE;
-pub static mut not_parallel: ::core::ffi::c_int = 0;
+/// Whether make is running non-parallel (one job at a time). Set while
+/// parsing and read during job scheduling/shuffling. Stored in an atomic so
+/// its reads/writes are plain safe operations; all access is single-threaded,
+/// so `Relaxed` preserves the original program order.
+pub static NOT_PARALLEL: AtomicBool = AtomicBool::new(false);
+
+/// Whether make is running non-parallel.
+pub fn not_parallel() -> bool {
+    NOT_PARALLEL.load(Ordering::Relaxed)
+}
 /// Set once make notices a prerequisite with a timestamp in the future
 /// (clock skew), so the "Clock skew detected" warning is printed once at the
 /// end. A one-shot boolean, stored in an atomic so its reads are plain safe
@@ -4782,6 +4791,21 @@ mod default_job_slots_tests {
     #[test]
     fn default_job_slots_is_invalid_sentinel() {
         assert_eq!(default_job_slots, INVALID_JOB_SLOTS);
+    }
+}
+
+#[cfg(test)]
+mod not_parallel_tests {
+    use super::{not_parallel, NOT_PARALLEL};
+    use std::sync::atomic::Ordering;
+
+    /// `not_parallel()` is a plain load of `NOT_PARALLEL`, so it agrees with a
+    /// direct load. Read-only to avoid disturbing the shared production flag
+    /// (job scheduling reads it), keeping this safe under the parallel test
+    /// harness.
+    #[test]
+    fn not_parallel_reflects_the_flag() {
+        assert_eq!(not_parallel(), NOT_PARALLEL.load(Ordering::Relaxed));
     }
 }
 

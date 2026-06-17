@@ -1778,7 +1778,7 @@ pub unsafe fn new_job(file: *mut file) {
         drop(nmbuf_buf);
     }
     start_waiting_job(c);
-    if job_slots == 1 || not_parallel != 0 {
+    if job_slots == 1 || not_parallel() {
         while (*file).command_state() as ::core::ffi::c_int == cs_running as ::core::ffi::c_int {
             reap_children(1, 0);
         }

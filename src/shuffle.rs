@@ -165,7 +165,7 @@ pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
         let cfg = config();
         (cfg.mode, cfg.seed)
     };
-    if mode == Mode::None || not_parallel != 0 {
+    if mode == Mode::None || not_parallel() {
         return;
     }
     if mode == Mode::Random {
