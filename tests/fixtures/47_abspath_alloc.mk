@@ -1,7 +1,8 @@
 # Exercises the alloc-style builtin path in expand_builtin_function
 # (function.rs): $(abspath) returns a freshly malloc'ed buffer that is now
-# owned via the RAII `ExpandedArg` wrapper. abspath normalizes lexically and
-# does not require the paths to exist, so both binaries must agree byte-for-byte
-# (they run in the same directory).
+# owned via the RAII `ExpandedArg` wrapper. The inputs are absolute paths so
+# the lexical normalization is independent of the working directory (the
+# differential harness runs each binary in its own temp dir), letting both
+# binaries agree byte-for-byte.
 all:
-	@echo abs $(abspath foo/../bar ./baz/. a/b/../c)
+	@echo abs $(abspath /foo/../bar /a/b/../c /x/./y /p/q///r)
