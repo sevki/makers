@@ -611,6 +611,19 @@ fn warn_undefined_var() {
 }
 
 #[test]
+fn warn_invalid_var_ref() {
+    // variable.rs emit_var_name_warning (RAII OwnedCStr message buffer): a
+    // reference whose name has an unquoted blank, `$(foo bar)`, is invalid;
+    // --warn=invalid-ref must emit the identical diagnostic from both binaries.
+    check(
+        "warn-invalid-ref",
+        "48_invalid_var_ref.mk",
+        "all",
+        &["--warn=invalid-ref"],
+    );
+}
+
+#[test]
 fn warn_global_action() {
     check(
         "warn-error",

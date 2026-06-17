@@ -313,6 +313,55 @@ fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
     stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
 }
 
+/// Owns a `malloc`ed C string and frees it on drop, replacing the manual
+/// `xstrdup(format(...))` + `free` message buffers in this module.
+struct OwnedCStr(*mut ::core::ffi::c_char);
+
+impl Drop for OwnedCStr {
+    fn drop(&mut self) {
+        unsafe { free(self.0 as *mut ::core::ffi::c_void) }
+    }
+}
+
+/// Emit the "invalid/undefined variable" diagnostic shared by the three
+/// `check_*`/`warn_undefined` warnings: format the message into an owned
+/// buffer (freed on drop via [`OwnedCStr`]), fataling first when the warning
+/// action is `Error`, then emitting it as a warning — mirroring the C code's
+/// `xstrdup(format(...))` ... `free(...)` sequence without a manual free.
+unsafe fn emit_var_name_warning(
+    flocp: *const Floc,
+    is_error: bool,
+    fmt: *const ::core::ffi::c_char,
+    len: ::core::ffi::c_int,
+    name: *const ::core::ffi::c_char,
+) {
+    let a = OwnedCStr(xstrdup(format(
+        ::core::ptr::null::<::core::ffi::c_char>(),
+        (53 as size_t)
+            .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
+            .wrapping_div(22)
+            .wrapping_add(3)
+            .wrapping_add(strlen(name) as size_t),
+        fmt,
+        len,
+        name,
+    )));
+    if is_error {
+        fatal(
+            flocp,
+            strlen(a.0) as size_t,
+            b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+            a.0,
+        );
+    }
+    error(
+        flocp,
+        strlen(a.0) as size_t,
+        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        a.0,
+    );
+}
+
 unsafe extern "C" fn check_valid_name(
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
@@ -330,32 +379,13 @@ unsafe extern "C" fn check_valid_name(
         return;
     }
     if warning::is_active(Type::InvalidVar) {
-        let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
-            ::core::ptr::null::<::core::ffi::c_char>(),
-            (53 as size_t)
-                .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
-                .wrapping_div(22)
-                .wrapping_add(3)
-                .wrapping_add(strlen(name) as size_t),
+        emit_var_name_warning(
+            flocp,
+            warning::action(Type::InvalidVar) == Action::Error,
             b"invalid variable name '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
             length as ::core::ffi::c_int,
             name,
-        ));
-        if warning::action(Type::InvalidVar) == Action::Error {
-            fatal(
-                flocp,
-                strlen(_a) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                _a,
-            );
-        }
-        error(
-            flocp,
-            strlen(_a) as size_t,
-            b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            _a,
         );
-        free(_a as *mut ::core::ffi::c_void);
     }
 }
 /// # Safety
@@ -638,32 +668,13 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
         return;
     }
     if warning::is_active(Type::InvalidRef) {
-        let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
-            ::core::ptr::null::<::core::ffi::c_char>(),
-            (53 as size_t)
-                .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
-                .wrapping_div(22)
-                .wrapping_add(3)
-                .wrapping_add(strlen(name) as size_t),
+        emit_var_name_warning(
+            *expanding_var,
+            warning::action(Type::InvalidRef) == Action::Error,
             b"invalid variable reference '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
             length as ::core::ffi::c_int,
             name,
-        ));
-        if warning::action(Type::InvalidRef) == Action::Error {
-            fatal(
-                *expanding_var,
-                strlen(_a) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                _a,
-            );
-        }
-        error(
-            *expanding_var,
-            strlen(_a) as size_t,
-            b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            _a,
         );
-        free(_a as *mut ::core::ffi::c_void);
     }
 }
 /// # Safety
@@ -1954,33 +1965,14 @@ pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
             dp = dp.offset(1 as ::core::ffi::c_int as isize);
         }
         if warning::is_active(Type::UndefinedVar) {
-            let mut _a: *mut ::core::ffi::c_char = xstrdup(format(
-                ::core::ptr::null::<::core::ffi::c_char>(),
-                (53 as size_t)
-                    .wrapping_mul(::core::mem::size_of::<uintmax_t>() as size_t)
-                    .wrapping_div(22)
-                    .wrapping_add(3)
-                    .wrapping_add(strlen(name) as size_t),
+            emit_var_name_warning(
+                reading_file,
+                warning::action(Type::UndefinedVar) == Action::Error,
                 b"reference to undefined variable '%.*s'\0" as *const u8
                     as *const ::core::ffi::c_char,
                 len as ::core::ffi::c_int,
                 name,
-            ));
-            if warning::action(Type::UndefinedVar) == Action::Error {
-                fatal(
-                    reading_file,
-                    strlen(_a) as size_t,
-                    b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    _a,
-                );
-            }
-            error(
-                reading_file,
-                strlen(_a) as size_t,
-                b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                _a,
             );
-            free(_a as *mut ::core::ffi::c_void);
         }
     }
 }
