@@ -2790,7 +2790,11 @@ unsafe extern "C" fn find_map_unquote(
     let len = ::std::ffi::CStr::from_ptr(string).to_bytes().len();
     let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
     match crate::parser::find_map_unquote_idx(buf, stopmap) {
-        Some(i) => buf[i..].as_mut_ptr() as *mut ::core::ffi::c_char,
+        // The buffer is mutated through `buf`, but the returned cursor keeps the
+        // original `string`'s provenance — callers dereference it (`*cmdleft`,
+        // `*p`, ...), and tying it to the C input pointer (as the C routine did)
+        // keeps those reads valid rather than tracking through a fresh slice.
+        Some(i) => string.wrapping_add(i),
         None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
     }
 }
