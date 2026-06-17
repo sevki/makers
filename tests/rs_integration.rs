@@ -601,13 +601,6 @@ fn shuffle_identity() {
 }
 
 #[test]
-fn load_directive_unsupported() {
-    // load.rs load_file (safe `fatal!`): the `load` directive is unsupported,
-    // so both binaries must abort with the identical diagnostic.
-    check("load-unsupported", "49_load_unsupported.mk", "all", &[]);
-}
-
-#[test]
 fn shuffle_invalid_mode() {
     // shuffle::fatal_invalid (safe `msg::fatal`): a non-numeric, non-keyword
     // --shuffle value aborts with the identical diagnostic from both binaries.
@@ -805,6 +798,31 @@ fn run_make(makefile: &str, files: &[(&str, &str)], args: &[&str]) -> (String, O
         String::from_utf8_lossy(&out.stdout).into_owned(),
         out.status.code(),
     )
+}
+
+#[test]
+fn load_directive_unsupported_aborts() {
+    // load.rs load_file (safe `fatal!`): dynamic loading is stubbed out, so a
+    // `load` directive aborts with the unsupported diagnostic on stderr and a
+    // non-zero exit. Not differential — the C oracle is built with MAKE_LOAD
+    // and instead tries to dlopen the object.
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Makefile"),
+        "load foo.so\nall: ; @echo unreached\n",
+    )
+    .unwrap();
+    let out = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to spawn make");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.contains("'load' is not supported on this platform"),
+        "expected unsupported-load diagnostic, got:\n{stderr}"
+    );
 }
 
 #[test]
