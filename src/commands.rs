@@ -396,7 +396,7 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
 
     let mut nlines: c_ushort;
     let mut lines: *mut *mut c_char;
-    if one_shell != 0 {
+    if one_shell() {
         // .ONESHELL: the entire recipe is a single line (sans final newline).
         let l = strlen(cmds.commands) as usize;
         nlines = 1;
