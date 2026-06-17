@@ -577,8 +577,11 @@ pub unsafe fn undefine_variable_in_set(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
-    static mut last_changenum: ::core::ffi::c_ulong = 0;
-    if variable_changenum != last_changenum
+    // Memoizes the variable-set change number at which `.VARIABLES` was last
+    // rebuilt. Function-local atomic so the read/write are plain safe ops;
+    // access is single-threaded, so `Relaxed` preserves the original order.
+    static LAST_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
+    if variable_changenum != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
         && (*(*var).name as ::core::ffi::c_int
             == *(b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
             && (*(*var).name as ::core::ffi::c_int == 0
@@ -627,7 +630,7 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
             vp = vp.offset(1 as ::core::ffi::c_int as isize);
         }
         *p.offset(-(1 as ::core::ffi::c_int as isize)) = 0;
-        last_changenum = variable_changenum;
+        LAST_CHANGENUM.store(variable_changenum, ::std::sync::atomic::Ordering::Relaxed);
     }
     var
 }

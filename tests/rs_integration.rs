@@ -711,6 +711,16 @@ fn notparallel_runs_serially() {
     check_unordered("notparallel", "49_notparallel.mk", "all", &["-j", "4"]);
 }
 
+#[test]
+fn special_variables_dot_variables() {
+    // `$(.VARIABLES)` is rebuilt by lookup_special_var, which memoizes the
+    // variable-set change number (now a function-local atomic). The fixture
+    // reads `.VARIABLES` once, defines a new variable, then reads it again, so
+    // the cache must invalidate and the second read must include the new name.
+    // Compared byte-for-byte against the C oracle.
+    check("special-vars", "50_special_variables.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
