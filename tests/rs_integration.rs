@@ -280,6 +280,14 @@ fn conditionals_else_if_chain_fallback() {
 }
 
 #[test]
+fn recursive_substitution_reference() {
+    // expand.rs recursive-variable expansion + substitution reference: a `=`
+    // (recursive) variable expanded through `$(SRC:.c=.o)` and through a plain
+    // `$(...)` reference. The freshly-expanded value is owned via RAII.
+    check("recursive-substref", "46_recursive_substref.mk", "all", &[]);
+}
+
+#[test]
 fn define_and_undefine_names() {
     // do_define / do_undefine name isolation (typed AST layer): a define whose
     // name is produced by expansion, and an undefine of a set variable.
