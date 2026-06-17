@@ -700,6 +700,17 @@ fn jobserver_tokens_recycled() {
     check_unordered("jobserver-tokens", "20_job_slots.mk", "all", &["-j", "2"]);
 }
 
+#[test]
+fn notparallel_runs_serially() {
+    // `.NOTPARALLEL` forces serial execution even under `-j`. This exercises
+    // the not_parallel flag (now routed through an atomic): it is set while
+    // parsing the special target and read by the scheduler/shuffle. Compared
+    // against the C oracle; output ordering can still jitter between make's
+    // buffered stdout and child fds, so compare the sorted line multiset and
+    // the exit code.
+    check_unordered("notparallel", "49_notparallel.mk", "all", &["-j", "4"]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
