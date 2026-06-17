@@ -2853,44 +2853,13 @@ unsafe extern "C" fn unescape_char(
     string: *mut ::core::ffi::c_char,
     c: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *mut ::core::ffi::c_char = string;
-    let mut s: *mut ::core::ffi::c_char = string;
-    while *s as ::core::ffi::c_int != 0 {
-        if *s as ::core::ffi::c_int == '\\' as i32 {
-            let mut e: *mut ::core::ffi::c_char = s;
-            let mut l: size_t;
-            while *e as ::core::ffi::c_int == '\\' as i32 {
-                e = e.offset(1 as ::core::ffi::c_int as isize);
-            }
-            l = e.offset_from(s) as ::core::ffi::c_long as size_t;
-            if *e as ::core::ffi::c_int != c || l.wrapping_rem(2) == 0 {
-                memmove(
-                    p as *mut ::core::ffi::c_void,
-                    s as *const ::core::ffi::c_void,
-                    l as size_t,
-                );
-                p = p.offset(l as isize);
-                if *e as ::core::ffi::c_int == 0 {
-                    break;
-                }
-            } else if l > 1 {
-                l = l.wrapping_div(2);
-                memmove(
-                    p as *mut ::core::ffi::c_void,
-                    s as *const ::core::ffi::c_void,
-                    l as size_t,
-                );
-                p = p.offset(l as isize);
-            }
-            s = e;
-        }
-        let fresh21 = s;
-        s = s.offset(1 as ::core::ffi::c_int as isize);
-        let fresh22 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-        *fresh22 = *fresh21;
-    }
-    *p = 0;
+    let len = ::std::ffi::CStr::from_ptr(string).to_bytes().len();
+    // The pure routine reads the bytes and returns the (never longer)
+    // unescaped result; write it back in place over the original buffer.
+    let out = crate::parser::unescape_char(::std::ffi::CStr::from_ptr(string).to_bytes(), c as u8);
+    let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
+    buf[..out.len()].copy_from_slice(&out);
+    buf[out.len()] = 0;
     string
 }
 /// # Safety

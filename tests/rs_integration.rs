@@ -199,6 +199,18 @@ fn escaped_percent_target() {
 }
 
 #[test]
+fn escaped_colon_prereq() {
+    // `foo\:bar` is a prerequisite with a literal colon (via unescape_char), not
+    // a target/prereq separator; both binaries must build the `foo:bar` target.
+    check(
+        "escaped_colon_prereq",
+        "45_escaped_colon_prereq.mk",
+        "all",
+        &[],
+    );
+}
+
+#[test]
 fn variable_expansion() {
     check("vars", "02_vars.mk", "all", &["FROMCMD=cli"]);
 }
