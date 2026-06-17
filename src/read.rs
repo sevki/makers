@@ -5,8 +5,8 @@ pub use crate::ffi_types::{
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::free_ns_chain;
 use crate::misc::{
-    collapse_continuations, copy_dep, copy_dep_chain, find_next_token, next_token, skip_reference,
-    xcalloc, xmalloc, xrealloc, xstrdup, xstrndup,
+    collapse_continuations, copy_dep, copy_dep_chain, find_next_token, next_token, xcalloc,
+    xmalloc, xrealloc, xstrdup, xstrndup,
 };
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
@@ -2783,56 +2783,16 @@ unsafe extern "C" fn record_files(
 }
 unsafe extern "C" fn find_map_unquote(
     string: *mut ::core::ffi::c_char,
-    mut stopmap: ::core::ffi::c_int,
+    stopmap: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
-    let mut string_len: size_t = 0;
-    let mut p: *mut ::core::ffi::c_char = string;
-    stopmap |= MAP_NUL;
-    loop {
-        while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(*p as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & stopmap
-            != 0)
-        {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
-        }
-        if *p as ::core::ffi::c_int == 0 {
-            break;
-        }
-        if *p as ::core::ffi::c_int == '$' as i32 {
-            p = skip_reference(p.offset(1 as ::core::ffi::c_int as isize));
-        } else if p > string
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '\\' as i32
-        {
-            let mut i: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
-            while p.offset(i as isize) as *mut ::core::ffi::c_char >= string
-                && *p.offset(i as isize) as ::core::ffi::c_int == '\\' as i32
-            {
-                i -= 1;
-            }
-            i += 1;
-            if string_len == 0 {
-                string_len = strlen(string) as size_t;
-            }
-            let hi: ::core::ffi::c_int = -(i / 2);
-            memmove(
-                p.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                p.offset((i / 2) as isize) as *mut ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                (string_len as size_t)
-                    .wrapping_sub(p.offset_from(string) as ::core::ffi::c_long as size_t)
-                    .wrapping_add(hi as size_t)
-                    .wrapping_add(1),
-            );
-            p = p.offset((i / 2) as isize);
-            if i % 2 == 0 {
-                return p;
-            }
-        } else {
-            return p;
-        }
+    // Bridge to the pure parser routine over a byte slice covering the C string
+    // plus its NUL, instead of the c2rust stopchar_map/memmove pointer walk.
+    let len = ::std::ffi::CStr::from_ptr(string).to_bytes().len();
+    let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
+    match crate::parser::find_map_unquote_idx(buf, stopmap) {
+        Some(i) => buf[i..].as_mut_ptr() as *mut ::core::ffi::c_char,
+        None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
     }
-    ::core::ptr::null_mut::<::core::ffi::c_char>()
 }
 unsafe extern "C" fn find_char_unquote(
     string: *mut ::core::ffi::c_char,
