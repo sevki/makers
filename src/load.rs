@@ -4,9 +4,9 @@
 //!
 //! Port of the no-`MAKE_LOAD` branch of `load.c`.
 
+use crate::fatal;
 pub use crate::ffi_types::size_t;
 use crate::floc::Floc;
-use crate::output::fatal;
 
 pub type file = crate::file::File;
 
@@ -21,11 +21,7 @@ pub unsafe fn load_file(
     noerror: ::core::ffi::c_int,
 ) -> ::core::ffi::c_int {
     if noerror == 0 {
-        fatal(
-            flocp,
-            0,
-            c"'load' is not supported on this platform".as_ptr(),
-        );
+        fatal!(flocp.as_ref(), "'load' is not supported on this platform");
     }
     0
 }
@@ -36,11 +32,7 @@ pub unsafe fn load_file(
 ///
 /// Never returns; safe to call with any argument (it is ignored).
 pub unsafe fn unload_file(_name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
-    fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        0,
-        c"INTERNAL: cannot unload when load is not supported".as_ptr(),
-    );
+    fatal!(None, "INTERNAL: cannot unload when load is not supported")
 }
 
 /// No-op: there is never anything to unload.
