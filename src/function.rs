@@ -2791,6 +2791,17 @@ static mut function_table_init: [function_table_entry; 38] = [
     ft_entry(b"wordlist\0", 3, 3, 1, func_wordlist),
     ft_entry(b"words\0", 0, 1, 1, func_words),
 ];
+/// Append an alloc-style builtin's freshly `malloc`ed result to the variable
+/// buffer, releasing it via the RAII `ExpandedArg` wrapper instead of a manual
+/// `free`. Kept separate so the owned buffer's `Drop` scope stays out of the
+/// hot `expand_builtin_function` dispatch.
+unsafe fn output_owned_result(
+    o: *mut ::core::ffi::c_char,
+    p: *mut ::core::ffi::c_char,
+) -> *mut ::core::ffi::c_char {
+    let owned = ExpandedArg::from_raw(p);
+    variable_buffer_output(o, owned.as_ptr(), strlen(owned.as_ptr()) as size_t)
+}
 unsafe extern "C" fn expand_builtin_function(
     mut o: *mut ::core::ffi::c_char,
     argc: ::core::ffi::c_uint,
@@ -2835,10 +2846,7 @@ unsafe extern "C" fn expand_builtin_function(
         .alloc_func_ptr
         .expect("non-null function pointer")((*entry_p).name, argc, argv);
     if !p.is_null() {
-        // The alloc-style builtin returns a freshly malloc'ed buffer we own;
-        // `ExpandedArg` frees it on drop instead of the manual `free` below.
-        let owned = ExpandedArg::from_raw(p);
-        o = variable_buffer_output(o, owned.as_ptr(), strlen(owned.as_ptr()) as size_t);
+        o = output_owned_result(o, p);
     }
     o
 }
