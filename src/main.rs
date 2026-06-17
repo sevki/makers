@@ -1748,10 +1748,19 @@ unsafe fn main_0(
             .wrapping_mul((*eval_strings).idx as size_t);
         i_2 = 0;
         while i_2 < (*eval_strings).idx {
-            p_0 = xstrdup(*(*eval_strings).list.offset(i_2 as isize));
-            len_1 = len_1.wrapping_add((2 as size_t).wrapping_mul(strlen(p_0)) as size_t);
-            eval_buffer(p_0, ::core::ptr::null::<Floc>());
-            free(p_0 as *mut ::core::ffi::c_void);
+            // Own a mutable, NUL-terminated copy of the eval string instead of
+            // xstrdup + free: `eval_buffer` parses it in place (only shrinking
+            // it), and the `Vec`'s Drop reclaims the buffer at end of scope —
+            // RAII in place of the manual malloc/free pair.
+            let mut owned: Vec<u8> =
+                ::std::ffi::CStr::from_ptr(*(*eval_strings).list.offset(i_2 as isize))
+                    .to_bytes_with_nul()
+                    .to_vec();
+            len_1 = len_1.wrapping_add((2 as size_t).wrapping_mul((owned.len() - 1) as size_t));
+            eval_buffer(
+                owned.as_mut_ptr() as *mut ::core::ffi::c_char,
+                ::core::ptr::null::<Floc>(),
+            );
             i_2 = i_2.wrapping_add(1);
         }
         let mut value_0_buf: Vec<u8> = Vec::with_capacity(len_1 as usize);
