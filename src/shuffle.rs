@@ -3,7 +3,6 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::make_main::not_parallel;
 use crate::misc::{make_rand, make_seed};
-use crate::output::fatal;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum Mode {
@@ -84,15 +83,10 @@ pub fn set_mode(arg: &str) {
 }
 
 fn fatal_invalid(arg: &str) -> ! {
-    let msg = format!("invalid shuffle mode: Invalid value: '{}'\0", arg);
-    unsafe {
-        fatal(
-            ::core::ptr::null(),
-            msg.len(),
-            b"%s\0".as_ptr() as *const ::core::ffi::c_char,
-            msg.as_ptr() as *const ::core::ffi::c_char,
-        );
-    }
+    crate::output::msg::fatal(
+        None,
+        &format!("invalid shuffle mode: Invalid value: '{arg}'"),
+    )
 }
 
 fn random_shuffle(slice: &mut [*mut Dep]) {

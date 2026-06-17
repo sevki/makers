@@ -601,6 +601,18 @@ fn shuffle_identity() {
 }
 
 #[test]
+fn shuffle_invalid_mode() {
+    // shuffle::fatal_invalid (safe `msg::fatal`): a non-numeric, non-keyword
+    // --shuffle value aborts with the identical diagnostic from both binaries.
+    check(
+        "shuffle-invalid",
+        "08_shuffle.mk",
+        "all",
+        &["--shuffle=bogus"],
+    );
+}
+
+#[test]
 fn warn_undefined_var() {
     check(
         "warn-undefined-var",
