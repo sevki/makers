@@ -2295,20 +2295,24 @@ mod env_recursion_tests {
     use super::{env_recursion, ENV_RECURSION};
     use std::sync::atomic::Ordering;
 
-    /// `env_recursion()` reflects the `ENV_RECURSION` counter, and the
-    /// add/sub used by the enter/leave paths round-trip through it. Restores
-    /// the prior value so it stays isolated from other tests.
+    /// `env_recursion()` is a plain load of the `ENV_RECURSION` counter, so it
+    /// agrees with a direct load. Read-only to avoid disturbing the shared
+    /// production global, which the enter/leave paths mutate — keeping this
+    /// test safe under the parallel test harness.
     #[test]
-    fn env_recursion_counts_round_trip() {
-        let saved = ENV_RECURSION.load(Ordering::Relaxed);
+    fn env_recursion_reflects_the_counter() {
+        assert_eq!(env_recursion(), ENV_RECURSION.load(Ordering::Relaxed));
+    }
 
-        ENV_RECURSION.store(0, Ordering::Relaxed);
-        assert_eq!(env_recursion(), 0);
-        ENV_RECURSION.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(env_recursion(), 1);
-        ENV_RECURSION.fetch_sub(1, Ordering::Relaxed);
-        assert_eq!(env_recursion(), 0);
-
-        ENV_RECURSION.store(saved, Ordering::Relaxed);
+    /// The fetch_add/fetch_sub the enter/leave paths use round-trip back to the
+    /// starting value. Exercised on a local atomic so it never touches the
+    /// shared production counter.
+    #[test]
+    fn env_recursion_add_sub_round_trips() {
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        counter.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
+        counter.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }
