@@ -1434,7 +1434,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                 == '&' as i32
                                         {
                                             colonp =
-                                                variable_buffer.offset((colon_off - 1) as isize);
+                                                colonp.offset(-(1 as ::core::ffi::c_int) as isize);
                                         }
                                         break;
                                     } else {
@@ -1515,11 +1515,9 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                     )
                                         as *mut nameseq;
                                     crate::expand::set_variable_buffer_byte(colon_off, save_0);
-                                    p2 = variable_buffer.offset(
-                                        (colon_off
-                                            + (save_0 as ::core::ffi::c_int == '&' as i32)
-                                                as ::core::ffi::c_int
-                                                as size_t)
+                                    p2 = colonp.offset(
+                                        (save_0 as ::core::ffi::c_int == '&' as i32)
+                                            as ::core::ffi::c_int
                                             as isize,
                                     );
                                     if filenames.is_null() {
