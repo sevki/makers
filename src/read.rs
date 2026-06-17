@@ -1415,7 +1415,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                 as size_t;
                                             let pend: *mut ::core::ffi::c_char =
                                                 p2.offset(strlen(p2) as isize);
-                                            *cmdleft = 0;
+                                            crate::expand::set_variable_buffer_byte(cmd_off, 0);
                                             expand_string_buf(pend, lb_next, SIZE_MAX as size_t);
                                             lb_next = lb_next.offset(strlen(lb_next) as isize);
                                             p2 = variable_buffer.offset(p2_off as isize);
@@ -1425,13 +1425,16 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                     }
                                     colonp = find_char_unquote(p2, ':' as i32);
                                     if !colonp.is_null() {
+                                        let colon_off: size_t = colonp.offset_from(variable_buffer)
+                                            as ::core::ffi::c_long
+                                            as size_t;
                                         if colonp > p2
-                                            && *colonp.offset(-(1 as ::core::ffi::c_int) as isize)
+                                            && crate::expand::variable_buffer_byte(colon_off - 1)
                                                 as ::core::ffi::c_int
                                                 == '&' as i32
                                         {
                                             colonp =
-                                                colonp.offset(-(1 as ::core::ffi::c_int) as isize);
+                                                variable_buffer.offset((colon_off - 1) as isize);
                                         }
                                         break;
                                     } else {
@@ -1494,11 +1497,15 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             as *const ::core::ffi::c_char,
                                     );
                                 } else {
-                                    let save_0: ::core::ffi::c_char = *colonp;
+                                    let colon_off: size_t = colonp.offset_from(variable_buffer)
+                                        as ::core::ffi::c_long
+                                        as size_t;
+                                    let save_0: ::core::ffi::c_char =
+                                        crate::expand::variable_buffer_byte(colon_off);
                                     if save_0 as ::core::ffi::c_int == '&' as i32 {
                                         also_make_targets = 1;
                                     }
-                                    *colonp = 0;
+                                    crate::expand::set_variable_buffer_byte(colon_off, 0);
                                     filenames = parse_file_seq(
                                         &raw mut p2,
                                         ::core::mem::size_of::<nameseq>() as size_t,
@@ -1507,10 +1514,12 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                         PARSEFS_NONE,
                                     )
                                         as *mut nameseq;
-                                    *colonp = save_0;
-                                    p2 = colonp.offset(
-                                        (save_0 as ::core::ffi::c_int == '&' as i32)
-                                            as ::core::ffi::c_int
+                                    crate::expand::set_variable_buffer_byte(colon_off, save_0);
+                                    p2 = variable_buffer.offset(
+                                        (colon_off
+                                            + (save_0 as ::core::ffi::c_int == '&' as i32)
+                                                as ::core::ffi::c_int
+                                                as size_t)
                                             as isize,
                                     );
                                     if filenames.is_null() {
