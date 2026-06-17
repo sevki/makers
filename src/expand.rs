@@ -159,6 +159,30 @@ pub unsafe fn swap_variable_buffer(
     variable_buffer_length = len;
     p
 }
+/// Read one byte from the variable expansion buffer at `off`.
+///
+/// Bounds-checked access into `variable_buffer` via a slice, used in place of
+/// raw-pointer dereferences of cursors derived from it (e.g. pointers returned
+/// by `find_char_unquote`) so the access cannot touch a stale pointer.
+///
+/// # Safety
+///
+/// `variable_buffer` must be initialized and `off` within its allocation.
+pub unsafe fn variable_buffer_byte(off: size_t) -> ::core::ffi::c_char {
+    ::core::slice::from_raw_parts(variable_buffer as *const u8, variable_buffer_length)[off]
+        as ::core::ffi::c_char
+}
+/// Write one byte into the variable expansion buffer at `off`.
+///
+/// Bounds-checked counterpart to [`variable_buffer_byte`].
+///
+/// # Safety
+///
+/// `variable_buffer` must be initialized and `off` within its allocation.
+pub unsafe fn set_variable_buffer_byte(off: size_t, b: ::core::ffi::c_char) {
+    ::core::slice::from_raw_parts_mut(variable_buffer as *mut u8, variable_buffer_length)[off] =
+        b as u8;
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
