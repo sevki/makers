@@ -575,6 +575,51 @@ pub fn find_char_unquote_idx(buf: &mut [u8], stop: u8) -> Option<usize> {
     }
 }
 
+/// In-place port of make's `find_map_unquote`: scan `buf` (a NUL-terminated C
+/// string slice, including the terminator) for the first *unquoted* byte whose
+/// stopchar-map flags intersect `stopmap`.
+///
+/// Like [`find_char_unquote_idx`] it collapses a backslash run before a stop
+/// byte (an odd run escapes it), shifting the tail left; additionally it skips
+/// over `$(...)`/`${...}` references (so a stop byte inside one does not count),
+/// reusing [`skip_reference`]. `MAP_NUL` is always added to `stopmap`, so the
+/// scan halts at the terminator. Returns the index of the unescaped stop byte,
+/// or `None` if none remains. Mirrors the c2rust pointer routine exactly.
+pub fn find_map_unquote_idx(buf: &mut [u8], stopmap: i32) -> Option<usize> {
+    let stopmap = stopmap | MAP_NUL;
+    let mut string_len: Option<usize> = None;
+    let mut p = 0usize;
+    loop {
+        // Advance to the next stop-map byte (or the NUL, which is in `stopmap`).
+        while !map_set(buf[p], stopmap) {
+            p += 1;
+        }
+        if buf[p] == 0 {
+            return None;
+        }
+        if buf[p] == b'$' {
+            // A reference is opaque to the scan; skip past it and continue.
+            p = skip_reference(buf, p + 1);
+        } else if p > 0 && buf[p - 1] == b'\\' {
+            // Same backslash collapse as `find_char_unquote_idx`.
+            let n = buf[..p].iter().rev().take_while(|&&b| b == b'\\').count();
+            let slen = *string_len
+                .get_or_insert_with(|| buf.iter().position(|&b| b == 0).unwrap_or(buf.len()));
+            let half = n / 2;
+            let dest = p - n;
+            let src = p - half;
+            let len = slen - p + half + 1;
+            buf.copy_within(src..src + len, dest);
+            p = src;
+            if n % 2 == 0 {
+                return Some(p);
+            }
+        } else {
+            return Some(p);
+        }
+    }
+}
+
 /// Pure port of make's `unescape_char`: remove one level of `\` escaping in
 /// front of the byte `c`, returning the rewritten bytes (without a trailing
 /// NUL).
@@ -2224,6 +2269,35 @@ mod tests {
         assert_eq!(get_next_mword(b"a\\:b:c"), (Static, 0, 4));
         // A word ending exactly at end-of-string.
         assert_eq!(get_next_mword(b"word"), (Static, 0, 4));
+    }
+
+    #[test]
+    fn find_map_unquote_skips_refs_and_collapses() {
+        use crate::make_main::{MAP_SEMI, MAP_VARIABLE};
+        ensure_map();
+
+        // (result index, resulting C string up to the new NUL).
+        fn run(s: &[u8], stopmap: i32) -> (Option<usize>, Vec<u8>) {
+            let mut buf = s.to_vec();
+            buf.push(0);
+            let r = find_map_unquote_idx(&mut buf, stopmap);
+            let end = buf.iter().position(|&b| b == 0).unwrap();
+            (r, buf[..end].to_vec())
+        }
+
+        // Plain stop byte (`;`) found as-is.
+        assert_eq!(run(b"abc;def", MAP_SEMI), (Some(3), b"abc;def".to_vec()));
+        // No stop byte present.
+        assert_eq!(run(b"abcdef", MAP_SEMI), (None, b"abcdef".to_vec()));
+        // A `;` inside a `$(...)` reference is skipped; the later `;` matches.
+        assert_eq!(
+            run(b"a$(x;y)b;c", MAP_SEMI | MAP_VARIABLE),
+            (Some(8), b"a$(x;y)b;c".to_vec())
+        );
+        // `\;` escapes the stop byte: collapsed, no unescaped `;` remains.
+        assert_eq!(run(b"a\\;b", MAP_SEMI), (None, b"a;b".to_vec()));
+        // `\\;` is an even run: `;` is unescaped at index 2 after collapsing.
+        assert_eq!(run(b"a\\\\;b", MAP_SEMI), (Some(2), b"a\\;b".to_vec()));
     }
 
     #[test]
