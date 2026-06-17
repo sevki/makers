@@ -237,8 +237,8 @@ use crate::hash::{
 };
 use crate::make_main::{
     cmd_prefix, db_level, export_all_variables, ignore_errors_flag, just_print_flag,
-    no_builtin_rules_flag, no_intermediates, not_parallel, question_flag, run_silent,
-    second_expansion, stopchar_map, touch_flag, verify_flag, MAP_DIRSEP,
+    no_builtin_rules_flag, no_intermediates, question_flag, run_silent, second_expansion,
+    stopchar_map, touch_flag, verify_flag, MAP_DIRSEP,
 };
 use crate::output::{error, fatal, perror_with_name};
 use crate::read::{find_percent, parse_file_seq};
@@ -1330,7 +1330,7 @@ pub unsafe fn snap_deps() {
     if !f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0 {
         let mut d2: *mut dep;
         if (*f).deps.is_null() {
-            not_parallel = 1;
+            crate::make_main::NOT_PARALLEL.store(true, ::std::sync::atomic::Ordering::Relaxed);
         } else {
             d = (*f).deps;
             while !d.is_null() {
