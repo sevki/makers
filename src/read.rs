@@ -2384,8 +2384,8 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
             && special == Some(crate::parser::SpecialTarget::SecondExpansion)
         {
             crate::make_main::SECOND_EXPANSION.store(true, ::std::sync::atomic::Ordering::Relaxed);
-        } else if one_shell == 0 && special == Some(crate::parser::SpecialTarget::OneShell) {
-            one_shell = 1;
+        } else if !one_shell() && special == Some(crate::parser::SpecialTarget::OneShell) {
+            crate::make_main::ONE_SHELL.store(true, ::std::sync::atomic::Ordering::Relaxed);
         } else if set_default != 0
             && *(*default_goal_var).value.offset(0) as ::core::ffi::c_int == 0
         {

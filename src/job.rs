@@ -2511,7 +2511,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                 if !strchr(sh_chars, *p as ::core::ffi::c_int).is_null() {
                     break 'fast;
                 }
-                if one_shell != 0 && *p as ::core::ffi::c_int == '\n' as i32 {
+                if one_shell() && *p as ::core::ffi::c_int == '\n' as i32 {
                     break 'fast;
                 }
                 match *p as ::core::ffi::c_int {
@@ -2662,7 +2662,7 @@ unsafe extern "C" fn construct_command_argv_internal(
     } else {
         0
     };
-    if one_shell != 0 {
+    if one_shell() {
         if is_bourne_compatible_shell(path_from_cstr(shell)) {
             let mut f: *const ::core::ffi::c_char = line;
             let mut t: *mut ::core::ffi::c_char = line;

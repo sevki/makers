@@ -723,7 +723,16 @@ pub static SECOND_EXPANSION: AtomicBool = AtomicBool::new(false);
 pub fn second_expansion() -> bool {
     SECOND_EXPANSION.load(Ordering::Relaxed)
 }
-pub static mut one_shell: ::core::ffi::c_int = 0;
+/// Whether `.ONESHELL` is in effect (each recipe runs in a single shell).
+/// Set once while parsing and read during job construction. Stored in an
+/// atomic so its reads/writes are plain safe operations; all access is
+/// single-threaded, so `Relaxed` preserves the original program order.
+pub static ONE_SHELL: AtomicBool = AtomicBool::new(false);
+
+/// Whether `.ONESHELL` is in effect.
+pub fn one_shell() -> bool {
+    ONE_SHELL.load(Ordering::Relaxed)
+}
 pub static mut output_sync: ::core::ffi::c_int = OUTPUT_SYNC_NONE;
 pub static mut not_parallel: ::core::ffi::c_int = 0;
 /// Set once make notices a prerequisite with a timestamp in the future
@@ -4773,6 +4782,21 @@ mod default_job_slots_tests {
     #[test]
     fn default_job_slots_is_invalid_sentinel() {
         assert_eq!(default_job_slots, INVALID_JOB_SLOTS);
+    }
+}
+
+#[cfg(test)]
+mod one_shell_tests {
+    use super::{one_shell, ONE_SHELL};
+    use std::sync::atomic::Ordering;
+
+    /// `one_shell()` is a plain load of `ONE_SHELL`, so it agrees with a
+    /// direct load. Read-only to avoid disturbing the shared production flag
+    /// (job construction reads it), keeping this safe under the parallel test
+    /// harness.
+    #[test]
+    fn one_shell_reflects_the_flag() {
+        assert_eq!(one_shell(), ONE_SHELL.load(Ordering::Relaxed));
     }
 }
 
