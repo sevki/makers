@@ -476,11 +476,17 @@ static mut old_builtin_rules_flag: ::core::ffi::c_int = 0;
 static mut old_builtin_variables_flag: ::core::ffi::c_int = 0;
 pub static mut export_all_variables: ::core::ffi::c_int = 0;
 pub static mut keep_going_flag: ::core::ffi::c_int = 0;
-static mut default_keep_going_flag: ::core::ffi::c_int = 0;
+/// Read-only `--keep-going` default: only referenced via `&raw const` as the
+/// option table's `default_value`, never written. Immutable removes a mutable
+/// global.
+static default_keep_going_flag: ::core::ffi::c_int = 0;
 static mut keep_going_origin: variable_origin = o_default;
 pub static mut check_symlink_flag: ::core::ffi::c_int = 0;
 static mut print_directory_flag: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
-static mut default_print_directory_flag: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
+/// Read-only `--print-directory` default: only referenced via `&raw const` as
+/// the option table's `default_value`, never written. Immutable removes a
+/// mutable global.
+static default_print_directory_flag: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut print_directory_origin: variable_origin = o_default;
 pub static mut print_version_flag: ::core::ffi::c_int = 0;
 static mut makefiles: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
@@ -492,7 +498,10 @@ static mut arg_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
 /// `&raw const` as the option table's `default_value`, never written. Keeping
 /// it an immutable `static` removes a needless mutable global.
 static default_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
-static mut inf_jobs: ::core::ffi::c_int = 0;
+/// Read-only sentinel for the `-j` no-argument case: only referenced via
+/// `&raw const` as the option table's `noarg_value`, never written. Immutable
+/// removes a mutable global.
+static inf_jobs: ::core::ffi::c_int = 0;
 pub static mut jobserver_auth: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 static mut jobserver_style: *mut ::core::ffi::c_char =
@@ -4764,5 +4773,20 @@ mod default_job_slots_tests {
     #[test]
     fn default_job_slots_is_invalid_sentinel() {
         assert_eq!(default_job_slots, INVALID_JOB_SLOTS);
+    }
+}
+
+#[cfg(test)]
+mod option_default_statics_tests {
+    use super::{default_keep_going_flag, default_print_directory_flag, inf_jobs};
+
+    /// The option table's read-only `default_value`/`noarg_value` statics hold
+    /// their initializers and are accessible from safe code (immutable, no
+    /// `unsafe`).
+    #[test]
+    fn option_default_statics_hold_initializers() {
+        assert_eq!(default_keep_going_flag, 0);
+        assert_eq!(default_print_directory_flag, -1);
+        assert_eq!(inf_jobs, 0);
     }
 }
