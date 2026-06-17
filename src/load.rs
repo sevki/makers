@@ -28,16 +28,25 @@ pub unsafe fn load_file(
 
 /// Always an internal error: nothing can have been loaded.
 ///
-/// # Safety
-///
-/// Never returns; safe to call with any argument (it is ignored).
-pub unsafe fn unload_file(_name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+/// Safe: the `_name` argument is ignored (never dereferenced) and the
+/// function never returns, so it carries no safety preconditions despite its
+/// C-ABI signature.
+pub fn unload_file(_name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     fatal!(None, "INTERNAL: cannot unload when load is not supported")
 }
 
 /// No-op: there is never anything to unload.
 ///
-/// # Safety
-///
-/// Always safe; unsafe only to match the caller's expectations.
-pub unsafe fn unload_all() {}
+/// Safe: empty body, no preconditions.
+pub fn unload_all() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unload_all_is_a_safe_noop() {
+        // Callable from safe code (no `unsafe`); does nothing.
+        unload_all();
+    }
+}
