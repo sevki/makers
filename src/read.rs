@@ -2831,43 +2831,16 @@ unsafe extern "C" fn find_char_unquote(
     string: *mut ::core::ffi::c_char,
     stop: ::core::ffi::c_int,
 ) -> *mut ::core::ffi::c_char {
-    let mut string_len: size_t = 0;
-    let mut p: *mut ::core::ffi::c_char = string;
-    loop {
-        p = strchr(p, stop);
-        if p.is_null() {
-            return ::core::ptr::null_mut::<::core::ffi::c_char>();
-        }
-        if p > string
-            && *p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int == '\\' as i32
-        {
-            let mut i: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
-            while p.offset(i as isize) as *mut ::core::ffi::c_char >= string
-                && *p.offset(i as isize) as ::core::ffi::c_int == '\\' as i32
-            {
-                i -= 1;
-            }
-            i += 1;
-            if string_len == 0 {
-                string_len = strlen(string) as size_t;
-            }
-            let hi: ::core::ffi::c_int = -(i / 2);
-            memmove(
-                p.offset(i as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                p.offset((i / 2) as isize) as *mut ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                (string_len as size_t)
-                    .wrapping_sub(p.offset_from(string) as ::core::ffi::c_long as size_t)
-                    .wrapping_add(hi as size_t)
-                    .wrapping_add(1),
-            );
-            p = p.offset((i / 2) as isize);
-            if i % 2 == 0 {
-                return p;
-            }
-        } else {
-            return p;
-        }
+    // Bridge to the pure parser routine over a byte slice covering the C string
+    // plus its NUL terminator, instead of the c2rust strchr/strlen/memmove walk.
+    let mut len: usize = 0;
+    while *string.add(len) as ::core::ffi::c_int != 0 {
+        len += 1;
+    }
+    let buf = ::core::slice::from_raw_parts_mut(string as *mut u8, len + 1);
+    match crate::parser::find_char_unquote_idx(buf, stop as u8) {
+        Some(i) => string.add(i),
+        None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
     }
 }
 unsafe extern "C" fn unescape_char(

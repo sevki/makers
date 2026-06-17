@@ -527,6 +527,53 @@ pub fn prereq_needs_second_expansion(depstr: &[u8]) -> bool {
     depstr.contains(&b'$')
 }
 
+/// In-place port of make's `find_char_unquote`: scan `buf` (a NUL-terminated C
+/// string slice, including the terminator) for the first *unquoted* `stop`
+/// byte, collapsing any run of backslashes that precedes a `stop` and shifting
+/// the tail left. Returns the index of the unescaped `stop`, or `None` if none
+/// remains.
+///
+/// A `stop` is escaped when an odd number of backslashes immediately precedes
+/// it; each pair of backslashes collapses to one. This mirrors the c2rust
+/// `strchr`/`strlen`/`memmove` pointer routine exactly, but over byte indices
+/// and `copy_within` instead of raw pointers.
+pub fn find_char_unquote_idx(buf: &mut [u8], stop: u8) -> Option<usize> {
+    let mut string_len: Option<usize> = None;
+    let mut p = 0usize;
+    loop {
+        // strchr(p, stop): advance to the next `stop` byte or the NUL.
+        while buf[p] != 0 && buf[p] != stop {
+            p += 1;
+        }
+        if buf[p] == 0 {
+            return None;
+        }
+        if p > 0 && buf[p - 1] == b'\\' {
+            // Count the consecutive backslashes ending at p-1: `i` walks back
+            // from p-2 and ends as the negative offset -n (n backslashes).
+            let mut i: isize = -2;
+            while (p as isize + i) >= 0 && buf[(p as isize + i) as usize] == b'\\' {
+                i -= 1;
+            }
+            i += 1;
+            let slen = *string_len
+                .get_or_insert_with(|| buf.iter().position(|&b| b == 0).unwrap_or(buf.len()));
+            let hi = -(i / 2);
+            let dest = (p as isize + i) as usize;
+            let src = (p as isize + i / 2) as usize;
+            // len == slen - p + hi + 1; src + len == slen + 1 (within the slice).
+            let len = (slen - p).wrapping_add(hi as usize).wrapping_add(1);
+            buf.copy_within(src..src + len, dest);
+            p = (p as isize + i / 2) as usize;
+            if i % 2 == 0 {
+                return Some(p);
+            }
+        } else {
+            return Some(p);
+        }
+    }
+}
+
 /// Whether a line begins with eight space characters — the heuristic make uses
 /// (when the command prefix is a TAB) to suggest "did you mean TAB instead of 8
 /// spaces?" on a missing-separator error. Mirrors `strncmp(line, "        ", 8)`.
@@ -1910,6 +1957,34 @@ mod tests {
         assert!(!starts_with_eight_spaces(b"\t@echo hi")); // a tab
         assert!(!starts_with_eight_spaces(b"")); // empty
         assert!(!starts_with_eight_spaces(b"    ")); // 4 spaces, too short
+    }
+
+    #[test]
+    fn find_char_unquote_collapses_backslashes() {
+        // Helper: run the unquote over an owned NUL-terminated buffer and return
+        // (result index, resulting C string up to the new NUL).
+        fn run(s: &[u8], stop: u8) -> (Option<usize>, Vec<u8>) {
+            let mut buf = s.to_vec();
+            buf.push(0);
+            let r = find_char_unquote_idx(&mut buf, stop);
+            let end = buf.iter().position(|&b| b == 0).unwrap();
+            (r, buf[..end].to_vec())
+        }
+
+        // No backslash: the stop is found as-is, buffer unchanged.
+        assert_eq!(run(b"abc%def", b'%'), (Some(3), b"abc%def".to_vec()));
+        // No stop at all.
+        assert_eq!(run(b"abcdef", b'%'), (None, b"abcdef".to_vec()));
+        // Single backslash escapes the `%`: it is consumed (one backslash
+        // removed) and no *unescaped* `%` remains.
+        assert_eq!(run(b"a\\%b", b'%'), (None, b"a%b".to_vec()));
+        // Two backslashes -> one literal backslash, `%` is unescaped at index 2.
+        assert_eq!(run(b"a\\\\%b", b'%'), (Some(2), b"a\\%b".to_vec()));
+        // Three backslashes -> one literal backslash then an escaped `%`: the
+        // `%` is consumed, none remains; buffer keeps a single backslash + `%`.
+        assert_eq!(run(b"a\\\\\\%b", b'%'), (None, b"a\\%b".to_vec()));
+        // Backslash that does not precede the stop is left untouched.
+        assert_eq!(run(b"a\\b%c", b'%'), (Some(3), b"a\\b%c".to_vec()));
     }
 
     #[test]
