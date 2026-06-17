@@ -196,7 +196,7 @@ pub unsafe fn recursively_expand_for_file(
     let mut set_reading: ::core::ffi::c_int = 0;
     let nl: size_t = strlen((*v).name) as size_t;
     let mut parent: *mut variable = ::core::ptr::null_mut::<variable>();
-    if (*v).expanding() != 0 && env_recursion != 0 {
+    if (*v).expanding() != 0 && env_recursion() != 0 {
         // A self-referencing variable being exported to a $(shell ...)
         // function: hand back the unexpanded environment value instead.
         if DB_VERBOSE & db_level != 0 {
