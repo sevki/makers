@@ -169,8 +169,8 @@ pub unsafe fn swap_variable_buffer(
 ///
 /// `variable_buffer` must be initialized and `off` within its allocation.
 pub unsafe fn variable_buffer_byte(off: size_t) -> ::core::ffi::c_char {
-    ::core::slice::from_raw_parts(variable_buffer as *const u8, variable_buffer_length)
-        [off as usize] as ::core::ffi::c_char
+    ::core::slice::from_raw_parts(variable_buffer as *const u8, variable_buffer_length)[off]
+        as ::core::ffi::c_char
 }
 /// Write one byte into the variable expansion buffer at `off`.
 ///
@@ -180,8 +180,8 @@ pub unsafe fn variable_buffer_byte(off: size_t) -> ::core::ffi::c_char {
 ///
 /// `variable_buffer` must be initialized and `off` within its allocation.
 pub unsafe fn set_variable_buffer_byte(off: size_t, b: ::core::ffi::c_char) {
-    ::core::slice::from_raw_parts_mut(variable_buffer as *mut u8, variable_buffer_length)
-        [off as usize] = b as u8;
+    ::core::slice::from_raw_parts_mut(variable_buffer as *mut u8, variable_buffer_length)[off] =
+        b as u8;
 }
 /// # Safety
 ///
