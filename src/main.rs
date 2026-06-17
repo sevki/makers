@@ -488,7 +488,10 @@ pub static mut job_slots: ::core::ffi::c_uint = 0;
 pub const INVALID_JOB_SLOTS: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
 static mut master_job_slots: ::core::ffi::c_uint = 0;
 static mut arg_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
-static mut default_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
+/// Read-only default for the `-j`/`--jobs` option: only ever referenced via
+/// `&raw const` as the option table's `default_value`, never written. Keeping
+/// it an immutable `static` removes a needless mutable global.
+static default_job_slots: ::core::ffi::c_int = INVALID_JOB_SLOTS;
 static mut inf_jobs: ::core::ffi::c_int = 0;
 pub static mut jobserver_auth: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
@@ -4749,5 +4752,17 @@ mod clock_skew_detected_tests {
         assert!(clock_skew_detected(), "skew detected");
 
         CLOCK_SKEW_DETECTED.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod default_job_slots_tests {
+    use super::{default_job_slots, INVALID_JOB_SLOTS};
+
+    /// `default_job_slots` is an immutable `static` holding the option's
+    /// read-only default and is accessible from safe code.
+    #[test]
+    fn default_job_slots_is_invalid_sentinel() {
+        assert_eq!(default_job_slots, INVALID_JOB_SLOTS);
     }
 }
