@@ -2313,4 +2313,37 @@ mod tests {
             );
         }
     }
+
+    /// The pattern-substitution arm of the stem branch: a prerequisite name
+    /// containing `%` is expanded against the stem via the variable buffer
+    /// (e.g. `%.o` with stem `epp_stem` -> `epp_stem.o`). Holds both the
+    /// file-graph and variable-buffer locks (only this test needs both).
+    #[test]
+    fn enter_prereqs_static_pattern_substitutes_percent() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _b = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            initialize_stopchar_map();
+            init_hash_files();
+            crate::expand::initialize_variable_output();
+
+            let nm = strcache_add(c"%.o".as_ptr());
+            let stem = strcache_add(c"epp_stem".as_ptr());
+            let d = alloc_dep();
+            (*d).name = nm;
+            (*d).next = ::core::ptr::null_mut();
+
+            let head = enter_prereqs(d, stem);
+            assert_eq!(head, d);
+            // `%` expanded to the stem and the dep resolved to a file named
+            // "epp_stem.o"; the dep name itself is cleared after resolution.
+            assert!((*head).name.is_null(), "resolved dep name is cleared");
+            assert!(
+                !lookup_file(strcache_add(c"epp_stem.o".as_ptr())).is_null(),
+                "the expanded prerequisite file was entered"
+            );
+        }
+    }
 }

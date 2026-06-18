@@ -78,6 +78,11 @@ fn stop_set(c: ::core::ffi::c_char, mask: ::core::ffi::c_int) -> bool {
 }
 pub static mut expanding_var: *mut *const Floc = &raw const reading_file as *mut *const Floc;
 pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5;
+/// Process-wide lock serializing tests that drive the `variable_buffer`
+/// global (the output buffer for `$(...)` expansion). Tests in different
+/// modules share this single lock so they never race on the buffer.
+#[cfg(test)]
+pub static VARIABLE_BUFFER_TEST_LOCK: ::std::sync::Mutex<()> = ::std::sync::Mutex::new(());
 static mut variable_buffer_length: size_t = 0;
 pub static mut variable_buffer: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;

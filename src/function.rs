@@ -3735,20 +3735,18 @@ mod realpath_tests {
 #[cfg(test)]
 mod subst_and_strip_tests {
     use super::{func_strip, subst_expand};
-    use crate::expand::{initialize_variable_output, variable_buffer, variable_buffer_output};
+    use crate::expand::{
+        initialize_variable_output, variable_buffer, variable_buffer_output,
+        VARIABLE_BUFFER_TEST_LOCK,
+    };
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CStr, CString};
-    use std::sync::Mutex;
-
-    // `variable_buffer` is a process-wide `static mut`; serialize the tests
-    // that drive it so they never race each other (no other test touches it).
-    static BUF_LOCK: Mutex<()> = Mutex::new(());
 
     /// Run `body` with a freshly initialized variable-output buffer, returning
     /// the bytes it wrote (`[buffer, end_cursor)`), where `body` returns the
     /// end cursor produced by the function under test.
     unsafe fn with_output<F: FnOnce(*mut c_char) -> *mut c_char>(body: F) -> Vec<u8> {
-        let _g = BUF_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = VARIABLE_BUFFER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         initialize_stopchar_map();
         let start = initialize_variable_output();
         let end = body(start);
@@ -3854,7 +3852,7 @@ mod subst_and_strip_tests {
     #[test]
     fn variable_buffer_output_appends_and_nul_terminates() {
         unsafe {
-            let _g = BUF_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _g = VARIABLE_BUFFER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let start = initialize_variable_output();
             let s = CString::new("hi").unwrap();
             let end = variable_buffer_output(start, s.as_ptr(), 2);
