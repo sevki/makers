@@ -766,6 +766,16 @@ fn changenum_staged_variables() {
     check("changenum-staged", "54_changenum_staged.mk", "all", &[]);
 }
 
+#[test]
+fn output_sync_grouped() {
+    // `-O` (output-sync) routes child output through per-target tmpfiles set up
+    // by `setup_tmpfile`, whose re-entrancy guard is now an atomic. Run three
+    // multi-line targets under `-j3 -O` so each target's lines stay grouped.
+    // Target ordering still jitters under `-j`, so compare the sorted line
+    // multiset and exit code against the C oracle.
+    check_unordered("output-sync", "55_output_sync.mk", "all", &["-j3", "-O"]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With

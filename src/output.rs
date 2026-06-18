@@ -237,11 +237,14 @@ pub unsafe fn output_tmpfd() -> ::core::ffi::c_int {
 /// # Safety
 /// `out` must point to a valid `output`; must run single-threaded.
 pub unsafe fn setup_tmpfile(out: *mut output) {
-    static mut in_setup: ::core::ffi::c_uint = 0;
-    if in_setup != 0 {
+    // Guards against re-entrant tmpfile setup (the C code's recursion check).
+    // Atomic so the read/write are plain safe ops; setup runs single-threaded,
+    // so `Relaxed` preserves the original program order.
+    static IN_SETUP: AtomicBool = AtomicBool::new(false);
+    if IN_SETUP.load(Ordering::Relaxed) {
         return;
     }
-    in_setup = 1;
+    IN_SETUP.store(true, Ordering::Relaxed);
     let io_state: ::core::ffi::c_uint = check_io_state();
     // The block falls through to the error handler below on any failure;
     // reaching its end is the success path (the C code used `goto`).
@@ -270,7 +273,7 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
                 (*out).err = fd_0;
             }
         }
-        in_setup = 0;
+        IN_SETUP.store(false, Ordering::Relaxed);
         return;
     }
     error(
@@ -281,7 +284,7 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
     output_close(out);
     output_sync = OUTPUT_SYNC_NONE;
     osync_clear();
-    in_setup = 0;
+    IN_SETUP.store(false, Ordering::Relaxed);
 }
 /// Dump any captured output under the output-sync lock and truncate the
 /// temp files for reuse.
