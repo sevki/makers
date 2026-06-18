@@ -731,6 +731,22 @@ fn delete_on_error() {
     check("delete-on-error", "51_delete_on_error.mk", "out", &[]);
 }
 
+#[test]
+fn waiting_for_unfinished_jobs() {
+    // Under `-j`, when one job fails while another is still running, make emits
+    // the one-time `*** Waiting for unfinished jobs....` notice on stderr,
+    // guarded by a (now atomic) flag in reap_children. The fixture runs a fast
+    // failing target alongside a slow one, so the slow job is still in flight
+    // when the failure is reaped. Output ordering jitters under `-j`, so compare
+    // the sorted line multiset and exit code against the C oracle.
+    check_unordered(
+        "waiting-for-jobs",
+        "52_waiting_for_jobs.mk",
+        "all",
+        &["-j2"],
+    );
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With

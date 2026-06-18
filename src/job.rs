@@ -569,9 +569,12 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
         let mut any_local: ::core::ffi::c_int;
         let dontcare: ::core::ffi::c_int;
         if err != 0 && block != 0 {
-            static mut printed: ::core::ffi::c_int = 0;
+            // Guards the one-time "Waiting for unfinished jobs" notice. Atomic
+            // so the read/write are plain safe ops; reaping is single-threaded,
+            // so `Relaxed` preserves the original program order.
+            static PRINTED: AtomicBool = AtomicBool::new(false);
             fflush(stdout);
-            if printed == 0 {
+            if !PRINTED.load(Ordering::Relaxed) {
                 error(
                     ::core::ptr::null_mut::<Floc>(),
                     0,
@@ -579,7 +582,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                         as *const ::core::ffi::c_char,
                 );
             }
-            printed = 1;
+            PRINTED.store(true, Ordering::Relaxed);
         }
         if dead_children() > 0 {
             DEAD_CHILDREN.fetch_sub(1, Ordering::Relaxed);
