@@ -248,11 +248,11 @@ const DEFAULT_VARIABLES: &[(&CStr, &CStr)] = &[
 /// # Safety
 /// Must run single-threaded: it mutates the global file table, the global
 /// variable set, and the `suffix_file` global.
-pub unsafe fn set_default_suffixes() {
+pub unsafe fn set_default_suffixes(options: &crate::make_main::Options) {
     suffix_file = enter_file(strcache_add(c".SUFFIXES".as_ptr()));
     (*suffix_file).set_builtin(1);
 
-    if crate::make_main::FLAGS.no_builtin_rules_flag != 0 {
+    if options.no_builtin_rules.get() {
         define_variable_in_set(
             c"SUFFIXES".as_ptr(),
             8,
@@ -301,8 +301,8 @@ pub unsafe fn set_default_suffixes() {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global file table.
-pub unsafe fn install_default_suffix_rules() {
-    if crate::make_main::FLAGS.no_builtin_rules_flag != 0 {
+pub unsafe fn install_default_suffix_rules(options: &crate::make_main::Options) {
+    if options.no_builtin_rules.get() {
         return;
     }
     for &(target, recipe) in DEFAULT_SUFFIX_RULES {
@@ -324,8 +324,8 @@ pub unsafe fn install_default_suffix_rules() {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global pattern-rule lists.
-pub unsafe fn install_default_implicit_rules() {
-    if crate::make_main::FLAGS.no_builtin_rules_flag != 0 {
+pub unsafe fn install_default_implicit_rules(options: &crate::make_main::Options) {
+    if options.no_builtin_rules.get() {
         return;
     }
     for &(target, dep, commands) in DEFAULT_PATTERN_RULES {
@@ -350,8 +350,8 @@ pub unsafe fn install_default_implicit_rules() {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global variable set.
-pub unsafe fn define_default_variables() {
-    if crate::make_main::FLAGS.no_builtin_variables_flag != 0 {
+pub unsafe fn define_default_variables(options: &crate::make_main::Options) {
+    if options.no_builtin_variables.get() {
         return;
     }
     for &(name, value) in DEFAULT_VARIABLES {

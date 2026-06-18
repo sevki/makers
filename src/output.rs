@@ -18,7 +18,7 @@ use libc::{
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::{
-    die, makelevel, output_sync, program, should_print_dir, starting_directory,
+    die, makelevel, output_sync, program, starting_directory,
 };
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
@@ -157,7 +157,7 @@ pub unsafe fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi
         len = need;
     }
     p = buf;
-    if crate::make_main::FLAGS.print_data_base_flag != 0 {
+    if crate::make_main::opt_print_data_base() {
         let fresh0 = p;
         p = p.add(1);
         *fresh0 = '#' as i32 as ::core::ffi::c_char;
@@ -305,7 +305,7 @@ pub unsafe fn output_dump(out: *mut output) {
             );
             osync_clear();
         }
-        if output_sync != OUTPUT_SYNC_RECURSE && should_print_dir() != 0 {
+        if output_sync != OUTPUT_SYNC_RECURSE && crate::make_main::should_print_dir_mirror() != 0 {
             traced = log_working_directory(1);
         }
         if outfd_not_empty != 0 {
@@ -401,7 +401,7 @@ pub unsafe fn output_start() {
     }
     if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE)
         && !stdio_traced()
-        && should_print_dir() != 0
+        && crate::make_main::should_print_dir_mirror() != 0
     {
         STDIO_TRACED.store(log_working_directory(1) != 0, Ordering::Relaxed);
     }

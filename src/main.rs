@@ -12,7 +12,7 @@ use crate::floc::Floc;
 use crate::load::unload_all;
 use crate::misc::free_ns_chain;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
-use crate::misc::{make_toui, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::misc::{make_toui, xcalloc, xmalloc, xstrdup};
 use crate::read::construct_include_path;
 use crate::remote_stub::{remote_cleanup, remote_setup};
 use crate::stdio::FILE;
@@ -714,6 +714,24 @@ fn opt_flag_int(options: &Options, c: ::core::ffi::c_int) -> ::core::ffi::c_int 
     }
 }
 
+/// Whether the switch char `c` has an associated origin slot (the `-s`/`-k`/
+/// `-w` family and their `--no-*` aliases), and which `Options` `Cell` backs it.
+/// Returns `None` for switches with no origin (the old null `cs.origin`).
+fn opt_origin_cell(
+    options: &Options,
+    c: ::core::ffi::c_int,
+) -> Option<&::core::cell::Cell<variable_origin>> {
+    if c == 's' as i32 || c == CHAR_MAX + 8 {
+        Some(&options.silent_origin)
+    } else if c == 'k' as i32 || c == 'S' as i32 {
+        Some(&options.keep_going_origin)
+    } else if c == 'w' as i32 || c == CHAR_MAX + 4 {
+        Some(&options.print_directory_origin)
+    } else {
+        None
+    }
+}
+
 /// Read a `positive_int`-type option's value as the legacy `c_uint` the old
 /// `value_ptr` deref produced. Only `-j` is a positive_int option; `None`
 /// (unspecified) maps to the `INVALID_JOB_SLOTS` sentinel reinterpreted as
@@ -772,6 +790,153 @@ static REBUILDING_MAKEFILES: AtomicBool = AtomicBool::new(false);
 pub fn rebuilding_makefiles() -> bool {
     REBUILDING_MAKEFILES.load(Ordering::Relaxed)
 }
+
+/// Mirror of `Options.env_overrides` (-e) for the deep, high-fan-in variable
+/// machinery (`define_variable_in_set`, `set_env_override`, ...). Those readers
+/// are reached from hundreds of call sites and via a C-ABI `hash_map_arg`
+/// callback (`set_env_override`), so they cannot take an `&Options` param.
+/// `Options` remains the canonical parser target; `sync_env_overrides` keeps
+/// this atomic in step whenever the option value changes. Single-threaded
+/// access, so `Relaxed` preserves program order.
+static ENV_OVERRIDES: AtomicBool = AtomicBool::new(false);
+
+/// Read the mirrored `-e` (`env_overrides`) flag from outside the `Options`
+/// borrow chain.
+pub fn env_overrides() -> bool {
+    ENV_OVERRIDES.load(Ordering::Relaxed)
+}
+
+/// Keep the `ENV_OVERRIDES` mirror in step with `options.env_overrides`.
+pub fn sync_env_overrides(options: &Options) {
+    ENV_OVERRIDES.store(options.env_overrides.get(), Ordering::Relaxed);
+}
+
+thread_local! {
+    /// Borrow channel to the `Options` owned as a local in `main_0`. This is a
+    /// *pointer*, not the option data: the values still live in `main_0`'s
+    /// `let options`. It exists solely so the one deep makefile-time callback
+    /// that re-decodes `MAKEFLAGS` (`set_special_var` -> `reset_makeflags`,
+    /// reached via the high-fan-in `do_variable_definition`) can reach the
+    /// owned `Options` without threading a borrow through the entire
+    /// read/eval engine. Set for the dynamic extent of `main_0`.
+    static OPTIONS_PTR: ::core::cell::Cell<*const Options> =
+        const { ::core::cell::Cell::new(::core::ptr::null()) };
+}
+
+/// Borrow the installed `main_0` `Options`. Only valid while `main_0` is on the
+/// stack (its referent outlives every makefile-time callback).
+unsafe fn installed_options<'a>() -> &'a Options {
+    let p = OPTIONS_PTR.with(|c| c.get());
+    debug_assert!(
+        !p.is_null(),
+        "installed_options called with no Options on the stack"
+    );
+    &*p
+}
+
+// Mirrors of the option flags read deep in the build engine (job/remake/file/
+// output/variable). Those readers sit behind hundreds of call sites and some
+// C-ABI callbacks (e.g. `set_env_override`, child-environment construction),
+// so they cannot take an `&Options` borrow. `Options` stays the canonical
+// parser target; `sync_runtime_mirrors` (and the remake save/restore path)
+// keep these in step. Single-threaded access => `Relaxed`.
+static M_QUESTION: AtomicBool = AtomicBool::new(false);
+static M_TOUCH: AtomicBool = AtomicBool::new(false);
+static M_JUST_PRINT: AtomicBool = AtomicBool::new(false);
+static M_IGNORE_ERRORS: AtomicBool = AtomicBool::new(false);
+static M_KEEP_GOING: AtomicBool = AtomicBool::new(false);
+static M_CHECK_SYMLINK: AtomicBool = AtomicBool::new(false);
+static M_NO_BUILTIN_RULES: AtomicBool = AtomicBool::new(false);
+static M_PRINT_DATA_BASE: AtomicBool = AtomicBool::new(false);
+static M_PRINT_VERSION: AtomicBool = AtomicBool::new(false);
+static M_SILENT: AtomicBool = AtomicBool::new(false);
+static M_PRINT_DIRECTORY: ::std::sync::atomic::AtomicI32 =
+    ::std::sync::atomic::AtomicI32::new(-1);
+static M_JOBSERVER_AUTH_PRESENT: AtomicBool = AtomicBool::new(false);
+static M_MAX_LOAD_AVERAGE: ::std::sync::atomic::AtomicU64 =
+    ::std::sync::atomic::AtomicU64::new((-1.0f64).to_bits());
+
+pub fn opt_question() -> bool {
+    M_QUESTION.load(Ordering::Relaxed)
+}
+pub fn opt_touch() -> bool {
+    M_TOUCH.load(Ordering::Relaxed)
+}
+pub fn opt_just_print() -> bool {
+    M_JUST_PRINT.load(Ordering::Relaxed)
+}
+pub fn opt_ignore_errors() -> bool {
+    M_IGNORE_ERRORS.load(Ordering::Relaxed)
+}
+pub fn opt_keep_going() -> bool {
+    M_KEEP_GOING.load(Ordering::Relaxed)
+}
+pub fn opt_check_symlink() -> bool {
+    M_CHECK_SYMLINK.load(Ordering::Relaxed)
+}
+pub fn opt_no_builtin_rules() -> bool {
+    M_NO_BUILTIN_RULES.load(Ordering::Relaxed)
+}
+pub fn opt_print_data_base() -> bool {
+    M_PRINT_DATA_BASE.load(Ordering::Relaxed)
+}
+pub fn opt_print_version() -> bool {
+    M_PRINT_VERSION.load(Ordering::Relaxed)
+}
+pub fn opt_jobserver_auth_present() -> bool {
+    M_JOBSERVER_AUTH_PRESENT.load(Ordering::Relaxed)
+}
+pub fn opt_max_load_average() -> f64 {
+    f64::from_bits(M_MAX_LOAD_AVERAGE.load(Ordering::Relaxed))
+}
+
+/// `should_print_dir` for callers outside the `Options` borrow chain
+/// (`output.rs`), backed by the runtime mirrors.
+pub fn should_print_dir_mirror() -> ::core::ffi::c_int {
+    let pd = M_PRINT_DIRECTORY.load(Ordering::Relaxed);
+    if pd >= 0 {
+        return pd;
+    }
+    let ml = unsafe { makelevel };
+    (!M_SILENT.load(Ordering::Relaxed) && ml > 0) as ::core::ffi::c_int
+}
+
+pub fn set_touch_mirror(v: bool) {
+    M_TOUCH.store(v, Ordering::Relaxed);
+}
+pub fn set_question_mirror(v: bool) {
+    M_QUESTION.store(v, Ordering::Relaxed);
+}
+pub fn set_just_print_mirror(v: bool) {
+    M_JUST_PRINT.store(v, Ordering::Relaxed);
+}
+pub fn set_ignore_errors_mirror(v: bool) {
+    M_IGNORE_ERRORS.store(v, Ordering::Relaxed);
+}
+
+/// Refresh every runtime mirror from `options`.
+pub fn sync_runtime_mirrors(options: &Options) {
+    M_QUESTION.store(options.question.get(), Ordering::Relaxed);
+    M_TOUCH.store(options.touch.get(), Ordering::Relaxed);
+    M_JUST_PRINT.store(options.just_print.get(), Ordering::Relaxed);
+    M_IGNORE_ERRORS.store(options.ignore_errors.get(), Ordering::Relaxed);
+    M_KEEP_GOING.store(options.keep_going.get(), Ordering::Relaxed);
+    M_CHECK_SYMLINK.store(options.check_symlink.get(), Ordering::Relaxed);
+    M_NO_BUILTIN_RULES.store(options.no_builtin_rules.get(), Ordering::Relaxed);
+    M_PRINT_DATA_BASE.store(options.print_data_base.get(), Ordering::Relaxed);
+    M_PRINT_VERSION.store(options.print_version.get(), Ordering::Relaxed);
+    M_SILENT.store(options.silent.get(), Ordering::Relaxed);
+    M_PRINT_DIRECTORY.store(
+        match options.print_directory.get() {
+            None => -1,
+            Some(v) => v as i32,
+        },
+        Ordering::Relaxed,
+    );
+    M_JOBSERVER_AUTH_PRESENT
+        .store(options.jobserver_auth.borrow().is_some(), Ordering::Relaxed);
+    M_MAX_LOAD_AVERAGE.store(options.max_load_average.get().to_bits(), Ordering::Relaxed);
+}
 pub static mut shell_var: variable = variable {
     name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -787,6 +952,11 @@ pub static mut cmd_prefix: ::core::ffi::c_char = '\t' as i32 as ::core::ffi::c_c
 pub static mut no_intermediates: ::core::ffi::c_uint = 0;
 pub static mut command_count: ::core::ffi::c_ulong = 1;
 static mut stdin_offset: ::core::ffi::c_int = -(1 as ::core::ffi::c_int);
+/// Strcache'd name of the temporary file holding the makefile read from stdin
+/// (or null). Mirrors `options.makefiles[stdin_offset]` so `temp_stdin_unlink`
+/// can run from the deep `die` path without an `&Options` borrow. The pointer
+/// is into the strcache, which lives for the whole run.
+static mut temp_stdin_name: *const ::core::ffi::c_char = ::core::ptr::null();
 static mut usage: [*const ::core::ffi::c_char; 36] = [
     b"Options:\n\0" as *const u8 as *const ::core::ffi::c_char,
     b"  -b, -m                      Ignored for compatibility.\n\0" as *const u8
@@ -1289,32 +1459,34 @@ fn classify_output_sync(value: &[u8]) -> Option<::core::ffi::c_int> {
 /// Reads the global `FLAGS.output_sync_option` / `FLAGS.sync_mutex` C strings; both must be
 /// null or valid NUL-terminated strings, and this must run single-threaded
 /// during option decoding.
-pub unsafe fn decode_output_sync_flags() {
-    if !FLAGS.output_sync_option.is_null() {
-        match classify_output_sync(::core::ffi::CStr::from_ptr(FLAGS.output_sync_option).to_bytes()) {
+pub unsafe fn decode_output_sync_flags(options: &Options) {
+    if let Some(opt) = options.output_sync_option.borrow().as_ref() {
+        match classify_output_sync(opt.as_bytes()) {
             Some(mode) => output_sync = mode,
             None => {
+                let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
                 fatal(
                     ::core::ptr::null_mut::<Floc>(),
-                    strlen(FLAGS.output_sync_option) as size_t,
+                    opt.len() as size_t,
                     b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                    FLAGS.output_sync_option,
+                    c.as_ptr(),
                 );
             }
         }
     }
-    if !FLAGS.sync_mutex.is_null() {
-        osync_parse_mutex(FLAGS.sync_mutex);
+    if let Some(mtx) = options.sync_mutex.borrow().as_ref() {
+        let c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
+        osync_parse_mutex(c.as_ptr());
     }
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_usage(bad: ::core::ffi::c_int) -> ! {
+pub unsafe fn print_usage(options: &Options, bad: ::core::ffi::c_int) -> ! {
     let mut cpp: *const *const ::core::ffi::c_char;
     let usageto: *mut FILE;
-    if FLAGS.print_version_flag != 0 {
+    if options.print_version.get() {
         print_version();
         fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
     }
@@ -1353,19 +1525,26 @@ pub unsafe fn print_usage(bad: ::core::ffi::c_int) -> ! {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn reset_jobserver() {
+pub unsafe fn reset_jobserver(options: &Options) {
     jobserver_clear();
-    free(FLAGS.jobserver_auth as *mut ::core::ffi::c_void);
-    FLAGS.jobserver_auth = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    *options.jobserver_auth.borrow_mut() = None;
+    M_JOBSERVER_AUTH_PRESENT.store(false, Ordering::Relaxed);
+}
+
+/// Mirror-only jobserver reset for the end-of-run `clean_jobserver`/`die`
+/// path, which has no `&Options` borrow. The owned `Options` is being torn
+/// down at that point, so clearing only the mirror is sufficient.
+pub unsafe fn reset_jobserver_mirror() {
+    jobserver_clear();
+    M_JOBSERVER_AUTH_PRESENT.store(false, Ordering::Relaxed);
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn temp_stdin_unlink() {
-    if stdin_offset >= 0 {
-        let nm: *const ::core::ffi::c_char =
-            FLAGS.makefiles[stdin_offset as usize].as_ptr();
+    if stdin_offset >= 0 && !temp_stdin_name.is_null() {
+        let nm: *const ::core::ffi::c_char = temp_stdin_name;
         let mut r: ::core::ffi::c_int;
         stdin_offset = -(1 as ::core::ffi::c_int);
         loop {
@@ -1393,7 +1572,14 @@ unsafe fn main_0(
     let mut current_directory: [::core::ffi::c_char; 4097] = [0; 4097];
     let mut restarts: ::core::ffi::c_uint = 0;
     let mut syncing: ::core::ffi::c_uint;
-    let argv_slots: ::core::ffi::c_int;
+    let argv_slots: Option<u32>;
+    // Owned option/flag state for this make invocation, borrowed (`&options`)
+    // through the call graph. Replaces the former `static mut FLAGS` global.
+    let options = Options::new();
+    // Install a borrow channel to `options` for the single deep makefile-time
+    // callback (`set_special_var` -> `reset_makeflags`) that cannot receive an
+    // `&Options` parameter. `options` itself remains the owner.
+    OPTIONS_PTR.with(|p| p.set(&options as *const Options));
     initialize_variable_output();
     spin(b"main-entry\0" as *const u8 as *const ::core::ffi::c_char);
     if check_io_state() & 0x8 as ::core::ffi::c_uint != 0 {
@@ -1584,6 +1770,7 @@ unsafe fn main_0(
     .is_null()
     {
         decode_env_switches(
+            &options,
             b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             o_command,
@@ -1599,6 +1786,7 @@ unsafe fn main_0(
         );
     }
     decode_env_switches(
+        &options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         o_command,
@@ -1612,17 +1800,17 @@ unsafe fn main_0(
     } else {
         ::core::ptr::null_mut::<output>()
     };
-    let env_slots: ::core::ffi::c_int = FLAGS.arg_job_slots;
-    FLAGS.arg_job_slots = INVALID_JOB_SLOTS;
-    decode_switches(argc, argv as *mut *const ::core::ffi::c_char, o_command);
-    argv_slots = FLAGS.arg_job_slots;
-    if FLAGS.arg_job_slots == INVALID_JOB_SLOTS {
-        FLAGS.arg_job_slots = env_slots;
+    let env_slots: Option<u32> = options.arg_job_slots.get();
+    options.arg_job_slots.set(None);
+    decode_switches(&options, argc, argv as *mut *const ::core::ffi::c_char, o_command);
+    argv_slots = options.arg_job_slots.get();
+    if options.arg_job_slots.get().is_none() {
+        options.arg_job_slots.set(env_slots);
     }
-    if FLAGS.print_usage_flag != 0 {
-        print_usage(0);
+    if options.print_usage.get() {
+        print_usage(&options, 0);
     }
-    if FLAGS.print_version_flag != 0 {
+    if options.print_version.get() {
         print_version();
         die(MAKE_SUCCESS);
     }
@@ -1632,19 +1820,12 @@ unsafe fn main_0(
         _IOLBF,
         BUFSIZ as size_t,
     );
-    if !FLAGS.shuffle_mode.is_null() {
-        let arg = ::core::ffi::CStr::from_ptr(FLAGS.shuffle_mode)
-            .to_str()
-            .unwrap_or("");
-        crate::shuffle::set_mode(arg);
-        free(FLAGS.shuffle_mode as *mut ::core::ffi::c_void);
-        FLAGS.shuffle_mode = match crate::shuffle::get_mode() {
-            Some(s) => {
-                let cs = ::std::ffi::CString::new(s).unwrap();
-                xstrdup(cs.as_ptr())
-            }
-            None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        };
+    {
+        let shuffle = options.shuffle_mode.borrow().clone();
+        if let Some(arg) = shuffle {
+            crate::shuffle::set_mode(&arg);
+            *options.shuffle_mode.borrow_mut() = crate::shuffle::get_mode();
+        }
     }
     if isatty(fileno(stdout)) != 0
         && lookup_variable(
@@ -1717,9 +1898,9 @@ unsafe fn main_0(
         makelevel = 0;
     }
     always_make_flag =
-        (FLAGS.always_make_set != 0 && restarts == 0) as ::core::ffi::c_int;
-    if FLAGS.no_builtin_variables_flag != 0 {
-        FLAGS.no_builtin_rules_flag = 1;
+        (options.always_make.get() && restarts == 0) as ::core::ffi::c_int;
+    if options.no_builtin_variables.get() {
+        options.no_builtin_rules.set(true);
     }
     if 0x1 as ::core::ffi::c_int & db_level != 0 {
         print_version();
@@ -1741,15 +1922,15 @@ unsafe fn main_0(
         ));
     }
     starting_directory = &raw mut current_directory as *mut ::core::ffi::c_char;
-    if !FLAGS.directories.is_empty() {
-        for entry in FLAGS.directories.iter() {
+    if !options.directories.borrow().is_empty() {
+        for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
             if chdir(dir) < 0 {
                 pfatal_with_name(dir);
             }
         }
     }
-    if !FLAGS.directories.is_empty() {
+    if !options.directories.borrow().is_empty() {
         if getcwd(
             &raw mut current_directory as *mut ::core::ffi::c_char,
             GET_PATH_MAX as size_t,
@@ -1774,19 +1955,24 @@ unsafe fn main_0(
         (*current_variable_set_list).set,
         NILF,
     );
-    let mut inc_ptrs: Vec<*const ::core::ffi::c_char> =
-        FLAGS.include_dirs.iter().map(|s| s.as_ptr()).collect();
-    construct_include_path(if FLAGS.include_dirs.is_empty() {
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
-    } else {
-        inc_ptrs.push(::core::ptr::null());
-        inc_ptrs.as_mut_ptr()
-    });
-    if !FLAGS.jobserver_auth.is_null() {
+    {
+        let include_dirs = options.include_dirs.borrow();
+        let mut inc_ptrs: Vec<*const ::core::ffi::c_char> =
+            include_dirs.iter().map(|s| s.as_ptr()).collect();
+        construct_include_path(if include_dirs.is_empty() {
+            ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
+        } else {
+            inc_ptrs.push(::core::ptr::null());
+            inc_ptrs.as_mut_ptr()
+        });
+    }
+    if options.jobserver_auth.borrow().is_some() {
         // Reset the jobserver unless we successfully inherited the parent's.
         let mut do_reset = true;
-        if argv_slots == INVALID_JOB_SLOTS {
-            if jobserver_parse_auth(FLAGS.jobserver_auth) != 0 {
+        if argv_slots.is_none() {
+            let auth = options.jobserver_auth.borrow().clone().unwrap();
+            let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
+            if jobserver_parse_auth(auth_c.as_ptr()) != 0 {
                 do_reset = false;
             } else {
                 error(
@@ -1795,19 +1981,19 @@ unsafe fn main_0(
                     b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
                         as *const u8 as *const ::core::ffi::c_char,
                 );
-                FLAGS.arg_job_slots = 1;
+                options.arg_job_slots.set(Some(1));
             }
-        } else if restarts == 0 && argv_slots != 1 {
+        } else if restarts == 0 && argv_slots != Some(1) {
             error(
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH,
                 b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-                argv_slots,
+                argv_slots.unwrap_or(0),
             );
         }
         if do_reset {
-            reset_jobserver();
+            reset_jobserver(&options);
         }
     }
     define_variable_in_set(
@@ -1889,11 +2075,11 @@ unsafe fn main_0(
             NILF,
         );
     }
-    if !FLAGS.makefiles.is_empty() {
+    if !options.makefiles.borrow().is_empty() {
         let mut i_1: usize;
         i_1 = 0;
-        while i_1 < FLAGS.makefiles.len() {
-            if FLAGS.makefiles[i_1].as_bytes() == b"-" {
+        while i_1 < options.makefiles.borrow().len() {
+            if options.makefiles.borrow()[i_1].as_bytes() == b"-" {
                 let outfile: *mut FILE;
                 let mut newnm: *mut ::core::ffi::c_char =
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1943,9 +2129,11 @@ unsafe fn main_0(
                     }
                 }
                 fclose(outfile);
-                FLAGS.makefiles[i_1] =
-                    ::core::ffi::CStr::from_ptr(strcache_add(newnm)).to_owned();
+                let cached = strcache_add(newnm);
+                options.makefiles.borrow_mut()[i_1] =
+                    ::core::ffi::CStr::from_ptr(cached).to_owned();
                 stdin_offset = i_1 as ::core::ffi::c_int;
+                temp_stdin_name = cached;
                 free(newnm as *mut ::core::ffi::c_void);
             }
             i_1 = i_1.wrapping_add(1);
@@ -1953,7 +2141,7 @@ unsafe fn main_0(
     }
     if stdin_offset >= 0 {
         let f: *mut file =
-            enter_file(strcache_add(FLAGS.makefiles[stdin_offset as usize].as_ptr()));
+            enter_file(strcache_add(options.makefiles.borrow()[stdin_offset as usize].as_ptr()));
         (*f).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         (*f).set_update_status(us_success as update_status);
         (*f).set_command_state(cs_finished as cmd_state);
@@ -1983,11 +2171,11 @@ unsafe fn main_0(
         SIGUSR1,
         Some(debug_signal_handler as unsafe extern "C" fn(::core::ffi::c_int) -> ()),
     );
-    set_default_suffixes();
+    set_default_suffixes(&options);
     define_automatic_variables();
-    let fresh46 = &mut (*define_makeflags(0));
+    let fresh46 = &mut (*define_makeflags(&options, 0));
     (*fresh46).set_export(v_export as variable_export);
-    define_default_variables();
+    define_default_variables(&options);
     default_file = enter_file(strcache_add(
         b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
     ));
@@ -2000,14 +2188,15 @@ unsafe fn main_0(
         (*current_variable_set_list).set,
         NILF,
     );
-    if !FLAGS.eval_strings.is_empty() {
+    if !options.eval_strings.borrow().is_empty() {
+        let eval_strings = options.eval_strings.borrow();
         let mut p_0: *mut ::core::ffi::c_char;
         let mut endp: *mut ::core::ffi::c_char;
         let mut len_1: size_t = (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t)
             .wrapping_sub(1)
             .wrapping_add(1)
-            .wrapping_mul(FLAGS.eval_strings.len() as size_t);
-        for es in FLAGS.eval_strings.iter() {
+            .wrapping_mul(eval_strings.len() as size_t);
+        for es in eval_strings.iter() {
             // Own a mutable, NUL-terminated copy of the eval string instead of
             // xstrdup + free: `eval_buffer` parses it in place (only shrinking
             // it), and the `Vec`'s Drop reclaims the buffer at end of scope —
@@ -2023,7 +2212,7 @@ unsafe fn main_0(
         let value_0 = value_0_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
         endp = value_0;
         p_0 = endp;
-        for es in FLAGS.eval_strings.iter() {
+        for es in eval_strings.iter() {
             p_0 = stpcpy(p_0, b"--eval=\0" as *const u8 as *const ::core::ffi::c_char);
             p_0 = quote_for_env(p_0, es.as_ptr());
             let fresh47 = p_0;
@@ -2043,17 +2232,22 @@ unsafe fn main_0(
         );
         drop(value_0_buf);
     }
-    let old_arg_job_slots: ::core::ffi::c_int = FLAGS.arg_job_slots;
-    old_builtin_rules_flag = FLAGS.no_builtin_rules_flag;
-    old_builtin_variables_flag = FLAGS.no_builtin_variables_flag;
+    let old_arg_job_slots: Option<u32> = options.arg_job_slots.get();
+    old_builtin_rules_flag = options.no_builtin_rules.get() as ::core::ffi::c_int;
+    old_builtin_variables_flag = options.no_builtin_variables.get() as ::core::ffi::c_int;
     // Intern each makefile name in the strcache so the pointers handed to
     // read_all_makefiles (and stored as floc.filenm during eval) stay valid
     // for the whole run, matching the C code where makefiles->list holds
     // strcache'd pointers. Using the raw CString as_ptr() here would dangle
     // once the mirror-back below replaces the CString.
-    let mut mf_ptrs: Vec<*const ::core::ffi::c_char> =
-        FLAGS.makefiles.iter().map(|s| strcache_add(s.as_ptr())).collect();
-    read_files = read_all_makefiles(if FLAGS.makefiles.is_empty() {
+    let mut mf_ptrs: Vec<*const ::core::ffi::c_char> = options
+        .makefiles
+        .borrow()
+        .iter()
+        .map(|s| strcache_add(s.as_ptr()))
+        .collect();
+    let makefiles_empty = options.makefiles.borrow().is_empty();
+    read_files = read_all_makefiles(if makefiles_empty {
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
     } else {
         mf_ptrs.push(::core::ptr::null());
@@ -2061,17 +2255,19 @@ unsafe fn main_0(
     });
     // `read_all_makefiles` rewrites each array entry in place to the actual
     // (strcache'd) makefile name it resolved/remade. Mirror those updates back
-    // into `FLAGS.makefiles` so the restart path emits the resolved names.
-    if !FLAGS.makefiles.is_empty() {
+    // into `options.makefiles` so the restart path emits the resolved names.
+    if !makefiles_empty {
+        let mut makefiles = options.makefiles.borrow_mut();
         for (i, &ptr) in mf_ptrs.iter().enumerate() {
             if ptr.is_null() {
                 break;
             }
-            FLAGS.makefiles[i] = ::core::ffi::CStr::from_ptr(ptr).to_owned();
+            makefiles[i] = ::core::ffi::CStr::from_ptr(ptr).to_owned();
         }
     }
-    FLAGS.arg_job_slots = INVALID_JOB_SLOTS;
+    options.arg_job_slots.set(None);
     decode_env_switches(
+        &options,
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         o_env,
@@ -2086,23 +2282,26 @@ unsafe fn main_0(
         NILF,
     );
     decode_env_switches(
+        &options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         o_env,
     );
-    if FLAGS.arg_job_slots == INVALID_JOB_SLOTS || argv_slots != INVALID_JOB_SLOTS {
-        FLAGS.arg_job_slots = old_arg_job_slots;
-    } else if !FLAGS.jobserver_auth.is_null() && FLAGS.arg_job_slots != old_arg_job_slots {
+    if options.arg_job_slots.get().is_none() || argv_slots.is_some() {
+        options.arg_job_slots.set(old_arg_job_slots);
+    } else if options.jobserver_auth.borrow().is_some()
+        && options.arg_job_slots.get() != old_arg_job_slots
+    {
         if restarts == 0 {
             error(
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH,
                 b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-                FLAGS.arg_job_slots,
+                options.arg_job_slots.get().unwrap_or(0),
             );
         }
-        reset_jobserver();
+        reset_jobserver(&options);
     }
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET)
         as ::core::ffi::c_int as ::core::ffi::c_uint;
@@ -2115,24 +2314,33 @@ unsafe fn main_0(
     } else {
         ::core::ptr::null_mut::<output>()
     };
-    disable_builtins();
-    if !FLAGS.jobserver_auth.is_null() {
+    disable_builtins(&options);
+    if options.jobserver_auth.borrow().is_some() {
         job_slots = 0;
-    } else if FLAGS.arg_job_slots == INVALID_JOB_SLOTS {
+    } else if options.arg_job_slots.get().is_none() {
         job_slots = 1;
     } else {
-        job_slots = FLAGS.arg_job_slots as ::core::ffi::c_uint;
+        job_slots = options.arg_job_slots.get().unwrap();
     }
-    if job_slots > 1
-        && jobserver_setup(
-            job_slots.wrapping_sub(1) as ::core::ffi::c_int,
-            FLAGS.jobserver_style,
-        ) != 0
-    {
-        FLAGS.jobserver_auth = jobserver_get_auth();
-        if !FLAGS.jobserver_auth.is_null() {
-            MASTER_JOB_SLOTS.store(job_slots, Ordering::Relaxed);
-            job_slots = 0;
+    if job_slots > 1 {
+        let style_c = options
+            .jobserver_style
+            .borrow()
+            .as_ref()
+            .and_then(|s| ::std::ffi::CString::new(s.as_bytes()).ok());
+        let style_ptr = style_c
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(::core::ptr::null());
+        if jobserver_setup(job_slots.wrapping_sub(1) as ::core::ffi::c_int, style_ptr) != 0 {
+            let auth = jobserver_get_auth();
+            if !auth.is_null() {
+                *options.jobserver_auth.borrow_mut() =
+                    Some(::core::ffi::CStr::from_ptr(auth).to_string_lossy().into_owned());
+                free(auth as *mut ::core::ffi::c_void);
+                MASTER_JOB_SLOTS.store(job_slots, Ordering::Relaxed);
+                job_slots = 0;
+            }
         }
     }
     if syncing != 0 && job_slots == 1 {
@@ -2142,40 +2350,54 @@ unsafe fn main_0(
         output_sync = OUTPUT_SYNC_NONE;
     }
     if syncing != 0 {
-        if FLAGS.sync_mutex.is_null() {
+        let has_mutex = options.sync_mutex.borrow().is_some();
+        if !has_mutex {
             osync_setup();
-            FLAGS.sync_mutex = osync_get_mutex();
-        } else if osync_parse_mutex(FLAGS.sync_mutex) == 0 {
-            osync_clear();
-            free(FLAGS.sync_mutex as *mut ::core::ffi::c_void);
-            FLAGS.sync_mutex = ::core::ptr::null_mut::<::core::ffi::c_char>();
+            let m = osync_get_mutex();
+            if !m.is_null() {
+                *options.sync_mutex.borrow_mut() =
+                    Some(::core::ffi::CStr::from_ptr(m).to_string_lossy().into_owned());
+                free(m as *mut ::core::ffi::c_void);
+            }
+        } else {
+            let mtx = options.sync_mutex.borrow().clone().unwrap();
+            let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
+            if osync_parse_mutex(mtx_c.as_ptr()) == 0 {
+                osync_clear();
+                *options.sync_mutex.borrow_mut() = None;
+            }
         }
     }
-    if !FLAGS.jobserver_auth.is_null()
+    if options.jobserver_auth.borrow().is_some()
         && (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int) & db_level != 0
     {
+        let auth = options.jobserver_auth.borrow().clone().unwrap();
+        let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
         printf(
             b"Using jobserver controller %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            FLAGS.jobserver_auth,
+            auth_c.as_ptr(),
         );
         fflush(stdout);
     }
-    if !FLAGS.sync_mutex.is_null() && 0x2 as ::core::ffi::c_int & db_level != 0 {
+    if options.sync_mutex.borrow().is_some() && 0x2 as ::core::ffi::c_int & db_level != 0 {
+        let mtx = options.sync_mutex.borrow().clone().unwrap();
+        let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
         printf(
             b"Using output-sync mutex %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            FLAGS.sync_mutex,
+            mtx_c.as_ptr(),
         );
         fflush(stdout);
     }
-    define_makeflags(0);
+    sync_runtime_mirrors(&options);
+    define_makeflags(&options, 0);
     snap_deps();
-    install_default_suffix_rules();
+    install_default_suffix_rules(&options);
     convert_to_pattern();
-    install_default_implicit_rules();
+    install_default_implicit_rules(&options);
     snap_implicit_rules();
     build_vpath_lists();
-    if !FLAGS.old_files.is_empty() {
-        for of in FLAGS.old_files.iter() {
+    if !options.old_files.borrow().is_empty() {
+        for of in options.old_files.borrow().iter() {
             let f_0: *mut file = enter_file(strcache_add(of.as_ptr()));
             (*f_0).mtime_before_update = OLD_MTIME as uintmax_t;
             (*f_0).last_mtime = (*f_0).mtime_before_update;
@@ -2184,12 +2406,12 @@ unsafe fn main_0(
             (*f_0).set_command_state(cs_finished as cmd_state);
         }
     }
-    if FLAGS.print_targets_flag != 0 {
+    if options.print_targets.get() {
         print_targets();
         die(EXIT_SUCCESS);
     }
-    if restarts == 0 && !FLAGS.new_files.is_empty() {
-        for nf in FLAGS.new_files.iter() {
+    if restarts == 0 && !options.new_files.borrow().is_empty() {
+        for nf in options.new_files.borrow().iter() {
             let f_1: *mut file = enter_file(strcache_add(nf.as_ptr()));
             (*f_1).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
                 if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
@@ -2207,10 +2429,12 @@ unsafe fn main_0(
     remote_setup();
     output_context = ::core::ptr::null_mut::<output>();
     crate::output::output_close(&raw mut make_sync);
-    if !FLAGS.shuffle_mode.is_null() && 0x1 as ::core::ffi::c_int & db_level != 0 {
+    if options.shuffle_mode.borrow().is_some() && 0x1 as ::core::ffi::c_int & db_level != 0 {
+        let sm = options.shuffle_mode.borrow().clone().unwrap();
+        let sm_c = ::std::ffi::CString::new(sm.as_bytes()).unwrap_or_default();
         printf(
             b"Enabled shuffle mode: %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            FLAGS.shuffle_mode,
+            sm_c.as_ptr(),
         );
         fflush(stdout);
     }
@@ -2298,7 +2522,7 @@ unsafe fn main_0(
                 };
             }
         }
-        define_makeflags(1);
+        define_makeflags(&options, 1);
         let orig_db_level: ::core::ffi::c_int = db_level;
         if 0x100 as ::core::ffi::c_int & db_level == 0 {
             db_level = DB_NONE;
@@ -2430,11 +2654,11 @@ unsafe fn main_0(
         };
         if needs_restart {
             remove_intermediates(0);
-            if FLAGS.print_data_base_flag != 0 {
+            if options.print_data_base.get() {
                 print_data_base();
             }
             clean_jobserver(0);
-            if !FLAGS.makefiles.is_empty() {
+            if !options.makefiles.borrow().is_empty() {
                 let mut mfidx: ::core::ffi::c_int = 0;
                 let mut av: *mut *mut ::core::ffi::c_char = argv;
                 let mut nv: *mut *const ::core::ffi::c_char;
@@ -2458,8 +2682,9 @@ unsafe fn main_0(
                     // branches (where mfidx is a valid index); for other argv
                     // elements the C code harmlessly read past the list, so
                     // fall back to null rather than panicking on bounds.
-                    let mf: *const ::core::ffi::c_char = FLAGS
+                    let mf: *const ::core::ffi::c_char = options
                         .makefiles
+                        .borrow()
                         .get(mfidx as usize)
                         .map_or(::core::ptr::null(), |s| s.as_ptr());
                     if strlen(a) > 0 {
@@ -2618,7 +2843,7 @@ unsafe fn main_0(
                 }
                 *nv = ::core::ptr::null::<::core::ffi::c_char>();
             }
-            if !FLAGS.directories.is_empty() {
+            if !options.directories.borrow().is_empty() {
                 let mut bad: ::core::ffi::c_int = 1;
                 if !directory_before_chdir.is_null() {
                     if chdir(directory_before_chdir) < 0 {
@@ -2735,10 +2960,10 @@ unsafe fn main_0(
             die(MAKE_FAILURE);
         }
     }
-    define_makeflags(0);
-    always_make_flag = FLAGS.always_make_set;
-    if restarts != 0 && !FLAGS.new_files.is_empty() {
-        for nf in FLAGS.new_files.iter() {
+    define_makeflags(&options, 0);
+    always_make_flag = options.always_make.get() as ::core::ffi::c_int;
+    if restarts != 0 && !options.new_files.borrow().is_empty() {
+        for nf in options.new_files.borrow().iter() {
             let f_5: *mut file = enter_file(strcache_add(nf.as_ptr()));
             (*f_5).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
                 if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
@@ -2850,7 +3075,7 @@ unsafe fn main_0(
     }
     die(makefile_status);
 }
-static mut options: [::core::ffi::c_char; 127] = [0; 127];
+static mut getopt_shorts: [::core::ffi::c_char; 127] = [0; 127];
 static mut long_options: [option; 51] = [option {
     name: ::core::ptr::null::<::core::ffi::c_char>(),
     has_arg: 0,
@@ -2865,10 +3090,10 @@ pub unsafe fn init_switches() {
     let mut p: *mut ::core::ffi::c_char;
     let mut c: ::core::ffi::c_uint;
     let mut i: ::core::ffi::c_uint;
-    if options[0 as ::core::ffi::c_int as usize] as ::core::ffi::c_int != 0 {
+    if getopt_shorts[0 as ::core::ffi::c_int as usize] as ::core::ffi::c_int != 0 {
         return;
     }
-    p = &raw mut options as *mut ::core::ffi::c_char;
+    p = &raw mut getopt_shorts as *mut ::core::ffi::c_char;
     let fresh24 = p;
     p = p.offset(1 as ::core::ffi::c_int as isize);
     *fresh24 = '-' as i32 as ::core::ffi::c_char;
@@ -3018,23 +3243,35 @@ unsafe extern "C" fn handle_non_switch_argument(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn reset_makeflags(origin: variable_origin) {
-    FLAGS.env_overrides = 0;
+/// `reset_makeflags` for the makefile-time `MAKEFLAGS` reassignment callback
+/// (`set_special_var`), which is reached through `do_variable_definition` and
+/// cannot thread an `&Options`. Uses the `main_0`-installed borrow.
+pub unsafe fn reset_makeflags_special(origin: variable_origin) {
+    reset_makeflags(installed_options(), origin);
+}
+
+pub unsafe fn reset_makeflags(options: &Options, origin: variable_origin) {
+    options.env_overrides.set(false);
+    sync_env_overrides(options);
     decode_env_switches(
+        options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         origin,
     );
-    let mut inc_ptrs2: Vec<*const ::core::ffi::c_char> =
-        FLAGS.include_dirs.iter().map(|s| s.as_ptr()).collect();
-    construct_include_path(if FLAGS.include_dirs.is_empty() {
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
-    } else {
-        inc_ptrs2.push(::core::ptr::null());
-        inc_ptrs2.as_mut_ptr()
-    });
-    disable_builtins();
-    define_makeflags(rebuilding_makefiles() as ::core::ffi::c_int);
+    {
+        let include_dirs = options.include_dirs.borrow();
+        let mut inc_ptrs2: Vec<*const ::core::ffi::c_char> =
+            include_dirs.iter().map(|s| s.as_ptr()).collect();
+        construct_include_path(if include_dirs.is_empty() {
+            ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
+        } else {
+            inc_ptrs2.push(::core::ptr::null());
+            inc_ptrs2.as_mut_ptr()
+        });
+    }
+    disable_builtins(options);
+    define_makeflags(options, rebuilding_makefiles() as ::core::ffi::c_int);
 }
 unsafe fn decode_switches(
     options: &Options,
@@ -3082,7 +3319,7 @@ unsafe fn decode_switches(
         c = getopt_long(
             argc,
             argv as *const *mut ::core::ffi::c_char,
-            &raw mut options as *mut ::core::ffi::c_char,
+            &raw mut getopt_shorts as *mut ::core::ffi::c_char,
             &raw mut long_options as *mut option,
             ::core::ptr::null_mut::<::core::ffi::c_int>(),
         );
@@ -3101,12 +3338,13 @@ unsafe fn decode_switches(
             cs = &raw mut switches as *mut command_switch;
             while (*cs).c != 0 {
                 if (*cs).c == c {
+                    let cs_origin = opt_origin_cell(options, (*cs).c);
                     let doit: ::core::ffi::c_int = (origin as ::core::ffi::c_uint
                         == o_command as ::core::ffi::c_int as ::core::ffi::c_uint
                         || (*cs).env() as ::core::ffi::c_int != 0
-                            && ((*cs).origin.is_null()
+                            && (cs_origin.is_none()
                                 || origin as ::core::ffi::c_uint
-                                    >= *(*cs).origin as ::core::ffi::c_uint))
+                                    >= cs_origin.unwrap().get() as ::core::ffi::c_uint))
                         as ::core::ffi::c_int;
                     if doit != 0 {
                         (*cs).set_specified(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -3118,9 +3356,7 @@ unsafe fn decode_switches(
                                 let on = (*cs).type_0 as ::core::ffi::c_uint
                                     == flag as ::core::ffi::c_int as ::core::ffi::c_uint;
                                 opt_set_flag(options, (*cs).c, on);
-                                if !(*cs).origin.is_null() {
-                                    *(*cs).origin = origin;
-                                }
+                                if let Some(oc) = cs_origin { oc.set(origin); }
                             }
                         }
                         2 | 3 | 4 => {
@@ -3171,9 +3407,7 @@ unsafe fn decode_switches(
                                             .to_string_lossy()
                                             .into_owned();
                                         opt_set_str(options, (*cs).c, s);
-                                        if !(*cs).origin.is_null() {
-                                            *(*cs).origin = origin;
-                                        }
+                                        if let Some(oc) = cs_origin { oc.set(origin); }
                                     } else if (*cs).c == CHAR_MAX + 1 {
                                         // `--debug` accumulates its args into a
                                         // `Vec<CString>`, skipping an exact duplicate of an
@@ -3185,9 +3419,7 @@ unsafe fn decode_switches(
                                             db_flags.iter().any(|e| e.as_c_str() == want);
                                         if !duplicate {
                                             db_flags.push(want.to_owned());
-                                            if !(*cs).origin.is_null() {
-                                                *(*cs).origin = origin;
-                                            }
+                                            if let Some(oc) = cs_origin { oc.set(origin); }
                                         }
                                     } else {
                                         // List options (`strlist`/`filename`) store owned
@@ -3240,8 +3472,9 @@ unsafe fn decode_switches(
                                                             );
                                                 }
                                                 stdin_offset = list.len() as ::core::ffi::c_int;
-                                                ::core::ffi::CStr::from_ptr(strcache_add(coptarg))
-                                                    .to_owned()
+                                                let cached = strcache_add(coptarg);
+                                                temp_stdin_name = cached;
+                                                ::core::ffi::CStr::from_ptr(cached).to_owned()
                                             } else {
                                                 ::core::ffi::CStr::from_ptr(
                                                     expand_command_line_file(coptarg),
@@ -3249,9 +3482,7 @@ unsafe fn decode_switches(
                                                 .to_owned()
                                             };
                                             list.push(stored);
-                                            if !(*cs).origin.is_null() {
-                                                *(*cs).origin = origin;
-                                            }
+                                            if let Some(oc) = cs_origin { oc.set(origin); }
                                         }
                                     }
                                 }
@@ -3294,18 +3525,14 @@ unsafe fn decode_switches(
                                         // Only `-j` is a positive_int option; it stores into
                                         // `arg_job_slots` (Some(n) for finite jobs).
                                         options.arg_job_slots.set(Some(i));
-                                        if !(*cs).origin.is_null() {
-                                            *(*cs).origin = origin;
-                                        }
+                                        if let Some(oc) = cs_origin { oc.set(origin); }
                                     }
                                 } else {
                                     // No argument: the table's `noarg_value` constant
                                     // (`inf_jobs` == 0) marks infinite jobs => Some(0).
                                     let n = *((*cs).noarg_value as *const ::core::ffi::c_uint);
                                     options.arg_job_slots.set(Some(n));
-                                    if !(*cs).origin.is_null() {
-                                        *(*cs).origin = origin;
-                                    }
+                                    if let Some(oc) = cs_origin { oc.set(origin); }
                                 }
                             }
                         }
@@ -3335,9 +3562,7 @@ unsafe fn decode_switches(
                                     *((*cs).noarg_value as *const ::core::ffi::c_double)
                                 };
                                 options.max_load_average.set(v);
-                                if !(*cs).origin.is_null() {
-                                    *(*cs).origin = origin;
-                                }
+                                if let Some(oc) = cs_origin { oc.set(origin); }
                             }
                         }
                         _ => {
@@ -3374,7 +3599,7 @@ unsafe fn decode_switches(
     if bad != 0
         && origin as ::core::ffi::c_uint == o_command as ::core::ffi::c_int as ::core::ffi::c_uint
     {
-        print_usage(bad);
+        print_usage(options, bad);
     }
     decode_debug_flags(options);
     decode_output_sync_flags(options);
@@ -3390,9 +3615,12 @@ unsafe fn decode_switches(
         }
     }
     run_silent = options.silent.get() as ::core::ffi::c_int;
-    reset_env_override(options);
+    sync_env_overrides(options);
+    sync_runtime_mirrors(options);
+    reset_env_override();
 }
-unsafe extern "C" fn decode_env_switches(
+unsafe fn decode_env_switches(
+    options: &Options,
     envar: *const ::core::ffi::c_char,
     mut len: size_t,
     origin: variable_origin,
@@ -3478,7 +3706,7 @@ unsafe extern "C" fn decode_env_switches(
         let fresh7 = &mut (*argv.offset(1 as ::core::ffi::c_int as isize));
         *fresh7 = buf;
     }
-    decode_switches(argc, argv, origin);
+    decode_switches(options, argc, argv, origin);
     free(buf as *mut ::core::ffi::c_void);
     free(argv as *mut ::core::ffi::c_void);
 }
@@ -3512,11 +3740,11 @@ unsafe extern "C" fn quote_for_env(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn disable_builtins() {
-    if FLAGS.no_builtin_variables_flag != 0 {
-        FLAGS.no_builtin_rules_flag = 1;
+pub unsafe fn disable_builtins(options: &Options) {
+    if options.no_builtin_variables.get() {
+        options.no_builtin_rules.set(true);
     }
-    if FLAGS.no_builtin_rules_flag != 0 && old_builtin_rules_flag == 0 {
+    if options.no_builtin_rules.get() && old_builtin_rules_flag == 0 {
         old_builtin_rules_flag = 1;
         if !suffix_file.is_null() && (*suffix_file).builtin() as ::core::ffi::c_int != 0 {
             free_dep_chain((*suffix_file).deps);
@@ -3532,10 +3760,11 @@ pub unsafe fn disable_builtins() {
             NILF,
         );
     }
-    if FLAGS.no_builtin_variables_flag != 0 && old_builtin_variables_flag == 0 {
+    if options.no_builtin_variables.get() && old_builtin_variables_flag == 0 {
         old_builtin_variables_flag = 1;
         undefine_default_variables();
     }
+    M_NO_BUILTIN_RULES.store(options.no_builtin_rules.get(), Ordering::Relaxed);
 }
 /// # Safety
 ///
@@ -3866,7 +4095,7 @@ pub unsafe fn define_makeflags(options: &Options, makefile: ::core::ffi::c_int) 
         (*current_variable_set_list).set,
         NILF,
     );
-    if !FLAGS.eval_strings.is_empty() {
+    if !options.eval_strings.borrow().is_empty() {
         fp = variable_buffer_output(
             fp,
             &raw const evalref as *const ::core::ffi::c_char,
@@ -3901,7 +4130,7 @@ pub unsafe fn define_makeflags(options: &Options, makefile: ::core::ffi::c_int) 
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         fp,
-        (if FLAGS.env_overrides != 0 {
+        (if options.env_overrides.get() {
             o_env_override as ::core::ffi::c_int
         } else {
             o_file as ::core::ffi::c_int
@@ -3918,11 +4147,11 @@ pub unsafe fn define_makeflags(options: &Options, makefile: ::core::ffi::c_int) 
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn should_print_dir() -> ::core::ffi::c_int {
-    if FLAGS.print_directory_flag >= 0 {
-        return FLAGS.print_directory_flag;
+pub unsafe fn should_print_dir(options: &Options) -> ::core::ffi::c_int {
+    if let Some(v) = options.print_directory.get() {
+        return v as ::core::ffi::c_int;
     }
-    (FLAGS.silent_flag == 0 && (makelevel > 0 || !FLAGS.directories.is_empty()))
+    (!options.silent.get() && (makelevel > 0 || !options.directories.borrow().is_empty()))
         as ::core::ffi::c_int
 }
 /// # Safety
@@ -3931,7 +4160,7 @@ pub unsafe fn should_print_dir() -> ::core::ffi::c_int {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_version() {
     static PRINTED_VERSION: AtomicBool = AtomicBool::new(false);
-    let precede: *const ::core::ffi::c_char = if FLAGS.print_data_base_flag != 0 {
+    let precede: *const ::core::ffi::c_char = if opt_print_data_base() {
         b"# \0" as *const u8 as *const ::core::ffi::c_char
     } else {
         b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -4041,7 +4270,7 @@ pub unsafe fn clean_jobserver(status: ::core::ffi::c_int) {
             );
         }
     }
-    reset_jobserver();
+    reset_jobserver_mirror();
 }
 /// # Safety
 ///
@@ -4051,7 +4280,7 @@ pub unsafe fn die(status: ::core::ffi::c_int) -> ! {
     static DYING: AtomicBool = AtomicBool::new(false);
     if !DYING.swap(true, Ordering::Relaxed) {
         let err: ::core::ffi::c_int;
-        if FLAGS.print_version_flag != 0 {
+        if opt_print_version() {
             print_version();
         }
         temp_stdin_unlink();
@@ -4061,7 +4290,7 @@ pub unsafe fn die(status: ::core::ffi::c_int) -> ! {
         }
         remote_cleanup();
         remove_intermediates(0);
-        if FLAGS.print_data_base_flag != 0 {
+        if opt_print_data_base() {
             print_data_base();
         }
         if verify_flag != 0 {
@@ -4256,7 +4485,7 @@ unsafe extern "C" fn run_static_initializers() {
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_keep_going_flag as *const ::core::ffi::c_void,
                 long_name: b"keep-going\0" as *const u8 as *const ::core::ffi::c_char,
-                origin: &raw mut FLAGS.keep_going_origin,
+                origin: ::core::ptr::null_mut::<variable_origin>(),
             };
             init.set_env(1);
             init.set_toenv(1);
@@ -4400,7 +4629,7 @@ unsafe extern "C" fn run_static_initializers() {
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_silent_flag as *const ::core::ffi::c_void,
                 long_name: b"silent\0" as *const u8 as *const ::core::ffi::c_char,
-                origin: &raw mut FLAGS.silent_origin,
+                origin: ::core::ptr::null_mut::<variable_origin>(),
             };
             init.set_env(1);
             init.set_toenv(1);
@@ -4418,7 +4647,7 @@ unsafe extern "C" fn run_static_initializers() {
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_keep_going_flag as *const ::core::ffi::c_void,
                 long_name: b"no-keep-going\0" as *const u8 as *const ::core::ffi::c_char,
-                origin: &raw mut FLAGS.keep_going_origin,
+                origin: ::core::ptr::null_mut::<variable_origin>(),
             };
             init.set_env(1);
             init.set_toenv(1);
@@ -4473,7 +4702,7 @@ unsafe extern "C" fn run_static_initializers() {
                 default_value: &raw const default_print_directory_flag
                     as *const ::core::ffi::c_void,
                 long_name: b"print-directory\0" as *const u8 as *const ::core::ffi::c_char,
-                origin: &raw mut FLAGS.print_directory_origin,
+                origin: ::core::ptr::null_mut::<variable_origin>(),
             };
             init.set_env(1);
             init.set_toenv(1);
@@ -4692,7 +4921,7 @@ unsafe extern "C" fn run_static_initializers() {
                 default_value: &raw const default_print_directory_flag
                     as *const ::core::ffi::c_void,
                 long_name: b"no-print-directory\0" as *const u8 as *const ::core::ffi::c_char,
-                origin: &raw mut FLAGS.print_directory_origin,
+                origin: ::core::ptr::null_mut::<variable_origin>(),
             };
             init.set_env(1);
             init.set_toenv(1);
@@ -4746,7 +4975,7 @@ unsafe extern "C" fn run_static_initializers() {
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_silent_flag as *const ::core::ffi::c_void,
                 long_name: b"no-silent\0" as *const u8 as *const ::core::ffi::c_char,
-                origin: &raw mut FLAGS.silent_origin,
+                origin: ::core::ptr::null_mut::<variable_origin>(),
             };
             init.set_env(1);
             init.set_toenv(1);

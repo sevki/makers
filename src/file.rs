@@ -725,10 +725,10 @@ pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
     let mut doneany: ::core::ffi::c_int = 0;
-    if crate::make_main::FLAGS.question_flag != 0 || crate::make_main::FLAGS.touch_flag != 0 || all_secondary() || no_intermediates != 0 {
+    if crate::make_main::opt_question() || crate::make_main::opt_touch() || all_secondary() || no_intermediates != 0 {
         return;
     }
-    if sig != 0 && crate::make_main::FLAGS.just_print_flag != 0 {
+    if sig != 0 && crate::make_main::opt_just_print() {
         return;
     }
     for slot in table_slots(&raw const files) {
@@ -745,7 +745,7 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
                     // ENOENT from unlink means the file was already gone: skip the
                     // diagnostic/bookkeeping below (the C code `continue`d here).
                     let skip: bool;
-                    if crate::make_main::FLAGS.just_print_flag != 0 {
+                    if crate::make_main::opt_just_print() {
                         status = 0;
                         skip = false;
                     } else {
@@ -1296,7 +1296,7 @@ pub unsafe fn snap_deps() {
     f = lookup_file(b".IGNORE\0" as *const u8 as *const ::core::ffi::c_char);
     if !f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0 {
         if (*f).deps.is_null() {
-            crate::make_main::FLAGS.ignore_errors_flag = 1;
+            crate::make_main::set_ignore_errors_mirror(true);
         } else {
             d = (*f).deps;
             while !d.is_null() {
@@ -1667,7 +1667,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
-    if crate::make_main::FLAGS.no_builtin_rules_flag != 0 && (*f).builtin() as ::core::ffi::c_int != 0 {
+    if crate::make_main::opt_no_builtin_rules() && (*f).builtin() as ::core::ffi::c_int != 0 {
         return;
     }
     putchar('\n' as i32);
@@ -1819,9 +1819,9 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
                 puts(b"#  Successfully updated.\0" as *const u8 as *const ::core::ffi::c_char);
             }
             2 => {
-                if crate::make_main::FLAGS.question_flag != 0 {
+                if crate::make_main::opt_question() {
                 } else {
-                    panic!("assertion failed: crate::make_main::FLAGS.question_flag");
+                    panic!("assertion failed: question_flag");
                 };
                 puts(
                     b"#  Needs to be updated (-q is set).\0" as *const u8

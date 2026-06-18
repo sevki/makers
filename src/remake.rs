@@ -218,9 +218,9 @@ unsafe fn double_colon_file_mut<'a>(f: *mut file) -> &'a mut file {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     let mut last_cmd_count: ::core::ffi::c_ulong = 0;
-    let t: ::core::ffi::c_int = crate::make_main::FLAGS.touch_flag;
-    let q: ::core::ffi::c_int = crate::make_main::FLAGS.question_flag;
-    let n: ::core::ffi::c_int = crate::make_main::FLAGS.just_print_flag;
+    let t: bool = crate::make_main::opt_touch();
+    let q: bool = crate::make_main::opt_question();
+    let n: bool = crate::make_main::opt_just_print();
     let mut status: update_status = us_none;
     let depth: ::core::ffi::c_uint =
         (if rebuilding_makefiles() { 1 } else { 0 }) as ::core::ffi::c_uint;
@@ -285,13 +285,13 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                 }
                 if rebuilding_makefiles() {
                     if fref(file).cmd_target() != 0 {
-                        crate::make_main::FLAGS.touch_flag = t;
-                        crate::make_main::FLAGS.question_flag = q;
-                        crate::make_main::FLAGS.just_print_flag = n;
+                        crate::make_main::set_touch_mirror(t);
+                        crate::make_main::set_question_mirror(q);
+                        crate::make_main::set_just_print_mirror(n);
                     } else {
-                        crate::make_main::FLAGS.just_print_flag = 0;
-                        crate::make_main::FLAGS.question_flag = crate::make_main::FLAGS.just_print_flag;
-                        crate::make_main::FLAGS.touch_flag = crate::make_main::FLAGS.question_flag;
+                        crate::make_main::set_just_print_mirror(false);
+                        crate::make_main::set_question_mirror(false);
+                        crate::make_main::set_touch_mirror(false);
                     }
                 }
                 let ocommands_started = commands_started();
@@ -331,8 +331,8 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                     {
                         if fref(file).update_status() as u64 != 0 {
                             status = fref(file).update_status() as update_status;
-                            stop = (crate::make_main::FLAGS.question_flag != 0
-                                && crate::make_main::FLAGS.keep_going_flag == 0
+                            stop = (crate::make_main::opt_question()
+                                && !crate::make_main::opt_keep_going()
                                 && !rebuilding_makefiles())
                                 as ::core::ffi::c_int;
                         } else {
@@ -354,7 +354,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                                 && mtime != fref(file).mtime_before_update
                             {
                                 if !rebuilding_makefiles()
-                                    || crate::make_main::FLAGS.just_print_flag == 0 && crate::make_main::FLAGS.question_flag == 0
+                                    || !crate::make_main::opt_just_print() && !crate::make_main::opt_question()
                                 {
                                     status = us_success;
                                 }
@@ -385,7 +385,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         == us_success as ::core::ffi::c_int
                     && g_changed == 0
                     && run_silent == 0
-                    && crate::make_main::FLAGS.question_flag == 0
+                    && !crate::make_main::opt_question()
                 {
                     message(
                         1,
@@ -420,9 +420,9 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     }
     free_dep_chain(goals_orig);
     if rebuilding_makefiles() {
-        crate::make_main::FLAGS.touch_flag = t;
-        crate::make_main::FLAGS.question_flag = q;
-        crate::make_main::FLAGS.just_print_flag = n;
+        crate::make_main::set_touch_mirror(t);
+        crate::make_main::set_question_mirror(q);
+        crate::make_main::set_just_print_mirror(n);
     }
     status as update_status
 }
@@ -500,7 +500,7 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
         while !fr.renamed.is_null() {
             fr = fr.renamed.as_mut().expect("update_file: null renamed file");
         }
-        if new as ::core::ffi::c_uint != 0 && crate::make_main::FLAGS.keep_going_flag == 0 {
+        if new as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going() {
             return new;
         }
         if fr.command_state() as ::core::ffi::c_int == cs_running as ::core::ffi::c_int
@@ -545,7 +545,7 @@ pub unsafe fn complain(file: *mut file) {
             let m: *const ::core::ffi::c_char = b"%sNo rule to make target '%s', needed by '%s'%s\0"
                 as *const u8
                 as *const ::core::ffi::c_char;
-            if crate::make_main::FLAGS.keep_going_flag == 0 {
+            if !crate::make_main::opt_keep_going() {
                 fatal(
                     NILF,
                     l,
@@ -569,7 +569,7 @@ pub unsafe fn complain(file: *mut file) {
             let l_0: size_t = (strlen((*file).name) as size_t).wrapping_add(4);
             let m_0: *const ::core::ffi::c_char =
                 b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
-            if crate::make_main::FLAGS.keep_going_flag == 0 {
+            if !crate::make_main::opt_keep_going() {
                 fatal(
                     NILF,
                     l_0,
@@ -941,7 +941,7 @@ unsafe extern "C" fn update_file_1(
                         break;
                     }
                 }
-                if dep_status as ::core::ffi::c_uint != 0 && crate::make_main::FLAGS.keep_going_flag == 0 {
+                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going() {
                     break;
                 }
                 if running == 0 {
@@ -1015,7 +1015,7 @@ unsafe extern "C" fn update_file_1(
                         break;
                     }
                 }
-                if dep_status as ::core::ffi::c_uint != 0 && crate::make_main::FLAGS.keep_going_flag == 0 {
+                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going() {
                     break;
                 }
                 if running == 0 {
@@ -1087,7 +1087,7 @@ unsafe extern "C" fn update_file_1(
             );
             fflush(stdout);
         }
-        if depth == 0 && crate::make_main::FLAGS.keep_going_flag != 0 && crate::make_main::FLAGS.just_print_flag == 0 && crate::make_main::FLAGS.question_flag == 0 {
+        if depth == 0 && crate::make_main::opt_keep_going() && !crate::make_main::opt_just_print() && !crate::make_main::opt_question() {
             error(
                 ::core::ptr::null_mut::<Floc>(),
                 strlen((*file).name) as size_t,
@@ -1326,7 +1326,7 @@ pub unsafe fn notice_finished_file(file: *mut file) {
     let mut touched: ::core::ffi::c_int = 0;
     (*file).set_command_state(cs_finished as cmd_state);
     (*file).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    if crate::make_main::FLAGS.touch_flag != 0
+    if crate::make_main::opt_touch()
         && (*file).update_status() as ::core::ffi::c_int == us_success as ::core::ffi::c_int
     {
         // Touch the file unless every command line is recursive (flagged
@@ -1360,7 +1360,7 @@ pub unsafe fn notice_finished_file(file: *mut file) {
     }
     if ran != 0 && (*file).phony() == 0 || touched != 0 {
         let mut i_0: ::core::ffi::c_int = 0;
-        if (crate::make_main::FLAGS.question_flag != 0 || crate::make_main::FLAGS.just_print_flag != 0 || crate::make_main::FLAGS.touch_flag != 0)
+        if (crate::make_main::opt_question() || crate::make_main::opt_just_print() || crate::make_main::opt_touch())
             && !(*file).cmds.is_null()
         {
             i_0 = (*(*file).cmds).ncommand_lines as ::core::ffi::c_int;
@@ -1419,7 +1419,7 @@ pub unsafe fn notice_finished_file(file: *mut file) {
             (*(*d).file).set_update_status((*file).update_status() as update_status);
             if ran != 0 && (*(*d).file).phony() == 0 {
                 f_mtime((*d).file, 0);
-                if crate::make_main::FLAGS.just_print_flag != 0 {
+                if crate::make_main::opt_just_print() {
                     (*(*d).file).last_mtime = (!(0 as ::core::ffi::c_int as uintmax_t))
                         .wrapping_sub(
                             if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
@@ -1567,7 +1567,7 @@ unsafe extern "C" fn check_dep(
                         }
                         dep_ref.file = renamed;
                     }
-                    if dep_status as ::core::ffi::c_uint != 0 && crate::make_main::FLAGS.keep_going_flag == 0 {
+                    if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going() {
                         break;
                     }
                     let dep_file_ref = fref(dep_ref.file);
@@ -1604,7 +1604,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
             (*file).name,
         );
     }
-    if crate::make_main::FLAGS.just_print_flag != 0 {
+    if crate::make_main::opt_just_print() {
         return us_success;
     }
     if ar_name(::core::ffi::CStr::from_ptr((*file).name)) {
@@ -1756,7 +1756,7 @@ pub unsafe fn remake_file(file: *mut file) {
         }
     } else {
         chop_commands((*file).cmds);
-        if crate::make_main::FLAGS.touch_flag == 0 || (*(*file).cmds).any_recurse() as ::core::ffi::c_int != 0 {
+        if !crate::make_main::opt_touch() || (*(*file).cmds).any_recurse() as ::core::ffi::c_int != 0 {
             execute_file_commands(file);
             return;
         }
@@ -2045,7 +2045,7 @@ pub unsafe fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
         perror_with_name(b"stat: \0" as *const u8 as *const ::core::ffi::c_char, name);
         return NONEXISTENT_MTIME as uintmax_t;
     }
-    if crate::make_main::FLAGS.check_symlink_flag != 0 && strlen(name) <= GET_PATH_MAX as size_t {
+    if crate::make_main::opt_check_symlink() && strlen(name) <= GET_PATH_MAX as size_t {
         let mut lpath: [::core::ffi::c_char; 4097] = [0; 4097];
         strcpy(&raw mut lpath as *mut ::core::ffi::c_char, name);
         loop {
