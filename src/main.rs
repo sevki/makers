@@ -5339,3 +5339,49 @@ mod option_helper_tests {
         assert_eq!(unsafe { should_print_dir(&o2) }, 0);
     }
 }
+
+#[cfg(test)]
+mod jobserver_and_stdin_cleanup_tests {
+    use super::{reset_jobserver, stdin_offset, temp_stdin_name, temp_stdin_unlink, Options};
+
+    /// `reset_jobserver` clears the auth field and tears down the (absent)
+    /// jobserver. With no jobserver configured, `jobserver_clear` is a no-op,
+    /// so this is safe to drive directly.
+    #[test]
+    fn reset_jobserver_clears_auth() {
+        let o = Options::new();
+        *o.jobserver_auth.borrow_mut() = Some("fifo:/tmp/x".to_string());
+        unsafe { reset_jobserver(&o) };
+        assert!(o.jobserver_auth.borrow().is_none());
+    }
+
+    /// `temp_stdin_unlink` removes the temp-stdin makefile and resets the
+    /// offset. Drives the real unlink path with a throwaway temp file, then
+    /// also confirms the no-op guard when no temp stdin is registered.
+    #[test]
+    fn temp_stdin_unlink_removes_file_and_noops() {
+        // No temp stdin registered (defaults): must be a harmless no-op.
+        unsafe {
+            stdin_offset = -1;
+            temp_stdin_name = ::core::ptr::null();
+            temp_stdin_unlink();
+        }
+
+        // Real unlink path: create a temp file and register it.
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("makers_tmpstdin_test_{}", std::process::id()));
+        std::fs::write(&path, b"all:\n").unwrap();
+        assert!(path.exists());
+        let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        unsafe {
+            stdin_offset = 0;
+            temp_stdin_name = cpath.as_ptr();
+            temp_stdin_unlink();
+            // Restore globals before `cpath` is dropped to avoid a dangling ptr.
+            temp_stdin_name = ::core::ptr::null();
+            stdin_offset = -1;
+        }
+        assert!(!path.exists(), "temp stdin file should have been unlinked");
+        drop(cpath);
+    }
+}
