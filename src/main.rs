@@ -5268,3 +5268,73 @@ mod option_default_statics_tests {
         assert_eq!(inf_jobs, 0);
     }
 }
+
+#[cfg(test)]
+mod option_helper_tests {
+    use super::{opt_flag_int, opt_set_flag, opt_set_str, should_print_dir, Options, CHAR_MAX};
+
+    /// Every `flag`-type switch round-trips through `opt_set_flag` ->
+    /// `opt_flag_int`, covering both the letter and `CHAR_MAX`-offset codes.
+    #[test]
+    fn flag_options_round_trip() {
+        let letters = [
+            'B' as i32, 'd' as i32, 'e' as i32, 'h' as i32, 'i' as i32, 'k' as i32, 'S' as i32,
+            'L' as i32, 'n' as i32, 'p' as i32, 'q' as i32, 'r' as i32, 'R' as i32, 's' as i32,
+            't' as i32, 'v' as i32, CHAR_MAX + 3, CHAR_MAX + 5, CHAR_MAX + 8, CHAR_MAX + 14,
+        ];
+        for &c in &letters {
+            let o = Options::new();
+            assert_eq!(opt_flag_int(&o, c), 0, "flag {c} should default to 0");
+            opt_set_flag(&o, c, true);
+            assert_eq!(opt_flag_int(&o, c), 1, "flag {c} should read back 1 after set");
+        }
+    }
+
+    /// `-w` / `--no-print-directory` is the tri-state: unset reads -1, and
+    /// set true/false read 1/0.
+    #[test]
+    fn print_directory_tristate() {
+        for &c in &['w' as i32, CHAR_MAX + 4] {
+            let o = Options::new();
+            assert_eq!(opt_flag_int(&o, c), -1, "unset print_directory is -1");
+            opt_set_flag(&o, c, true);
+            assert_eq!(opt_flag_int(&o, c), 1);
+            opt_set_flag(&o, c, false);
+            assert_eq!(opt_flag_int(&o, c), 0);
+        }
+    }
+
+    /// `string`-type switches store their value in the matching field.
+    #[test]
+    fn string_options_store() {
+        let o = Options::new();
+        opt_set_str(&o, 'O' as i32, "line".to_string());
+        assert_eq!(o.output_sync_option.borrow().as_deref(), Some("line"));
+        opt_set_str(&o, CHAR_MAX + 2, "fifo:/x".to_string());
+        assert_eq!(o.jobserver_auth.borrow().as_deref(), Some("fifo:/x"));
+        opt_set_str(&o, CHAR_MAX + 7, "mtx".to_string());
+        assert_eq!(o.sync_mutex.borrow().as_deref(), Some("mtx"));
+        opt_set_str(&o, CHAR_MAX + 11, "random".to_string());
+        assert_eq!(o.shuffle_mode.borrow().as_deref(), Some("random"));
+        opt_set_str(&o, CHAR_MAX + 12, "fifo".to_string());
+        assert_eq!(o.jobserver_style.borrow().as_deref(), Some("fifo"));
+    }
+
+    /// `should_print_dir` honours the explicit tri-state when set, and falls
+    /// back to the silent/dir-count heuristic when unset.
+    #[test]
+    fn should_print_dir_paths() {
+        let o = Options::new();
+        // Explicit -w wins.
+        opt_set_flag(&o, 'w' as i32, true);
+        assert_eq!(unsafe { should_print_dir(&o) }, 1);
+        opt_set_flag(&o, 'w' as i32, false);
+        assert_eq!(unsafe { should_print_dir(&o) }, 0);
+        // Unset: not silent, no -C dirs, makelevel 0 -> 0.
+        let o2 = Options::new();
+        assert_eq!(unsafe { should_print_dir(&o2) }, 0);
+        // Silent suppresses it too.
+        opt_set_flag(&o2, 's' as i32, true);
+        assert_eq!(unsafe { should_print_dir(&o2) }, 0);
+    }
+}
