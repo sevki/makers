@@ -2266,9 +2266,8 @@ unsafe extern "C" fn record_target_var(
             vref.set_export((*vmod).export_v() as variable_export);
         }
         if vref.origin() as ::core::ffi::c_int != o_override as ::core::ffi::c_int {
-            let gv: *mut variable;
             let len: size_t = strlen(vref.name) as size_t;
-            gv = lookup_variable(vref.name, len);
+            let gv: *mut variable = lookup_variable(vref.name, len);
             if !gv.is_null()
                 && v != gv
                 && ((*gv).origin() as ::core::ffi::c_int == o_env_override as ::core::ffi::c_int
