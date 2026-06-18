@@ -8,7 +8,7 @@
 
 use ::core::ffi::{c_char, c_int, c_uint, c_void};
 use ::core::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libc::{
     __errno_location, close, exit, ftruncate, lseek, perror, read, sprintf, strcat, strerror,
@@ -341,8 +341,12 @@ pub unsafe fn output_dump(out: *mut output) {
         }
     }
 }
-static mut stdout_flags: ::core::ffi::c_int = -1;
-static mut stderr_flags: ::core::ffi::c_int = -1;
+/// Saved `O_APPEND`-state of stdout/stderr while output-sync redirects them,
+/// restored by `output_close`. Atomic so the read/write are plain safe ops;
+/// output setup/teardown runs single-threaded, so `Relaxed` preserves the
+/// original program order.
+static STDOUT_FLAGS: AtomicI32 = AtomicI32::new(-1);
+static STDERR_FLAGS: AtomicI32 = AtomicI32::new(-1);
 /// Initialize `out` (or, when null, switch stdout/stderr to append mode).
 ///
 /// # Safety
@@ -357,8 +361,8 @@ pub unsafe fn output_init(out: *mut output) {
         );
         return;
     }
-    stdout_flags = fd_set_append(fileno(stdout));
-    stderr_flags = fd_set_append(fileno(stderr));
+    STDOUT_FLAGS.store(fd_set_append(fileno(stdout)), Ordering::Relaxed);
+    STDERR_FLAGS.store(fd_set_append(fileno(stderr)), Ordering::Relaxed);
 }
 /// Dump and close `out`'s temp files (or, when null, restore
 /// stdout/stderr).
@@ -371,8 +375,8 @@ pub unsafe fn output_close(out: *mut output) {
         if stdio_traced() {
             log_working_directory(0);
         }
-        fd_reset_append(fileno(stdout), stdout_flags);
-        fd_reset_append(fileno(stderr), stderr_flags);
+        fd_reset_append(fileno(stdout), STDOUT_FLAGS.load(Ordering::Relaxed));
+        fd_reset_append(fileno(stderr), STDERR_FLAGS.load(Ordering::Relaxed));
         return;
     }
     output_dump(out);

@@ -786,6 +786,14 @@ fn job_counter_parallel() {
     check_unordered("job-counter", "56_job_counter.mk", "all", &["-j2"]);
 }
 
+#[test]
+fn output_init_restores_streams() {
+    // `output_init`/`output_close` save and restore the stdout/stderr append
+    // flags (now atomics) around every run. A plain recipe exercises that
+    // save/restore round-trip; its output must match the C oracle byte-for-byte.
+    check("output-init", "57_output_init.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
