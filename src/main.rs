@@ -491,92 +491,107 @@ static inf_jobs: ::core::ffi::c_int = 0;
 pub static mut default_load_average: ::core::ffi::c_double = -1.0f64;
 pub static mut always_make_flag: ::core::ffi::c_int = 0;
 
-/// Option/flag globals collected into a single instance. Each field keeps the
-/// original type and default of the standalone `static mut` it replaces; the
-/// switch table's `value_ptr`/`origin` entries point at these fields. Access is
-/// single-threaded (argument parsing then reads), matching the prior globals.
-pub struct Flags {
-    pub silent_flag: ::core::ffi::c_int,
-    pub silent_origin: variable_origin,
-    pub touch_flag: ::core::ffi::c_int,
-    pub just_print_flag: ::core::ffi::c_int,
-    pub db_flags: *mut stringlist,
-    pub debug_flag: ::core::ffi::c_int,
-    pub output_sync_option: *mut ::core::ffi::c_char,
-    pub env_overrides: ::core::ffi::c_int,
-    pub ignore_errors_flag: ::core::ffi::c_int,
-    pub print_data_base_flag: ::core::ffi::c_int,
-    pub print_targets_flag: ::core::ffi::c_int,
-    pub question_flag: ::core::ffi::c_int,
-    pub no_builtin_rules_flag: ::core::ffi::c_int,
-    pub no_builtin_variables_flag: ::core::ffi::c_int,
-    pub keep_going_flag: ::core::ffi::c_int,
-    pub keep_going_origin: variable_origin,
-    pub check_symlink_flag: ::core::ffi::c_int,
-    pub print_directory_flag: ::core::ffi::c_int,
-    pub print_directory_origin: variable_origin,
-    pub print_version_flag: ::core::ffi::c_int,
-    pub makefiles: Vec<::std::ffi::CString>,
-    pub arg_job_slots: ::core::ffi::c_int,
-    pub jobserver_auth: *mut ::core::ffi::c_char,
-    pub jobserver_style: *mut ::core::ffi::c_char,
-    pub shuffle_mode: *mut ::core::ffi::c_char,
-    pub sync_mutex: *mut ::core::ffi::c_char,
-    pub max_load_average: ::core::ffi::c_double,
-    pub directories: Vec<::std::ffi::CString>,
-    pub include_dirs: Vec<::std::ffi::CString>,
-    pub old_files: Vec<::std::ffi::CString>,
-    pub new_files: Vec<::std::ffi::CString>,
-    pub eval_strings: Vec<::std::ffi::CString>,
-    pub print_usage_flag: ::core::ffi::c_int,
-    pub warn_flags: Vec<::std::ffi::CString>,
-    pub warn_undefined_variables_flag: ::core::ffi::c_int,
-    pub trace_flag: ::core::ffi::c_int,
-    /// The `-B`/`--always-make` flag as set by option parsing (formerly the
-    /// `ALWAYS_MAKE_SET` atomic). Written once through the switch table's
-    /// `value_ptr`, then read when deriving `always_make_flag`.
-    pub always_make_set: ::core::ffi::c_int,
+/// Option/flag values collected into a single owned instance, threaded through
+/// the call graph as `&Options`. Runtime-mutated fields use `Cell`/`RefCell`
+/// interior mutability so a shared borrow suffices everywhere except where an
+/// owned value is first created (`main_0`). The option-parser sets these fields
+/// through char-keyed helpers (`opt_set_flag`/`opt_set_str`) rather than the
+/// old raw `value_ptr` dispatch.
+pub struct Options {
+    pub silent: ::core::cell::Cell<bool>,
+    pub silent_origin: ::core::cell::Cell<variable_origin>,
+    pub touch: ::core::cell::Cell<bool>,
+    pub just_print: ::core::cell::Cell<bool>,
+    pub db_flags: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    pub debug_flag: ::core::cell::Cell<bool>,
+    pub output_sync_option: ::core::cell::RefCell<Option<String>>,
+    pub env_overrides: ::core::cell::Cell<bool>,
+    pub ignore_errors: ::core::cell::Cell<bool>,
+    pub print_data_base: ::core::cell::Cell<bool>,
+    pub print_targets: ::core::cell::Cell<bool>,
+    pub question: ::core::cell::Cell<bool>,
+    pub no_builtin_rules: ::core::cell::Cell<bool>,
+    pub no_builtin_variables: ::core::cell::Cell<bool>,
+    pub keep_going: ::core::cell::Cell<bool>,
+    pub keep_going_origin: ::core::cell::Cell<variable_origin>,
+    pub check_symlink: ::core::cell::Cell<bool>,
+    /// Legacy tri-state: `None` == not specified (-1), `Some(true)` == -w,
+    /// `Some(false)` == --no-print-directory.
+    pub print_directory: ::core::cell::Cell<Option<bool>>,
+    pub print_directory_origin: ::core::cell::Cell<variable_origin>,
+    pub print_version: ::core::cell::Cell<bool>,
+    pub makefiles: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    /// Legacy `INVALID_JOB_SLOTS` (-1) == `None`; infinite jobs == `Some(0)`.
+    pub arg_job_slots: ::core::cell::Cell<Option<u32>>,
+    pub jobserver_auth: ::core::cell::RefCell<Option<String>>,
+    pub jobserver_style: ::core::cell::RefCell<Option<String>>,
+    pub shuffle_mode: ::core::cell::RefCell<Option<String>>,
+    pub sync_mutex: ::core::cell::RefCell<Option<String>>,
+    pub max_load_average: ::core::cell::Cell<f64>,
+    pub directories: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    pub include_dirs: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    pub old_files: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    pub new_files: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    pub eval_strings: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    pub print_usage: ::core::cell::Cell<bool>,
+    pub warn_flags: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    pub warn_undefined_variables: ::core::cell::Cell<bool>,
+    pub trace: ::core::cell::Cell<bool>,
+    /// The `-B`/`--always-make` flag as set by option parsing.
+    pub always_make: ::core::cell::Cell<bool>,
 }
 
-pub static mut FLAGS: Flags = Flags {
-    silent_flag: 0,
-    silent_origin: o_default,
-    touch_flag: 0,
-    just_print_flag: 0,
-    db_flags: ::core::ptr::null::<stringlist>() as *mut stringlist,
-    debug_flag: 0,
-    output_sync_option: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    env_overrides: 0,
-    ignore_errors_flag: 0,
-    print_data_base_flag: 0,
-    print_targets_flag: 0,
-    question_flag: 0,
-    no_builtin_rules_flag: 0,
-    no_builtin_variables_flag: 0,
-    keep_going_flag: 0,
-    keep_going_origin: o_default,
-    check_symlink_flag: 0,
-    print_directory_flag: -(1 as ::core::ffi::c_int),
-    print_directory_origin: o_default,
-    print_version_flag: 0,
-    makefiles: Vec::new(),
-    arg_job_slots: INVALID_JOB_SLOTS,
-    jobserver_auth: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    jobserver_style: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    shuffle_mode: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    sync_mutex: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    max_load_average: -1.0f64,
-    directories: Vec::new(),
-    include_dirs: Vec::new(),
-    old_files: Vec::new(),
-    new_files: Vec::new(),
-    eval_strings: Vec::new(),
-    print_usage_flag: 0,
-    warn_flags: Vec::new(),
-    warn_undefined_variables_flag: 0,
-    trace_flag: 0,
-    always_make_set: 0,
-};
+impl Options {
+    /// A fresh `Options` with every field at its zero/sentinel default,
+    /// matching the original `static mut` initial values.
+    pub fn new() -> Options {
+        Options {
+            silent: ::core::cell::Cell::new(false),
+            silent_origin: ::core::cell::Cell::new(o_default),
+            touch: ::core::cell::Cell::new(false),
+            just_print: ::core::cell::Cell::new(false),
+            db_flags: ::core::cell::RefCell::new(Vec::new()),
+            debug_flag: ::core::cell::Cell::new(false),
+            output_sync_option: ::core::cell::RefCell::new(None),
+            env_overrides: ::core::cell::Cell::new(false),
+            ignore_errors: ::core::cell::Cell::new(false),
+            print_data_base: ::core::cell::Cell::new(false),
+            print_targets: ::core::cell::Cell::new(false),
+            question: ::core::cell::Cell::new(false),
+            no_builtin_rules: ::core::cell::Cell::new(false),
+            no_builtin_variables: ::core::cell::Cell::new(false),
+            keep_going: ::core::cell::Cell::new(false),
+            keep_going_origin: ::core::cell::Cell::new(o_default),
+            check_symlink: ::core::cell::Cell::new(false),
+            print_directory: ::core::cell::Cell::new(None),
+            print_directory_origin: ::core::cell::Cell::new(o_default),
+            print_version: ::core::cell::Cell::new(false),
+            makefiles: ::core::cell::RefCell::new(Vec::new()),
+            arg_job_slots: ::core::cell::Cell::new(None),
+            jobserver_auth: ::core::cell::RefCell::new(None),
+            jobserver_style: ::core::cell::RefCell::new(None),
+            shuffle_mode: ::core::cell::RefCell::new(None),
+            sync_mutex: ::core::cell::RefCell::new(None),
+            max_load_average: ::core::cell::Cell::new(-1.0f64),
+            directories: ::core::cell::RefCell::new(Vec::new()),
+            include_dirs: ::core::cell::RefCell::new(Vec::new()),
+            old_files: ::core::cell::RefCell::new(Vec::new()),
+            new_files: ::core::cell::RefCell::new(Vec::new()),
+            eval_strings: ::core::cell::RefCell::new(Vec::new()),
+            print_usage: ::core::cell::Cell::new(false),
+            warn_flags: ::core::cell::RefCell::new(Vec::new()),
+            warn_undefined_variables: ::core::cell::Cell::new(false),
+            trace: ::core::cell::Cell::new(false),
+            always_make: ::core::cell::Cell::new(false),
+        }
+    }
+}
+
+impl Default for Options {
+    fn default() -> Options {
+        Options::new()
+    }
+}
 
 /// Explicit per-flag dispatch from a switch character to the address of the
 /// `FLAGS` field that stores that option's value. This replaces the generic
