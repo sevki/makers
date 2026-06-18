@@ -2420,4 +2420,25 @@ mod initialize_file_variables_tests {
             assert_eq!(f.variables, first, "the existing set is reused");
         }
     }
+
+    /// With `reading == 0`, the pattern-variable search arm runs. A target name
+    /// that matches no defined pattern variable yields no match, so the search
+    /// loop is skipped and `pat_searched` is set. Drives that branch without
+    /// requiring any pattern variables to be installed.
+    #[test]
+    fn reading_zero_runs_pattern_search() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let name = strcache_add(c"ifv_reading0_unmatched_probe".as_ptr());
+            let mut f = File::default();
+            f.name = name;
+            f.hname = name;
+
+            assert_eq!(f.pat_searched(), 0, "starts un-searched");
+            initialize_file_variables(&raw mut f, 0);
+
+            assert_eq!(f.pat_searched(), 1, "pattern search ran and was recorded");
+            assert!(!f.variables.is_null(), "variable set still allocated");
+        }
+    }
 }
