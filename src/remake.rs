@@ -1527,11 +1527,10 @@ unsafe extern "C" fn check_dep(
                 // Every prerequisite has a resolved file by the time check_dep
                 // walks it (set during parsing or by expand_deps above), so the
                 // pointer is non-null on all reachable paths. Take it back out
-                // through the NonNull check to stay null-safe for CodeQL without
-                // the extra (never-taken) skip branch that lowered coverage.
-                let dep_file = ::core::ptr::NonNull::new(dep_ref.file)
-                    .expect("check_dep: prerequisite has no resolved file")
-                    .as_ptr();
+                // through the NonNull check (one expression, no extra statement
+                // lines) to stay null-safe for CodeQL without the never-taken
+                // skip branch that lowered coverage.
+                let dep_file = ::core::ptr::NonNull::new(dep_ref.file).expect("check_dep: prerequisite has no resolved file").as_ptr();
                 if double_colon_file_mut(dep_file).updating() != 0 {
                     let dep_name = fref(dep_file).name;
                     error(
