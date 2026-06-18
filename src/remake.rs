@@ -121,7 +121,11 @@ pub fn commands_started() -> ::core::ffi::c_uint {
 }
 static mut goal_list: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 static mut goal_dep: *mut dep = ::core::ptr::null::<dep>() as *mut dep;
-static mut considered: ::core::ffi::c_uint = 0;
+/// Generation counter that marks which files have already been considered in
+/// the current `update_goal_chain` pass. Atomic so its reads/writes are plain
+/// safe ops; goal updating is single-threaded, so `Relaxed` preserves the
+/// original program order.
+static CONSIDERED: AtomicU32 = AtomicU32::new(0);
 static mut dropped_list: *mut *mut dep = ::core::ptr::null::<*mut dep>() as *mut *mut dep;
 static mut dropped_list_len: size_t = 0;
 pub const DROPPED_LIST_INCR: ::core::ffi::c_int = 5;
@@ -227,7 +231,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
     } else {
         ::core::ptr::null_mut::<goaldep>()
     };
-    considered = considered.wrapping_add(1);
+    CONSIDERED.fetch_add(1, Ordering::Relaxed);
     while !goals.is_null() {
         let mut gu: *mut dep;
         let mut g: *mut dep;
@@ -411,7 +415,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
             gu = gu_next;
         }
         if gu.is_null() || wait != 0 {
-            considered = considered.wrapping_add(1);
+            CONSIDERED.fetch_add(1, Ordering::Relaxed);
         }
     }
     free_dep_chain(goals_orig);
@@ -464,7 +468,7 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
     };
     {
         let fr = f.as_ref().expect("update_file: null file chain");
-        if fr.considered == considered
+        if fr.considered == CONSIDERED.load(Ordering::Relaxed)
             && !(fr.updated() as ::core::ffi::c_int != 0
                 && fr.update_status() as ::core::ffi::c_int > us_none as ::core::ffi::c_int
                 && fr.dontcare() == 0
@@ -491,7 +495,7 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
     }
     while !f.is_null() {
         let mut fr = f.as_mut().expect("update_file: null file chain");
-        fr.considered = considered;
+        fr.considered = CONSIDERED.load(Ordering::Relaxed);
         let new: update_status = update_file_1(&raw mut *fr, depth);
         while !fr.renamed.is_null() {
             fr = fr.renamed.as_mut().expect("update_file: null renamed file");

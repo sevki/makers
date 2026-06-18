@@ -747,6 +747,15 @@ fn waiting_for_unfinished_jobs() {
     );
 }
 
+#[test]
+fn considered_diamond() {
+    // A diamond dependency (`left` and `right` both need `shared`) exercises the
+    // per-pass "considered" generation counter in update_file/update_goal_chain,
+    // now a file-local atomic: `shared` must be built exactly once even though it
+    // is reached via two paths. Compared byte-for-byte against the C oracle.
+    check("considered-diamond", "53_considered_diamond.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
