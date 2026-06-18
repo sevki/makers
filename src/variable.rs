@@ -808,9 +808,13 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
             (*file).pat_variables = create_new_variable_set();
             current_variable_set_list = (*file).pat_variables;
             loop {
-                let v: *mut variable;
-                if (*p).variable.flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
-                    v = define_variable_in_set(
+                // Both definition paths return a live variable; bind it once as
+                // a checked `&mut` produced by the if/else so every field write
+                // below is a reference access (no raw deref for CodeQL) and the
+                // `f_simple` flavor write reuses that same binding — no extra
+                // statement line and no added branch.
+                let v = if (*p).variable.flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
+                    let v = define_variable_in_set(
                         (*p).variable.name,
                         strlen((*p).variable.name) as size_t,
                         (*p).variable.value,
@@ -818,10 +822,11 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
                         0,
                         (*current_variable_set_list).set,
                         &raw mut (*p).variable.fileinfo,
-                    );
-                    (*v).set_flavor(f_simple as variable_flavor);
+                    ).as_mut().expect("define_variable_in_set returned null");
+                    v.set_flavor(f_simple as variable_flavor);
+                    v
                 } else {
-                    v = do_variable_definition(
+                    do_variable_definition(
                         &raw mut (*p).variable.fileinfo,
                         (*p).variable.name,
                         (*p).variable.value,
@@ -829,16 +834,11 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
                         (*p).variable.flavor(),
                         (*p).variable.conditional() as ::core::ffi::c_int,
                         s_pattern,
-                    );
-                }
-                // Both definition paths above return a live variable (the
-                // `f_simple` arm already dereferences `v` for `set_flavor`).
-                // Bind a checked reference so these setters are null-safe
-                // without adding a branch.
-                let vr = v.as_mut().expect("variable definition returned null");
-                vr.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
-                vr.set_export((*p).variable.export() as variable_export);
-                vr.set_private_var((*p).variable.private_var() as ::core::ffi::c_uint);
+                    ).as_mut().expect("do_variable_definition returned null")
+                };
+                v.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
+                v.set_export((*p).variable.export() as variable_export);
+                v.set_private_var((*p).variable.private_var() as ::core::ffi::c_uint);
                 p = lookup_pattern_var(p, (*file).name, targlen);
                 if p.is_null() {
                     break;
