@@ -808,6 +808,15 @@ fn decode_switches_flags() {
     );
 }
 
+#[test]
+fn pattern_rule_search() {
+    // Building `foo.out` via the `%.out: %.in` pattern rule drives
+    // `pattern_search`, which sizes its scratch allocations from the
+    // pattern-rule-limit counters (now atomics) computed by
+    // `count_implicit_rule_limits`. Compared byte-for-byte against the C oracle.
+    check("pattern-rule", "59_pattern_rule.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With

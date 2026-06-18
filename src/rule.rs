@@ -4,6 +4,8 @@
 //!
 //! Port of `rule.c`.
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, Dep, File};
 use crate::misc::free_ns_chain;
@@ -83,9 +85,13 @@ unsafe fn push_cstr(buf: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
 }
 pub static mut pattern_rules: *mut rule = ::core::ptr::null_mut();
 pub static mut last_pattern_rule: *mut rule = ::core::ptr::null_mut();
-pub static mut num_pattern_rules: ::core::ffi::c_uint = 0;
-pub static mut max_pattern_targets: ::core::ffi::c_uint = 0;
-pub static mut max_pattern_deps: ::core::ffi::c_uint = 0;
+/// Pattern-rule limits recomputed by `count_implicit_rule_limits` and read by
+/// `pattern_search` to size its scratch allocations. Atomic so the reads/writes
+/// are plain safe ops; the rule database is built and searched single-threaded,
+/// so `Relaxed` preserves the original program order.
+pub static NUM_PATTERN_RULES: AtomicU32 = AtomicU32::new(0);
+pub static MAX_PATTERN_TARGETS: AtomicU32 = AtomicU32::new(0);
+pub static MAX_PATTERN_DEPS: AtomicU32 = AtomicU32::new(0);
 pub static mut max_pattern_dep_length: size_t = 0;
 pub static mut suffix_file: *mut File = ::core::ptr::null_mut();
 /// Return (computing and caching it on first use) the printable definition of
@@ -197,16 +203,16 @@ pub unsafe fn snap_implicit_rules() {
         pre_deps = pre_deps.wrapping_add(1);
         d = dr.next;
     }
-    num_pattern_rules = 0;
-    max_pattern_targets = 0;
-    max_pattern_deps = 0;
+    NUM_PATTERN_RULES.store(0, Ordering::Relaxed);
+    MAX_PATTERN_TARGETS.store(0, Ordering::Relaxed);
+    MAX_PATTERN_DEPS.store(0, Ordering::Relaxed);
     let mut rule: *mut rule = pattern_rules;
     while let Some(rr) = rule.as_mut() {
         let mut ndeps: ::core::ffi::c_uint = pre_deps;
         let mut lastdep: *mut dep = ::core::ptr::null_mut();
-        num_pattern_rules = num_pattern_rules.wrapping_add(1);
-        if rr.num as ::core::ffi::c_uint > max_pattern_targets {
-            max_pattern_targets = rr.num as ::core::ffi::c_uint;
+        NUM_PATTERN_RULES.fetch_add(1, Ordering::Relaxed);
+        if rr.num as ::core::ffi::c_uint > MAX_PATTERN_TARGETS.load(Ordering::Relaxed) {
+            MAX_PATTERN_TARGETS.store(rr.num as ::core::ffi::c_uint, Ordering::Relaxed);
         }
         d = rr.deps;
         while let Some(dr) = d.as_mut() {
@@ -252,8 +258,8 @@ pub unsafe fn snap_implicit_rules() {
                 rr.deps = copy_dep_chain(prereqs);
             }
         }
-        if ndeps > max_pattern_deps {
-            max_pattern_deps = ndeps;
+        if ndeps > MAX_PATTERN_DEPS.load(Ordering::Relaxed) {
+            MAX_PATTERN_DEPS.store(ndeps, Ordering::Relaxed);
         }
         rule = rr.next;
     }
@@ -621,6 +627,7 @@ pub unsafe fn print_rule_data_base() {
             terminal as ::core::ffi::c_double / rules as ::core::ffi::c_double * 100.0f64,
         );
     }
+    let num_pattern_rules = NUM_PATTERN_RULES.load(Ordering::Relaxed);
     if num_pattern_rules != rules && num_pattern_rules != 0 {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
