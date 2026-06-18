@@ -1958,8 +1958,13 @@ unsafe fn main_0(
     let old_arg_job_slots: ::core::ffi::c_int = FLAGS.arg_job_slots;
     old_builtin_rules_flag = FLAGS.no_builtin_rules_flag;
     old_builtin_variables_flag = FLAGS.no_builtin_variables_flag;
+    // Intern each makefile name in the strcache so the pointers handed to
+    // read_all_makefiles (and stored as floc.filenm during eval) stay valid
+    // for the whole run, matching the C code where makefiles->list holds
+    // strcache'd pointers. Using the raw CString as_ptr() here would dangle
+    // once the mirror-back below replaces the CString.
     let mut mf_ptrs: Vec<*const ::core::ffi::c_char> =
-        FLAGS.makefiles.iter().map(|s| s.as_ptr()).collect();
+        FLAGS.makefiles.iter().map(|s| strcache_add(s.as_ptr())).collect();
     read_files = read_all_makefiles(if FLAGS.makefiles.is_empty() {
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
     } else {
@@ -2361,8 +2366,14 @@ unsafe fn main_0(
                 while !(*av).is_null() {
                     let f_4: *mut ::core::ffi::c_char;
                     let a: *mut ::core::ffi::c_char = *av;
-                    let mf: *const ::core::ffi::c_char =
-                        FLAGS.makefiles[mfidx as usize].as_ptr();
+                    // mf is only consumed inside the -f/--file substitution
+                    // branches (where mfidx is a valid index); for other argv
+                    // elements the C code harmlessly read past the list, so
+                    // fall back to null rather than panicking on bounds.
+                    let mf: *const ::core::ffi::c_char = FLAGS
+                        .makefiles
+                        .get(mfidx as usize)
+                        .map_or(::core::ptr::null(), |s| s.as_ptr());
                     if strlen(a) > 0 {
                     } else {
                         panic!("assertion failed: strlen (a) > 0");
