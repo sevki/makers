@@ -791,26 +791,6 @@ pub fn rebuilding_makefiles() -> bool {
     REBUILDING_MAKEFILES.load(Ordering::Relaxed)
 }
 
-/// Mirror of `Options.env_overrides` (-e) for the deep, high-fan-in variable
-/// machinery (`define_variable_in_set`, `set_env_override`, ...). Those readers
-/// are reached from hundreds of call sites and via a C-ABI `hash_map_arg`
-/// callback (`set_env_override`), so they cannot take an `&Options` param.
-/// `Options` remains the canonical parser target; `sync_env_overrides` keeps
-/// this atomic in step whenever the option value changes. Single-threaded
-/// access, so `Relaxed` preserves program order.
-static ENV_OVERRIDES: AtomicBool = AtomicBool::new(false);
-
-/// Read the mirrored `-e` (`env_overrides`) flag from outside the `Options`
-/// borrow chain.
-pub fn env_overrides() -> bool {
-    ENV_OVERRIDES.load(Ordering::Relaxed)
-}
-
-/// Keep the `ENV_OVERRIDES` mirror in step with `options.env_overrides`.
-pub fn sync_env_overrides(options: &Options) {
-    ENV_OVERRIDES.store(options.env_overrides.get(), Ordering::Relaxed);
-}
-
 thread_local! {
     /// Borrow channel to the `Options` owned as a local in `main_0`. This is a
     /// *pointer*, not the option data: the values still live in `main_0`'s
@@ -834,108 +814,79 @@ unsafe fn installed_options<'a>() -> &'a Options {
     &*p
 }
 
-// Mirrors of the option flags read deep in the build engine (job/remake/file/
-// output/variable). Those readers sit behind hundreds of call sites and some
-// C-ABI callbacks (e.g. `set_env_override`, child-environment construction),
-// so they cannot take an `&Options` borrow. `Options` stays the canonical
-// parser target; `sync_runtime_mirrors` (and the remake save/restore path)
-// keep these in step. Single-threaded access => `Relaxed`.
-static M_QUESTION: AtomicBool = AtomicBool::new(false);
-static M_TOUCH: AtomicBool = AtomicBool::new(false);
-static M_JUST_PRINT: AtomicBool = AtomicBool::new(false);
-static M_IGNORE_ERRORS: AtomicBool = AtomicBool::new(false);
-static M_KEEP_GOING: AtomicBool = AtomicBool::new(false);
-static M_CHECK_SYMLINK: AtomicBool = AtomicBool::new(false);
-static M_NO_BUILTIN_RULES: AtomicBool = AtomicBool::new(false);
-static M_PRINT_DATA_BASE: AtomicBool = AtomicBool::new(false);
-static M_PRINT_VERSION: AtomicBool = AtomicBool::new(false);
-static M_SILENT: AtomicBool = AtomicBool::new(false);
-static M_PRINT_DIRECTORY: ::std::sync::atomic::AtomicI32 =
-    ::std::sync::atomic::AtomicI32::new(-1);
-static M_JOBSERVER_AUTH_PRESENT: AtomicBool = AtomicBool::new(false);
-static M_MAX_LOAD_AVERAGE: ::std::sync::atomic::AtomicU64 =
-    ::std::sync::atomic::AtomicU64::new((-1.0f64).to_bits());
+/// Run `f` with a borrow of `main_0`'s single owned `Options`, reached through
+/// the `OPTIONS_PTR` borrow channel. This is the single source of truth for the
+/// deep, high-fan-in option readers (`job`/`remake`/`file`/`output`/`variable`)
+/// that sit behind hundreds of call sites and some C-ABI callbacks, so they
+/// cannot take an `&Options` parameter. `OPTIONS_PTR` is installed at the very
+/// start of `main_0`, before any code that could read options runs, and its
+/// referent outlives every makefile-time/build-time callback.
+pub fn with_options<R>(f: impl FnOnce(&Options) -> R) -> R {
+    f(unsafe { installed_options() })
+}
 
+pub fn env_overrides() -> bool {
+    with_options(|o| o.env_overrides.get())
+}
 pub fn opt_question() -> bool {
-    M_QUESTION.load(Ordering::Relaxed)
+    with_options(|o| o.question.get())
 }
 pub fn opt_touch() -> bool {
-    M_TOUCH.load(Ordering::Relaxed)
+    with_options(|o| o.touch.get())
 }
 pub fn opt_just_print() -> bool {
-    M_JUST_PRINT.load(Ordering::Relaxed)
+    with_options(|o| o.just_print.get())
 }
 pub fn opt_ignore_errors() -> bool {
-    M_IGNORE_ERRORS.load(Ordering::Relaxed)
+    with_options(|o| o.ignore_errors.get())
 }
 pub fn opt_keep_going() -> bool {
-    M_KEEP_GOING.load(Ordering::Relaxed)
+    with_options(|o| o.keep_going.get())
 }
 pub fn opt_check_symlink() -> bool {
-    M_CHECK_SYMLINK.load(Ordering::Relaxed)
+    with_options(|o| o.check_symlink.get())
 }
 pub fn opt_no_builtin_rules() -> bool {
-    M_NO_BUILTIN_RULES.load(Ordering::Relaxed)
+    with_options(|o| o.no_builtin_rules.get())
 }
 pub fn opt_print_data_base() -> bool {
-    M_PRINT_DATA_BASE.load(Ordering::Relaxed)
+    with_options(|o| o.print_data_base.get())
 }
 pub fn opt_print_version() -> bool {
-    M_PRINT_VERSION.load(Ordering::Relaxed)
+    with_options(|o| o.print_version.get())
 }
 pub fn opt_jobserver_auth_present() -> bool {
-    M_JOBSERVER_AUTH_PRESENT.load(Ordering::Relaxed)
+    with_options(|o| o.jobserver_auth.borrow().is_some())
 }
 pub fn opt_max_load_average() -> f64 {
-    f64::from_bits(M_MAX_LOAD_AVERAGE.load(Ordering::Relaxed))
+    with_options(|o| o.max_load_average.get())
 }
 
 /// `should_print_dir` for callers outside the `Options` borrow chain
-/// (`output.rs`), backed by the runtime mirrors.
+/// (`output.rs`), reading the owned `Options` through the borrow channel.
 pub fn should_print_dir_mirror() -> ::core::ffi::c_int {
-    let pd = M_PRINT_DIRECTORY.load(Ordering::Relaxed);
-    if pd >= 0 {
-        return pd;
-    }
-    let ml = unsafe { makelevel };
-    (!M_SILENT.load(Ordering::Relaxed) && ml > 0) as ::core::ffi::c_int
+    with_options(|o| {
+        match o.print_directory.get() {
+            Some(v) => v as ::core::ffi::c_int,
+            None => {
+                let ml = unsafe { makelevel };
+                (!o.silent.get() && ml > 0) as ::core::ffi::c_int
+            }
+        }
+    })
 }
 
 pub fn set_touch_mirror(v: bool) {
-    M_TOUCH.store(v, Ordering::Relaxed);
+    with_options(|o| o.touch.set(v));
 }
 pub fn set_question_mirror(v: bool) {
-    M_QUESTION.store(v, Ordering::Relaxed);
+    with_options(|o| o.question.set(v));
 }
 pub fn set_just_print_mirror(v: bool) {
-    M_JUST_PRINT.store(v, Ordering::Relaxed);
+    with_options(|o| o.just_print.set(v));
 }
 pub fn set_ignore_errors_mirror(v: bool) {
-    M_IGNORE_ERRORS.store(v, Ordering::Relaxed);
-}
-
-/// Refresh every runtime mirror from `options`.
-pub fn sync_runtime_mirrors(options: &Options) {
-    M_QUESTION.store(options.question.get(), Ordering::Relaxed);
-    M_TOUCH.store(options.touch.get(), Ordering::Relaxed);
-    M_JUST_PRINT.store(options.just_print.get(), Ordering::Relaxed);
-    M_IGNORE_ERRORS.store(options.ignore_errors.get(), Ordering::Relaxed);
-    M_KEEP_GOING.store(options.keep_going.get(), Ordering::Relaxed);
-    M_CHECK_SYMLINK.store(options.check_symlink.get(), Ordering::Relaxed);
-    M_NO_BUILTIN_RULES.store(options.no_builtin_rules.get(), Ordering::Relaxed);
-    M_PRINT_DATA_BASE.store(options.print_data_base.get(), Ordering::Relaxed);
-    M_PRINT_VERSION.store(options.print_version.get(), Ordering::Relaxed);
-    M_SILENT.store(options.silent.get(), Ordering::Relaxed);
-    M_PRINT_DIRECTORY.store(
-        match options.print_directory.get() {
-            None => -1,
-            Some(v) => v as i32,
-        },
-        Ordering::Relaxed,
-    );
-    M_JOBSERVER_AUTH_PRESENT
-        .store(options.jobserver_auth.borrow().is_some(), Ordering::Relaxed);
-    M_MAX_LOAD_AVERAGE.store(options.max_load_average.get().to_bits(), Ordering::Relaxed);
+    with_options(|o| o.ignore_errors.set(v));
 }
 pub static mut shell_var: variable = variable {
     name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -1528,15 +1479,14 @@ pub unsafe fn print_usage(options: &Options, bad: ::core::ffi::c_int) -> ! {
 pub unsafe fn reset_jobserver(options: &Options) {
     jobserver_clear();
     *options.jobserver_auth.borrow_mut() = None;
-    M_JOBSERVER_AUTH_PRESENT.store(false, Ordering::Relaxed);
 }
 
-/// Mirror-only jobserver reset for the end-of-run `clean_jobserver`/`die`
-/// path, which has no `&Options` borrow. The owned `Options` is being torn
-/// down at that point, so clearing only the mirror is sufficient.
+/// Jobserver reset for the end-of-run `clean_jobserver`/`die` path, which has
+/// no `&Options` borrow. Reaches the owned `Options` through the borrow channel
+/// (still installed for the dynamic extent of `main_0`).
 pub unsafe fn reset_jobserver_mirror() {
     jobserver_clear();
-    M_JOBSERVER_AUTH_PRESENT.store(false, Ordering::Relaxed);
+    with_options(|o| *o.jobserver_auth.borrow_mut() = None);
 }
 /// # Safety
 ///
@@ -2388,7 +2338,6 @@ unsafe fn main_0(
         );
         fflush(stdout);
     }
-    sync_runtime_mirrors(&options);
     define_makeflags(&options, 0);
     snap_deps();
     install_default_suffix_rules(&options);
@@ -3252,7 +3201,6 @@ pub unsafe fn reset_makeflags_special(origin: variable_origin) {
 
 pub unsafe fn reset_makeflags(options: &Options, origin: variable_origin) {
     options.env_overrides.set(false);
-    sync_env_overrides(options);
     decode_env_switches(
         options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3615,8 +3563,6 @@ unsafe fn decode_switches(
         }
     }
     run_silent = options.silent.get() as ::core::ffi::c_int;
-    sync_env_overrides(options);
-    sync_runtime_mirrors(options);
     reset_env_override();
 }
 unsafe fn decode_env_switches(
@@ -3764,7 +3710,6 @@ pub unsafe fn disable_builtins(options: &Options) {
         old_builtin_variables_flag = 1;
         undefine_default_variables();
     }
-    M_NO_BUILTIN_RULES.store(options.no_builtin_rules.get(), Ordering::Relaxed);
 }
 /// # Safety
 ///
