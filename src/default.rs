@@ -10,7 +10,6 @@ use ::core::ptr::{null, null_mut};
 use crate::ffi_types::size_t;
 use crate::file::{enter_file, enter_prereqs, Commands};
 use crate::floc::Floc;
-use crate::make_main::{no_builtin_rules_flag, no_builtin_variables_flag};
 use crate::misc::{xmalloc, xstrdup};
 use crate::read::{parse_file_seq, MAP_NUL, PARSEFS_NONE};
 use crate::rule::{install_pattern_rule, pspec, suffix_file};
@@ -253,7 +252,7 @@ pub unsafe fn set_default_suffixes() {
     suffix_file = enter_file(strcache_add(c".SUFFIXES".as_ptr()));
     (*suffix_file).set_builtin(1);
 
-    if no_builtin_rules_flag != 0 {
+    if crate::make_main::FLAGS.no_builtin_rules_flag != 0 {
         define_variable_in_set(
             c"SUFFIXES".as_ptr(),
             8,
@@ -303,7 +302,7 @@ pub unsafe fn set_default_suffixes() {
 /// # Safety
 /// Must run single-threaded: it mutates the global file table.
 pub unsafe fn install_default_suffix_rules() {
-    if no_builtin_rules_flag != 0 {
+    if crate::make_main::FLAGS.no_builtin_rules_flag != 0 {
         return;
     }
     for &(target, recipe) in DEFAULT_SUFFIX_RULES {
@@ -326,7 +325,7 @@ pub unsafe fn install_default_suffix_rules() {
 /// # Safety
 /// Must run single-threaded: it mutates the global pattern-rule lists.
 pub unsafe fn install_default_implicit_rules() {
-    if no_builtin_rules_flag != 0 {
+    if crate::make_main::FLAGS.no_builtin_rules_flag != 0 {
         return;
     }
     for &(target, dep, commands) in DEFAULT_PATTERN_RULES {
@@ -352,7 +351,7 @@ pub unsafe fn install_default_implicit_rules() {
 /// # Safety
 /// Must run single-threaded: it mutates the global variable set.
 pub unsafe fn define_default_variables() {
-    if no_builtin_variables_flag != 0 {
+    if crate::make_main::FLAGS.no_builtin_variables_flag != 0 {
         return;
     }
     for &(name, value) in DEFAULT_VARIABLES {

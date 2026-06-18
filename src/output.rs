@@ -18,8 +18,7 @@ use libc::{
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::{
-    die, makelevel, output_sync, print_data_base_flag, program, should_print_dir,
-    starting_directory,
+    die, makelevel, output_sync, program, should_print_dir, starting_directory,
 };
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
@@ -158,7 +157,7 @@ pub unsafe fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi
         len = need;
     }
     p = buf;
-    if print_data_base_flag != 0 {
+    if crate::make_main::FLAGS.print_data_base_flag != 0 {
         let fresh0 = p;
         p = p.add(1);
         *fresh0 = '#' as i32 as ::core::ffi::c_char;

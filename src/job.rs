@@ -268,9 +268,8 @@ use crate::file::{lookup_file, set_command_state};
 use crate::findprog::find_in_given_path;
 use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
-    command_count, db_level, die, fatal_signal_set, ignore_errors_flag, job_slots, just_print_flag,
-    keep_going_flag, max_load_average, not_parallel, one_shell, output_sync, posix_pedantic,
-    question_flag, run_silent, stopchar_map, touch_flag,
+    command_count, db_level, die, fatal_signal_set, job_slots, not_parallel, one_shell,
+    output_sync, posix_pedantic, run_silent, stopchar_map,
 };
 use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
 use crate::posixos::{
@@ -797,7 +796,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             child_failed = MAKE_SUCCESS;
         } else if exit_sig == 0
             && exit_code == 1
-            && question_flag != 0
+            && crate::make_main::FLAGS.question_flag != 0
             && (*c).recursive() as ::core::ffi::c_int != 0
         {
             child_failed = MAKE_TROUBLE;
@@ -832,7 +831,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
             GOOD_STDIN_USED.store(false, Ordering::Relaxed);
         }
         dontcare = (*c).dontcare() as ::core::ffi::c_int;
-        if child_failed != 0 && (*c).noerror() == 0 && ignore_errors_flag == 0 {
+        if child_failed != 0 && (*c).noerror() == 0 && crate::make_main::FLAGS.ignore_errors_flag == 0 {
             // Caches whether `.DELETE_ON_ERROR` is a target: -1 = not yet
             // computed, 0/1 = the looked-up answer. Atomic so the read/write are
             // plain safe ops; access is single-threaded (children are reaped on
@@ -945,7 +944,7 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
         if err == 0
             && child_failed != 0
             && dontcare == 0
-            && keep_going_flag == 0
+            && crate::make_main::FLAGS.keep_going_flag == 0
             && handling_fatal_signal == 0
         {
             die(child_failed);
@@ -1150,7 +1149,7 @@ pub unsafe fn start_job_command(child: *mut child) {
             *end_ref = 0;
             (*child).command_ptr = end.add(1);
         }
-        if !argv.is_null() && question_flag != 0 && !(flags & 1 != 0) {
+        if !argv.is_null() && crate::make_main::FLAGS.question_flag != 0 && !(flags & 1 != 0) {
             if !argv.is_null() {
                 free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
@@ -1163,7 +1162,7 @@ pub unsafe fn start_job_command(child: *mut child) {
             notice_finished_file((*child).file);
             return;
         }
-        if touch_flag != 0 && !(flags & 1 != 0) {
+        if crate::make_main::FLAGS.touch_flag != 0 && !(flags & 1 != 0) {
             if !argv.is_null() {
                 free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
@@ -1184,7 +1183,7 @@ pub unsafe fn start_job_command(child: *mut child) {
             if (*child).output.syncout() == 0 {
                 crate::output::output_dump(&raw mut (*child).output);
             }
-            if just_print_flag != 0
+            if crate::make_main::FLAGS.just_print_flag != 0
                 || 0x10 as ::core::ffi::c_int & db_level != 0
                 || !(flags & 2 != 0) && run_silent == 0
             {
@@ -1235,7 +1234,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                         as ::core::ffi::c_int
                         == 0)
                 && (*argv.offset(3 as ::core::ffi::c_int as isize)).is_null()
-                || (just_print_flag != 0 && !(flags & 1 != 0))
+                || (crate::make_main::FLAGS.just_print_flag != 0 && !(flags & 1 != 0))
             {
                 if !argv.is_null() {
                     free(*argv.offset(0 as ::core::ffi::c_int as isize) as *mut ::core::ffi::c_void);
@@ -1866,7 +1865,7 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
     static mut proc_fd: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
     let mut load: ::core::ffi::c_double = 0.;
     let now: time_t;
-    if max_load_average < 0 as ::core::ffi::c_int as ::core::ffi::c_double {
+    if crate::make_main::FLAGS.max_load_average < 0 as ::core::ffi::c_int as ::core::ffi::c_double {
         return 0;
     }
     if proc_fd == -(2 as ::core::ffi::c_int) {
@@ -1930,11 +1929,11 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
                                 as *const ::core::ffi::c_char,
                             cnt,
                             job_slots_used(),
-                            max_load_average,
+                            crate::make_main::FLAGS.max_load_average,
                         );
                         fflush(stdout);
                     }
-                    return (cnt as ::core::ffi::c_double > max_load_average) as ::core::ffi::c_int;
+                    return (cnt as ::core::ffi::c_double > crate::make_main::FLAGS.max_load_average) as ::core::ffi::c_int;
                 }
                 if 0x4 as ::core::ffi::c_int & db_level != 0 {
                     printf(
@@ -1995,11 +1994,11 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
                 as *const ::core::ffi::c_char,
             guess,
             load,
-            max_load_average,
+            crate::make_main::FLAGS.max_load_average,
         );
         fflush(stdout);
     }
-    (guess >= max_load_average) as ::core::ffi::c_int
+    (guess >= crate::make_main::FLAGS.max_load_average) as ::core::ffi::c_int
 }
 /// # Safety
 ///
@@ -2945,7 +2944,7 @@ pub unsafe fn construct_command_argv(
     } else if (*var).origin() as ::core::ffi::c_int != o_default as ::core::ffi::c_int {
         allocflags = allocated_expand_string_for_file((*var).value, file);
         shellflags = allocflags;
-    } else if posix_pedantic() && ignore_errors_flag == 0 && !(cmd_flags & 4 != 0) {
+    } else if posix_pedantic() && crate::make_main::FLAGS.ignore_errors_flag == 0 && !(cmd_flags & 4 != 0) {
         shellflags = b"-ec\0" as *const u8 as *const ::core::ffi::c_char;
     } else {
         shellflags = b"-c\0" as *const u8 as *const ::core::ffi::c_char;
