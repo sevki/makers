@@ -593,98 +593,173 @@ impl Default for Options {
     }
 }
 
-/// Explicit per-flag dispatch from a switch character to the address of the
-/// `FLAGS` field that stores that option's value. This replaces the generic
-/// pointer-walk that used to dereference `(*cs).value_ptr`: the parser now
-/// matches on the switch char / option identity and touches the corresponding
-/// `FLAGS` field directly. The mapping reproduces exactly the `value_ptr`
-/// wiring built in `run_static_initializers`. Returns a null pointer for the
-/// `ignore`-type switches ('b', 'm') and the terminating sentinel, matching
-/// the original table entries (whose `type_0` arms never deref `value_ptr`).
-///
-/// # Safety
-/// Returns an interior pointer into the single-threaded `FLAGS` global; the
-/// caller must respect the field's type, exactly as the original `value_ptr`
-/// did.
-unsafe fn flag_value_ptr(c: ::core::ffi::c_int) -> *mut ::core::ffi::c_void {
-    let p: *mut ::core::ffi::c_void = if c == 'B' as i32 {
-        &raw mut FLAGS.always_make_set as *mut ::core::ffi::c_void
+/// Set a boolean / tri-state `flag`/`flag_off`-type option, keyed by switch
+/// character, to `on`. Replaces the old raw `value_ptr` write for the `flag`
+/// (type 0) and `flag_off` (type 1) table arms: the parser passes
+/// `on = (type == flag)`, so `flag_off` clears the field. The `ignore`-type
+/// switches ('b', 'm') and the terminating sentinel have no storage and are
+/// silently ignored, matching the original table arms.
+fn opt_set_flag(options: &Options, c: ::core::ffi::c_int, on: bool) {
+    if c == 'B' as i32 {
+        options.always_make.set(on);
     } else if c == 'd' as i32 {
-        &raw mut FLAGS.debug_flag as *mut ::core::ffi::c_void
+        options.debug_flag.set(on);
     } else if c == 'e' as i32 {
-        &raw mut FLAGS.env_overrides as *mut ::core::ffi::c_void
+        options.env_overrides.set(on);
     } else if c == 'h' as i32 {
-        &raw mut FLAGS.print_usage_flag as *mut ::core::ffi::c_void
+        options.print_usage.set(on);
     } else if c == 'i' as i32 {
-        &raw mut FLAGS.ignore_errors_flag as *mut ::core::ffi::c_void
-    } else if c == 'k' as i32 {
-        &raw mut FLAGS.keep_going_flag as *mut ::core::ffi::c_void
+        options.ignore_errors.set(on);
+    } else if c == 'k' as i32 || c == 'S' as i32 {
+        options.keep_going.set(on);
     } else if c == 'L' as i32 {
-        &raw mut FLAGS.check_symlink_flag as *mut ::core::ffi::c_void
+        options.check_symlink.set(on);
     } else if c == 'n' as i32 {
-        &raw mut FLAGS.just_print_flag as *mut ::core::ffi::c_void
+        options.just_print.set(on);
     } else if c == 'p' as i32 {
-        &raw mut FLAGS.print_data_base_flag as *mut ::core::ffi::c_void
+        options.print_data_base.set(on);
     } else if c == 'q' as i32 {
-        &raw mut FLAGS.question_flag as *mut ::core::ffi::c_void
+        options.question.set(on);
     } else if c == 'r' as i32 {
-        &raw mut FLAGS.no_builtin_rules_flag as *mut ::core::ffi::c_void
+        options.no_builtin_rules.set(on);
     } else if c == 'R' as i32 {
-        &raw mut FLAGS.no_builtin_variables_flag as *mut ::core::ffi::c_void
-    } else if c == 's' as i32 {
-        &raw mut FLAGS.silent_flag as *mut ::core::ffi::c_void
-    } else if c == 'S' as i32 {
-        &raw mut FLAGS.keep_going_flag as *mut ::core::ffi::c_void
+        options.no_builtin_variables.set(on);
+    } else if c == 's' as i32 || c == CHAR_MAX + 8 {
+        options.silent.set(on);
     } else if c == 't' as i32 {
-        &raw mut FLAGS.touch_flag as *mut ::core::ffi::c_void
+        options.touch.set(on);
     } else if c == 'v' as i32 {
-        &raw mut FLAGS.print_version_flag as *mut ::core::ffi::c_void
-    } else if c == 'w' as i32 {
-        &raw mut FLAGS.print_directory_flag as *mut ::core::ffi::c_void
-    } else if c == 'j' as i32 {
-        &raw mut FLAGS.arg_job_slots as *mut ::core::ffi::c_void
-    } else if c == 'l' as i32 {
-        &raw mut FLAGS.max_load_average as *mut ::core::ffi::c_void
-    } else if c == 'O' as i32 {
-        &raw mut FLAGS.output_sync_option as *mut ::core::ffi::c_void
-    } else if c == CHAR_MAX + 1 {
-        // --debug
-        &raw mut FLAGS.db_flags as *mut ::core::ffi::c_void
-    } else if c == CHAR_MAX + 2 {
-        // --jobserver-auth
-        &raw mut FLAGS.jobserver_auth as *mut ::core::ffi::c_void
+        options.print_version.set(on);
+    } else if c == 'w' as i32 || c == CHAR_MAX + 4 {
+        // -w / --no-print-directory tri-state.
+        options.print_directory.set(Some(on));
     } else if c == CHAR_MAX + 3 {
-        // --trace
-        &raw mut FLAGS.trace_flag as *mut ::core::ffi::c_void
-    } else if c == CHAR_MAX + 4 {
-        // --no-print-directory
-        &raw mut FLAGS.print_directory_flag as *mut ::core::ffi::c_void
+        options.trace.set(on);
     } else if c == CHAR_MAX + 5 {
-        // --warn-undefined-variables
-        &raw mut FLAGS.warn_undefined_variables_flag as *mut ::core::ffi::c_void
+        options.warn_undefined_variables.set(on);
+    } else if c == CHAR_MAX + 14 {
+        options.print_targets.set(on);
+    }
+    // 'b', 'm' (ignore) and the 0 sentinel have no storage.
+}
+
+/// Set a `string`-type option, keyed by switch character, to `s`. Replaces the
+/// raw `value_ptr` write of the `string` (type 2) table arm.
+fn opt_set_str(options: &Options, c: ::core::ffi::c_int, s: String) {
+    if c == 'O' as i32 {
+        *options.output_sync_option.borrow_mut() = Some(s);
+    } else if c == CHAR_MAX + 2 || c == CHAR_MAX + 9 {
+        // --jobserver-auth / --jobserver-fds
+        *options.jobserver_auth.borrow_mut() = Some(s);
     } else if c == CHAR_MAX + 7 {
         // --sync-mutex
-        &raw mut FLAGS.sync_mutex as *mut ::core::ffi::c_void
-    } else if c == CHAR_MAX + 8 {
-        // --no-silent
-        &raw mut FLAGS.silent_flag as *mut ::core::ffi::c_void
-    } else if c == CHAR_MAX + 9 {
-        // --jobserver-fds
-        &raw mut FLAGS.jobserver_auth as *mut ::core::ffi::c_void
+        *options.sync_mutex.borrow_mut() = Some(s);
     } else if c == CHAR_MAX + 11 {
         // --shuffle
-        &raw mut FLAGS.shuffle_mode as *mut ::core::ffi::c_void
+        *options.shuffle_mode.borrow_mut() = Some(s);
     } else if c == CHAR_MAX + 12 {
         // --jobserver-style
-        &raw mut FLAGS.jobserver_style as *mut ::core::ffi::c_void
+        *options.jobserver_style.borrow_mut() = Some(s);
+    }
+}
+
+/// Read a `flag`/`flag_off`-type option's value as the legacy `c_int` the
+/// original `value_ptr` deref produced (0/1; tri-state `print_directory` maps
+/// `None` -> -1). Used by `define_makeflags` to reproduce the MAKEFLAGS logic.
+fn opt_flag_int(options: &Options, c: ::core::ffi::c_int) -> ::core::ffi::c_int {
+    let b = |v: bool| v as ::core::ffi::c_int;
+    if c == 'B' as i32 {
+        b(options.always_make.get())
+    } else if c == 'd' as i32 {
+        b(options.debug_flag.get())
+    } else if c == 'e' as i32 {
+        b(options.env_overrides.get())
+    } else if c == 'h' as i32 {
+        b(options.print_usage.get())
+    } else if c == 'i' as i32 {
+        b(options.ignore_errors.get())
+    } else if c == 'k' as i32 || c == 'S' as i32 {
+        b(options.keep_going.get())
+    } else if c == 'L' as i32 {
+        b(options.check_symlink.get())
+    } else if c == 'n' as i32 {
+        b(options.just_print.get())
+    } else if c == 'p' as i32 {
+        b(options.print_data_base.get())
+    } else if c == 'q' as i32 {
+        b(options.question.get())
+    } else if c == 'r' as i32 {
+        b(options.no_builtin_rules.get())
+    } else if c == 'R' as i32 {
+        b(options.no_builtin_variables.get())
+    } else if c == 's' as i32 || c == CHAR_MAX + 8 {
+        b(options.silent.get())
+    } else if c == 't' as i32 {
+        b(options.touch.get())
+    } else if c == 'v' as i32 {
+        b(options.print_version.get())
+    } else if c == 'w' as i32 || c == CHAR_MAX + 4 {
+        match options.print_directory.get() {
+            None => -1,
+            Some(v) => b(v),
+        }
+    } else if c == CHAR_MAX + 3 {
+        b(options.trace.get())
+    } else if c == CHAR_MAX + 5 {
+        b(options.warn_undefined_variables.get())
     } else if c == CHAR_MAX + 14 {
-        // --print-targets
-        &raw mut FLAGS.print_targets_flag as *mut ::core::ffi::c_void
+        b(options.print_targets.get())
     } else {
-        // 'b', 'm' (ignore-type) and the 0 sentinel have no storage.
-        ::core::ptr::null_mut::<::core::ffi::c_void>()
+        0
+    }
+}
+
+/// Read a `positive_int`-type option's value as the legacy `c_uint` the old
+/// `value_ptr` deref produced. Only `-j` is a positive_int option; `None`
+/// (unspecified) maps to the `INVALID_JOB_SLOTS` sentinel reinterpreted as
+/// `c_uint`, matching the original `arg_job_slots` storage.
+fn opt_uint(options: &Options, c: ::core::ffi::c_int) -> ::core::ffi::c_uint {
+    if c == 'j' as i32 {
+        match options.arg_job_slots.get() {
+            None => INVALID_JOB_SLOTS as ::core::ffi::c_uint,
+            Some(n) => n,
+        }
+    } else {
+        0
+    }
+}
+
+/// Read a `floating`-type option's value. Only `-l` is a floating option.
+fn opt_double(options: &Options, c: ::core::ffi::c_int) -> ::core::ffi::c_double {
+    if c == 'l' as i32 {
+        options.max_load_average.get()
+    } else {
+        0.0
+    }
+}
+
+/// Read a `string`-type option's current value as an owned `CString` (or
+/// `None` when unset), keyed by switch character. The returned `CString` owns
+/// its bytes, so it stays alive across `variable_buffer_output` in
+/// `define_makeflags`.
+fn opt_get_str(options: &Options, c: ::core::ffi::c_int) -> Option<::std::ffi::CString> {
+    let conv = |o: &Option<String>| {
+        o.as_ref()
+            .and_then(|s| ::std::ffi::CString::new(s.as_bytes()).ok())
     };
-    p
+    if c == 'O' as i32 {
+        conv(&options.output_sync_option.borrow())
+    } else if c == CHAR_MAX + 2 || c == CHAR_MAX + 9 {
+        conv(&options.jobserver_auth.borrow())
+    } else if c == CHAR_MAX + 7 {
+        conv(&options.sync_mutex.borrow())
+    } else if c == CHAR_MAX + 11 {
+        conv(&options.shuffle_mode.borrow())
+    } else if c == CHAR_MAX + 12 {
+        conv(&options.jobserver_style.borrow())
+    } else {
+        None
+    }
 }
 /// Set while `update_goal_chain` is remaking the makefiles themselves (the
 /// first goal-chain pass), so the remake logic can treat makefile targets
@@ -2961,7 +3036,8 @@ pub unsafe fn reset_makeflags(origin: variable_origin) {
     disable_builtins();
     define_makeflags(rebuilding_makefiles() as ::core::ffi::c_int);
 }
-unsafe extern "C" fn decode_switches(
+unsafe fn decode_switches(
+    options: &Options,
     argc: ::core::ffi::c_int,
     argv: *mut *const ::core::ffi::c_char,
     origin: variable_origin,
@@ -3039,11 +3115,9 @@ unsafe extern "C" fn decode_switches(
                         7 => {}
                         0 | 1 => {
                             if doit != 0 {
-                                *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_int) = ((*cs)
-                                    .type_0
-                                    as ::core::ffi::c_uint
-                                    == flag as ::core::ffi::c_int as ::core::ffi::c_uint)
-                                    as ::core::ffi::c_int;
+                                let on = (*cs).type_0 as ::core::ffi::c_uint
+                                    == flag as ::core::ffi::c_int as ::core::ffi::c_uint;
+                                opt_set_flag(options, (*cs).c, on);
                                 if !(*cs).origin.is_null() {
                                     *(*cs).origin = origin;
                                 }
@@ -3093,96 +3167,42 @@ unsafe extern "C" fn decode_switches(
                                     if (*cs).type_0 as ::core::ffi::c_uint
                                         == string as ::core::ffi::c_int as ::core::ffi::c_uint
                                     {
-                                        let val: *mut *mut ::core::ffi::c_char =
-                                            flag_value_ptr((*cs).c) as *mut *mut ::core::ffi::c_char;
-                                        free(*val as *mut ::core::ffi::c_void);
-                                        *val = xstrdup(coptarg);
+                                        let s = ::core::ffi::CStr::from_ptr(coptarg)
+                                            .to_string_lossy()
+                                            .into_owned();
+                                        opt_set_str(options, (*cs).c, s);
                                         if !(*cs).origin.is_null() {
                                             *(*cs).origin = origin;
                                         }
                                     } else if (*cs).c == CHAR_MAX + 1 {
-                                        // `--debug` still backs onto a C `stringlist`
-                                        // (`FLAGS.db_flags`); it is out of scope for the
-                                        // `Vec<CString>` migration, so keep the original
-                                        // lazy-allocate / dedup / append logic verbatim.
-                                        let mut sl: *mut stringlist =
-                                            *(flag_value_ptr((*cs).c) as *mut *mut stringlist);
-                                        if sl.is_null() {
-                                            sl = xmalloc(
-                                                ::core::mem::size_of::<stringlist>() as size_t
-                                            )
-                                                as *mut stringlist;
-                                            (*sl).max = 5;
-                                            (*sl).idx = 0;
-                                            (*sl).list = xmalloc((5 as size_t).wrapping_mul(
-                                                ::core::mem::size_of::<*mut ::core::ffi::c_char>()
-                                                    as size_t,
-                                            ))
-                                                as *mut *const ::core::ffi::c_char;
-                                            let fresh10 = &mut (*(flag_value_ptr((*cs).c)
-                                                as *mut *mut stringlist));
-                                            *fresh10 = sl;
-                                        } else if (*sl).idx == (*sl).max.wrapping_sub(1) {
-                                            (*sl).max = (*sl).max.wrapping_add(5);
-                                            (*sl).list = xrealloc(
-                                                (*sl).list as *mut ::core::ffi::c_void,
-                                                ((*sl).max as size_t).wrapping_mul(
-                                                    ::core::mem::size_of::<
-                                                        *mut ::core::ffi::c_char,
-                                                    >(
-                                                    ) as size_t,
-                                                ),
-                                            )
-                                                as *mut *const ::core::ffi::c_char;
-                                        }
-                                        let duplicate = {
-                                            let mut k: ::core::ffi::c_uint = 0;
-                                            while k < (*sl).idx {
-                                                if **(*sl).list.offset(k as isize)
-                                                    as ::core::ffi::c_int
-                                                    == *coptarg as ::core::ffi::c_int
-                                                    && (**(*sl).list.offset(k as isize)
-                                                        as ::core::ffi::c_int
-                                                        == 0
-                                                        || strcmp(
-                                                            (*(*sl).list.offset(k as isize))
-                                                                .offset(1),
-                                                            coptarg.offset(1),
-                                                        ) == 0)
-                                                {
-                                                    break;
-                                                }
-                                                k = k.wrapping_add(1);
-                                            }
-                                            k < (*sl).idx
-                                        };
+                                        // `--debug` accumulates its args into a
+                                        // `Vec<CString>`, skipping an exact duplicate of an
+                                        // already-stored value (matching the original
+                                        // stringlist dedup logic).
+                                        let mut db_flags = options.db_flags.borrow_mut();
+                                        let want = ::core::ffi::CStr::from_ptr(coptarg);
+                                        let duplicate =
+                                            db_flags.iter().any(|e| e.as_c_str() == want);
                                         if !duplicate {
-                                            let fresh11 = (*sl).idx;
-                                            (*sl).idx = (*sl).idx.wrapping_add(1);
-                                            let fresh12 =
-                                                &mut (*(*sl).list.offset(fresh11 as isize));
-                                            *fresh12 = xstrdup(coptarg);
+                                            db_flags.push(want.to_owned());
                                             if !(*cs).origin.is_null() {
                                                 *(*cs).origin = origin;
                                             }
-                                            let fresh17 =
-                                                &mut (*(*sl).list.offset((*sl).idx as isize));
-                                            *fresh17 = ::core::ptr::null::<::core::ffi::c_char>();
                                         }
                                     } else {
-                                        // List options (`strlist`/`filename`) now store
-                                        // owned `CString`s in a `Vec` on `FLAGS`. Dispatch
-                                        // on the switch char to the relevant `Vec`.
-                                        let list: &mut Vec<::std::ffi::CString> = match (*cs).c {
-                                            c if c == 'C' as i32 => &mut FLAGS.directories,
+                                        // List options (`strlist`/`filename`) store owned
+                                        // `CString`s in a `Vec` on `Options`. Dispatch on the
+                                        // switch char to the relevant `Vec`.
+                                        let mut list = match (*cs).c {
+                                            c if c == 'C' as i32 => options.directories.borrow_mut(),
                                             c if c == 'f' as i32 || c == TEMP_STDIN_OPT => {
-                                                &mut FLAGS.makefiles
+                                                options.makefiles.borrow_mut()
                                             }
-                                            c if c == 'I' as i32 => &mut FLAGS.include_dirs,
-                                            c if c == 'o' as i32 => &mut FLAGS.old_files,
-                                            c if c == 'W' as i32 => &mut FLAGS.new_files,
-                                            c if c == 'E' as i32 => &mut FLAGS.eval_strings,
-                                            c if c == WARN_OPT => &mut FLAGS.warn_flags,
+                                            c if c == 'I' as i32 => options.include_dirs.borrow_mut(),
+                                            c if c == 'o' as i32 => options.old_files.borrow_mut(),
+                                            c if c == 'W' as i32 => options.new_files.borrow_mut(),
+                                            c if c == 'E' as i32 => options.eval_strings.borrow_mut(),
+                                            c if c == WARN_OPT => options.warn_flags.borrow_mut(),
                                             _ => {
                                                 unreachable!("non-list option in list arm")
                                             }
@@ -3271,14 +3291,18 @@ unsafe extern "C" fn decode_switches(
                                         );
                                         bad = 1;
                                     } else {
-                                        *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_uint) = i;
+                                        // Only `-j` is a positive_int option; it stores into
+                                        // `arg_job_slots` (Some(n) for finite jobs).
+                                        options.arg_job_slots.set(Some(i));
                                         if !(*cs).origin.is_null() {
                                             *(*cs).origin = origin;
                                         }
                                     }
                                 } else {
-                                    *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_uint) =
-                                        *((*cs).noarg_value as *mut ::core::ffi::c_uint);
+                                    // No argument: the table's `noarg_value` constant
+                                    // (`inf_jobs` == 0) marks infinite jobs => Some(0).
+                                    let n = *((*cs).noarg_value as *const ::core::ffi::c_uint);
+                                    options.arg_job_slots.set(Some(n));
                                     if !(*cs).origin.is_null() {
                                         *(*cs).origin = origin;
                                     }
@@ -3303,12 +3327,14 @@ unsafe extern "C" fn decode_switches(
                                 coptarg = *argv.offset(fresh19 as isize);
                             }
                             if doit != 0 {
-                                *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_double) =
-                                    if !coptarg.is_null() {
-                                        atof(coptarg)
-                                    } else {
-                                        *((*cs).noarg_value as *mut ::core::ffi::c_double)
-                                    };
+                                // Only `-l` is a floating option; it stores into
+                                // `max_load_average`.
+                                let v = if !coptarg.is_null() {
+                                    atof(coptarg)
+                                } else {
+                                    *((*cs).noarg_value as *const ::core::ffi::c_double)
+                                };
+                                options.max_load_average.set(v);
                                 if !(*cs).origin.is_null() {
                                     *(*cs).origin = origin;
                                 }
@@ -3350,20 +3376,21 @@ unsafe extern "C" fn decode_switches(
     {
         print_usage(bad);
     }
-    decode_debug_flags();
-    decode_output_sync_flags();
-    if FLAGS.warn_undefined_variables_flag != 0 {
+    decode_debug_flags(options);
+    decode_output_sync_flags(options);
+    if options.warn_undefined_variables.get() {
         crate::warning::decode_actions("undefined-var", None);
-        FLAGS.warn_undefined_variables_flag = 0;
+        options.warn_undefined_variables.set(false);
     }
-    if !FLAGS.warn_flags.is_empty() {
-        for wf in FLAGS.warn_flags.iter() {
+    {
+        let warn_flags = options.warn_flags.borrow();
+        for wf in warn_flags.iter() {
             let arg = wf.to_str().unwrap_or("");
             crate::warning::decode_actions(arg, None);
         }
     }
-    run_silent = FLAGS.silent_flag;
-    reset_env_override();
+    run_silent = options.silent.get() as ::core::ffi::c_int;
+    reset_env_override(options);
 }
 unsafe extern "C" fn decode_env_switches(
     envar: *const ::core::ffi::c_char,
@@ -3514,7 +3541,7 @@ pub unsafe fn disable_builtins() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
+pub unsafe fn define_makeflags(options: &Options, makefile: ::core::ffi::c_int) -> *mut variable {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let ref_0: [::core::ffi::c_char; 14] =
         ::core::mem::transmute::<[u8; 14], [::core::ffi::c_char; 14]>(*b"MAKEOVERRIDES\0");
@@ -3545,13 +3572,13 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                 == flag as ::core::ffi::c_int as ::core::ffi::c_uint
                 || (*cs).type_0 as ::core::ffi::c_uint
                     == flag_off as ::core::ffi::c_int as ::core::ffi::c_uint)
-            && ((*(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_int) == 0) as ::core::ffi::c_int
+            && ((opt_flag_int(options, (*cs).c) == 0) as ::core::ffi::c_int
                 == ((*cs).type_0 as ::core::ffi::c_uint
                     == flag_off as ::core::ffi::c_int as ::core::ffi::c_uint)
                     as ::core::ffi::c_int
                 && ((*cs).default_value.is_null()
                     || (*cs).specified() as ::core::ffi::c_int != 0
-                    || *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_int)
+                    || opt_flag_int(options, (*cs).c)
                         != *((*cs).default_value as *mut ::core::ffi::c_int)))
         {
             c[0 as ::core::ffi::c_int as usize] = (*cs).c as ::core::ffi::c_char;
@@ -3571,14 +3598,14 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                 7 => {}
                 0 | 1 => {
                     if !((*cs).c <= CHAR_MAX)
-                        && ((*(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_int) == 0)
+                        && ((opt_flag_int(options, (*cs).c) == 0)
                             as ::core::ffi::c_int
                             == ((*cs).type_0 as ::core::ffi::c_uint
                                 == flag_off as ::core::ffi::c_int as ::core::ffi::c_uint)
                                 as ::core::ffi::c_int
                             && ((*cs).default_value.is_null()
                                 || (*cs).specified() as ::core::ffi::c_int != 0
-                                || *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_int)
+                                || opt_flag_int(options, (*cs).c)
                                     != *((*cs).default_value as *mut ::core::ffi::c_int)))
                     {
                         if (*cs).c <= CHAR_MAX {
@@ -3605,7 +3632,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                 }
                 5 => {
                     if !(!(*cs).default_value.is_null()
-                        && *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_uint)
+                        && opt_uint(options, (*cs).c)
                             == *((*cs).default_value as *mut ::core::ffi::c_uint))
                     {
                         if (*cs).c <= CHAR_MAX {
@@ -3629,7 +3656,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                             );
                         }
                         if (*cs).noarg_value.is_null()
-                            || *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_uint)
+                            || opt_uint(options, (*cs).c)
                                 != *((*cs).noarg_value as *mut ::core::ffi::c_uint)
                         {
                             alloca_allocations.push(::std::vec::from_elem(
@@ -3642,7 +3669,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                             let buflen: ::core::ffi::c_int = sprintf(
                                 buf,
                                 b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-                                *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_uint),
+                                opt_uint(options, (*cs).c),
                             );
                             if !((*cs).c <= CHAR_MAX) {
                                 fp = variable_buffer_output(
@@ -3657,7 +3684,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                 }
                 6 => {
                     if !(!(*cs).default_value.is_null()
-                        && *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_double)
+                        && opt_double(options, (*cs).c)
                             == *((*cs).default_value as *mut ::core::ffi::c_double))
                     {
                         if (*cs).c <= CHAR_MAX {
@@ -3681,7 +3708,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                             );
                         }
                         if (*cs).noarg_value.is_null()
-                            || *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_double)
+                            || opt_double(options, (*cs).c)
                                 != *((*cs).noarg_value as *mut ::core::ffi::c_double)
                         {
                             alloca_allocations.push(::std::vec::from_elem(
@@ -3694,7 +3721,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                             let buflen_0: ::core::ffi::c_int = sprintf(
                                 buf_0,
                                 b"%g\0" as *const u8 as *const ::core::ffi::c_char,
-                                *(flag_value_ptr((*cs).c) as *mut ::core::ffi::c_double),
+                                opt_double(options, (*cs).c),
                             );
                             if !((*cs).c <= CHAR_MAX) {
                                 fp = variable_buffer_output(
@@ -3708,8 +3735,12 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                     }
                 }
                 2 => {
-                    let p: *mut ::core::ffi::c_char =
-                        *(flag_value_ptr((*cs).c) as *mut *mut ::core::ffi::c_char);
+                    // Keep the owned `CString` alive across the buffer writes.
+                    let owned = opt_get_str(options, (*cs).c);
+                    let p: *const ::core::ffi::c_char = match owned {
+                        Some(ref s) => s.as_ptr(),
+                        None => ::core::ptr::null(),
+                    };
                     if !p.is_null() {
                         if (*cs).c <= CHAR_MAX {
                             c[2 as ::core::ffi::c_int as usize] = (*cs).c as ::core::ffi::c_char;
@@ -3749,28 +3780,22 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                         // options read their owned `Vec<CString>`; `--debug`
                         // (`db_flags`) still reads its C `stringlist`.
                         let mut items: Vec<*const ::core::ffi::c_char> = Vec::new();
-                        let vec_list: Option<&Vec<::std::ffi::CString>> = match (*cs).c {
-                            c if c == 'C' as i32 => Some(&FLAGS.directories),
-                            c if c == 'f' as i32 || c == TEMP_STDIN_OPT => Some(&FLAGS.makefiles),
-                            c if c == 'I' as i32 => Some(&FLAGS.include_dirs),
-                            c if c == 'o' as i32 => Some(&FLAGS.old_files),
-                            c if c == 'W' as i32 => Some(&FLAGS.new_files),
-                            c if c == 'E' as i32 => Some(&FLAGS.eval_strings),
-                            _ => None,
-                        };
-                        if let Some(list) = vec_list {
-                            items.extend(list.iter().map(|s| s.as_ptr()));
-                        } else {
-                            let sl: *mut stringlist =
-                                *(flag_value_ptr((*cs).c) as *mut *mut stringlist);
-                            if !sl.is_null() {
-                                let mut i: ::core::ffi::c_uint = 0;
-                                while i < (*sl).idx {
-                                    items.push(*(*sl).list.offset(i as isize));
-                                    i = i.wrapping_add(1);
-                                }
+                        // Borrow the relevant `Vec<CString>` on `options`; `--debug`
+                        // reads `db_flags`, every other list option its own field.
+                        // The borrow guard must outlive `items` (raw pointers into it).
+                        let guard = match (*cs).c {
+                            c if c == 'C' as i32 => options.directories.borrow(),
+                            c if c == 'f' as i32 || c == TEMP_STDIN_OPT => {
+                                options.makefiles.borrow()
                             }
-                        }
+                            c if c == 'I' as i32 => options.include_dirs.borrow(),
+                            c if c == 'o' as i32 => options.old_files.borrow(),
+                            c if c == 'W' as i32 => options.new_files.borrow(),
+                            c if c == 'E' as i32 => options.eval_strings.borrow(),
+                            c if c == CHAR_MAX + 1 => options.db_flags.borrow(),
+                            _ => options.db_flags.borrow(),
+                        };
+                        items.extend(guard.iter().map(|s| s.as_ptr()));
                         {
                             for &item in items.iter() {
                                 if (*cs).c <= CHAR_MAX {
@@ -4119,7 +4144,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'B' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.always_make_set as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"always-make\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4137,7 +4162,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'd' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.debug_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: ::core::ptr::null::<::core::ffi::c_char>(),
@@ -4155,7 +4180,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'e' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.env_overrides as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"environment-overrides\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4173,7 +4198,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'E' as i32,
                 type_0: strlist,
-                value_ptr: &raw mut FLAGS.eval_strings as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"eval\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4191,7 +4216,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'h' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.print_usage_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"help\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4209,7 +4234,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'i' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.ignore_errors_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"ignore-errors\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4227,7 +4252,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'k' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.keep_going_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_keep_going_flag as *const ::core::ffi::c_void,
                 long_name: b"keep-going\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4245,7 +4270,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'L' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.check_symlink_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"check-symlink-times\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4281,7 +4306,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'n' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.just_print_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"just-print\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4299,7 +4324,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'p' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.print_data_base_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"print-data-base\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4317,7 +4342,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'q' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.question_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"question\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4335,7 +4360,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'r' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.no_builtin_rules_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"no-builtin-rules\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4353,7 +4378,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'R' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.no_builtin_variables_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"no-builtin-variables\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4371,7 +4396,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 's' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.silent_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_silent_flag as *const ::core::ffi::c_void,
                 long_name: b"silent\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4389,7 +4414,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'S' as i32,
                 type_0: flag_off,
-                value_ptr: &raw mut FLAGS.keep_going_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_keep_going_flag as *const ::core::ffi::c_void,
                 long_name: b"no-keep-going\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4407,7 +4432,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 't' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.touch_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"touch\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4425,7 +4450,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'v' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.print_version_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"version\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4443,7 +4468,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'w' as i32,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.print_directory_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_print_directory_flag
                     as *const ::core::ffi::c_void,
@@ -4462,7 +4487,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'C' as i32,
                 type_0: filename,
-                value_ptr: &raw mut FLAGS.directories as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"directory\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4480,7 +4505,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'f' as i32,
                 type_0: filename,
-                value_ptr: &raw mut FLAGS.makefiles as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"file\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4498,7 +4523,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'I' as i32,
                 type_0: filename,
-                value_ptr: &raw mut FLAGS.include_dirs as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"include-dir\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4516,7 +4541,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'j' as i32,
                 type_0: positive_int,
-                value_ptr: &raw mut FLAGS.arg_job_slots as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: &raw const inf_jobs as *const ::core::ffi::c_void,
                 default_value: &raw const default_job_slots as *const ::core::ffi::c_void,
                 long_name: b"jobs\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4534,7 +4559,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'l' as i32,
                 type_0: floating,
-                value_ptr: &raw mut FLAGS.max_load_average as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: &raw mut default_load_average as *const ::core::ffi::c_void,
                 default_value: &raw mut default_load_average as *const ::core::ffi::c_void,
                 long_name: b"load-average\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4552,7 +4577,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'o' as i32,
                 type_0: filename,
-                value_ptr: &raw mut FLAGS.old_files as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"old-file\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4570,7 +4595,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'O' as i32,
                 type_0: string,
-                value_ptr: &raw mut FLAGS.output_sync_option as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: b"target\0" as *const u8 as *const ::core::ffi::c_char
                     as *const ::core::ffi::c_void,
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
@@ -4589,7 +4614,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'W' as i32,
                 type_0: filename,
-                value_ptr: &raw mut FLAGS.new_files as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"what-if\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4607,7 +4632,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 1,
                 type_0: strlist,
-                value_ptr: &raw mut FLAGS.db_flags as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: b"basic\0" as *const u8 as *const ::core::ffi::c_char
                     as *const ::core::ffi::c_void,
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
@@ -4626,7 +4651,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 2,
                 type_0: string,
-                value_ptr: &raw mut FLAGS.jobserver_auth as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: JOBSERVER_AUTH_OPT.as_ptr(),
@@ -4644,7 +4669,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 3,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.trace_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"trace\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4662,7 +4687,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 4,
                 type_0: flag_off,
-                value_ptr: &raw mut FLAGS.print_directory_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_print_directory_flag
                     as *const ::core::ffi::c_void,
@@ -4681,7 +4706,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 5,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.warn_undefined_variables_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"warn-undefined-variables\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4699,7 +4724,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 7,
                 type_0: string,
-                value_ptr: &raw mut FLAGS.sync_mutex as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"sync-mutex\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4717,7 +4742,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 8,
                 type_0: flag_off,
-                value_ptr: &raw mut FLAGS.silent_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: &raw const default_silent_flag as *const ::core::ffi::c_void,
                 long_name: b"no-silent\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4735,7 +4760,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 9,
                 type_0: string,
-                value_ptr: &raw mut FLAGS.jobserver_auth as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"jobserver-fds\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4753,7 +4778,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: TEMP_STDIN_OPT,
                 type_0: filename,
-                value_ptr: &raw mut FLAGS.makefiles as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"temp-stdin\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4771,7 +4796,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 11,
                 type_0: string,
-                value_ptr: &raw mut FLAGS.shuffle_mode as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: b"random\0" as *const u8 as *const ::core::ffi::c_char
                     as *const ::core::ffi::c_void,
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
@@ -4790,7 +4815,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 12,
                 type_0: string,
-                value_ptr: &raw mut FLAGS.jobserver_style as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"jobserver-style\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4808,7 +4833,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: WARN_OPT,
                 type_0: strlist,
-                value_ptr: &raw mut FLAGS.warn_flags as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: b"warn\0" as *const u8 as *const ::core::ffi::c_char
                     as *const ::core::ffi::c_void,
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
@@ -4827,7 +4852,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 14,
                 type_0: flag,
-                value_ptr: &raw mut FLAGS.print_targets_flag as *mut ::core::ffi::c_void,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"print-targets\0" as *const u8 as *const ::core::ffi::c_char,
