@@ -262,11 +262,11 @@ pub unsafe fn recursively_expand_for_file(
             sl = (*sl).next;
         }
     }
-    let value: *mut ::core::ffi::c_char = if !parent.is_null() {
+    let value: *mut ::core::ffi::c_char = if let Some(pref) = parent.as_ref() {
         if (*v).origin() == o_override {
             allocated_variable_append(v)
         } else {
-            xstrdup((*parent).value)
+            xstrdup(pref.value)
         }
     } else if (*v).origin() == o_command || (*v).origin() == o_env_override {
         allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<file>())
