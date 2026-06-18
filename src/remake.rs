@@ -1794,16 +1794,13 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             arfile = enter_file(strcache_add(arname));
         }
         mtime = f_mtime(arfile, search);
-        while let Some(arf) = arfile.as_ref() {
-            if arf.renamed.is_null() {
-                break;
-            }
-            arfile = arf.renamed;
+        // `arfile` is non-null here; follow the (non-null) renamed links via a
+        // checked reference, keeping the walk a single branch and line count.
+        while !arfile.as_ref().expect("f_mtime: null arfile").renamed.is_null() {
+            arfile = arfile.as_ref().expect("f_mtime: null arfile").renamed;
         }
-        if let Some(arf2) = arfile
-            .as_ref()
-            .filter(|a| search != 0 && strcmp(a.hname, arname) != 0)
-        {
+        let arf2 = arfile.as_ref().expect("f_mtime: null arfile");
+        if search != 0 && strcmp(arf2.hname, arname) != 0 {
             let arlen: size_t = strlen(arf2.hname) as size_t;
             let memlen: size_t = strlen(memname) as size_t;
             alloca_allocations.push(::std::vec::from_elem(
