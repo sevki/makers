@@ -400,12 +400,12 @@ pub unsafe fn ar_glob(
     names = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *const ::core::ffi::c_char;
     i = 0;
     n = state.chain;
-    while !n.is_null() {
+    while let Some(nref) = n.as_mut() {
         let fresh1 = i;
         i = i.wrapping_add(1);
         let fresh2 = &mut (*names.offset(fresh1 as isize));
-        *fresh2 = (*n).name;
-        n = (*n).next;
+        *fresh2 = nref.name;
+        n = nref.next;
     }
     qsort(
         names as *mut ::core::ffi::c_void,
@@ -415,11 +415,11 @@ pub unsafe fn ar_glob(
     );
     i = 0;
     n = state.chain;
-    while !n.is_null() {
+    while let Some(nref) = n.as_mut() {
         let fresh3 = i;
         i = i.wrapping_add(1);
-        (*n).name = *names.offset(fresh3 as isize);
-        n = (*n).next;
+        nref.name = *names.offset(fresh3 as isize);
+        n = nref.next;
     }
     state.chain
 }
