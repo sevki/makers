@@ -2143,7 +2143,9 @@ pub const FILE_TIMESTAMP_HI_RES: ::core::ffi::c_int = 1;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::implicit::alloc_dep;
     use crate::make_main::initialize_stopchar_map;
+    use crate::strcache::strcache_add;
 
     /// `snapped_deps()` reflects the `SNAPPED_DEPS` atomic: false before
     /// `snap_deps` runs, true after. Restores the prior value so the global
@@ -2199,5 +2201,84 @@ mod tests {
         assert!(all_secondary(), "non-zero is set");
 
         ALL_SECONDARY.store(saved, Ordering::Relaxed);
+    }
+
+    // Serialize the tests that touch the process-wide `files` hash table and
+    // the file-graph globals so they never race each other.
+    static FILE_GRAPH_LOCK: Mutex<()> = Mutex::new(());
+
+    /// `snap_file` on a plain (non-target, variable-less) file just clears the
+    /// `updating` flag and returns, since `all_secondary`/`no_intermediates`
+    /// are unset by default. Drives that branch on a stack file.
+    #[test]
+    fn snap_file_plain_target_clears_updating() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let mut f = File::default();
+            f.set_updating(1);
+            snap_file(&raw mut f, ::core::ptr::null());
+            assert_eq!(f.updating(), 0, "updating cleared when not 2nd-expanding");
+        }
+    }
+
+    /// For a target file with no per-target variables, `snap_file` copies the
+    /// `.EXTRA_PREREQS` dep chain (here a single prereq whose name matches the
+    /// target, so the self-match break path runs and the copy is freed).
+    #[test]
+    fn snap_file_target_copies_extra_prereqs() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            initialize_stopchar_map();
+            let name = strcache_add(c"snapself".as_ptr());
+            let mut f = File::default();
+            f.name = name;
+            f.hname = name;
+            f.set_is_target(1);
+
+            // A one-element prereq chain whose dep name equals the target name.
+            let d = alloc_dep();
+            (*d).name = name;
+            (*d).next = ::core::ptr::null_mut();
+            snap_file(&raw mut f, d as *const Dep);
+            // The self-referential prereq is dropped, so deps stays empty.
+            assert!(f.deps.is_null(), "self-prereq is not appended");
+            free_dep(d);
+        }
+    }
+
+    /// `enter_prereqs(deps, NULL)` resolves each prerequisite to a file via
+    /// `enter_file`, nulls the dep name, and (with a null stem) marks the
+    /// entered file explicit. Drives the common no-pattern path.
+    #[test]
+    fn enter_prereqs_resolves_files_for_plain_deps() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            initialize_stopchar_map();
+            init_hash_files();
+
+            let nm = strcache_add(c"enter_prereqs_probe_target".as_ptr());
+            let d = alloc_dep();
+            (*d).name = nm;
+            (*d).next = ::core::ptr::null_mut();
+
+            let head = enter_prereqs(d, ::core::ptr::null());
+            assert_eq!(head, d, "the chain head is returned unchanged");
+            // Name is consumed (replaced by the resolved file) and a file exists.
+            assert!((*head).name.is_null(), "resolved dep name is cleared");
+            assert!(!(*head).file.is_null(), "prereq resolved to a file");
+            assert!(
+                !lookup_file(nm).is_null(),
+                "the prerequisite file is now in the table"
+            );
+        }
+    }
+
+    /// `enter_prereqs(NULL, _)` is a no-op returning null.
+    #[test]
+    fn enter_prereqs_null_is_noop() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            assert!(enter_prereqs(::core::ptr::null_mut(), ::core::ptr::null()).is_null());
+        }
     }
 }
