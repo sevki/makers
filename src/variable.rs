@@ -2362,3 +2362,62 @@ mod env_recursion_tests {
         assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }
+
+#[cfg(test)]
+mod initialize_file_variables_tests {
+    use super::{global_setlist, initialize_file_variables};
+    use crate::file::File;
+    use crate::strcache::strcache_add;
+    use std::sync::Mutex;
+
+    // `global_setlist` is process-wide; serialize so these tests don't race.
+    static GLOBAL_VARS_LOCK: Mutex<()> = Mutex::new(());
+
+    /// For a fresh file (no per-target set, no parent, no double-colon),
+    /// `initialize_file_variables` allocates the file's variable set and links
+    /// it to the global set list as a parent scope. With `reading != 0` the
+    /// pattern-variable scan is skipped, keeping the call self-contained.
+    #[test]
+    fn allocates_set_and_links_global_parent() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let name = strcache_add(c"ifv_probe_target".as_ptr());
+            let mut f = File::default();
+            f.name = name;
+            f.hname = name;
+
+            assert!(f.variables.is_null(), "starts without a variable set");
+            initialize_file_variables(&raw mut f, 1);
+
+            let l = f.variables;
+            assert!(!l.is_null(), "a variable set list is allocated");
+            assert!(!(*l).set.is_null(), "the set itself is allocated");
+            assert_eq!(
+                (*l).next,
+                &raw mut global_setlist,
+                "parent scope is the global set list"
+            );
+            assert_eq!((*l).next_is_parent, 1);
+        }
+    }
+
+    /// Calling it again when the file already has a variable set reuses that
+    /// set (the allocation branch is skipped) and re-links the global parent.
+    #[test]
+    fn reuses_existing_set() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let name = strcache_add(c"ifv_probe_reuse".as_ptr());
+            let mut f = File::default();
+            f.name = name;
+            f.hname = name;
+
+            initialize_file_variables(&raw mut f, 1);
+            let first = f.variables;
+            assert!(!first.is_null());
+
+            initialize_file_variables(&raw mut f, 1);
+            assert_eq!(f.variables, first, "the existing set is reused");
+        }
+    }
+}
