@@ -3731,3 +3731,136 @@ mod realpath_tests {
         assert_eq!(realpath_token(&noisy), Some(expected));
     }
 }
+
+#[cfg(test)]
+mod subst_and_strip_tests {
+    use super::{func_strip, subst_expand};
+    use crate::expand::{initialize_variable_output, variable_buffer, variable_buffer_output};
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CStr, CString};
+    use std::sync::Mutex;
+
+    // `variable_buffer` is a process-wide `static mut`; serialize the tests
+    // that drive it so they never race each other (no other test touches it).
+    static BUF_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Run `body` with a freshly initialized variable-output buffer, returning
+    /// the bytes it wrote (`[buffer, end_cursor)`), where `body` returns the
+    /// end cursor produced by the function under test.
+    unsafe fn with_output<F: FnOnce(*mut c_char) -> *mut c_char>(body: F) -> Vec<u8> {
+        let _g = BUF_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let start = initialize_variable_output();
+        let end = body(start);
+        let len = end.offset_from(start);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        std::slice::from_raw_parts(start as *const u8, len as usize).to_vec()
+    }
+
+    #[test]
+    fn subst_expand_replaces_each_occurrence() {
+        unsafe {
+            let text = CString::new("a.b.c").unwrap();
+            let subst = CString::new(".").unwrap();
+            let replace = CString::new("-").unwrap();
+            let out = with_output(|o| {
+                subst_expand(
+                    o,
+                    text.as_ptr(),
+                    subst.as_ptr(),
+                    replace.as_ptr(),
+                    1,
+                    1,
+                    0,
+                )
+            });
+            assert_eq!(out, b"a-b-c");
+        }
+    }
+
+    #[test]
+    fn subst_expand_empty_subst_appends_replacement() {
+        // slen == 0 && by_word == 0: copy text verbatim then append replace.
+        unsafe {
+            let text = CString::new("xy").unwrap();
+            let subst = CString::new("").unwrap();
+            let replace = CString::new("Z").unwrap();
+            let out = with_output(|o| {
+                subst_expand(
+                    o,
+                    text.as_ptr(),
+                    subst.as_ptr(),
+                    replace.as_ptr(),
+                    0,
+                    1,
+                    0,
+                )
+            });
+            assert_eq!(out, b"xyZ");
+        }
+    }
+
+    #[test]
+    fn subst_expand_by_word_only_replaces_whole_words() {
+        // by_word != 0: "foo" is replaced as a standalone word, but the "foo"
+        // inside "foobar" is preserved.
+        unsafe {
+            let text = CString::new("foo foobar foo").unwrap();
+            let subst = CString::new("foo").unwrap();
+            let replace = CString::new("Q").unwrap();
+            let out = with_output(|o| {
+                subst_expand(
+                    o,
+                    text.as_ptr(),
+                    subst.as_ptr(),
+                    replace.as_ptr(),
+                    3,
+                    1,
+                    1,
+                )
+            });
+            assert_eq!(out, b"Q foobar Q");
+        }
+    }
+
+    #[test]
+    fn func_strip_collapses_internal_and_edge_whitespace() {
+        unsafe {
+            let arg = CString::new("  a\t b   c  ").unwrap();
+            // argv is a NULL-terminated vector of arg pointers.
+            let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
+            let name = CString::new("strip").unwrap();
+            let out = with_output(|o| func_strip(o, argv.as_mut_ptr(), name.as_ptr()));
+            // Words separated by single spaces, no leading/trailing space.
+            assert_eq!(out, b"a b c");
+            // Keep `arg` alive until after the call.
+            let _ = CStr::from_ptr(argv[0]);
+        }
+    }
+
+    #[test]
+    fn func_strip_all_whitespace_yields_empty() {
+        unsafe {
+            let arg = CString::new("   \t  ").unwrap();
+            let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
+            let name = CString::new("strip").unwrap();
+            let out = with_output(|o| func_strip(o, argv.as_mut_ptr(), name.as_ptr()));
+            assert_eq!(out, b"");
+        }
+    }
+
+    // Touch the buffer-output helper directly so the import is always used even
+    // if the functions above short-circuit.
+    #[test]
+    fn variable_buffer_output_appends_and_nul_terminates() {
+        unsafe {
+            let _g = BUF_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let start = initialize_variable_output();
+            let s = CString::new("hi").unwrap();
+            let end = variable_buffer_output(start, s.as_ptr(), 2);
+            assert_eq!(end.offset_from(start), 2);
+            assert_eq!(*end, 0, "buffer is NUL-terminated at the cursor");
+            assert!(!variable_buffer.is_null());
+        }
+    }
+}
