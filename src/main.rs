@@ -516,20 +516,20 @@ pub struct Flags {
     pub print_directory_flag: ::core::ffi::c_int,
     pub print_directory_origin: variable_origin,
     pub print_version_flag: ::core::ffi::c_int,
-    pub makefiles: *mut stringlist,
+    pub makefiles: Vec<::std::ffi::CString>,
     pub arg_job_slots: ::core::ffi::c_int,
     pub jobserver_auth: *mut ::core::ffi::c_char,
     pub jobserver_style: *mut ::core::ffi::c_char,
     pub shuffle_mode: *mut ::core::ffi::c_char,
     pub sync_mutex: *mut ::core::ffi::c_char,
     pub max_load_average: ::core::ffi::c_double,
-    pub directories: *mut stringlist,
-    pub include_dirs: *mut stringlist,
-    pub old_files: *mut stringlist,
-    pub new_files: *mut stringlist,
-    pub eval_strings: *mut stringlist,
+    pub directories: Vec<::std::ffi::CString>,
+    pub include_dirs: Vec<::std::ffi::CString>,
+    pub old_files: Vec<::std::ffi::CString>,
+    pub new_files: Vec<::std::ffi::CString>,
+    pub eval_strings: Vec<::std::ffi::CString>,
     pub print_usage_flag: ::core::ffi::c_int,
-    pub warn_flags: *mut stringlist,
+    pub warn_flags: Vec<::std::ffi::CString>,
     pub warn_undefined_variables_flag: ::core::ffi::c_int,
     pub trace_flag: ::core::ffi::c_int,
     /// The `-B`/`--always-make` flag as set by option parsing (formerly the
@@ -559,20 +559,20 @@ pub static mut FLAGS: Flags = Flags {
     print_directory_flag: -(1 as ::core::ffi::c_int),
     print_directory_origin: o_default,
     print_version_flag: 0,
-    makefiles: ::core::ptr::null::<stringlist>() as *mut stringlist,
+    makefiles: Vec::new(),
     arg_job_slots: INVALID_JOB_SLOTS,
     jobserver_auth: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     jobserver_style: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     shuffle_mode: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     sync_mutex: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
     max_load_average: -1.0f64,
-    directories: ::core::ptr::null::<stringlist>() as *mut stringlist,
-    include_dirs: ::core::ptr::null::<stringlist>() as *mut stringlist,
-    old_files: ::core::ptr::null::<stringlist>() as *mut stringlist,
-    new_files: ::core::ptr::null::<stringlist>() as *mut stringlist,
-    eval_strings: ::core::ptr::null::<stringlist>() as *mut stringlist,
+    directories: Vec::new(),
+    include_dirs: Vec::new(),
+    old_files: Vec::new(),
+    new_files: Vec::new(),
+    eval_strings: Vec::new(),
     print_usage_flag: 0,
-    warn_flags: ::core::ptr::null::<stringlist>() as *mut stringlist,
+    warn_flags: Vec::new(),
     warn_undefined_variables_flag: 0,
     trace_flag: 0,
     always_make_set: 0,
@@ -598,8 +598,6 @@ unsafe fn flag_value_ptr(c: ::core::ffi::c_int) -> *mut ::core::ffi::c_void {
         &raw mut FLAGS.debug_flag as *mut ::core::ffi::c_void
     } else if c == 'e' as i32 {
         &raw mut FLAGS.env_overrides as *mut ::core::ffi::c_void
-    } else if c == 'E' as i32 {
-        &raw mut FLAGS.eval_strings as *mut ::core::ffi::c_void
     } else if c == 'h' as i32 {
         &raw mut FLAGS.print_usage_flag as *mut ::core::ffi::c_void
     } else if c == 'i' as i32 {
@@ -628,22 +626,12 @@ unsafe fn flag_value_ptr(c: ::core::ffi::c_int) -> *mut ::core::ffi::c_void {
         &raw mut FLAGS.print_version_flag as *mut ::core::ffi::c_void
     } else if c == 'w' as i32 {
         &raw mut FLAGS.print_directory_flag as *mut ::core::ffi::c_void
-    } else if c == 'C' as i32 {
-        &raw mut FLAGS.directories as *mut ::core::ffi::c_void
-    } else if c == 'f' as i32 {
-        &raw mut FLAGS.makefiles as *mut ::core::ffi::c_void
-    } else if c == 'I' as i32 {
-        &raw mut FLAGS.include_dirs as *mut ::core::ffi::c_void
     } else if c == 'j' as i32 {
         &raw mut FLAGS.arg_job_slots as *mut ::core::ffi::c_void
     } else if c == 'l' as i32 {
         &raw mut FLAGS.max_load_average as *mut ::core::ffi::c_void
-    } else if c == 'o' as i32 {
-        &raw mut FLAGS.old_files as *mut ::core::ffi::c_void
     } else if c == 'O' as i32 {
         &raw mut FLAGS.output_sync_option as *mut ::core::ffi::c_void
-    } else if c == 'W' as i32 {
-        &raw mut FLAGS.new_files as *mut ::core::ffi::c_void
     } else if c == CHAR_MAX + 1 {
         // --debug
         &raw mut FLAGS.db_flags as *mut ::core::ffi::c_void
@@ -668,16 +656,12 @@ unsafe fn flag_value_ptr(c: ::core::ffi::c_int) -> *mut ::core::ffi::c_void {
     } else if c == CHAR_MAX + 9 {
         // --jobserver-fds
         &raw mut FLAGS.jobserver_auth as *mut ::core::ffi::c_void
-    } else if c == TEMP_STDIN_OPT {
-        &raw mut FLAGS.makefiles as *mut ::core::ffi::c_void
     } else if c == CHAR_MAX + 11 {
         // --shuffle
         &raw mut FLAGS.shuffle_mode as *mut ::core::ffi::c_void
     } else if c == CHAR_MAX + 12 {
         // --jobserver-style
         &raw mut FLAGS.jobserver_style as *mut ::core::ffi::c_void
-    } else if c == WARN_OPT {
-        &raw mut FLAGS.warn_flags as *mut ::core::ffi::c_void
     } else if c == CHAR_MAX + 14 {
         // --print-targets
         &raw mut FLAGS.print_targets_flag as *mut ::core::ffi::c_void
@@ -1292,7 +1276,8 @@ pub unsafe fn reset_jobserver() {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn temp_stdin_unlink() {
     if stdin_offset >= 0 {
-        let nm: *const ::core::ffi::c_char = *(*FLAGS.makefiles).list.offset(stdin_offset as isize);
+        let nm: *const ::core::ffi::c_char =
+            FLAGS.makefiles[stdin_offset as usize].as_ptr();
         let mut r: ::core::ffi::c_int;
         stdin_offset = -(1 as ::core::ffi::c_int);
         loop {
@@ -1668,18 +1653,15 @@ unsafe fn main_0(
         ));
     }
     starting_directory = &raw mut current_directory as *mut ::core::ffi::c_char;
-    if !FLAGS.directories.is_null() {
-        let mut i_0: ::core::ffi::c_uint;
-        i_0 = 0;
-        while !(*(*FLAGS.directories).list.offset(i_0 as isize)).is_null() {
-            let dir: *const ::core::ffi::c_char = *(*FLAGS.directories).list.offset(i_0 as isize);
+    if !FLAGS.directories.is_empty() {
+        for entry in FLAGS.directories.iter() {
+            let dir: *const ::core::ffi::c_char = entry.as_ptr();
             if chdir(dir) < 0 {
                 pfatal_with_name(dir);
             }
-            i_0 = i_0.wrapping_add(1);
         }
     }
-    if !FLAGS.directories.is_null() {
+    if !FLAGS.directories.is_empty() {
         if getcwd(
             &raw mut current_directory as *mut ::core::ffi::c_char,
             GET_PATH_MAX as size_t,
@@ -1704,10 +1686,13 @@ unsafe fn main_0(
         (*current_variable_set_list).set,
         NILF,
     );
-    construct_include_path(if !FLAGS.include_dirs.is_null() {
-        (*FLAGS.include_dirs).list
-    } else {
+    let mut inc_ptrs: Vec<*const ::core::ffi::c_char> =
+        FLAGS.include_dirs.iter().map(|s| s.as_ptr()).collect();
+    construct_include_path(if FLAGS.include_dirs.is_empty() {
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
+    } else {
+        inc_ptrs.push(::core::ptr::null());
+        inc_ptrs.as_mut_ptr()
     });
     if !FLAGS.jobserver_auth.is_null() {
         // Reset the jobserver unless we successfully inherited the parent's.
@@ -1816,18 +1801,11 @@ unsafe fn main_0(
             NILF,
         );
     }
-    if !FLAGS.makefiles.is_null() {
-        let mut i_1: ::core::ffi::c_uint;
+    if !FLAGS.makefiles.is_empty() {
+        let mut i_1: usize;
         i_1 = 0;
-        while i_1 < (*FLAGS.makefiles).idx {
-            if *(*(*FLAGS.makefiles).list.offset(i_1 as isize)).offset(0 as ::core::ffi::c_int as isize)
-                as ::core::ffi::c_int
-                == '-' as i32
-                && *(*(*FLAGS.makefiles).list.offset(i_1 as isize))
-                    .offset(1 as ::core::ffi::c_int as isize)
-                    as ::core::ffi::c_int
-                    == 0
-            {
+        while i_1 < FLAGS.makefiles.len() {
+            if FLAGS.makefiles[i_1].as_bytes() == b"-" {
                 let outfile: *mut FILE;
                 let mut newnm: *mut ::core::ffi::c_char =
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1877,8 +1855,8 @@ unsafe fn main_0(
                     }
                 }
                 fclose(outfile);
-                let fresh45 = &mut (*(*FLAGS.makefiles).list.offset(i_1 as isize));
-                *fresh45 = strcache_add(newnm);
+                FLAGS.makefiles[i_1] =
+                    ::core::ffi::CStr::from_ptr(strcache_add(newnm)).to_owned();
                 stdin_offset = i_1 as ::core::ffi::c_int;
                 free(newnm as *mut ::core::ffi::c_void);
             }
@@ -1886,7 +1864,8 @@ unsafe fn main_0(
         }
     }
     if stdin_offset >= 0 {
-        let f: *mut file = enter_file(*(*FLAGS.makefiles).list.offset(stdin_offset as isize));
+        let f: *mut file =
+            enter_file(strcache_add(FLAGS.makefiles[stdin_offset as usize].as_ptr()));
         (*f).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         (*f).set_update_status(us_success as update_status);
         (*f).set_command_state(cs_finished as cmd_state);
@@ -1933,44 +1912,36 @@ unsafe fn main_0(
         (*current_variable_set_list).set,
         NILF,
     );
-    if !FLAGS.eval_strings.is_null() {
+    if !FLAGS.eval_strings.is_empty() {
         let mut p_0: *mut ::core::ffi::c_char;
         let mut endp: *mut ::core::ffi::c_char;
-        let mut i_2: ::core::ffi::c_uint;
         let mut len_1: size_t = (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t)
             .wrapping_sub(1)
             .wrapping_add(1)
-            .wrapping_mul((*FLAGS.eval_strings).idx as size_t);
-        i_2 = 0;
-        while i_2 < (*FLAGS.eval_strings).idx {
+            .wrapping_mul(FLAGS.eval_strings.len() as size_t);
+        for es in FLAGS.eval_strings.iter() {
             // Own a mutable, NUL-terminated copy of the eval string instead of
             // xstrdup + free: `eval_buffer` parses it in place (only shrinking
             // it), and the `Vec`'s Drop reclaims the buffer at end of scope —
             // RAII in place of the manual malloc/free pair.
-            let mut owned: Vec<u8> =
-                ::std::ffi::CStr::from_ptr(*(*FLAGS.eval_strings).list.offset(i_2 as isize))
-                    .to_bytes_with_nul()
-                    .to_vec();
+            let mut owned: Vec<u8> = es.as_bytes_with_nul().to_vec();
             len_1 = len_1.wrapping_add((2 as size_t).wrapping_mul((owned.len() - 1) as size_t));
             eval_buffer(
                 owned.as_mut_ptr() as *mut ::core::ffi::c_char,
                 ::core::ptr::null::<Floc>(),
             );
-            i_2 = i_2.wrapping_add(1);
         }
         let mut value_0_buf: Vec<u8> = Vec::with_capacity(len_1 as usize);
         let value_0 = value_0_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
         endp = value_0;
         p_0 = endp;
-        i_2 = 0;
-        while i_2 < (*FLAGS.eval_strings).idx {
+        for es in FLAGS.eval_strings.iter() {
             p_0 = stpcpy(p_0, b"--eval=\0" as *const u8 as *const ::core::ffi::c_char);
-            p_0 = quote_for_env(p_0, *(*FLAGS.eval_strings).list.offset(i_2 as isize));
+            p_0 = quote_for_env(p_0, es.as_ptr());
             let fresh47 = p_0;
             p_0 = p_0.offset(1 as ::core::ffi::c_int as isize);
             endp = fresh47;
             *endp = ' ' as i32 as ::core::ffi::c_char;
-            i_2 = i_2.wrapping_add(1);
         }
         *endp = 0;
         define_variable_in_set(
@@ -1987,11 +1958,25 @@ unsafe fn main_0(
     let old_arg_job_slots: ::core::ffi::c_int = FLAGS.arg_job_slots;
     old_builtin_rules_flag = FLAGS.no_builtin_rules_flag;
     old_builtin_variables_flag = FLAGS.no_builtin_variables_flag;
-    read_files = read_all_makefiles(if FLAGS.makefiles.is_null() {
+    let mut mf_ptrs: Vec<*const ::core::ffi::c_char> =
+        FLAGS.makefiles.iter().map(|s| s.as_ptr()).collect();
+    read_files = read_all_makefiles(if FLAGS.makefiles.is_empty() {
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
     } else {
-        (*FLAGS.makefiles).list
+        mf_ptrs.push(::core::ptr::null());
+        mf_ptrs.as_mut_ptr()
     });
+    // `read_all_makefiles` rewrites each array entry in place to the actual
+    // (strcache'd) makefile name it resolved/remade. Mirror those updates back
+    // into `FLAGS.makefiles` so the restart path emits the resolved names.
+    if !FLAGS.makefiles.is_empty() {
+        for (i, &ptr) in mf_ptrs.iter().enumerate() {
+            if ptr.is_null() {
+                break;
+            }
+            FLAGS.makefiles[i] = ::core::ffi::CStr::from_ptr(ptr).to_owned();
+        }
+    }
     FLAGS.arg_job_slots = INVALID_JOB_SLOTS;
     decode_env_switches(
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2096,28 +2081,23 @@ unsafe fn main_0(
     install_default_implicit_rules();
     snap_implicit_rules();
     build_vpath_lists();
-    if !FLAGS.old_files.is_null() {
-        let mut p_1: *mut *const ::core::ffi::c_char;
-        p_1 = (*FLAGS.old_files).list;
-        while !(*p_1).is_null() {
-            let f_0: *mut file = enter_file(*p_1);
+    if !FLAGS.old_files.is_empty() {
+        for of in FLAGS.old_files.iter() {
+            let f_0: *mut file = enter_file(strcache_add(of.as_ptr()));
             (*f_0).mtime_before_update = OLD_MTIME as uintmax_t;
             (*f_0).last_mtime = (*f_0).mtime_before_update;
             (*f_0).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             (*f_0).set_update_status(us_success as update_status);
             (*f_0).set_command_state(cs_finished as cmd_state);
-            p_1 = p_1.offset(1 as ::core::ffi::c_int as isize);
         }
     }
     if FLAGS.print_targets_flag != 0 {
         print_targets();
         die(EXIT_SUCCESS);
     }
-    if restarts == 0 && !FLAGS.new_files.is_null() {
-        let mut p_2: *mut *const ::core::ffi::c_char;
-        p_2 = (*FLAGS.new_files).list;
-        while !(*p_2).is_null() {
-            let f_1: *mut file = enter_file(*p_2);
+    if restarts == 0 && !FLAGS.new_files.is_empty() {
+        for nf in FLAGS.new_files.iter() {
+            let f_1: *mut file = enter_file(strcache_add(nf.as_ptr()));
             (*f_1).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
                 if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
@@ -2129,7 +2109,6 @@ unsafe fn main_0(
                 },
             );
             (*f_1).last_mtime = (*f_1).mtime_before_update;
-            p_2 = p_2.offset(1 as ::core::ffi::c_int as isize);
         }
     }
     remote_setup();
@@ -2362,7 +2341,7 @@ unsafe fn main_0(
                 print_data_base();
             }
             clean_jobserver(0);
-            if !FLAGS.makefiles.is_null() {
+            if !FLAGS.makefiles.is_empty() {
                 let mut mfidx: ::core::ffi::c_int = 0;
                 let mut av: *mut *mut ::core::ffi::c_char = argv;
                 let mut nv: *mut *const ::core::ffi::c_char;
@@ -2382,7 +2361,8 @@ unsafe fn main_0(
                 while !(*av).is_null() {
                     let f_4: *mut ::core::ffi::c_char;
                     let a: *mut ::core::ffi::c_char = *av;
-                    let mf: *const ::core::ffi::c_char = *(*FLAGS.makefiles).list.offset(mfidx as isize);
+                    let mf: *const ::core::ffi::c_char =
+                        FLAGS.makefiles[mfidx as usize].as_ptr();
                     if strlen(a) > 0 {
                     } else {
                         panic!("assertion failed: strlen (a) > 0");
@@ -2539,7 +2519,7 @@ unsafe fn main_0(
                 }
                 *nv = ::core::ptr::null::<::core::ffi::c_char>();
             }
-            if !FLAGS.directories.is_null() && (*FLAGS.directories).idx > 0 {
+            if !FLAGS.directories.is_empty() {
                 let mut bad: ::core::ffi::c_int = 1;
                 if !directory_before_chdir.is_null() {
                     if chdir(directory_before_chdir) < 0 {
@@ -2658,11 +2638,9 @@ unsafe fn main_0(
     }
     define_makeflags(0);
     always_make_flag = FLAGS.always_make_set;
-    if restarts != 0 && !FLAGS.new_files.is_null() {
-        let mut p_5: *mut *const ::core::ffi::c_char;
-        p_5 = (*FLAGS.new_files).list;
-        while !(*p_5).is_null() {
-            let f_5: *mut file = enter_file(*p_5);
+    if restarts != 0 && !FLAGS.new_files.is_empty() {
+        for nf in FLAGS.new_files.iter() {
+            let f_5: *mut file = enter_file(strcache_add(nf.as_ptr()));
             (*f_5).mtime_before_update = (!(0 as ::core::ffi::c_int as uintmax_t)).wrapping_sub(
                 if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
                     0 as ::core::ffi::c_int as uintmax_t
@@ -2674,7 +2652,6 @@ unsafe fn main_0(
                 },
             );
             (*f_5).last_mtime = (*f_5).mtime_before_update;
-            p_5 = p_5.offset(1 as ::core::ffi::c_int as isize);
         }
     }
     temp_stdin_unlink();
@@ -2949,10 +2926,13 @@ pub unsafe fn reset_makeflags(origin: variable_origin) {
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         origin,
     );
-    construct_include_path(if !FLAGS.include_dirs.is_null() {
-        (*FLAGS.include_dirs).list
-    } else {
+    let mut inc_ptrs2: Vec<*const ::core::ffi::c_char> =
+        FLAGS.include_dirs.iter().map(|s| s.as_ptr()).collect();
+    construct_include_path(if FLAGS.include_dirs.is_empty() {
         ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
+    } else {
+        inc_ptrs2.push(::core::ptr::null());
+        inc_ptrs2.as_mut_ptr()
     });
     disable_builtins();
     define_makeflags(rebuilding_makefiles() as ::core::ffi::c_int);
@@ -2965,7 +2945,6 @@ unsafe extern "C" fn decode_switches(
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut bad: ::core::ffi::c_int = 0;
     let mut cs: *mut command_switch;
-    let mut sl: *mut stringlist;
     let mut targets: stringlist = stringlist {
         list: ::core::ptr::null_mut::<*const ::core::ffi::c_char>(),
         idx: 0,
@@ -3097,8 +3076,13 @@ unsafe extern "C" fn decode_switches(
                                         if !(*cs).origin.is_null() {
                                             *(*cs).origin = origin;
                                         }
-                                    } else {
-                                        sl = *(flag_value_ptr((*cs).c) as *mut *mut stringlist);
+                                    } else if (*cs).c == CHAR_MAX + 1 {
+                                        // `--debug` still backs onto a C `stringlist`
+                                        // (`FLAGS.db_flags`); it is out of scope for the
+                                        // `Vec<CString>` migration, so keep the original
+                                        // lazy-allocate / dedup / append logic verbatim.
+                                        let mut sl: *mut stringlist =
+                                            *(flag_value_ptr((*cs).c) as *mut *mut stringlist);
                                         if sl.is_null() {
                                             sl = xmalloc(
                                                 ::core::mem::size_of::<stringlist>() as size_t
@@ -3116,26 +3100,19 @@ unsafe extern "C" fn decode_switches(
                                             *fresh10 = sl;
                                         } else if (*sl).idx == (*sl).max.wrapping_sub(1) {
                                             (*sl).max = (*sl).max.wrapping_add(5);
-                                            (*sl).list =
-                                                xrealloc(
-                                                    (*sl).list as *mut ::core::ffi::c_void,
-                                                    ((*sl).max as size_t).wrapping_mul(
-                                                        ::core::mem::size_of::<
-                                                            *mut ::core::ffi::c_char,
-                                                        >(
-                                                        )
-                                                            as size_t,
-                                                    ),
-                                                )
-                                                    as *mut *const ::core::ffi::c_char;
+                                            (*sl).list = xrealloc(
+                                                (*sl).list as *mut ::core::ffi::c_void,
+                                                ((*sl).max as size_t).wrapping_mul(
+                                                    ::core::mem::size_of::<
+                                                        *mut ::core::ffi::c_char,
+                                                    >(
+                                                    ) as size_t,
+                                                ),
+                                            )
+                                                as *mut *const ::core::ffi::c_char;
                                         }
-                                        // Skip a value already present (but -f and --warn allow
-                                        // duplicates).
-                                        let duplicate = if (*cs).c != 'f' as i32
-                                            && (*cs).c != WARN_OPT
-                                        {
-                                            let mut k: ::core::ffi::c_uint;
-                                            k = 0;
+                                        let duplicate = {
+                                            let mut k: ::core::ffi::c_uint = 0;
                                             while k < (*sl).idx {
                                                 if **(*sl).list.offset(k as isize)
                                                     as ::core::ffi::c_int
@@ -3145,13 +3122,8 @@ unsafe extern "C" fn decode_switches(
                                                         == 0
                                                         || strcmp(
                                                             (*(*sl).list.offset(k as isize))
-                                                                .offset(
-                                                                    1 as ::core::ffi::c_int
-                                                                        as isize,
-                                                                ),
-                                                            coptarg.offset(
-                                                                1 as ::core::ffi::c_int as isize,
-                                                            ),
+                                                                .offset(1),
+                                                            coptarg.offset(1),
                                                         ) == 0)
                                                 {
                                                     break;
@@ -3159,22 +3131,61 @@ unsafe extern "C" fn decode_switches(
                                                 k = k.wrapping_add(1);
                                             }
                                             k < (*sl).idx
+                                        };
+                                        if !duplicate {
+                                            let fresh11 = (*sl).idx;
+                                            (*sl).idx = (*sl).idx.wrapping_add(1);
+                                            let fresh12 =
+                                                &mut (*(*sl).list.offset(fresh11 as isize));
+                                            *fresh12 = xstrdup(coptarg);
+                                            if !(*cs).origin.is_null() {
+                                                *(*cs).origin = origin;
+                                            }
+                                            let fresh17 =
+                                                &mut (*(*sl).list.offset((*sl).idx as isize));
+                                            *fresh17 = ::core::ptr::null::<::core::ffi::c_char>();
+                                        }
+                                    } else {
+                                        // List options (`strlist`/`filename`) now store
+                                        // owned `CString`s in a `Vec` on `FLAGS`. Dispatch
+                                        // on the switch char to the relevant `Vec`.
+                                        let list: &mut Vec<::std::ffi::CString> = match (*cs).c {
+                                            c if c == 'C' as i32 => &mut FLAGS.directories,
+                                            c if c == 'f' as i32 || c == TEMP_STDIN_OPT => {
+                                                &mut FLAGS.makefiles
+                                            }
+                                            c if c == 'I' as i32 => &mut FLAGS.include_dirs,
+                                            c if c == 'o' as i32 => &mut FLAGS.old_files,
+                                            c if c == 'W' as i32 => &mut FLAGS.new_files,
+                                            c if c == 'E' as i32 => &mut FLAGS.eval_strings,
+                                            c if c == WARN_OPT => &mut FLAGS.warn_flags,
+                                            _ => {
+                                                unreachable!("non-list option in list arm")
+                                            }
+                                        };
+                                        // Skip a value already present (but -f and --warn allow
+                                        // duplicates). The comparison is against the raw
+                                        // `coptarg` bytes, exactly as the original
+                                        // stringlist code did.
+                                        let duplicate = if (*cs).c != 'f' as i32
+                                            && (*cs).c != WARN_OPT
+                                        {
+                                            let want = ::core::ffi::CStr::from_ptr(coptarg);
+                                            list.iter().any(|e| e.as_c_str() == want)
                                         } else {
                                             false
                                         };
                                         if !duplicate {
-                                            if (*cs).type_0 as ::core::ffi::c_uint
+                                            // Build the owned `CString` to store.  `strlist`
+                                            // stores the raw arg; `filename` stores the
+                                            // expanded path (or the strcache entry for the
+                                            // --temp-stdin placeholder).
+                                            let stored: ::std::ffi::CString = if (*cs).type_0
+                                                as ::core::ffi::c_uint
                                                 == strlist as ::core::ffi::c_int
                                                     as ::core::ffi::c_uint
                                             {
-                                                let fresh11 = (*sl).idx;
-                                                (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                let fresh12 =
-                                                    &mut (*(*sl).list.offset(fresh11 as isize));
-                                                *fresh12 = xstrdup(coptarg);
-                                                if !(*cs).origin.is_null() {
-                                                    *(*cs).origin = origin;
-                                                }
+                                                ::core::ffi::CStr::from_ptr(coptarg).to_owned()
                                             } else if (*cs).c == TEMP_STDIN_OPT {
                                                 if stdin_offset > 0 {
                                                     fatal(
@@ -3184,28 +3195,19 @@ unsafe extern "C" fn decode_switches(
                                                                     as *const u8 as *const ::core::ffi::c_char,
                                                             );
                                                 }
-                                                stdin_offset = (*sl).idx as ::core::ffi::c_int;
-                                                let fresh13 = (*sl).idx;
-                                                (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                let fresh14 =
-                                                    &mut (*(*sl).list.offset(fresh13 as isize));
-                                                *fresh14 = strcache_add(coptarg);
-                                                if !(*cs).origin.is_null() {
-                                                    *(*cs).origin = origin;
-                                                }
+                                                stdin_offset = list.len() as ::core::ffi::c_int;
+                                                ::core::ffi::CStr::from_ptr(strcache_add(coptarg))
+                                                    .to_owned()
                                             } else {
-                                                let fresh15 = (*sl).idx;
-                                                (*sl).idx = (*sl).idx.wrapping_add(1);
-                                                let fresh16 =
-                                                    &mut (*(*sl).list.offset(fresh15 as isize));
-                                                *fresh16 = expand_command_line_file(coptarg);
-                                                if !(*cs).origin.is_null() {
-                                                    *(*cs).origin = origin;
-                                                }
+                                                ::core::ffi::CStr::from_ptr(
+                                                    expand_command_line_file(coptarg),
+                                                )
+                                                .to_owned()
+                                            };
+                                            list.push(stored);
+                                            if !(*cs).origin.is_null() {
+                                                *(*cs).origin = origin;
                                             }
-                                            let fresh17 =
-                                                &mut (*(*sl).list.offset((*sl).idx as isize));
-                                            *fresh17 = ::core::ptr::null::<::core::ffi::c_char>();
                                         }
                                     }
                                 }
@@ -3330,12 +3332,10 @@ unsafe extern "C" fn decode_switches(
         crate::warning::decode_actions("undefined-var", None);
         FLAGS.warn_undefined_variables_flag = 0;
     }
-    if !FLAGS.warn_flags.is_null() {
-        let mut pp: *mut *const ::core::ffi::c_char = (*FLAGS.warn_flags).list;
-        while !(*pp).is_null() {
-            let arg = ::core::ffi::CStr::from_ptr(*pp).to_str().unwrap_or("");
+    if !FLAGS.warn_flags.is_empty() {
+        for wf in FLAGS.warn_flags.iter() {
+            let arg = wf.to_str().unwrap_or("");
             crate::warning::decode_actions(arg, None);
-            pp = pp.offset(1 as ::core::ffi::c_int as isize);
         }
     }
     run_silent = FLAGS.silent_flag;
@@ -3721,11 +3721,34 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                     if (*cs).c == WARN_OPT {
                         fp = crate::warning::encode_flag(fp);
                     } else {
-                        let sl: *mut stringlist = *(flag_value_ptr((*cs).c) as *mut *mut stringlist);
-                        if !sl.is_null() {
-                            let mut i: ::core::ffi::c_uint;
-                            i = 0;
-                            while i < (*sl).idx {
+                        // Gather the item pointers to serialize. The migrated list
+                        // options read their owned `Vec<CString>`; `--debug`
+                        // (`db_flags`) still reads its C `stringlist`.
+                        let mut items: Vec<*const ::core::ffi::c_char> = Vec::new();
+                        let vec_list: Option<&Vec<::std::ffi::CString>> = match (*cs).c {
+                            c if c == 'C' as i32 => Some(&FLAGS.directories),
+                            c if c == 'f' as i32 || c == TEMP_STDIN_OPT => Some(&FLAGS.makefiles),
+                            c if c == 'I' as i32 => Some(&FLAGS.include_dirs),
+                            c if c == 'o' as i32 => Some(&FLAGS.old_files),
+                            c if c == 'W' as i32 => Some(&FLAGS.new_files),
+                            c if c == 'E' as i32 => Some(&FLAGS.eval_strings),
+                            _ => None,
+                        };
+                        if let Some(list) = vec_list {
+                            items.extend(list.iter().map(|s| s.as_ptr()));
+                        } else {
+                            let sl: *mut stringlist =
+                                *(flag_value_ptr((*cs).c) as *mut *mut stringlist);
+                            if !sl.is_null() {
+                                let mut i: ::core::ffi::c_uint = 0;
+                                while i < (*sl).idx {
+                                    items.push(*(*sl).list.offset(i as isize));
+                                    i = i.wrapping_add(1);
+                                }
+                            }
+                        }
+                        {
+                            for &item in items.iter() {
                                 if (*cs).c <= CHAR_MAX {
                                     c[2 as ::core::ffi::c_int as usize] =
                                         (*cs).c as ::core::ffi::c_char;
@@ -3757,10 +3780,9 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
                                 }
                                 fp = variable_buffer_output(
                                     fp,
-                                    *(*sl).list.offset(i as isize),
-                                    strlen(*(*sl).list.offset(i as isize)) as size_t,
+                                    item,
+                                    strlen(item) as size_t,
                                 );
-                                i = i.wrapping_add(1);
                             }
                         }
                     }
@@ -3795,7 +3817,7 @@ pub unsafe fn define_makeflags(makefile: ::core::ffi::c_int) -> *mut variable {
         (*current_variable_set_list).set,
         NILF,
     );
-    if !FLAGS.eval_strings.is_null() {
+    if !FLAGS.eval_strings.is_empty() {
         fp = variable_buffer_output(
             fp,
             &raw const evalref as *const ::core::ffi::c_char,
@@ -3851,7 +3873,8 @@ pub unsafe fn should_print_dir() -> ::core::ffi::c_int {
     if FLAGS.print_directory_flag >= 0 {
         return FLAGS.print_directory_flag;
     }
-    (FLAGS.silent_flag == 0 && (makelevel > 0 || !FLAGS.directories.is_null())) as ::core::ffi::c_int
+    (FLAGS.silent_flag == 0 && (makelevel > 0 || !FLAGS.directories.is_empty()))
+        as ::core::ffi::c_int
 }
 /// # Safety
 ///
