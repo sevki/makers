@@ -962,3 +962,34 @@ mod collapse_continuations_tests {
         assert_eq!(collapse(b"a$\\\nb", false), b"ab");
     }
 }
+
+#[cfg(test)]
+mod next_token_tests {
+    use super::next_token;
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CStr, CString};
+
+    /// `next_token` advances past leading blanks/newlines and returns the first
+    /// non-whitespace character (or the terminating NUL for all-blank input).
+    #[test]
+    fn skips_leading_whitespace() {
+        unsafe {
+            initialize_stopchar_map();
+
+            // Leading spaces and a tab are skipped to the first real char.
+            let s = CString::new("  \t foo").unwrap();
+            let p = next_token(s.as_ptr());
+            assert_eq!(CStr::from_ptr(p).to_bytes(), b"foo");
+
+            // No leading whitespace: returns the start unchanged.
+            let s2 = CString::new("bar").unwrap();
+            let p2 = next_token(s2.as_ptr());
+            assert_eq!(p2 as *const c_char, s2.as_ptr());
+
+            // All whitespace: lands on the terminating NUL (empty token).
+            let s3 = CString::new("   ").unwrap();
+            let p3 = next_token(s3.as_ptr());
+            assert_eq!(*p3, 0);
+        }
+    }
+}
