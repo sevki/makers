@@ -2281,4 +2281,36 @@ mod tests {
             assert!(enter_prereqs(::core::ptr::null_mut(), ::core::ptr::null()).is_null());
         }
     }
+
+    /// With a non-null stem, `enter_prereqs` walks the static-pattern block. A
+    /// prerequisite name with no `%` finds no percent, so it keeps its name but
+    /// is tagged with the stem and `staticpattern`, then resolved to a file.
+    /// This exercises the stem branch without touching the variable buffer.
+    #[test]
+    fn enter_prereqs_static_pattern_without_percent() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            initialize_stopchar_map();
+            init_hash_files();
+
+            let nm = strcache_add(c"enter_prereqs_static_probe".as_ptr());
+            let stem = strcache_add(c"thestem".as_ptr());
+            let d = alloc_dep();
+            (*d).name = nm;
+            (*d).next = ::core::ptr::null_mut();
+
+            let head = enter_prereqs(d, stem);
+            assert_eq!(head, d);
+            // The dep was tagged with the stem (staticpattern path ran) and then
+            // resolved: name cleared, file entered, staticpattern reset to 0.
+            assert_eq!((*head).stem, stem, "stem recorded on the static pattern");
+            assert!((*head).name.is_null(), "resolved dep name is cleared");
+            assert!(!(*head).file.is_null(), "prereq resolved to a file");
+            assert_eq!(
+                (*head).staticpattern(),
+                0,
+                "staticpattern is reset after resolution"
+            );
+        }
+    }
 }
