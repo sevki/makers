@@ -2550,7 +2550,6 @@ unsafe fn main_0(
                             }) != *makefile_mtimes.offset(i_3 as isize))
                                 as ::core::ffi::c_int;
                         } else if d_4r.flags() as ::core::ffi::c_int & RM_DONTCARE == 0 {
-                            let mtime: uintmax_t;
                             error(
                                 &raw mut d_4r.floc,
                                 strlen(f4r.name) as size_t,
@@ -2558,7 +2557,7 @@ unsafe fn main_0(
                                     as *const ::core::ffi::c_char,
                                 f4r.name,
                             );
-                            mtime = if f4r.last_mtime == UNKNOWN_MTIME as uintmax_t {
+                            let mtime: uintmax_t = if f4r.last_mtime == UNKNOWN_MTIME as uintmax_t {
                                 f_mtime(f_4, 0)
                             } else {
                                 f4r.last_mtime

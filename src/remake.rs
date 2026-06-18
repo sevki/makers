@@ -1804,16 +1804,14 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             .as_ref()
             .filter(|a| search != 0 && strcmp(a.hname, arname) != 0)
         {
-            let name: *mut ::core::ffi::c_char;
-            let arlen: size_t;
-            let memlen: size_t;
-            arlen = strlen(arf2.hname) as size_t;
-            memlen = strlen(memname) as size_t;
+            let arlen: size_t = strlen(arf2.hname) as size_t;
+            let memlen: size_t = strlen(memname) as size_t;
             alloca_allocations.push(::std::vec::from_elem(
                 0,
                 arlen.wrapping_add(1).wrapping_add(memlen).wrapping_add(2) as usize,
             ));
-            name = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
+            let name: *mut ::core::ffi::c_char =
+                alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
                 name as *mut ::core::ffi::c_void,
                 arf2.hname as *const ::core::ffi::c_void,
