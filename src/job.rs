@@ -11,7 +11,7 @@ use libc::{
     __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
     strchr, strcmp, strerror, strsignal,
 };
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
@@ -351,7 +351,11 @@ static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child
 /// original are W32/DOS-specific, so the value is fixed at 1 here. Keeping it
 /// an immutable `static` lets the read sites access it from safe code.
 pub static unixy_shell: ::core::ffi::c_int = 1;
-pub static mut job_counter: ::core::ffi::c_ulong = 0;
+/// Number of jobs started since the load average was last sampled; used by
+/// `load_too_high` to estimate the incremental load each new job adds. Atomic
+/// so its reads/writes are plain safe ops; job bookkeeping is single-threaded,
+/// so `Relaxed` preserves the original program order.
+static JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Count of jobserver tokens this make instance currently holds (the implicit
 /// token for its own slot plus one per running child). Stored in an atomic so
 /// its reads are plain safe operations; all access is single-threaded, so
@@ -730,8 +734,8 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                     );
                     fflush(stdout);
                 }
-                if job_counter != 0 {
-                    job_counter = job_counter.wrapping_sub(1);
+                if JOB_COUNTER.load(Ordering::Relaxed) != 0 {
+                    JOB_COUNTER.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         }
@@ -1304,7 +1308,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                     jobserver_post_child((flags & 1 != 0) as ::core::ffi::c_int);
                 }
                 if (*child).pid >= 0 {
-                    job_counter = job_counter.wrapping_add(1);
+                    JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
                 }
                 set_command_state((*child).file, cs_running);
                 if !argv.is_null() {
@@ -1977,14 +1981,15 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
     now = time(::core::ptr::null_mut::<time_t>());
     if last_now < now {
         if last_now == now - 1 as time_t {
-            last_sec = LOAD_WEIGHT_B * job_counter as ::core::ffi::c_double;
+            last_sec = LOAD_WEIGHT_B * JOB_COUNTER.load(Ordering::Relaxed) as ::core::ffi::c_double;
         } else {
             last_sec = 0.0f64;
         }
-        job_counter = 0;
+        JOB_COUNTER.store(0, Ordering::Relaxed);
         last_now = now;
     }
-    guess = load + LOAD_WEIGHT_A * (job_counter as ::core::ffi::c_double + last_sec);
+    guess = load
+        + LOAD_WEIGHT_A * (JOB_COUNTER.load(Ordering::Relaxed) as ::core::ffi::c_double + last_sec);
     if 0x4 as ::core::ffi::c_int & db_level != 0 {
         printf(
             b"Estimated system load = %f (actual = %f) (max requested = %f)\n\0" as *const u8

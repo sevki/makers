@@ -776,6 +776,16 @@ fn output_sync_grouped() {
     check_unordered("output-sync", "55_output_sync.mk", "all", &["-j3", "-O"]);
 }
 
+#[test]
+fn job_counter_parallel() {
+    // Every started job bumps the load-estimation counter `job_counter` (now an
+    // atomic) and every reaped job decrements it. Run four independent targets
+    // under `-j2` so both the increment and decrement paths execute. Ordering
+    // jitters under `-j`, so compare the sorted line multiset and exit code
+    // against the C oracle.
+    check_unordered("job-counter", "56_job_counter.mk", "all", &["-j2"]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
