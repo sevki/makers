@@ -794,6 +794,20 @@ fn output_init_restores_streams() {
     check("output-init", "57_output_init.mk", "all", &[]);
 }
 
+#[test]
+fn decode_switches_flags() {
+    // `decode_switches` parses argv behind a now-atomic re-entrancy guard. Pass
+    // several switches (`-s`, `-e`, a command-line variable assignment) so the
+    // option decoder runs the guard set/reset around a non-trivial parse; output
+    // is compared byte-for-byte against the C oracle.
+    check(
+        "decode-switches",
+        "58_decode_switches.mk",
+        "all",
+        &["-s", "-e", "FOO=cli"],
+    );
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
