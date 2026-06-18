@@ -1580,9 +1580,9 @@ unsafe fn func_filter_filterout(
                 &raw mut a_word_table,
                 &raw mut a_word_key as *const ::core::ffi::c_void,
             ) as *mut a_word;
-            while !wp.is_null() {
-                (*wp).matched |= 1;
-                wp = (*wp).chain;
+            while let Some(wpref) = wp.as_mut() {
+                wpref.matched |= 1;
+                wp = wpref.chain;
             }
         } else {
             wp = words;
@@ -2965,7 +2965,7 @@ pub unsafe fn handle_function(
                 next_0 = aend;
             }
             *argvp = p_0;
-            *next_0 = 0;
+            *next_0.as_mut().expect("split_args: next_0 is null") = 0;
             p_0 = next_0.offset(1 as ::core::ffi::c_int as isize);
             argvp = argvp.offset(1 as ::core::ffi::c_int as isize);
         }
