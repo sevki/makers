@@ -2346,4 +2346,32 @@ mod tests {
             );
         }
     }
+
+    /// When a `%` prerequisite expands to the empty string (a bare `%` with an
+    /// empty stem: the percent is dropped and nothing remains), `enter_prereqs`
+    /// removes that prerequisite from the chain and frees it. With a single
+    /// such dep the chain collapses to empty.
+    #[test]
+    fn enter_prereqs_drops_prereq_that_expands_empty() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _b = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            initialize_stopchar_map();
+            init_hash_files();
+            crate::expand::initialize_variable_output();
+
+            let nm = strcache_add(c"%".as_ptr());
+            let stem = strcache_add(c"".as_ptr());
+            let d = alloc_dep();
+            (*d).name = nm;
+            (*d).next = ::core::ptr::null_mut();
+
+            // The bare `%` with an empty stem expands to "", so the dep is
+            // dropped and freed; the returned chain is empty.
+            let head = enter_prereqs(d, stem);
+            assert!(head.is_null(), "the empty-expanding prereq is removed");
+        }
+    }
 }
