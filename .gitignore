@@ -84,3 +84,6 @@ checkcfg.*.log
 /fuzz/artifacts
 /fuzz/coverage
 /fuzz/Cargo.lock
+
+# Claude Code session/worktree artifacts
+.claude/
