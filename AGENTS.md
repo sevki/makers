@@ -2,11 +2,38 @@
 
 # C2Rust Porting Rules
 
+## North Star (the watermark)
+
+Before writing or accepting any change, ask: **"Is this how
+[hdonnay](https://github.com/hdonnay) or
+[steveklabnik](https://github.com/steveklabnik) would write it as idiomatic
+Rust from scratch?"** That is the watermark for every line in `src/`. If the
+answer is no, redesign rather than transliterate — a c2rust shape that merely
+compiles is not the goal.
+
+Two non-negotiable rules flow from this:
+
+1. **Safe conversions only.** Every cleanup must *remove* `unsafe`, never add
+   it, and must be behavior-preserving (differential-tested against the C
+   oracle). Eliminate a raw-pointer dereference by turning it into a safe
+   borrow (`&T`/`&mut T`, `<*mut T>::as_ref()`/`as_mut()`, `NonNull`,
+   `Option<&T>`, slices, iterators) — **do not** "fix" a raw deref by bolting
+   on a null-check guard, `assert!`, or extra branch just to satisfy a linter
+   or security scanner. If a pointer access can't be made safe without
+   changing a stored struct field type or cascading signatures, leave it and
+   say so; don't paper over it.
+2. **No global singletons.** No `static mut`, no global mutable state, and no
+   "mirror" statics that shadow owned data. Thread ownership explicitly:
+   pass owned state by `&`/`&mut`, use `Cell`/`RefCell` for scoped interior
+   mutability, or a scoped accessor channel — never a process-wide singleton.
+   Readers reach state through the owner, not a global.
+
 ## Goals
 1. Preserve behavior first
-2. Reduce unsafe incrementally
+2. Reduce unsafe incrementally (safe conversions only — never widen `unsafe`)
 3. Replace C patterns with Rust abstractions
 4. Never preserve C architecture blindly
+5. Hold every change to the watermark above
 
 ## Conversion Priorities (work order)
 
@@ -58,13 +85,20 @@ the conversion also closes a coverage gap.
 - bool flags with semantic meaning
 - pervasive unsafe blocks
 - manual linked lists unless proven necessary
+- global singletons: `static mut`, global mutable state, or "mirror" statics
+  that shadow owned data
+- null-check guards / `assert!` / extra branches added solely to silence a
+  linter or security scanner around a raw deref (de-pointer it instead)
+- any conversion that *adds* `unsafe` or changes observable behavior
 
 ## Required Refactors
 - Convert char* + len -> &[u8] or &str
 - Convert ownership pairs into RAII structs
 - Replace errno-style APIs with Result<T, E>
 - Replace tagged unions with enums
-- Replace global mutable state with Arc/Mutex/RwLock or ownership transfer
+- Replace global mutable state with ownership transfer (pass owned state by
+  `&`/`&mut`, `Cell`/`RefCell` for scoped interior mutability, or a scoped
+  accessor) — not a new global singleton
 - Replace manual allocators with Vec/Box/slab/arena crates
 - Move functions into impl blocks
 - Introduce newtypes for identifiers and units
