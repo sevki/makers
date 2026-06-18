@@ -1118,18 +1118,17 @@ pub unsafe extern "C" fn debug_signal_handler(mut _sig: ::core::ffi::c_int) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn decode_debug_flags() {
-    let mut pp: *mut *const ::core::ffi::c_char;
-    if FLAGS.debug_flag != 0 {
+pub unsafe fn decode_debug_flags(options: &Options) {
+    if options.debug_flag.get() {
         db_level = DB_ALL;
     }
-    if FLAGS.trace_flag != 0 {
+    if options.trace.get() {
         db_level |= DB_PRINT | DB_WHY;
     }
-    if !FLAGS.db_flags.is_null() {
-        pp = (*FLAGS.db_flags).list;
-        while !(*pp).is_null() {
-            let mut p: *const ::core::ffi::c_char = *pp;
+    {
+        let db_flags = options.db_flags.borrow();
+        for entry in db_flags.iter() {
+            let mut p: *const ::core::ffi::c_char = entry.as_ptr();
             loop {
                 match tolower(*p.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int) {
                     97 => {
@@ -1186,14 +1185,13 @@ pub unsafe fn decode_debug_flags() {
                     break;
                 }
             }
-            pp = pp.offset(1 as ::core::ffi::c_int as isize);
         }
     }
     if db_level != 0 {
         verify_flag = 1;
     }
     if db_level == 0 {
-        FLAGS.debug_flag = 0;
+        options.debug_flag.set(false);
     }
 }
 /// # Safety
