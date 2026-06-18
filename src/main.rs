@@ -26,7 +26,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -529,7 +529,12 @@ static mut eval_strings: *mut stringlist = ::core::ptr::null::<stringlist>() as 
 static mut print_usage_flag: ::core::ffi::c_int = 0;
 static mut warn_flags: *mut stringlist = ::core::ptr::null::<stringlist>() as *mut stringlist;
 static mut warn_undefined_variables_flag: ::core::ffi::c_int = 0;
-static mut always_make_set: ::core::ffi::c_int = 0;
+/// The `-B`/`--always-make` flag as set by option parsing. Written once through
+/// the switch table's `value_ptr` by the single-threaded argument parser, then
+/// read when deriving `always_make_flag`. Stored in an atomic so its reads are
+/// plain safe operations; all access is single-threaded, so `Relaxed` preserves
+/// the original program order.
+static ALWAYS_MAKE_SET: AtomicI32 = AtomicI32::new(0);
 pub static mut always_make_flag: ::core::ffi::c_int = 0;
 /// Set while `update_goal_chain` is remaking the makefiles themselves (the
 /// first goal-chain pass), so the remake logic can treat makefile targets
@@ -1488,7 +1493,8 @@ unsafe fn main_0(
     } else {
         makelevel = 0;
     }
-    always_make_flag = (always_make_set != 0 && restarts == 0) as ::core::ffi::c_int;
+    always_make_flag =
+        (ALWAYS_MAKE_SET.load(Ordering::Relaxed) != 0 && restarts == 0) as ::core::ffi::c_int;
     if no_builtin_variables_flag != 0 {
         no_builtin_rules_flag = 1;
     }
@@ -2501,7 +2507,7 @@ unsafe fn main_0(
         }
     }
     define_makeflags(0);
-    always_make_flag = always_make_set;
+    always_make_flag = ALWAYS_MAKE_SET.load(Ordering::Relaxed);
     if restarts != 0 && !new_files.is_null() {
         let mut p_5: *mut *const ::core::ffi::c_char;
         p_5 = (*new_files).list;
@@ -3915,7 +3921,7 @@ unsafe extern "C" fn run_static_initializers() {
                 c2rust_padding: [0; 7],
                 c: 'B' as i32,
                 type_0: flag,
-                value_ptr: &raw mut always_make_set as *mut ::core::ffi::c_void,
+                value_ptr: ALWAYS_MAKE_SET.as_ptr() as *mut ::core::ffi::c_void,
                 noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 default_value: ::core::ptr::null::<::core::ffi::c_void>(),
                 long_name: b"always-make\0" as *const u8 as *const ::core::ffi::c_char,
