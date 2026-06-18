@@ -964,7 +964,7 @@ unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *m
     while from_var_slot < from_var_end {
         if let Some(&from_var) = from_var_slot.as_ref().filter(|slot| {
             !slot.is_null()
-                && **slot as *mut ::core::ffi::c_void != hash_deleted_item as *mut ::core::ffi::c_void
+                && !::core::ptr::eq(**slot as *const ::core::ffi::c_void, hash_deleted_item)
         }) {
             let to_var_slot: *mut *mut variable = hash_find_slot(
                 &raw mut (*to_set).table,
