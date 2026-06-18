@@ -1524,7 +1524,12 @@ unsafe extern "C" fn check_dep(
             while let Some(dep_ref) = d.as_mut() {
                 let new: update_status;
                 let mut maybe_make: ::core::ffi::c_int;
-                let dep_file = dep_ref.file;
+                let Some(dep_file_nn) = ::core::ptr::NonNull::new(dep_ref.file) else {
+                    ld = d;
+                    d = dep_ref.next;
+                    continue;
+                };
+                let dep_file = dep_file_nn.as_ptr();
                 if double_colon_file_mut(dep_file).updating() != 0 {
                     let dep_name = fref(dep_file).name;
                     error(
@@ -1557,7 +1562,7 @@ unsafe extern "C" fn check_dep(
                     if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                         dep_status = new;
                     }
-                    if (*d).ignore_mtime() == 0 {
+                    if dep_ref.ignore_mtime() == 0 {
                         *must_make_ptr = maybe_make;
                     }
                     loop {
@@ -1789,14 +1794,20 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             arfile = enter_file(strcache_add(arname));
         }
         mtime = f_mtime(arfile, search);
-        while !(*arfile).renamed.is_null() {
-            arfile = (*arfile).renamed;
+        while let Some(arf) = arfile.as_ref() {
+            if arf.renamed.is_null() {
+                break;
+            }
+            arfile = arf.renamed;
         }
-        if search != 0 && strcmp((*arfile).hname, arname) != 0 {
+        if let Some(arf2) = arfile
+            .as_ref()
+            .filter(|a| search != 0 && strcmp(a.hname, arname) != 0)
+        {
             let name: *mut ::core::ffi::c_char;
             let arlen: size_t;
             let memlen: size_t;
-            arlen = strlen((*arfile).hname) as size_t;
+            arlen = strlen(arf2.hname) as size_t;
             memlen = strlen(memname) as size_t;
             alloca_allocations.push(::std::vec::from_elem(
                 0,
@@ -1805,7 +1816,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             name = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
                 name as *mut ::core::ffi::c_void,
-                (*arfile).hname as *const ::core::ffi::c_void,
+                arf2.hname as *const ::core::ffi::c_void,
                 arlen as size_t,
             );
             *name.offset(arlen as isize) = '(' as i32 as ::core::ffi::c_char;
@@ -1819,7 +1830,7 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             *name.offset(arlen.wrapping_add(1 as size_t).wrapping_add(memlen) as isize) =
                 ')' as i32 as ::core::ffi::c_char;
             *name.offset(arlen.wrapping_add(1).wrapping_add(memlen).wrapping_add(1) as isize) = 0;
-            if (*arfile).name == (*arfile).hname {
+            if arf2.name == arf2.hname {
                 rename_file(file, strcache_add(name));
             } else {
                 rehash_file(file, strcache_add(name));
