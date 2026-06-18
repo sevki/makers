@@ -4054,9 +4054,9 @@ pub unsafe fn define_makeflags(options: &Options, makefile: ::core::ffi::c_int) 
     };
     let l: size_t = strlen(r) as size_t;
     v = lookup_variable(r, l);
-    if !v.is_null()
-        && !(*v).value.is_null()
-        && *(*v).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+    if v
+        .as_ref()
+        .is_some_and(|vr| !vr.value.is_null() && *vr.value.offset(0) as ::core::ffi::c_int != 0)
     {
         fp = variable_buffer_output(
             fp,
