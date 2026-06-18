@@ -62,7 +62,7 @@ use crate::hash::{
 };
 use crate::job::default_shell;
 use crate::make_main::{
-    cmd_prefix, export_all_variables, makelevel, reset_makeflags,
+    cmd_prefix, export_all_variables, makelevel,
     shell_var, stopchar_map,
 };
 use crate::misc::concat;
@@ -435,7 +435,7 @@ pub unsafe fn define_variable_in_set(
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
     v = *var_slot;
-    if crate::make_main::FLAGS.env_overrides != 0
+    if crate::make_main::env_overrides()
         && origin as ::core::ffi::c_uint == o_env as ::core::ffi::c_int as ::core::ffi::c_uint
     {
         origin = o_env_override;
@@ -443,7 +443,7 @@ pub unsafe fn define_variable_in_set(
     if !(v.is_null()
         || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        if crate::make_main::FLAGS.env_overrides != 0 && (*v).origin() as ::core::ffi::c_int == o_env as ::core::ffi::c_int
+        if crate::make_main::env_overrides() && (*v).origin() as ::core::ffi::c_int == o_env as ::core::ffi::c_int
         {
             (*v).set_origin(o_env_override as variable_origin);
         }
@@ -566,7 +566,7 @@ pub unsafe fn undefine_variable_in_set(
         &raw mut set.table,
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
-    if crate::make_main::FLAGS.env_overrides != 0
+    if crate::make_main::env_overrides()
         && origin as ::core::ffi::c_uint == o_env as ::core::ffi::c_int as ::core::ffi::c_uint
     {
         origin = o_env_override;
@@ -575,7 +575,7 @@ pub unsafe fn undefine_variable_in_set(
     if !(v.is_null()
         || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        if crate::make_main::FLAGS.env_overrides != 0 && (*v).origin() as ::core::ffi::c_int == o_env as ::core::ffi::c_int
+        if crate::make_main::env_overrides() && (*v).origin() as ::core::ffi::c_int == o_env as ::core::ffi::c_int
         {
             (*v).set_origin(o_env_override as variable_origin);
         }
@@ -1315,7 +1315,7 @@ pub unsafe fn target_environment(
     if file.is_null() {
         ENV_RECURSION.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
-    if recursive == 0 && !crate::make_main::FLAGS.jobserver_auth.is_null() {
+    if recursive == 0 && crate::make_main::opt_jobserver_auth_present() {
         invalid = jobserver_get_invalid_auth();
     }
     if !file.is_null() {
@@ -1572,7 +1572,7 @@ unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin
                     .offset(1 as ::core::ffi::c_int as isize),
             ) == 0)
     {
-        reset_makeflags(origin);
+        crate::make_main::reset_makeflags_special(origin);
     } else if *(*var).name as ::core::ffi::c_int
         == *(b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
         && (*(*var).name as ::core::ffi::c_int == 0
@@ -1971,12 +1971,12 @@ pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
 }
 unsafe fn set_env_override(item: *const ::core::ffi::c_void, mut _arg: *mut ::core::ffi::c_void) {
     let v: *mut variable = item as *mut variable;
-    let old: variable_origin = (if crate::make_main::FLAGS.env_overrides != 0 {
+    let old: variable_origin = (if crate::make_main::env_overrides() {
         o_env as ::core::ffi::c_int
     } else {
         o_env_override as ::core::ffi::c_int
     }) as variable_origin;
-    let new: variable_origin = (if crate::make_main::FLAGS.env_overrides != 0 {
+    let new: variable_origin = (if crate::make_main::env_overrides() {
         o_env_override as ::core::ffi::c_int
     } else {
         o_env as ::core::ffi::c_int
