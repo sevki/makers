@@ -1,0 +1,108 @@
+# Scheduled, unattended c2rust -> safe-Rust cleanup.
+#
+# Every 2 hours (and on manual dispatch) this runs Claude Code to land ONE
+# focused safe-Rust conversion as a pull request, following the rules in
+# AGENTS.md. It opens a PR and stops -- it never merges. The repo's normal PR
+# CI (CodeQL, CRAP, coverage, kernel build) is the gate.
+#
+# PREREQUISITE (one-time, by a repo admin):
+#   Add a repository secret named ANTHROPIC_API_KEY (Settings -> Secrets and
+#   variables -> Actions). Without it, the job is skipped. A Claude Code OAuth
+#   token works too -- swap the `anthropic_api_key` input accordingly.
+#
+# Docs: https://code.claude.com/docs  (Claude Code GitHub Action)
+
+name: c2rust cleanup (scheduled)
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'   # every 2 hours, on the even hour (UTC)
+  workflow_dispatch: {}      # allow manual runs
+
+# Don't stack runs: if one cycle is still going, skip the next tick.
+concurrency:
+  group: c2rust-cleanup
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # create branch + commits
+  pull-requests: write   # open the PR
+
+jobs:
+  convert:
+    name: one safe-conversion cycle
+    runs-on: ubuntu-latest
+    # Skip cleanly if the API key isn't configured yet.
+    if: ${{ github.repository == 'sevki/makers' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install stable
+          rustup component add clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Run Claude Code (one conversion cycle)
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Keep the model on the latest capable Opus.
+          claude_args: >-
+            --allowed-tools "Bash,Read,Edit,Write,Glob,Grep"
+          prompt: |
+            You are running ONE cycle of an ongoing c2rust -> safe-Rust cleanup
+            loop on this repo (a c2rust port of GNU make). Land exactly ONE
+            focused, high-value unsafe / raw-pointer cleanup as a pull request.
+            Never merge; open the PR and stop. The repo's PR CI does the heavy
+            gating.
+
+            READ AGENTS.md FIRST -- it is the contract. Non-negotiable:
+            - Safe conversions only: remove `unsafe`, never add it; behavior
+              must stay byte-identical.
+            - Eliminate raw-pointer derefs via safe borrows (&T / &mut T,
+              <*mut T>::as_ref()/as_mut(), NonNull, Option<&T>, slices,
+              iterators) -- NOT by adding null-check guards / assert! / extra
+              branches to appease a linter or scanner.
+            - No global singletons: no `static mut`, no global mutable state,
+              no "mirror" statics.
+            - Preserve the original as a test oracle: when you replace an
+              unsafe impl with a safe one, move the original verbatim into a
+              #[cfg(test)] module named `<fn>_unsafe_oracle` and add a test
+              driving representative inputs through BOTH versions, asserting
+              identical results. Do not delete the old code.
+            - Watermark: would hdonnay or steveklabnik write it this way as
+              idiomatic Rust from scratch? If not, redesign.
+
+            SCOPE: pick ONE function or a small tight cluster that converts
+            cleanly (e.g. raw .offset()/*p cursor walking -> slices/iterators,
+            or a small unsafe helper). Avoid the deep raw-pointer-graph
+            functions (file/dep/variable linked structures) that need struct
+            field-type changes -- out of scope. If nothing is safely tractable
+            without a risky/cascading change, STOP and open no PR.
+
+            VERIFY locally before opening the PR:
+            - cargo build --lib  (0 warnings)
+            - cargo test --lib   (all pass; your oracle test adds to the count)
+            - cargo clippy --lib (no new warnings on changed lines)
+            - run a few tests/fixtures/*.mk through the built binary: no
+              `panicked`, no `$(`-unexpanded garbage.
+            (CodeQL access-invalid-pointer and CRAP are enforced by the repo's
+            existing PR CI, so you don't need to run them here -- but do not
+            introduce patterns AGENTS.md forbids.)
+
+            Commit on a new branch named claude/c2rust-<short-fn-name> with a
+            clear message, push it, and open a PR against main describing the
+            conversion, the oracle test, and the local gate results. Do NOT
+            enable auto-merge.
