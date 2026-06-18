@@ -1865,7 +1865,6 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
     static mut last_now: time_t = 0;
     static mut proc_fd: ::core::ffi::c_int = -(2 as ::core::ffi::c_int);
     let mut load: ::core::ffi::c_double = 0.;
-    let guess: ::core::ffi::c_double;
     let now: time_t;
     if max_load_average < 0 as ::core::ffi::c_int as ::core::ffi::c_double {
         return 0;
@@ -1988,7 +1987,7 @@ pub unsafe fn load_too_high() -> ::core::ffi::c_int {
         JOB_COUNTER.store(0, Ordering::Relaxed);
         last_now = now;
     }
-    guess = load
+    let guess: ::core::ffi::c_double = load
         + LOAD_WEIGHT_A * (JOB_COUNTER.load(Ordering::Relaxed) as ::core::ffi::c_double + last_sec);
     if 0x4 as ::core::ffi::c_int & db_level != 0 {
         printf(
