@@ -2818,12 +2818,15 @@ unsafe extern "C" fn decode_switches(
     let mut c: ::core::ffi::c_int;
     let mut found_wait: ::core::ffi::c_uint = 0;
     let mut a: *mut *const ::core::ffi::c_char;
-    static mut using_getopt: ::core::ffi::c_int = 0;
-    if using_getopt == 0 {
+    // Re-entrancy guard: `decode_switches` must not be called recursively.
+    // Atomic so the read/writes are plain safe ops; switch decoding runs
+    // single-threaded, so `Relaxed` preserves the original program order.
+    static USING_GETOPT: AtomicBool = AtomicBool::new(false);
+    if !USING_GETOPT.load(Ordering::Relaxed) {
     } else {
         panic!("assertion failed: using_getopt == 0");
     };
-    using_getopt = 1;
+    USING_GETOPT.store(true, Ordering::Relaxed);
     targets.max = (argc + 1) as ::core::ffi::c_uint;
     alloca_allocations.push(::std::vec::from_elem(
         0,
@@ -3149,7 +3152,7 @@ unsafe extern "C" fn decode_switches(
     }
     let fresh23 = &mut (*targets.list.offset(targets.idx as isize));
     *fresh23 = ::core::ptr::null::<::core::ffi::c_char>();
-    using_getopt = 0;
+    USING_GETOPT.store(false, Ordering::Relaxed);
     a = targets.list;
     while !(*a).is_null() {
         let prior_found_wait: ::core::ffi::c_int = found_wait as ::core::ffi::c_int;
