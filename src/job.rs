@@ -934,10 +934,10 @@ pub unsafe fn reap_children(mut block: ::core::ffi::c_int, err: ::core::ffi::c_i
                 Ordering::Relaxed,
             );
         }
-        if lastc.is_null() {
-            children = (*c).next;
+        if let Some(lastcr) = lastc.as_mut() {
+            lastcr.next = (*c).next;
         } else {
-            (*lastc).next = (*c).next;
+            children = (*c).next;
         }
         free_child(c);
         unblock_sigs();
@@ -2215,7 +2215,7 @@ unsafe fn spawn_child(
         // Not a directly executable file: retry it as an argument to the shell.
         let mut l_0: size_t = 0;
         let mut pp_0: *mut *mut ::core::ffi::c_char = argv;
-        while !(*pp_0).is_null() {
+        while pp_0.as_ref().is_some_and(|p| !p.is_null()) {
             l_0 = l_0.wrapping_add(1);
             pp_0 = pp_0.offset(1);
         }
@@ -2805,15 +2805,15 @@ unsafe extern "C" fn construct_command_argv_internal(
     ) as *mut ::core::ffi::c_char;
     ap = new_line;
     cp = shell;
-    while *cp as ::core::ffi::c_int != 0 {
-        if !strchr(sh_chars, *cp as ::core::ffi::c_int).is_null() {
+    while let Some(&cc) = cp.as_ref().filter(|c| **c as ::core::ffi::c_int != 0) {
+        if !strchr(sh_chars, cc as ::core::ffi::c_int).is_null() {
             let fresh40 = ap;
             ap = ap.offset(1 as ::core::ffi::c_int as isize);
             *fresh40 = '\\' as i32 as ::core::ffi::c_char;
         }
         let fresh41 = ap;
         ap = ap.offset(1 as ::core::ffi::c_int as isize);
-        *fresh41 = *cp;
+        *fresh41 = cc;
         cp = cp.offset(1 as ::core::ffi::c_int as isize);
     }
     let fresh42 = ap;
