@@ -157,6 +157,19 @@ pub fn env_recursion() -> u64 {
 /// its reads/writes are plain safe ops; variable mutation is single-threaded,
 /// so `Relaxed` preserves the original program order.
 static VARIABLE_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
+
+/// Reads the change counter masked to the C `unsigned long` width. The original
+/// counter is a `c_ulong`, which is 32-bit on some targets (Windows, 32-bit
+/// Unix); masking keeps the wraparound point — and therefore the `.VARIABLES`
+/// invalidation behavior — identical to the C oracle on every target. The mask
+/// is `u64::MAX` (a no-op) where `c_ulong` is already 64-bit.
+fn variable_changenum() -> u64 {
+    // No-op (`u64::MAX`) on 64-bit `c_ulong`; the low 32 bits where `c_ulong`
+    // is 32-bit. Computed via a shift to avoid a cast that clippy flags as
+    // redundant on 64-bit targets.
+    let mask = u64::MAX >> (u64::BITS - ::core::ffi::c_ulong::BITS);
+    VARIABLE_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed) & mask
+}
 static mut pattern_vars: *mut pattern_var = ::core::ptr::null::<pattern_var>() as *mut pattern_var;
 static mut last_pattern_vars: [*mut pattern_var; 256] =
     [::core::ptr::null::<pattern_var>() as *mut pattern_var; 256];
@@ -585,8 +598,7 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
     // rebuilt. Function-local atomic so the read/write are plain safe ops;
     // access is single-threaded, so `Relaxed` preserves the original order.
     static LAST_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
-    if VARIABLE_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
-        != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
+    if variable_changenum() != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
         && (*(*var).name as ::core::ffi::c_int
             == *(b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
             && (*(*var).name as ::core::ffi::c_int == 0
@@ -635,10 +647,7 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
             vp = vp.offset(1 as ::core::ffi::c_int as isize);
         }
         *p.offset(-(1 as ::core::ffi::c_int as isize)) = 0;
-        LAST_CHANGENUM.store(
-            VARIABLE_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed),
-            ::std::sync::atomic::Ordering::Relaxed,
-        );
+        LAST_CHANGENUM.store(variable_changenum(), ::std::sync::atomic::Ordering::Relaxed);
     }
     var
 }
