@@ -27,6 +27,14 @@ Two non-negotiable rules flow from this:
    pass owned state by `&`/`&mut`, use `Cell`/`RefCell` for scoped interior
    mutability, or a scoped accessor channel — never a process-wide singleton.
    Readers reach state through the owner, not a global.
+3. **Preserve the original as a test oracle.** When you replace an `unsafe`
+   implementation with a safe one, do **not** delete the old code — move it
+   verbatim into a `#[cfg(test)]` module (e.g. rename it `<fn>_unsafe_oracle`)
+   and add a test that drives representative inputs through both the new safe
+   version and the preserved unsafe one, asserting identical results. The old
+   code stays out of the shipping build but proves the conversion is
+   behavior-preserving; remove the oracle only once the safe version is
+   covered by differential tests against the C oracle.
 
 ## Goals
 1. Preserve behavior first
