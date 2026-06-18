@@ -160,12 +160,12 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
     // returned slot pointer always valid (never a null sentinel).
     let mut deleted_idx: Option<usize> = None;
     let mut hash_2: c_uint = 0;
-    let mut hash_1 = (*ht).ht_hash_1.expect("hash table without ht_hash_1")(key) as c_uint;
+    let mut hash_1 = ht.as_ref().expect("hash table pointer is null").ht_hash_1.expect("hash table without ht_hash_1")(key) as c_uint;
 
-    (*ht).ht_lookups = (*ht).ht_lookups.wrapping_add(1);
+    ht.as_mut().expect("hash table pointer is null").ht_lookups = ht.as_ref().expect("hash table pointer is null").ht_lookups.wrapping_add(1);
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
-        hash_1 = (hash_1 as c_ulong & ((*ht).ht_size - 1)) as c_uint;
+        hash_1 = (hash_1 as c_ulong & (ht.as_ref().expect("hash table pointer is null").ht_size - 1)) as c_uint;
         let idx = hash_1 as usize;
         let slot_val = *table_slots_mut(ht)
             .get(idx)
@@ -184,16 +184,16 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
             if ::core::ptr::eq(key, slot_val) {
                 return &raw mut table_slots_mut(ht)[idx];
             }
-            if (*ht).ht_compare.expect("hash table without ht_compare")(key, slot_val) == 0 {
+            if ht.as_ref().expect("hash table pointer is null").ht_compare.expect("hash table without ht_compare")(key, slot_val) == 0 {
                 return &raw mut table_slots_mut(ht)[idx];
             }
-            (*ht).ht_collisions = (*ht).ht_collisions.wrapping_add(1);
+            ht.as_mut().expect("hash table pointer is null").ht_collisions = ht.as_ref().expect("hash table pointer is null").ht_collisions.wrapping_add(1);
         }
 
         // Probe again with the secondary hash (forced odd, so it is
         // coprime with the power-of-two size).
         if hash_2 == 0 {
-            hash_2 = ((*ht).ht_hash_2.expect("hash table without ht_hash_2")(key) | 1) as c_uint;
+            hash_2 = (ht.as_ref().expect("hash table pointer is null").ht_hash_2.expect("hash table without ht_hash_2")(key) | 1) as c_uint;
         }
         hash_1 = hash_1.wrapping_add(hash_2);
     }
