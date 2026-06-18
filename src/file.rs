@@ -371,10 +371,16 @@ unsafe fn file_hash_cmp(
     x: *const ::core::ffi::c_void,
     y: *const ::core::ffi::c_void,
 ) -> ::core::ffi::c_int {
-    if (*(x as *const file)).hname == (*(y as *const file)).hname {
+    let xh = (x as *const file)
+        .as_ref()
+        .map_or(::core::ptr::null(), |xf| xf.hname);
+    let yh = (y as *const file)
+        .as_ref()
+        .map_or(::core::ptr::null(), |yf| yf.hname);
+    if xh == yh {
         0
     } else {
-        strcmp((*(x as *const file)).hname, (*(y as *const file)).hname)
+        strcmp(xh, yh)
     }
 }
 static mut files: hash_table = hash_table {
@@ -459,7 +465,7 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     let f: *mut file;
     let file_slot: *mut *mut file;
     let mut file_key = File::default();
-    if *name as ::core::ffi::c_int != 0 {
+    if name.as_ref().is_some_and(|c| *c as ::core::ffi::c_int != 0) {
     } else {
         panic!("assertion failed: *name != '\'");
     };
@@ -509,7 +515,10 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     let to_file: *mut file;
     let deleted_file: *mut file;
     let mut f: *mut file;
-    (*from_file).set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    let Some(from_ref) = from_file.as_mut() else {
+        return;
+    };
+    from_ref.set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     file_key.hname = to_hname;
     if file_hash_cmp(
         from_file as *const ::core::ffi::c_void,
@@ -518,9 +527,12 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     {
         return;
     }
-    file_key.hname = (*from_file).hname;
-    while !(*from_file).renamed.is_null() {
-        from_file = (*from_file).renamed;
+    file_key.hname = from_ref.hname;
+    while let Some(fr) = from_file.as_ref() {
+        if fr.renamed.is_null() {
+            break;
+        }
+        from_file = fr.renamed;
     }
     if file_hash_cmp(
         from_file as *const ::core::ffi::c_void,
@@ -540,11 +552,12 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         &raw mut file_key as *const ::core::ffi::c_void,
     ) as *mut *mut file;
     to_file = *file_slot;
-    (*from_file).hname = to_hname;
-    f = (*from_file).double_colon;
-    while !f.is_null() {
-        (*f).hname = to_hname;
-        f = (*f).prev;
+    let Some(fr2) = from_file.as_mut() else { return };
+    fr2.hname = to_hname;
+    f = fr2.double_colon;
+    while let Some(fr) = f.as_mut() {
+        fr.hname = to_hname;
+        f = fr.prev;
     }
     if to_file.is_null()
         || to_file as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
@@ -556,12 +569,12 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         );
         return;
     }
-    if !(*from_file).cmds.is_null() {
+    if !fr2.cmds.is_null() {
         if (*to_file).cmds.is_null() {
-            (*to_file).cmds = (*from_file).cmds;
-        } else if (*from_file).cmds != (*to_file).cmds {
-            let mut l: size_t = strlen((*from_file).name) as size_t;
-            let from_cmds = (*from_file)
+            (*to_file).cmds = fr2.cmds;
+        } else if fr2.cmds != (*to_file).cmds {
+            let mut l: size_t = strlen(fr2.name) as size_t;
+            let from_cmds = fr2
                 .cmds
                 .as_mut()
                 .expect("from_file recipe is non-null in this branch");
@@ -577,7 +590,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
                         .wrapping_add(INTSTR_LENGTH),
                     b"recipe was specified for file '%s' at %s:%lu,\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*from_file).name,
+                    fr2.name,
                     from_cmds.fileinfo.filenm,
                     from_cmds.fileinfo.lineno,
                 );
@@ -587,7 +600,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
                     l,
                     b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*from_file).name,
+                    fr2.name,
                 );
             }
             l = l.wrapping_add(strlen(to_hname) as size_t);
@@ -596,7 +609,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
                 l,
                 b"but '%s' is now considered the same file as '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*from_file).name,
+                fr2.name,
                 to_hname,
             );
             error(
@@ -604,105 +617,105 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
                 l,
                 b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*from_file).name,
+                fr2.name,
                 to_hname,
             );
         }
     }
     if (*to_file).deps.is_null() {
-        (*to_file).deps = (*from_file).deps;
+        (*to_file).deps = fr2.deps;
     } else {
         let mut deps: *mut dep = (*to_file).deps;
         while !(*deps).next.is_null() {
             deps = (*deps).next;
         }
-        (*deps).next = (*from_file).deps;
+        (*deps).next = fr2.deps;
     }
-    merge_variable_set_lists(&raw mut (*to_file).variables, (*from_file).variables);
+    merge_variable_set_lists(&raw mut (*to_file).variables, fr2.variables);
     if !(*to_file).double_colon.is_null()
-        && (*from_file).is_target() as ::core::ffi::c_int != 0
-        && (*from_file).double_colon.is_null()
+        && fr2.is_target() as ::core::ffi::c_int != 0
+        && fr2.double_colon.is_null()
     {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
-            (strlen((*from_file).name) as size_t).wrapping_add(strlen(to_hname) as size_t),
+            (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
             b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            (*from_file).name,
+            fr2.name,
             to_hname,
         );
     }
-    if (*to_file).double_colon.is_null() && !(*from_file).double_colon.is_null() {
+    if (*to_file).double_colon.is_null() && !fr2.double_colon.is_null() {
         if (*to_file).is_target() != 0 {
             fatal(
                 ::core::ptr::null_mut::<Floc>(),
-                (strlen((*from_file).name) as size_t).wrapping_add(strlen(to_hname) as size_t),
+                (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
                 b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                (*from_file).name,
+                fr2.name,
                 to_hname,
             );
         } else {
-            (*to_file).double_colon = (*from_file).double_colon;
+            (*to_file).double_colon = fr2.double_colon;
         }
     }
-    if (*from_file).last_mtime > (*to_file).last_mtime {
-        (*to_file).last_mtime = (*from_file).last_mtime;
+    if fr2.last_mtime > (*to_file).last_mtime {
+        (*to_file).last_mtime = fr2.last_mtime;
     }
-    (*to_file).mtime_before_update = (*from_file).mtime_before_update;
+    (*to_file).mtime_before_update = fr2.mtime_before_update;
     (*to_file).set_precious(
         (*to_file).precious()
-            | (*from_file).precious() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.precious() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_loaded(
-        (*to_file).loaded() | (*from_file).loaded() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).loaded() | fr2.loaded() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_tried_implicit(
         (*to_file).tried_implicit()
-            | (*from_file).tried_implicit() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.tried_implicit() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_updating(
         (*to_file).updating()
-            | (*from_file).updating() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.updating() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_updated(
-        (*to_file).updated() | (*from_file).updated() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).updated() | fr2.updated() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_is_target(
         (*to_file).is_target()
-            | (*from_file).is_target() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.is_target() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_cmd_target(
         (*to_file).cmd_target()
-            | (*from_file).cmd_target() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.cmd_target() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_phony(
-        (*to_file).phony() | (*from_file).phony() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).phony() | fr2.phony() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_is_explicit(
         (*to_file).is_explicit()
-            | (*from_file).is_explicit() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.is_explicit() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_secondary(
         (*to_file).secondary()
-            | (*from_file).secondary() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.secondary() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_notintermediate(
         (*to_file).notintermediate()
-            | (*from_file).notintermediate() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.notintermediate() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_ignore_vpath(
         (*to_file).ignore_vpath()
-            | (*from_file).ignore_vpath() as ::core::ffi::c_int as ::core::ffi::c_uint,
+            | fr2.ignore_vpath() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_snapped(
-        (*to_file).snapped() | (*from_file).snapped() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).snapped() | fr2.snapped() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_suffix(
-        (*to_file).suffix() | (*from_file).suffix() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).suffix() | fr2.suffix() as ::core::ffi::c_int as ::core::ffi::c_uint,
     );
     (*to_file).set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    (*from_file).renamed = to_file;
+    fr2.renamed = to_file;
     REHASHED_FILES
         .lock()
         .expect("rehashed file list lock poisoned")
@@ -714,9 +727,9 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi::c_char) {
     rehash_file(from_file, to_hname);
-    while !from_file.is_null() {
-        (*from_file).name = (*from_file).hname;
-        from_file = (*from_file).prev;
+    while let Some(ff) = from_file.as_mut() {
+        ff.name = ff.hname;
+        from_file = ff.prev;
     }
 }
 /// # Safety
@@ -816,7 +829,7 @@ pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x40 as ::core::ffi::c_int,
     ) as *mut dep;
-    if *p != 0 {
+    if p.as_ref().is_some_and(|c| *c != 0) {
         let mut ood: *mut dep;
         p = p.offset(1 as ::core::ffi::c_int as isize);
         ood = parse_file_seq(
@@ -857,15 +870,15 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
         let pattern: *const ::core::ffi::c_char = b"%\0" as *const u8 as *const ::core::ffi::c_char;
         let mut dp: *mut dep = deps;
         let mut dl: *mut dep = ::core::ptr::null_mut::<dep>();
-        while !dp.is_null() {
+        while let Some(dpr) = dp.as_mut() {
             let percent: *mut ::core::ffi::c_char;
-            let nl: size_t = (strlen((*dp).name) as size_t).wrapping_add(1);
+            let nl: size_t = (strlen(dpr.name) as size_t).wrapping_add(1);
             alloca_allocations.push(::std::vec::from_elem(0, nl as usize));
             let nm: *mut ::core::ffi::c_char =
                 alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
             memcpy(
                 nm as *mut ::core::ffi::c_void,
-                (*dp).name as *const ::core::ffi::c_void,
+                dpr.name as *const ::core::ffi::c_void,
                 nl as size_t,
             );
             percent = find_percent(nm);
@@ -898,45 +911,47 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
                 {
                     let df: *mut dep = dp;
                     if dp == deps {
-                        deps = (*deps).next;
+                        deps = match deps.as_ref() {
+                            Some(depsr) => depsr.next,
+                            None => deps,
+                        };
                         dp = deps;
-                    } else {
-                        (*dl).next = (*dp).next;
-                        dp = (*dl).next;
+                    } else if let Some(dlr) = dl.as_mut() {
+                        dlr.next = dpr.next;
+                        dp = dlr.next;
                     }
                     free_dep(df);
                     continue;
                 } else {
-                    (*dp).name = strcache_add_len(
+                    dpr.name = strcache_add_len(
                         variable_buffer,
                         o.offset_from(variable_buffer) as ::core::ffi::c_long as size_t,
                     );
                 }
             }
-            (*dp).stem = stem;
-            (*dp).set_staticpattern(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            dpr.stem = stem;
+            dpr.set_staticpattern(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             dl = dp;
-            dp = (*dp).next;
+            dp = dpr.next;
         }
     }
     d1 = deps;
-    while !d1.is_null() {
-        if !((*d1).need_2nd_expansion() != 0) {
-            (*d1).file = lookup_file((*d1).name);
-            if (*d1).file.is_null() {
-                (*d1).file = enter_file((*d1).name);
+    while let Some(d1r) = d1.as_mut() {
+        if !(d1r.need_2nd_expansion() != 0) {
+            d1r.file = lookup_file(d1r.name);
+            if d1r.file.is_null() {
+                d1r.file = enter_file(d1r.name);
             }
-            (*d1).set_staticpattern(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            (*d1).name = ::core::ptr::null::<::core::ffi::c_char>();
+            d1r.set_staticpattern(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            d1r.name = ::core::ptr::null::<::core::ffi::c_char>();
             if stem.is_null() {
-                (*d1)
-                    .file
+                d1r.file
                     .as_mut()
                     .expect("dep file was just entered above")
                     .set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             }
         }
-        d1 = (*d1).next;
+        d1 = d1r.next;
     }
     deps
 }
@@ -1073,14 +1088,14 @@ pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
         ::core::ptr::null_mut::<dep>()
     };
     d = prereqs;
-    while !d.is_null() {
-        (*d).file = lookup_file((*d).name);
-        if (*d).file.is_null() {
-            (*d).file = enter_file((*d).name);
+    while let Some(dr) = d.as_mut() {
+        dr.file = lookup_file(dr.name);
+        if dr.file.is_null() {
+            dr.file = enter_file(dr.name);
         }
-        (*d).name = ::core::ptr::null::<::core::ffi::c_char>();
-        (*d).set_ignore_automatic_vars(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        d = (*d).next;
+        dr.name = ::core::ptr::null::<::core::ffi::c_char>();
+        dr.set_ignore_automatic_vars(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        d = dr.next;
     }
     prereqs
 }
@@ -1091,16 +1106,17 @@ pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
 pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d: *mut dep;
+    let Some(fr) = f.as_mut() else { return };
     if !second_expansion() {
-        (*f).set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        fr.set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if all_secondary() && (*f).notintermediate() == 0 {
-        (*f).set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    if all_secondary() && fr.notintermediate() == 0 {
+        fr.set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if no_intermediates != 0 && (*f).intermediate() == 0 && (*f).secondary() == 0 {
-        (*f).set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    if no_intermediates != 0 && fr.intermediate() == 0 && fr.secondary() == 0 {
+        fr.set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if let Some(file_vars) = (*f).variables.as_ref() {
+    if let Some(file_vars) = fr.variables.as_ref() {
         prereqs = expand_extra_prereqs(lookup_variable_in_set(
             b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
@@ -1108,20 +1124,20 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
         ));
         if second_expansion() {
             d = prereqs;
-            while !d.is_null() {
-                if (*d).name.is_null() {
-                    (*d).name = xstrdup(
-                        (*d).file
+            while let Some(dr) = d.as_mut() {
+                if dr.name.is_null() {
+                    dr.name = xstrdup(
+                        dr.file
                             .as_ref()
                             .expect("a nameless prereq has a file")
                             .name,
                     );
                 }
-                (*d).set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                d = (*d).next;
+                dr.set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                d = dr.next;
             }
         }
-    } else if (*f).is_target() != 0 {
+    } else if fr.is_target() != 0 {
         prereqs = copy_dep_chain(deps);
     }
     if !prereqs.is_null() {
@@ -1132,7 +1148,7 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
             } else {
                 dr.file.as_ref().expect("expand_deps: null dep file").name
             };
-            let fname = (*f).name;
+            let fname = fr.name;
             let same = match (dname.as_ref(), fname.as_ref()) {
                 (Some(&db), Some(&fb)) => {
                     fb as ::core::ffi::c_int == db as ::core::ffi::c_int
@@ -1148,14 +1164,17 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
         }
         if !d.is_null() {
             free_dep_chain(prereqs);
-        } else if (*f).deps.is_null() {
-            (*f).deps = prereqs;
+        } else if fr.deps.is_null() {
+            fr.deps = prereqs;
         } else {
-            d = (*f).deps;
-            while !(*d).next.is_null() {
-                d = (*d).next;
+            d = fr.deps;
+            while let Some(dr2) = d.as_mut() {
+                if dr2.next.is_null() {
+                    dr2.next = prereqs;
+                    break;
+                }
+                d = dr2.next;
             }
-            (*d).next = prereqs;
         }
     }
 }
@@ -1170,116 +1189,122 @@ pub unsafe fn snap_deps() {
     SNAPPED_DEPS.store(true, Ordering::Relaxed);
     f = lookup_file(b".PRECIOUS\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
-            f2 = (*d).file;
-            while !f2.is_null() {
-                (*f2).set_precious(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                f2 = (*f2).prev;
+        let Some(fr) = f.as_ref() else { break };
+        d = fr.deps;
+        while let Some(dr) = d.as_ref() {
+            f2 = dr.file;
+            while let Some(f2r) = f2.as_mut() {
+                f2r.set_precious(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                f2 = f2r.prev;
             }
-            d = (*d).next;
+            d = dr.next;
         }
-        f = (*f).prev;
+        f = fr.prev;
     }
     f = lookup_file(b".LOW_RESOLUTION_TIME\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
-            f2 = (*d).file;
-            while !f2.is_null() {
-                (*f2).set_low_resolution_time(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                f2 = (*f2).prev;
+        let Some(fr) = f.as_ref() else { break };
+        d = fr.deps;
+        while let Some(dr) = d.as_ref() {
+            f2 = dr.file;
+            while let Some(f2r) = f2.as_mut() {
+                f2r.set_low_resolution_time(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                f2 = f2r.prev;
             }
-            d = (*d).next;
+            d = dr.next;
         }
-        f = (*f).prev;
+        f = fr.prev;
     }
     f = lookup_file(b".PHONY\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
-            f2 = (*d).file;
-            while !f2.is_null() {
-                (*f2).set_phony(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                (*f2).set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                (*f2).last_mtime = NONEXISTENT_MTIME as uintmax_t;
-                (*f2).mtime_before_update = NONEXISTENT_MTIME as uintmax_t;
-                f2 = (*f2).prev;
+        let Some(fr) = f.as_ref() else { break };
+        d = fr.deps;
+        while let Some(dr) = d.as_ref() {
+            f2 = dr.file;
+            while let Some(f2r) = f2.as_mut() {
+                f2r.set_phony(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                f2r.set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                f2r.last_mtime = NONEXISTENT_MTIME as uintmax_t;
+                f2r.mtime_before_update = NONEXISTENT_MTIME as uintmax_t;
+                f2 = f2r.prev;
             }
-            d = (*d).next;
+            d = dr.next;
         }
-        f = (*f).prev;
+        f = fr.prev;
     }
     f = lookup_file(b".NOTINTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        if !(*f).deps.is_null() {
-            d = (*f).deps;
-            while !d.is_null() {
-                f2 = (*d).file;
-                while !f2.is_null() {
-                    (*f2).set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                    f2 = (*f2).prev;
+        let Some(fr) = f.as_ref() else { break };
+        if !fr.deps.is_null() {
+            d = fr.deps;
+            while let Some(dr) = d.as_ref() {
+                f2 = dr.file;
+                while let Some(f2r) = f2.as_mut() {
+                    f2r.set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    f2 = f2r.prev;
                 }
-                d = (*d).next;
+                d = dr.next;
             }
         } else {
             no_intermediates = 1;
         }
-        f = (*f).prev;
+        f = fr.prev;
     }
     f = lookup_file(b".INTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        d = (*f).deps;
-        while !d.is_null() {
-            f2 = (*d).file;
-            while !f2.is_null() {
-                if (*f2).notintermediate() != 0 {
+        let Some(fr) = f.as_ref() else { break };
+        d = fr.deps;
+        while let Some(dr) = d.as_ref() {
+            f2 = dr.file;
+            while let Some(f2r) = f2.as_mut() {
+                if f2r.notintermediate() != 0 {
                     fatal(
                         ::core::ptr::null_mut::<Floc>(),
-                        strlen((*f2).name) as size_t,
+                        strlen(f2r.name) as size_t,
                         b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*f2).name,
+                        f2r.name,
                     );
                 } else {
-                    (*f2).set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    f2r.set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 }
-                f2 = (*f2).prev;
+                f2 = f2r.prev;
             }
-            d = (*d).next;
+            d = dr.next;
         }
-        f = (*f).prev;
+        f = fr.prev;
     }
     f = lookup_file(b".SECONDARY\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
-        if !(*f).deps.is_null() {
-            d = (*f).deps;
-            while !d.is_null() {
-                f2 = (*d).file;
-                while !f2.is_null() {
-                    if (*f2).notintermediate() != 0 {
+        let Some(fr) = f.as_ref() else { break };
+        if !fr.deps.is_null() {
+            d = fr.deps;
+            while let Some(dr) = d.as_ref() {
+                f2 = dr.file;
+                while let Some(f2r) = f2.as_mut() {
+                    if f2r.notintermediate() != 0 {
                         fatal(
                             ::core::ptr::null_mut::<Floc>(),
-                            strlen((*f2).name) as size_t,
+                            strlen(f2r.name) as size_t,
                             b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            (*f2).name,
+                            f2r.name,
                         );
                     } else {
                         let rhs = {
-                            (*f2).set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            (*f2).secondary()
+                            f2r.set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                            f2r.secondary()
                         } as ::core::ffi::c_uint;
-                        (*f2).set_intermediate(rhs);
+                        f2r.set_intermediate(rhs);
                     }
-                    f2 = (*f2).prev;
+                    f2 = f2r.prev;
                 }
-                d = (*d).next;
+                d = dr.next;
             }
         } else {
             ALL_SECONDARY.store(true, Ordering::Relaxed);
         }
-        f = (*f).prev;
+        f = fr.prev;
     }
     if no_intermediates != 0 && all_secondary() {
         fatal(
@@ -1290,61 +1315,72 @@ pub unsafe fn snap_deps() {
         );
     }
     f = lookup_file(b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
-    if !f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0 {
+    if f.as_ref()
+        .is_some_and(|fr| fr.is_target() as ::core::ffi::c_int != 0)
+    {
         export_all_variables = 1;
     }
     f = lookup_file(b".IGNORE\0" as *const u8 as *const ::core::ffi::c_char);
-    if !f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0 {
-        if (*f).deps.is_null() {
+    if let Some(fr) = f
+        .as_ref()
+        .filter(|fr| fr.is_target() as ::core::ffi::c_int != 0)
+    {
+        if fr.deps.is_null() {
             crate::make_main::set_ignore_errors_mirror(true);
         } else {
-            d = (*f).deps;
-            while !d.is_null() {
-                f2 = (*d).file;
-                while !f2.is_null() {
-                    (*f2).command_flags |= COMMANDS_NOERROR;
-                    f2 = (*f2).prev;
+            d = fr.deps;
+            while let Some(dr) = d.as_ref() {
+                f2 = dr.file;
+                while let Some(f2r) = f2.as_mut() {
+                    f2r.command_flags |= COMMANDS_NOERROR;
+                    f2 = f2r.prev;
                 }
-                d = (*d).next;
+                d = dr.next;
             }
         }
     }
     f = lookup_file(b".SILENT\0" as *const u8 as *const ::core::ffi::c_char);
-    if !f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0 {
-        if (*f).deps.is_null() {
+    if let Some(fr) = f
+        .as_ref()
+        .filter(|fr| fr.is_target() as ::core::ffi::c_int != 0)
+    {
+        if fr.deps.is_null() {
             run_silent = 1;
         } else {
-            d = (*f).deps;
-            while !d.is_null() {
-                f2 = (*d).file;
-                while !f2.is_null() {
-                    (*f2).command_flags |= COMMANDS_SILENT;
-                    f2 = (*f2).prev;
+            d = fr.deps;
+            while let Some(dr) = d.as_ref() {
+                f2 = dr.file;
+                while let Some(f2r) = f2.as_mut() {
+                    f2r.command_flags |= COMMANDS_SILENT;
+                    f2 = f2r.prev;
                 }
-                d = (*d).next;
+                d = dr.next;
             }
         }
     }
     f = lookup_file(b".NOTPARALLEL\0" as *const u8 as *const ::core::ffi::c_char);
-    if !f.is_null() && (*f).is_target() as ::core::ffi::c_int != 0 {
+    if let Some(fr) = f
+        .as_ref()
+        .filter(|fr| fr.is_target() as ::core::ffi::c_int != 0)
+    {
         let mut d2: *mut dep;
-        if (*f).deps.is_null() {
+        if fr.deps.is_null() {
             crate::make_main::NOT_PARALLEL.store(true, ::std::sync::atomic::Ordering::Relaxed);
         } else {
-            d = (*f).deps;
-            while !d.is_null() {
-                f2 = (*d).file;
-                while !f2.is_null() {
-                    if !(*f2).deps.is_null() {
-                        d2 = (*f2).deps.as_ref().expect("checked non-null above").next;
-                        while !d2.is_null() {
-                            (*d2).set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            d2 = (*d2).next;
+            d = fr.deps;
+            while let Some(dr) = d.as_ref() {
+                f2 = dr.file;
+                while let Some(f2r) = f2.as_mut() {
+                    if !f2r.deps.is_null() {
+                        d2 = f2r.deps.as_ref().expect("checked non-null above").next;
+                        while let Some(d2r) = d2.as_mut() {
+                            d2r.set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                            d2 = d2r.next;
                         }
                     }
-                    f2 = (*f2).prev;
+                    f2 = f2r.prev;
                 }
-                d = (*d).next;
+                d = dr.next;
             }
         }
     }
@@ -1358,8 +1394,8 @@ pub unsafe fn snap_deps() {
         None,
     );
     let mut filep: *mut *mut ::core::ffi::c_void = filedump;
-    while !(*filep).is_null() {
-        snap_file(*filep as *mut file, prereqs);
+    while let Some(&fp) = filep.as_ref().filter(|p| !p.is_null()) {
+        snap_file(fp as *mut file, prereqs);
         filep = filep.offset(1 as ::core::ffi::c_int as isize);
     }
     free(filedump as *mut ::core::ffi::c_void);
@@ -1617,46 +1653,45 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
         }
         deps = (*deps).next;
     }
-    if !ood.is_null() {
+    if let Some(oodr) = ood.as_ref() {
         printf(
             b" | %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            if (*ood).wait_here() as ::core::ffi::c_int != 0 {
+            if oodr.wait_here() as ::core::ffi::c_int != 0 {
                 b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
             } else {
                 b"\0" as *const u8 as *const ::core::ffi::c_char
             },
-            if !(*ood).name.is_null() {
-                (*ood).name
+            if !oodr.name.is_null() {
+                oodr.name
             } else {
-                (*ood)
+                oodr
                     .file
                     .as_ref()
                     .expect("a nameless dep has a file")
                     .name
             },
         );
-        ood = (*ood).next;
-        while !ood.is_null() {
-            if (*ood).ignore_mtime() != 0 {
+        ood = oodr.next;
+        while let Some(oodn) = ood.as_ref() {
+            if oodn.ignore_mtime() != 0 {
                 printf(
                     b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    if (*ood).wait_here() as ::core::ffi::c_int != 0 {
+                    if oodn.wait_here() as ::core::ffi::c_int != 0 {
                         b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
                     } else {
                         b"\0" as *const u8 as *const ::core::ffi::c_char
                     },
-                    if !(*ood).name.is_null() {
-                        (*ood).name
+                    if !oodn.name.is_null() {
+                        oodn.name
                     } else {
-                        (*ood)
-                            .file
+                        oodn.file
                             .as_ref()
                             .expect("a nameless dep has a file")
                             .name
                     },
                 );
             }
-            ood = (*ood).next;
+            ood = oodn.next;
         }
     }
     putchar('\n' as i32);
