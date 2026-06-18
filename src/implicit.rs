@@ -4,6 +4,8 @@
 //!
 //! Port of `implicit.c`.
 
+use std::sync::atomic::Ordering;
+
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Dep, File};
 use crate::misc::free_ns_chain;
@@ -28,8 +30,8 @@ use crate::make_main::{db_level, no_intermediates, stopchar_map};
 use crate::read::parse_file_seq;
 pub use crate::rule::rule;
 use crate::rule::{
-    get_rule_defn, max_pattern_dep_length, max_pattern_deps, max_pattern_targets,
-    num_pattern_rules, pattern_rules,
+    get_rule_defn, max_pattern_dep_length, pattern_rules, MAX_PATTERN_DEPS, MAX_PATTERN_TARGETS,
+    NUM_PATTERN_RULES,
 };
 use crate::variable::o_automatic;
 use crate::variable::{
@@ -260,7 +262,7 @@ unsafe fn pattern_search(
     // failed. Holding it in an `Option` (rather than a nullable raw pointer)
     // keeps the pointer always valid storage-backed, never a null sentinel.
     let mut int_file_reuse: Option<*mut file> = None;
-    let mut max_deps: ::core::ffi::c_uint = max_pattern_deps;
+    let mut max_deps: ::core::ffi::c_uint = MAX_PATTERN_DEPS.load(Ordering::Relaxed);
     // The viable prerequisites recorded while trying a rule.
     let mut deplist: Vec<patdeps> = Vec::with_capacity(max_deps as usize);
     // Scratch buffer for a prerequisite name with the stem substituted.
@@ -270,8 +272,11 @@ unsafe fn pattern_search(
     let mut stemlen: size_t = 0;
     let fullstemlen: size_t;
     // Candidate rules whose targets match the name.
-    let mut tryrules: Vec<tryrule> =
-        Vec::with_capacity(num_pattern_rules.wrapping_mul(max_pattern_targets) as usize);
+    let mut tryrules: Vec<tryrule> = Vec::with_capacity(
+        NUM_PATTERN_RULES
+            .load(Ordering::Relaxed)
+            .wrapping_mul(MAX_PATTERN_TARGETS.load(Ordering::Relaxed)) as usize,
+    );
     let foundrule: usize;
     let mut file_vars_initialized: ::core::ffi::c_int = 0;
     let mut specific_rule_matched: bool = false;
@@ -615,8 +620,10 @@ unsafe fn pattern_search(
                             // Track the most deps any rule has produced (the
                             // Vec grows on its own).
                             if deps_found > max_deps {
-                                max_pattern_deps = max_pattern_deps.max(deps_found);
-                                max_deps = max_pattern_deps;
+                                let new_max =
+                                    MAX_PATTERN_DEPS.load(Ordering::Relaxed).max(deps_found);
+                                MAX_PATTERN_DEPS.store(new_max, Ordering::Relaxed);
+                                max_deps = new_max;
                             }
                             // Check each expanded prerequisite for viability.
                             d = dl;
