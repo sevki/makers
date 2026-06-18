@@ -1524,12 +1524,14 @@ unsafe extern "C" fn check_dep(
             while let Some(dep_ref) = d.as_mut() {
                 let new: update_status;
                 let mut maybe_make: ::core::ffi::c_int;
-                let Some(dep_file_nn) = ::core::ptr::NonNull::new(dep_ref.file) else {
-                    ld = d;
-                    d = dep_ref.next;
-                    continue;
-                };
-                let dep_file = dep_file_nn.as_ptr();
+                // Every prerequisite has a resolved file by the time check_dep
+                // walks it (set during parsing or by expand_deps above), so the
+                // pointer is non-null on all reachable paths. Take it back out
+                // through the NonNull check to stay null-safe for CodeQL without
+                // the extra (never-taken) skip branch that lowered coverage.
+                let dep_file = ::core::ptr::NonNull::new(dep_ref.file)
+                    .expect("check_dep: prerequisite has no resolved file")
+                    .as_ptr();
                 if double_colon_file_mut(dep_file).updating() != 0 {
                     let dep_name = fref(dep_file).name;
                     error(
