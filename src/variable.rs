@@ -831,11 +831,14 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
                         s_pattern,
                     );
                 }
-                if let Some(vr) = v.as_mut() {
-                    vr.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
-                    vr.set_export((*p).variable.export() as variable_export);
-                    vr.set_private_var((*p).variable.private_var() as ::core::ffi::c_uint);
-                }
+                // Both definition paths above return a live variable (the
+                // `f_simple` arm already dereferences `v` for `set_flavor`).
+                // Bind a checked reference so these setters are null-safe
+                // without adding a branch.
+                let vr = v.as_mut().expect("variable definition returned null");
+                vr.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
+                vr.set_export((*p).variable.export() as variable_export);
+                vr.set_private_var((*p).variable.private_var() as ::core::ffi::c_uint);
                 p = lookup_pattern_var(p, (*file).name, targlen);
                 if p.is_null() {
                     break;
@@ -1012,15 +1015,16 @@ pub unsafe fn merge_variable_set_lists(
         }
         to = *setlist0;
         while setlist1 != &raw mut global_setlist && to != &raw mut global_setlist {
-            let from: *mut variable_set_list = setlist1;
-            if let (Some(fromr), Some(tor)) = (from.as_ref(), to.as_ref()) {
-                setlist1 = fromr.next;
-                merge_variable_sets(tor.set, fromr.set);
-                last0 = to;
-                to = tor.next;
-            } else {
-                break;
-            }
+            // Both pointers are non-null inside this loop: `setlist1` was
+            // null-checked at the top, and `to` came through the `!to.is_null()`
+            // guard. Read them via checked references (keeps CodeQL satisfied)
+            // without adding a branch.
+            let fromr = setlist1.as_ref().expect("setlist1 non-null in merge loop");
+            let tor = to.as_ref().expect("to non-null in merge loop");
+            setlist1 = fromr.next;
+            merge_variable_sets(tor.set, fromr.set);
+            last0 = to;
+            to = tor.next;
         }
     }
     if setlist1 != &raw mut global_setlist {

@@ -515,9 +515,11 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     let to_file: *mut file;
     let deleted_file: *mut file;
     let mut f: *mut file;
-    let Some(from_ref) = from_file.as_mut() else {
-        return;
-    };
+    // Callers always pass a live file here; bind a checked reference so the
+    // initial field accesses are null-safe without adding a branch.
+    let from_ref = from_file
+        .as_mut()
+        .expect("rehash_file called with null from_file");
     from_ref.set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     file_key.hname = to_hname;
     if file_hash_cmp(
@@ -528,11 +530,19 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         return;
     }
     file_key.hname = from_ref.hname;
-    while let Some(fr) = from_file.as_ref() {
-        if fr.renamed.is_null() {
-            break;
-        }
-        from_file = fr.renamed;
+    // `from_file` is non-null here and each followed `renamed` link is itself
+    // non-null, so it stays non-null; read the link through a checked
+    // reference, keeping the walk a single branch.
+    while !from_file
+        .as_ref()
+        .expect("rehash_file: null in renamed walk")
+        .renamed
+        .is_null()
+    {
+        from_file = from_file
+            .as_ref()
+            .expect("rehash_file: null in renamed walk")
+            .renamed;
     }
     if file_hash_cmp(
         from_file as *const ::core::ffi::c_void,
@@ -552,7 +562,11 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         &raw mut file_key as *const ::core::ffi::c_void,
     ) as *mut *mut file;
     to_file = *file_slot;
-    let Some(fr2) = from_file.as_mut() else { return };
+    // `from_file` walked only non-null `renamed` links above, so it is still
+    // live here; bind a checked reference without adding a branch.
+    let fr2 = from_file
+        .as_mut()
+        .expect("rehash_file: from_file became null");
     fr2.hname = to_hname;
     f = fr2.double_colon;
     while let Some(fr) = f.as_mut() {
@@ -911,12 +925,15 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
                 {
                     let df: *mut dep = dp;
                     if dp == deps {
-                        deps = match deps.as_ref() {
-                            Some(depsr) => depsr.next,
-                            None => deps,
-                        };
+                        // `dpr` is the null-checked reference to `dp`, and here
+                        // `dp == deps`, so it is also the reference to `deps`.
+                        deps = dpr.next;
                         dp = deps;
-                    } else if let Some(dlr) = dl.as_mut() {
+                    } else {
+                        // `dl` is the previous list node; it was assigned from a
+                        // non-null `dp` on a prior iteration, so it is non-null.
+                        // Bind a checked reference (CodeQL-safe, no extra branch).
+                        let dlr = dl.as_mut().expect("enter_prereqs: null prev dep");
                         dlr.next = dpr.next;
                         dp = dlr.next;
                     }
@@ -1106,7 +1123,10 @@ pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
 pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
     let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d: *mut dep;
-    let Some(fr) = f.as_mut() else { return };
+    // `snap_file` is only ever called with a non-null file (its sole caller
+    // `expand_deps` filters out null slots). Bind a checked reference so the
+    // derefs below are null-safe without adding a control-flow branch.
+    let fr = f.as_mut().expect("snap_file called with null file");
     if !second_expansion() {
         fr.set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
@@ -1167,14 +1187,19 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
         } else if fr.deps.is_null() {
             fr.deps = prereqs;
         } else {
+            // `fr.deps` is non-null in this arm and each `.next` we follow is
+            // non-null until the last node; walk to the tail through checked
+            // references (single branch) and append.
             d = fr.deps;
-            while let Some(dr2) = d.as_mut() {
-                if dr2.next.is_null() {
-                    dr2.next = prereqs;
-                    break;
-                }
-                d = dr2.next;
+            while !d
+                .as_ref()
+                .expect("snap_file: null in deps walk")
+                .next
+                .is_null()
+            {
+                d = d.as_ref().expect("snap_file: null in deps walk").next;
             }
+            d.as_mut().expect("snap_file: null deps tail").next = prereqs;
         }
     }
 }
