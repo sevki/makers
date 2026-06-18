@@ -152,7 +152,11 @@ pub static ENV_RECURSION: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::
 pub fn env_recursion() -> u64 {
     ENV_RECURSION.load(::std::sync::atomic::Ordering::Relaxed)
 }
-static mut variable_changenum: ::core::ffi::c_ulong = 0;
+/// Monotonic counter bumped whenever the global variable set changes; used to
+/// invalidate the cached `.VARIABLES` value in `lookup_special_var`. Atomic so
+/// its reads/writes are plain safe ops; variable mutation is single-threaded,
+/// so `Relaxed` preserves the original program order.
+static VARIABLE_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
 static mut pattern_vars: *mut pattern_var = ::core::ptr::null::<pattern_var>() as *mut pattern_var;
 static mut last_pattern_vars: [*mut pattern_var; 256] =
     [::core::ptr::null::<pattern_var>() as *mut pattern_var; 256];
@@ -452,7 +456,7 @@ pub unsafe fn define_variable_in_set(
         var_slot as *const ::core::ffi::c_void,
     );
     if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
-        variable_changenum = variable_changenum.wrapping_add(1);
+        VARIABLE_CHANGENUM.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     (*v).value = xstrdup(value);
     if !flocp.is_null() {
@@ -567,7 +571,7 @@ pub unsafe fn undefine_variable_in_set(
             free_variable_name_and_value(v as *const ::core::ffi::c_void);
             free(v as *mut ::core::ffi::c_void);
             if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
-                variable_changenum = variable_changenum.wrapping_add(1);
+                VARIABLE_CHANGENUM.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -581,11 +585,8 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
     // rebuilt. Function-local atomic so the read/write are plain safe ops;
     // access is single-threaded, so `Relaxed` preserves the original order.
     static LAST_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
-    // `u64::from` keeps this width-agnostic: `variable_changenum` is `c_ulong`,
-    // which is u32 on some targets (e.g. 32-bit Linux) and u64 on others. On
-    // 64-bit targets the conversion is a no-op, so silence clippy there.
-    #[allow(clippy::useless_conversion)]
-    if u64::from(variable_changenum) != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
+    if VARIABLE_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
+        != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
         && (*(*var).name as ::core::ffi::c_int
             == *(b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
             && (*(*var).name as ::core::ffi::c_int == 0
@@ -634,9 +635,8 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
             vp = vp.offset(1 as ::core::ffi::c_int as isize);
         }
         *p.offset(-(1 as ::core::ffi::c_int as isize)) = 0;
-        #[allow(clippy::useless_conversion)]
         LAST_CHANGENUM.store(
-            u64::from(variable_changenum),
+            VARIABLE_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed),
             ::std::sync::atomic::Ordering::Relaxed,
         );
     }
@@ -961,7 +961,7 @@ unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *m
                     from_var as *const ::core::ffi::c_void,
                     to_var_slot as *const ::core::ffi::c_void,
                 );
-                variable_changenum = variable_changenum.wrapping_add(inc as ::core::ffi::c_ulong);
+                VARIABLE_CHANGENUM.fetch_add(inc as u64, ::std::sync::atomic::Ordering::Relaxed);
             } else {
                 free((*from_var).value as *mut ::core::ffi::c_void);
                 free(from_var as *mut ::core::ffi::c_void);

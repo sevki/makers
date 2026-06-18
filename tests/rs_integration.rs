@@ -756,6 +756,16 @@ fn considered_diamond() {
     check("considered-diamond", "53_considered_diamond.mk", "all", &[]);
 }
 
+#[test]
+fn changenum_staged_variables() {
+    // Each new variable definition bumps the global change counter (now an
+    // atomic), so `lookup_special_var` must rebuild `.VARIABLES` on each
+    // subsequent read. The fixture interleaves definitions of A/B/C with reads,
+    // so the filtered count must grow 1 -> 2 -> 3. Compared byte-for-byte
+    // against the C oracle.
+    check("changenum-staged", "54_changenum_staged.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
