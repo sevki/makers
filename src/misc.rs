@@ -442,12 +442,25 @@ pub unsafe fn next_token(mut s: *const c_char) -> *mut c_char {
 /// honoring nested parentheses or braces.
 /// # Safety
 /// `p` must be a valid NUL-terminated string.
-pub unsafe fn skip_reference(mut p: *const c_char) -> *mut c_char {
-    let openparen: c_char = *p;
+pub unsafe fn skip_reference(p: *const c_char) -> *mut c_char {
+    // Borrow the NUL-terminated input as a byte slice (including the NUL slot)
+    // and walk it by index, so the scan does no raw dereferences. Only the
+    // final result is turned back into a pointer.
+    let len = strlen(p);
+    let bytes = ::core::slice::from_raw_parts(p as *const u8, len + 1);
+    let off = skip_reference_off(bytes);
+    p.add(off) as *mut c_char
+}
+
+/// Index-based core of [`skip_reference`]: given the NUL-terminated bytes
+/// starting just past the `$`, return the offset of the first character after
+/// the reference. `bytes` must contain the terminating NUL.
+fn skip_reference_off(bytes: &[u8]) -> usize {
+    let openparen = bytes[0] as c_char;
     let mut count: c_int = 1;
 
     if openparen == 0 {
-        return p as *mut c_char;
+        return 0;
     }
     let closeparen: c_char = if openparen as c_int == '(' as i32 {
         ')' as c_char
@@ -455,29 +468,31 @@ pub unsafe fn skip_reference(mut p: *const c_char) -> *mut c_char {
         '}' as c_char
     } else {
         // Single-character reference like $X.
-        return p.add(1) as *mut c_char;
+        return 1;
     };
 
+    let mut p = 0usize;
     loop {
-        p = p.add(1);
+        p += 1;
+        let c = bytes[p] as c_char;
         // MAP_VARSEP marks ()/{} characters; skip everything else quickly.
-        if !stop_set(*p, MAP_NUL | MAP_VARSEP) {
+        if !stop_set(c, MAP_NUL | MAP_VARSEP) {
             continue;
         }
-        if *p == 0 {
+        if c == 0 {
             break;
         }
-        if *p == openparen {
+        if c == openparen {
             count += 1;
-        } else if *p == closeparen {
+        } else if c == closeparen {
             count -= 1;
             if count == 0 {
-                p = p.add(1);
+                p += 1;
                 break;
             }
         }
     }
-    p as *mut c_char
+    p
 }
 
 /// Find the next token in `*ptr`, advancing `*ptr` past it. Returns the
@@ -1051,6 +1066,94 @@ mod lindex_unsafe_oracle {
                         "mismatch buf={buf:?} c={c} len={len}"
                     );
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod skip_reference_unsafe_oracle {
+    use super::skip_reference;
+    use ::core::ffi::{c_char, c_int};
+
+    // Re-derive the helpers the oracle needs, identical to the module ones.
+    const MAP_NUL: c_int = 0x0001;
+    const MAP_VARSEP: c_int = 0x0080;
+
+    fn stop_set(c: c_char, mask: c_int) -> bool {
+        crate::make_main::stopchar_map()[c as u8 as usize] as c_int & mask != 0
+    }
+
+    /// Verbatim copy of the original c2rust-derived `skip_reference`, preserved
+    /// as a behavioral oracle for the safe slice-based rewrite.
+    ///
+    /// # Safety
+    /// `p` must be a valid NUL-terminated string.
+    unsafe fn skip_reference_oracle(mut p: *const c_char) -> *mut c_char {
+        let openparen: c_char = *p;
+        let mut count: c_int = 1;
+
+        if openparen == 0 {
+            return p as *mut c_char;
+        }
+        let closeparen: c_char = if openparen as c_int == '(' as i32 {
+            ')' as c_char
+        } else if openparen as c_int == '{' as i32 {
+            '}' as c_char
+        } else {
+            return p.add(1) as *mut c_char;
+        };
+
+        loop {
+            p = p.add(1);
+            if !stop_set(*p, MAP_NUL | MAP_VARSEP) {
+                continue;
+            }
+            if *p == 0 {
+                break;
+            }
+            if *p == openparen {
+                count += 1;
+            } else if *p == closeparen {
+                count -= 1;
+                if count == 0 {
+                    p = p.add(1);
+                    break;
+                }
+            }
+        }
+        p as *mut c_char
+    }
+
+    /// Drive representative inputs (the byte just past a `$`) through both the
+    /// safe `skip_reference` and the preserved unsafe oracle, asserting that
+    /// they return byte-identical pointers.
+    #[test]
+    fn matches_oracle() {
+        // Each case is NUL-terminated; `skip_reference` is passed the address
+        // of the first byte (the character following the `$`).
+        let cases: &[&[u8]] = &[
+            b"\0",            // empty / bare `$`
+            b"X\0",           // single-char reference `$X`
+            b")\0",           // lone closer
+            b"(foo)\0",       // `$(foo)`
+            b"{foo}\0",       // `${foo}`
+            b"(foo\0",        // unterminated paren ref
+            b"(a$(b)c)\0",    // nested parens
+            b"(a${b}c)\0",    // nested mixed braces inside parens
+            b"{a$(b)c}\0",    // nested parens inside braces
+            b"((()))\0",      // deep nesting
+            b"(unbalanced\0", // runs to NUL
+            b"(a)b)\0",       // stops at first balanced closer
+            b"( )\0",         // whitespace inside
+        ];
+
+        for &buf in cases {
+            let p = buf.as_ptr() as *const c_char;
+            unsafe {
+                let safe = skip_reference(p);
+                let oracle = skip_reference_oracle(p);
+                assert_eq!(safe, oracle, "mismatch buf={buf:?}");
             }
         }
     }
