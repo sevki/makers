@@ -410,14 +410,16 @@ pub fn lindex(hay: &[u8], c: u8) -> Option<usize> {
     hay.iter().position(|&b| b == c)
 }
 
-/// Return the address of the first whitespace, NUL, or newline in `s`.
-/// # Safety
-/// `s` must be a valid NUL-terminated string.
-pub unsafe fn end_of_token(mut s: *const c_char) -> *mut c_char {
-    while !stop_set(*s, MAP_SPACE | MAP_NUL) {
-        s = s.add(1);
-    }
-    s as *mut c_char
+/// Return the offset within `s` of the first whitespace byte (make's
+/// `MAP_SPACE` class). `s` should be the bytes of a NUL-terminated string
+/// *without* the trailing NUL (e.g. via `&buf[..strlen]`); the end of the
+/// slice plays the role of the NUL terminator, so a token that runs to the
+/// end of `s` yields `s.len()`. This is the offset form of make's
+/// `end_of_token`, which returns the address of the first whitespace-or-NUL.
+pub fn end_of_token(s: &[u8]) -> usize {
+    s.iter()
+        .position(|&b| stop_set(b as c_char, MAP_SPACE))
+        .unwrap_or(s.len())
 }
 
 /// Return the address of the first nonwhitespace character in `s`.
@@ -485,9 +487,14 @@ pub unsafe fn find_next_token(ptr: *mut *const c_char, lengthptr: *mut size_t) -
     if *p == 0 {
         return null_mut();
     }
-    *ptr = end_of_token(p);
+    // Bridge to the safe `end_of_token`: view `[p, NUL)` as a byte slice and
+    // get the token length, then advance the cursor by that many bytes. The
+    // slice ends at the NUL, so `end_of_token` stops at the first whitespace
+    // *or* the NUL, matching the original pointer walk exactly.
+    let tok_len = end_of_token(::core::slice::from_raw_parts(p as *const u8, strlen(p)));
+    *ptr = p.add(tok_len);
     if !lengthptr.is_null() {
-        *lengthptr = (*ptr).offset_from(p) as size_t;
+        *lengthptr = tok_len as size_t;
     }
     p as *mut c_char
 }
@@ -1149,6 +1156,61 @@ mod skip_reference_unsafe_oracle {
             let offset = skip_reference(buf);
             let safe = unsafe { buf.as_ptr().add(offset) as *mut c_char };
             let oracle = unsafe { skip_reference_oracle(buf.as_ptr() as *const c_char) };
+            assert_eq!(safe, oracle, "mismatch buf={buf:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod end_of_token_unsafe_oracle {
+    use super::{end_of_token, MAP_NUL, MAP_SPACE};
+    use ::core::ffi::{c_char, c_int};
+
+    fn stop_set(c: c_char, mask: c_int) -> bool {
+        crate::make_main::stopchar_map()[c as u8 as usize] as c_int & mask != 0
+    }
+
+    /// Verbatim copy of the original c2rust-derived `end_of_token`, preserved
+    /// as a behavioral oracle for the safe offset-based rewrite.
+    ///
+    /// # Safety
+    /// `s` must be a valid NUL-terminated string.
+    unsafe fn end_of_token_oracle(mut s: *const c_char) -> *mut c_char {
+        while !stop_set(*s, MAP_SPACE | MAP_NUL) {
+            s = s.add(1);
+        }
+        s as *mut c_char
+    }
+
+    /// Drive representative NUL-terminated inputs through both the safe
+    /// `end_of_token` (fed the bytes up to the NUL) and the preserved unsafe
+    /// oracle, asserting they agree on the token-end position. The safe API's
+    /// returned offset is mapped back to the pointer the oracle returns via
+    /// `s.add(offset)`.
+    #[test]
+    fn matches_oracle() {
+        crate::make_main::initialize_stopchar_map();
+
+        let cases: &[&[u8]] = &[
+            b"\0",            // empty: token end at offset 0
+            b"foo\0",         // whole string is the token
+            b"foo bar\0",     // stops at the space
+            b"foo\tbar\0",    // stops at the tab (MAP_BLANK)
+            b"foo\nbar\0",    // stops at the newline (MAP_NEWLINE)
+            b" foo\0",        // leading space: token end at offset 0
+            b"a b c\0",       // stops at the first space
+            b"\xff\x01 z\0",  // high bytes then a space
+            b"nospacehere\0", // runs to the NUL
+        ];
+
+        for &buf in cases {
+            // `buf` is NUL-terminated; feed the bytes up to (not including) the
+            // NUL to the safe API, matching how the real callers slice.
+            let strlen = buf.iter().position(|&b| b == 0).unwrap();
+            let offset = end_of_token(&buf[..strlen]);
+            // SAFETY: `offset <= strlen`, so `s.add(offset)` is in bounds.
+            let safe = unsafe { buf.as_ptr().add(offset) as *mut c_char };
+            let oracle = unsafe { end_of_token_oracle(buf.as_ptr() as *const c_char) };
             assert_eq!(safe, oracle, "mismatch buf={buf:?}");
         }
     }
