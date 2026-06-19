@@ -1021,11 +1021,12 @@ mod lindex_unsafe_oracle {
     /// `Option<usize>` is mapped back to the pointer the oracle returns:
     /// `Some(i)` -> `s.add(i)`, `None` -> null.
     ///
-    /// The safe API searches for a `u8`; the oracle compares the (signed)
-    /// `c_char` sign-extended to `c_int`. To exercise that boundary faithfully
-    /// we feed the oracle `(c as i8) as c_int`, which is exactly the value its
-    /// `b as c_int` comparison produces for byte `b == c` (this is what proves
-    /// sign-extension parity for the high byte `0xff`).
+    /// The safe API searches for a `u8`; the oracle promotes the byte via the
+    /// platform `c_char` type before comparing as `c_int`. To feed both sides
+    /// identical inputs, we derive the oracle's needle with `c as c_char as
+    /// c_int`, exactly mirroring how the oracle promotes `*s`. This keeps the
+    /// two implementations in lockstep on both signed- and unsigned-`c_char`
+    /// targets (the high byte `0xff` exercises that boundary).
     #[test]
     fn matches_oracle() {
         let cases: &[(&[u8], u8)] = &[
@@ -1041,7 +1042,7 @@ mod lindex_unsafe_oracle {
 
         for &(buf, c) in cases {
             let s = buf.as_ptr() as *const c_char;
-            let c_oracle = (c as i8) as c_int;
+            let c_oracle = c as c_char as c_int;
             // Exercise every prefix length so the boundary is covered.
             for len in 0..=buf.len() {
                 let safe = lindex(&buf[..len], c);
