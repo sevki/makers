@@ -1008,9 +1008,13 @@ pub unsafe fn expand_deps(f: *mut file) {
                     cs = cs.offset(1 as ::core::ffi::c_int as isize);
                 }
                 if nperc != 0 {
-                    let slen: size_t = (strlen((*d).name) as size_t)
-                        .wrapping_add(nperc)
-                        .wrapping_add(1);
+                    let name_len = strlen((*d).name) as size_t;
+                    let slen: size_t = name_len.wrapping_add(nperc).wrapping_add(1);
+                    // End of the source name, computed once so the per-`%`
+                    // token scan below stays bounded against it instead of
+                    // re-`strlen`'ing the whole remaining suffix each iteration
+                    // (which would be O(n^2) over a name with many `%`).
+                    let name_end: *const ::core::ffi::c_char = (*d).name.add(name_len as usize);
                     let mut pcs: *const ::core::ffi::c_char = (*d).name;
                     let name: *mut ::core::ffi::c_char = xmalloc(slen) as *mut ::core::ffi::c_char;
                     let mut s: *mut ::core::ffi::c_char = name;
@@ -1032,9 +1036,12 @@ pub unsafe fn expand_deps(f: *mut file) {
                         // Bridge to the safe `end_of_token`: it returns the
                         // offset of the first whitespace/NUL within `[cs, NUL)`,
                         // which we add back to `cs` to recover the C pointer.
+                        // `cs` points within `(*d).name`, so bound the slice with
+                        // the precomputed `name_end` rather than re-`strlen`'ing.
+                        let cs_avail = name_end.offset_from(cs) as usize;
                         let eot = cs.add(end_of_token(::core::slice::from_raw_parts(
                             cs as *const u8,
-                            strlen(cs),
+                            cs_avail,
                         )));
                         cs = strchr(eot, '%' as i32);
                     }
