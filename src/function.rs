@@ -317,13 +317,13 @@ pub unsafe fn subst_expand(
             // difference (an accepted span computation, not pointer arithmetic).
             let t_ptr = text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char;
             let nt = next_token(t_ptr);
-            // Bridge to the safe `end_of_token`: view `[nt, NUL)` as bytes and
-            // add the returned token length back to `nt` to recover the pointer.
-            let p_ptr = nt.add(end_of_token(::core::slice::from_raw_parts(
-                nt as *const u8,
-                strlen(nt),
-            )));
-            p = p_ptr as usize - text_bytes.as_ptr() as usize;
+            // `nt` points within `text_bytes`; recover its offset and scan only
+            // the already-bounded remaining slice for the token end. Feeding the
+            // bounded `text_bytes[nt_off..]` (which ends at the NUL) avoids a
+            // fresh `strlen` over the whole suffix per token, keeping this
+            // per-token loop O(n) overall instead of O(n^2).
+            let nt_off = nt as usize - text_bytes.as_ptr() as usize;
+            p = nt_off + end_of_token(&text_bytes[nt_off..]);
         } else {
             // p = strstr(t, subst)
             match text_bytes[ti..]
@@ -2499,7 +2499,6 @@ unsafe fn func_file(
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut fn_0: *mut ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
     if *fn_0.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '>' as i32 {
-        let len: size_t;
         let start: *const ::core::ffi::c_char;
         let nm: *mut ::core::ffi::c_char;
         let mut fp: *mut FILE;
@@ -2520,7 +2519,7 @@ unsafe fn func_file(
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start, NUL)` is exactly the token length.
-        len = end_of_token(::core::slice::from_raw_parts(
+        let len = end_of_token(::core::slice::from_raw_parts(
             start as *const u8,
             strlen(start),
         )) as size_t;
@@ -2581,7 +2580,6 @@ unsafe fn func_file(
         }
     } else if *fn_0.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '<' as i32 {
         let mut n: size_t = 0;
-        let len_0: size_t;
         let start_0: *const ::core::ffi::c_char;
         let nm_0: *mut ::core::ffi::c_char;
         let mut fp_0: *mut FILE;
@@ -2602,7 +2600,7 @@ unsafe fn func_file(
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start_0, NUL)` is exactly the token length.
-        len_0 = end_of_token(::core::slice::from_raw_parts(
+        let len_0 = end_of_token(::core::slice::from_raw_parts(
             start_0 as *const u8,
             strlen(start_0),
         )) as size_t;

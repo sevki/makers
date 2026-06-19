@@ -487,14 +487,30 @@ pub unsafe fn find_next_token(ptr: *mut *const c_char, lengthptr: *mut size_t) -
     if *p == 0 {
         return null_mut();
     }
-    // Bridge to the safe `end_of_token`: view `[p, NUL)` as a byte slice and
-    // get the token length, then advance the cursor by that many bytes. The
-    // slice ends at the NUL, so `end_of_token` stops at the first whitespace
-    // *or* the NUL, matching the original pointer walk exactly.
-    let tok_len = end_of_token(::core::slice::from_raw_parts(p as *const u8, strlen(p)));
-    *ptr = p.add(tok_len);
+    // `find_next_token` is called once per token over a whitespace-separated
+    // list, so it must NOT measure the whole remaining suffix (e.g. via
+    // `strlen` + `end_of_token`) per call — that would regress tokenization
+    // from O(n) to O(n^2). Instead, scan only the current token with a
+    // pointer-based walk that stops at the first blank/NUL, exactly as the
+    // original inline `end_of_token` did.
+    let end = end_of_token_raw(p);
+    *ptr = end;
     if !lengthptr.is_null() {
-        *lengthptr = tok_len as size_t;
+        *lengthptr = end.offset_from(p) as size_t;
+    }
+    p as *mut c_char
+}
+
+/// Walk `p` to the first whitespace-or-NUL byte and return its address. This
+/// is the pointer-based equivalent of the public safe `end_of_token`, kept
+/// private and used ONLY by `find_next_token`'s per-token hot path so that
+/// tokenizing a whitespace-separated list stays O(n) (no `strlen` over the
+/// whole suffix per token).
+/// # Safety
+/// `p` must be a valid NUL-terminated string.
+unsafe fn end_of_token_raw(mut p: *const c_char) -> *mut c_char {
+    while !stop_set(*p, MAP_SPACE | MAP_NUL) {
+        p = p.add(1);
     }
     p as *mut c_char
 }
