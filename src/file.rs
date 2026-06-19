@@ -1029,7 +1029,14 @@ pub unsafe fn expand_deps(f: *mut file) {
                         *fresh1 = '*' as i32 as ::core::ffi::c_char;
                         cs = cs.offset(1 as ::core::ffi::c_int as isize);
                         pcs = cs;
-                        cs = strchr(end_of_token(cs), '%' as i32);
+                        // Bridge to the safe `end_of_token`: it returns the
+                        // offset of the first whitespace/NUL within `[cs, NUL)`,
+                        // which we add back to `cs` to recover the C pointer.
+                        let eot = cs.add(end_of_token(::core::slice::from_raw_parts(
+                            cs as *const u8,
+                            strlen(cs),
+                        )));
+                        cs = strchr(eot, '%' as i32);
                     }
                     strcpy(s, pcs);
                     free((*d).name as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void);

@@ -316,7 +316,13 @@ pub unsafe fn subst_expand(
             // p = end_of_token(next_token(t)); recover its offset by address
             // difference (an accepted span computation, not pointer arithmetic).
             let t_ptr = text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char;
-            let p_ptr = end_of_token(next_token(t_ptr));
+            let nt = next_token(t_ptr);
+            // Bridge to the safe `end_of_token`: view `[nt, NUL)` as bytes and
+            // add the returned token length back to `nt` to recover the pointer.
+            let p_ptr = nt.add(end_of_token(::core::slice::from_raw_parts(
+                nt as *const u8,
+                strlen(nt),
+            )));
             p = p_ptr as usize - text_bytes.as_ptr() as usize;
         } else {
             // p = strstr(t, subst)
@@ -1294,7 +1300,13 @@ unsafe fn func_foreach(
     let mut len: size_t = 0;
     let var: *mut variable;
     let vp: *mut ::core::ffi::c_char = next_token(varname.as_ptr());
-    *end_of_token(vp).offset(0 as ::core::ffi::c_int as isize) = 0;
+    // Bridge to the safe `end_of_token`: terminate the token by writing a NUL
+    // at `vp + token_len` (the offset of the first whitespace/NUL).
+    let vp_eot = vp.add(end_of_token(::core::slice::from_raw_parts(
+        vp as *const u8,
+        strlen(vp),
+    )));
+    *vp_eot = 0;
     push_new_variable_scope();
     var = define_variable_in_set(
         vp,
@@ -2488,7 +2500,6 @@ unsafe fn func_file(
     let mut fn_0: *mut ::core::ffi::c_char = *argv.offset(0 as ::core::ffi::c_int as isize);
     if *fn_0.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '>' as i32 {
         let len: size_t;
-        let end: *const ::core::ffi::c_char;
         let start: *const ::core::ffi::c_char;
         let nm: *mut ::core::ffi::c_char;
         let mut fp: *mut FILE;
@@ -2507,8 +2518,12 @@ unsafe fn func_file(
                 b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
             );
         }
-        end = end_of_token(start);
-        len = end.offset_from(start) as ::core::ffi::c_long as size_t;
+        // Bridge to the safe `end_of_token`: the returned offset of the first
+        // whitespace/NUL within `[start, NUL)` is exactly the token length.
+        len = end_of_token(::core::slice::from_raw_parts(
+            start as *const u8,
+            strlen(start),
+        )) as size_t;
         alloca_allocations.push(::std::vec::from_elem(0, len.wrapping_add(1) as usize));
         nm = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         memcpy(
@@ -2567,7 +2582,6 @@ unsafe fn func_file(
     } else if *fn_0.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '<' as i32 {
         let mut n: size_t = 0;
         let len_0: size_t;
-        let end_0: *const ::core::ffi::c_char;
         let start_0: *const ::core::ffi::c_char;
         let nm_0: *mut ::core::ffi::c_char;
         let mut fp_0: *mut FILE;
@@ -2586,8 +2600,12 @@ unsafe fn func_file(
                 b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char,
             );
         }
-        end_0 = end_of_token(start_0);
-        len_0 = end_0.offset_from(start_0) as ::core::ffi::c_long as size_t;
+        // Bridge to the safe `end_of_token`: the returned offset of the first
+        // whitespace/NUL within `[start_0, NUL)` is exactly the token length.
+        len_0 = end_of_token(::core::slice::from_raw_parts(
+            start_0 as *const u8,
+            strlen(start_0),
+        )) as size_t;
         alloca_allocations.push(::std::vec::from_elem(0, len_0.wrapping_add(1) as usize));
         nm_0 = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
         memcpy(
@@ -3000,7 +3018,13 @@ unsafe fn func_call(
     let entry_p: *const function_table_entry;
     let v: *mut variable;
     fname = next_token(*argv.offset(0 as ::core::ffi::c_int as isize));
-    *end_of_token(fname).offset(0 as ::core::ffi::c_int as isize) = 0;
+    // Bridge to the safe `end_of_token`: terminate the function name by writing
+    // a NUL at `fname + token_len` (offset of the first whitespace/NUL).
+    let fname_eot = fname.add(end_of_token(::core::slice::from_raw_parts(
+        fname as *const u8,
+        strlen(fname),
+    )));
+    *fname_eot = 0;
     if *fname as ::core::ffi::c_int == 0 {
         return o;
     }
