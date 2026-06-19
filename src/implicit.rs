@@ -204,11 +204,10 @@ unsafe fn get_next_word(
             }
             b'$' => {
                 // `skip_reference` consumes a `$(...)`/`${...}` reference. It
-                // takes the byte following the `$`; hand it a borrowed
-                // sub-pointer and translate the result back to an index via
-                // address subtraction (no pointer arithmetic).
-                let after = skip_reference(bytes[i..].as_ptr() as *const ::core::ffi::c_char);
-                i = (after as usize) - (bytes.as_ptr() as usize);
+                // takes the bytes following the `$` and returns the number of
+                // bytes consumed; advance our index by that amount.
+                let consumed = skip_reference(&bytes[i..]);
+                i += consumed;
             }
             b'|' => {
                 break;

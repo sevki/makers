@@ -437,25 +437,11 @@ pub unsafe fn next_token(mut s: *const c_char) -> *mut c_char {
     s as *mut c_char
 }
 
-/// `p` points to the character after a `$` that introduces a variable
-/// reference; return the address of the first character after the reference,
-/// honoring nested parentheses or braces.
-/// # Safety
-/// `p` must be a valid NUL-terminated string.
-pub unsafe fn skip_reference(p: *const c_char) -> *mut c_char {
-    // Borrow the NUL-terminated input as a byte slice (including the NUL slot)
-    // and walk it by index, so the scan does no raw dereferences. Only the
-    // final result is turned back into a pointer.
-    let len = strlen(p);
-    let bytes = ::core::slice::from_raw_parts(p as *const u8, len + 1);
-    let off = skip_reference_off(bytes);
-    p.add(off) as *mut c_char
-}
-
-/// Index-based core of [`skip_reference`]: given the NUL-terminated bytes
-/// starting just past the `$`, return the offset of the first character after
-/// the reference. `bytes` must contain the terminating NUL.
-fn skip_reference_off(bytes: &[u8]) -> usize {
+/// `bytes` starts at the character after a `$` that introduces a variable
+/// reference; return the number of bytes consumed, i.e. the offset of the first
+/// character after the `$(...)`/`${...}`/`$X` reference, honoring nested
+/// parentheses or braces. `bytes` must contain the terminating NUL slot.
+pub fn skip_reference(bytes: &[u8]) -> usize {
     let openparen = bytes[0] as c_char;
     let mut count: c_int = 1;
 
@@ -1127,11 +1113,16 @@ mod skip_reference_unsafe_oracle {
 
     /// Drive representative inputs (the byte just past a `$`) through both the
     /// safe `skip_reference` and the preserved unsafe oracle, asserting that
-    /// they return byte-identical pointers.
+    /// they return byte-identical results.
     #[test]
     fn matches_oracle() {
-        // Each case is NUL-terminated; `skip_reference` is passed the address
-        // of the first byte (the character following the `$`).
+        // The oracle and the safe implementation both read the global stopchar
+        // map; initialize it up front so this test passes in isolation rather
+        // than relying on another test having seeded the global.
+        crate::make_main::initialize_stopchar_map();
+
+        // Each case is NUL-terminated; the character at index 0 is the one
+        // following the `$`.
         let cases: &[&[u8]] = &[
             b"\0",            // empty / bare `$`
             b"X\0",           // single-char reference `$X`
@@ -1149,12 +1140,12 @@ mod skip_reference_unsafe_oracle {
         ];
 
         for &buf in cases {
-            let p = buf.as_ptr() as *const c_char;
-            unsafe {
-                let safe = skip_reference(p);
-                let oracle = skip_reference_oracle(p);
-                assert_eq!(safe, oracle, "mismatch buf={buf:?}");
-            }
+            // Run the safe API and map its offset back to the pointer the
+            // oracle returns, then compare against the unsafe oracle directly.
+            let offset = skip_reference(buf);
+            let safe = unsafe { buf.as_ptr().add(offset) as *mut c_char };
+            let oracle = unsafe { skip_reference_oracle(buf.as_ptr() as *const c_char) };
+            assert_eq!(safe, oracle, "mismatch buf={buf:?}");
         }
     }
 }
