@@ -437,9 +437,39 @@ pub unsafe fn expand_string_buf(
                             c"unterminated variable reference".as_ptr(),
                         );
                     }
+                    // Bridge the safe `lindex(&[u8], u8) -> Option<usize>` to
+                    // the pointer-walking code below: view `[b, e)` as a byte
+                    // slice, search it, and map the index back to a pointer
+                    // (or null when not found, exactly as the old `lindex`).
+                    // The `e <= b` guard ensures we never form a slice from an
+                    // empty/invalid range.
+                    let lindex_ptr = |b: *const ::core::ffi::c_char,
+                                      e: *const ::core::ffi::c_char,
+                                      c: u8|
+                     -> *const ::core::ffi::c_char {
+                        // SAFETY: when `b < e`, `[b, e)` is a single valid
+                        // readable range (both point into the same buffer the
+                        // surrounding code already walks); the cast to `*const
+                        // u8` is a reinterpret of the same bytes.
+                        let hay = unsafe {
+                            if e <= b {
+                                &[][..]
+                            } else {
+                                ::core::slice::from_raw_parts(
+                                    b as *const u8,
+                                    e.offset_from(b) as usize,
+                                )
+                            }
+                        };
+                        match lindex(hay, c) {
+                            // SAFETY: `i` is within `[b, e)`.
+                            Some(i) => unsafe { b.add(i) },
+                            None => ::core::ptr::null(),
+                        }
+                    };
                     // A nested `$` means the variable name itself needs
                     // expanding first; find the matching close paren.
-                    p1 = lindex(beg, end, '$' as i32);
+                    p1 = lindex_ptr(beg, end, b'$');
                     if !p1.is_null() {
                         let mut count = 1;
                         p = beg;
@@ -465,11 +495,11 @@ pub unsafe fn expand_string_buf(
                     }
                     // `$(name:a=b)` substitution reference: rewrite it as
                     // a `%a` -> `%b` patsubst over the variable's value.
-                    colon = lindex(beg, end, ':' as i32);
+                    colon = lindex_ptr(beg, end, b':');
                     if !colon.is_null() {
                         let subst_beg: *const ::core::ffi::c_char = colon.add(1);
                         let subst_end: *const ::core::ffi::c_char =
-                            lindex(subst_beg, end, '=' as i32);
+                            lindex_ptr(subst_beg, end, b'=');
                         if subst_end.is_null() {
                             // A colon without `=` is just part of the name.
                             colon = ::core::ptr::null::<::core::ffi::c_char>();
