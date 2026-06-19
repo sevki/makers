@@ -400,21 +400,14 @@ pub unsafe fn xstrndup(str: *const c_char, length: size_t) -> *mut c_char {
     result
 }
 
-/// Limited INDEX: search through the string `s` for the character `c`, but
-/// don't go past `limit`. Returns null if `c` is not found before `limit`.
-/// # Safety
-/// `s..limit` must be a valid readable range.
-pub unsafe fn lindex(s: *const c_char, limit: *const c_char, c: c_int) -> *mut c_char {
-    // `s..limit` is a single valid readable range (per the safety contract),
-    // so view it as a slice and let the iterator perform the cursor walk.
-    let len = limit.offset_from(s).max(0) as usize;
-    let hay = ::core::slice::from_raw_parts(s, len);
-    // Compare in `c_int` exactly as the original did: `*s` is a `c_char` that
-    // sign-extends to `c_int`, matched against the raw `c` argument.
-    match hay.iter().position(|&b| b as c_int == c) {
-        Some(i) => s.add(i) as *mut c_char,
-        None => null_mut(),
-    }
+/// Limited INDEX: search the byte slice `hay` for the first occurrence of the
+/// byte `c`, returning its index, or `None` if absent.
+///
+/// `hay` is the original `s..limit` range; `Option<usize>` replaces the
+/// original pointer/null result. An empty slice yields `None`, which also
+/// removes the null/empty-range hazard the old pointer signature carried.
+pub fn lindex(hay: &[u8], c: u8) -> Option<usize> {
+    hay.iter().position(|&b| b == c)
 }
 
 /// Return the address of the first whitespace, NUL, or newline in `s`.
@@ -1024,34 +1017,45 @@ mod lindex_unsafe_oracle {
     }
 
     /// Drive representative inputs through both the safe `lindex` and the
-    /// preserved unsafe oracle, asserting byte-identical results (the returned
-    /// offset from the start, or null).
+    /// preserved unsafe oracle, asserting they agree. The safe function's
+    /// `Option<usize>` is mapped back to the pointer the oracle returns:
+    /// `Some(i)` -> `s.add(i)`, `None` -> null.
+    ///
+    /// The safe API searches for a `u8`; the oracle compares the (signed)
+    /// `c_char` sign-extended to `c_int`. To exercise that boundary faithfully
+    /// we feed the oracle `(c as i8) as c_int`, which is exactly the value its
+    /// `b as c_int` comparison produces for byte `b == c` (this is what proves
+    /// sign-extension parity for the high byte `0xff`).
     #[test]
     fn matches_oracle() {
-        let cases: &[(&[u8], c_int)] = &[
-            (b"hello", 'l' as i32),     // first match mid-string
-            (b"hello", 'h' as i32),     // match at start
-            (b"hello", 'o' as i32),     // match at last byte
-            (b"hello", 'z' as i32),     // no match
-            (b"", 'a' as i32),          // empty range
-            (b"a\0b", 0),               // searching for NUL, embedded
-            (b"aaa", 'a' as i32),       // returns the first of repeats
-            (b"\xff\x01", 0xff),        // high byte (sign-extension parity)
+        let cases: &[(&[u8], u8)] = &[
+            (b"hello", b'l'),     // first match mid-string
+            (b"hello", b'h'),     // match at start
+            (b"hello", b'o'),     // match at last byte
+            (b"hello", b'z'),     // no match
+            (b"", b'a'),          // empty range
+            (b"a\0b", 0),         // searching for NUL, embedded
+            (b"aaa", b'a'),       // returns the first of repeats
+            (b"\xff\x01", 0xff),  // high byte (sign-extension parity)
         ];
 
         for &(buf, c) in cases {
             let s = buf.as_ptr() as *const c_char;
-            // Exercise every prefix length so the `limit` boundary is covered.
+            let c_oracle = (c as i8) as c_int;
+            // Exercise every prefix length so the boundary is covered.
             for len in 0..=buf.len() {
-                unsafe {
-                    let limit = s.add(len);
-                    let safe = lindex(s, limit, c);
-                    let oracle = lindex_oracle(s, limit, c);
-                    assert_eq!(
-                        safe, oracle,
-                        "mismatch buf={buf:?} c={c} len={len}"
-                    );
-                }
+                let safe = lindex(&buf[..len], c);
+                // SAFETY: `s..s.add(len)` is within `buf`'s allocation.
+                let oracle = unsafe { lindex_oracle(s, s.add(len), c_oracle) };
+                let safe_ptr = match safe {
+                    // SAFETY: `i < len`, so `s.add(i)` is in bounds.
+                    Some(i) => (unsafe { s.add(i) }) as *mut c_char,
+                    None => null_mut(),
+                };
+                assert_eq!(
+                    safe_ptr, oracle,
+                    "mismatch buf={buf:?} c={c} len={len}"
+                );
             }
         }
     }
