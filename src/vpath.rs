@@ -279,17 +279,97 @@ pub unsafe fn construct_vpath_list(pattern: *mut c_char, dirpath: *mut c_char) {
 ///
 /// # Safety
 /// `file` must point to at least `len` readable bytes.
-pub unsafe fn gpath_search(file: *const c_char, len: size_t) -> c_int {
-    if !gpaths.is_null() && len <= (*gpaths).maxlen {
-        let needle = ::core::slice::from_raw_parts(file as *const u8, len);
-        for &entry in searchpath_entries(gpaths) {
-            // The GPATH entry must equal exactly the first `len` bytes.
-            if cstr_bytes(entry) == needle {
-                return 1;
+pub fn gpath_search(file: &[u8]) -> bool {
+    // SAFETY: `gpaths` is the process-wide GPATH list built during startup and
+    // only read here; the slices it hands out (`searchpath_entries`,
+    // `cstr_bytes`) borrow that still-C-shaped data for the duration of the
+    // comparison.
+    unsafe {
+        if !gpaths.is_null() && file.len() <= (*gpaths).maxlen {
+            for &entry in searchpath_entries(gpaths) {
+                // The GPATH entry must equal exactly the first `len` bytes.
+                if cstr_bytes(entry) == file {
+                    return true;
+                }
             }
         }
     }
-    0
+    false
+}
+
+#[cfg(test)]
+mod gpath_search_unsafe_oracle {
+    use super::*;
+
+    /// Verbatim pre-conversion implementation, preserved as a differential
+    /// oracle. Operates on a raw pointer + length and returns `c_int`.
+    unsafe fn gpath_search_oracle(file: *const c_char, len: size_t) -> c_int {
+        if !gpaths.is_null() && len <= (*gpaths).maxlen {
+            let needle = ::core::slice::from_raw_parts(file as *const u8, len);
+            for &entry in searchpath_entries(gpaths) {
+                // The GPATH entry must equal exactly the first `len` bytes.
+                if cstr_bytes(entry) == needle {
+                    return 1;
+                }
+            }
+        }
+        0
+    }
+
+    /// Build a `Vpath` whose `searchpath` holds the given NUL-terminated
+    /// entries and publish it as the process `gpaths` for the test. The
+    /// backing storage is leaked deliberately so it outlives the comparison.
+    fn install_gpaths(entries: &[&[u8]]) {
+        let mut ptrs: Vec<*const c_char> = entries
+            .iter()
+            .map(|e| {
+                let mut buf = e.to_vec();
+                buf.push(0);
+                Box::leak(buf.into_boxed_slice()).as_ptr() as *const c_char
+            })
+            .collect();
+        let maxlen = entries.iter().map(|e| e.len()).max().unwrap_or(0);
+        let npaths = ptrs.len();
+        let searchpath = ptrs.as_mut_ptr();
+        Box::leak(ptrs.into_boxed_slice());
+        let vp = Box::new(Vpath {
+            next: null_mut(),
+            pattern: null(),
+            percent: null(),
+            patlen: 0,
+            searchpath,
+            npaths,
+            maxlen,
+        });
+        unsafe {
+            gpaths = Box::leak(vp);
+        }
+    }
+
+    #[test]
+    fn safe_matches_oracle() {
+        install_gpaths(&[b"src", b"include", b"a/b/c"]);
+        let cases: &[&[u8]] = &[
+            b"src",
+            b"include",
+            b"a/b/c",
+            b"a/b",          // shorter than an entry, not a match
+            b"srcx",         // longer, exceeds maxlen check or differs
+            b"",             // empty needle
+            b"includ",       // prefix only
+            b"a/b/c/d/e/f",  // longer than maxlen
+        ];
+        for &needle in cases {
+            let safe = gpath_search(needle);
+            let oracle = unsafe { gpath_search_oracle(needle.as_ptr() as *const c_char, needle.len()) };
+            assert_eq!(
+                safe,
+                oracle != 0,
+                "mismatch for {:?}",
+                ::core::str::from_utf8(needle)
+            );
+        }
+    }
 }
 
 /// Search the given `Vpath` list for a directory where `file` exists. If it
