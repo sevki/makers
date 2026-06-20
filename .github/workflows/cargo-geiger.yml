@@ -1,0 +1,86 @@
+# cargo-geiger detects usage of unsafe Rust in this crate and all of its
+# dependencies. Because this is a C2Rust port of GNU make, the crate itself is
+# unsafe-heavy by design; the value here is tracking that surface over time and
+# keeping an eye on the unsafe footprint pulled in by dependencies.
+# More details at https://github.com/geiger-rs/cargo-geiger
+name: cargo-geiger
+
+on:
+    push:
+        branches: [main, master]
+    pull_request:
+    workflow_dispatch:
+
+concurrency:
+    group: cargo-geiger-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    cargo-geiger:
+        name: Scan unsafe usage with cargo-geiger
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+              with:
+                  profile: minimal
+                  toolchain: nightly-2026-05-04
+                  override: true
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Cache cargo-geiger binary
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/cargo-geiger
+                  key: cargo-geiger-bin-${{ runner.os }}
+
+            - name: Install cargo-geiger
+              run: |
+                  if ! command -v cargo-geiger >/dev/null 2>&1; then
+                      cargo install cargo-geiger --locked
+                  fi
+                  cargo geiger --version
+
+            # cargo-geiger returns a non-zero exit code when unsafe usage is
+            # found, which is expected for a C2Rust port. Capture the report and
+            # never fail the job on the unsafe count itself; this job is a
+            # tracking dashboard, not a gate.
+            - name: Run cargo-geiger
+              run: |
+                  set +e
+                  cargo geiger \
+                      --all-features \
+                      --output-format Ascii \
+                      2>&1 | tee cargo-geiger.txt
+                  echo "cargo-geiger exit: ${PIPESTATUS[0]}"
+                  set -e
+
+            - name: Publish report to job summary
+              if: always()
+              run: |
+                  {
+                      echo '## cargo-geiger unsafe usage report'
+                      echo ''
+                      echo '```'
+                      cat cargo-geiger.txt
+                      echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Upload cargo-geiger report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cargo-geiger-${{ github.sha }}
+                  path: cargo-geiger.txt
+                  if-no-files-found: error
+                  retention-days: 30
