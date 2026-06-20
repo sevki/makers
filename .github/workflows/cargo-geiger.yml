@@ -19,6 +19,9 @@ jobs:
     cargo-geiger:
         name: Scan unsafe usage with cargo-geiger
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            issues: write
         steps:
             - uses: actions/checkout@v4
 
@@ -84,3 +87,57 @@ jobs:
                   path: cargo-geiger.txt
                   if-no-files-found: error
                   retention-days: 30
+
+            # Maintain a single tracking issue with the latest report. We look
+            # up an existing open issue by its fixed title and edit it in place,
+            # so reruns refresh one issue instead of spamming new ones. Limited
+            # to main/master pushes and manual runs to avoid touching issues on
+            # every PR.
+            - name: Open or update tracking issue
+              if: >
+                  always() &&
+                  (github.ref == 'refs/heads/main' ||
+                   github.ref == 'refs/heads/master' ||
+                   github.event_name == 'workflow_dispatch')
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  TITLE="cargo-geiger: unsafe usage report"
+                  LABEL="cargo-geiger"
+
+                  # Ensure the label exists (idempotent; ignore "already exists").
+                  gh label create "$LABEL" \
+                      --color FFA500 \
+                      --description "Automated cargo-geiger unsafe-usage report" \
+                      2>/dev/null || true
+
+                  # GitHub caps issue bodies at 65536 chars; leave headroom for
+                  # the surrounding markdown and truncate the report if needed.
+                  REPORT=$(head -c 60000 cargo-geiger.txt)
+                  {
+                      echo "Automated unsafe-usage report from cargo-geiger."
+                      echo ""
+                      echo "- Commit: \`${GITHUB_SHA}\`"
+                      echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+                      echo "- Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                      echo ""
+                      echo '```'
+                      echo "$REPORT"
+                      echo '```'
+                  } > issue-body.md
+
+                  EXISTING=$(gh issue list \
+                      --state open \
+                      --search "\"$TITLE\" in:title" \
+                      --json number,title \
+                      --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+
+                  if [ -n "$EXISTING" ]; then
+                      gh issue edit "$EXISTING" --body-file issue-body.md
+                      echo "Updated existing issue #$EXISTING"
+                  else
+                      gh issue create \
+                          --title "$TITLE" \
+                          --label "$LABEL" \
+                          --body-file issue-body.md
+                  fi
