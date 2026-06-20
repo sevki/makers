@@ -32,16 +32,14 @@ impl Drop for OwnedCStr {
     }
 }
 
-/// Copy `[beg, end)` into an owned buffer prefixed with `%` and
-/// NUL-terminated, for the substitution-reference patsubst rewrite.
-unsafe fn percent_prefixed(
-    beg: *const ::core::ffi::c_char,
-    end: *const ::core::ffi::c_char,
-) -> Vec<u8> {
-    let len = end.offset_from(beg) as usize;
-    let mut buf = Vec::with_capacity(len + 2);
+/// Build a NUL-terminated `%`-prefixed copy of `s`: `b'%'`, then the bytes of
+/// `s`, then a trailing NUL. Used to rewrite a `$(name:a=b)` substitution
+/// reference as a `%a` -> `%b` patsubst, where the leading `%` ensures an
+/// explicit percent in the makefile takes precedence over the implicit one.
+fn percent_prefixed(s: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(s.len() + 2);
     buf.push(b'%');
-    buf.extend_from_slice(::core::slice::from_raw_parts(beg as *const u8, len));
+    buf.extend_from_slice(s);
     buf.push(0);
     buf
 }
@@ -526,8 +524,23 @@ pub unsafe fn expand_string_buf(
 
                                 // Prefix both sides with `%` so an explicit
                                 // percent in the makefile takes precedence.
-                                let mut pattern_buf = percent_prefixed(subst_beg, subst_end);
-                                let mut replace_buf = percent_prefixed(replace_beg, replace_end);
+                                // SAFETY: `subst_beg..subst_end` and
+                                // `replace_beg..replace_end` are spans within the
+                                // reference being parsed; each length is computed
+                                // once via `offset_from` and the bytes are read as
+                                // a single slice (no per-element strlen).
+                                let mut pattern_buf = percent_prefixed(unsafe {
+                                    ::core::slice::from_raw_parts(
+                                        subst_beg as *const u8,
+                                        subst_end.offset_from(subst_beg) as usize,
+                                    )
+                                });
+                                let mut replace_buf = percent_prefixed(unsafe {
+                                    ::core::slice::from_raw_parts(
+                                        replace_beg as *const u8,
+                                        replace_end.offset_from(replace_beg) as usize,
+                                    )
+                                });
                                 let mut pattern =
                                     pattern_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
                                 let mut replace =
@@ -685,4 +698,44 @@ pub unsafe fn allocated_variable_append(v: *const variable) -> *mut ::core::ffi:
         1,
     );
     swap_variable_buffer(obuf, olen)
+}
+
+#[cfg(test)]
+mod percent_prefixed_unsafe_oracle {
+    /// Original c2rust pointer-based implementation, preserved verbatim as a
+    /// differential-test oracle for the safe [`super::percent_prefixed`].
+    unsafe fn percent_prefixed(
+        beg: *const ::core::ffi::c_char,
+        end: *const ::core::ffi::c_char,
+    ) -> Vec<u8> {
+        let len = end.offset_from(beg) as usize;
+        let mut buf = Vec::with_capacity(len + 2);
+        buf.push(b'%');
+        buf.extend_from_slice(::core::slice::from_raw_parts(beg as *const u8, len));
+        buf.push(0);
+        buf
+    }
+
+    #[test]
+    fn matches_oracle() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"foo",
+            b"foo.o",
+            b"a=b",
+            b"with space",
+            b"%already",
+            b"\x00trailing-nul-mid", // arbitrary embedded byte
+            b"\xff\x80\x01",
+        ];
+        for &s in cases {
+            let safe = super::percent_prefixed(s);
+            // Build the same [beg, end) span the C bridge sees.
+            let beg = s.as_ptr() as *const ::core::ffi::c_char;
+            let end = unsafe { beg.add(s.len()) };
+            let oracle = unsafe { percent_prefixed(beg, end) };
+            assert_eq!(safe, oracle, "mismatch for input {s:?}");
+        }
+    }
 }
