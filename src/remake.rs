@@ -1883,7 +1883,10 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                 name_len = strlen(name_0)
                     .wrapping_sub(strlen((*file).name))
                     .wrapping_sub(1) as size_t;
-                if gpath_search(name_0, name_len) != 0 {
+                // SAFETY: `name_0`/`name_len` are the library pathname and its
+                // prefix length computed just above, so this borrows exactly the
+                // bytes the old pointer+length pair described.
+                if gpath_search(unsafe { ::core::slice::from_raw_parts(name_0 as *const u8, name_len as usize) }) {
                     rename_file(file, name_0);
                     while !file.renamed.is_null() {
                         file = file.renamed.as_mut().expect("f_mtime: null renamed file");
