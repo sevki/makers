@@ -664,6 +664,20 @@ unsafe extern "C" fn parse_var_assignment(
     }
     line.add(scan.rest) as *mut ::core::ffi::c_char
 }
+/// Copy a `vpath` directive's pattern token into an owned, NUL-terminated
+/// buffer, mirroring the `xstrndup(p, len)` the c2rust `eval` used.
+///
+/// `strndup(p, len)` returns a fresh allocation holding at most `len` bytes
+/// of `p`, truncated at the first embedded NUL and always NUL-terminated. A
+/// [`CString`](std::ffi::CString) captures exactly that contract while owning
+/// its (Rust-allocated) storage, so the scratch pattern is released by `Drop`
+/// instead of a paired libc `free`. `token` is the token slice `[p, p + len)`;
+/// the result holds its bytes up to the first NUL.
+fn vpath_pattern_token(token: &[u8]) -> ::std::ffi::CString {
+    let end = token.iter().position(|&b| b == 0).unwrap_or(token.len());
+    // `token[..end]` cannot contain a NUL, so `CString::new` never fails.
+    ::std::ffi::CString::new(&token[..end]).expect("token truncated at first NUL")
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -1011,7 +1025,6 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         crate::parser::LineClass::File(crate::parser::FileDirective::Vpath)
                     ) {
                         let mut cp_0: *const ::core::ffi::c_char;
-                        let vpat: *mut ::core::ffi::c_char;
                         let mut l_0: size_t = 0;
                         if initial_tab != 0 {
                             error(
@@ -1050,14 +1063,25 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             SIZE_MAX as size_t,
                         );
                         p = find_next_token(&raw mut cp_0, &raw mut l_0);
-                        if !p.is_null() {
-                            vpat = xstrndup(p, l_0);
+                        // Own the pattern token in a `CString` whose `Drop`
+                        // releases it, replacing the `xstrndup` + `free` pair.
+                        // `construct_vpath_list` only reads `pattern` (it interns
+                        // a copy via `strcache_add` / compares it), so the buffer
+                        // never escapes to C ownership.
+                        let vpat = if !p.is_null() {
+                            let token = ::core::slice::from_raw_parts(p as *const u8, l_0 as usize);
+                            let owned = vpath_pattern_token(token);
                             p = find_next_token(&raw mut cp_0, &raw mut l_0);
+                            Some(owned)
                         } else {
-                            vpat = ::core::ptr::null_mut::<::core::ffi::c_char>();
-                        }
-                        construct_vpath_list(vpat, p);
-                        free(vpat as *mut ::core::ffi::c_void);
+                            None
+                        };
+                        construct_vpath_list(
+                            vpat.as_ref().map_or(::core::ptr::null_mut(), |c| {
+                                c.as_ptr() as *mut ::core::ffi::c_char
+                            }),
+                            p,
+                        );
                     } else if matches!(
                         line_class,
                         crate::parser::LineClass::File(
@@ -3591,4 +3615,52 @@ pub unsafe fn parse_file_seq(
     }
     *stringp = p;
     new as *mut ::core::ffi::c_void
+}
+
+#[cfg(test)]
+mod vpath_pattern_token_unsafe_oracle {
+    use super::vpath_pattern_token;
+
+    /// Original c2rust ownership pattern preserved verbatim as a differential
+    /// oracle for the safe [`super::vpath_pattern_token`]: `xstrndup(p, len)`
+    /// produced a libc-`malloc`ed copy that the caller `free`d. We reproduce
+    /// it with `libc::strndup` / `libc::free` and return the observable bytes.
+    unsafe fn xstrndup_bytes(token: &[u8]) -> Vec<u8> {
+        // `token` is borrowed by the C call only; the duplicate is owned here.
+        let dup = libc::strndup(
+            token.as_ptr() as *const ::core::ffi::c_char,
+            token.len() as libc::size_t,
+        );
+        assert!(!dup.is_null(), "strndup allocation failed");
+        let bytes = ::core::ffi::CStr::from_ptr(dup).to_bytes().to_vec();
+        libc::free(dup as *mut ::core::ffi::c_void);
+        bytes
+    }
+
+    #[test]
+    fn matches_oracle() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"%.o",
+            b"%.c",
+            b"src/%",
+            b"foo.bar",
+            b"with-high\xff\x80\x01-bytes",
+            b"embedded\x00nul-truncates",
+            b"\x00leading-nul",
+            b"trailing-nul\x00",
+        ];
+        for &token in cases {
+            // The safe version yields a NUL-terminated owned buffer; compare
+            // the observable string bytes (up to, excluding, the terminator).
+            let safe = vpath_pattern_token(token);
+            let oracle = unsafe { xstrndup_bytes(token) };
+            assert_eq!(
+                safe.as_bytes(),
+                oracle.as_slice(),
+                "vpath_pattern_token mismatch for {token:?}"
+            );
+        }
+    }
 }
