@@ -192,12 +192,9 @@ impl ParsedArName {
     /// a prior [`ar_name`] check) into an owned buffer. Mirrors `ar_parse_name`:
     /// split at the first `(`, then drop the trailing `)`.
     ///
-    /// # Safety
-    ///
-    /// May call [`out_of_memory`], which is `unsafe`, on allocation failure.
-    /// Marked `unsafe` so the `out_of_memory()` diagnostic path is reachable
-    /// without introducing a new `unsafe` block.
-    unsafe fn parse(name: &::core::ffi::CStr) -> Self {
+    /// Calls [`out_of_memory`] on allocation failure, matching the original
+    /// `xstrdup`.
+    fn parse(name: &::core::ffi::CStr) -> Self {
         let src = name.to_bytes_with_nul();
         // Reserve fallibly so OOM routes through make's `out_of_memory()`
         // ("virtual memory exhausted") diagnostic, matching the original
@@ -565,7 +562,7 @@ mod parsed_ar_name_tests {
     /// embedded NUL-adjacent, high-byte, and single-character members.
     fn assert_same(name: &[u8]) {
         let cs = ::std::ffi::CString::new(name).expect("test input has no embedded NUL");
-        let parsed = unsafe { ParsedArName::parse(&cs) };
+        let parsed = ParsedArName::parse(&cs);
         // Read the produced C strings back as byte slices (no terminating NUL).
         let got_ar = unsafe { ::core::ffi::CStr::from_ptr(parsed.arname()) }.to_bytes();
         let got_mem = unsafe { ::core::ffi::CStr::from_ptr(parsed.memname()) }.to_bytes();
