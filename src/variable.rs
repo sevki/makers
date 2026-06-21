@@ -1368,9 +1368,9 @@ pub unsafe fn target_environment(
                         || *evslot as *mut ::core::ffi::c_void
                             == hash_deleted_item as *mut ::core::ffi::c_void
                     {
-                        // SAFETY: `v` is a live, non-null variable taken from
-                        // an occupied hash slot just above.
-                        if isglobal == 0 || should_export(unsafe { &*v }) {
+                        // `v` is a live, non-null variable taken from an
+                        // occupied hash slot just above.
+                        if isglobal == 0 || should_export(&*v) {
                             hash_insert_at(
                                 &raw mut table,
                                 v as *const ::core::ffi::c_void,
@@ -1403,9 +1403,9 @@ pub unsafe fn target_environment(
             let v_0: *mut variable = *v_slot;
             let mut value: *mut ::core::ffi::c_char = (*v_0).value;
             let mut cp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-            // SAFETY: `v_0` is a live, non-null variable taken from an
+            // `v_0` is a live, non-null variable taken from an
             // occupied hash slot just above.
-            if should_export(unsafe { &*v_0 }) {
+            if should_export(&*v_0) {
                 if (*v_0).recursive() as ::core::ffi::c_int != 0
                     && ((*v_0).origin() as ::core::ffi::c_int != o_env as ::core::ffi::c_int
                         && (*v_0).origin() as ::core::ffi::c_int
