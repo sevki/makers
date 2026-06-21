@@ -56,7 +56,7 @@ use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
 use crate::misc::{alpha_compare, concat};
-use crate::output::{error, fatal, perror_with_name};
+use crate::output::{error, fatal, out_of_memory, perror_with_name};
 use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -191,8 +191,19 @@ impl ParsedArName {
     /// Parse `name` (a well-formed `archive(member)` reference, as guaranteed by
     /// a prior [`ar_name`] check) into an owned buffer. Mirrors `ar_parse_name`:
     /// split at the first `(`, then drop the trailing `)`.
+    ///
+    /// Calls [`out_of_memory`] on allocation failure, matching the original
+    /// `xstrdup`.
     fn parse(name: &::core::ffi::CStr) -> Self {
-        let mut buf = name.to_bytes_with_nul().to_vec();
+        let src = name.to_bytes_with_nul();
+        // Reserve fallibly so OOM routes through make's `out_of_memory()`
+        // ("virtual memory exhausted") diagnostic, matching the original
+        // `xstrdup`, rather than aborting via Rust's allocation-error path.
+        let mut buf = Vec::new();
+        if buf.try_reserve_exact(src.len()).is_err() {
+            out_of_memory();
+        }
+        buf.extend_from_slice(src);
         // `ar_name` guarantees a '(' exists and the name ends with ')'.
         let lp = buf
             .iter()

@@ -149,7 +149,7 @@ pub use crate::job::childbase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
 use crate::make_main::{command_count, db_level, starting_directory, stopchar_map};
 pub use crate::output::output;
-use crate::output::{error, fatal, output_context, outputs};
+use crate::output::{error, fatal, out_of_memory, output_context, outputs};
 use crate::posixos::fd_noinherit;
 use crate::read::{eval_buffer, find_percent, parse_file_seq, reading_file};
 use crate::variable::{
@@ -2871,10 +2871,21 @@ unsafe extern "C" fn expand_builtin_function(
 /// (`Vec`, not `CString`) because the caller rewrites it in place while
 /// carving out argument substrings.
 fn copy_args_buffer(src: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(src.len() + 1);
-    buf.extend_from_slice(src);
-    buf.push(0);
-    buf
+    // The original `xmalloc(len + 1)` routed allocation failure through make's
+    // `out_of_memory()` ("virtual memory exhausted", make's own exit status)
+    // rather than aborting the process the way plain `Vec` growth does. Mirror
+    // that: reserve exactly `len + 1` bytes up front and, on reservation
+    // failure, route through make's `out_of_memory()`. The subsequent
+    // `extend`/`push` cannot reallocate because the capacity is already
+    // guaranteed.
+    let total = src.len() + 1;
+    let mut v: Vec<u8> = Vec::new();
+    if v.try_reserve_exact(total).is_err() {
+        out_of_memory();
+    }
+    v.extend_from_slice(src);
+    v.push(0);
+    v
 }
 
 /// # Safety
@@ -3907,91 +3918,45 @@ mod subst_and_strip_tests {
 
 #[cfg(test)]
 mod handle_function_abeg_unsafe_oracle {
-    //! Differential oracle for the RAII conversion of `handle_function`'s
-    //! `abeg` argument-copy buffer.
+    //! Pure-Rust expected-value test for the RAII conversion of
+    //! `handle_function`'s `abeg` argument-copy buffer.
     //!
     //! The original c2rust code allocated the buffer with `xmalloc(len + 1)`,
     //! filled it with `mempcpy(abeg, beg, len)` followed by a NUL terminator,
     //! and released it with `free(abeg)`. The conversion replaces this with an
-    //! owned `Vec<u8>` (pushed onto `alloca_allocations`) whose `as_mut_ptr()`
-    //! backs the same `mempcpy` + NUL write. This test asserts the two
-    //! constructions produce byte-identical buffer contents (including the
-    //! trailing NUL) across edge cases: empty input, embedded NUL, high bytes
-    //! (0x80 / 0xff), and `%`/paren-laden function-call payloads.
+    //! owned `Vec<u8>` produced by `copy_args_buffer`. Rather than replaying the
+    //! removed C functions, we compute the expected NUL-terminated bytes in safe
+    //! Rust and assert `copy_args_buffer(src)` matches, across edge cases: empty
+    //! input, single byte, embedded NUL, high bytes (0x80 / 0xff), a full
+    //! `0..=255` sweep, and `%`/paren-laden function-call payloads.
 
-    use libc::{c_char, c_void, free, malloc, memcpy};
-
-    /// Verbatim copy of the original unsafe allocation/fill/free logic. Returns
-    /// the buffer contents (len + 1 bytes, last byte the NUL) read back through
-    /// the platform `c_char` exactly as the splitter would see them.
-    fn oracle_via_xmalloc(beg: &[u8]) -> Vec<c_char> {
-        let len = beg.len();
-        unsafe {
-            let abeg = malloc(len + 1) as *mut c_char;
-            assert!(!abeg.is_null());
-            if len > 0 {
-                memcpy(
-                    abeg as *mut c_void,
-                    beg.as_ptr() as *const c_void,
-                    len,
-                );
-            }
-            *abeg.add(len) = 0;
-            // Promote bytes through the platform `c_char`, not i8.
-            let mut out: Vec<c_char> = Vec::with_capacity(len + 1);
-            for i in 0..=len {
-                out.push(*abeg.add(i));
-            }
-            free(abeg as *mut c_void);
-            out
-        }
-    }
-
-    /// The RAII construction under test: the owned `Vec<u8>` produced by
-    /// `copy_args_buffer`, read back through the platform `c_char` exactly as
-    /// the in-place splitter in `handle_function` would see it.
-    fn raii_via_vec(beg: &[u8]) -> Vec<c_char> {
-        let len = beg.len();
-        let mut buf = super::copy_args_buffer(beg);
-        // Buffer owns `len + 1` bytes: the copy plus the trailing terminator.
-        assert_eq!(buf.len(), len + 1);
-        let abeg = buf.as_mut_ptr() as *mut c_char;
-        let mut out: Vec<c_char> = Vec::with_capacity(len + 1);
-        unsafe {
-            for i in 0..=len {
-                out.push(*abeg.add(i));
-            }
-        }
-        out
-    }
-
-    fn assert_identical(beg: &[u8]) {
+    fn assert_copy(src: &[u8]) {
+        // Expected: a verbatim copy of `src` followed by a single NUL byte.
+        let mut want = src.to_vec();
+        want.push(0);
         assert_eq!(
-            oracle_via_xmalloc(beg),
-            raii_via_vec(beg),
-            "RAII abeg buffer differs from xmalloc oracle for input {beg:?}"
+            super::copy_args_buffer(src),
+            want,
+            "copy_args_buffer differs from expected NUL-terminated copy for input {src:?}"
         );
     }
 
     #[test]
     fn byte_identical_across_edge_cases() {
-        assert_identical(b"");
-        assert_identical(b"x");
-        assert_identical(b"foo,bar");
+        assert_copy(b"");
+        assert_copy(b"x");
+        assert_copy(b"foo,bar");
         // Embedded NUL: the copy is length-based, so the NUL is preserved.
-        assert_identical(b"a\0b");
-        // High bytes must round-trip through the platform c_char unchanged.
-        assert_identical(b"\x80\xff\x00\x7f");
-        assert_identical(&[0x80u8; 16]);
-        assert_identical(&[0xffu8; 16]);
+        assert_copy(b"a\0b");
+        // High bytes must round-trip unchanged.
+        assert_copy(b"\x80\xff\x00\x7f");
+        assert_copy(&[0x80u8; 16]);
+        assert_copy(&[0xffu8; 16]);
         // `%` patterns and nested parens, the kind of payload the splitter sees.
-        assert_identical(b"patsubst %.c,%.o,$(SRCS)");
-        assert_identical(b"$(foo $(bar),baz),%qux%");
-        // A longer mixed payload spanning all byte classes.
-        let mut big: Vec<u8> = Vec::new();
-        for b in 0u16..=255 {
-            big.push(b as u8);
-        }
-        assert_identical(&big);
+        assert_copy(b"patsubst %.c,%.o,$(SRCS)");
+        assert_copy(b"$(foo $(bar),baz),%qux%");
+        // A full sweep spanning every byte value.
+        let big: Vec<u8> = (0u16..=255).map(|b| b as u8).collect();
+        assert_copy(&big);
     }
 }
