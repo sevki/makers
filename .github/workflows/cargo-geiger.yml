@@ -15,6 +15,16 @@ concurrency:
     group: cargo-geiger-${{ github.ref }}
     cancel-in-progress: true
 
+# Pin cargo-geiger so the gate's HEAD count and the committed baseline are
+# produced by the SAME release. The committed `.cargo-geiger-baseline` (155677)
+# was generated with this version; a different release can count unsafe
+# differently, which would make unchanged PRs fail or let real additions pass.
+# The version is baked into the binary cache key (shared by both jobs below) so
+# a cache hit can never resurrect an unpinned build. Bump here AND refresh the
+# baseline together: bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline
+env:
+    GEIGER_VERSION: "0.13.0"
+
 jobs:
     cargo-geiger:
         name: Scan unsafe usage with cargo-geiger
@@ -45,12 +55,12 @@ jobs:
               uses: actions/cache@v4
               with:
                   path: ~/.cargo/bin/cargo-geiger
-                  key: cargo-geiger-bin-${{ runner.os }}
+                  key: cargo-geiger-bin-${{ runner.os }}-${{ env.GEIGER_VERSION }}
 
             - name: Install cargo-geiger
               run: |
                   if ! command -v cargo-geiger >/dev/null 2>&1; then
-                      cargo install cargo-geiger --locked
+                      cargo install cargo-geiger --version "${GEIGER_VERSION}" --locked
                   fi
                   cargo geiger --version
 
@@ -182,27 +192,30 @@ jobs:
               uses: actions/cache@v4
               with:
                   path: ~/.cargo/bin/cargo-geiger
-                  key: cargo-geiger-bin-${{ runner.os }}
+                  key: cargo-geiger-bin-${{ runner.os }}-${{ env.GEIGER_VERSION }}
 
             - name: Install cargo-geiger
               run: |
                   if ! command -v cargo-geiger >/dev/null 2>&1; then
-                      cargo install cargo-geiger --locked
+                      cargo install cargo-geiger --version "${GEIGER_VERSION}" --locked
                   fi
                   cargo geiger --version
 
-            # Gate against the TRUSTED main-branch baseline, not the one in the
-            # PR worktree. Otherwise a PR could add unsafe and bump
+            # Gate against the TRUSTED baseline on the PR's BASE branch, not the
+            # one in the PR worktree. Otherwise a PR could add unsafe and bump
             # .cargo-geiger-baseline in the same diff, so the comparison would be
-            # new-vs-new and never fire. Resolve from origin/main; until main
-            # carries a baseline, fall back to the in-tree file.
+            # new-vs-new and never fire. Resolve from the actual base branch
+            # (github.base_ref) so PRs into master/maintenance branches compare
+            # against the right tree; until that branch carries a baseline, fall
+            # back to the in-tree file.
             - name: Resolve trusted baseline
               run: |
-                  git fetch --depth=1 origin main:refs/remotes/origin/main || true
-                  if git show origin/main:.cargo-geiger-baseline > main-geiger-baseline 2>/dev/null; then
-                      echo "Using main-branch geiger baseline"
+                  BASE_REF="${{ github.base_ref }}"
+                  git fetch --depth=1 origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+                  if git show "origin/${BASE_REF}:.cargo-geiger-baseline" > main-geiger-baseline 2>/dev/null; then
+                      echo "Using ${BASE_REF}-branch geiger baseline"
                   else
-                      echo "No baseline on main yet; falling back to in-tree baseline"
+                      echo "No baseline on ${BASE_REF} yet; falling back to in-tree baseline"
                       cp .cargo-geiger-baseline main-geiger-baseline
                   fi
 
