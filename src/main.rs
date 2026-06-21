@@ -4088,16 +4088,21 @@ pub unsafe fn define_makeflags(options: &Options, makefile: ::core::ffi::c_int) 
     restore_variable_buffer(bufsave, lensave);
     v
 }
-/// # Safety
+/// Decide whether `make` should announce directory changes.
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn should_print_dir(options: &Options) -> ::core::ffi::c_int {
+/// Returns the explicit `--print-directory` / `--no-print-directory`
+/// choice when one was given; otherwise it prints unless `--silent` is set
+/// and both the make level is top-level and no `-C` directory was supplied.
+///
+/// The lone `unsafe` is a contained integer read of the `makelevel` global
+/// (`static mut` owned by main); no pointer is dereferenced.
+pub fn should_print_dir(options: &Options) -> bool {
     if let Some(v) = options.print_directory.get() {
-        return v as ::core::ffi::c_int;
+        return v;
     }
-    (!options.silent.get() && (makelevel > 0 || !options.directories.borrow().is_empty()))
-        as ::core::ffi::c_int
+    // SAFETY: reads the `makelevel` integer global; no pointer is dereferenced.
+    let nested = unsafe { makelevel } > 0;
+    !options.silent.get() && (nested || !options.directories.borrow().is_empty())
 }
 /// # Safety
 ///
@@ -5327,15 +5332,70 @@ mod option_helper_tests {
         let o = Options::new();
         // Explicit -w wins.
         opt_set_flag(&o, 'w' as i32, true);
-        assert_eq!(unsafe { should_print_dir(&o) }, 1);
+        assert!(should_print_dir(&o));
         opt_set_flag(&o, 'w' as i32, false);
-        assert_eq!(unsafe { should_print_dir(&o) }, 0);
-        // Unset: not silent, no -C dirs, makelevel 0 -> 0.
+        assert!(!should_print_dir(&o));
+        // Unset: not silent, no -C dirs, makelevel 0 -> false.
         let o2 = Options::new();
-        assert_eq!(unsafe { should_print_dir(&o2) }, 0);
+        assert!(!should_print_dir(&o2));
         // Silent suppresses it too.
         opt_set_flag(&o2, 's' as i32, true);
-        assert_eq!(unsafe { should_print_dir(&o2) }, 0);
+        assert!(!should_print_dir(&o2));
+    }
+}
+
+/// Verbatim copy of the pre-conversion `unsafe` implementation, kept as a
+/// behavior oracle so the safe `should_print_dir` can be differential-tested
+/// against the exact C-shaped logic it replaced.
+#[cfg(test)]
+mod should_print_dir_unsafe_oracle {
+    use super::{makelevel, Options};
+
+    pub unsafe fn should_print_dir(options: &Options) -> ::core::ffi::c_int {
+        if let Some(v) = options.print_directory.get() {
+            return v as ::core::ffi::c_int;
+        }
+        (!options.silent.get() && (makelevel > 0 || !options.directories.borrow().is_empty()))
+            as ::core::ffi::c_int
+    }
+}
+
+#[cfg(test)]
+mod should_print_dir_diff_tests {
+    use super::should_print_dir;
+    use super::should_print_dir_unsafe_oracle::should_print_dir as oracle;
+    use super::Options;
+
+    /// Build an `Options` from a tri-state `--print-directory`, the silent
+    /// flag, and a `-C` directory count, then assert the safe version and the
+    /// preserved unsafe oracle agree on the boolean (the oracle's 0/1 maps to
+    /// false/true).
+    fn check(print_directory: Option<bool>, silent: bool, dir_count: usize) {
+        let o = Options::new();
+        o.print_directory.set(print_directory);
+        o.silent.set(silent);
+        {
+            let mut dirs = o.directories.borrow_mut();
+            for _ in 0..dir_count {
+                dirs.push(c"d".to_owned());
+            }
+        }
+        let safe = should_print_dir(&o);
+        // SAFETY: `o` is a fully owned, valid Options; the oracle only reads
+        // its fields and the `makelevel` integer global.
+        let raw = unsafe { oracle(&o) };
+        assert_eq!(safe, raw != 0, "mismatch for {print_directory:?}/{silent}/{dir_count}");
+    }
+
+    #[test]
+    fn safe_matches_unsafe_oracle() {
+        for print_directory in [None, Some(true), Some(false)] {
+            for silent in [false, true] {
+                for dir_count in [0usize, 1, 3] {
+                    check(print_directory, silent, dir_count);
+                }
+            }
+        }
     }
 }
 
