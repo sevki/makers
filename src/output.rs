@@ -639,36 +639,23 @@ pub unsafe fn pfatal_with_name(name: *const ::core::ffi::c_char) -> ! {
 }
 /// Print the out-of-memory message without allocating and exit with
 /// `MAKE_FAILURE`.
-///
-/// # Safety
-/// Always safe to call; unsafe only for C-API signature compatibility.
-pub unsafe fn out_of_memory() -> ! {
-    writebuf(
-        fileno(stdout),
-        program as *const ::core::ffi::c_void,
-        strlen(program) as size_t,
-    );
-    writebuf(
-        fileno(stdout),
-        c": *** virtual memory exhausted\n".as_ptr() as *const ::core::ffi::c_void,
-        (::core::mem::size_of::<[::core::ffi::c_char; 32]>() as size_t).wrapping_sub(1),
-    );
-    exit(MAKE_FAILURE);
-}
-
-/// Safe wrapper around [`out_of_memory`] for callers in safe Rust code.
-///
-/// `out_of_memory` carries an `unsafe` marker purely for C-ABI signature
-/// compatibility (per its own docs it is "always safe to call"): it touches no
-/// caller-supplied pointers, only emitting the canonical
-/// `": *** virtual memory exhausted\n"` message and exiting with make's failure
-/// status. This wrapper lets allocation-failure paths in safe code route
-/// through the exact same behaviour without opening an `unsafe` block at the
-/// call site.
-pub fn out_of_memory_safe() -> ! {
-    // SAFETY: `out_of_memory` dereferences no caller pointers; it writes a
-    // fixed message to stdout and exits. Safe to invoke unconditionally.
-    unsafe { out_of_memory() }
+pub fn out_of_memory() -> ! {
+    // SAFETY: during makefile evaluation the C globals (`stdout`, `program`)
+    // are initialized; these calls only read those globals and a static C
+    // string, then exit. No caller-supplied pointers are dereferenced.
+    unsafe {
+        writebuf(
+            fileno(stdout),
+            program as *const ::core::ffi::c_void,
+            strlen(program) as size_t,
+        );
+        writebuf(
+            fileno(stdout),
+            c": *** virtual memory exhausted\n".as_ptr() as *const ::core::ffi::c_void,
+            (::core::mem::size_of::<[::core::ffi::c_char; 32]>() as size_t).wrapping_sub(1),
+        );
+        exit(MAKE_FAILURE);
+    }
 }
 
 /// Native-Rust counterparts to the variadic C-ABI `message`/`error`/`fatal`
