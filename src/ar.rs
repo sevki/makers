@@ -169,15 +169,66 @@ unsafe fn ar_member_date_1(
         0 as intmax_t
     }
 }
+/// Owns a parsed `archive(member)` name split into two NUL-terminated C
+/// strings inside a single buffer.
+///
+/// `ar_parse_name` historically did `xstrdup(name)`, overwrote the `(` and the
+/// trailing `)` with NULs in place, and handed the caller back two interior
+/// pointers it then had to `free`. `ParsedArName` replaces that `xstrdup`/`free`
+/// ownership pair with an owned `Vec<u8>` that drops automatically: it holds
+/// `archive\0member\0`, so [`arname`](Self::arname) is the leading C string and
+/// [`memname`](Self::memname) starts at `member_off`. Nothing escapes — the
+/// buffer is allocated, used, and dropped entirely within the calling function.
+struct ParsedArName {
+    /// The dup of `name` with `(` and the trailing `)` rewritten as NULs,
+    /// i.e. `archive\0member\0`, kept owned so it drops at end of scope.
+    buf: Vec<u8>,
+    /// Byte offset of the member C string within `buf`.
+    member_off: usize,
+}
+
+impl ParsedArName {
+    /// Parse `name` (a well-formed `archive(member)` reference, as guaranteed by
+    /// a prior [`ar_name`] check) into an owned buffer. Mirrors `ar_parse_name`:
+    /// split at the first `(`, then drop the trailing `)`.
+    fn parse(name: &::core::ffi::CStr) -> Self {
+        let mut buf = name.to_bytes_with_nul().to_vec();
+        // `ar_name` guarantees a '(' exists and the name ends with ')'.
+        let lp = buf
+            .iter()
+            .position(|&c| c == b'(')
+            .expect("ParsedArName::parse: ar_name guarantees a '('");
+        buf[lp] = 0;
+        let member_off = lp + 1;
+        // Overwrite the trailing ')' (the byte before the original NUL) with a
+        // NUL, exactly as `p[strlen(p) - 1] = '\0'` did.
+        let close = buf.len() - 2;
+        buf[close] = 0;
+        ParsedArName { buf, member_off }
+    }
+
+    /// The archive C string (`archive`).
+    fn arname(&self) -> *const ::core::ffi::c_char {
+        self.buf.as_ptr() as *const ::core::ffi::c_char
+    }
+
+    /// The member C string (`member`).
+    fn memname(&self) -> *const ::core::ffi::c_char {
+        self.buf[self.member_off..].as_ptr() as *const ::core::ffi::c_char
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
-    let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    // `name` is `archive(member)`; own the split buffer here so it drops on
+    // return (replacing the old `ar_parse_name` xstrdup + `free`).
+    let parsed = ParsedArName::parse(::core::ffi::CStr::from_ptr(name));
+    let arname = parsed.arname();
+    let memname = parsed.memname();
     let val: intmax_t;
-    ar_parse_name(name, &raw mut arname, &raw mut memname);
     let mut arfile: *mut file;
     arfile = lookup_file(arname);
     if arfile.is_null() && file_exists_p(arname) != 0 {
@@ -191,7 +242,6 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
         Some(ar_member_date_1),
         memname as *const ::core::ffi::c_void,
     );
-    free(arname as *mut ::core::ffi::c_void);
     if (0 as intmax_t) < val
         && val
             <= (if (0 as ::core::ffi::c_int as time_t) < -(1 as ::core::ffi::c_int) as time_t {
@@ -466,5 +516,57 @@ mod ar_name_tests {
         // Only the unsupported form needs both an inner '(' and a matching
         // inner ')'. A lone inner '(' is treated as part of the member name.
         assert_eq!(kind("lib((member)"), "member");
+    }
+}
+
+#[cfg(test)]
+mod parsed_ar_name_tests {
+    use super::ParsedArName;
+
+    /// Pre-conversion oracle: the in-place split that `ar_parse_name` did on an
+    /// `xstrdup`'d copy. Operates on an owned `Vec<u8>` (mirroring the dup),
+    /// overwrites the first `(` and the trailing `)` with NULs, and returns the
+    /// resulting `(arname, memname)` C-string byte slices (without their NULs),
+    /// reproducing the interior pointers `ar_parse_name` handed back.
+    fn ar_parse_name_oracle(name: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        // xstrdup: a NUL-terminated copy.
+        let mut buf = name.to_vec();
+        buf.push(0);
+        // p = strchr(arname, '('); *(p++) = '\0';
+        let lp = buf
+            .iter()
+            .position(|&c| c == b'(')
+            .expect("oracle: name must contain '('");
+        buf[lp] = 0;
+        // p[strlen(p) - 1] = '\0';  (the trailing ')' before the copy's NUL).
+        let close = buf.len() - 2;
+        buf[close] = 0;
+        let arname = buf[..lp].to_vec();
+        let memname = buf[lp + 1..close].to_vec();
+        (arname, memname)
+    }
+
+    /// Drive the safe `ParsedArName` and the preserved oracle through the same
+    /// inputs and assert byte-identical archive/member strings, including
+    /// embedded NUL-adjacent, high-byte, and single-character members.
+    fn assert_same(name: &[u8]) {
+        let cs = ::std::ffi::CString::new(name).expect("test input has no embedded NUL");
+        let parsed = ParsedArName::parse(&cs);
+        // Read the produced C strings back as byte slices (no terminating NUL).
+        let got_ar = unsafe { ::core::ffi::CStr::from_ptr(parsed.arname()) }.to_bytes();
+        let got_mem = unsafe { ::core::ffi::CStr::from_ptr(parsed.memname()) }.to_bytes();
+        let (want_ar, want_mem) = ar_parse_name_oracle(name);
+        assert_eq!(got_ar, &want_ar[..], "arname mismatch for {name:?}");
+        assert_eq!(got_mem, &want_mem[..], "memname mismatch for {name:?}");
+    }
+
+    #[test]
+    fn matches_oracle_on_representative_inputs() {
+        assert_same(b"lib.a(member.o)");
+        assert_same(b"a(b)"); // single-char archive and member
+        assert_same(b"lib((member)"); // lone inner '(' is part of the member
+        assert_same(b"/path/to/lib.a(very_long_member_name.o)");
+        assert_same(b"\xc3\xa9lib.a(m\xc3\xa9mber.o)"); // high bytes both sides
+        assert_same(b"x(\xff)"); // high-byte single-byte member
     }
 }
