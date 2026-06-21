@@ -43,11 +43,6 @@ extern "C" {
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> ::core::ffi::c_int;
-    fn mempcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
 
@@ -2866,6 +2861,22 @@ unsafe extern "C" fn expand_builtin_function(
     }
     o
 }
+/// Build the owned, NUL-terminated working buffer that `handle_function` uses
+/// to split a non-`expand_args` function's argument list in place.
+///
+/// This is the RAII replacement for the original `xmalloc(len + 1)` +
+/// `mempcpy(abeg, beg, len)` + trailing `'\0'` + `free(abeg)` sequence: the
+/// returned `Vec<u8>` owns exactly `src.len() + 1` bytes (the copy plus the
+/// terminator) and frees itself on drop. It is a real, mutable allocation
+/// (`Vec`, not `CString`) because the caller rewrites it in place while
+/// carving out argument substrings.
+fn copy_args_buffer(src: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(src.len() + 1);
+    buf.extend_from_slice(src);
+    buf.push(0);
+    buf
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -2885,7 +2896,6 @@ pub unsafe fn handle_function(
     let mut beg: *const ::core::ffi::c_char;
     let mut end: *const ::core::ffi::c_char;
     let mut count: ::core::ffi::c_int = 0;
-    let mut abeg: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let argv: *mut *mut ::core::ffi::c_char;
     let mut argvp: *mut *mut ::core::ffi::c_char;
     let mut nargs: ::core::ffi::c_uint;
@@ -2962,13 +2972,21 @@ pub unsafe fn handle_function(
         let len: size_t = end.offset_from(beg) as ::core::ffi::c_long as size_t;
         let mut p_0: *mut ::core::ffi::c_char;
         let aend: *mut ::core::ffi::c_char;
-        abeg = xmalloc(len.wrapping_add(1)) as *mut ::core::ffi::c_char;
-        aend = mempcpy(
-            abeg as *mut ::core::ffi::c_void,
-            beg as *const ::core::ffi::c_void,
-            len as size_t,
-        ) as *mut ::core::ffi::c_char;
-        *aend = 0;
+        // Owned, genuinely-mutable copy of `[beg, end)` plus a NUL terminator
+        // (was `xmalloc(len+1)` + `mempcpy` + `free(abeg)`). The arg-splitter
+        // below rewrites this buffer in place (`*next_0 = 0`) and `argv` holds
+        // borrows into it, so it must be a real `Vec<u8>` (mutable) -- a
+        // `CString::as_ptr()` here would be UB. Pushing it onto
+        // `alloca_allocations` ties its lifetime to the function, dropping it
+        // (the former `free`) only after `expand_builtin_function` has consumed
+        // the borrowed `argv` slices.
+        alloca_allocations.push(copy_args_buffer(::core::slice::from_raw_parts(
+            beg as *const u8,
+            len as usize,
+        )));
+        let abeg: *mut ::core::ffi::c_char =
+            alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
+        aend = abeg.add(len as usize);
         p_0 = abeg;
         nargs = 0;
         while p_0 <= aend {
@@ -2994,9 +3012,9 @@ pub unsafe fn handle_function(
             free(*argvp as *mut ::core::ffi::c_void);
             argvp = argvp.offset(1 as ::core::ffi::c_int as isize);
         }
-    } else {
-        free(abeg as *mut ::core::ffi::c_void);
     }
+    // In the non-expand-args branch the former `free(abeg)` is now handled by
+    // `alloca_allocations` dropping at end of scope (RAII).
     1
 }
 unsafe fn func_call(
@@ -3884,5 +3902,96 @@ mod subst_and_strip_tests {
             assert_eq!(*end, 0, "buffer is NUL-terminated at the cursor");
             assert!(!variable_buffer.is_null());
         }
+    }
+}
+
+#[cfg(test)]
+mod handle_function_abeg_unsafe_oracle {
+    //! Differential oracle for the RAII conversion of `handle_function`'s
+    //! `abeg` argument-copy buffer.
+    //!
+    //! The original c2rust code allocated the buffer with `xmalloc(len + 1)`,
+    //! filled it with `mempcpy(abeg, beg, len)` followed by a NUL terminator,
+    //! and released it with `free(abeg)`. The conversion replaces this with an
+    //! owned `Vec<u8>` (pushed onto `alloca_allocations`) whose `as_mut_ptr()`
+    //! backs the same `mempcpy` + NUL write. This test asserts the two
+    //! constructions produce byte-identical buffer contents (including the
+    //! trailing NUL) across edge cases: empty input, embedded NUL, high bytes
+    //! (0x80 / 0xff), and `%`/paren-laden function-call payloads.
+
+    use libc::{c_char, c_void, free, malloc, memcpy};
+
+    /// Verbatim copy of the original unsafe allocation/fill/free logic. Returns
+    /// the buffer contents (len + 1 bytes, last byte the NUL) read back through
+    /// the platform `c_char` exactly as the splitter would see them.
+    fn oracle_via_xmalloc(beg: &[u8]) -> Vec<c_char> {
+        let len = beg.len();
+        unsafe {
+            let abeg = malloc(len + 1) as *mut c_char;
+            assert!(!abeg.is_null());
+            if len > 0 {
+                memcpy(
+                    abeg as *mut c_void,
+                    beg.as_ptr() as *const c_void,
+                    len,
+                );
+            }
+            *abeg.add(len) = 0;
+            // Promote bytes through the platform `c_char`, not i8.
+            let mut out: Vec<c_char> = Vec::with_capacity(len + 1);
+            for i in 0..=len {
+                out.push(*abeg.add(i));
+            }
+            free(abeg as *mut c_void);
+            out
+        }
+    }
+
+    /// The RAII construction under test: the owned `Vec<u8>` produced by
+    /// `copy_args_buffer`, read back through the platform `c_char` exactly as
+    /// the in-place splitter in `handle_function` would see it.
+    fn raii_via_vec(beg: &[u8]) -> Vec<c_char> {
+        let len = beg.len();
+        let mut buf = super::copy_args_buffer(beg);
+        // Buffer owns `len + 1` bytes: the copy plus the trailing terminator.
+        assert_eq!(buf.len(), len + 1);
+        let abeg = buf.as_mut_ptr() as *mut c_char;
+        let mut out: Vec<c_char> = Vec::with_capacity(len + 1);
+        unsafe {
+            for i in 0..=len {
+                out.push(*abeg.add(i));
+            }
+        }
+        out
+    }
+
+    fn assert_identical(beg: &[u8]) {
+        assert_eq!(
+            oracle_via_xmalloc(beg),
+            raii_via_vec(beg),
+            "RAII abeg buffer differs from xmalloc oracle for input {beg:?}"
+        );
+    }
+
+    #[test]
+    fn byte_identical_across_edge_cases() {
+        assert_identical(b"");
+        assert_identical(b"x");
+        assert_identical(b"foo,bar");
+        // Embedded NUL: the copy is length-based, so the NUL is preserved.
+        assert_identical(b"a\0b");
+        // High bytes must round-trip through the platform c_char unchanged.
+        assert_identical(b"\x80\xff\x00\x7f");
+        assert_identical(&[0x80u8; 16]);
+        assert_identical(&[0xffu8; 16]);
+        // `%` patterns and nested parens, the kind of payload the splitter sees.
+        assert_identical(b"patsubst %.c,%.o,$(SRCS)");
+        assert_identical(b"$(foo $(bar),baz),%qux%");
+        // A longer mixed payload spanning all byte classes.
+        let mut big: Vec<u8> = Vec::new();
+        for b in 0u16..=255 {
+            big.push(b as u8);
+        }
+        assert_identical(&big);
     }
 }
