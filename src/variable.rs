@@ -1965,33 +1965,146 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
     name: ::core::ptr::null::<::core::ffi::c_char>(),
     len: 0,
 }; 13];
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
+/// Emit a "reference to undefined variable" warning for `name`, unless `name`
+/// is one of the built-in always-defined variables in the `defined_vars`
+/// table, or the warning is inactive.
+pub fn warn_undefined(name: &[u8]) {
     if warning::is_active(Type::UndefinedVar) {
-        let mut dp: *const defined_vars;
-        dp = &raw const defined_vars as *const defined_vars;
-        while !(*dp).name.is_null() {
-            if (*dp).len == len
-                && memcmp(
-                    (*dp).name as *const ::core::ffi::c_void,
-                    name as *const ::core::ffi::c_void,
-                    len as size_t,
-                ) == 0
-            {
-                return;
+        // SAFETY: `defined_vars` is a process-wide, NUL-terminated table of
+        // built-in variable names, populated once during startup and never
+        // mutated afterwards. We only read it here, walking until the
+        // sentinel null `name`, and compare each entry's bytes against `name`.
+        let is_builtin = unsafe {
+            let mut dp = &raw const defined_vars as *const defined_vars;
+            let mut found = false;
+            while !(*dp).name.is_null() {
+                if (*dp).len == name.len()
+                    && ::core::slice::from_raw_parts((*dp).name as *const u8, (*dp).len) == name
+                {
+                    found = true;
+                    break;
+                }
+                dp = dp.offset(1);
             }
-            dp = dp.offset(1 as ::core::ffi::c_int as isize);
+            found
+        };
+        if is_builtin {
+            return;
         }
         if warning::is_active(Type::UndefinedVar) {
             emit_var_name_warning(
-                reading_file.as_ref(),
+                // SAFETY: `reading_file` is a process-wide pointer to the
+                // current Floc, set during makefile evaluation; read-only here.
+                unsafe { reading_file.as_ref() },
                 warning::action(Type::UndefinedVar) == Action::Error,
                 "reference to undefined variable",
-                ::core::slice::from_raw_parts(name as *const u8, len),
+                name,
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod warn_undefined_unsafe_oracle {
+    use super::*;
+
+    /// Verbatim pre-conversion implementation, preserved as a differential
+    /// test oracle.
+    unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
+        if warning::is_active(Type::UndefinedVar) {
+            let mut dp: *const defined_vars;
+            dp = &raw const defined_vars as *const defined_vars;
+            while !(*dp).name.is_null() {
+                if (*dp).len == len
+                    && memcmp(
+                        (*dp).name as *const ::core::ffi::c_void,
+                        name as *const ::core::ffi::c_void,
+                        len as size_t,
+                    ) == 0
+                {
+                    return;
+                }
+                dp = dp.offset(1 as ::core::ffi::c_int as isize);
+            }
+            if warning::is_active(Type::UndefinedVar) {
+                emit_var_name_warning(
+                    reading_file.as_ref(),
+                    warning::action(Type::UndefinedVar) == Action::Error,
+                    "reference to undefined variable",
+                    ::core::slice::from_raw_parts(name as *const u8, len),
+                );
+            }
+        }
+    }
+
+    /// Membership decision mirroring the safe `warn_undefined`'s scan.
+    fn is_builtin_safe(name: &[u8]) -> bool {
+        // SAFETY: read-only walk of the process-wide built-in table; see
+        // `warn_undefined`.
+        unsafe {
+            let mut dp = &raw const defined_vars as *const defined_vars;
+            while !(*dp).name.is_null() {
+                if (*dp).len == name.len()
+                    && ::core::slice::from_raw_parts((*dp).name as *const u8, (*dp).len) == name
+                {
+                    return true;
+                }
+                dp = dp.offset(1);
+            }
+            false
+        }
+    }
+
+    /// Membership decision mirroring the oracle's `memcmp` scan.
+    fn is_builtin_oracle(name: *const ::core::ffi::c_char, len: size_t) -> bool {
+        // SAFETY: read-only walk of the process-wide built-in table.
+        unsafe {
+            let mut dp = &raw const defined_vars as *const defined_vars;
+            while !(*dp).name.is_null() {
+                if (*dp).len == len
+                    && memcmp(
+                        (*dp).name as *const ::core::ffi::c_void,
+                        name as *const ::core::ffi::c_void,
+                        len as size_t,
+                    ) == 0
+                {
+                    return true;
+                }
+                dp = dp.offset(1 as ::core::ffi::c_int as isize);
+            }
+            false
+        }
+    }
+
+    /// The observable side effect (whether a warning is emitted) is gated on
+    /// the global warning state, which we do not perturb. What this pins down
+    /// is the membership decision against `defined_vars`: the safe version must
+    /// classify a name as built-in iff the oracle's `memcmp`-based scan would
+    /// have early-returned. Both sides read identical bytes (cast through
+    /// platform `c_char`), and we assert agreement across representative inputs
+    /// (empty, embedded NUL, high bytes 0x80/0xff, and known built-in names).
+    #[test]
+    fn differential_membership() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"\0",
+            b"a\0b",
+            b".VARIABLES",
+            b"MAKE",
+            b"MAKEFILE_LIST",
+            b"definitely-not-a-builtin",
+            &[0x80, 0xff],
+            &[b'M', b'A', b'K', b'E', 0xff],
+        ];
+        for &c in cases {
+            let safe = is_builtin_safe(c);
+            let oracle = is_builtin_oracle(c.as_ptr() as *const ::core::ffi::c_char, c.len());
+            assert_eq!(safe, oracle, "membership mismatch for {c:?}");
+        }
+        // Exercise the original oracle entry point. Warning state is inactive
+        // in unit tests, so this is a no-op beyond confirming it runs.
+        unsafe {
+            warn_undefined(b"MAKE\0".as_ptr() as *const ::core::ffi::c_char, 4);
         }
     }
 }

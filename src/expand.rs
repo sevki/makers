@@ -294,7 +294,9 @@ pub unsafe fn expand_variable_output(
 ) -> *mut ::core::ffi::c_char {
     let v = lookup_variable(name, length);
     if v.is_null() {
-        warn_undefined(name, length);
+        // SAFETY: `name` points to `length` valid bytes (caller contract);
+        // read-only bridge to the safe `warn_undefined`.
+        warn_undefined(::core::slice::from_raw_parts(name as *const u8, length));
     }
     if v.is_null()
         || *(*v).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
@@ -507,7 +509,14 @@ pub unsafe fn expand_string_buf(
                             let name_len = colon.offset_from(beg) as size_t;
                             let v = lookup_variable(beg, name_len).as_mut();
                             if v.is_none() {
-                                warn_undefined(beg, name_len);
+                                // SAFETY: `beg` points to `name_len` valid
+                                // bytes (`name_len = colon - beg`, both within
+                                // the same buffer); read-only bridge to the
+                                // safe `warn_undefined`.
+                                warn_undefined(::core::slice::from_raw_parts(
+                                    beg as *const u8,
+                                    name_len,
+                                ));
                             }
                             if let Some(v) = v.filter(|v| *v.value != 0) {
                                 // Recursive values are freshly expanded and

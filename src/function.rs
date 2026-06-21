@@ -3042,7 +3042,9 @@ unsafe fn func_call(
     flen = strlen(fname) as size_t;
     v = lookup_variable(fname, flen);
     if v.is_null() {
-        warn_undefined(fname, flen);
+        // SAFETY: `fname` points to `flen` valid bytes (length precomputed
+        // above via `strlen`); read-only bridge to the safe `warn_undefined`.
+        warn_undefined(::core::slice::from_raw_parts(fname as *const u8, flen));
     }
     if v.is_null() || *(*v).value as ::core::ffi::c_int == 0 {
         return o;
