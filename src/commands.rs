@@ -95,13 +95,17 @@ unsafe fn dep_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
     strcmp(dep_name(x as *const dep), dep_name(y as *const dep))
 }
 
-/// Overwrite the trailing separator of a space-joined list (or write an
-/// empty string when nothing was appended).
-unsafe fn finish_list(start: *mut c_char, end: *mut c_char) {
-    if end > start {
-        *end.sub(1) = 0;
+/// NUL-terminate a name list that was built into `buf` by writing `len` bytes
+/// (each entry followed by a `FILE_LIST_SEPARATOR`). When at least one byte was
+/// written the trailing separator at `len - 1` is overwritten with NUL;
+/// otherwise the list is empty and byte 0 is set to NUL. `buf` must hold at
+/// least `len + 1` bytes (the callers always allocate the extra terminator
+/// slot). Pure index math, no pointer arithmetic.
+fn finish_list(buf: &mut [u8], len: usize) {
+    if len > 0 {
+        buf[len - 1] = 0;
     } else {
-        *end = 0;
+        buf[0] = 0;
     }
 }
 
@@ -283,7 +287,14 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         }
         d = (*d).next;
     }
-    finish_list(plus_value, cp);
+    // Bridge the pointer-walked write cursor back to a bounded slice: `len` is
+    // the address span the loop filled, and the buffer always holds one more
+    // byte for the terminator (per the `+ 1` capacity above).
+    let plus_filled = cp as usize - plus_value as usize;
+    finish_list(
+        ::core::slice::from_raw_parts_mut(plus_value as *mut u8, plus_filled + 1),
+        plus_filled,
+    );
     define_automatic(file, c"+", plus_value);
 
     if qmark_len > qmark_max {
@@ -371,11 +382,24 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     }
     hash_free(&raw mut dep_hash, 0);
 
-    finish_list(caret_value, cp);
+    // Same bridge as for `$+`: each buffer carries a spare terminator byte.
+    let caret_filled = cp as usize - caret_value as usize;
+    finish_list(
+        ::core::slice::from_raw_parts_mut(caret_value as *mut u8, caret_filled + 1),
+        caret_filled,
+    );
     define_automatic(file, c"^", caret_value);
-    finish_list(qmark_value, qp);
+    let qmark_filled = qp as usize - qmark_value as usize;
+    finish_list(
+        ::core::slice::from_raw_parts_mut(qmark_value as *mut u8, qmark_filled + 1),
+        qmark_filled,
+    );
     define_automatic(file, c"?", qmark_value);
-    finish_list(bar_value, bp);
+    let bar_filled = bp as usize - bar_value as usize;
+    finish_list(
+        ::core::slice::from_raw_parts_mut(bar_value as *mut u8, bar_filled + 1),
+        bar_filled,
+    );
     define_automatic(file, c"|", bar_value);
 }
 
@@ -738,6 +762,57 @@ pub unsafe fn print_commands(cmds: *const commands) {
 }
 
 pub const FILE_TIMESTAMP_HI_RES: c_int = 1;
+
+#[cfg(test)]
+mod finish_list_unsafe_oracle {
+    use ::core::ffi::c_char;
+
+    /// Verbatim c2rust-era implementation, kept as a differential oracle.
+    unsafe fn finish_list(start: *mut c_char, end: *mut c_char) {
+        if end > start {
+            *end.sub(1) = 0;
+        } else {
+            *end = 0;
+        }
+    }
+
+    /// Drive both implementations over a buffer of `len` written bytes and
+    /// assert the resulting byte arrays are identical.
+    fn check(initial: &[u8], len: usize) {
+        // Safe version: index a slice covering the written bytes plus the
+        // terminator slot.
+        let mut safe_buf = initial.to_vec();
+        super::finish_list(&mut safe_buf, len);
+
+        // Oracle: same buffer, pointer-walked. `end = start + len`, matching
+        // each real call site's cursor span.
+        let mut oracle_buf = initial.to_vec();
+        unsafe {
+            let start = oracle_buf.as_mut_ptr() as *mut c_char;
+            // `start.add(len)` mirrors the original `cp`/`qp`/`bp` cursor: a
+            // pointer `len` bytes past the buffer base.
+            let end = start.add(len);
+            finish_list(start, end);
+        }
+
+        assert_eq!(safe_buf, oracle_buf, "len={len} initial={initial:?}");
+    }
+
+    #[test]
+    fn differential() {
+        // Empty list: terminator goes at byte 0.
+        check(&[0xff], 0);
+        check(&[0xff, 0x80, b'x'], 0);
+        // Non-empty: trailing separator at len-1 becomes NUL.
+        check(b"foo \0", 4);
+        check(b"a b c \0", 6);
+        // High bytes / embedded NUL must survive untouched before len-1.
+        check(&[0x80, 0xff, 0x00, b' ', 0xab], 4);
+        check(&[b'x', 0x00, 0xff, b' '], 4);
+        // Single written byte.
+        check(&[b' ', 0xff], 1);
+    }
+}
 
 #[cfg(test)]
 mod split_archive_ref_tests {
