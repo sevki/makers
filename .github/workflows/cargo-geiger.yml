@@ -54,10 +54,12 @@ jobs:
                   fi
                   cargo geiger --version
 
-            # cargo-geiger returns a non-zero exit code when unsafe usage is
-            # found, which is expected for a C2Rust port. Capture the report and
-            # never fail the job on the unsafe count itself; this job is a
-            # tracking dashboard, not a gate.
+            # cargo-geiger exits 1 when it finds unsafe usage, which is expected
+            # for a C2Rust port, so we treat exit 1 as success. Any other
+            # non-zero status (cargo metadata failure, incompatible cached
+            # binary, an option that stopped parsing, a panic) is a real failure:
+            # fail the job so we don't upload error output or refresh the
+            # tracking issue with it.
             - name: Run cargo-geiger
               run: |
                   set +e
@@ -65,8 +67,13 @@ jobs:
                       --all-features \
                       --output-format Ascii \
                       2>&1 | tee cargo-geiger.txt
-                  echo "cargo-geiger exit: ${PIPESTATUS[0]}"
+                  status=${PIPESTATUS[0]}
                   set -e
+                  echo "cargo-geiger exit: $status"
+                  if [ "$status" -ne 0 ] && [ "$status" -ne 1 ]; then
+                      echo "::error::cargo-geiger failed with exit code $status"
+                      exit "$status"
+                  fi
 
             - name: Publish report to job summary
               if: always()
