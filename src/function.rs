@@ -149,7 +149,7 @@ pub use crate::job::childbase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
 use crate::make_main::{command_count, db_level, starting_directory, stopchar_map};
 pub use crate::output::output;
-use crate::output::{error, fatal, output_context, outputs};
+use crate::output::{error, fatal, out_of_memory_safe, output_context, outputs};
 use crate::posixos::fd_noinherit;
 use crate::read::{eval_buffer, find_percent, parse_file_seq, reading_file};
 use crate::variable::{
@@ -2871,10 +2871,21 @@ unsafe extern "C" fn expand_builtin_function(
 /// (`Vec`, not `CString`) because the caller rewrites it in place while
 /// carving out argument substrings.
 fn copy_args_buffer(src: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(src.len() + 1);
-    buf.extend_from_slice(src);
-    buf.push(0);
-    buf
+    // The original `xmalloc(len + 1)` routed allocation failure through make's
+    // `out_of_memory()` ("virtual memory exhausted", make's own exit status)
+    // rather than aborting the process the way plain `Vec` growth does. Mirror
+    // that: reserve exactly `len + 1` bytes up front and, on reservation
+    // failure, fall through to `out_of_memory_safe()` (a safe wrapper over the
+    // C-ABI `out_of_memory`). The subsequent `extend`/`push` cannot reallocate
+    // because the capacity is already guaranteed.
+    let total = src.len() + 1;
+    let mut v: Vec<u8> = Vec::new();
+    if v.try_reserve_exact(total).is_err() {
+        out_of_memory_safe();
+    }
+    v.extend_from_slice(src);
+    v.push(0);
+    v
 }
 
 /// # Safety
@@ -3919,24 +3930,32 @@ mod handle_function_abeg_unsafe_oracle {
     //! trailing NUL) across edge cases: empty input, embedded NUL, high bytes
     //! (0x80 / 0xff), and `%`/paren-laden function-call payloads.
 
-    use libc::{c_char, c_void, free, malloc, memcpy};
+    use crate::misc::xmalloc;
+    use libc::{c_char, c_void, free};
 
-    /// Verbatim copy of the original unsafe allocation/fill/free logic. Returns
-    /// the buffer contents (len + 1 bytes, last byte the NUL) read back through
-    /// the platform `c_char` exactly as the splitter would see them.
+    extern "C" {
+        fn mempcpy(dest: *mut c_void, src: *const c_void, n: super::size_t) -> *mut c_void;
+    }
+
+    /// Verbatim replay of the *actual* original removed sequence the RAII
+    /// conversion replaced: `xmalloc(len + 1)` → `mempcpy(abeg, beg, len)`
+    /// (capturing the returned end pointer) → write the NUL terminator at that
+    /// end pointer → `free(abeg)`. Returns the buffer contents (len + 1 bytes,
+    /// last byte the NUL) read back through the platform `c_char` exactly as the
+    /// splitter would see them.
     fn oracle_via_xmalloc(beg: &[u8]) -> Vec<c_char> {
         let len = beg.len();
         unsafe {
-            let abeg = malloc(len + 1) as *mut c_char;
+            let abeg = xmalloc((len + 1) as super::size_t) as *mut c_char;
             assert!(!abeg.is_null());
-            if len > 0 {
-                memcpy(
-                    abeg as *mut c_void,
-                    beg.as_ptr() as *const c_void,
-                    len,
-                );
-            }
-            *abeg.add(len) = 0;
+            // mempcpy returns a pointer to the byte *after* the last copied one;
+            // the original wrote the NUL terminator through that returned end.
+            let aend = mempcpy(
+                abeg as *mut c_void,
+                beg.as_ptr() as *const c_void,
+                len as super::size_t,
+            ) as *mut c_char;
+            *aend = 0;
             // Promote bytes through the platform `c_char`, not i8.
             let mut out: Vec<c_char> = Vec::with_capacity(len + 1);
             for i in 0..=len {
