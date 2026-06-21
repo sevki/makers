@@ -56,7 +56,7 @@ use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
 use crate::misc::{alpha_compare, concat};
-use crate::output::{error, fatal, perror_with_name};
+use crate::output::{error, fatal, out_of_memory, perror_with_name};
 use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -191,8 +191,22 @@ impl ParsedArName {
     /// Parse `name` (a well-formed `archive(member)` reference, as guaranteed by
     /// a prior [`ar_name`] check) into an owned buffer. Mirrors `ar_parse_name`:
     /// split at the first `(`, then drop the trailing `)`.
-    fn parse(name: &::core::ffi::CStr) -> Self {
-        let mut buf = name.to_bytes_with_nul().to_vec();
+    ///
+    /// # Safety
+    ///
+    /// May call [`out_of_memory`], which is `unsafe`, on allocation failure.
+    /// Marked `unsafe` so the `out_of_memory()` diagnostic path is reachable
+    /// without introducing a new `unsafe` block.
+    unsafe fn parse(name: &::core::ffi::CStr) -> Self {
+        let src = name.to_bytes_with_nul();
+        // Reserve fallibly so OOM routes through make's `out_of_memory()`
+        // ("virtual memory exhausted") diagnostic, matching the original
+        // `xstrdup`, rather than aborting via Rust's allocation-error path.
+        let mut buf = Vec::new();
+        if buf.try_reserve_exact(src.len()).is_err() {
+            out_of_memory();
+        }
+        buf.extend_from_slice(src);
         // `ar_name` guarantees a '(' exists and the name ends with ')'.
         let lp = buf
             .iter()
@@ -551,7 +565,7 @@ mod parsed_ar_name_tests {
     /// embedded NUL-adjacent, high-byte, and single-character members.
     fn assert_same(name: &[u8]) {
         let cs = ::std::ffi::CString::new(name).expect("test input has no embedded NUL");
-        let parsed = ParsedArName::parse(&cs);
+        let parsed = unsafe { ParsedArName::parse(&cs) };
         // Read the produced C strings back as byte slices (no terminating NUL).
         let got_ar = unsafe { ::core::ffi::CStr::from_ptr(parsed.arname()) }.to_bytes();
         let got_mem = unsafe { ::core::ffi::CStr::from_ptr(parsed.memname()) }.to_bytes();
