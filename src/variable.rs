@@ -1281,20 +1281,17 @@ fn should_export_decision(
     }
 }
 
-/// # Safety
+/// Should variable `v` be placed in a child process's environment?
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn should_export(v: *const variable) -> ::core::ffi::c_int {
-    let v = v
-        .as_ref()
-        .expect("should_export requires a non-null variable");
-    should_export_decision(
-        v.export(),
-        v.origin(),
-        v.exportable() != 0,
-        export_all_variables != 0,
-    ) as ::core::ffi::c_int
+/// Safe wrapper over [`should_export_decision`]: it borrows the variable and
+/// returns a plain `bool`. The only `unsafe` is the single integer load of the
+/// process-global `export_all_variables` flag (an existing `static mut` owned
+/// by `main`) — no pointer is dereferenced.
+pub fn should_export(v: &variable) -> bool {
+    // SAFETY: a plain integer read of the existing `export_all_variables`
+    // global; no pointer is dereferenced and no aliasing reference is formed.
+    let export_all = unsafe { export_all_variables != 0 };
+    should_export_decision(v.export(), v.origin(), v.exportable() != 0, export_all)
 }
 /// # Safety
 ///
@@ -1371,7 +1368,9 @@ pub unsafe fn target_environment(
                         || *evslot as *mut ::core::ffi::c_void
                             == hash_deleted_item as *mut ::core::ffi::c_void
                     {
-                        if isglobal == 0 || should_export(v) != 0 {
+                        // `v` is a live, non-null variable taken from an
+                        // occupied hash slot just above.
+                        if isglobal == 0 || should_export(&*v) {
                             hash_insert_at(
                                 &raw mut table,
                                 v as *const ::core::ffi::c_void,
@@ -1404,7 +1403,9 @@ pub unsafe fn target_environment(
             let v_0: *mut variable = *v_slot;
             let mut value: *mut ::core::ffi::c_char = (*v_0).value;
             let mut cp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-            if !(should_export(v_0) == 0) {
+            // `v_0` is a live, non-null variable taken from an
+            // occupied hash slot just above.
+            if should_export(&*v_0) {
                 if (*v_0).recursive() as ::core::ffi::c_int != 0
                     && ((*v_0).origin() as ::core::ffi::c_int != o_env as ::core::ffi::c_int
                         && (*v_0).origin() as ::core::ffi::c_int
@@ -2446,6 +2447,84 @@ mod should_export_tests {
         let o_file = 2; // some non-command/env origin
         assert!(!should_export_decision(v_default, o_file, true, false));
         assert!(should_export_decision(v_default, o_file, true, true));
+    }
+}
+
+/// Differential test: the new safe [`should_export`] must agree byte-for-byte
+/// with the original c2rust unsafe implementation across every relevant input.
+#[cfg(test)]
+mod should_export_unsafe_oracle {
+    use super::{
+        export_all_variables, o_automatic, o_command, o_default, o_env, o_env_override, o_file,
+        o_invalid, o_override, should_export, should_export_decision, v_default, v_export, v_ifset,
+        v_noexport, variable, variable_export, variable_origin,
+    };
+
+    /// Original c2rust implementation, preserved verbatim as the behavioral
+    /// oracle (raw `*const variable`, `c_int` result, `static mut` read).
+    unsafe fn should_export_oracle(v: *const variable) -> ::core::ffi::c_int {
+        let v = v
+            .as_ref()
+            .expect("should_export requires a non-null variable");
+        should_export_decision(
+            v.export(),
+            v.origin(),
+            v.exportable() != 0,
+            export_all_variables != 0,
+        ) as ::core::ffi::c_int
+    }
+
+    /// Build a zeroed `variable` carrying just the fields `should_export`
+    /// inspects, so both implementations see identical state.
+    fn make_var(export: variable_export, origin: variable_origin, exportable: bool) -> variable {
+        // SAFETY: `variable` is `#[repr(C)]` and all-zeroes is a valid bit
+        // pattern (null pointers, cleared bitfields); only the export/origin/
+        // exportable fields are then set.
+        let mut v: variable = unsafe { ::core::mem::zeroed() };
+        v.set_export(export);
+        v.set_origin(origin);
+        v.set_exportable(exportable as ::core::ffi::c_uint);
+        v
+    }
+
+    #[test]
+    fn safe_matches_oracle_over_full_cross_product() {
+        let exports = [v_default, v_export, v_noexport, v_ifset];
+        let origins = [
+            o_default,
+            o_env,
+            o_file,
+            o_env_override,
+            o_command,
+            o_override,
+            o_automatic,
+            o_invalid,
+        ];
+        // Toggle the process-global flag both ways, restoring it afterwards so
+        // the test leaves no residue in shared state.
+        // SAFETY: single-threaded `cargo test --lib` access to the global.
+        let saved = unsafe { export_all_variables };
+        for &export_all in &[0, 1] {
+            // SAFETY: as above.
+            unsafe { export_all_variables = export_all };
+            for &export in &exports {
+                for &origin in &origins {
+                    for &exportable in &[false, true] {
+                        let v = make_var(export, origin, exportable);
+                        // SAFETY: `v` is a live local.
+                        let oracle = unsafe { should_export_oracle(&raw const v) };
+                        let safe = should_export(&v) as ::core::ffi::c_int;
+                        assert_eq!(
+                            safe, oracle,
+                            "mismatch: export={export} origin={origin} \
+                             exportable={exportable} export_all={export_all}"
+                        );
+                    }
+                }
+            }
+        }
+        // SAFETY: restore the previous global value.
+        unsafe { export_all_variables = saved };
     }
 }
 
