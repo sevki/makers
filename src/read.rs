@@ -679,9 +679,23 @@ unsafe extern "C" fn parse_var_assignment(
 /// the paired libc `free`) while permitting the in-place rewrite. `token` is
 /// the token slice `[p, p + len)`; the result holds its bytes up to the first
 /// NUL, followed by a trailing NUL terminator.
-fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
+///
+/// # Safety
+///
+/// May call [`out_of_memory`], which is `unsafe`, on allocation failure. The
+/// function itself only reads `token`, but is marked `unsafe` so the
+/// `out_of_memory()` diagnostic path is reachable without introducing a new
+/// `unsafe` block.
+unsafe fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
     let end = token.iter().position(|&b| b == 0).unwrap_or(token.len());
-    let mut pat = token[..end].to_vec();
+    // Reserve fallibly so OOM routes through make's `out_of_memory()`
+    // ("virtual memory exhausted") diagnostic, matching the original
+    // `xstrndup`, rather than aborting via Rust's allocation-error path.
+    let mut pat = Vec::new();
+    if pat.try_reserve_exact(end + 1).is_err() {
+        out_of_memory();
+    }
+    pat.extend_from_slice(&token[..end]);
     pat.push(0);
     pat
 }
@@ -3670,7 +3684,7 @@ mod vpath_pattern_token_unsafe_oracle {
             // it must end in a single terminator and its observable string
             // bytes (everything before that terminator) must match the bytes
             // the original `strndup`'d buffer exposed.
-            let safe = vpath_pattern_token(token);
+            let safe = unsafe { vpath_pattern_token(token) };
             assert_eq!(
                 safe.last().copied(),
                 Some(0u8),
