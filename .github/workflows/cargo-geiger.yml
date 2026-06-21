@@ -1,0 +1,143 @@
+# cargo-geiger detects usage of unsafe Rust in this crate and all of its
+# dependencies. Because this is a C2Rust port of GNU make, the crate itself is
+# unsafe-heavy by design; the value here is tracking that surface over time and
+# keeping an eye on the unsafe footprint pulled in by dependencies.
+# More details at https://github.com/geiger-rs/cargo-geiger
+name: cargo-geiger
+
+on:
+    push:
+        branches: [main, master]
+    pull_request:
+    workflow_dispatch:
+
+concurrency:
+    group: cargo-geiger-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    cargo-geiger:
+        name: Scan unsafe usage with cargo-geiger
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            issues: write
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+              with:
+                  profile: minimal
+                  toolchain: nightly-2026-05-04
+                  override: true
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Cache cargo-geiger binary
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/cargo-geiger
+                  key: cargo-geiger-bin-${{ runner.os }}
+
+            - name: Install cargo-geiger
+              run: |
+                  if ! command -v cargo-geiger >/dev/null 2>&1; then
+                      cargo install cargo-geiger --locked
+                  fi
+                  cargo geiger --version
+
+            # cargo-geiger returns a non-zero exit code when unsafe usage is
+            # found, which is expected for a C2Rust port. Capture the report and
+            # never fail the job on the unsafe count itself; this job is a
+            # tracking dashboard, not a gate.
+            - name: Run cargo-geiger
+              run: |
+                  set +e
+                  cargo geiger \
+                      --all-features \
+                      --output-format Ascii \
+                      2>&1 | tee cargo-geiger.txt
+                  echo "cargo-geiger exit: ${PIPESTATUS[0]}"
+                  set -e
+
+            - name: Publish report to job summary
+              if: always()
+              run: |
+                  {
+                      echo '## cargo-geiger unsafe usage report'
+                      echo ''
+                      echo '```'
+                      cat cargo-geiger.txt
+                      echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Upload cargo-geiger report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cargo-geiger-${{ github.sha }}
+                  path: cargo-geiger.txt
+                  if-no-files-found: error
+                  retention-days: 30
+
+            # Maintain a single tracking issue with the latest report. We look
+            # up an existing open issue by its fixed title and edit it in place,
+            # so reruns refresh one issue instead of spamming new ones. Limited
+            # to main/master pushes and manual runs to avoid touching issues on
+            # every PR.
+            - name: Open or update tracking issue
+              if: >
+                  always() &&
+                  (github.ref == 'refs/heads/main' ||
+                   github.ref == 'refs/heads/master' ||
+                   github.event_name == 'workflow_dispatch')
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  TITLE="cargo-geiger: unsafe usage report"
+                  LABEL="cargo-geiger"
+
+                  # Ensure the label exists (idempotent; ignore "already exists").
+                  gh label create "$LABEL" \
+                      --color FFA500 \
+                      --description "Automated cargo-geiger unsafe-usage report" \
+                      2>/dev/null || true
+
+                  # GitHub caps issue bodies at 65536 chars; leave headroom for
+                  # the surrounding markdown and truncate the report if needed.
+                  REPORT=$(head -c 60000 cargo-geiger.txt)
+                  {
+                      echo "Automated unsafe-usage report from cargo-geiger."
+                      echo ""
+                      echo "- Commit: \`${GITHUB_SHA}\`"
+                      echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+                      echo "- Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                      echo ""
+                      echo '```'
+                      echo "$REPORT"
+                      echo '```'
+                  } > issue-body.md
+
+                  EXISTING=$(gh issue list \
+                      --state open \
+                      --search "\"$TITLE\" in:title" \
+                      --json number,title \
+                      --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+
+                  if [ -n "$EXISTING" ]; then
+                      gh issue edit "$EXISTING" --body-file issue-body.md
+                      echo "Updated existing issue #$EXISTING"
+                  else
+                      gh issue create \
+                          --title "$TITLE" \
+                          --label "$LABEL" \
+                          --body-file issue-body.md
+                  fi
