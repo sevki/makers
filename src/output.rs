@@ -656,6 +656,21 @@ pub unsafe fn out_of_memory() -> ! {
     exit(MAKE_FAILURE);
 }
 
+/// Safe wrapper around [`out_of_memory`] for callers in safe Rust code.
+///
+/// `out_of_memory` carries an `unsafe` marker purely for C-ABI signature
+/// compatibility (per its own docs it is "always safe to call"): it touches no
+/// caller-supplied pointers, only emitting the canonical
+/// `": *** virtual memory exhausted\n"` message and exiting with make's failure
+/// status. This wrapper lets allocation-failure paths in safe code route
+/// through the exact same behaviour without opening an `unsafe` block at the
+/// call site.
+pub fn out_of_memory_safe() -> ! {
+    // SAFETY: `out_of_memory` dereferences no caller pointers; it writes a
+    // fixed message to stdout and exits. Safe to invoke unconditionally.
+    unsafe { out_of_memory() }
+}
+
 /// Native-Rust counterparts to the variadic C-ABI `message`/`error`/`fatal`
 /// in this module. Callers build their formatted message with `format!`
 /// (or any `Display` source) and hand a `&str` here; the prefix and suffix
