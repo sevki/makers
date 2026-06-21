@@ -11,7 +11,7 @@ use ::core::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libc::{
-    __errno_location, close, exit, ftruncate, lseek, perror, read, sprintf, strcat, strerror,
+    __errno_location, close, ftruncate, lseek, perror, read, sprintf, strcat, strerror,
     strlen, EINTR, SEEK_END, SEEK_SET,
 };
 
@@ -640,22 +640,15 @@ pub unsafe fn pfatal_with_name(name: *const ::core::ffi::c_char) -> ! {
 /// Print the out-of-memory message without allocating and exit with
 /// `MAKE_FAILURE`.
 pub fn out_of_memory() -> ! {
-    // SAFETY: during makefile evaluation the C globals (`stdout`, `program`)
-    // are initialized; these calls only read those globals and a static C
-    // string, then exit. No caller-supplied pointers are dereferenced.
-    unsafe {
-        writebuf(
-            fileno(stdout),
-            program as *const ::core::ffi::c_void,
-            strlen(program) as size_t,
-        );
-        writebuf(
-            fileno(stdout),
-            c": *** virtual memory exhausted\n".as_ptr() as *const ::core::ffi::c_void,
-            (::core::mem::size_of::<[::core::ffi::c_char; 32]>() as size_t).wrapping_sub(1),
-        );
-        exit(MAKE_FAILURE);
-    }
+    use std::io::Write;
+    // The program-name read is the one unavoidable C-global access; it is
+    // already encapsulated (with its SAFETY note) in `msg::program_name`.
+    let prog = msg::program_name();
+    let mut out = std::io::stdout().lock();
+    #[allow(clippy::write_with_newline)]
+    let _ = write!(out, "{prog}: *** virtual memory exhausted\n");
+    let _ = out.flush();
+    std::process::exit(MAKE_FAILURE)
 }
 
 /// Native-Rust counterparts to the variadic C-ABI `message`/`error`/`fatal`
@@ -669,7 +662,7 @@ pub mod msg {
     use super::{die, makelevel, outputs, program, MAKE_FAILURE};
     use crate::floc::Floc;
 
-    fn program_name() -> String {
+    pub(crate) fn program_name() -> String {
         // SAFETY: `program` is set during make startup and lives for the
         // process lifetime; we read it as a NUL-terminated C string.
         unsafe { ::core::ffi::CStr::from_ptr(program) }
