@@ -141,3 +141,101 @@ jobs:
                           --label "$LABEL" \
                           --body-file issue-body.md
                   fi
+
+    # DIFF GATE: fail a PR only when it ADDS unsafe to the make-sys crate's own
+    # code. We gate on REGRESSION, not an absolute number: as a C2Rust port of
+    # GNU make the crate is unsafe-heavy by design, so an absolute threshold
+    # would be red on every PR. The trusted baseline is the make-sys own-unsafe
+    # count on origin/main, stored in .cargo-geiger-baseline (a bare integer).
+    # This mirrors the CRAP regression gate in change-risk.yml.
+    #
+    # Refresh the baseline (e.g. after an intentional, reviewed unsafe addition)
+    # with:  bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline
+    geiger-gate:
+        name: Gate on new unsafe in make-sys
+        runs-on: ubuntu-latest
+        if: github.event_name == 'pull_request'
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install Rust toolchain
+              uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+              with:
+                  profile: minimal
+                  toolchain: nightly-2026-05-04
+                  override: true
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Cache cargo-geiger binary
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/cargo-geiger
+                  key: cargo-geiger-bin-${{ runner.os }}
+
+            - name: Install cargo-geiger
+              run: |
+                  if ! command -v cargo-geiger >/dev/null 2>&1; then
+                      cargo install cargo-geiger --locked
+                  fi
+                  cargo geiger --version
+
+            # Gate against the TRUSTED main-branch baseline, not the one in the
+            # PR worktree. Otherwise a PR could add unsafe and bump
+            # .cargo-geiger-baseline in the same diff, so the comparison would be
+            # new-vs-new and never fire. Resolve from origin/main; until main
+            # carries a baseline, fall back to the in-tree file.
+            - name: Resolve trusted baseline
+              run: |
+                  git fetch --depth=1 origin main:refs/remotes/origin/main || true
+                  if git show origin/main:.cargo-geiger-baseline > main-geiger-baseline 2>/dev/null; then
+                      echo "Using main-branch geiger baseline"
+                  else
+                      echo "No baseline on main yet; falling back to in-tree baseline"
+                      cp .cargo-geiger-baseline main-geiger-baseline
+                  fi
+
+            # cargo-geiger exits non-zero whenever unsafe is present (expected
+            # for this crate); the script handles that and prints only the
+            # make-sys own-unsafe integer.
+            - name: Compute current count
+              id: count
+              run: |
+                  HEAD_N=$(bash scripts/geiger-unsafe-count.sh)
+                  echo "current make-sys unsafe count: $HEAD_N"
+                  echo "head_n=$HEAD_N" >> "$GITHUB_OUTPUT"
+
+            - name: Gate
+              run: |
+                  BASE_N=$(tr -d '[:space:]' < main-geiger-baseline)
+                  HEAD_N="${{ steps.count.outputs.head_n }}"
+                  {
+                      echo "## cargo-geiger unsafe gate (make-sys)"
+                      echo ""
+                      echo "- Trusted baseline (origin/main): \`$BASE_N\`"
+                      echo "- This PR: \`$HEAD_N\`"
+                  } >> "$GITHUB_STEP_SUMMARY"
+                  if [ "$HEAD_N" -gt "$BASE_N" ]; then
+                      DELTA=$((HEAD_N - BASE_N))
+                      echo "::error::cargo-geiger: make-sys unsafe count increased: $BASE_N -> $HEAD_N (+$DELTA). New unsafe was added to the crate. If intentional, refresh the baseline: bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline"
+                      echo "" >> "$GITHUB_STEP_SUMMARY"
+                      echo "**FAILED**: unsafe count increased by $DELTA. If intentional, refresh the baseline: \`bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline\`" >> "$GITHUB_STEP_SUMMARY"
+                      exit 1
+                  fi
+                  if [ "$HEAD_N" -lt "$BASE_N" ]; then
+                      echo "make-sys unsafe count decreased: $BASE_N -> $HEAD_N. The baseline can be lowered: bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline"
+                      echo "" >> "$GITHUB_STEP_SUMMARY"
+                      echo "Note: unsafe count decreased; the baseline can be lowered." >> "$GITHUB_STEP_SUMMARY"
+                  fi
+                  echo "OK: make-sys unsafe count did not increase ($HEAD_N <= $BASE_N)."
