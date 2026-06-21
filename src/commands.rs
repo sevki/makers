@@ -292,7 +292,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     // byte for the terminator (per the `+ 1` capacity above).
     let plus_filled = cp as usize - plus_value as usize;
     finish_list(
-        ::core::slice::from_raw_parts_mut(plus_value as *mut u8, plus_filled + 1),
+        ::core::slice::from_raw_parts_mut(plus_value as *mut u8, (plus_filled).max(1)),
         plus_filled,
     );
     define_automatic(file, c"+", plus_value);
@@ -385,19 +385,19 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     // Same bridge as for `$+`: each buffer carries a spare terminator byte.
     let caret_filled = cp as usize - caret_value as usize;
     finish_list(
-        ::core::slice::from_raw_parts_mut(caret_value as *mut u8, caret_filled + 1),
+        ::core::slice::from_raw_parts_mut(caret_value as *mut u8, (caret_filled).max(1)),
         caret_filled,
     );
     define_automatic(file, c"^", caret_value);
     let qmark_filled = qp as usize - qmark_value as usize;
     finish_list(
-        ::core::slice::from_raw_parts_mut(qmark_value as *mut u8, qmark_filled + 1),
+        ::core::slice::from_raw_parts_mut(qmark_value as *mut u8, (qmark_filled).max(1)),
         qmark_filled,
     );
     define_automatic(file, c"?", qmark_value);
     let bar_filled = bp as usize - bar_value as usize;
     finish_list(
-        ::core::slice::from_raw_parts_mut(bar_value as *mut u8, bar_filled + 1),
+        ::core::slice::from_raw_parts_mut(bar_value as *mut u8, (bar_filled).max(1)),
         bar_filled,
     );
     define_automatic(file, c"|", bar_value);
