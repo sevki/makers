@@ -151,6 +151,15 @@ pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char
     ))
 }
 
+/// Intern an arbitrary byte slice and return the canonical, NUL-terminated
+/// pointer. Safe wrapper around the interner for callers that hold genuine Rust
+/// types (e.g. `&[u8]` derived from a `PathBuf`) and must not fabricate a
+/// `CString`/`*const c_char` themselves. The cache stores its own copy and
+/// appends the trailing NUL internally.
+pub fn strcache_add_bytes(bytes: &[u8]) -> *const c_char {
+    intern(bytes)
+}
+
 /// Returns nonzero if `str` is a pointer previously handed out by the cache.
 ///
 /// Does not dereference `str`, so it is sound to call on any pointer value

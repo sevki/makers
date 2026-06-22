@@ -16,7 +16,6 @@ use libc::{
 };
 extern "C" {
     pub type dirent;
-    fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> ::core::ffi::c_int;
     static mut stdout: *mut FILE;
     fn fclose(__stream: *mut FILE) -> ::core::ffi::c_int;
     fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
@@ -24,6 +23,7 @@ extern "C" {
         __filename: *const ::core::ffi::c_char,
         __modes: *const ::core::ffi::c_char,
     ) -> *mut FILE;
+    fn fdopen(__fd: ::core::ffi::c_int, __modes: *const ::core::ffi::c_char) -> *mut FILE;
     fn fgets(
         __s: *mut ::core::ffi::c_char,
         __n: ::core::ffi::c_int,
@@ -291,14 +291,15 @@ static mut toplevel_conditionals: conditionals = conditionals {
     seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
 };
 static mut conditionals: *mut conditionals = &raw const toplevel_conditionals as *mut conditionals;
-static mut default_include_directories: [*const ::core::ffi::c_char; 4] = [
-    b"/usr/gnu/include\0" as *const u8 as *const ::core::ffi::c_char,
-    b"/usr/local/include\0" as *const u8 as *const ::core::ffi::c_char,
-    b"/usr/include\0" as *const u8 as *const ::core::ffi::c_char,
-    ::core::ptr::null::<::core::ffi::c_char>(),
+/// Default system include directories searched when `-I` does not disable them.
+/// Genuine Rust byte slices (no NUL terminators, no `*const c_char`).
+static DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] = [
+    b"/usr/gnu/include",
+    b"/usr/local/include",
+    b"/usr/include",
 ];
-static mut include_directories: *mut *const ::core::ffi::c_char =
-    ::core::ptr::null::<*const ::core::ffi::c_char>() as *mut *const ::core::ffi::c_char;
+/// The resolved include search path, owned as native Rust and dropped by Rust.
+static mut include_directories: Vec<std::path::PathBuf> = Vec::new();
 static mut max_incl_len: size_t = 0;
 pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
 static mut read_files: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
@@ -493,39 +494,53 @@ unsafe extern "C" fn eval_makefile(
     }
     if ebuf.fp.is_null()
         && (*deps).error == ENOENT
-        && !include_directories.is_null()
         && flags as ::core::ffi::c_int & (1) << 1 != 0
         && !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*filename.as_ref().expect("eval_makefile: null filename") as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
             & 0x8000 as ::core::ffi::c_int
             != 0)
     {
-        let mut dir: *mut *const ::core::ffi::c_char;
-        dir = include_directories;
-        while !(*dir).is_null() {
-            let included: *const ::core::ffi::c_char = concat(
-                3,
-                *dir,
-                b"/\0" as *const u8 as *const ::core::ffi::c_char,
-                filename,
-            );
-            loop {
-                *__errno_location() = 0;
-                ebuf.fp =
-                    fopen(included, b"r\0" as *const u8 as *const ::core::ffi::c_char) as *mut FILE;
-                if !(ebuf.fp.is_null() && *__errno_location() == EINTR) {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::io::IntoRawFd;
+        // `filename` is an existing C string supplied by the caller; read its
+        // bytes (no new C string constructed) to build candidate paths.
+        let filename_bytes = CStr::from_ptr(filename).to_bytes().to_vec();
+        let filename_os = std::ffi::OsStr::from_bytes(&filename_bytes);
+        for dir in &*core::ptr::addr_of!(include_directories) {
+            // Native path construction: PathBuf::join, not the C `concat` helper.
+            let candidate = dir.join(filename_os);
+            // Open via std::fs (std handles the syscall's NUL internally); retry
+            // on EINTR to match the original fopen loop.
+            let opened = loop {
+                match std::fs::File::open(&candidate) {
+                    Ok(f) => break Ok(f),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => break Err(e),
+                }
+            };
+            match opened {
+                Ok(f) => {
+                    // Hand the descriptor to the C `FILE*` eval machinery; the
+                    // path never becomes a `*const c_char` in our code.
+                    ebuf.fp = fdopen(
+                        f.into_raw_fd(),
+                        b"r\0" as *const u8 as *const ::core::ffi::c_char,
+                    ) as *mut FILE;
+                    filename = crate::strcache::strcache_add_bytes(
+                        candidate.as_os_str().as_bytes(),
+                    );
                     break;
                 }
-            }
-            if !ebuf.fp.is_null() {
-                filename = included;
-                break;
-            } else if *__errno_location() != ENOENT {
-                filename = included;
-                (*deps).error = *__errno_location();
-                break;
-            } else {
-                dir = dir.offset(1 as ::core::ffi::c_int as isize);
+                Err(e) => {
+                    let errno = e.raw_os_error().unwrap_or(ENOENT);
+                    if errno != ENOENT {
+                        filename = crate::strcache::strcache_add_bytes(
+                            candidate.as_os_str().as_bytes(),
+                        );
+                        (*deps).error = errno;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -3078,135 +3093,80 @@ unsafe extern "C" fn get_next_mword(
         crate::parser::MWordType::AmpDColon => w_ampdcolon,
     }
 }
+/// Expand a leading `~` (or `~/`) in a directory byte string using `$HOME`.
+/// Returns the bytes unchanged when there is no leading tilde or `$HOME` is
+/// unset. (`~user` forms are left as-is; they then fail the directory-exists
+/// check, matching make's behaviour when the lookup fails.)
+fn expand_tilde_dir(dir: &[u8]) -> Vec<u8> {
+    if dir.first() == Some(&b'~') && (dir.len() == 1 || dir[1] == b'/') {
+        if let Some(home) = std::env::var_os("HOME") {
+            use std::os::unix::ffi::OsStrExt;
+            let mut out = home.as_bytes().to_vec();
+            out.extend_from_slice(&dir[1..]);
+            return out;
+        }
+    }
+    dir.to_vec()
+}
+
+/// Append `dir` to the include path if it names an existing directory, after
+/// stripping trailing `/` (keeping at least one byte). Uses `std::fs` for the
+/// existence/type check — no `stat`, no `*const c_char`. Returns the trimmed
+/// byte length of the directory when it was added, so the caller can update the
+/// `max_incl_len` global.
+fn push_include_dir(out: &mut Vec<std::path::PathBuf>, dir: &[u8]) -> Option<usize> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut len = dir.len();
+    while len > 1 && dir[len - 1] == b'/' {
+        len -= 1;
+    }
+    let trimmed = &dir[..len];
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(trimmed));
+    if std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+        out.push(path.to_path_buf());
+        Some(len)
+    } else {
+        None
+    }
+}
+
+/// Build the include search path from the `-I` directories plus the default
+/// system directories, owning the result as a native `Vec<PathBuf>`.
+///
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_char) {
-    let mut stbuf: stat = stat {
-        st_dev: 0,
-        st_ino: 0,
-        st_nlink: 0,
-        st_mode: 0,
-        st_uid: 0,
-        st_gid: 0,
-        __pad0: 0,
-        st_rdev: 0,
-        st_size: 0,
-        st_blksize: 0,
-        st_blocks: 0,
-        st_atim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_mtim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_ctim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        __glibc_reserved: [0; 3],
-    };
-    let dirs: *mut *const ::core::ffi::c_char;
-    let mut cpp: *mut *const ::core::ffi::c_char;
-    let mut idx: size_t;
-    let mut disable: ::core::ffi::c_int = 0;
-    idx = (::core::mem::size_of::<[*const ::core::ffi::c_char; 4]>() as usize)
-        .wrapping_div(::core::mem::size_of::<*const ::core::ffi::c_char>() as usize)
-        as size_t;
-    if !arg_dirs.is_null() {
-        cpp = arg_dirs;
-        while cpp.as_ref().is_some_and(|inner| !inner.is_null()) {
-            idx = idx.wrapping_add(1);
-            cpp = cpp.offset(1 as ::core::ffi::c_int as isize);
-        }
-    }
-    dirs = xmalloc(idx.wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t))
-        as *mut *const ::core::ffi::c_char;
-    idx = 0;
+/// Touches `make`'s global mutable state (`max_incl_len`, `include_directories`)
+/// and calls into the C variable machinery; must run single-threaded like the
+/// rest of startup.
+pub unsafe fn construct_include_path(arg_dirs: &[std::path::PathBuf]) {
+    use std::os::unix::ffi::OsStrExt;
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    let mut disable = false;
     max_incl_len = 0;
-    if !arg_dirs.is_null() {
-        while arg_dirs.as_ref().is_some_and(|inner| !inner.is_null()) {
-            let fresh0 = arg_dirs;
-            arg_dirs = arg_dirs.offset(1 as ::core::ffi::c_int as isize);
-            let mut dir: *const ::core::ffi::c_char = *fresh0.as_ref().expect("construct_include_path: null dir slot");
-            let mut expanded: *mut ::core::ffi::c_char =
-                ::core::ptr::null_mut::<::core::ffi::c_char>();
-            let mut e: ::core::ffi::c_int;
-            if *dir.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '-' as i32
-                && *dir.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
-            {
-                disable = 1;
-                idx = 0;
-                max_incl_len = 0;
-            } else {
-                if *dir.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '~' as i32
-                {
-                    expanded = tilde_expand(dir);
-                    if !expanded.is_null() {
-                        dir = expanded;
-                    }
+    for dir in arg_dirs {
+        let bytes = dir.as_os_str().as_bytes();
+        if bytes == b"-" {
+            disable = true;
+            dirs.clear();
+            max_incl_len = 0;
+        } else {
+            let expanded = expand_tilde_dir(bytes);
+            if let Some(len) = push_include_dir(&mut dirs, &expanded) {
+                if (len as size_t) > max_incl_len {
+                    max_incl_len = len as size_t;
                 }
-                loop {
-                    e = stat(dir, &raw mut stbuf);
-                    if !(e == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
-                        break;
-                    }
-                }
-                if e == 0 && stbuf.st_mode & __S_IFMT as __mode_t == 0o40000 as __mode_t {
-                    let mut len: size_t = strlen(dir) as size_t;
-                    while len > 1
-                        && *dir.offset(len.wrapping_sub(1) as isize) as ::core::ffi::c_int
-                            == '/' as i32
-                    {
-                        len = len.wrapping_sub(1);
-                    }
-                    if len > max_incl_len {
-                        max_incl_len = len;
-                    }
-                    let fresh1 = idx;
-                    idx = idx.wrapping_add(1);
-                    let fresh2 = &mut (*dirs.offset(fresh1 as isize));
-                    *fresh2 = strcache_add_len(dir, len);
-                }
-                free(expanded as *mut ::core::ffi::c_void);
             }
         }
     }
-    if disable == 0 {
-        let mut ccpp: *const *const ::core::ffi::c_char;
-        ccpp = &raw const default_include_directories as *const *const ::core::ffi::c_char;
-        while !(*ccpp).is_null() {
-            let mut e_0: ::core::ffi::c_int;
-            loop {
-                e_0 = stat(*ccpp, &raw mut stbuf);
-                if !(e_0 == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
-                    break;
+    if !disable {
+        for d in DEFAULT_INCLUDE_DIRECTORIES {
+            if let Some(len) = push_include_dir(&mut dirs, d) {
+                if (len as size_t) > max_incl_len {
+                    max_incl_len = len as size_t;
                 }
             }
-            if e_0 == 0 && stbuf.st_mode & __S_IFMT as __mode_t == 0o40000 as __mode_t {
-                let mut len_0: size_t = strlen(*ccpp) as size_t;
-                while len_0 > 1
-                    && *(*ccpp).offset(len_0.wrapping_sub(1) as isize) as ::core::ffi::c_int
-                        == '/' as i32
-                {
-                    len_0 = len_0.wrapping_sub(1);
-                }
-                if len_0 > max_incl_len {
-                    max_incl_len = len_0;
-                }
-                let fresh3 = idx;
-                idx = idx.wrapping_add(1);
-                let fresh4 = &mut (*dirs.offset(fresh3 as isize));
-                *fresh4 = strcache_add_len(*ccpp, len_0);
-            }
-            ccpp = ccpp.offset(1 as ::core::ffi::c_int as isize);
         }
     }
-    let fresh5 = &mut (*dirs.offset(idx as isize));
-    *fresh5 = ::core::ptr::null::<::core::ffi::c_char>();
     do_variable_definition(
         NILF,
         b".INCLUDE_DIRS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3216,20 +3176,20 @@ pub unsafe fn construct_include_path(mut arg_dirs: *mut *const ::core::ffi::c_ch
         0,
         s_global,
     );
-    cpp = dirs;
-    while !(*cpp).is_null() {
+    for dir in &dirs {
+        // Intern the path bytes to obtain a canonical, cache-owned pointer for
+        // the C variable machinery; no CString/manual NUL constructed here.
+        let value = crate::strcache::strcache_add_bytes(dir.as_os_str().as_bytes());
         do_variable_definition(
             NILF,
             b".INCLUDE_DIRS\0" as *const u8 as *const ::core::ffi::c_char,
-            *cpp,
+            value,
             o_default,
             f_append,
             0,
             s_global,
         );
-        cpp = cpp.offset(1 as ::core::ffi::c_int as isize);
     }
-    free(include_directories as *mut ::core::ffi::c_void);
     include_directories = dirs;
 }
 /// # Safety
