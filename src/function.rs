@@ -2285,6 +2285,78 @@ unsafe fn read_all_pipe(fd: i32) -> (Vec<u8>, size_t) {
     (buffer, i)
 }
 
+#[cfg(test)]
+mod read_all_pipe_tests {
+    use super::*;
+
+    /// Drive `read_all_pipe` through a real `pipe(2)`: write `payload` to the
+    /// write end (in a thread so a payload larger than the pipe buffer cannot
+    /// deadlock), close it to signal EOF, and read from the read end. Returns
+    /// the `(buffer, len)` the helper produced.
+    unsafe fn run(payload: Vec<u8>) -> (Vec<u8>, size_t) {
+        let mut fds = [0_i32; 2];
+        assert_eq!(libc::pipe(fds.as_mut_ptr()), 0, "pipe() failed");
+        let (rd, wr) = (fds[0], fds[1]);
+
+        let writer = std::thread::spawn(move || {
+            let mut off = 0usize;
+            while off < payload.len() {
+                let n = libc::write(
+                    wr,
+                    payload.as_ptr().add(off) as *const ::core::ffi::c_void,
+                    payload.len() - off,
+                );
+                if n <= 0 {
+                    break;
+                }
+                off += n as usize;
+            }
+            libc::close(wr);
+        });
+
+        let (buffer, len) = read_all_pipe(rd);
+        libc::close(rd);
+        writer.join().unwrap();
+        (buffer, len)
+    }
+
+    /// Empty pipe (immediate EOF): zero length and a NUL at offset 0.
+    #[test]
+    fn empty_pipe_yields_zero_length_nul_terminated() {
+        unsafe {
+            let (buffer, len) = run(Vec::new());
+            assert_eq!(len, 0);
+            assert_eq!(buffer[0], 0, "NUL-terminated at offset 0");
+        }
+    }
+
+    /// A payload that fits inside the initial 200-byte buffer round-trips
+    /// byte-for-byte and is NUL-terminated just past the data.
+    #[test]
+    fn small_payload_round_trips() {
+        unsafe {
+            let payload = b"hello from the pipe".to_vec();
+            let (buffer, len) = run(payload.clone());
+            assert_eq!(len as usize, payload.len());
+            assert_eq!(&buffer[..len as usize], &payload[..]);
+            assert_eq!(buffer[len as usize], 0, "NUL-terminated past the data");
+        }
+    }
+
+    /// A payload well past the initial 200 bytes forces the 512-byte growth
+    /// path (potentially several times) and must still round-trip exactly.
+    #[test]
+    fn large_payload_exercises_buffer_growth() {
+        unsafe {
+            let payload: Vec<u8> = (0..5000u32).map(|n| (n % 251) as u8).collect();
+            let (buffer, len) = run(payload.clone());
+            assert_eq!(len as usize, payload.len(), "all bytes read across growth");
+            assert_eq!(&buffer[..len as usize], &payload[..], "bytes preserved");
+            assert_eq!(buffer[len as usize], 0, "NUL-terminated past the data");
+        }
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
