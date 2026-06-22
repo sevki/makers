@@ -53,6 +53,7 @@ pub type commands = Commands;
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, expanding_var,
     install_variable_buffer, recursively_expand_for_file, swap_variable_buffer, variable_buffer,
+    OwnedCStr,
 };
 use crate::floc::Floc;
 use crate::function::func_shell_base;
@@ -1707,10 +1708,14 @@ pub unsafe fn do_variable_definition(
             newval = alloc_value;
         }
         5 => {
-            let q: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
-            alloc_value = shell_result(q);
-            free(q as *mut ::core::ffi::c_void);
+            // The expanded recipe text is scratch consumed only by
+            // `shell_result`; `OwnedCStr` frees it on drop (RAII) instead of
+            // the manual `free` the C code performed here.
+            let q = OwnedCStr(allocated_expand_string_for_file(
+                value,
+                ::core::ptr::null_mut::<file>(),
+            ));
+            alloc_value = shell_result(q.as_ptr());
             flavor = f_recursive;
             newval = alloc_value;
         }

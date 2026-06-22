@@ -16,12 +16,12 @@ extern "C" {
 }
 
 /// Owns a `malloc`ed C string and frees it on drop, replacing the manual
-/// `xstrdup`/`expand_argument` + `free` ownership pairs in this module.
-struct OwnedCStr(*mut ::core::ffi::c_char);
+/// `xstrdup`/`expand_argument` + `free` ownership pairs across the port.
+pub(crate) struct OwnedCStr(pub(crate) *mut ::core::ffi::c_char);
 
 impl OwnedCStr {
     /// Borrow the underlying NUL-terminated buffer.
-    fn as_ptr(&self) -> *mut ::core::ffi::c_char {
+    pub(crate) fn as_ptr(&self) -> *mut ::core::ffi::c_char {
         self.0
     }
 }
