@@ -396,6 +396,7 @@ pub unsafe fn init_hash_global_variable_set() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn define_variable_in_set(
     ctx: &crate::execctx::ExecContext,
     mut name: *const ::core::ffi::c_char,
@@ -1353,8 +1354,7 @@ pub unsafe fn target_environment(
     let result_0: *mut *mut ::core::ffi::c_char;
     let mut result: *mut *mut ::core::ffi::c_char;
     let mut invalid: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut added_shell: i32 =
-        (shell_var.value == ::core::ptr::null_mut::<::core::ffi::c_char>()) as i32;
+    let mut added_shell: i32 = shell_var.value.is_null() as i32;
     let mut found_makelevel: i32 = 0;
     let mut found_mflags: i32 = 0;
     let mut found_makeflags: i32 = 0;
@@ -1445,7 +1445,7 @@ pub unsafe fn target_environment(
                                         .offset(1_i32 as isize),
                                 ) == 0))
                 {
-                    cp = recursively_expand_for_file(v_0, file);
+                    cp = recursively_expand_for_file(ctx, v_0, file);
                     value = cp;
                 }
                 if added_shell == 0
@@ -1602,7 +1602,11 @@ pub unsafe fn target_environment(
     }
     result_0
 }
-unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin) -> *mut variable {
+unsafe fn set_special_var(
+    ctx: &crate::execctx::ExecContext,
+    var: *mut variable,
+    origin: variable_origin,
+) -> *mut variable {
     let Some(varr) = var.as_ref() else {
         return var;
     };
@@ -1615,7 +1619,7 @@ unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin
                 (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1_i32 as isize),
             ) == 0)
     {
-        crate::make_main::reset_makeflags_special(origin);
+        crate::make_main::reset_makeflags_special(ctx, origin);
     } else if vn0 == *(b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
@@ -1637,11 +1641,12 @@ unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin
             ) == 0)
     {
         let actions: *mut ::core::ffi::c_char = allocated_expand_variable(
+            ctx,
             b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         );
         let arg = ::core::ffi::CStr::from_ptr(actions).to_str().unwrap_or("");
-        warning::decode_actions(arg, Some(&varr.fileinfo));
+        warning::decode_actions(ctx, arg, Some(&varr.fileinfo));
         free(actions as *mut ::core::ffi::c_void);
     }
     var
@@ -1650,7 +1655,10 @@ unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+pub unsafe fn shell_result(
+    ctx: &crate::execctx::ExecContext,
+    p: *const ::core::ffi::c_char,
+) -> *mut ::core::ffi::c_char {
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     let mut args: [*mut ::core::ffi::c_char; 2] =
@@ -1659,6 +1667,7 @@ pub unsafe fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c
     args[0_i32 as usize] = p as *mut ::core::ffi::c_char;
     args[1_i32 as usize] = ::core::ptr::null_mut::<::core::ffi::c_char>();
     func_shell_base(
+        ctx,
         variable_buffer,
         &raw mut args as *mut *mut ::core::ffi::c_char,
         0,
@@ -1669,6 +1678,7 @@ pub unsafe fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn do_variable_definition(
     ctx: &crate::execctx::ExecContext,
     flocp: *const Floc,
@@ -1694,12 +1704,13 @@ pub unsafe fn do_variable_definition(
     }
     match flavor as ::core::ffi::c_uint {
         1 => {
-            alloc_value = allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
+            alloc_value =
+                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>());
             newval = alloc_value;
         }
         3 => {
             let t: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
+                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>());
             alloc_value = xmalloc((strlen(t) as size_t).wrapping_mul(2).wrapping_add(1))
                 as *mut ::core::ffi::c_char;
             let mut np: *mut ::core::ffi::c_char = alloc_value;
@@ -1722,8 +1733,8 @@ pub unsafe fn do_variable_definition(
         }
         5 => {
             let q: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(value, ::core::ptr::null_mut::<file>());
-            alloc_value = shell_result(q);
+                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>());
+            alloc_value = shell_result(ctx, q);
             free(q as *mut ::core::ffi::c_void);
             flavor = f_recursive;
             newval = alloc_value;
@@ -1738,6 +1749,7 @@ pub unsafe fn do_variable_definition(
             } else {
                 append = 1;
                 v = lookup_variable_in_set(
+                    ctx,
                     varname,
                     strlen(varname) as size_t,
                     (*current_variable_set_list).set,
@@ -1775,7 +1787,8 @@ pub unsafe fn do_variable_definition(
                 } else if flavor as ::core::ffi::c_uint
                     != f_append_value as i32 as ::core::ffi::c_uint
                 {
-                    tp = allocated_expand_string_for_file(val, ::core::ptr::null_mut::<file>());
+                    tp =
+                        allocated_expand_string_for_file(ctx, val, ::core::ptr::null_mut::<file>());
                     val = tp;
                 }
                 vallen = strlen(val) as size_t;
@@ -1841,6 +1854,7 @@ pub unsafe fn do_variable_definition(
             panic!("assertion failed: newval");
         }
         v = define_variable_in_set(
+            ctx,
             varname,
             strlen(varname) as size_t,
             newval,
@@ -1860,7 +1874,7 @@ pub unsafe fn do_variable_definition(
     }
     free(alloc_value as *mut ::core::ffi::c_void);
     match v.as_mut() {
-        Some(vr) if vr.special() as i32 != 0 => set_special_var(vr as *mut variable, origin),
+        Some(vr) if vr.special() as i32 != 0 => set_special_var(ctx, vr as *mut variable, origin),
         _ => v,
     }
 }
@@ -1895,6 +1909,7 @@ pub unsafe fn parse_variable_definition(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn assign_variable_definition(
+    ctx: &crate::execctx::ExecContext,
     v: *mut variable,
     line: *const ::core::ffi::c_char,
 ) -> *mut variable {
@@ -1914,9 +1929,10 @@ pub unsafe fn assign_variable_definition(
         (*v).length as size_t,
     );
     *name.offset((*v).length as isize) = 0;
-    (*v).name = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
+    (*v).name = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
     if *(*v).name.offset(0_i32 as isize) as i32 == 0 {
         fatal(
+            ctx,
             &raw mut (*v).fileinfo,
             0,
             b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1929,6 +1945,7 @@ pub unsafe fn assign_variable_definition(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn try_variable_definition(
+    ctx: &crate::execctx::ExecContext,
     flocp: *const Floc,
     line: *const ::core::ffi::c_char,
     origin: variable_origin,
@@ -1951,10 +1968,11 @@ pub unsafe fn try_variable_definition(
     } else {
         v.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
     }
-    if assign_variable_definition(&raw mut v, line).is_null() {
+    if assign_variable_definition(ctx, &raw mut v, line).is_null() {
         return ::core::ptr::null_mut::<variable>();
     }
     vp = do_variable_definition(
+        ctx,
         flocp,
         v.name,
         v.value,
@@ -1973,7 +1991,7 @@ static mut defined_vars: [defined_vars; 13] = [defined_vars {
 /// Emit a "reference to undefined variable" warning for `name`, unless `name`
 /// is one of the built-in always-defined variables in the `defined_vars`
 /// table, or the warning is inactive.
-pub fn warn_undefined(name: &[u8]) {
+pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
     if warning::is_active(Type::UndefinedVar) {
         // SAFETY: `defined_vars` is a process-wide, NUL-terminated table of
         // built-in variable names, populated once during startup and never
@@ -1998,6 +2016,7 @@ pub fn warn_undefined(name: &[u8]) {
         }
         if warning::is_active(Type::UndefinedVar) {
             emit_var_name_warning(
+                ctx,
                 // SAFETY: `reading_file` is a process-wide pointer to the
                 // current Floc, set during makefile evaluation; read-only here.
                 unsafe { reading_file.as_ref() },
@@ -2015,7 +2034,11 @@ mod warn_undefined_unsafe_oracle {
 
     /// Verbatim pre-conversion implementation, preserved as a differential
     /// test oracle.
-    unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
+    unsafe fn warn_undefined(
+        ctx: &crate::execctx::ExecContext,
+        name: *const ::core::ffi::c_char,
+        len: size_t,
+    ) {
         if warning::is_active(Type::UndefinedVar) {
             let mut dp: *const defined_vars;
             dp = &raw const defined_vars as *const defined_vars;
@@ -2033,6 +2056,7 @@ mod warn_undefined_unsafe_oracle {
             }
             if warning::is_active(Type::UndefinedVar) {
                 emit_var_name_warning(
+                    ctx,
                     reading_file.as_ref(),
                     warning::action(Type::UndefinedVar) == Action::Error,
                     "reference to undefined variable",
@@ -2109,7 +2133,8 @@ mod warn_undefined_unsafe_oracle {
         // Exercise the original oracle entry point. Warning state is inactive
         // in unit tests, so this is a no-op beyond confirming it runs.
         unsafe {
-            warn_undefined(b"MAKE\0".as_ptr() as *const ::core::ffi::c_char, 4);
+            let ctx = crate::execctx::ExecContext::default();
+            warn_undefined(&ctx, b"MAKE\0".as_ptr() as *const ::core::ffi::c_char, 4);
         }
     }
 }
@@ -2583,7 +2608,8 @@ mod initialize_file_variables_tests {
             f.hname = name;
 
             assert!(f.variables.is_null(), "starts without a variable set");
-            initialize_file_variables(&raw mut f, 1);
+            let ctx = crate::execctx::ExecContext::default();
+            initialize_file_variables(&ctx, &raw mut f, 1);
 
             let l = f.variables;
             assert!(!l.is_null(), "a variable set list is allocated");
@@ -2608,11 +2634,12 @@ mod initialize_file_variables_tests {
             f.name = name;
             f.hname = name;
 
-            initialize_file_variables(&raw mut f, 1);
+            let ctx = crate::execctx::ExecContext::default();
+            initialize_file_variables(&ctx, &raw mut f, 1);
             let first = f.variables;
             assert!(!first.is_null());
 
-            initialize_file_variables(&raw mut f, 1);
+            initialize_file_variables(&ctx, &raw mut f, 1);
             assert_eq!(f.variables, first, "the existing set is reused");
         }
     }
@@ -2631,7 +2658,8 @@ mod initialize_file_variables_tests {
             f.hname = name;
 
             assert_eq!(f.pat_searched(), 0, "starts un-searched");
-            initialize_file_variables(&raw mut f, 0);
+            let ctx = crate::execctx::ExecContext::default();
+            initialize_file_variables(&ctx, &raw mut f, 0);
 
             assert_eq!(f.pat_searched(), 1, "pattern search ran and was recorded");
             assert!(!f.variables.is_null(), "variable set still allocated");
@@ -2655,7 +2683,8 @@ mod initialize_file_variables_tests {
             child.hname = cname;
             child.parent = &raw mut parent;
 
-            initialize_file_variables(&raw mut child, 1);
+            let ctx = crate::execctx::ExecContext::default();
+            initialize_file_variables(&ctx, &raw mut child, 1);
 
             assert!(!parent.variables.is_null(), "parent set is initialized");
             let l = child.variables;
@@ -2686,7 +2715,8 @@ mod initialize_file_variables_tests {
             f.hname = mname;
             f.double_colon = &raw mut dc;
 
-            initialize_file_variables(&raw mut f, 1);
+            let ctx = crate::execctx::ExecContext::default();
+            initialize_file_variables(&ctx, &raw mut f, 1);
 
             assert!(!dc.variables.is_null(), "double-colon set is initialized");
             let l = f.variables;

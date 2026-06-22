@@ -754,7 +754,7 @@ pub unsafe fn get_tmpfd(ctx: &crate::execctx::ExecContext, name: *mut *mut c_cha
         *name = null_mut();
     } else {
         // If there's an OS-specific way to get an anonymous temp file, use it.
-        fd = os_anontmp();
+        fd = os_anontmp(ctx);
         if fd >= 0 {
             return fd;
         }
@@ -817,10 +817,7 @@ pub unsafe fn get_tmpfd(ctx: &crate::execctx::ExecContext, name: *mut *mut c_cha
 /// # Safety
 /// `name` must be non-null and valid for writes; the caller takes ownership
 /// of `*name`.
-pub unsafe fn get_tmpfile(
-    ctx: &crate::execctx::ExecContext,
-    name: *mut *mut c_char,
-) -> *mut FILE {
+pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_char) -> *mut FILE {
     let tmpfile_mode: *const c_char = c"wb+".as_ptr();
 
     let name = name.as_mut().expect("get_tmpfile: name must be non-null");

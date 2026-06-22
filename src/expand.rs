@@ -252,7 +252,7 @@ pub unsafe fn recursively_expand_for_file(
         let mut sl: *mut variable_set_list;
         sl = current_variable_set_list;
         while !sl.is_null() && parent.is_null() {
-            let vp: *mut variable = lookup_variable_in_set((*v).name, nl, (*sl).set);
+            let vp: *mut variable = lookup_variable_in_set(ctx, (*v).name, nl, (*sl).set);
             if !vp.is_null() && vp != v && (*vp).origin() as i32 == o_override as i32 {
                 parent = vp;
             }
@@ -292,11 +292,14 @@ pub unsafe fn expand_variable_output(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
-    let v = lookup_variable(name, length);
+    let v = lookup_variable(ctx, name, length);
     if v.is_null() {
         // SAFETY: `name` points to `length` valid bytes (caller contract);
         // read-only bridge to the safe `warn_undefined`.
-        warn_undefined(::core::slice::from_raw_parts(name as *const u8, length));
+        warn_undefined(
+            ctx,
+            ::core::slice::from_raw_parts(name as *const u8, length),
+        );
     }
     if v.is_null() || *(*v).value.offset(0_i32 as isize) as i32 == 0 && (*v).append() == 0 {
         return ptr;
@@ -430,7 +433,7 @@ pub unsafe fn expand_string_buf(
                 let mut abeg: Option<OwnedCStr> = None;
                 let mut end: *const ::core::ffi::c_char;
                 let mut colon: *const ::core::ffi::c_char;
-                if handle_function(&raw mut o, &raw mut p) == 0 {
+                if handle_function(ctx, &raw mut o, &raw mut p) == 0 {
                     end = strchr(beg, closeparen as i32);
                     if end.is_null() {
                         fatal(
@@ -510,16 +513,16 @@ pub unsafe fn expand_string_buf(
                             let replace_beg: *const ::core::ffi::c_char = subst_end.add(1);
                             let replace_end: *const ::core::ffi::c_char = end;
                             let name_len = colon.offset_from(beg) as size_t;
-                            let v = lookup_variable(beg, name_len).as_mut();
+                            let v = lookup_variable(ctx, beg, name_len).as_mut();
                             if v.is_none() {
                                 // SAFETY: `beg` points to `name_len` valid
                                 // bytes (`name_len = colon - beg`, both within
                                 // the same buffer); read-only bridge to the
                                 // safe `warn_undefined`.
-                                warn_undefined(::core::slice::from_raw_parts(
-                                    beg as *const u8,
-                                    name_len,
-                                ));
+                                warn_undefined(
+                                    ctx,
+                                    ::core::slice::from_raw_parts(beg as *const u8, name_len),
+                                );
                             }
                             if let Some(v) = v.filter(|v| *v.value != 0) {
                                 // Recursive values are freshly expanded and
@@ -683,7 +686,7 @@ unsafe fn variable_append(
         return initialize_variable_output();
     }
     let nextlocal = (local != 0 && (*set).next_is_parent == 0) as i32;
-    let v: *const variable = lookup_variable_in_set(name, length, (*set).set);
+    let v: *const variable = lookup_variable_in_set(ctx, name, length, (*set).set);
     if v.is_null() || (local == 0 && (*v).private_var() != 0) {
         return variable_append(ctx, name, length, (*set).next, nextlocal);
     }

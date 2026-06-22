@@ -478,7 +478,7 @@ unsafe fn child_error(
     } else {
         ::core::ptr::null_mut::<output>()
     };
-    show_goal_error();
+    show_goal_error(ctx);
     if exit_sig == 0 {
         error(
             ctx,
@@ -627,7 +627,10 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             if pid > 0 {
                 remote = 1;
             } else if pid < 0 {
-                pfatal_with_name(ctx, b"remote_status\0" as *const u8 as *const ::core::ffi::c_char);
+                pfatal_with_name(
+                    ctx,
+                    b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
+                );
             } else {
                 if any_local != 0 {
                     if block == 0 {
@@ -679,7 +682,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             }
             command_count = command_count.wrapping_add(1);
             if remote == 0 && pid == shell_function_pid() {
-                shell_completed(exit_code, exit_sig);
+                shell_completed(ctx, exit_code, exit_sig);
                 break;
             } else {
                 lastc = ::core::ptr::null_mut::<child>();
@@ -840,7 +843,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 );
             }
             if exit_sig != 0 || DELETE_ON_ERROR.load(Ordering::Relaxed) != 0 {
-                delete_child_targets(c);
+                delete_child_targets(ctx, c);
             }
         } else {
             if child_failed != 0 {
@@ -880,7 +883,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     .update_status() as i32
                     != us_success as i32
                 {
-                    delete_child_targets(c);
+                    delete_child_targets(ctx, c);
                 }
             } else {
                 (*c).file
@@ -891,7 +894,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         }
         crate::output::output_dump(ctx, &raw mut (*c).output);
         if handling_fatal_signal == 0 {
-            notice_finished_file((*c).file);
+            notice_finished_file(ctx, (*c).file);
         }
         block_sigs();
         if (*c).pid > 0 && 0x4_i32 & db_level != 0 {
@@ -927,7 +930,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             && !crate::make_main::opt_keep_going()
             && handling_fatal_signal == 0
         {
-            die(child_failed);
+            die(ctx, child_failed);
         }
         block = 0;
     }
@@ -976,7 +979,7 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
         );
     }
     if jobserver_enabled() != 0 && jobserver_tokens() > 1 {
-        jobserver_release(1);
+        jobserver_release(ctx, 1);
         if 0x4_i32 & db_level != 0 {
             printf(
                 b"Released token for child %p (%s).\n\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1133,7 +1136,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 .as_mut()
                 .expect("a child always has a file")
                 .set_update_status(us_question as update_status);
-            notice_finished_file((*child).file);
+            notice_finished_file(ctx, (*child).file);
             return;
         }
         if crate::make_main::opt_touch() && !(flags & 1 != 0) {
@@ -1204,6 +1207,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
                     (*child).environment = target_environment(
+                        ctx,
                         (*child).file,
                         (*child)
                             .file
@@ -1280,7 +1284,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             .as_mut()
             .expect("a child always has a file")
             .set_update_status(us_success as update_status);
-        notice_finished_file((*child).file);
+        notice_finished_file(ctx, (*child).file);
     }
     output_context = ::core::ptr::null_mut::<output>();
 }
@@ -1347,7 +1351,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
         }
     }
     if finish {
-        notice_finished_file(f);
+        notice_finished_file(ctx, f);
         free_child(ctx, c);
     }
     1
@@ -1364,7 +1368,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
     let mut i: ::core::ffi::c_uint;
     start_waiting_jobs(ctx);
     reap_children(ctx, 0, 0);
-    chop_commands(cmds);
+    chop_commands(ctx, cmds);
     c = xcalloc(::core::mem::size_of::<child>() as size_t) as *mut child;
     crate::output::output_init(&raw mut (*c).output);
     (*c).file = file;
@@ -1485,7 +1489,8 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
         }
         (*cmds).fileinfo.offset = i as ::core::ffi::c_ulong;
         let fresh7 = &mut (*lines.offset(i as isize));
-        *fresh7 = allocated_expand_string_for_file(*(*cmds).command_lines.offset(i as isize), file);
+        *fresh7 =
+            allocated_expand_string_for_file(ctx, *(*cmds).command_lines.offset(i as isize), file);
         i = i.wrapping_add(1);
     }
     (*cmds).fileinfo.offset = 0;
@@ -1513,7 +1518,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
             if jobserver_tokens() == 0 {
                 break;
             }
-            jobserver_pre_acquire();
+            jobserver_pre_acquire(ctx);
             reap_children(ctx, 0, 0);
             start_waiting_jobs(ctx);
             if jobserver_tokens() == 0 {
@@ -1528,7 +1533,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
                         as *const ::core::ffi::c_char,
                 );
             }
-            got_token = jobserver_acquire((waiting_jobs != NULL as *mut child) as i32) as i32;
+            got_token = jobserver_acquire(ctx, (waiting_jobs != NULL as *mut child) as i32) as i32;
             if !(got_token == 1) {
                 continue;
             }
@@ -1650,6 +1655,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
             );
         } else {
             let mut newer: *mut ::core::ffi::c_char = allocated_expand_variable_for_file(
+                ctx,
                 b"?\0" as *const u8 as *const ::core::ffi::c_char,
                 (::core::mem::size_of::<[::core::ffi::c_char; 2]>() as size_t).wrapping_sub(1),
                 (*c).file,
@@ -2294,6 +2300,7 @@ pub unsafe fn exec_command(
     }
     pid
 }
+#[allow(clippy::too_many_arguments)]
 unsafe fn construct_command_argv_internal(
     ctx: &crate::execctx::ExecContext,
     mut line: *mut ::core::ffi::c_char,
@@ -2864,11 +2871,13 @@ pub unsafe fn construct_command_argv(
     let save: Action = warning::action(Type::UndefinedVar);
     warning::set_action(Type::UndefinedVar, Action::Ignore);
     shell = allocated_expand_variable_for_file(
+        ctx,
         b"SHELL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
         file,
     );
     var = lookup_variable_for_file(
+        ctx,
         b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),
         file,
@@ -2876,7 +2885,7 @@ pub unsafe fn construct_command_argv(
     if var.is_null() {
         shellflags = b"\0" as *const u8 as *const ::core::ffi::c_char;
     } else if (*var).origin() as i32 != o_default as i32 {
-        allocflags = allocated_expand_string_for_file((*var).value, file);
+        allocflags = allocated_expand_string_for_file(ctx, (*var).value, file);
         shellflags = allocflags;
     } else if posix_pedantic() && !crate::make_main::opt_ignore_errors() && !(cmd_flags & 4 != 0) {
         shellflags = b"-ec\0" as *const u8 as *const ::core::ffi::c_char;
@@ -2884,6 +2893,7 @@ pub unsafe fn construct_command_argv(
         shellflags = b"-c\0" as *const u8 as *const ::core::ffi::c_char;
     }
     ifs = allocated_expand_variable_for_file(
+        ctx,
         b"IFS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 4]>() as size_t).wrapping_sub(1),
         file,

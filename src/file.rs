@@ -225,7 +225,8 @@ use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
 use crate::hash::{
     hash_delete, hash_deleted_item, hash_dump, hash_find_item, hash_find_slot, hash_init,
-    hash_insert_at, hash_map, hash_print_stats, is_real_item, jhash_string, table_slots,
+    hash_insert_at, hash_map, hash_map_arg, hash_print_stats, is_real_item, jhash_string,
+    table_slots,
 };
 use crate::make_main::{
     cmd_prefix, db_level, export_all_variables, no_intermediates, run_silent, second_expansion,
@@ -813,8 +814,12 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
+pub unsafe fn split_prereqs(
+    ctx: &crate::execctx::ExecContext,
+    mut p: *mut ::core::ffi::c_char,
+) -> *mut dep {
     let mut new: *mut dep = parse_file_seq(
+        ctx,
         &raw mut p,
         ::core::mem::size_of::<dep>() as size_t,
         0x100_i32,
@@ -825,6 +830,7 @@ pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
         let mut ood: *mut dep;
         p = p.offset(1_i32 as isize);
         ood = parse_file_seq(
+            ctx,
             &raw mut p,
             ::core::mem::size_of::<dep>() as size_t,
             0x1_i32,
@@ -951,7 +957,7 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn expand_deps(f: *mut file) {
+pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: *mut file) {
     let mut d: *mut dep;
     let mut dp: *mut *mut dep;
     let mut fstem: *const ::core::ffi::c_char;
@@ -1026,10 +1032,11 @@ pub unsafe fn expand_deps(f: *mut file) {
                 }
             }
             if initialized == 0 {
-                initialize_file_variables(f, 0);
+                initialize_file_variables(ctx, f, 0);
                 initialized = 1;
             }
             set_file_variables(
+                ctx,
                 f,
                 if !(*d).stem.is_null() {
                     (*d).stem
@@ -1037,9 +1044,9 @@ pub unsafe fn expand_deps(f: *mut file) {
                     (*f).stem
                 },
             );
-            p = expand_string_for_file((*d).name, f);
+            p = expand_string_for_file(ctx, (*d).name, f);
             free((*d).name as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void);
-            new = split_prereqs(p);
+            new = split_prereqs(ctx, p);
             if new.is_null() {
                 *dp = (*d).next;
                 changed_dep = 1;
@@ -1082,14 +1089,21 @@ pub unsafe fn expand_deps(f: *mut file) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
+pub unsafe fn expand_extra_prereqs(
+    ctx: &crate::execctx::ExecContext,
+    extra: *const variable,
+) -> *mut dep {
     let mut d: *mut dep;
     let prereqs: *mut dep = if !extra.is_null() {
-        split_prereqs(expand_string_buf(
-            ::core::ptr::null_mut::<::core::ffi::c_char>(),
-            (*extra).value,
-            SIZE_MAX as size_t,
-        ))
+        split_prereqs(
+            ctx,
+            expand_string_buf(
+                ctx,
+                ::core::ptr::null_mut::<::core::ffi::c_char>(),
+                (*extra).value,
+                SIZE_MAX as size_t,
+            ),
+        )
     } else {
         ::core::ptr::null_mut::<dep>()
     };
@@ -1109,7 +1123,7 @@ pub unsafe fn expand_extra_prereqs(extra: *const variable) -> *mut dep {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
+pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: *mut file, deps: *const dep) {
     let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut d: *mut dep;
     // `snap_file` is only ever called with a non-null file (its sole caller
@@ -1126,11 +1140,15 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
         fr.set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     if let Some(file_vars) = fr.variables.as_ref() {
-        prereqs = expand_extra_prereqs(lookup_variable_in_set(
-            b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-            file_vars.set,
-        ));
+        prereqs = expand_extra_prereqs(
+            ctx,
+            lookup_variable_in_set(
+                ctx,
+                b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
+                (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
+                file_vars.set,
+            ),
+        );
         if second_expansion() {
             d = prereqs;
             while let Some(dr) = d.as_mut() {
@@ -1384,10 +1402,14 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             }
         }
     }
-    let prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
-        b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-    ));
+    let prereqs: *mut dep = expand_extra_prereqs(
+        ctx,
+        lookup_variable(
+            ctx,
+            b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
+            (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
+        ),
+    );
     let filedump: *mut *mut ::core::ffi::c_void = hash_dump(
         &raw mut files,
         ::core::ptr::null_mut::<*mut ::core::ffi::c_void>(),
@@ -1395,7 +1417,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     );
     let mut filep: *mut *mut ::core::ffi::c_void = filedump;
     while let Some(&fp) = filep.as_ref().filter(|p| !p.is_null()) {
-        snap_file(fp as *mut file, prereqs);
+        snap_file(ctx, fp as *mut file, prereqs);
         filep = filep.offset(1_i32 as isize);
     }
     free(filedump as *mut ::core::ffi::c_void);
@@ -1897,7 +1919,10 @@ pub unsafe fn print_targets() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
+pub unsafe fn verify_file(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
+    // Invoked via `hash_map_arg`; `arg` carries the borrowed `ExecContext` so the
+    // diagnostics below can be prefixed correctly without any global.
+    let ctx = &*(arg as *const crate::execctx::ExecContext);
     let f: *const file = item as *const file;
     let mut d: *const dep;
     if !(*f).name.is_null()
@@ -1905,6 +1930,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).name) == 0
     {
         error(
+            ctx,
             ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
@@ -1922,6 +1948,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).hname) == 0
     {
         error(
+            ctx,
             ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
@@ -1939,6 +1966,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).vpath) == 0
     {
         error(
+            ctx,
             ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
@@ -1956,6 +1984,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         && strcache_iscached((*f).stem) == 0
     {
         error(
+            ctx,
             ::core::ptr::null::<Floc>(),
             (strlen((*f).name) as size_t)
                 .wrapping_add(
@@ -1976,6 +2005,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
             && strcache_iscached((*d).name) == 0
         {
             error(
+                ctx,
                 ::core::ptr::null::<Floc>(),
                 (strlen((*d).name) as size_t)
                     .wrapping_add(
@@ -1994,6 +2024,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
             && strcache_iscached((*d).stem) == 0
         {
             error(
+                ctx,
                 ::core::ptr::null::<Floc>(),
                 (strlen((*d).name) as size_t)
                     .wrapping_add(
@@ -2014,8 +2045,12 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn verify_file_data_base() {
-    hash_map(&raw mut files, Some(verify_file));
+pub unsafe fn verify_file_data_base(ctx: &crate::execctx::ExecContext) {
+    hash_map_arg(
+        &raw mut files,
+        Some(verify_file),
+        ctx as *const crate::execctx::ExecContext as *mut ::core::ffi::c_void,
+    );
 }
 /// # Safety
 ///
@@ -2263,9 +2298,10 @@ mod tests {
     fn snap_file_plain_target_clears_updating() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            let ctx = crate::execctx::ExecContext::default();
             let mut f = File::default();
             f.set_updating(1);
-            snap_file(&raw mut f, ::core::ptr::null());
+            snap_file(&ctx, &raw mut f, ::core::ptr::null());
             assert_eq!(f.updating(), 0, "updating cleared when not 2nd-expanding");
         }
     }
@@ -2278,6 +2314,7 @@ mod tests {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             initialize_stopchar_map();
+            let ctx = crate::execctx::ExecContext::default();
             let name = strcache_add(c"snapself".as_ptr());
             let mut f = File::default();
             f.name = name;
@@ -2288,7 +2325,7 @@ mod tests {
             let d = alloc_dep();
             (*d).name = name;
             (*d).next = ::core::ptr::null_mut();
-            snap_file(&raw mut f, d as *const Dep);
+            snap_file(&ctx, &raw mut f, d as *const Dep);
             // The self-referential prereq is dropped, so deps stays empty.
             assert!(f.deps.is_null(), "self-prereq is not appended");
             free_dep(d);

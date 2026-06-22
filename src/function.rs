@@ -55,8 +55,12 @@ struct ExpandedArg(*mut ::core::ffi::c_char);
 
 impl ExpandedArg {
     /// Expand `arg`, stopping at `end` (or at the NUL when `end` is null).
-    unsafe fn new(arg: *const ::core::ffi::c_char, end: *const ::core::ffi::c_char) -> Self {
-        ExpandedArg(expand_argument(arg, end))
+    unsafe fn new(
+        ctx: &crate::execctx::ExecContext,
+        arg: *const ::core::ffi::c_char,
+        end: *const ::core::ffi::c_char,
+    ) -> Self {
+        ExpandedArg(expand_argument(ctx, arg, end))
     }
 
     /// Take ownership of an already-expanded, `malloc`ed buffer (e.g. from
@@ -171,6 +175,7 @@ pub struct function_table_entry {
 pub union C2RustUnnamed {
     pub func_ptr: Option<
         unsafe fn(
+            &crate::execctx::ExecContext,
             *mut ::core::ffi::c_char,
             *mut *mut ::core::ffi::c_char,
             *const ::core::ffi::c_char,
@@ -572,13 +577,17 @@ unsafe extern "C" fn find_next_argument(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+pub unsafe fn string_glob(
+    ctx: &crate::execctx::ExecContext,
+    mut line: *mut ::core::ffi::c_char,
+) -> *mut ::core::ffi::c_char {
     static mut result: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut length: size_t = 0;
     let mut chain: *mut nameseq;
     let mut idx: size_t;
     chain = parse_file_seq(
+        ctx,
         &raw mut line,
         ::core::mem::size_of::<nameseq>() as size_t,
         0x1_i32,
@@ -619,6 +628,7 @@ pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ff
     result
 }
 unsafe fn func_patsubst(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -632,6 +642,7 @@ unsafe fn func_patsubst(
     o
 }
 unsafe fn func_join(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -666,11 +677,13 @@ unsafe fn func_join(
     o
 }
 unsafe fn func_origin(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let v: *mut variable = lookup_variable(
+        ctx,
         *argv.offset(0_i32 as isize),
         strlen(*argv.offset(0_i32 as isize)) as size_t,
     );
@@ -740,11 +753,13 @@ unsafe fn func_origin(
     o
 }
 unsafe fn func_flavor(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let v: *mut variable = lookup_variable(
+        ctx,
         *argv.offset(0_i32 as isize),
         strlen(*argv.offset(0_i32 as isize)) as size_t,
     );
@@ -766,6 +781,7 @@ unsafe fn func_flavor(
     o
 }
 unsafe fn func_notdir_suffix(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
@@ -829,6 +845,7 @@ unsafe fn func_notdir_suffix(
     o
 }
 unsafe fn func_basename_dir(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
@@ -882,6 +899,7 @@ unsafe fn func_basename_dir(
     o
 }
 unsafe fn func_addsuffix_addprefix(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
@@ -914,6 +932,7 @@ unsafe fn func_addsuffix_addprefix(
     o
 }
 unsafe fn func_subst(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -974,6 +993,7 @@ fn word_span(s: &[u8], start: usize, stop: usize) -> Option<&[u8]> {
 }
 
 unsafe fn func_firstword(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -989,6 +1009,7 @@ unsafe fn func_firstword(
     o
 }
 unsafe fn func_lastword(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1004,6 +1025,7 @@ unsafe fn func_lastword(
     o
 }
 unsafe fn func_words(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1133,11 +1155,16 @@ fn classify_numeric(s: &[u8]) -> NumParse {
 /// `msg` context) on empty / out-of-range / otherwise-invalid input. The parsing
 /// is done in safe Rust by [`classify_numeric`]; the only `unsafe` here is the
 /// variadic `fatal` reporting, which still needs the C string pointers.
-unsafe fn parse_numeric(s: &::core::ffi::CStr, msg: &::core::ffi::CStr) -> i64 {
+unsafe fn parse_numeric(
+    ctx: &crate::execctx::ExecContext,
+    s: &::core::ffi::CStr,
+    msg: &::core::ffi::CStr,
+) -> i64 {
     match classify_numeric(s.to_bytes()) {
         NumParse::Ok(n) => n,
         // `fatal` diverges (`-> !`), so these arms never produce an `i64`.
         NumParse::Empty => fatal(
+            ctx,
             *expanding_var,
             msg.to_bytes().len() as size_t,
             c"%s: empty value".as_ptr(),
@@ -1150,6 +1177,7 @@ unsafe fn parse_numeric(s: &::core::ffi::CStr, msg: &::core::ffi::CStr) -> i64 {
                 c"%s: '%s'"
             };
             fatal(
+                ctx,
                 *expanding_var,
                 (msg.to_bytes().len() + s.to_bytes().len()) as size_t,
                 fmt.as_ptr(),
@@ -1160,16 +1188,19 @@ unsafe fn parse_numeric(s: &::core::ffi::CStr, msg: &::core::ffi::CStr) -> i64 {
     }
 }
 unsafe fn func_word(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let i = parse_numeric(
+        ctx,
         ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
         c"invalid first argument to 'word' function",
     );
     if i < 1 {
         fatal(
+            ctx,
             *expanding_var,
             0,
             c"first argument to 'word' function must be greater than 0".as_ptr(),
@@ -1191,6 +1222,7 @@ unsafe fn func_word(
     o
 }
 unsafe fn func_wordlist(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1199,11 +1231,13 @@ unsafe fn func_wordlist(
     let badfirst = c"invalid first argument to 'wordlist' function";
     let badsecond = c"invalid second argument to 'wordlist' function";
     let start = parse_numeric(
+        ctx,
         ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
         badfirst,
     );
     if start < 1 {
         fatal(
+            ctx,
             *expanding_var,
             (badfirst.to_bytes().len() as size_t)
                 .wrapping_add(
@@ -1215,11 +1249,13 @@ unsafe fn func_wordlist(
         );
     }
     let stop = parse_numeric(
+        ctx,
         ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)),
         badsecond,
     );
     if stop < 0 {
         fatal(
+            ctx,
             *expanding_var,
             (badsecond.to_bytes().len() as size_t)
                 .wrapping_add(
@@ -1247,6 +1283,7 @@ unsafe fn func_wordlist(
     o
 }
 unsafe fn func_findstring(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1261,15 +1298,18 @@ unsafe fn func_findstring(
     o
 }
 unsafe fn func_foreach(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let varname = ExpandedArg::new(
+        ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let list = ExpandedArg::new(
+        ctx,
         *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
@@ -1289,6 +1329,7 @@ unsafe fn func_foreach(
     *vp_eot = 0;
     push_new_variable_scope();
     var = define_variable_in_set(
+        ctx,
         vp,
         strlen(vp) as size_t,
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1305,6 +1346,7 @@ unsafe fn func_foreach(
         free((*var).value as *mut ::core::ffi::c_void);
         (*var).value = xstrndup(p, len);
         let result = ExpandedArg::from_raw(allocated_expand_string_for_file(
+            ctx,
             body,
             ::core::ptr::null_mut::<file>(),
         ));
@@ -1319,15 +1361,18 @@ unsafe fn func_foreach(
     o
 }
 unsafe fn func_let(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let varnames = ExpandedArg::new(
+        ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let list = ExpandedArg::new(
+        ctx,
         *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
@@ -1353,6 +1398,7 @@ unsafe fn func_let(
             *p.offset(len as isize) = 0;
         }
         define_variable_in_set(
+            ctx,
             vp,
             vlen,
             if !p.is_null() {
@@ -1376,6 +1422,7 @@ unsafe fn func_let(
     }
     if !vp.is_null() {
         define_variable_in_set(
+            ctx,
             vp,
             vlen,
             next_token(list_iterator),
@@ -1385,7 +1432,7 @@ unsafe fn func_let(
             NILF,
         );
     }
-    o = expand_string_buf(o, body, SIZE_MAX as size_t);
+    o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t);
     pop_variable_scope();
     o.offset(strlen(o) as isize)
 }
@@ -1426,6 +1473,7 @@ unsafe fn a_word_hash_cmp(x: *const ::core::ffi::c_void, y: *const ::core::ffi::
     }
 }
 unsafe fn func_filter_filterout(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
@@ -1610,6 +1658,7 @@ unsafe fn func_filter_filterout(
     o
 }
 unsafe fn func_strip(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1648,6 +1697,7 @@ unsafe fn func_strip(
     o
 }
 unsafe fn func_error(
+    ctx: &crate::execctx::ExecContext,
     o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
@@ -1659,6 +1709,7 @@ unsafe fn func_error(
     match logfn {
         Some(crate::parser::LogFunction::Error) => {
             fatal(
+                ctx,
                 reading_file,
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
                 b"%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1667,6 +1718,7 @@ unsafe fn func_error(
         }
         Some(crate::parser::LogFunction::Warning) => {
             error(
+                ctx,
                 reading_file,
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
                 b"%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1682,10 +1734,11 @@ unsafe fn func_error(
             msg.extend_from_slice(::core::slice::from_raw_parts(src as *const u8, len));
             msg.push(b'\n');
             msg.push(0);
-            outputs(0, msg.as_ptr() as *const ::core::ffi::c_char);
+            outputs(ctx, 0, msg.as_ptr() as *const ::core::ffi::c_char);
         }
         _ => {
             fatal(
+                ctx,
                 *expanding_var,
                 strlen(funcname) as size_t,
                 b"INTERNAL: func_error: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1715,6 +1768,7 @@ fn alpha_cmp(a: &[u8], b: &[u8]) -> ::core::cmp::Ordering {
 }
 
 unsafe fn func_sort(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1801,6 +1855,7 @@ fn classify_textint(t: &[u8]) -> TextInt {
 /// NUL-terminated strings and the out-parameters must be valid for writes.
 /// Aborts via [`fatal`] on an empty or non-numeric value.
 unsafe fn parse_textint(
+    ctx: &crate::execctx::ExecContext,
     number: *const ::core::ffi::c_char,
     msg: *const ::core::ffi::c_char,
     sign: *mut i32,
@@ -1810,12 +1865,14 @@ unsafe fn parse_textint(
     let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
     match classify_textint(t) {
         TextInt::Empty => fatal(
+            ctx,
             *expanding_var,
             strlen(msg) as size_t,
             b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
             msg,
         ),
         TextInt::NotNumeric => fatal(
+            ctx,
             *expanding_var,
             (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
             b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1858,6 +1915,7 @@ fn compare_textint(lsign: i32, ldigits: &[u8], rsign: i32, rdigits: &[u8]) -> i3
 }
 
 unsafe fn func_intcmp(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1867,14 +1925,17 @@ unsafe fn func_intcmp(
     let mut lnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut rnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let lhs_str = ExpandedArg::new(
+        ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let rhs_str = ExpandedArg::new(
+        ctx,
         *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let llim: *const ::core::ffi::c_char = parse_textint(
+        ctx,
         lhs_str.as_ptr(),
         b"non-numeric first argument to 'intcmp' function\0" as *const u8
             as *const ::core::ffi::c_char,
@@ -1882,6 +1943,7 @@ unsafe fn func_intcmp(
         &raw mut lnum,
     );
     let rlim: *const ::core::ffi::c_char = parse_textint(
+        ctx,
         rhs_str.as_ptr(),
         b"non-numeric second argument to 'intcmp' function\0" as *const u8
             as *const ::core::ffi::c_char,
@@ -1912,12 +1974,13 @@ unsafe fn func_intcmp(
         }
     }
     if !(*argv).is_null() {
-        let expansion = ExpandedArg::new(*argv, ::core::ptr::null::<::core::ffi::c_char>());
+        let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
         o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
     }
     o
 }
 unsafe fn func_if(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1929,17 +1992,18 @@ unsafe fn func_if(
     let mut result: i32 = 0;
     strip_whitespace(&raw mut begp, &raw mut endp);
     if begp <= endp {
-        let expansion = ExpandedArg::new(begp, endp.offset(1_i32 as isize));
+        let expansion = ExpandedArg::new(ctx, begp, endp.offset(1_i32 as isize));
         result = (*expansion.as_ptr().offset(0_i32 as isize) as i32 != 0) as i32;
     }
     argv = argv.offset((1 + (result == 0) as i32) as isize);
     if !(*argv).is_null() {
-        let expansion = ExpandedArg::new(*argv, ::core::ptr::null::<::core::ffi::c_char>());
+        let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
         o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
     }
     o
 }
 unsafe fn func_or(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1951,7 +2015,7 @@ unsafe fn func_or(
             .offset(-(1_i32 as isize));
         strip_whitespace(&raw mut begp, &raw mut endp);
         if !(begp > endp) {
-            let expansion = ExpandedArg::new(begp, endp.offset(1_i32 as isize));
+            let expansion = ExpandedArg::new(ctx, begp, endp.offset(1_i32 as isize));
             let result = strlen(expansion.as_ptr()) as size_t;
             if result != 0 {
                 o = variable_buffer_output(o, expansion.as_ptr(), result);
@@ -1963,6 +2027,7 @@ unsafe fn func_or(
     o
 }
 unsafe fn func_and(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -1976,7 +2041,7 @@ unsafe fn func_and(
         if begp > endp {
             return o;
         }
-        let expansion = ExpandedArg::new(begp, endp.offset(1_i32 as isize));
+        let expansion = ExpandedArg::new(ctx, begp, endp.offset(1_i32 as isize));
         let result = strlen(expansion.as_ptr()) as size_t;
         if result == 0 {
             break;
@@ -1991,15 +2056,17 @@ unsafe fn func_and(
     o
 }
 unsafe fn func_wildcard(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let p: *mut ::core::ffi::c_char = string_glob(*argv.offset(0_i32 as isize));
+    let p: *mut ::core::ffi::c_char = string_glob(ctx, *argv.offset(0_i32 as isize));
     o = variable_buffer_output(o, p, strlen(p) as size_t);
     o
 }
 unsafe fn func_eval(
+    ctx: &crate::execctx::ExecContext,
     o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -2007,16 +2074,22 @@ unsafe fn func_eval(
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     install_variable_buffer(&raw mut buf, &raw mut len);
-    eval_buffer(*argv.offset(0_i32 as isize), ::core::ptr::null::<Floc>());
+    eval_buffer(
+        ctx,
+        *argv.offset(0_i32 as isize),
+        ::core::ptr::null::<Floc>(),
+    );
     restore_variable_buffer(buf, len);
     o
 }
 unsafe fn func_value(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let v: *mut variable = lookup_variable(
+        ctx,
         *argv.offset(0_i32 as isize),
         strlen(*argv.offset(0_i32 as isize)) as size_t,
     );
@@ -2144,7 +2217,11 @@ mod shell_function_completed_tests {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn shell_completed(mut exit_code: i32, exit_sig: i32) {
+pub unsafe fn shell_completed(
+    ctx: &crate::execctx::ExecContext,
+    mut exit_code: i32,
+    exit_sig: i32,
+) {
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     SHELL_FUNCTION_PID.store(0, Ordering::Relaxed);
     if exit_sig == 0 && exit_code == 127 {
@@ -2161,6 +2238,7 @@ pub unsafe fn shell_completed(mut exit_code: i32, exit_sig: i32) {
         exit_code,
     );
     define_variable_in_set(
+        ctx,
         b".SHELLSTATUS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         &raw mut buf as *mut ::core::ffi::c_char,
@@ -2175,6 +2253,7 @@ pub unsafe fn shell_completed(mut exit_code: i32, exit_sig: i32) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn func_shell_base(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     trim_newlines: i32,
@@ -2196,6 +2275,7 @@ pub unsafe fn func_shell_base(
     let mut pipedes: [i32; 2] = [0; 2];
     let pid: pid_t;
     command_argv = construct_command_argv(
+        ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
         ::core::ptr::null_mut::<file>(),
@@ -2205,15 +2285,16 @@ pub unsafe fn func_shell_base(
     if command_argv.is_null() {
         return o;
     }
-    crate::output::output_start();
+    crate::output::output_start(ctx);
     errfd = if !output_context.is_null() && (*output_context).err >= 0 {
         (*output_context).err
     } else {
         fileno(stderr)
     };
-    child.environment = target_environment(::core::ptr::null_mut::<file>(), 0);
+    child.environment = target_environment(ctx, ::core::ptr::null_mut::<file>(), 0);
     if pipe(&raw mut pipedes as *mut i32) < 0 {
         error(
+            ctx,
             reading_file,
             strlen(strerror(*__errno_location())) as size_t,
             b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2227,9 +2308,9 @@ pub unsafe fn func_shell_base(
             .set_syncout(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         child.output.out = pipedes[1_i32 as usize];
         child.output.err = errfd;
-        pid = child_execute_job(&raw mut child, 1, command_argv);
+        pid = child_execute_job(ctx, &raw mut child, 1, command_argv);
         if pid < 0 {
-            shell_completed(127, 0);
+            shell_completed(ctx, 127, 0);
         } else {
             let mut maxlen: size_t;
             let mut i: size_t;
@@ -2269,7 +2350,7 @@ pub unsafe fn func_shell_base(
             *buffer.as_mut_ptr().add(i as usize) = 0;
             close(pipedes[0_i32 as usize]);
             while shell_function_completed() == 0 {
-                reap_children(1, 0);
+                reap_children(ctx, 1, 0);
             }
             if !batch_filename.is_null() {
                 if 0x2_i32 & db_level != 0 {
@@ -2300,11 +2381,12 @@ pub unsafe fn func_shell_base(
     o
 }
 unsafe fn func_shell(
+    ctx: &crate::execctx::ExecContext,
     o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    func_shell_base(o, argv, 1)
+    func_shell_base(ctx, o, argv, 1)
 }
 pub const ROOT_LEN: i32 = 1;
 /// Normalize a path into `out`, mirroring GNU make's `abspath`.
@@ -2428,6 +2510,7 @@ fn realpath_token(token: &[u8]) -> Option<Vec<u8>> {
     Some(bytes)
 }
 unsafe fn func_realpath(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -2461,6 +2544,7 @@ unsafe fn func_realpath(
     o
 }
 unsafe fn func_file(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -2481,6 +2565,7 @@ unsafe fn func_file(
         start = next_token(fn_0);
         if *start.offset(0_i32 as isize) as i32 == 0 {
             fatal(
+                ctx,
                 *expanding_var,
                 0,
                 b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2509,6 +2594,7 @@ unsafe fn func_file(
         }
         if fp.is_null() {
             fatal(
+                ctx,
                 reading_file,
                 (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2527,6 +2613,7 @@ unsafe fn func_file(
                 || nl != 0 && fputc('\n' as i32, fp) == EOF
             {
                 fatal(
+                    ctx,
                     reading_file,
                     (strlen(nm) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2538,6 +2625,7 @@ unsafe fn func_file(
         }
         if fclose(fp) != 0 {
             fatal(
+                ctx,
                 reading_file,
                 (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2554,6 +2642,7 @@ unsafe fn func_file(
         start_0 = next_token(fn_0.offset(1_i32 as isize));
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
             fatal(
+                ctx,
                 *expanding_var,
                 0,
                 b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2561,6 +2650,7 @@ unsafe fn func_file(
         }
         if !(*argv.offset(1_i32 as isize)).is_null() {
             fatal(
+                ctx,
                 *expanding_var,
                 0,
                 b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2601,6 +2691,7 @@ unsafe fn func_file(
                 return o;
             }
             fatal(
+                ctx,
                 reading_file,
                 (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2623,6 +2714,7 @@ unsafe fn func_file(
             }
             if ferror(fp_0) != 0 && *__errno_location() != EINTR {
                 fatal(
+                    ctx,
                     reading_file,
                     (strlen(nm_0) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2637,6 +2729,7 @@ unsafe fn func_file(
         }
         if fclose(fp_0) != 0 {
             fatal(
+                ctx,
                 reading_file,
                 (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2653,6 +2746,7 @@ unsafe fn func_file(
         }
     } else {
         fatal(
+            ctx,
             *expanding_var,
             strlen(fn_0) as size_t,
             b"file: invalid file operation: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2662,6 +2756,7 @@ unsafe fn func_file(
     o
 }
 unsafe fn func_abspath(
+    _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -2714,6 +2809,7 @@ const fn ft_entry(
     max: ::core::ffi::c_uchar,
     expand: u8,
     func: unsafe fn(
+        &crate::execctx::ExecContext,
         *mut ::core::ffi::c_char,
         *mut *mut ::core::ffi::c_char,
         *const ::core::ffi::c_char,
@@ -2820,6 +2916,7 @@ unsafe fn expand_builtin_function(
     }
     if (*entry_p).alloc_fn() == 0 {
         return (*entry_p).fptr.func_ptr.expect("non-null function pointer")(
+            ctx,
             o,
             argv,
             (*entry_p).name,
@@ -2950,7 +3047,7 @@ pub unsafe fn handle_function(
             } {
                 next = end;
             }
-            *argvp = expand_argument(p, next);
+            *argvp = expand_argument(ctx, p, next);
             p = next.offset(1_i32 as isize);
             argvp = argvp.offset(1_i32 as isize);
         }
@@ -3004,6 +3101,7 @@ pub unsafe fn handle_function(
     1
 }
 unsafe fn func_call(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -3036,14 +3134,14 @@ unsafe fn func_call(
         while !(*argv.offset(i.wrapping_add(1) as isize)).is_null() {
             i = i.wrapping_add(1);
         }
-        return expand_builtin_function(o, i, argv.offset(1_i32 as isize), entry_p);
+        return expand_builtin_function(ctx, o, i, argv.offset(1_i32 as isize), entry_p);
     }
     flen = strlen(fname) as size_t;
-    v = lookup_variable(fname, flen);
+    v = lookup_variable(ctx, fname, flen);
     if v.is_null() {
         // SAFETY: `fname` points to `flen` valid bytes (length precomputed
         // above via `strlen`); read-only bridge to the safe `warn_undefined`.
-        warn_undefined(::core::slice::from_raw_parts(fname as *const u8, flen));
+        warn_undefined(ctx, ::core::slice::from_raw_parts(fname as *const u8, flen));
     }
     if v.is_null() || *(*v).value as i32 == 0 {
         return o;
@@ -3053,6 +3151,7 @@ unsafe fn func_call(
     while !(*argv).is_null() {
         let mut num: [::core::ffi::c_char; 22] = [0; 22];
         define_variable_in_set(
+            ctx,
             &raw mut num as *mut ::core::ffi::c_char,
             sprintf(
                 &raw mut num as *mut ::core::ffi::c_char,
@@ -3071,6 +3170,7 @@ unsafe fn func_call(
     while i < MAX_ARGS.load(Ordering::Relaxed) {
         let mut num_0: [::core::ffi::c_char; 22] = [0; 22];
         define_variable_in_set(
+            ctx,
             &raw mut num_0 as *mut ::core::ffi::c_char,
             sprintf(
                 &raw mut num_0 as *mut ::core::ffi::c_char,
@@ -3088,7 +3188,7 @@ unsafe fn func_call(
     (*v).set_exp_count(EXP_COUNT_MAX as ::core::ffi::c_uint as ::core::ffi::c_uint);
     let saved_args = MAX_ARGS.load(Ordering::Relaxed) as i32;
     MAX_ARGS.store(i, Ordering::Relaxed);
-    o = expand_variable_output(o, fname, flen);
+    o = expand_variable_output(ctx, o, fname, flen);
     MAX_ARGS.store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
     (*v).set_exp_count(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     pop_variable_scope();
@@ -3835,7 +3935,14 @@ mod subst_and_strip_tests {
             // argv is a NULL-terminated vector of arg pointers.
             let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
             let name = CString::new("strip").unwrap();
-            let out = with_output(|o| func_strip(o, argv.as_mut_ptr(), name.as_ptr()));
+            let out = with_output(|o| {
+                func_strip(
+                    &crate::execctx::ExecContext::default(),
+                    o,
+                    argv.as_mut_ptr(),
+                    name.as_ptr(),
+                )
+            });
             // Words separated by single spaces, no leading/trailing space.
             assert_eq!(out, b"a b c");
             // Keep `arg` alive until after the call.
@@ -3849,7 +3956,14 @@ mod subst_and_strip_tests {
             let arg = CString::new("   \t  ").unwrap();
             let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
             let name = CString::new("strip").unwrap();
-            let out = with_output(|o| func_strip(o, argv.as_mut_ptr(), name.as_ptr()));
+            let out = with_output(|o| {
+                func_strip(
+                    &crate::execctx::ExecContext::default(),
+                    o,
+                    argv.as_mut_ptr(),
+                    name.as_ptr(),
+                )
+            });
             assert_eq!(out, b"");
         }
     }

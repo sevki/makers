@@ -238,8 +238,8 @@ pub unsafe fn update_goal_chain(
         let mut lastgoal: *mut dep;
         let mut running: i32 = 0;
         let mut wait: i32 = 0;
-        start_waiting_jobs();
-        reap_children((last_cmd_count == command_count) as i32, 0);
+        start_waiting_jobs(ctx);
+        reap_children(ctx, (last_cmd_count == command_count) as i32, 0);
         last_cmd_count = command_count;
         lastgoal = ::core::ptr::null_mut::<dep>();
         gu = goals;
@@ -806,7 +806,7 @@ unsafe extern "C" fn update_file_1(
     }
     must_make = noexist;
     if (*file).phony() == 0 && (*file).cmds.is_null() && (*file).tried_implicit() == 0 {
-        try_implicit_rule(file, depth);
+        try_implicit_rule(ctx, file, depth);
         (*file).set_tried_implicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     if (*file).cmds.is_null()
@@ -830,7 +830,7 @@ unsafe extern "C" fn update_file_1(
     while !ad.is_null() {
         let mut lastd: *mut dep = ::core::ptr::null_mut::<dep>();
         if second_expansion() {
-            expand_deps((*ad).file);
+            expand_deps(ctx, (*ad).file);
         }
         du = (*(*ad).file).deps;
         ad = (*ad).next;
@@ -1465,7 +1465,7 @@ unsafe extern "C" fn check_dep(
     } else {
         let mtime_0: uintmax_t;
         if (*file).phony() == 0 && (*file).cmds.is_null() && (*file).tried_implicit() == 0 {
-            try_implicit_rule(file, depth);
+            try_implicit_rule(ctx, file, depth);
             (*file).set_tried_implicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
         if (*file).cmds.is_null()
@@ -1508,7 +1508,7 @@ unsafe extern "C" fn check_dep(
             }
             ld = ::core::ptr::null_mut::<dep>();
             if second_expansion() {
-                expand_deps(file);
+                expand_deps(ctx, file);
             }
             d = (*file).deps;
             while let Some(dep_ref) = d.as_mut() {
@@ -1607,8 +1607,8 @@ pub unsafe fn touch_file(ctx: &crate::execctx::ExecContext, file: *mut file) -> 
     if crate::make_main::opt_just_print() {
         return us_success;
     }
-    if ar_name(::core::ffi::CStr::from_ptr((*file).name)) {
-        return (if ar_touch((*file).name) != 0 {
+    if ar_name(ctx, ::core::ffi::CStr::from_ptr((*file).name)) {
+        return (if ar_touch(ctx, (*file).name) != 0 {
             us_failed as i32
         } else {
             us_success as i32
@@ -1753,9 +1753,9 @@ pub unsafe fn remake_file(ctx: &crate::execctx::ExecContext, file: *mut file) {
             (*file).set_update_status(us_failed as update_status);
         }
     } else {
-        chop_commands((*file).cmds);
+        chop_commands(ctx, (*file).cmds);
         if !crate::make_main::opt_touch() || (*(*file).cmds).any_recurse() as i32 != 0 {
-            execute_file_commands(file);
+            execute_file_commands(ctx, file);
             return;
         }
         (*file).set_update_status(us_success as update_status);
@@ -1778,13 +1778,13 @@ pub unsafe fn f_mtime(
     let propagate_timestamp: ::core::ffi::c_uint;
     // Checked view of FILE; a null argument is a caller bug.
     let mut file = file.as_mut().expect("f_mtime: null file");
-    if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
+    if ar_name(ctx, ::core::ffi::CStr::from_ptr(file.name)) {
         let memmtime: uintmax_t;
         let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut arfile: *mut file;
         let member_date: time_t;
-        ar_parse_name((*file).name, &raw mut arname, &raw mut memname);
+        ar_parse_name(ctx, (*file).name, &raw mut arname, &raw mut memname);
         memmtime = name_mtime(ctx, memname);
         arfile = lookup_file(arname);
         if arfile.is_null() {
@@ -1831,9 +1831,9 @@ pub unsafe fn f_mtime(
                 ')' as i32 as ::core::ffi::c_char;
             *name.offset(arlen.wrapping_add(1).wrapping_add(memlen).wrapping_add(1) as isize) = 0;
             if arf2.name == arf2.hname {
-                rename_file(file, strcache_add(name));
+                rename_file(ctx, file, strcache_add(name));
             } else {
-                rehash_file(file, strcache_add(name));
+                rehash_file(ctx, file, strcache_add(name));
             }
             while !file.renamed.is_null() {
                 file = file.renamed.as_mut().expect("f_mtime: null renamed file");
@@ -1844,7 +1844,7 @@ pub unsafe fn f_mtime(
         if mtime == NONEXISTENT_MTIME as uintmax_t {
             return NONEXISTENT_MTIME as uintmax_t;
         }
-        member_date = ar_member_date((*file).hname);
+        member_date = ar_member_date(ctx, (*file).hname);
         if member_date == -1_i32 as time_t
             || memmtime != NONEXISTENT_MTIME as uintmax_t
                 && (memmtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
@@ -1854,12 +1854,13 @@ pub unsafe fn f_mtime(
         {
             mtime = NONEXISTENT_MTIME as uintmax_t;
         } else {
-            mtime = file_timestamp_cons((*file).hname, member_date, 0);
+            mtime = file_timestamp_cons(ctx, (*file).hname, member_date, 0);
         }
     } else {
         mtime = name_mtime(ctx, (*file).name);
         if mtime == NONEXISTENT_MTIME as uintmax_t && search != 0 && (*file).ignore_vpath() == 0 {
             let mut name_0: *const ::core::ffi::c_char = vpath_search(
+                ctx,
                 (*file).name,
                 &raw mut mtime,
                 ::core::ptr::null_mut::<::core::ffi::c_uint>(),
@@ -1886,7 +1887,7 @@ pub unsafe fn f_mtime(
                 if gpath_search(unsafe {
                     ::core::slice::from_raw_parts(name_0 as *const u8, name_len as usize)
                 }) {
-                    rename_file(file, name_0);
+                    rename_file(ctx, file, name_0);
                     while !file.renamed.is_null() {
                         file = file.renamed.as_mut().expect("f_mtime: null renamed file");
                     }
@@ -1896,7 +1897,7 @@ pub unsafe fn f_mtime(
                         (*file).last_mtime
                     };
                 }
-                rehash_file(file, name_0);
+                rehash_file(ctx, file, name_0);
                 while !file.renamed.is_null() {
                     file = file.renamed.as_mut().expect("f_mtime: null renamed file");
                 }
@@ -1935,7 +1936,7 @@ pub unsafe fn f_mtime(
         let adjusted_mtime: uintmax_t = mtime;
         if adjusted_now < adjusted_mtime {
             let mut resolution: i32 = 0;
-            let now: uintmax_t = file_timestamp_now(&raw mut resolution);
+            let now: uintmax_t = file_timestamp_now(ctx, &raw mut resolution);
             adjusted_now = now.wrapping_add((resolution - 1) as uintmax_t);
             if adjusted_now < adjusted_mtime {
                 let from_now: ::core::ffi::c_double = (mtime
@@ -2051,6 +2052,7 @@ pub unsafe fn name_mtime(
     }
     if e == 0 {
         mtime = file_timestamp_cons(
+            ctx,
             name,
             st.st_mtim.tv_sec as time_t,
             st.st_mtim.tv_nsec as ::core::ffi::c_long,
@@ -2058,7 +2060,11 @@ pub unsafe fn name_mtime(
     } else if *__errno_location() == ENOENT || *__errno_location() == ENOTDIR {
         mtime = NONEXISTENT_MTIME as uintmax_t;
     } else {
-        perror_with_name(ctx, b"stat: \0" as *const u8 as *const ::core::ffi::c_char, name);
+        perror_with_name(
+            ctx,
+            b"stat: \0" as *const u8 as *const ::core::ffi::c_char,
+            name,
+        );
         return NONEXISTENT_MTIME as uintmax_t;
     }
     if crate::make_main::opt_check_symlink() && strlen(name) <= GET_PATH_MAX as size_t {
@@ -2089,6 +2095,7 @@ pub unsafe fn name_mtime(
                     break;
                 }
                 ltime = file_timestamp_cons(
+                    ctx,
                     &raw mut lpath as *mut ::core::ffi::c_char,
                     st.st_mtim.tv_sec as time_t,
                     st.st_mtim.tv_nsec as ::core::ffi::c_long,
@@ -2165,6 +2172,7 @@ unsafe extern "C" fn library_search(
     let mut best_path: ::core::ffi::c_uint = 0;
     let mut dp: *const *const ::core::ffi::c_char;
     libpatterns = allocated_expand_variable(
+        ctx,
         b".LIBPATTERNS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
     );
@@ -2222,6 +2230,7 @@ unsafe extern "C" fn library_search(
                 let mut vpath_index: ::core::ffi::c_uint = 0;
                 let mut path_index: ::core::ffi::c_uint = 0;
                 let f: *const ::core::ffi::c_char = vpath_search(
+                    ctx,
                     libbuf,
                     if !mtime_ptr.is_null() {
                         &raw mut mtime

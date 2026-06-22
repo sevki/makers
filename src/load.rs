@@ -22,7 +22,11 @@ pub unsafe fn load_file(
     noerror: i32,
 ) -> i32 {
     if noerror == 0 {
-        fatal!(ctx, flocp.as_ref(), "'load' is not supported on this platform");
+        fatal!(
+            ctx,
+            flocp.as_ref(),
+            "'load' is not supported on this platform"
+        );
     }
     0
 }
@@ -33,7 +37,11 @@ pub unsafe fn load_file(
 /// function never returns, so it carries no safety preconditions despite its
 /// C-ABI signature.
 pub fn unload_file(ctx: &crate::execctx::ExecContext, _name: *const ::core::ffi::c_char) -> i32 {
-    fatal!(ctx, None, "INTERNAL: cannot unload when load is not supported")
+    fatal!(
+        ctx,
+        None,
+        "INTERNAL: cannot unload when load is not supported"
+    )
 }
 
 /// No-op: there is never anything to unload.

@@ -141,7 +141,11 @@ unsafe fn free_dep_chain(d: *mut dep) {
 /// # Safety
 /// `file` must point to a valid file entry; the rule database and all linked
 /// structures must be valid; must run single-threaded.
-pub unsafe fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> i32 {
+pub unsafe fn try_implicit_rule(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    depth: ::core::ffi::c_uint,
+) -> i32 {
     let name = file
         .as_ref()
         .expect("try_implicit_rule requires a file")
@@ -151,16 +155,16 @@ pub unsafe fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> 
         c"Looking for an implicit rule for '%s'.\n".as_ptr(),
         name
     );
-    if pattern_search(file, 0, depth, 0, 0) != 0 {
+    if pattern_search(ctx, file, 0, depth, 0, 0) != 0 {
         return 1;
     }
-    if ar_name(::core::ffi::CStr::from_ptr(name)) {
+    if ar_name(ctx, ::core::ffi::CStr::from_ptr(name)) {
         dbs!(
             depth,
             c"Looking for archive-member implicit rule for '%s'.\n".as_ptr(),
             name
         );
-        if pattern_search(file, 1, depth, 0, 0) != 0 {
+        if pattern_search(ctx, file, 1, depth, 0, 0) != 0 {
             return 1;
         }
         dbs!(
@@ -237,6 +241,7 @@ unsafe fn rule_target(r: &rule, ti: usize) -> (*const ::core::ffi::c_char, &[u8]
     (target, bytes, percent)
 }
 unsafe fn pattern_search(
+    ctx: &crate::execctx::ExecContext,
     file: *mut file,
     archive: i32,
     mut depth: ::core::ffi::c_uint,
@@ -287,7 +292,7 @@ unsafe fn pattern_search(
     let mut stem_str: [u8; PATH_MAX + 1] = [0; PATH_MAX + 1];
     depth = depth.wrapping_add(1);
     // An archive member name has no directory part.
-    let pathlen: usize = if archive != 0 || ar_name(::core::ffi::CStr::from_ptr(filename)) {
+    let pathlen: usize = if archive != 0 || ar_name(ctx, ::core::ffi::CStr::from_ptr(filename)) {
         0
     } else {
         name[..namelen.saturating_sub(1)]
@@ -479,6 +484,7 @@ unsafe fn pattern_search(
                                 depname.push(0);
                                 let mut p: *mut ::core::ffi::c_char = depname.as_mut_ptr().cast();
                                 dl = parse_file_seq(
+                                    ctx,
                                     &raw mut p,
                                     ::core::mem::size_of::<dep>() as size_t,
                                     MAP_NUL,
@@ -561,11 +567,12 @@ unsafe fn pattern_search(
                                 // The automatic variables ($*, $@, ...) must
                                 // be in place before expanding the dep.
                                 if file_vars_initialized == 0 {
-                                    initialize_file_variables(file, 0);
-                                    set_file_variables(file, stem_str.as_mut_ptr().cast());
+                                    initialize_file_variables(ctx, file, 0);
+                                    set_file_variables(ctx, file, stem_str.as_mut_ptr().cast());
                                     file_vars_initialized = 1;
                                 } else if file_variables_set == 0 {
                                     define_variable_in_set(
+                                        ctx,
                                         c"*".as_ptr(),
                                         1,
                                         stem_str.as_mut_ptr().cast(),
@@ -581,10 +588,11 @@ unsafe fn pattern_search(
                                     file_variables_set = 1;
                                 }
                                 let mut p: *mut ::core::ffi::c_char =
-                                    expand_string_for_file(depname.as_mut_ptr().cast(), file);
+                                    expand_string_for_file(ctx, depname.as_mut_ptr().cast(), file);
                                 let mut dptr: *mut *mut dep = &raw mut dl;
                                 loop {
                                     let dp: *mut dep = parse_file_seq(
+                                        ctx,
                                         &raw mut p,
                                         ::core::mem::size_of::<dep>() as size_t,
                                         if order_only != 0 { MAP_NUL } else { MAP_PIPE },
@@ -630,7 +638,7 @@ unsafe fn pattern_search(
                                 let is_rule = dr.name == dep_name(dep);
                                 let mut explicit = false;
                                 let mut dp: *mut dep = ::core::ptr::null_mut();
-                                if file_impossible_p(dr.name) != 0 {
+                                if file_impossible_p(ctx, dr.name) != 0 {
                                     dbs!(
                                         depth,
                                         if is_rule {
@@ -688,7 +696,7 @@ unsafe fn pattern_search(
                                     pe.name = dr.name;
                                     deplist.push(pe);
                                     dbs!(depth, c"'%s' ought to exist.\n".as_ptr(), dr.name);
-                                } else if file_exists_p(dr.name) != 0 {
+                                } else if file_exists_p(ctx, dr.name) != 0 {
                                     pe.name = dr.name;
                                     deplist.push(pe);
                                     dbs!(depth, c"Found '%s'.\n".as_ptr(), dr.name);
@@ -712,6 +720,7 @@ unsafe fn pattern_search(
                                         found_compat_rule = 1;
                                     }
                                     let vname: *const ::core::ffi::c_char = vpath_search(
+                                        ctx,
                                         dr.name,
                                         ::core::ptr::null_mut::<uintmax_t>(),
                                         ::core::ptr::null_mut::<::core::ffi::c_uint>(),
@@ -770,6 +779,7 @@ unsafe fn pattern_search(
                                                 int_ref.name = dr.name;
                                             }
                                             if pattern_search(
+                                                ctx,
                                                 int_file,
                                                 0,
                                                 depth,
@@ -797,7 +807,7 @@ unsafe fn pattern_search(
                                                     free_variable_set(int_ref.pat_variables);
                                                 }
                                                 if df.is_null() {
-                                                    file_impossible(dr.name);
+                                                    file_impossible(ctx, dr.name);
                                                 }
                                                 // Keep this scratch entry to reuse next iteration.
                                                 int_file_reuse = Some(int_file);
@@ -1029,7 +1039,7 @@ unsafe fn pattern_search(
             allow_compat_rules == 0,
             "compatibility-rule retry must not recurse"
         );
-        return pattern_search(file, archive, depth, recursions, 1);
+        return pattern_search(ctx, file, archive, depth, recursions, 1);
     }
     dbs!(
         depth,

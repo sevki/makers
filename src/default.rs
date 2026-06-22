@@ -248,12 +248,16 @@ const DEFAULT_VARIABLES: &[(&CStr, &CStr)] = &[
 /// # Safety
 /// Must run single-threaded: it mutates the global file table, the global
 /// variable set, and the `suffix_file` global.
-pub unsafe fn set_default_suffixes(options: &crate::make_main::Options) {
+pub unsafe fn set_default_suffixes(
+    ctx: &crate::execctx::ExecContext,
+    options: &crate::make_main::Options,
+) {
     suffix_file = enter_file(strcache_add(c".SUFFIXES".as_ptr()));
     (*suffix_file).set_builtin(1);
 
     if options.no_builtin_rules.get() {
         define_variable_in_set(
+            ctx,
             c"SUFFIXES".as_ptr(),
             8,
             c"".as_ptr(),
@@ -266,6 +270,7 @@ pub unsafe fn set_default_suffixes(options: &crate::make_main::Options) {
         let mut p = &raw mut default_suffixes as *mut c_char;
         (*suffix_file).deps = enter_prereqs(
             parse_file_seq(
+                ctx,
                 &mut p,
                 ::core::mem::size_of::<crate::file::Dep>(),
                 MAP_NUL,
@@ -285,6 +290,7 @@ pub unsafe fn set_default_suffixes(options: &crate::make_main::Options) {
         }
 
         define_variable_in_set(
+            ctx,
             c"SUFFIXES".as_ptr(),
             8,
             &raw const default_suffixes as *const c_char,
@@ -324,7 +330,10 @@ pub unsafe fn install_default_suffix_rules(options: &crate::make_main::Options) 
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global pattern-rule lists.
-pub unsafe fn install_default_implicit_rules(options: &crate::make_main::Options) {
+pub unsafe fn install_default_implicit_rules(
+    ctx: &crate::execctx::ExecContext,
+    options: &crate::make_main::Options,
+) {
     if options.no_builtin_rules.get() {
         return;
     }
@@ -334,7 +343,7 @@ pub unsafe fn install_default_implicit_rules(options: &crate::make_main::Options
             dep: dep.as_ptr(),
             commands: commands.as_ptr(),
         };
-        install_pattern_rule(&spec, 0);
+        install_pattern_rule(ctx, &spec, 0);
     }
     for &(target, dep, commands) in DEFAULT_TERMINAL_RULES {
         let spec = pspec {
@@ -342,7 +351,7 @@ pub unsafe fn install_default_implicit_rules(options: &crate::make_main::Options
             dep: dep.as_ptr(),
             commands: commands.as_ptr(),
         };
-        install_pattern_rule(&spec, 1);
+        install_pattern_rule(ctx, &spec, 1);
     }
 }
 
@@ -350,12 +359,16 @@ pub unsafe fn install_default_implicit_rules(options: &crate::make_main::Options
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global variable set.
-pub unsafe fn define_default_variables(options: &crate::make_main::Options) {
+pub unsafe fn define_default_variables(
+    ctx: &crate::execctx::ExecContext,
+    options: &crate::make_main::Options,
+) {
     if options.no_builtin_variables.get() {
         return;
     }
     for &(name, value) in DEFAULT_VARIABLES {
         define_variable_in_set(
+            ctx,
             name.as_ptr(),
             name.to_bytes().len() as size_t,
             value.as_ptr(),
@@ -372,9 +385,10 @@ pub unsafe fn define_default_variables(options: &crate::make_main::Options) {
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global variable set.
-pub unsafe fn undefine_default_variables() {
+pub unsafe fn undefine_default_variables(ctx: &crate::execctx::ExecContext) {
     for &(name, _) in DEFAULT_VARIABLES {
         undefine_variable_in_set(
+            ctx,
             null(),
             name.as_ptr(),
             name.to_bytes().len() as size_t,
