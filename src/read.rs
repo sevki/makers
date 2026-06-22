@@ -298,9 +298,6 @@ static DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] = [
     b"/usr/local/include",
     b"/usr/include",
 ];
-/// The resolved include search path, owned as native Rust and dropped by Rust.
-static mut include_directories: Vec<std::path::PathBuf> = Vec::new();
-static mut max_incl_len: size_t = 0;
 pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
 static mut read_files: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 /// # Safety
@@ -506,7 +503,14 @@ unsafe extern "C" fn eval_makefile(
         // bytes (no new C string constructed) to build candidate paths.
         let filename_bytes = CStr::from_ptr(filename).to_bytes().to_vec();
         let filename_os = std::ffi::OsStr::from_bytes(&filename_bytes);
-        for dir in &*core::ptr::addr_of!(include_directories) {
+        // The include search path is owned by `main_0`'s `Options` and reached
+        // through the `with_options` borrow channel (no `static mut`). Snapshot
+        // it into a local `Vec` so the `RefCell` borrow is released before the
+        // file-open work below (which re-enters the eval engine on success).
+        let search_dirs: Vec<std::path::PathBuf> = crate::make_main::with_options(|o| {
+            o.resolved_include_dirs.borrow().clone()
+        });
+        for dir in &search_dirs {
             // Native path construction: PathBuf::join, not the C `concat` helper.
             let candidate = dir.join(filename_os);
             // Open via std::fs (std handles the syscall's NUL internally); retry
@@ -3093,17 +3097,29 @@ unsafe extern "C" fn get_next_mword(
         crate::parser::MWordType::AmpDColon => w_ampdcolon,
     }
 }
-/// Expand a leading `~` (or `~/`) in a directory byte string using `$HOME`.
-/// Returns the bytes unchanged when there is no leading tilde or `$HOME` is
-/// unset. (`~user` forms are left as-is; they then fail the directory-exists
-/// check, matching make's behaviour when the lookup fails.)
+/// Expand a leading bare `~` (or `~/`) in a directory byte string using the
+/// `HOME` process environment variable. Returns the bytes unchanged when there
+/// is no leading tilde, when `HOME` is unset/empty, or for `~user` forms.
+///
+/// NOTE: make's C `tilde_expand` is richer — it consults make's own `HOME`
+/// *variable* (e.g. `make HOME=/tmp`) ahead of the environment, falls back to
+/// `getpwnam(getlogin())`, and resolves `~user` via `getpwnam`. All of those
+/// extra sources require the C passwd/variable-expansion FFI
+/// (`*const c_char`/`CString`/`getpwnam`), which this crate's safety rules
+/// forbid introducing here and which would add `unsafe`. They are therefore
+/// not handled: such tildes are left literal and then fail the
+/// directory-exists check, exactly as an unresolved `~` does. See the PR notes
+/// for the assessment of why a byte-identical tilde port needs that FFI.
 fn expand_tilde_dir(dir: &[u8]) -> Vec<u8> {
     if dir.first() == Some(&b'~') && (dir.len() == 1 || dir[1] == b'/') {
         if let Some(home) = std::env::var_os("HOME") {
             use std::os::unix::ffi::OsStrExt;
-            let mut out = home.as_bytes().to_vec();
-            out.extend_from_slice(&dir[1..]);
-            return out;
+            let home = home.as_bytes();
+            if !home.is_empty() {
+                let mut out = home.to_vec();
+                out.extend_from_slice(&dir[1..]);
+                return out;
+            }
         }
     }
     dir.to_vec()
@@ -3111,10 +3127,8 @@ fn expand_tilde_dir(dir: &[u8]) -> Vec<u8> {
 
 /// Append `dir` to the include path if it names an existing directory, after
 /// stripping trailing `/` (keeping at least one byte). Uses `std::fs` for the
-/// existence/type check — no `stat`, no `*const c_char`. Returns the trimmed
-/// byte length of the directory when it was added, so the caller can update the
-/// `max_incl_len` global.
-fn push_include_dir(out: &mut Vec<std::path::PathBuf>, dir: &[u8]) -> Option<usize> {
+/// existence/type check — no `stat`, no `*const c_char`.
+fn push_include_dir(out: &mut Vec<std::path::PathBuf>, dir: &[u8]) {
     use std::os::unix::ffi::OsStrExt;
     let mut len = dir.len();
     while len > 1 && dir[len - 1] == b'/' {
@@ -3124,9 +3138,6 @@ fn push_include_dir(out: &mut Vec<std::path::PathBuf>, dir: &[u8]) -> Option<usi
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(trimmed));
     if std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
         out.push(path.to_path_buf());
-        Some(len)
-    } else {
-        None
     }
 }
 
@@ -3135,36 +3146,27 @@ fn push_include_dir(out: &mut Vec<std::path::PathBuf>, dir: &[u8]) -> Option<usi
 ///
 /// # Safety
 ///
-/// Touches `make`'s global mutable state (`max_incl_len`, `include_directories`)
-/// and calls into the C variable machinery; must run single-threaded like the
-/// rest of startup.
+/// Calls into the C variable machinery (`do_variable_definition`); must run
+/// single-threaded like the rest of startup. The resolved search path is then
+/// stored in `main_0`'s owned `Options` via the `with_options` borrow channel,
+/// not in any process-global mutable state.
 pub unsafe fn construct_include_path(arg_dirs: &[std::path::PathBuf]) {
     use std::os::unix::ffi::OsStrExt;
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     let mut disable = false;
-    max_incl_len = 0;
     for dir in arg_dirs {
         let bytes = dir.as_os_str().as_bytes();
         if bytes == b"-" {
             disable = true;
             dirs.clear();
-            max_incl_len = 0;
         } else {
             let expanded = expand_tilde_dir(bytes);
-            if let Some(len) = push_include_dir(&mut dirs, &expanded) {
-                if (len as size_t) > max_incl_len {
-                    max_incl_len = len as size_t;
-                }
-            }
+            push_include_dir(&mut dirs, &expanded);
         }
     }
     if !disable {
         for d in DEFAULT_INCLUDE_DIRECTORIES {
-            if let Some(len) = push_include_dir(&mut dirs, d) {
-                if (len as size_t) > max_incl_len {
-                    max_incl_len = len as size_t;
-                }
-            }
+            push_include_dir(&mut dirs, d);
         }
     }
     do_variable_definition(
@@ -3190,7 +3192,9 @@ pub unsafe fn construct_include_path(arg_dirs: &[std::path::PathBuf]) {
             s_global,
         );
     }
-    include_directories = dirs;
+    crate::make_main::with_options(|o| {
+        *o.resolved_include_dirs.borrow_mut() = dirs;
+    });
 }
 /// # Safety
 ///

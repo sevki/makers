@@ -539,6 +539,13 @@ pub struct Options {
     pub trace: ::core::cell::Cell<bool>,
     /// The `-B`/`--always-make` flag as set by option parsing.
     pub always_make: ::core::cell::Cell<bool>,
+    /// The resolved include search path (validated `-I` dirs plus the default
+    /// system directories), built once at startup by
+    /// [`crate::read::construct_include_path`] and read by the makefile reader
+    /// when resolving an `include` against the search path. Owned here in
+    /// `main_0`'s `Options` and reached through the `with_options` borrow
+    /// channel, replacing the former `static mut include_directories`.
+    pub resolved_include_dirs: ::core::cell::RefCell<Vec<::std::path::PathBuf>>,
 }
 
 impl Options {
@@ -583,6 +590,7 @@ impl Options {
             warn_undefined_variables: ::core::cell::Cell::new(false),
             trace: ::core::cell::Cell::new(false),
             always_make: ::core::cell::Cell::new(false),
+            resolved_include_dirs: ::core::cell::RefCell::new(Vec::new()),
         }
     }
 }
