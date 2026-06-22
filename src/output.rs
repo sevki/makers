@@ -743,3 +743,105 @@ macro_rules! fatal {
         $crate::output::msg::fatal($loc, &::std::format!($($arg)*))
     };
 }
+
+#[cfg(test)]
+mod outputs_tests {
+    use super::{_outputs, output, OUTPUT_NONE};
+    use std::ffi::CString;
+
+    /// A unique temp path; the file is created by `open_temp_fd`.
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("outputs-{tag}-{nanos}-{}", std::process::id()))
+    }
+
+    /// Open `path` for read/write, creating/truncating it, returning a raw fd.
+    unsafe fn open_temp_fd(path: &std::path::Path) -> i32 {
+        let c = CString::new(path.to_str().unwrap()).unwrap();
+        let fd = libc::open(
+            c.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o600,
+        );
+        assert!(fd >= 0, "open temp file");
+        fd
+    }
+
+    /// Read the whole file at `path` to a string.
+    fn read_all(path: &std::path::Path) -> String {
+        std::fs::read_to_string(path).expect("read temp file")
+    }
+
+    /// Build a zeroed `output` with `syncout` enabled and its stdout/stderr
+    /// descriptors pointed at two raw fds.
+    unsafe fn sync_output(out_fd: i32, err_fd: i32) -> output {
+        let mut o: output = ::core::mem::zeroed();
+        o.out = out_fd;
+        o.err = err_fd;
+        o.set_syncout(1);
+        o
+    }
+
+    /// With output-sync active and a valid stdout descriptor, `_outputs`
+    /// appends the message to that descriptor (the sync/`writebuf` path). The
+    /// stderr selection routes to the `err` fd instead. Uses real temp files so
+    /// the bytes can be read back; no dependence on the global stdio.
+    #[test]
+    fn writes_to_sync_descriptor_per_stream() {
+        let out_path = temp_path("out");
+        let err_path = temp_path("err");
+        unsafe {
+            let out_fd = open_temp_fd(&out_path);
+            let err_fd = open_temp_fd(&err_path);
+            let o = sync_output(out_fd, err_fd);
+
+            _outputs(
+                &o as *const output as *mut output,
+                0,
+                c"to-stdout\n".as_ptr(),
+            );
+            _outputs(
+                &o as *const output as *mut output,
+                1,
+                c"to-stderr\n".as_ptr(),
+            );
+            libc::close(out_fd);
+            libc::close(err_fd);
+        }
+        assert_eq!(
+            read_all(&out_path),
+            "to-stdout\n",
+            "is_err==0 writes to the out descriptor"
+        );
+        assert_eq!(
+            read_all(&err_path),
+            "to-stderr\n",
+            "is_err!=0 writes to the err descriptor"
+        );
+        let _ = std::fs::remove_file(&out_path);
+        let _ = std::fs::remove_file(&err_path);
+    }
+
+    /// When the selected descriptor is `OUTPUT_NONE`, the sync fast-path is
+    /// skipped and the call falls through to the stdio writer. Driving it with
+    /// an empty message keeps the test output clean while still exercising the
+    /// `fd == OUTPUT_NONE` branch and the `fputs`/`fflush` tail.
+    #[test]
+    fn falls_through_when_descriptor_is_none() {
+        unsafe {
+            let o = sync_output(OUTPUT_NONE, OUTPUT_NONE);
+            _outputs(&o as *const output as *mut output, 0, c"".as_ptr());
+        }
+    }
+
+    /// A null `output` (no sync context) goes straight to the stdio writer.
+    #[test]
+    fn null_output_uses_stdio() {
+        unsafe {
+            _outputs(::core::ptr::null_mut(), 0, c"".as_ptr());
+        }
+    }
+}

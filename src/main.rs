@@ -817,6 +817,22 @@ pub fn with_options<R>(f: impl FnOnce(&Options) -> R) -> R {
     f(unsafe { installed_options() })
 }
 
+/// Test-only: install a default `Options` on the current thread's
+/// `OPTIONS_PTR` borrow channel so option readers
+/// (`opt_check_symlink`, etc.) can run inside `#[cfg(test)]` unit tests
+/// that exercise code below `main_0`. The `Options` is leaked so the
+/// installed pointer stays valid for the thread's lifetime; this only
+/// affects test binaries and never changes shipping behavior.
+#[cfg(test)]
+pub fn install_default_options_for_test() {
+    OPTIONS_PTR.with(|p| {
+        if p.get().is_null() {
+            let leaked: &'static Options = Box::leak(Box::new(Options::new()));
+            p.set(leaked as *const Options);
+        }
+    });
+}
+
 pub fn env_overrides() -> bool {
     with_options(|o| o.env_overrides.get())
 }

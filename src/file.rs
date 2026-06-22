@@ -2319,4 +2319,28 @@ mod tests {
             assert!(head.is_null(), "the empty-expanding prereq is removed");
         }
     }
+
+    /// `file_timestamp_cons` packs an in-range `(seconds, nanoseconds)` pair
+    /// into a `FILE_TIMESTAMP`. Two ordinary stamps round-trip without the
+    /// out-of-range substitution, and a later second yields a strictly larger
+    /// encoded timestamp than an earlier one (ordering, not absolute value).
+    #[test]
+    fn file_timestamp_cons_in_range_is_monotonic() {
+        unsafe {
+            let earlier = file_timestamp_cons(c"probe_a".as_ptr(), 1_000_000, 0);
+            let later = file_timestamp_cons(c"probe_b".as_ptr(), 1_000_001, 0);
+            assert!(
+                later > earlier,
+                "a later second encodes to a larger timestamp ({later} > {earlier})"
+            );
+            // Both land in the ordinary range, above the reserved sentinels.
+            assert!(earlier > ORDINARY_MTIME_MIN as uintmax_t);
+            // The nanosecond component widens the value within the same second.
+            let with_ns = file_timestamp_cons(c"probe_a".as_ptr(), 1_000_000, 500_000_000);
+            assert!(
+                with_ns > earlier,
+                "added nanoseconds raise the encoded timestamp within a second"
+            );
+        }
+    }
 }

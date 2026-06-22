@@ -2586,4 +2586,70 @@ mod initialize_file_variables_tests {
             assert!(!f.variables.is_null(), "variable set still allocated");
         }
     }
+
+    /// A file with a `parent` recurses into the parent first, then links the
+    /// parent's variable set as the next (parent) scope. Drives the
+    /// non-null-`parent` arm (the recursion + parent-scope link).
+    #[test]
+    fn parent_chains_into_parent_scope() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let pname = strcache_add(c"ifv_parent_probe".as_ptr());
+            let cname = strcache_add(c"ifv_child_probe".as_ptr());
+            let mut parent = File::default();
+            parent.name = pname;
+            parent.hname = pname;
+            let mut child = File::default();
+            child.name = cname;
+            child.hname = cname;
+            child.parent = &raw mut parent;
+
+            initialize_file_variables(&raw mut child, 1);
+
+            assert!(!parent.variables.is_null(), "parent set is initialized");
+            let l = child.variables;
+            assert!(!l.is_null(), "child set is allocated");
+            assert_eq!(
+                (*l).next,
+                parent.variables,
+                "child's next scope is the parent's variable set"
+            );
+            assert_eq!((*l).next_is_parent, 1);
+        }
+    }
+
+    /// A file whose `double_colon` points at a distinct file recurses into that
+    /// entry and links its variable set as a (non-parent) sibling scope before
+    /// returning early. Drives the `double_colon` arm.
+    #[test]
+    fn double_colon_links_sibling_scope() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let dname = strcache_add(c"ifv_dcolon_probe".as_ptr());
+            let mname = strcache_add(c"ifv_main_probe".as_ptr());
+            let mut dc = File::default();
+            dc.name = dname;
+            dc.hname = dname;
+            let mut f = File::default();
+            f.name = mname;
+            f.hname = mname;
+            f.double_colon = &raw mut dc;
+
+            initialize_file_variables(&raw mut f, 1);
+
+            assert!(!dc.variables.is_null(), "double-colon set is initialized");
+            let l = f.variables;
+            assert!(!l.is_null());
+            assert_eq!(
+                (*l).next,
+                dc.variables,
+                "next scope is the double-colon entry's set"
+            );
+            assert_eq!(
+                (*l).next_is_parent,
+                0,
+                "double-colon scope is a sibling, not a parent"
+            );
+        }
+    }
 }

@@ -2258,6 +2258,129 @@ pub const __LONG_MAX__: ::core::ffi::c_long = 9223372036854775807 as ::core::ffi
 pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 
 #[cfg(test)]
+mod f_mtime_tests {
+    use super::*;
+    use crate::strcache::strcache_add;
+    use std::io::Write;
+
+    // Serialize tests that touch the process-wide file/strcache globals.
+    static F_MTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Create a unique temp file and return its absolute path as a C string
+    /// interned in the strcache (so it is a stable `*const c_char` usable as a
+    /// `File::name`). The file is left on disk; the caller removes it.
+    fn make_temp_file() -> (std::path::PathBuf, *const ::core::ffi::c_char) {
+        let dir = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = dir.join(format!("fmtime-{nanos}-{}", std::process::id()));
+        let mut f = std::fs::File::create(&path).expect("create temp file");
+        f.write_all(b"x").expect("write temp file");
+        let cstr = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        let interned = unsafe { strcache_add(cstr.as_ptr()) };
+        (path, interned)
+    }
+
+    /// `f_mtime` on a plain (non-archive) file whose name is an existing path
+    /// stats the file and returns an ordinary, existent timestamp. Marking the
+    /// file `updated` keeps the clock-skew block deterministic. This drives the
+    /// common non-archive branch (the region the cast cleanup touched):
+    /// `name_mtime` -> `file_timestamp_cons` -> the timestamp-propagation loop.
+    #[test]
+    fn f_mtime_existing_file_returns_ordinary_mtime() {
+        let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::make_main::install_default_options_for_test();
+        let (path, name) = make_temp_file();
+        unsafe {
+            let mut file = File::default();
+            file.name = name;
+            file.hname = name;
+            file.set_updated(1);
+
+            let mtime = f_mtime(&raw mut file, 0);
+            assert_ne!(
+                mtime, NONEXISTENT_MTIME as uintmax_t,
+                "an existing file has a real mtime"
+            );
+            assert_ne!(
+                mtime, UNKNOWN_MTIME as uintmax_t,
+                "the mtime is resolved, not unknown"
+            );
+            assert!(
+                mtime > ORDINARY_MTIME_MIN as uintmax_t,
+                "an existing file lands in the ordinary timestamp range"
+            );
+            // last_mtime is propagated through the (single-element) chain.
+            assert_eq!(file.last_mtime, mtime, "last_mtime is cached on the file");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `f_mtime` on a plain file whose name does not exist (and with `search`
+    /// disabled, so no vpath/library fallback) returns `NONEXISTENT_MTIME`.
+    /// Drives the missing-file arm of `name_mtime` (`ENOENT`).
+    #[test]
+    fn f_mtime_missing_file_is_nonexistent() {
+        let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::make_main::install_default_options_for_test();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let missing = std::env::temp_dir().join(format!("fmtime-missing-{nanos}"));
+        let cstr = std::ffi::CString::new(missing.to_str().unwrap()).unwrap();
+        unsafe {
+            let name = strcache_add(cstr.as_ptr());
+            let mut file = File::default();
+            file.name = name;
+            file.hname = name;
+            file.set_updated(1);
+            file.set_ignore_vpath(1);
+
+            let mtime = f_mtime(&raw mut file, 0);
+            assert_eq!(
+                mtime, NONEXISTENT_MTIME as uintmax_t,
+                "a missing file with no search reports nonexistent"
+            );
+        }
+    }
+
+    /// Same plain-file path but with `updated` left unset, so `f_mtime` runs the
+    /// clock-skew check block. An existing file has a present/past mtime, so the
+    /// inner `adjusted_now < adjusted_mtime` future-time test is false and no
+    /// warning is emitted; this covers the clock-skew guard region without
+    /// reaching the (make-init-dependent) `error` warning path.
+    #[test]
+    fn f_mtime_past_file_skips_skew_warning() {
+        let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::make_main::install_default_options_for_test();
+        let saved_skew = crate::make_main::CLOCK_SKEW_DETECTED.load(Ordering::Relaxed);
+        crate::make_main::CLOCK_SKEW_DETECTED.store(false, Ordering::Relaxed);
+        let (path, name) = make_temp_file();
+        unsafe {
+            let mut file = File::default();
+            file.name = name;
+            file.hname = name;
+            // updated() left at 0 so the clock-skew block's outer guard runs.
+
+            let mtime = f_mtime(&raw mut file, 0);
+            assert!(
+                mtime > ORDINARY_MTIME_MIN as uintmax_t,
+                "an existing past-dated file resolves to an ordinary mtime"
+            );
+            assert!(
+                !crate::make_main::clock_skew_detected(),
+                "a past-dated file triggers no clock-skew warning"
+            );
+        }
+        crate::make_main::CLOCK_SKEW_DETECTED.store(saved_skew, Ordering::Relaxed);
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
 mod commands_started_tests {
     use super::{commands_started, COMMANDS_STARTED};
     use std::sync::atomic::Ordering;
