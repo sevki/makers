@@ -103,12 +103,13 @@ fn classify_ar_name(bytes: &[u8]) -> ArName {
 ///
 /// Aborts via [`fatal`] on the unsupported nested `archive((member))` form,
 /// matching make's behavior.
-pub fn ar_name(name: &::core::ffi::CStr) -> bool {
+pub fn ar_name(ctx: &crate::execctx::ExecContext, name: &::core::ffi::CStr) -> bool {
     match classify_ar_name(name.to_bytes()) {
         ArName::Plain => false,
         ArName::Member => true,
         ArName::Unsupported => unsafe {
             fatal(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 name.to_bytes().len() as size_t,
                 b"attempt to use unsupported feature: '%s'\0" as *const u8
@@ -123,6 +124,7 @@ pub fn ar_name(name: &::core::ffi::CStr) -> bool {
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_parse_name(
+    ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     arname_p: *mut *mut ::core::ffi::c_char,
     memname_p: *mut *mut ::core::ffi::c_char,
@@ -132,6 +134,7 @@ pub unsafe fn ar_parse_name(
     p = strchr(*arname_p, '(' as i32);
     if p.is_null() {
         fatal(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             strlen(*arname_p) as size_t,
             b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -229,7 +232,10 @@ impl ParsedArName {
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
+pub unsafe fn ar_member_date(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+) -> time_t {
     // `name` is `archive(member)`; own the split buffer here so it drops on
     // return (replacing the old `ar_parse_name` xstrdup + `free`).
     let parsed = ParsedArName::parse(::core::ffi::CStr::from_ptr(name));
@@ -245,6 +251,7 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
         f_mtime(arfile, 0);
     }
     val = ar_scan(
+        ctx,
         arname,
         Some(ar_member_date_1),
         memname as *const ::core::ffi::c_void,
@@ -272,18 +279,19 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> i32 {
+pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::ffi::c_char) -> i32 {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut val: i32;
-    ar_parse_name(name, &raw mut arname, &raw mut memname);
+    ar_parse_name(ctx, name, &raw mut arname, &raw mut memname);
     let arfile: *mut file;
     arfile = enter_file(strcache_add(arname));
     f_mtime(arfile, 0);
     val = 1;
-    match ar_member_touch(arname, memname) {
+    match ar_member_touch(ctx, arname, memname) {
         -1 => {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 strlen(arname) as size_t,
                 b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
@@ -292,6 +300,7 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> i32 {
         }
         -2 => {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 strlen(arname) as size_t,
                 b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
@@ -300,12 +309,14 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> i32 {
         }
         -3 => {
             perror_with_name(
+                ctx,
                 b"touch: \0" as *const u8 as *const ::core::ffi::c_char,
                 arname,
             );
         }
         1 => {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 (strlen(memname) as size_t).wrapping_add(strlen(arname) as size_t),
                 b"touch: member '%s' does not exist in '%s'\0" as *const u8
@@ -319,6 +330,7 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> i32 {
         }
         _ => {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 strlen(name) as size_t,
                 b"touch: bad return code from ar_member_touch on '%s'\0" as *const u8
@@ -417,6 +429,7 @@ mod ar_glob_pattern_p_tests {
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_glob(
+    ctx: &crate::execctx::ExecContext,
     arname: *const ::core::ffi::c_char,
     member_pattern: *const ::core::ffi::c_char,
     size: size_t,
@@ -441,6 +454,7 @@ pub unsafe fn ar_glob(
     state.chain = ::core::ptr::null_mut::<nameseq>();
     state.n = 0;
     ar_scan(
+        ctx,
         arname,
         Some(ar_glob_match),
         &raw mut state as *const ::core::ffi::c_void,

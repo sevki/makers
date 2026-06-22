@@ -314,7 +314,7 @@ unsafe fn convert_suffix_rule(
 /// # Safety
 /// `suffix_file` and all linked file/dep structures must be valid; must run
 /// single-threaded (mutates the rule database).
-pub unsafe fn convert_to_pattern() {
+pub unsafe fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
     let suffixes: *mut dep = suffix_file
         .as_ref()
         .expect("the .SUFFIXES file must exist before convert_to_pattern")
@@ -348,6 +348,7 @@ pub unsafe fn convert_to_pattern() {
                     f.set_suffix(1);
                 } else if !posix_pedantic() {
                     error(
+                        ctx,
                         &raw mut cmds.fileinfo,
                         0,
                         c"warning: ignoring prerequisites on suffix rule definition".as_ptr(),
@@ -377,6 +378,7 @@ pub unsafe fn convert_to_pattern() {
                                 skip = true;
                             } else {
                                 error(
+                                    ctx,
                                     &raw mut cmds.fileinfo,
                                     0,
                                     c"warning: ignoring prerequisites on suffix rule definition"
@@ -603,7 +605,7 @@ pub unsafe fn print_rule(r: *mut rule) {
 ///
 /// # Safety
 /// The global pattern-rule list must be valid; must run single-threaded.
-pub unsafe fn print_rule_data_base() {
+pub unsafe fn print_rule_data_base(ctx: &crate::execctx::ExecContext) {
     let mut rules: ::core::ffi::c_uint = 0;
     let mut terminal: ::core::ffi::c_uint = 0;
     puts(c"\n# Implicit Rules".as_ptr());
@@ -630,6 +632,7 @@ pub unsafe fn print_rule_data_base() {
     let num_pattern_rules = NUM_PATTERN_RULES.load(Ordering::Relaxed);
     if num_pattern_rules != rules && num_pattern_rules != 0 {
         fatal(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             INTSTR_LENGTH.wrapping_mul(2) as size_t,
             c"INTERNAL: num_pattern_rules is wrong!  %u != %u".as_ptr(),

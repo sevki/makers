@@ -665,7 +665,7 @@ const DEFAULT_TMPFILE: &::core::ffi::CStr = c"GmXXXXXX";
 /// # Safety
 /// Must run single-threaded: it caches its result in a static and reads the
 /// environment.
-pub unsafe fn get_tmpdir() -> *const c_char {
+pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
     static mut tmpdir: *const c_char = null();
 
     if tmpdir.is_null() {
@@ -687,6 +687,7 @@ pub unsafe fn get_tmpdir() -> *const c_char {
             }
             if r < 0 {
                 error(
+                    ctx,
                     null::<Floc>(),
                     var.count_bytes() + strlen(tmpdir) + strlen(strerror(*__errno_location())),
                     c"%s value %s: %s".as_ptr(),
@@ -696,6 +697,7 @@ pub unsafe fn get_tmpdir() -> *const c_char {
                 );
             } else if st.st_mode & S_IFMT != S_IFDIR {
                 error(
+                    ctx,
                     null::<Floc>(),
                     var.count_bytes() + strlen(tmpdir),
                     c"%s value %s: not a directory".as_ptr(),
@@ -710,6 +712,7 @@ pub unsafe fn get_tmpdir() -> *const c_char {
         tmpdir = DEFAULT_TMPDIR.as_ptr();
         if found {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(tmpdir),
                 c"using default temporary directory '%s'".as_ptr(),
@@ -723,8 +726,8 @@ pub unsafe fn get_tmpdir() -> *const c_char {
 /// Build an `xmalloc`'d mkstemp template `<tmpdir>/GmXXXXXX`.
 /// # Safety
 /// Must run single-threaded (uses `get_tmpdir`); caller frees the result.
-pub unsafe fn get_tmptemplate() -> *mut c_char {
-    let tmpdir = get_tmpdir();
+pub unsafe fn get_tmptemplate(ctx: &crate::execctx::ExecContext) -> *mut c_char {
+    let tmpdir = get_tmpdir(ctx);
 
     let template = xmalloc(strlen(tmpdir) + DEFAULT_TMPFILE.to_bytes().len() + 2) as *mut c_char;
     let mut cp = stpcpy(template, tmpdir);
@@ -744,7 +747,7 @@ pub unsafe fn get_tmptemplate() -> *mut c_char {
 /// # Safety
 /// `name` must be null or valid for writes; the caller takes ownership of
 /// `*name`.
-pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> i32 {
+pub unsafe fn get_tmpfd(ctx: &crate::execctx::ExecContext, name: *mut *mut c_char) -> i32 {
     let mut fd: i32;
 
     if !name.is_null() {
@@ -759,7 +762,7 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> i32 {
 
     // Make sure the temporary file is never readable by other users.
     let mask: mode_t = umask(0o77);
-    let tmpnm = get_tmptemplate();
+    let tmpnm = get_tmptemplate(ctx);
     loop {
         fd = mkstemp(tmpnm);
         if !(fd == -1 && *__errno_location() == EINTR) {
@@ -769,6 +772,7 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> i32 {
 
     if fd < 0 {
         error(
+            ctx,
             null::<Floc>(),
             strlen(tmpnm) + strlen(strerror(*__errno_location())),
             c"cannot create temporary file %s: %s".as_ptr(),
@@ -791,6 +795,7 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> i32 {
         }
         if r < 0 {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(tmpnm) + strlen(strerror(*__errno_location())),
                 c"cannot unlink temporary file %s: %s".as_ptr(),
@@ -812,12 +817,15 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> i32 {
 /// # Safety
 /// `name` must be non-null and valid for writes; the caller takes ownership
 /// of `*name`.
-pub unsafe fn get_tmpfile(name: *mut *mut c_char) -> *mut FILE {
+pub unsafe fn get_tmpfile(
+    ctx: &crate::execctx::ExecContext,
+    name: *mut *mut c_char,
+) -> *mut FILE {
     let tmpfile_mode: *const c_char = c"wb+".as_ptr();
 
     let name = name.as_mut().expect("get_tmpfile: name must be non-null");
 
-    let fd = get_tmpfd(name);
+    let fd = get_tmpfd(ctx, name);
     if fd < 0 {
         return null_mut();
     }
@@ -837,6 +845,7 @@ pub unsafe fn get_tmpfile(name: *mut *mut c_char) -> *mut FILE {
     }
     if file.is_null() {
         error(
+            ctx,
             null::<Floc>(),
             strlen(*name) + strlen(strerror(*__errno_location())),
             c"fdopen: temporary file %s: %s".as_ptr(),

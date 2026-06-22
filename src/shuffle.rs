@@ -57,7 +57,7 @@ pub fn get_mode() -> Option<String> {
 /// Configure shuffle behavior from a textual argument (typically the value of
 /// the `--shuffle=` command-line flag). Aborts via `fatal` on a malformed
 /// numeric seed, matching the original C behavior.
-pub fn set_mode(arg: &str) {
+pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
     let mut cfg = config();
     if arg.eq_ignore_ascii_case("reverse") {
         cfg.mode = Mode::Reverse;
@@ -74,7 +74,7 @@ pub fn set_mode(arg: &str) {
         } else {
             match arg.parse::<u32>() {
                 Ok(n) => n,
-                Err(_) => fatal!(None, "invalid shuffle mode: Invalid value: '{arg}'"),
+                Err(_) => fatal!(ctx, None, "invalid shuffle mode: Invalid value: '{arg}'"),
             }
         };
         cfg.mode = Mode::Random;
@@ -196,40 +196,45 @@ mod tests {
     #[test]
     fn set_mode_reverse_is_reported_by_get_mode() {
         let _guard = lock_mode_tests();
-        set_mode("none");
-        set_mode("reverse");
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "none");
+        set_mode(&ctx, "reverse");
         assert_eq!(get_mode().as_deref(), Some("reverse"));
     }
 
     #[test]
     fn set_mode_identity_is_reported_by_get_mode() {
         let _guard = lock_mode_tests();
-        set_mode("none");
-        set_mode("identity");
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "none");
+        set_mode(&ctx, "identity");
         assert_eq!(get_mode().as_deref(), Some("identity"));
     }
 
     #[test]
     fn set_mode_none_clears_mode() {
         let _guard = lock_mode_tests();
-        set_mode("reverse");
-        set_mode("none");
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        set_mode(&ctx, "none");
         assert_eq!(get_mode(), None);
     }
 
     #[test]
     fn set_mode_numeric_seed_is_reported_by_get_mode() {
         let _guard = lock_mode_tests();
-        set_mode("none");
-        set_mode("1234");
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "none");
+        set_mode(&ctx, "1234");
         assert_eq!(get_mode().as_deref(), Some("1234"));
     }
 
     #[test]
     fn set_mode_random_produces_active_mode_label() {
         let _guard = lock_mode_tests();
-        set_mode("none");
-        set_mode("random");
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "none");
+        set_mode(&ctx, "random");
         assert!(get_mode().is_some());
     }
 }

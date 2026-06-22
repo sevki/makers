@@ -894,11 +894,11 @@ pub fn opt_max_load_average() -> f64 {
 
 /// `should_print_dir` for callers outside the `Options` borrow chain
 /// (`output.rs`), reading the owned `Options` through the borrow channel.
-pub fn should_print_dir_mirror() -> i32 {
+pub fn should_print_dir_mirror(ctx: &crate::execctx::ExecContext) -> i32 {
     with_options(|o| match o.print_directory.get() {
         Some(v) => v as i32,
         None => {
-            let ml = unsafe { makelevel };
+            let ml = ctx.makelevel();
             (!o.silent.get() && ml > 0) as i32
         }
     })
@@ -1792,7 +1792,7 @@ unsafe fn main_0(
     {
         let shuffle = options.shuffle_mode.borrow().clone();
         if let Some(arg) = shuffle {
-            crate::shuffle::set_mode(&arg);
+            crate::shuffle::set_mode(&ctx, &arg);
             *options.shuffle_mode.borrow_mut() = crate::shuffle::get_mode();
         }
     }
@@ -5332,18 +5332,19 @@ mod option_helper_tests {
     /// back to the silent/dir-count heuristic when unset.
     #[test]
     fn should_print_dir_paths() {
+        let ctx = crate::execctx::ExecContext::default();
         let o = Options::new();
         // Explicit -w wins.
         opt_set_flag(&o, 'w' as i32, true);
-        assert!(should_print_dir(&o));
+        assert!(should_print_dir(&ctx, &o));
         opt_set_flag(&o, 'w' as i32, false);
-        assert!(!should_print_dir(&o));
+        assert!(!should_print_dir(&ctx, &o));
         // Unset: not silent, no -C dirs, makelevel 0 -> false.
         let o2 = Options::new();
-        assert!(!should_print_dir(&o2));
+        assert!(!should_print_dir(&ctx, &o2));
         // Silent suppresses it too.
         opt_set_flag(&o2, 's' as i32, true);
-        assert!(!should_print_dir(&o2));
+        assert!(!should_print_dir(&ctx, &o2));
     }
 }
 
@@ -5352,14 +5353,15 @@ mod option_helper_tests {
 /// against the exact C-shaped logic it replaced.
 #[cfg(test)]
 mod should_print_dir_unsafe_oracle {
-    use super::{makelevel, Options};
+    use super::Options;
+    use crate::execctx::ExecContext;
 
-    pub unsafe fn should_print_dir(options: &Options) -> i32 {
+    pub unsafe fn should_print_dir(ctx: &ExecContext, options: &Options) -> i32 {
         if let Some(v) = options.print_directory.get() {
             return v as i32;
         }
-        (!options.silent.get() && (makelevel > 0 || !options.directories.borrow().is_empty()))
-            as i32
+        (!options.silent.get()
+            && (ctx.makelevel() > 0 || !options.directories.borrow().is_empty())) as i32
     }
 }
 
@@ -5383,10 +5385,11 @@ mod should_print_dir_diff_tests {
                 dirs.push(c"d".to_owned());
             }
         }
-        let safe = should_print_dir(&o);
+        let ctx = crate::execctx::ExecContext::default();
+        let safe = should_print_dir(&ctx, &o);
         // SAFETY: `o` is a fully owned, valid Options; the oracle only reads
-        // its fields and the `makelevel` integer global.
-        let raw = unsafe { oracle(&o) };
+        // its fields and the threaded `ctx` makelevel.
+        let raw = unsafe { oracle(&ctx, &o) };
         assert_eq!(
             safe,
             raw != 0,

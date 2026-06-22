@@ -61,7 +61,7 @@ use crate::hash::{
     hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
 };
 use crate::job::default_shell;
-use crate::make_main::{cmd_prefix, export_all_variables, makelevel, shell_var, stopchar_map};
+use crate::make_main::{cmd_prefix, export_all_variables, shell_var, stopchar_map};
 use crate::misc::concat;
 use crate::output::fatal;
 use crate::output::msg;
@@ -338,15 +338,22 @@ fn stop_set(c: u8, mask: i32) -> bool {
 ///
 /// `kind` is the leading text (e.g. "invalid variable name") and `name` is the
 /// offending name bytes — together they reproduce the C `"... '%.*s'"` text.
-fn emit_var_name_warning(loc: Option<&Floc>, is_error: bool, kind: &str, name: &[u8]) {
+fn emit_var_name_warning(
+    ctx: &crate::execctx::ExecContext,
+    loc: Option<&Floc>,
+    is_error: bool,
+    kind: &str,
+    name: &[u8],
+) {
     let body = format!("{kind} '{}'", String::from_utf8_lossy(name));
     if is_error {
-        msg::fatal(loc, &body);
+        msg::fatal(ctx, loc, &body);
     }
-    msg::error(loc, &format!("warning: {body}"));
+    msg::error(ctx, loc, &format!("warning: {body}"));
 }
 
-unsafe extern "C" fn check_valid_name(
+unsafe fn check_valid_name(
+    ctx: &crate::execctx::ExecContext,
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
     length: size_t,
@@ -364,6 +371,7 @@ unsafe extern "C" fn check_valid_name(
     }
     if warning::is_active(Type::InvalidVar) {
         emit_var_name_warning(
+            ctx,
             flocp.as_ref(),
             warning::action(Type::InvalidVar) == Action::Error,
             "invalid variable name",
@@ -389,6 +397,7 @@ pub unsafe fn init_hash_global_variable_set() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn define_variable_in_set(
+    ctx: &crate::execctx::ExecContext,
     mut name: *const ::core::ffi::c_char,
     length: size_t,
     value: *const ::core::ffi::c_char,
@@ -410,7 +419,7 @@ pub unsafe fn define_variable_in_set(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    check_valid_name(flocp, name, length);
+    check_valid_name(ctx, flocp, name, length);
     // Route SET through a checked reference; null means the global set.
     let set = if set.is_null() {
         &raw mut global_variable_set
@@ -520,6 +529,7 @@ pub unsafe fn free_variable_set(list: *mut variable_set_list) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn undefine_variable_in_set(
+    ctx: &crate::execctx::ExecContext,
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
     length: size_t,
@@ -539,7 +549,7 @@ pub unsafe fn undefine_variable_in_set(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    check_valid_name(flocp, name, length);
+    check_valid_name(ctx, flocp, name, length);
     // Route SET through a checked reference; null means the global set.
     let set = if set.is_null() {
         &raw mut global_variable_set
@@ -637,7 +647,11 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
     }
     var
 }
-unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, length: size_t) {
+unsafe fn check_variable_reference(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
+) {
     if !(warning::is_active(Type::InvalidRef)) {
         return;
     }
@@ -651,6 +665,7 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
     }
     if warning::is_active(Type::InvalidRef) {
         emit_var_name_warning(
+            ctx,
             (*expanding_var).as_ref(),
             warning::action(Type::InvalidRef) == Action::Error,
             "invalid variable reference",
@@ -662,7 +677,11 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) -> *mut variable {
+pub unsafe fn lookup_variable(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
+) -> *mut variable {
     let mut setlist: *const variable_set_list;
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -676,7 +695,7 @@ pub unsafe fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) 
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     let mut is_parent: i32 = 0;
-    check_variable_reference(name, length);
+    check_variable_reference(ctx, name, length);
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     setlist = current_variable_set_list;
@@ -704,6 +723,7 @@ pub unsafe fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) 
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn lookup_variable_for_file(
+    ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
     file: *mut file,
@@ -711,10 +731,10 @@ pub unsafe fn lookup_variable_for_file(
     let var: *mut variable;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     if file.is_null() {
-        return lookup_variable(name, length);
+        return lookup_variable(ctx, name, length);
     }
     install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
-    var = lookup_variable(name, length);
+    var = lookup_variable(ctx, name, length);
     restore_file_context(savev, ::core::ptr::null::<Floc>());
     var
 }
@@ -723,6 +743,7 @@ pub unsafe fn lookup_variable_for_file(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn lookup_variable_in_set(
+    ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
     set: *const variable_set,
@@ -738,7 +759,7 @@ pub unsafe fn lookup_variable_in_set(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    check_variable_reference(name, length);
+    check_variable_reference(ctx, name, length);
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     let Some(setr) = set.as_ref() else {
@@ -753,7 +774,11 @@ pub unsafe fn lookup_variable_in_set(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_file_variables(file: *mut file, reading: i32) {
+pub unsafe fn initialize_file_variables(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    reading: i32,
+) {
     let mut l: *mut variable_set_list = (*file).variables;
     if l.is_null() {
         l = xmalloc(::core::mem::size_of::<variable_set_list>() as size_t)
@@ -769,7 +794,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: i32) {
         (*file).variables = l;
     }
     if !(*file).double_colon.is_null() && (*file).double_colon != file {
-        initialize_file_variables((*file).double_colon, reading);
+        initialize_file_variables(ctx, (*file).double_colon, reading);
         (*l).next = (*(*file).double_colon).variables;
         (*l).next_is_parent = 0;
         return;
@@ -777,7 +802,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: i32) {
     if (*file).parent.is_null() {
         (*l).next = &raw mut global_setlist;
     } else {
-        initialize_file_variables((*file).parent, reading);
+        initialize_file_variables(ctx, (*file).parent, reading);
         (*l).next = (*(*file).parent).variables;
     }
     (*l).next_is_parent = 1;
@@ -801,6 +826,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: i32) {
                 // statement line and no added branch.
                 let v = if (*p).variable.flavor() as i32 == f_simple as i32 {
                     let v = define_variable_in_set(
+                        ctx,
                         (*p).variable.name,
                         strlen((*p).variable.name) as size_t,
                         (*p).variable.value,
@@ -815,6 +841,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: i32) {
                     v
                 } else {
                     do_variable_definition(
+                        ctx,
                         &raw mut (*p).variable.fileinfo,
                         (*p).variable.name,
                         (*p).variable.value,
@@ -1028,15 +1055,16 @@ pub unsafe fn merge_variable_set_lists(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn define_automatic_variables() {
+pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
     let mut v: *mut variable;
     let mut buf: [::core::ffi::c_char; 200] = [0; 200];
     sprintf(
         &raw mut buf as *mut ::core::ffi::c_char,
         b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-        makelevel,
+        ctx.makelevel(),
     );
     define_variable_in_set(
+        ctx,
         b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         &raw mut buf as *mut ::core::ffi::c_char,
@@ -1061,6 +1089,7 @@ pub unsafe fn define_automatic_variables() {
         },
     );
     define_variable_in_set(
+        ctx,
         b"MAKE_VERSION\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         &raw mut buf as *mut ::core::ffi::c_char,
@@ -1070,6 +1099,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"MAKE_HOST\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         crate::version::make_host(),
@@ -1079,6 +1109,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     v = define_variable_in_set(
+        ctx,
         b"SHELL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
         default_shell,
@@ -1096,6 +1127,7 @@ pub unsafe fn define_automatic_variables() {
         (*v).value = xstrdup(default_shell);
     }
     v = define_variable_in_set(
+        ctx,
         b"MAKEFILES\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1106,6 +1138,7 @@ pub unsafe fn define_automatic_variables() {
     );
     (*v).set_export(v_ifset as variable_export);
     define_variable_in_set(
+        ctx,
         b"@D\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(patsubst %/,%,$(dir $@))\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1115,6 +1148,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"%D\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(patsubst %/,%,$(dir $%))\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1124,6 +1158,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"*D\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(patsubst %/,%,$(dir $*))\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1133,6 +1168,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"<D\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(patsubst %/,%,$(dir $<))\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1142,6 +1178,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"?D\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(patsubst %/,%,$(dir $?))\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1151,6 +1188,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"^D\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(patsubst %/,%,$(dir $^))\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1160,6 +1198,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"+D\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(patsubst %/,%,$(dir $+))\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1169,6 +1208,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"@F\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(notdir $@)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1178,6 +1218,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"%F\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(notdir $%)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1187,6 +1228,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"*F\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(notdir $*)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1196,6 +1238,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"<F\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(notdir $<)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1205,6 +1248,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"?F\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(notdir $?)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1214,6 +1258,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"^F\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(notdir $^)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1223,6 +1268,7 @@ pub unsafe fn define_automatic_variables() {
         NILF,
     );
     define_variable_in_set(
+        ctx,
         b"+F\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
         b"$(notdir $+)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1280,7 +1326,11 @@ pub fn should_export(v: &variable) -> bool {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn target_environment(file: *mut file, recursive: i32) -> *mut *mut ::core::ffi::c_char {
+pub unsafe fn target_environment(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    recursive: i32,
+) -> *mut *mut ::core::ffi::c_char {
     let set_list: *mut variable_set_list;
     let mut s: *mut variable_set_list;
     let mut table: hash_table = hash_table {
@@ -1423,7 +1473,7 @@ pub unsafe fn target_environment(file: *mut file, recursive: i32) -> *mut *mut :
                     sprintf(
                         &raw mut val as *mut ::core::ffi::c_char,
                         b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-                        makelevel.wrapping_add(1),
+                        ctx.makelevel().wrapping_add(1),
                     );
                     free(cp as *mut ::core::ffi::c_void);
                     cp = xstrdup(&raw mut val as *mut ::core::ffi::c_char);
@@ -1539,7 +1589,7 @@ pub unsafe fn target_environment(file: *mut file, recursive: i32) -> *mut *mut :
             &raw mut val_0 as *mut ::core::ffi::c_char,
             b"%s=%u\0" as *const u8 as *const ::core::ffi::c_char,
             MAKELEVEL_NAME.as_ptr(),
-            makelevel.wrapping_add(1),
+            ctx.makelevel().wrapping_add(1),
         );
         let fresh12 = result;
         result = result.offset(1_i32 as isize);
@@ -1620,6 +1670,7 @@ pub unsafe fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn do_variable_definition(
+    ctx: &crate::execctx::ExecContext,
     flocp: *const Floc,
     varname: *const ::core::ffi::c_char,
     value: *const ::core::ffi::c_char,
@@ -1636,7 +1687,7 @@ pub unsafe fn do_variable_definition(
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
     let mut append: i32 = 0;
     if conditional != 0 {
-        v = lookup_variable(varname, strlen(varname) as size_t);
+        v = lookup_variable(ctx, varname, strlen(varname) as size_t);
         if !v.is_null() {
             return v;
         }
@@ -1683,7 +1734,7 @@ pub unsafe fn do_variable_definition(
         4 | 6 => {
             let mut override_0: i32 = 0;
             if scope as ::core::ffi::c_uint == s_global as i32 as ::core::ffi::c_uint {
-                v = lookup_variable(varname, strlen(varname) as size_t);
+                v = lookup_variable(ctx, varname, strlen(varname) as size_t);
             } else {
                 append = 1;
                 v = lookup_variable_in_set(

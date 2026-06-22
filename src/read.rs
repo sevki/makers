@@ -290,7 +290,10 @@ static mut read_files: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goa
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char) -> *mut goaldep {
+pub unsafe fn read_all_makefiles(
+    ctx: &crate::execctx::ExecContext,
+    mut makefiles: *mut *const ::core::ffi::c_char,
+) -> *mut goaldep {
     let mut num_makefiles: ::core::ffi::c_uint = 0;
     define_variable_in_set(
         b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
@@ -328,6 +331,7 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
             *fresh10 = 0;
         }
         eval_makefile(
+            ctx,
             strcache_add(name),
             (RM_NO_DEFAULT_GOAL | RM_INCLUDED | RM_DONTCARE) as ::core::ffi::c_ushort,
         );
@@ -335,9 +339,9 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
     free(value as *mut ::core::ffi::c_void);
     if !makefiles.is_null() {
         while let Some(mref) = makefiles.as_mut().filter(|m| !m.is_null()) {
-            let d: *mut goaldep = eval_makefile(*mref, 0);
+            let d: *mut goaldep = eval_makefile(ctx, *mref, 0);
             if *__errno_location() != 0 {
-                perror_with_name(b"\0" as *const u8 as *const ::core::ffi::c_char, *mref);
+                perror_with_name(ctx, b"\0" as *const u8 as *const ::core::ffi::c_char, *mref);
             }
             *mref = if !(*d).name.is_null() {
                 (*d).name
@@ -361,9 +365,9 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
             p_0 = p_0.offset(1_i32 as isize);
         }
         if !(*p_0).is_null() {
-            eval_makefile(*p_0, 0);
+            eval_makefile(ctx, *p_0, 0);
             if *__errno_location() != 0 {
-                perror_with_name(b"\0" as *const u8 as *const ::core::ffi::c_char, *p_0);
+                perror_with_name(ctx, b"\0" as *const u8 as *const ::core::ffi::c_char, *p_0);
             }
         } else {
             p_0 = &raw const default_makefiles as *const *const ::core::ffi::c_char;
@@ -402,7 +406,8 @@ pub unsafe fn restore_conditionals(saved: *mut conditionals) {
     free((*conditionals).seen_else as *mut ::core::ffi::c_void);
     conditionals = saved;
 }
-unsafe extern "C" fn eval_makefile(
+unsafe fn eval_makefile(
+    ctx: &crate::execctx::ExecContext,
     mut filename: *const ::core::ffi::c_char,
     flags: ::core::ffi::c_ushort,
 ) -> *mut goaldep {
@@ -465,6 +470,7 @@ unsafe extern "C" fn eval_makefile(
         EMFILE | ENFILE | ENOMEM => {
             let err: *const ::core::ffi::c_char = strerror((*deps).error);
             fatal(
+                ctx,
                 reading_file,
                 strlen(err) as size_t,
                 b"%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -565,6 +571,7 @@ unsafe extern "C" fn eval_makefile(
     curfile = reading_file;
     reading_file = &raw mut ebuf.floc;
     eval(
+        ctx,
         &raw mut ebuf,
         (flags as i32 & RM_NO_DEFAULT_GOAL == 0) as i32,
     );
@@ -578,7 +585,11 @@ unsafe extern "C" fn eval_makefile(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn eval_buffer(buffer: *mut ::core::ffi::c_char, flocp: *const Floc) {
+pub unsafe fn eval_buffer(
+    ctx: &crate::execctx::ExecContext,
+    buffer: *mut ::core::ffi::c_char,
+    flocp: *const Floc,
+) {
     let mut ebuf: ebuffer = ebuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -616,11 +627,12 @@ pub unsafe fn eval_buffer(buffer: *mut ::core::ffi::c_char, flocp: *const Floc) 
     curfile = reading_file;
     reading_file = &raw mut ebuf.floc;
     saved = install_conditionals(&raw mut new);
-    eval(&raw mut ebuf, 1);
+    eval(ctx, &raw mut ebuf, 1);
     restore_conditionals(saved);
     reading_file = curfile;
 }
-unsafe extern "C" fn parse_var_assignment(
+unsafe fn parse_var_assignment(
+    ctx: &crate::execctx::ExecContext,
     line: *const ::core::ffi::c_char,
     targvar: i32,
     flocp: *const Floc,
@@ -654,6 +666,7 @@ unsafe extern "C" fn parse_var_assignment(
     (*vmod).set_undefine_v(scan.mods.undefine.into());
     if scan.had_modifier && !flocp.is_null() {
         error(
+            ctx,
             flocp,
             0,
             b"warning: directive lines cannot start with TAB\0" as *const u8
@@ -702,7 +715,7 @@ fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
+pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_default: i32) {
     let mut collapsed: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut collapsed_length: size_t = 0;
     let mut commands_len: size_t = 200;
@@ -754,7 +767,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
             .floc
             .lineno
             .wrapping_add(nlines as ::core::ffi::c_ulong);
-        nlines = readline(ebuf);
+        nlines = readline(ctx, ebuf);
         if nlines < 0 {
             break;
         }
@@ -839,6 +852,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
             p = p.offset(1_i32 as isize);
         }
         p = parse_var_assignment(
+            ctx,
             p,
             0,
             if initial_tab != 0 {
@@ -864,6 +878,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                     fi.lineno = tgts_started as ::core::ffi::c_ulong;
                     fi.offset = 0;
                     record_files(
+                        ctx,
                         filenames,
                         also_make_targets,
                         pattern,
@@ -883,10 +898,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                 pattern = ::core::ptr::null::<::core::ffi::c_char>();
                 also_make_targets = 0;
                 if vmod.undefine_v() != 0 {
-                    do_undefine(p, origin, ebuf);
+                    do_undefine(ctx, p, origin, ebuf);
                 } else {
                     if vmod.define_v() != 0 {
-                        v = do_define(p, origin, ebuf);
+                        v = do_define(ctx, p, origin, ebuf);
                     } else {
                         v = try_variable_definition(fstart, p, origin, s_global);
                     }
@@ -917,10 +932,11 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                     in_ignored_define = 0;
                 }
             } else {
-                let i: i32 = conditional_line(p, wlen, fstart, initial_tab);
+                let i: i32 = conditional_line(ctx, p, wlen, fstart, initial_tab);
                 if i != -2_i32 {
                     if i == -1_i32 {
                         fatal(
+                            ctx,
                             fstart,
                             0,
                             b"invalid syntax in conditional\0" as *const u8
@@ -958,6 +974,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                         let exporting: i32 = if *p as i32 == 'u' as i32 { 0 } else { 1 };
                         if initial_tab != 0 {
                             error(
+                                ctx,
                                 &raw mut (*ebuf).floc,
                                 strlen(if exporting != 0 {
                                     b"export\0" as *const u8 as *const ::core::ffi::c_char
@@ -977,6 +994,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
                             fi.offset = 0;
                             record_files(
+                                ctx,
                                 filenames,
                                 also_make_targets,
                                 pattern,
@@ -1040,6 +1058,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                         let mut l_0: size_t = 0;
                         if initial_tab != 0 {
                             error(
+                                ctx,
                                 &raw mut (*ebuf).floc,
                                 0,
                                 b"warning: vpath directive lines cannot start with TAB\0"
@@ -1051,6 +1070,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
                             fi.offset = 0;
                             record_files(
+                                ctx,
                                 filenames,
                                 also_make_targets,
                                 pattern,
@@ -1119,6 +1139,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                         let noerror: i32 = (*p.offset(0_i32 as isize) as i32 != 'i' as i32) as i32;
                         if initial_tab != 0 {
                             error(
+                                ctx,
                                 &raw mut (*ebuf).floc,
                                 strlen(if *p as i32 == 'i' as i32 {
                                     b"include\0" as *const u8 as *const ::core::ffi::c_char
@@ -1142,6 +1163,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
                             fi.offset = 0;
                             record_files(
+                                ctx,
                                 filenames,
                                 also_make_targets,
                                 pattern,
@@ -1178,6 +1200,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                 fi.lineno = tgts_started as ::core::ffi::c_ulong;
                                 fi.offset = 0;
                                 record_files(
+                                    ctx,
                                     filenames,
                                     also_make_targets,
                                     pattern,
@@ -1207,7 +1230,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                         RM_NO_DEFAULT_GOAL
                                     }))
                                     as ::core::ffi::c_ushort;
-                                let d: *mut goaldep = eval_makefile((*files).name, flags);
+                                let d: *mut goaldep = eval_makefile(ctx, (*files).name, flags);
                                 (*d).floc = *fstart;
                                 free_ns(files);
                                 files = next;
@@ -1227,6 +1250,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                             (*p.offset(0_i32 as isize) as i32 == '-' as i32) as i32;
                         if initial_tab != 0 {
                             error(
+                                ctx,
                                 &raw mut (*ebuf).floc,
                                 strlen(if noerror_0 != 0 {
                                     b"-load\0" as *const u8 as *const ::core::ffi::c_char
@@ -1246,6 +1270,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
                             fi.offset = 0;
                             record_files(
+                                ctx,
                                 filenames,
                                 also_make_targets,
                                 pattern,
@@ -1333,9 +1358,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                     init
                                 };
                                 file.name = name;
-                                r = load_file(&raw mut (*ebuf).floc, &raw mut file, noerror_0);
+                                r = load_file(ctx, &raw mut (*ebuf).floc, &raw mut file, noerror_0);
                                 if r == 0 && noerror_0 == 0 {
                                     fatal(
+                                        ctx,
                                         &raw mut (*ebuf).floc,
                                         strlen(name) as size_t,
                                         b"%s: failed to load\0" as *const u8
@@ -1369,6 +1395,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                     } else {
                         if *line.offset(0_i32 as isize) as i32 == cmd_prefix as i32 {
                             fatal(
+                                ctx,
                                 fstart,
                                 0,
                                 b"recipe commences before first target\0" as *const u8
@@ -1389,6 +1416,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
                             fi.offset = 0;
                             record_files(
+                                ctx,
                                 filenames,
                                 also_make_targets,
                                 pattern,
@@ -1424,6 +1452,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                             1 => {
                                 if !cmdleft.is_null() {
                                     fatal(
+                                        ctx,
                                         fstart,
                                         0,
                                         b"missing rule before recipe\0" as *const u8
@@ -1506,6 +1535,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                         )
                                     {
                                         fatal(
+                                            ctx,
                                             fstart,
                                             0,
                                             b"missing separator (did you mean TAB instead of 8 spaces?)\0"
@@ -1522,6 +1552,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                         ::std::ffi::CStr::from_ptr(p2).to_bytes(),
                                     ) {
                                         fatal(
+                                            ctx,
                                             fstart,
                                             0,
                                             b"missing separator (ifeq/ifneq must be followed by whitespace)\0"
@@ -1529,6 +1560,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                         );
                                     }
                                     fatal(
+                                        ctx,
                                         fstart,
                                         0,
                                         b"missing separator\0" as *const u8
@@ -1580,6 +1612,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                             p2 = variable_buffer.offset(l_1 as isize);
                                         }
                                         p2 = parse_var_assignment(
+                                            ctx,
                                             p2,
                                             1,
                                             ::core::ptr::null::<Floc>(),
@@ -1603,6 +1636,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                                 p2 = variable_buffer.offset(l_2 as isize);
                                             }
                                             record_target_var(
+                                                ctx,
                                                 filenames,
                                                 p2,
                                                 (if vmod.override_v() as i32 != 0 {
@@ -1691,6 +1725,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                                 p2 = p2.offset(1_i32 as isize);
                                                 if target.is_null() {
                                                     fatal(
+                                                        ctx,
                                                         fstart,
                                                         0,
                                                         b"missing target pattern\0" as *const u8
@@ -1698,6 +1733,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                                     );
                                                 } else if !(*target).next.is_null() {
                                                     fatal(
+                                                        ctx,
                                                         fstart,
                                                         0,
                                                         b"multiple target patterns\0" as *const u8
@@ -1709,6 +1745,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
                                                 pattern = (*target).name;
                                                 if pattern_percent.is_null() {
                                                     fatal(
+                                                        ctx,
                                                         fstart,
                                                         0,
                                                         b"target pattern contains no '%%'\0"
@@ -1773,6 +1810,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
     }
     if (*conditionals).if_cmds != 0 {
         fatal(
+            ctx,
             fstart,
             0,
             b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1782,6 +1820,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
         fi.lineno = tgts_started as ::core::ffi::c_ulong;
         fi.offset = 0;
         record_files(
+            ctx,
             filenames,
             also_make_targets,
             pattern,
@@ -1809,7 +1848,8 @@ pub unsafe fn remove_comments(line: *mut ::core::ffi::c_char) {
         *comment = 0;
     }
 }
-unsafe extern "C" fn do_undefine(
+unsafe fn do_undefine(
+    ctx: &crate::execctx::ExecContext,
     mut name: *mut ::core::ffi::c_char,
     origin: variable_origin,
     ebuf: *mut ebuffer,
@@ -1821,6 +1861,7 @@ unsafe extern "C" fn do_undefine(
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
         Some(s) => s,
         None => fatal(
+            ctx,
             &raw mut (*ebuf).floc,
             0,
             b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1837,7 +1878,8 @@ unsafe extern "C" fn do_undefine(
     );
     free(var as *mut ::core::ffi::c_void);
 }
-unsafe extern "C" fn do_define(
+unsafe fn do_define(
+    ctx: &crate::execctx::ExecContext,
     mut name: *mut ::core::ffi::c_char,
     origin: variable_origin,
     ebuf: *mut ebuffer,
@@ -1874,6 +1916,7 @@ unsafe extern "C" fn do_define(
     } else {
         if *var.value.offset(0_i32 as isize) as i32 != 0 {
             error(
+                ctx,
                 &raw mut defstart,
                 0,
                 b"extraneous text after 'define' directive\0" as *const u8
@@ -1888,6 +1931,7 @@ unsafe extern "C" fn do_define(
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(n).to_bytes()) {
         Some(s) => s,
         None => fatal(
+            ctx,
             &raw mut defstart,
             0,
             b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1897,9 +1941,10 @@ unsafe extern "C" fn do_define(
     *n.add(span.end) = 0;
     loop {
         let line: *mut ::core::ffi::c_char;
-        let nlines: ::core::ffi::c_long = readline(ebuf);
+        let nlines: ::core::ffi::c_long = readline(ctx, ebuf);
         if nlines < 0 {
             fatal(
+                ctx,
                 &raw mut defstart,
                 0,
                 b"missing 'endef', unterminated 'define'\0" as *const u8
@@ -1928,6 +1973,7 @@ unsafe extern "C" fn do_define(
                     remove_comments(p);
                     if !crate::parser::rest_is_blank(::std::ffi::CStr::from_ptr(p).to_bytes()) {
                         error(
+                            ctx,
                             &raw mut (*ebuf).floc,
                             0,
                             b"extraneous text after 'endef' directive\0" as *const u8
@@ -1988,7 +2034,8 @@ fn directive_cmdtype(d: crate::parser::Directive) -> C2RustUnnamed {
         Directive::Endif => c_endif,
     }
 }
-unsafe extern "C" fn conditional_line(
+unsafe fn conditional_line(
+    ctx: &crate::execctx::ExecContext,
     mut line: *mut ::core::ffi::c_char,
     mut len: size_t,
     flocp: *const Floc,
@@ -2011,6 +2058,7 @@ unsafe extern "C" fn conditional_line(
     }
     if initial_tab != 0 {
         error(
+            ctx,
             flocp,
             0,
             b"warning: conditional directive lines cannot start with TAB\0" as *const u8
@@ -2028,6 +2076,7 @@ unsafe extern "C" fn conditional_line(
     if cmdtype as ::core::ffi::c_uint == c_endif as i32 as ::core::ffi::c_uint {
         if *line as i32 != 0 {
             error(
+                ctx,
                 flocp,
                 strlen(cmdname) as size_t,
                 b"extraneous text after '%s' directive\0" as *const u8
@@ -2037,6 +2086,7 @@ unsafe extern "C" fn conditional_line(
         }
         if (*conditionals).if_cmds == 0 {
             fatal(
+                ctx,
                 flocp,
                 strlen(cmdname) as size_t,
                 b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2048,6 +2098,7 @@ unsafe extern "C" fn conditional_line(
         let mut p: *const ::core::ffi::c_char;
         if (*conditionals).if_cmds == 0 {
             fatal(
+                ctx,
                 flocp,
                 strlen(cmdname) as size_t,
                 b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2057,6 +2108,7 @@ unsafe extern "C" fn conditional_line(
         o = (*conditionals).if_cmds.wrapping_sub(1);
         if *(*conditionals).seen_else.offset(o as isize) != 0 {
             fatal(
+                ctx,
                 flocp,
                 0,
                 b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2093,9 +2145,10 @@ unsafe extern "C" fn conditional_line(
             if matches!(
                 next,
                 Some(crate::parser::Directive::Else | crate::parser::Directive::Endif)
-            ) || conditional_line(line, len, flocp, 0) < 0
+            ) || conditional_line(ctx, line, len, flocp, 0) < 0
             {
                 error(
+                    ctx,
                     flocp,
                     strlen(cmdname) as size_t,
                     b"extraneous text after '%s' directive\0" as *const u8
@@ -2196,6 +2249,7 @@ unsafe extern "C" fn conditional_line(
                 } => {
                     if trailing_text {
                         error(
+                            ctx,
                             flocp,
                             strlen(cmdname) as size_t,
                             b"extraneous text after '%s' directive\0" as *const u8
@@ -2225,7 +2279,8 @@ unsafe extern "C" fn conditional_line(
     }
     0
 }
-unsafe extern "C" fn record_target_var(
+unsafe fn record_target_var(
+    ctx: &crate::execctx::ExecContext,
     mut filenames: *mut nameseq,
     defn: *mut ::core::ffi::c_char,
     origin: variable_origin,
@@ -2273,6 +2328,7 @@ unsafe extern "C" fn record_target_var(
             v = try_variable_definition(flocp, defn, origin, s_target);
             if v.is_null() {
                 fatal(
+                    ctx,
                     flocp,
                     0,
                     b"malformed target-specific variable definition\0" as *const u8
@@ -2457,13 +2513,18 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
+pub unsafe fn check_special_file(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    flocp: *const Floc,
+) {
     if crate::parser::is_wait_token(::std::ffi::CStr::from_ptr((*file).name).to_bytes()) {
         use std::sync::atomic::{AtomicBool, Ordering};
         static WPRE: AtomicBool = AtomicBool::new(false);
         static WCMD: AtomicBool = AtomicBool::new(false);
         if !WPRE.load(Ordering::Relaxed) && !(*file).deps.is_null() {
             error(
+                ctx,
                 flocp,
                 0,
                 b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2472,6 +2533,7 @@ pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
         }
         if !WCMD.load(Ordering::Relaxed) && !(*file).cmds.is_null() {
             error(
+                ctx,
                 flocp,
                 0,
                 b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2480,7 +2542,8 @@ pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
         }
     }
 }
-unsafe extern "C" fn record_files(
+unsafe fn record_files(
+    ctx: &crate::execctx::ExecContext,
     filenames: *mut nameseq,
     are_also_makes: i32,
     pattern: *const ::core::ffi::c_char,
@@ -2500,6 +2563,7 @@ unsafe extern "C" fn record_files(
     let mut name: *const ::core::ffi::c_char;
     if snapped_deps() {
         fatal(
+            ctx,
             flocp,
             0,
             b"prerequisites cannot be defined in recipes\0" as *const u8
@@ -2522,6 +2586,7 @@ unsafe extern "C" fn record_files(
         cmdsref.recipe_prefix = prefix;
     } else if are_also_makes != 0 {
         fatal(
+            ctx,
             flocp,
             0,
             b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2560,6 +2625,7 @@ unsafe extern "C" fn record_files(
         let mut c: ::core::ffi::c_ushort;
         if !pattern.is_null() {
             fatal(
+                ctx,
                 flocp,
                 0,
                 b"mixed implicit and static pattern rules\0" as *const u8
@@ -2592,6 +2658,7 @@ unsafe extern "C" fn record_files(
             implicit_percent = find_percent_cached(&raw mut name);
             if implicit_percent.is_null() {
                 fatal(
+                    ctx,
                     flocp,
                     0,
                     b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2616,6 +2683,7 @@ unsafe extern "C" fn record_files(
         free_ns(filenames);
         if !pattern.is_null() && pattern_matches(pattern, pattern_percent, name) == 0 {
             error(
+                ctx,
                 flocp,
                 strlen(name) as size_t,
                 b"target '%s' doesn't match the target pattern\0" as *const u8
@@ -2633,6 +2701,7 @@ unsafe extern "C" fn record_files(
             f = enter_file(strcache_add(name));
             if !(*f).double_colon.is_null() {
                 fatal(
+                    ctx,
                     flocp,
                     strlen((*f).name) as size_t,
                     b"target file '%s' has both : and :: entries\0" as *const u8
@@ -2642,6 +2711,7 @@ unsafe extern "C" fn record_files(
             }
             if !cmds.is_null() && cmds == (*f).cmds {
                 error(
+                    ctx,
                     flocp,
                     strlen((*f).name) as size_t,
                     b"target '%s' given more than once in the same rule\0" as *const u8
@@ -2651,6 +2721,7 @@ unsafe extern "C" fn record_files(
             } else if !cmds.is_null() && !(*f).cmds.is_null() && (*f).is_target() as i32 != 0 {
                 let l: size_t = strlen((*f).name) as size_t;
                 error(
+                    ctx,
                     &raw mut (*cmds).fileinfo,
                     l,
                     b"warning: overriding recipe for target '%s'\0" as *const u8
@@ -2658,6 +2729,7 @@ unsafe extern "C" fn record_files(
                     (*f).name,
                 );
                 error(
+                    ctx,
                     &raw mut (*(*f).cmds).fileinfo,
                     l,
                     b"warning: ignoring old recipe for target '%s'\0" as *const u8
@@ -2682,6 +2754,7 @@ unsafe extern "C" fn record_files(
                 .filter(|x| x.is_target() as i32 != 0 && x.double_colon.is_null())
             {
                 fatal(
+                    ctx,
                     flocp,
                     strlen(fref.name) as size_t,
                     b"target file '%s' has both : and :: entries\0" as *const u8
@@ -2753,7 +2826,7 @@ unsafe extern "C" fn record_files(
                 }
             }
         }
-        check_special_file(f, flocp);
+        check_special_file(ctx, f, flocp);
         if nextf_0.is_null() {
             break;
         }
@@ -2761,6 +2834,7 @@ unsafe extern "C" fn record_files(
         name = (*filenames).name;
         if !find_percent_cached(&raw mut name).is_null() {
             error(
+                ctx,
                 flocp,
                 0,
                 b"*** mixed implicit and normal rules: deprecated syntax\0" as *const u8
@@ -2776,6 +2850,7 @@ unsafe extern "C" fn record_files(
             .expect("record_files: null also-make target file");
         if !f0.also_make.is_null() {
             error(
+                ctx,
                 &raw mut cmds
                     .as_mut()
                     .expect("record_files: null cmds in group warning")
@@ -2937,7 +3012,7 @@ pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
+pub unsafe fn readline(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer) -> ::core::ffi::c_long {
     let mut p: *mut ::core::ffi::c_char;
     let mut end: *mut ::core::ffi::c_char;
     let mut start: *mut ::core::ffi::c_char;
@@ -2962,6 +3037,7 @@ pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
         len = strlen(p) as size_t;
         if len == 0 {
             error(
+                ctx,
                 &raw mut (*ebuf).floc,
                 0,
                 b"warning: NUL character seen; rest of line ignored\0" as *const u8
@@ -3010,7 +3086,7 @@ pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
         *p = 0;
     }
     if ferror((*ebuf).fp) != 0 {
-        pfatal_with_name((*ebuf).floc.filenm);
+        pfatal_with_name(ctx, (*ebuf).floc.filenm);
     }
     if nlines != 0 {
         nlines

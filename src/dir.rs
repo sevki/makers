@@ -246,7 +246,10 @@ unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
 ///
 /// `name` must be a NUL-terminated path; the directory tables must be
 /// initialized (see [`hash_init_directories`]).
-pub unsafe fn find_directory(name: *const c_char) -> *mut directory {
+pub unsafe fn find_directory(
+    ctx: &crate::execctx::ExecContext,
+    name: *const c_char,
+) -> *mut directory {
     let mut dir_key: directory = ::core::mem::zeroed();
     dir_key.name = name;
     let dir_slot = (hash_find_slot(&raw mut directories, (&raw const dir_key).cast())
@@ -360,7 +363,7 @@ pub unsafe fn find_directory(name: *const c_char) -> *mut directory {
             open_directories += 1;
             if open_directories == MAX_OPEN_DIRECTORIES as c_uint {
                 // Too many streams open: read this one to completion now.
-                dir_contents_file_exists_p(dir, null());
+                dir_contents_file_exists_p(ctx, dir, null());
             }
         }
     }
@@ -369,7 +372,11 @@ pub unsafe fn find_directory(name: *const c_char) -> *mut directory {
 
 /// Does `filename` exist in `dir`? Reads the directory incrementally,
 /// caching every entry seen; a null `filename` reads to the end.
-unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_char) -> i32 {
+unsafe fn dir_contents_file_exists_p(
+    ctx: &crate::execctx::ExecContext,
+    dir: *mut directory,
+    filename: *const c_char,
+) -> i32 {
     let dir = dir.as_ref().expect("dir_contents_file_exists_p: null dir");
     let Some(dc) = dir.contents.as_mut() else {
         // The directory could not be stat'd.
@@ -414,6 +421,7 @@ unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_cha
         let Some(entry) = d.as_mut() else {
             if *__errno_location() != 0 {
                 fatal(
+                    ctx,
                     null::<Floc>(),
                     strlen(dir.name) + strlen(strerror(*__errno_location())),
                     c"readdir %s: %s".as_ptr(),
@@ -471,8 +479,12 @@ unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_cha
 /// # Safety
 ///
 /// Both must be NUL-terminated; the directory tables must be initialized.
-pub unsafe fn dir_file_exists_p(dirname: *const c_char, filename: *const c_char) -> i32 {
-    dir_contents_file_exists_p(find_directory(dirname), filename)
+pub unsafe fn dir_file_exists_p(
+    ctx: &crate::execctx::ExecContext,
+    dirname: *const c_char,
+    filename: *const c_char,
+) -> i32 {
+    dir_contents_file_exists_p(ctx, find_directory(ctx, dirname), filename)
 }
 
 /// Compute how `name` splits at its final slash.
@@ -506,13 +518,13 @@ unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *con
 ///
 /// `name` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_exists_p(name: *const c_char) -> i32 {
+pub unsafe fn file_exists_p(ctx: &crate::execctx::ExecContext, name: *const c_char) -> i32 {
     if crate::ar::ar_name(::core::ffi::CStr::from_ptr(name)) {
         return (crate::ar::ar_member_date(name) != -1) as i32;
     }
     match split_dir(name) {
-        None => dir_file_exists_p(c".".as_ptr(), name),
-        Some((_buf, dirname, base)) => dir_file_exists_p(dirname, base),
+        None => dir_file_exists_p(ctx, c".".as_ptr(), name),
+        Some((_buf, dirname, base)) => dir_file_exists_p(ctx, dirname, base),
     }
 }
 
@@ -523,10 +535,10 @@ pub unsafe fn file_exists_p(name: *const c_char) -> i32 {
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_impossible(filename: *const c_char) {
+pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *const c_char) {
     let (dir, filename) = match split_dir(filename) {
-        None => (find_directory(c".".as_ptr()), filename),
-        Some((_buf, dirname, base)) => (find_directory(dirname), base),
+        None => (find_directory(ctx, c".".as_ptr()), filename),
+        Some((_buf, dirname, base)) => (find_directory(ctx, dirname), base),
     };
     let dir = dir.as_mut().expect("find_directory never returns null");
 
@@ -562,17 +574,20 @@ pub unsafe fn file_impossible(filename: *const c_char) {
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_impossible_p(filename: *const c_char) -> i32 {
+pub unsafe fn file_impossible_p(
+    ctx: &crate::execctx::ExecContext,
+    filename: *const c_char,
+) -> i32 {
     let (dir, filename) = match split_dir(filename) {
         None => {
-            let dir_ptr = find_directory(c".".as_ptr());
+            let dir_ptr = find_directory(ctx, c".".as_ptr());
             let contents = dir_ptr
                 .as_ref()
                 .map_or(::core::ptr::null_mut(), |d| d.contents);
             (contents, filename)
         }
         Some((_buf, dirname, base)) => {
-            let dir_ptr = find_directory(dirname);
+            let dir_ptr = find_directory(ctx, dirname);
             let contents = dir_ptr
                 .as_ref()
                 .map_or(::core::ptr::null_mut(), |d| d.contents);
@@ -601,8 +616,8 @@ pub unsafe fn file_impossible_p(filename: *const c_char) -> i32 {
 ///
 /// `dir` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn dir_name(dir: *const c_char) -> *const c_char {
-    find_directory(dir)
+pub unsafe fn dir_name(ctx: &crate::execctx::ExecContext, dir: *const c_char) -> *const c_char {
+    find_directory(ctx, dir)
         .as_ref()
         .expect("find_directory never returns null")
         .name

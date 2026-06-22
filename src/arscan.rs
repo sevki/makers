@@ -75,7 +75,15 @@ pub const AR_HDR_SIZE: usize = ::core::mem::size_of::<ar_hdr>();
 /// Aborts via `msg::fatal` on a malformed digit, an overflow, or a value
 /// exceeding `max`. An all-spaces (or empty) field returns 0, matching the
 /// original C behavior.
-fn parse_int(field: &[u8], base: u32, max: u64, what: &str, archive: &str, name: &str) -> u64 {
+fn parse_int(
+    ctx: &crate::execctx::ExecContext,
+    field: &[u8],
+    base: u32,
+    max: u64,
+    what: &str,
+    archive: &str,
+    name: &str,
+) -> u64 {
     // Skip leading spaces, then take everything up to the next space or
     // end-of-field. Mirrors the C parser's two `while` loops.
     let start = field.iter().position(|&b| b != b' ').unwrap_or(field.len());
@@ -105,6 +113,7 @@ fn parse_int(field: &[u8], base: u32, max: u64, what: &str, archive: &str, name:
     match parsed {
         Some(v) if v <= max => v,
         _ => crate::output::msg::fatal(
+            ctx,
             None,
             &format!("invalid {what} for archive {archive} member {name}"),
         ),
@@ -115,6 +124,7 @@ fn parse_int(field: &[u8], base: u32, max: u64, what: &str, archive: &str, name:
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_scan(
+    ctx: &crate::execctx::ExecContext,
     archive: *const ::core::ffi::c_char,
     function: ar_member_func_t,
     arg: *const ::core::ffi::c_void,
@@ -301,6 +311,7 @@ pub unsafe fn ar_scan(
                 member_header.ar_gid.len(),
             );
             eltmode = parse_int(
+                ctx,
                 mode_field,
                 8,
                 ::core::ffi::c_uint::MAX as u64,
@@ -309,6 +320,7 @@ pub unsafe fn ar_scan(
                 &name_str,
             ) as ::core::ffi::c_uint;
             eltsize = parse_int(
+                ctx,
                 size_field,
                 10,
                 ::core::ffi::c_long::MAX as u64,
@@ -317,6 +329,7 @@ pub unsafe fn ar_scan(
                 &name_str,
             ) as ::core::ffi::c_long;
             eltdate = parse_int(
+                ctx,
                 date_field,
                 10,
                 intmax_t::MAX as u64,
@@ -325,6 +338,7 @@ pub unsafe fn ar_scan(
                 &name_str,
             ) as intmax_t;
             eltuid = parse_int(
+                ctx,
                 uid_field,
                 10,
                 i32::MAX as u64,
@@ -333,6 +347,7 @@ pub unsafe fn ar_scan(
                 &name_str,
             ) as i32;
             eltgid = parse_int(
+                ctx,
                 gid_field,
                 10,
                 i32::MAX as u64,
@@ -477,10 +492,12 @@ unsafe fn ar_member_pos(
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_member_touch(
+    ctx: &crate::execctx::ExecContext,
     arname: *const ::core::ffi::c_char,
     memname: *const ::core::ffi::c_char,
 ) -> i32 {
     let pos: intmax_t = ar_scan(
+        ctx,
         arname,
         Some(ar_member_pos),
         memname as *const ::core::ffi::c_void,

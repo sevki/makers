@@ -303,7 +303,8 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             );
             osync_clear();
         }
-        if output_sync != OUTPUT_SYNC_RECURSE && crate::make_main::should_print_dir_mirror() != 0 {
+        if output_sync != OUTPUT_SYNC_RECURSE && crate::make_main::should_print_dir_mirror(ctx) != 0
+        {
             traced = log_working_directory(ctx, 1);
         }
         if outfd_not_empty != 0 {
@@ -397,7 +398,7 @@ pub unsafe fn output_start(ctx: &ExecContext) {
     }
     if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE)
         && !stdio_traced()
-        && crate::make_main::should_print_dir_mirror() != 0
+        && crate::make_main::should_print_dir_mirror(ctx) != 0
     {
         STDIO_TRACED.store(log_working_directory(ctx, 1) != 0, Ordering::Relaxed);
     }
