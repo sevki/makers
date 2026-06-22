@@ -658,13 +658,6 @@ pub unsafe extern "C" fn dbg(fmt: *const c_char, args: ...) {
 const DEFAULT_TMPDIR: &::core::ffi::CStr = c"/tmp";
 const DEFAULT_TMPFILE: &::core::ffi::CStr = c"GmXXXXXX";
 
-/// Return the directory for temporary files: `$MAKE_TMPDIR`, `$TMPDIR`, or
-/// the default, in that order, warning about set-but-unusable values. The
-/// result is computed once and cached.
-///
-/// # Safety
-/// Must run single-threaded: it caches its result in a static and reads the
-/// environment.
 /// Outcome of probing one `$TMPDIR`-style environment variable.
 enum TmpdirCandidate {
     /// Unset or empty: skip silently.
@@ -721,6 +714,13 @@ unsafe fn eval_tmpdir_var(
     TmpdirCandidate::Usable(val)
 }
 
+/// Return the directory for temporary files: `$MAKE_TMPDIR`, `$TMPDIR`, or
+/// the default, in that order, warning about set-but-unusable values. The
+/// result is computed once and cached.
+///
+/// # Safety
+/// Must run single-threaded: it caches its result in a static and reads the
+/// environment.
 pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
     static mut tmpdir: *const c_char = null();
 
