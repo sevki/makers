@@ -312,20 +312,14 @@ unsafe fn convert_suffix_rule(
     };
     create_pattern_rule(names, percents, 1, 0, deps, cmds, 0);
 }
-/// Convert old-style suffix rules (the prerequisites of `.SUFFIXES`) into
-/// pattern rules.
-///
 /// Decide whether a looked-up suffix-rule file (which has commands) should be
 /// treated as a suffix rule, given whether it carries prerequisites. With no
 /// prerequisites it always applies; with prerequisites it is skipped under
 /// `--posix`, else a warning is issued (located at `fileinfo`) and it still
 /// applies. Shared by the single-suffix and suffix-pair arms below.
-///
-/// # Safety
-/// `fileinfo` must be a valid `Floc` pointer for the diagnostic.
-unsafe fn suffix_rule_applies(
+fn suffix_rule_applies(
     ctx: &crate::execctx::ExecContext,
-    fileinfo: *const Floc,
+    fileinfo: &Floc,
     has_prereqs: bool,
 ) -> bool {
     if !has_prereqs {
@@ -334,15 +328,23 @@ unsafe fn suffix_rule_applies(
     if posix_pedantic() {
         return false;
     }
-    error(
-        ctx,
-        fileinfo,
-        0,
-        c"warning: ignoring prerequisites on suffix rule definition".as_ptr(),
-    );
+    // SAFETY: a fixed format string with one matching `%s` arg, `fileinfo` a
+    // live borrow, and `ctx` outliving the call -- the only reason this helper
+    // touches `unsafe` at all is the variadic C-ABI `error`.
+    unsafe {
+        error(
+            ctx,
+            fileinfo,
+            0,
+            c"warning: ignoring prerequisites on suffix rule definition".as_ptr(),
+        );
+    }
     true
 }
 
+/// Convert old-style suffix rules (the prerequisites of `.SUFFIXES`) into
+/// pattern rules.
+///
 /// # Safety
 /// `suffix_file` and all linked file/dep structures must be valid; must run
 /// single-threaded (mutates the rule database).
@@ -377,7 +379,7 @@ pub unsafe fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
         if let Some(f) = lookup_file(rulename).as_mut() {
             let has_prereqs = !f.deps.is_null();
             if let Some(cmds) = f.cmds.as_mut() {
-                if suffix_rule_applies(ctx, &raw mut cmds.fileinfo, has_prereqs) {
+                if suffix_rule_applies(ctx, &cmds.fileinfo, has_prereqs) {
                     f.set_suffix(1);
                 }
             }
@@ -398,7 +400,7 @@ pub unsafe fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
                     if let Some(cmds) = f.cmds.as_mut() {
                         // Under --posix, prerequisites on a suffix rule are silently
                         // ignored (skip); otherwise warn and still convert the rule.
-                        if suffix_rule_applies(ctx, &raw mut cmds.fileinfo, has_prereqs) {
+                        if suffix_rule_applies(ctx, &cmds.fileinfo, has_prereqs) {
                             f.set_suffix(1);
                             if s2len == 2
                                 && *rulename.add(slen) as u8 == b'.'
