@@ -411,35 +411,33 @@ pub unsafe fn unblock_all_sigs() {
 /// Build the `<file>:<line>` location label for a failed child's error message,
 /// or the static `<builtin>` when the recipe has no source location. Any heap
 /// buffer is pushed onto `allocations` so it outlives the `error()` call that
-/// reads it. Split out of `child_error`.
-///
-/// # Safety
-///
-/// `flocp` must be a valid `Floc`; `allocations` owns any buffer returned by
-/// pointer and must outlive that pointer's use.
-unsafe fn child_error_label(
-    flocp: *const Floc,
-    allocations: &mut Vec<Vec<u8>>,
-) -> *const ::core::ffi::c_char {
-    if (*flocp).filenm.is_null() {
+/// reads it. Split out of `child_error`; the only unsafety (formatting through
+/// the recipe's `filenm` C string) is confined to the block below.
+fn child_error_label(floc: &Floc, allocations: &mut Vec<Vec<u8>>) -> *const ::core::ffi::c_char {
+    if floc.filenm.is_null() {
         return b"<builtin>\0" as *const u8 as *const ::core::ffi::c_char;
     }
-    allocations.push(::std::vec::from_elem(
-        0,
-        strlen((*flocp).filenm)
-            .wrapping_add(6)
-            .wrapping_add(INTSTR_LENGTH)
-            .wrapping_add(1) as usize,
-    ));
-    let a: *mut ::core::ffi::c_char =
-        allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-    sprintf(
-        a,
-        b"%s:%lu\0" as *const u8 as *const ::core::ffi::c_char,
-        (*flocp).filenm,
-        (*flocp).lineno.wrapping_add((*flocp).offset),
-    );
-    a
+    // SAFETY: `filenm` is a non-null, NUL-terminated C string taken from the
+    // recipe's `fileinfo`; the buffer is sized to hold "<filenm>:<lineno>" and
+    // is owned by `allocations`, so the returned pointer stays valid.
+    unsafe {
+        allocations.push(::std::vec::from_elem(
+            0,
+            strlen(floc.filenm)
+                .wrapping_add(6)
+                .wrapping_add(INTSTR_LENGTH)
+                .wrapping_add(1) as usize,
+        ));
+        let a: *mut ::core::ffi::c_char =
+            allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
+        sprintf(
+            a,
+            b"%s:%lu\0" as *const u8 as *const ::core::ffi::c_char,
+            floc.filenm,
+            floc.lineno.wrapping_add(floc.offset),
+        );
+        a
+    }
 }
 
 /// The trailing shuffle-mode field for a child error: `smode` when shuffle mode
@@ -484,7 +482,7 @@ unsafe fn child_error(
         pre = b"\0" as *const u8 as *const ::core::ffi::c_char;
         post = b" (ignored)\0" as *const u8 as *const ::core::ffi::c_char;
     }
-    let nm = child_error_label(flocp, &mut alloca_allocations);
+    let nm = child_error_label(&*flocp, &mut alloca_allocations);
     l = strlen(pre)
         .wrapping_add(strlen(nm))
         .wrapping_add(strlen((*f).name))
@@ -3248,7 +3246,7 @@ mod child_error_helper_tests {
             offset: 0,
         };
         let mut allocations: Vec<Vec<u8>> = Vec::new();
-        let label = unsafe { child_error_label(&fl, &mut allocations) };
+        let label = child_error_label(&fl, &mut allocations);
         let label = unsafe { CStr::from_ptr(label) };
         assert_eq!(label.to_bytes(), b"<builtin>");
         assert!(allocations.is_empty(), "builtin path allocates nothing");
@@ -3265,7 +3263,7 @@ mod child_error_helper_tests {
             offset: 2,
         };
         let mut allocations: Vec<Vec<u8>> = Vec::new();
-        let label = unsafe { child_error_label(&fl, &mut allocations) };
+        let label = child_error_label(&fl, &mut allocations);
         let label = unsafe { CStr::from_ptr(label) };
         assert_eq!(label.to_bytes(), b"Makefile:12");
         assert_eq!(allocations.len(), 1, "formatted label owns one buffer");
