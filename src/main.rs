@@ -833,6 +833,28 @@ pub fn install_default_options_for_test() {
     });
 }
 
+/// Test-only: install a valid `program` name and reset `makelevel` to 0 so
+/// the real `error()` / `message()` / `warning()` output paths can run inside
+/// `#[cfg(test)]` unit tests without dereferencing the otherwise-null
+/// `program` pointer (which segfaults outside full make init). The name is a
+/// leaked `CString` so the installed pointer stays valid for the test
+/// binary's lifetime. This only affects test builds and never changes
+/// shipping behavior.
+///
+/// # Safety
+/// Writes the `program`/`makelevel` process globals; callers must serialize
+/// against other code touching those globals (e.g. via the relevant test
+/// mutex).
+#[cfg(test)]
+pub unsafe fn install_program_name_for_test() {
+    if program.is_null() {
+        let leaked: &'static std::ffi::CStr =
+            Box::leak(Box::new(std::ffi::CString::new("make").unwrap())).as_c_str();
+        program = leaked.as_ptr();
+    }
+    makelevel = 0;
+}
+
 pub fn env_overrides() -> bool {
     with_options(|o| o.env_overrides.get())
 }

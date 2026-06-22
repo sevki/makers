@@ -2378,6 +2378,64 @@ mod f_mtime_tests {
         crate::make_main::CLOCK_SKEW_DETECTED.store(saved_skew, Ordering::Relaxed);
         let _ = std::fs::remove_file(&path);
     }
+
+    /// `f_mtime` on a plain file whose mtime lies far in the future drives the
+    /// clock-skew `error()` warning branch ("file '%s' has modification time
+    /// %s s in the future"), which formats the offset and sets
+    /// `CLOCK_SKEW_DETECTED`. This is the exact previously-uncovered branch:
+    /// covering it requires a valid `program` name so `error()` runs its real
+    /// path instead of dereferencing the null `program` pointer (a segfault).
+    #[test]
+    fn f_mtime_future_file_warns_and_sets_skew() {
+        let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::make_main::install_default_options_for_test();
+        let saved_skew = crate::make_main::CLOCK_SKEW_DETECTED.load(Ordering::Relaxed);
+        crate::make_main::CLOCK_SKEW_DETECTED.store(false, Ordering::Relaxed);
+        let (path, name) = make_temp_file();
+        // Push the file's mtime far enough into the future to beat any value
+        // the process-shared `adjusted_now` accumulator already holds.
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(10_000_000);
+        let future_secs = future
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        unsafe {
+            crate::make_main::install_program_name_for_test();
+            let times = [
+                libc::timespec {
+                    tv_sec: future_secs,
+                    tv_nsec: 0,
+                },
+                libc::timespec {
+                    tv_sec: future_secs,
+                    tv_nsec: 0,
+                },
+            ];
+            let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            assert_eq!(
+                libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), times.as_ptr(), 0),
+                0,
+                "set the temp file's mtime into the future"
+            );
+
+            let mut file = File::default();
+            file.name = name;
+            file.hname = name;
+            // updated() left at 0 so the clock-skew block runs in full.
+
+            let mtime = f_mtime(&raw mut file, 0);
+            assert!(
+                mtime > ORDINARY_MTIME_MIN as uintmax_t,
+                "the future-dated file still resolves to an ordinary mtime"
+            );
+            assert!(
+                crate::make_main::clock_skew_detected(),
+                "a future-dated file triggers the clock-skew warning"
+            );
+        }
+        crate::make_main::CLOCK_SKEW_DETECTED.store(saved_skew, Ordering::Relaxed);
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 #[cfg(test)]
