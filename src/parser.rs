@@ -314,6 +314,39 @@ impl SpecialTarget {
     }
 }
 
+/// A built-in diagnostic ("logging") expansion function — the three names that
+/// make routes to a single shared handler (`func_error`): `$(error …)`,
+/// `$(warning …)`, and `$(info …)`. They differ only in how their single
+/// argument is reported.
+///
+/// make's c2rust handler switched on the raw first byte of the function name
+/// (`'e'`/`'w'`/`'i'`), an opaque magic-number wall. Recognising the function is
+/// a pure function of the name bytes, so it belongs in the AST layer as a typed
+/// classifier rather than as inlined byte comparisons.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LogFunction {
+    /// `$(error …)` — print the argument as a fatal error and stop.
+    Error,
+    /// `$(warning …)` — print the argument as a non-fatal warning.
+    Warning,
+    /// `$(info …)` — print the argument to stdout, followed by a newline.
+    Info,
+}
+
+impl LogFunction {
+    /// Classify a built-in function `name` as one of the diagnostic functions,
+    /// or `None` if it is not one of them. Matching is exact on the full name,
+    /// mirroring the closed set the function table routes to `func_error`.
+    pub fn from_funcname(name: &[u8]) -> Option<LogFunction> {
+        Some(match name {
+            b"error" => LogFunction::Error,
+            b"warning" => LogFunction::Warning,
+            b"info" => LogFunction::Info,
+            _ => return None,
+        })
+    }
+}
+
 /// The typed classification of a whole logical (non-recipe) line: which of
 /// make's four `eval` dispatch arms the line takes. It is composed from the
 /// leading-word classifiers in make's `eval` order — conditional directives are
@@ -1733,6 +1766,41 @@ mod tests {
             SpecialTarget::from_name(b".ONESHELL"),
             Some(SpecialTarget::OneShell)
         );
+    }
+
+    #[test]
+    fn log_functions_classify() {
+        assert_eq!(
+            LogFunction::from_funcname(b"error"),
+            Some(LogFunction::Error)
+        );
+        assert_eq!(
+            LogFunction::from_funcname(b"warning"),
+            Some(LogFunction::Warning)
+        );
+        assert_eq!(LogFunction::from_funcname(b"info"), Some(LogFunction::Info));
+    }
+
+    #[test]
+    fn log_functions_reject_non_matches() {
+        // Other built-in functions sharing a first byte must not classify
+        // (the old wall switched on the first byte alone).
+        for w in [
+            b"eval".as_slice(),
+            b"if".as_slice(),
+            b"wildcard".as_slice(),
+            b"intcmp".as_slice(),
+            b"Error".as_slice(),
+            b"errors".as_slice(),
+            b"".as_slice(),
+        ] {
+            assert_eq!(
+                LogFunction::from_funcname(w),
+                None,
+                "{:?} must not classify",
+                w
+            );
+        }
     }
 
     fn scan(s: &str) -> VarModScan {

@@ -224,6 +224,25 @@ fn escaped_colon_prereq() {
 }
 
 #[test]
+fn log_functions_info_warning() {
+    // $(info)/$(warning) route through func_error, classified via the typed
+    // LogFunction AST classifier. Non-fatal: the build still runs `all`.
+    check("log-functions", "60_log_functions.mk", "all", &[]);
+}
+
+#[test]
+fn log_functions_error() {
+    // $(error) (gated by BOOM) is fatal; both binaries must abort identically
+    // with the same located diagnostic and exit code.
+    check(
+        "log-functions-error",
+        "60_log_functions.mk",
+        "all",
+        &["BOOM=1"],
+    );
+}
+
+#[test]
 fn variable_expansion() {
     check("vars", "02_vars.mk", "all", &["FROMCMD=cli"]);
 }

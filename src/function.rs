@@ -1670,8 +1670,12 @@ unsafe fn func_error(
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    match *funcname as ::core::ffi::c_int {
-        101 => {
+    // Classify the diagnostic function (`error`/`warning`/`info`) through the
+    // typed AST layer instead of switching on the raw first byte of the name.
+    let logfn =
+        crate::parser::LogFunction::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes());
+    match logfn {
+        Some(crate::parser::LogFunction::Error) => {
             fatal(
                 reading_file,
                 strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,
@@ -1679,7 +1683,7 @@ unsafe fn func_error(
                 *argv.offset(0 as ::core::ffi::c_int as isize),
             );
         }
-        119 => {
+        Some(crate::parser::LogFunction::Warning) => {
             error(
                 reading_file,
                 strlen(*argv.offset(0 as ::core::ffi::c_int as isize)) as size_t,
@@ -1687,7 +1691,7 @@ unsafe fn func_error(
                 *argv.offset(0 as ::core::ffi::c_int as isize),
             );
         }
-        105 => {
+        Some(crate::parser::LogFunction::Info) => {
             // $(info ...): build "<arg>\n\0" in an owned buffer instead of a
             // malloc/memcpy/free sequence.
             let src = *argv.offset(0 as ::core::ffi::c_int as isize);
