@@ -17,7 +17,8 @@ use libc::{
 
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
-use crate::make_main::{die, makelevel, output_sync, program, starting_directory};
+use crate::execctx::ExecContext;
+use crate::make_main::{die, output_sync, program, starting_directory};
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
@@ -108,7 +109,8 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
 ///
 /// # Safety
 /// Must run single-threaded: reads make globals and a static buffer.
-pub unsafe fn log_working_directory(entering: i32) -> i32 {
+pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
+    let makelevel = ctx.makelevel();
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut len: size_t = 0;
@@ -229,7 +231,7 @@ pub unsafe fn output_tmpfd() -> i32 {
 ///
 /// # Safety
 /// `out` must point to a valid `output`; must run single-threaded.
-pub unsafe fn setup_tmpfile(out: *mut output) {
+pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     // Guards against re-entrant tmpfile setup (the C code's recursion check).
     // Atomic so the read/write are plain safe ops; setup runs single-threaded,
     // so `Relaxed` preserves the original program order.
@@ -243,7 +245,7 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
     // reaching its end is the success path (the C code used `goto`).
     'setup: {
         if io_state & (IO_STDOUT_OK | IO_STDERR_OK) == 0 {
-            perror_with_name(c"output-sync suppressed: ".as_ptr(), c"stderr".as_ptr());
+            perror_with_name(ctx, c"output-sync suppressed: ".as_ptr(), c"stderr".as_ptr());
             break 'setup;
         }
         if io_state & IO_STDOUT_OK != 0 {
@@ -270,6 +272,7 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
         return;
     }
     error(
+        ctx,
         null::<Floc>(),
         0,
         c"cannot open output-sync lock file: suppressing output-sync".as_ptr(),
@@ -284,7 +287,7 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
 ///
 /// # Safety
 /// `out` must point to a valid `output`; must run single-threaded.
-pub unsafe fn output_dump(out: *mut output) {
+pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
     let outfd_not_empty: i32 =
         ((*out).out != OUTPUT_NONE && lseek((*out).out, 0, SEEK_END) > 0) as i32;
     let errfd_not_empty: i32 =
@@ -293,6 +296,7 @@ pub unsafe fn output_dump(out: *mut output) {
         let mut traced: i32 = 0;
         if osync_acquire() == 0 {
             error(
+                ctx,
                 null::<Floc>(),
                 0,
                 c"warning: cannot acquire output lock: disabling output sync".as_ptr(),
@@ -300,7 +304,7 @@ pub unsafe fn output_dump(out: *mut output) {
             osync_clear();
         }
         if output_sync != OUTPUT_SYNC_RECURSE && crate::make_main::should_print_dir_mirror() != 0 {
-            traced = log_working_directory(1);
+            traced = log_working_directory(ctx, 1);
         }
         if outfd_not_empty != 0 {
             pump_from_tmp((*out).out, stdout);
@@ -309,7 +313,7 @@ pub unsafe fn output_dump(out: *mut output) {
             pump_from_tmp((*out).err, stderr);
         }
         if traced != 0 {
-            log_working_directory(0);
+            log_working_directory(ctx, 0);
         }
         osync_release();
         if (*out).out != OUTPUT_NONE {
@@ -361,16 +365,16 @@ pub unsafe fn output_init(out: *mut output) {
 /// # Safety
 /// `out` must be null or point to a valid `output`; must run
 /// single-threaded.
-pub unsafe fn output_close(out: *mut output) {
+pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
     if out.is_null() {
         if stdio_traced() {
-            log_working_directory(0);
+            log_working_directory(ctx, 0);
         }
         fd_reset_append(fileno(stdout), STDOUT_FLAGS.load(Ordering::Relaxed));
         fd_reset_append(fileno(stderr), STDERR_FLAGS.load(Ordering::Relaxed));
         return;
     }
-    output_dump(out);
+    output_dump(ctx, out);
     if (*out).out >= 0 {
         close((*out).out);
     }
@@ -384,18 +388,18 @@ pub unsafe fn output_close(out: *mut output) {
 ///
 /// # Safety
 /// Must run single-threaded: touches output and trace globals.
-pub unsafe fn output_start() {
+pub unsafe fn output_start(ctx: &ExecContext) {
     if !output_context.is_null()
         && (*output_context).syncout() as i32 != 0
         && !((*output_context).out >= 0 || (*output_context).err >= 0)
     {
-        setup_tmpfile(output_context);
+        setup_tmpfile(ctx, output_context);
     }
     if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE)
         && !stdio_traced()
         && crate::make_main::should_print_dir_mirror() != 0
     {
-        STDIO_TRACED.store(log_working_directory(1) != 0, Ordering::Relaxed);
+        STDIO_TRACED.store(log_working_directory(ctx, 1) != 0, Ordering::Relaxed);
     }
 }
 /// Write `msg` to stdout or stderr (or the sync temp file), starting
@@ -434,11 +438,13 @@ pub unsafe fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
 /// `fmt` and the variadic arguments must form a valid printf invocation
 /// whose expansion fits in `len` extra bytes.
 pub unsafe extern "C" fn message(
+    ctx: &ExecContext,
     prefix: i32,
     mut len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) {
+    let makelevel = ctx.makelevel();
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -475,11 +481,13 @@ pub unsafe extern "C" fn message(
 /// form a valid printf invocation whose expansion fits in `len` extra
 /// bytes.
 pub unsafe extern "C" fn error(
+    ctx: &ExecContext,
     flocp: *const Floc,
     mut len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) {
+    let makelevel = ctx.makelevel();
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
             .wrapping_add(strlen(program))
@@ -524,11 +532,13 @@ pub unsafe extern "C" fn error(
 /// # Safety
 /// Same contract as [`error`].
 pub unsafe extern "C" fn fatal(
+    ctx: &ExecContext,
     flocp: *const Floc,
     mut len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: ...
 ) -> ! {
+    let makelevel = ctx.makelevel();
     let stop: *const ::core::ffi::c_char = c".  Stop.\n".as_ptr();
     len = (len as ::core::ffi::c_ulong).wrapping_add(
         strlen(fmt)
@@ -602,9 +612,14 @@ pub unsafe extern "C" fn format(
 ///
 /// # Safety
 /// `str` and `name` must be valid NUL-terminated strings.
-pub unsafe fn perror_with_name(str: *const ::core::ffi::c_char, name: *const ::core::ffi::c_char) {
+pub unsafe fn perror_with_name(
+    ctx: &ExecContext,
+    str: *const ::core::ffi::c_char,
+    name: *const ::core::ffi::c_char,
+) {
     let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     error(
+        ctx,
         null::<Floc>(),
         (strlen(str) as size_t)
             .wrapping_add(strlen(name) as size_t)
@@ -619,9 +634,10 @@ pub unsafe fn perror_with_name(str: *const ::core::ffi::c_char, name: *const ::c
 ///
 /// # Safety
 /// `name` must be a valid NUL-terminated string.
-pub unsafe fn pfatal_with_name(name: *const ::core::ffi::c_char) -> ! {
+pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_char) -> ! {
     let err: *const ::core::ffi::c_char = strerror(*__errno_location());
     fatal(
+        ctx,
         null::<Floc>(),
         (strlen(name) as size_t).wrapping_add(strlen(err) as size_t),
         c"%s: %s".as_ptr(),
@@ -651,7 +667,8 @@ pub fn out_of_memory() -> ! {
 /// Compatibility note: the variadic extern "C" versions still live above
 /// for legacy call sites; both produce identical output formats.
 pub mod msg {
-    use super::{die, makelevel, outputs, program, MAKE_FAILURE};
+    use super::{die, outputs, program, MAKE_FAILURE};
+    use crate::execctx::ExecContext;
     use crate::floc::Floc;
 
     pub(crate) fn program_name() -> String {
@@ -662,7 +679,7 @@ pub mod msg {
             .into_owned()
     }
 
-    fn build_prefix(loc: Option<&Floc>, fatal_marker: bool) -> String {
+    fn build_prefix(ctx: &ExecContext, loc: Option<&Floc>, fatal_marker: bool) -> String {
         let marker = if fatal_marker { "*** " } else { "" };
         // SAFETY: `(*flocp).filenm` is a NUL-terminated C string when non-null.
         unsafe {
@@ -672,7 +689,7 @@ pub mod msg {
                     format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
                 }
                 _ => {
-                    let lvl = makelevel;
+                    let lvl = ctx.makelevel();
                     let prog = program_name();
                     if lvl == 0 {
                         format!("{prog}: {marker}")
@@ -698,9 +715,9 @@ pub mod msg {
 
     /// Print `msg` to stdout with a trailing newline. If `with_prefix`,
     /// prepend the make program name (and `[LEVEL]` when nested).
-    pub fn message(with_prefix: bool, msg: &str) {
+    pub fn message(ctx: &ExecContext, with_prefix: bool, msg: &str) {
         let line = if with_prefix {
-            format!("{}{msg}\n", build_prefix(None, false))
+            format!("{}{msg}\n", build_prefix(ctx, None, false))
         } else {
             format!("{msg}\n")
         };
@@ -709,16 +726,16 @@ pub mod msg {
 
     /// Print `msg` to stderr with the make program/file:line prefix and a
     /// trailing newline.
-    pub fn error(loc: Option<&Floc>, msg: &str) {
-        let line = format!("{}{msg}\n", build_prefix(loc, false));
+    pub fn error(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) {
+        let line = format!("{}{msg}\n", build_prefix(ctx, loc, false));
         write_line(line, true);
     }
 
     /// Print `msg` to stderr with the make program/file:line prefix plus
     /// the `*** ` fatal marker, append `.  Stop.\n`, and exit with
     /// `MAKE_FAILURE`.
-    pub fn fatal(loc: Option<&Floc>, msg: &str) -> ! {
-        let line = format!("{}{msg}.  Stop.\n", build_prefix(loc, true));
+    pub fn fatal(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) -> ! {
+        let line = format!("{}{msg}.  Stop.\n", build_prefix(ctx, loc, true));
         write_line(line, true);
         // SAFETY: `die` is the make-process exit point and never returns.
         unsafe { die(MAKE_FAILURE) }
@@ -729,8 +746,8 @@ pub mod msg {
 /// syntax. Safe wrapper over [`msg::error`] — `$loc` is an `Option<&Floc>`.
 #[macro_export]
 macro_rules! error {
-    ($loc:expr, $($arg:tt)*) => {
-        $crate::output::msg::error($loc, &::std::format!($($arg)*))
+    ($ctx:expr, $loc:expr, $($arg:tt)*) => {
+        $crate::output::msg::error($ctx, $loc, &::std::format!($($arg)*))
     };
 }
 
@@ -739,8 +756,8 @@ macro_rules! error {
 /// `$loc` is an `Option<&Floc>`.
 #[macro_export]
 macro_rules! fatal {
-    ($loc:expr, $($arg:tt)*) => {
-        $crate::output::msg::fatal($loc, &::std::format!($($arg)*))
+    ($ctx:expr, $loc:expr, $($arg:tt)*) => {
+        $crate::output::msg::fatal($ctx, $loc, &::std::format!($($arg)*))
     };
 }
 
