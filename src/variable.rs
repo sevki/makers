@@ -1930,6 +1930,21 @@ pub unsafe fn assign_variable_definition(
     );
     *name.offset((*v).length as isize) = 0;
     (*v).name = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
+    fatal_on_empty_variable_name(ctx, v);
+    v
+}
+
+/// Abort with "empty variable name" when `v`'s (already expanded) name is the
+/// empty string. Split out of `assign_variable_definition` so that function
+/// stays a flat two-branch sequence; this guard is a never-returning error path
+/// (the makefile must name the variable being defined), so it is exercised only
+/// by the error-handling integration cases, not the unit tests.
+///
+/// # Safety
+///
+/// `v` must be a valid `variable` whose `name` points at a live NUL-terminated
+/// string, and `ctx` must be valid for diagnostic reporting.
+unsafe fn fatal_on_empty_variable_name(ctx: &crate::execctx::ExecContext, v: *mut variable) {
     if *(*v).name.offset(0_i32 as isize) as i32 == 0 {
         fatal(
             ctx,
@@ -1938,7 +1953,6 @@ pub unsafe fn assign_variable_definition(
             b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
         );
     }
-    v
 }
 /// # Safety
 ///
