@@ -1198,6 +1198,25 @@ fn oneshell_special() {
     check("oneshell", "29_oneshell.mk", "all", &[]);
 }
 
+/// Exercises the converted `verify_flag` accessor end to end. `--debug=a` turns
+/// on full debugging, which sets `VERIFY_FLAG` (the old `static mut verify_flag`)
+/// to 1; combined with `-p` that drives the `verify_flag()` read at the end of
+/// the run, gating the `verify_file_data_base` consistency pass. The pass is
+/// silent on a well-formed data base, so the build still completes and prints
+/// the recipe output. Rust-only (`-p`/`--debug` output embeds timestamps and the
+/// environment, so it is not byte-stable against the C oracle), but it confirms
+/// the set+read path runs without panicking the internal assertions.
+#[test]
+fn verify_flag_debug_print_database() {
+    let (out, code) = run_make("all:\n\t@echo built\n", &[], &["-p", "--debug=a", "all"]);
+    assert_eq!(code, Some(0), "make -p --debug=a should succeed:\n{out}");
+    assert!(out.contains("built"), "recipe output missing:\n{out}");
+    assert!(
+        out.contains("# Make data base"),
+        "data base dump missing (verify_flag read path):\n{out}"
+    );
+}
+
 /// `-I <dir>` include resolution. A makefile `include`s a file that exists only
 /// under the `-I` search directory; with the right `-I` both binaries resolve
 /// and print the variable defined there, and with a bogus `-I` both fail

@@ -26,7 +26,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> ::core::ffi::c_int;
     fn sigaddset(__set: *mut sigset_t, __signo: ::core::ffi::c_int) -> ::core::ffi::c_int;
@@ -453,7 +453,15 @@ pub const OLD_MTIME: ::core::ffi::c_int = 2;
 pub const no_argument: ::core::ffi::c_int = 0;
 pub const required_argument: ::core::ffi::c_int = 1;
 pub const optional_argument: ::core::ffi::c_int = 2;
-pub static mut verify_flag: ::core::ffi::c_int = 0;
+/// Whether `--verify` (a.k.a. the assertion-checking debug mode) is active.
+/// Stored in an atomic so its reads are plain safe operations; all access is
+/// single-threaded, so `Relaxed` preserves the original program order.
+pub static VERIFY_FLAG: AtomicI32 = AtomicI32::new(0);
+
+/// Current value of the `--verify` flag.
+pub fn verify_flag() -> ::core::ffi::c_int {
+    VERIFY_FLAG.load(Ordering::Relaxed)
+}
 static mut default_silent_flag: ::core::ffi::c_int = 0;
 pub static mut run_silent: ::core::ffi::c_int = 0;
 pub static mut db_level: ::core::ffi::c_int = 0;
@@ -1392,7 +1400,7 @@ pub unsafe fn decode_debug_flags(options: &Options) {
         }
     }
     if db_level != 0 {
-        verify_flag = 1;
+        VERIFY_FLAG.store(1, Ordering::Relaxed);
     }
     if db_level == 0 {
         options.debug_flag.set(false);
@@ -1546,7 +1554,7 @@ unsafe fn main_0(
     crate::output::output_init(&raw mut make_sync);
     initialize_stopchar_map();
     crate::warning::init();
-    verify_flag = 1;
+    VERIFY_FLAG.store(1, Ordering::Relaxed);
     setlocale(LC_ALL, b"\0" as *const u8 as *const ::core::ffi::c_char);
     sigemptyset(&raw mut fatal_signal_set);
     install_fatal_signal(1);
@@ -4251,7 +4259,7 @@ pub unsafe fn die(status: ::core::ffi::c_int) -> ! {
         if opt_print_data_base() {
             print_data_base();
         }
-        if verify_flag != 0 {
+        if verify_flag() != 0 {
             verify_file_data_base();
         }
         unload_all();
@@ -5450,5 +5458,24 @@ mod jobserver_and_stdin_cleanup_tests {
         }
         assert!(!path.exists(), "temp stdin file should have been unlinked");
         drop(cpath);
+    }
+}
+
+#[cfg(test)]
+mod verify_flag_tests {
+    use super::{verify_flag, VERIFY_FLAG};
+    use std::sync::atomic::Ordering;
+
+    /// `verify_flag()` reflects the `VERIFY_FLAG` atomic, mirroring the old
+    /// `static mut verify_flag` reads/writes one-for-one (the `--verify` /
+    /// `--debug` paths set it to 1, the default is 0).
+    #[test]
+    fn verify_flag_round_trip() {
+        let saved = VERIFY_FLAG.load(Ordering::Relaxed);
+        VERIFY_FLAG.store(0, Ordering::Relaxed);
+        assert_eq!(verify_flag(), 0, "default is off");
+        VERIFY_FLAG.store(1, Ordering::Relaxed);
+        assert_eq!(verify_flag(), 1, "set by --verify/--debug");
+        VERIFY_FLAG.store(saved, Ordering::Relaxed);
     }
 }

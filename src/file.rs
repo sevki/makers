@@ -469,7 +469,7 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     } else {
         panic!("assertion failed: *name != '\'");
     };
-    if verify_flag == 0 || strcache_iscached(name) != 0 {
+    if verify_flag() == 0 || strcache_iscached(name) != 0 {
     } else {
         panic!("assertion failed: ! verify_flag || strcache_iscached (name)");
     };
