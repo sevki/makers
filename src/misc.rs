@@ -17,10 +17,10 @@ use libc::{
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t, time_t};
-use crate::file::{nameseq, Dep};
+use crate::file::{nameseq, Dep, GoalDep};
 use crate::floc::Floc;
 use crate::make_main::{posix_pedantic, stopchar_map};
-use crate::output::{error, out_of_memory};
+use crate::output::{error, out_of_memory, FmtArg};
 use crate::posixos::os_anontmp;
 use crate::stdio::FILE;
 use crate::sys_stat::stat;
@@ -33,7 +33,6 @@ extern "C" {
     fn fopen(filename: *const c_char, modes: *const c_char) -> *mut FILE;
     fn fdopen(fd: c_int, modes: *const c_char) -> *mut FILE;
     fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> c_int;
-    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> c_int;
     fn time(timer: *mut time_t) -> time_t;
 }
 
@@ -232,22 +231,18 @@ pub unsafe fn print_spaces(n: c_uint) {
     }
 }
 
-/// Concatenate `num` strings into a static (reused, growing) buffer and
+/// Concatenate strings into a static (reused, growing) buffer and
 /// return it. Null arguments count as empty strings.
 ///
 /// # Safety
-/// Each of the `num` variadic arguments must be null or a valid
-/// NUL-terminated string. Not reentrant: the returned buffer is shared
-/// between calls.
-pub unsafe extern "C" fn concat(mut num: c_uint, args: ...) -> *const c_char {
+/// Each argument must be null or a valid NUL-terminated string. Not
+/// reentrant: the returned buffer is shared between calls.
+pub unsafe fn concat(args: &[*const c_char]) -> *const c_char {
     static mut rlen: size_t = 0;
     static mut result: *mut c_char = null_mut();
 
     let mut ri: size_t = 0;
-    let mut args_0 = args.clone();
-    while num > 0 {
-        num -= 1;
-        let s: *const c_char = args_0.next_arg::<*const c_char>();
+    for &s in args {
         let l: size_t = if s.is_null() { 0 } else { strlen(s) };
         if l == 0 {
             continue;
@@ -524,6 +519,47 @@ pub unsafe fn copy_dep_chain(mut d: *const Dep) -> *mut Dep {
     firstnew
 }
 
+/// Copy a single `GoalDep` node (not following `next`), duplicating its name
+/// if it still needs second expansion.
+/// # Safety
+/// `d` must be null or point to a valid `GoalDep`.
+pub unsafe fn copy_goaldep(d: *const GoalDep) -> *mut GoalDep {
+    if d.is_null() {
+        return null_mut();
+    }
+    let new = xmalloc(::core::mem::size_of::<GoalDep>()) as *mut GoalDep;
+    memcpy(
+        new as *mut c_void,
+        d as *const c_void,
+        ::core::mem::size_of::<GoalDep>(),
+    );
+    if (*new).need_2nd_expansion {
+        (*new).name = xstrdup((*new).name);
+    }
+    (*new).next = null_mut();
+    new
+}
+
+/// Copy an entire `GoalDep` chain.
+/// # Safety
+/// `d` must be null or the head of a valid `GoalDep` chain.
+pub unsafe fn copy_goal_chain(mut d: *const GoalDep) -> *mut GoalDep {
+    let mut firstnew: *mut GoalDep = null_mut();
+    let mut lastnew: *mut GoalDep = null_mut();
+    while let Some(dn) = d.as_ref() {
+        let c = copy_goaldep(d);
+        if let Some(ln) = lastnew.as_mut() {
+            ln.next = c;
+            lastnew = c;
+        } else {
+            lastnew = c;
+            firstnew = lastnew;
+        }
+        d = dn.next;
+    }
+    firstnew
+}
+
 /// Free a chain of `nameseq` structures (the names themselves are cached and
 /// not freed).
 /// # Safety
@@ -557,18 +593,21 @@ pub unsafe fn spin(type_0: *const c_char) {
     }
 }
 
-/// Debugging aid: append a printf-formatted line, tagged with the PID, to
-/// `/tmp/gmkdebug.log`.
+/// Debugging aid: append a line, tagged with the PID, to `/tmp/gmkdebug.log`.
 ///
 /// # Safety
-/// `fmt` and the variadic arguments must form a valid printf invocation
-/// producing less than 4096 bytes.
-pub unsafe extern "C" fn dbg(fmt: *const c_char, args: ...) {
+/// `msg` must be null or a valid NUL-terminated string.
+pub unsafe fn dbg(msg: *const c_char) {
     let fp: *mut FILE = fopen(c"/tmp/gmkdebug.log".as_ptr(), c"a+".as_ptr());
-    let mut buf: [c_char; 4096] = [0; 4096];
-    let args_0 = args.clone();
-    vsprintf(buf.as_mut_ptr(), fmt, args_0);
-    fprintf(fp, c"%u: %s\n".as_ptr(), make_pid() as c_uint, buf.as_ptr());
+    if fp.is_null() {
+        return;
+    }
+    let msg = if msg.is_null() {
+        c"(null)".as_ptr()
+    } else {
+        msg
+    };
+    fprintf(fp, c"%u: %s\n".as_ptr(), make_pid() as c_uint, msg);
     fflush(fp);
     fclose(fp);
 }
@@ -606,19 +645,18 @@ pub unsafe fn get_tmpdir() -> *const c_char {
             if r < 0 {
                 error(
                     null::<Floc>(),
-                    var.count_bytes() + strlen(tmpdir) + strlen(strerror(*__errno_location())),
                     c"%s value %s: %s".as_ptr(),
-                    var.as_ptr(),
-                    tmpdir,
-                    strerror(*__errno_location()),
+                    &[
+                        FmtArg::Str(var.as_ptr()),
+                        FmtArg::Str(tmpdir),
+                        FmtArg::Str(strerror(*__errno_location())),
+                    ],
                 );
             } else if st.st_mode & S_IFMT != S_IFDIR {
                 error(
                     null::<Floc>(),
-                    var.count_bytes() + strlen(tmpdir),
                     c"%s value %s: not a directory".as_ptr(),
-                    var.as_ptr(),
-                    tmpdir,
+                    &[FmtArg::Str(var.as_ptr()), FmtArg::Str(tmpdir)],
                 );
             } else {
                 return tmpdir;
@@ -629,9 +667,8 @@ pub unsafe fn get_tmpdir() -> *const c_char {
         if found {
             error(
                 null::<Floc>(),
-                strlen(tmpdir),
                 c"using default temporary directory '%s'".as_ptr(),
-                tmpdir,
+                &[FmtArg::Str(tmpdir)],
             );
         }
     }
@@ -688,10 +725,11 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> c_int {
     if fd < 0 {
         error(
             null::<Floc>(),
-            strlen(tmpnm) + strlen(strerror(*__errno_location())),
             c"cannot create temporary file %s: %s".as_ptr(),
-            tmpnm,
-            strerror(*__errno_location()),
+            &[
+                FmtArg::Str(tmpnm),
+                FmtArg::Str(strerror(*__errno_location())),
+            ],
         );
         free(tmpnm as *mut c_void);
         return -1;
@@ -710,10 +748,11 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> c_int {
         if r < 0 {
             error(
                 null::<Floc>(),
-                strlen(tmpnm) + strlen(strerror(*__errno_location())),
                 c"cannot unlink temporary file %s: %s".as_ptr(),
-                tmpnm,
-                strerror(*__errno_location()),
+                &[
+                    FmtArg::Str(tmpnm),
+                    FmtArg::Str(strerror(*__errno_location())),
+                ],
             );
         }
         free(tmpnm as *mut c_void);
@@ -761,10 +800,11 @@ pub unsafe fn get_tmpfile(name: *mut *mut c_char) -> *mut FILE {
         };
         error(
             null::<Floc>(),
-            strlen(*name) + strlen(strerror(*__errno_location())),
             c"fdopen: temporary file %s: %s".as_ptr(),
-            *name,
-            strerror(*__errno_location()),
+            &[
+                FmtArg::Str(tmp_name_for_err),
+                FmtArg::Str(strerror(*__errno_location())),
+            ],
         );
     }
     file

@@ -1,5 +1,7 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{
+    commands, dep, file, seq_iter, Commands, Dep, File, VariableSet, VariableSetList,
+};
 use crate::misc::free_ns_chain;
 use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xrealloc, xstrdup};
 use crate::stdio::FILE;
@@ -68,6 +70,10 @@ pub struct Rule {
     pub terminal: ::core::ffi::c_char,
     pub in_use: ::core::ffi::c_char,
 }
+
+#[allow(non_camel_case_types)]
+pub type rule = Rule;
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct pspec {
@@ -80,7 +86,7 @@ use crate::dir::dir_file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{expand_extra_prereqs, lookup_file};
 use crate::make_main::{posix_pedantic, second_expansion};
-use crate::output::{error, fatal};
+use crate::output::{error, fatal, FmtArg};
 use crate::read::{find_percent_cached, parse_file_seq};
 use crate::variable::lookup_variable;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
@@ -106,62 +112,54 @@ pub static mut max_pattern_targets: ::core::ffi::c_uint = 0;
 pub static mut max_pattern_deps: ::core::ffi::c_uint = 0;
 pub static mut max_pattern_dep_length: size_t = 0;
 pub static mut suffix_file: *mut file = ::core::ptr::null::<file>() as *mut file;
+
+unsafe fn dep_name(dep: &Dep) -> *const ::core::ffi::c_char {
+    if !dep.name.is_null() {
+        dep.name
+    } else {
+        dep.file
+            .as_ref()
+            .expect("dependency has a null file pointer")
+            .name
+    }
+}
+
+unsafe fn append_cstr_bytes(out: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
+    if !s.is_null() {
+        out.extend_from_slice(::core::ffi::CStr::from_ptr(s).to_bytes());
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
-    if (*r)._defn.is_null() {
-        let mut len: size_t = 8;
-        let mut k: ::core::ffi::c_uint;
-        let mut p: *mut ::core::ffi::c_char;
-        let mut sep: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
-        let _dep: *const Dep;
-        let mut ood: *const Dep = ::core::ptr::null::<Dep>();
-        k = 0;
-        while k < (*r).num as ::core::ffi::c_uint {
-            len = len.wrapping_add((*(*r).lens.offset(k as isize)).wrapping_add(1) as size_t);
-            k = k.wrapping_add(1);
-        }
-        for dep in seq_iter(r_ref.deps) {
-            len = (len as ::core::ffi::c_ulong).wrapping_add(
-                strlen(if !(*dep).name.is_null() {
-                    (*dep).name
-                } else {
-                    (*(*dep).file).name
-                })
-                .wrapping_add(if (*dep).wait_here() as ::core::ffi::c_int != 0 {
-                    (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1)
-                } else {
-                    0
-                })
-                .wrapping_add(1) as ::core::ffi::c_ulong,
-            ) as size_t as size_t;
-        }
-        r_ref._defn = xmalloc(len) as *mut ::core::ffi::c_char;
-        p = r_ref._defn;
-        k = 0;
+    let r_ref = r.as_mut().expect("get_rule_defn: null rule");
+    if r_ref._defn.is_null() {
+        let mut defn = Vec::new();
+        let mut k = 0;
         while k < r_ref.num as ::core::ffi::c_uint {
-            p = mempcpy(
-                mempcpy(
-                    p as *mut ::core::ffi::c_void,
-                    sep as *const ::core::ffi::c_void,
-                    strlen(sep),
-                ),
-                *r_ref.targets.offset(k as isize) as *const ::core::ffi::c_void,
-                *r_ref.lens.offset(k as isize) as size_t,
-            ) as *mut ::core::ffi::c_char;
+            if k != 0 {
+                defn.push(b' ');
+            }
+            let target = *r_ref.targets.offset(k as isize);
+            let len = *r_ref.lens.offset(k as isize) as usize;
+            if !target.is_null() && len != 0 {
+                defn.extend_from_slice(::core::slice::from_raw_parts(target as *const u8, len));
+            }
             k = k.wrapping_add(1);
-            sep = b" \0" as *const u8 as *const ::core::ffi::c_char;
         }
-        let fresh4 = p;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
-        *fresh4 = ':' as i32 as ::core::ffi::c_char;
+        defn.push(b':');
         if r_ref.terminal != 0 {
             defn.push(b':');
         }
+
+        let mut ood: *mut Dep = ::core::ptr::null_mut::<Dep>();
         for dep in seq_iter(r_ref.deps) {
-            let dep_ref = dep.as_ref().expect("rule dependency chain contains a null node");
+            let dep_ref = dep
+                .as_ref()
+                .expect("rule dependency chain contains a null node");
             if !dep_ref.ignore_mtime {
                 if dep_ref.wait_here {
                     defn.extend_from_slice(b" .WAIT");
@@ -429,11 +427,11 @@ pub unsafe fn convert_to_pattern() {
                 (*f).suffix = true;
             } else if posix_pedantic == 0 {
                 error(
-        &raw mut (*(*f).cmds).fileinfo,
-        b"warning: ignoring prerequisites on suffix rule definition\0" as *const u8
+                    &raw mut (*(*f).cmds).fileinfo,
+                    b"warning: ignoring prerequisites on suffix rule definition\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[],
-    );
+                    &[],
+                );
                 (*f).suffix = true;
             }
         }
@@ -496,12 +494,12 @@ pub unsafe fn convert_to_pattern() {
                             skip = true;
                         } else {
                             error(
-        &raw mut (*(*f).cmds).fileinfo,
-        b"warning: ignoring prerequisites on suffix rule definition\0"
+                                &raw mut (*(*f).cmds).fileinfo,
+                                b"warning: ignoring prerequisites on suffix rule definition\0"
                                     as *const u8
                                     as *const ::core::ffi::c_char,
-        &[],
-    );
+                                &[],
+                            );
                         }
                     }
                     if !skip {
@@ -800,11 +798,13 @@ pub unsafe fn print_rule_data_base() {
     }
     if num_pattern_rules != rules && num_pattern_rules != 0 {
         fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"INTERNAL: num_pattern_rules is wrong!  %u != %u\0" as *const u8
+            ::core::ptr::null_mut::<Floc>(),
+            b"INTERNAL: num_pattern_rules is wrong!  %u != %u\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((num_pattern_rules) as u32 as u64),
-            FmtArg::Uint((rules) as u32 as u64)],
-    );
+            &[
+                FmtArg::Uint((num_pattern_rules) as u32 as u64),
+                FmtArg::Uint((rules) as u32 as u64),
+            ],
+        );
     }
 }

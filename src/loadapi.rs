@@ -1,13 +1,9 @@
-pub use crate::expand::allocated_expand_string_for_file;
 pub use crate::file::{CommandState, UpdateStatus};
 use libc::free;
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Dep, File, VariableSet, VariableSetList};
+use crate::file::{commands, file, Dep, File, VariableSet, VariableSetList};
 use crate::misc::xmalloc;
-extern "C" {
-    pub type commands;
-}
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct gmk_floc {

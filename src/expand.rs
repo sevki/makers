@@ -1,9 +1,7 @@
-pub use crate::output::{FmtArg, fatal};
-pub use crate::variable::install_file_context;
-pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{lindex, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::output::FmtArg;
 use crate::stdio::FILE;
 use libc::{free, printf, strchr};
 extern "C" {
@@ -229,11 +227,11 @@ pub unsafe fn recursively_expand_for_file(
     if (*v).expanding() != 0 {
         if (*v).exp_count() == 0 {
             fatal(
-        *expanding_var,
-        b"recursive variable '%s' references itself (eventually)\0" as *const u8
+                *expanding_var,
+                b"recursive variable '%s' references itself (eventually)\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
+            );
         }
         (*v).set_exp_count((*v).exp_count() - 1);
     }
@@ -438,11 +436,11 @@ pub unsafe fn expand_string_buf(
                     end = strchr(beg, closeparen as ::core::ffi::c_int);
                     if end.is_null() {
                         fatal(
-        *expanding_var,
-        b"unterminated variable reference\0" as *const u8
+                            *expanding_var,
+                            b"unterminated variable reference\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[],
-    );
+                            &[],
+                        );
                     }
                     p1 = lindex(beg, end, '$' as i32);
                     if !p1.is_null() {

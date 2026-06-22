@@ -13,7 +13,7 @@ use crate::hash::{
 };
 use crate::make_main::{command_count, db_level};
 use crate::misc::{xcalloc, xmalloc, xrealloc};
-use crate::output::fatal;
+use crate::output::{fatal, FmtArg};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add_len;
 
@@ -423,10 +423,11 @@ unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_cha
             if *__errno_location() != 0 {
                 fatal(
                     null::<Floc>(),
-                    strlen(dir.name) + strlen(strerror(*__errno_location())),
                     c"readdir %s: %s".as_ptr(),
-                    dir.name,
-                    strerror(*__errno_location()),
+                    &[
+                        FmtArg::Str(dir.name),
+                        FmtArg::Str(strerror(*__errno_location())),
+                    ],
                 );
             }
             break;

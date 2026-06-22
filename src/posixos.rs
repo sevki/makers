@@ -23,7 +23,7 @@ use crate::ffi_types::mode_t;
 use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::{get_tmpdir, get_tmpfd, make_pid, xmalloc, xstrdup};
-use crate::output::{error, fatal, perror_with_name, pfatal_with_name, INTSTR_LENGTH};
+use crate::output::{error, fatal, perror_with_name, pfatal_with_name, FmtArg, INTSTR_LENGTH};
 use crate::stdio::FILE;
 
 extern "C" {
@@ -193,10 +193,11 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
             if job_fds[0] < 0 {
                 fatal(
                     null::<Floc>(),
-                    strlen(fifo_name) + strlen(strerror(*__errno_location())),
                     c"cannot open jobserver %s: %s".as_ptr(),
-                    fifo_name,
-                    strerror(*__errno_location()),
+                    &[
+                        FmtArg::Str(fifo_name),
+                        FmtArg::Str(strerror(*__errno_location())),
+                    ],
                 );
             }
             loop {
@@ -208,10 +209,11 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
             if job_fds[0] < 0 {
                 fatal(
                     null::<Floc>(),
-                    strlen(fifo_name) + strlen(strerror(*__errno_location())),
                     c"cannot open jobserver %s: %s".as_ptr(),
-                    fifo_name,
-                    strerror(*__errno_location()),
+                    &[
+                        FmtArg::Str(fifo_name),
+                        FmtArg::Str(strerror(*__errno_location())),
+                    ],
                 );
             }
             js_type = JsType::Fifo;
@@ -222,9 +224,8 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
         if !style.is_null() && strcmp(style, c"pipe".as_ptr()) != 0 {
             fatal(
                 null::<Floc>(),
-                strlen(style),
                 c"unknown jobserver auth style '%s'".as_ptr(),
-                style,
+                &[FmtArg::Str(style)],
             );
         }
         loop {
@@ -261,10 +262,8 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
             }
             fatal(
                 null::<Floc>(),
-                INTSTR_LENGTH * 2,
                 c"requested job count (%d) is larger than system limit (%d)".as_ptr(),
-                slots + 1,
-                k,
+                &[FmtArg::Int((slots + 1) as i64), FmtArg::Int(k as i64)],
             );
         }
     }
@@ -296,10 +295,11 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
         if job_fds[0] < 0 {
             error(
                 null::<Floc>(),
-                strlen(fifo_name) + strlen(strerror(*__errno_location())),
                 c"cannot open jobserver %s: %s".as_ptr(),
-                fifo_name,
-                strerror(*__errno_location()),
+                &[
+                    FmtArg::Str(fifo_name),
+                    FmtArg::Str(strerror(*__errno_location())),
+                ],
             );
             return 0;
         }
@@ -312,10 +312,11 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
         if job_fds[1] < 0 {
             error(
                 null::<Floc>(),
-                strlen(fifo_name) + strlen(strerror(*__errno_location())),
                 c"cannot open jobserver %s: %s".as_ptr(),
-                fifo_name,
-                strerror(*__errno_location()),
+                &[
+                    FmtArg::Str(fifo_name),
+                    FmtArg::Str(strerror(*__errno_location())),
+                ],
             );
             return 0;
         }
@@ -334,9 +335,8 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
     } else {
         error(
             null::<Floc>(),
-            strlen(auth),
             c"invalid --jobserver-auth string '%s'".as_ptr(),
-            auth,
+            &[FmtArg::Str(auth)],
         );
         return 0;
     }
@@ -572,7 +572,7 @@ pub unsafe fn jobserver_acquire(timeout: c_int) -> c_uint {
                 EINTR => return 0,
                 EBADF => {
                     // The read side was closed by jobserver_signal().
-                    fatal(null::<Floc>(), 0, c"job server shut down".as_ptr());
+                    fatal(null::<Floc>(), c"job server shut down".as_ptr(), &[]);
                 }
                 _ => pfatal_with_name(c"pselect jobs pipe".as_ptr()),
             }
@@ -652,9 +652,8 @@ pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
     if strncmp(mutex, MUTEX_PREFIX.as_ptr(), MUTEX_PREFIX.to_bytes().len()) != 0 {
         error(
             null::<Floc>(),
-            strlen(mutex),
             c"invalid --sync-mutex string '%s'".as_ptr(),
-            mutex,
+            &[FmtArg::Str(mutex)],
         );
         return 0;
     }
@@ -671,10 +670,11 @@ pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
     if osync_handle < 0 {
         fatal(
             null::<Floc>(),
-            strlen(osync_tmpfile) + strlen(strerror(*__errno_location())),
             c"cannot open output sync mutex %s: %s".as_ptr(),
-            osync_tmpfile,
-            strerror(*__errno_location()),
+            &[
+                FmtArg::Str(osync_tmpfile),
+                FmtArg::Str(strerror(*__errno_location())),
+            ],
         );
     }
     fd_noinherit(osync_handle);
@@ -870,9 +870,8 @@ pub unsafe fn os_anontmp() -> c_int {
         if tfile.is_null() {
             error(
                 null::<Floc>(),
-                strlen(strerror(*__errno_location())),
                 c"tmpfile: %s".as_ptr(),
-                strerror(*__errno_location()),
+                &[FmtArg::Str(strerror(*__errno_location()))],
             );
             return -1;
         }
@@ -886,9 +885,8 @@ pub unsafe fn os_anontmp() -> c_int {
         if fd < 0 {
             error(
                 null::<Floc>(),
-                strlen(strerror(*__errno_location())),
                 c"dup: %s".as_ptr(),
-                strerror(*__errno_location()),
+                &[FmtArg::Str(strerror(*__errno_location()))],
             );
         }
         libc::fclose(tfile);

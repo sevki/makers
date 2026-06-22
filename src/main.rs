@@ -1,14 +1,3 @@
-pub use crate::output::{FmtArg, error, fatal};
-pub use crate::misc::concat;
-pub use crate::file::enter_file;
-pub use crate::file::lookup_file;
-pub use crate::load::load_file;
-pub use crate::read::read_all_makefiles;
-pub use crate::remake::f_mtime;
-pub use crate::remake::update_goal_chain;
-pub use crate::rule::suffix_file;
-use crate::read::parse_file_seq;
-pub use crate::file::{CommandState, UpdateStatus};
 use crate::default::{
     define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
     set_default_suffixes, undefine_default_variables,
@@ -18,12 +7,16 @@ pub use crate::ffi_types::{
     __clock_t, __off64_t, __off_t, __pid_t, __sig_atomic_t, __uid_t, pid_t, sig_atomic_t, size_t,
     uintmax_t,
 };
-use crate::file::{Dep, File, VariableSet, VariableSetList};
+use crate::file::{
+    dep, file, CommandState, Dep, File, GoalDep, NameSeq, UpdateStatus, VariableSet,
+    VariableSetList,
+};
 use crate::floc::Floc;
 use crate::load::unload_all;
 use crate::misc::free_ns_chain;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
 use crate::misc::{make_toui, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::output::FmtArg;
 use crate::read::construct_include_path;
 use crate::remote_stub::{remote_cleanup, remote_setup};
 use crate::stdio::FILE;
@@ -1071,10 +1064,10 @@ pub unsafe extern "C" fn close_stdout() {
             );
         } else {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"write error: stdout\0" as *const u8 as *const ::core::ffi::c_char,
-        &[],
-    );
+                ::core::ptr::null_mut::<Floc>(),
+                b"write error: stdout\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         exit(MAKE_TROUBLE);
     }
@@ -1086,10 +1079,10 @@ unsafe extern "C" fn expand_command_line_file(
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
         fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
-        &[],
-    );
+            ::core::ptr::null_mut::<Floc>(),
+            b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '~' as i32 {
         expanded = tilde_expand(name);
@@ -1168,11 +1161,11 @@ pub unsafe fn decode_debug_flags() {
                     }
                     _ => {
                         fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"unknown debug level specification '%s'\0" as *const u8
+                            ::core::ptr::null_mut::<Floc>(),
+                            b"unknown debug level specification '%s'\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
-    );
+                            &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+                        );
                     }
                 }
                 loop {
@@ -1250,10 +1243,12 @@ pub unsafe fn decode_output_sync_flags() {
             output_sync = OUTPUT_SYNC_RECURSE;
         } else {
             fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((output_sync_option) as *const ::core::ffi::c_char)],
-    );
+                ::core::ptr::null_mut::<Floc>(),
+                b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str(
+                    (output_sync_option) as *const ::core::ffi::c_char,
+                )],
+            );
         }
     }
     if !sync_mutex.is_null() {
@@ -1687,7 +1682,11 @@ unsafe fn main_0(
         && !strchr(*argv.offset(0 as ::core::ffi::c_int as isize), '/' as i32).is_null()
     {
         let fresh41 = &mut (*argv.offset(0 as ::core::ffi::c_int as isize));
-        *fresh41 = xstrdup(concat(&[&raw mut current_directory as *mut ::core::ffi::c_char, b"/\0" as *const u8 as *const ::core::ffi::c_char, *argv.offset(0 as ::core::ffi::c_int as isize)]));
+        *fresh41 = xstrdup(concat(&[
+            &raw mut current_directory as *mut ::core::ffi::c_char,
+            b"/\0" as *const u8 as *const ::core::ffi::c_char,
+            *argv.offset(0 as ::core::ffi::c_int as isize),
+        ]));
     }
     starting_directory = &raw mut current_directory as *mut ::core::ffi::c_char;
     if !directories.is_null() {
@@ -1739,20 +1738,20 @@ unsafe fn main_0(
                 do_reset = false;
             } else {
                 error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
+                    ::core::ptr::null_mut::<Floc>(),
+                    b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
                         as *const u8 as *const ::core::ffi::c_char,
-        &[],
-    );
+                    &[],
+                );
                 arg_job_slots = 1;
             }
         } else if restarts == 0 && argv_slots != 1 {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
+                ::core::ptr::null_mut::<Floc>(),
+                b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Int((argv_slots) as i32 as i64)],
-    );
+                &[FmtArg::Int((argv_slots) as i32 as i64)],
+            );
         }
         if do_reset {
             reset_jobserver();
@@ -1854,20 +1853,20 @@ unsafe fn main_0(
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
                 if stdin_offset >= 0 {
                     fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"Makefile from standard input specified twice\0" as *const u8
+                        ::core::ptr::null_mut::<Floc>(),
+                        b"Makefile from standard input specified twice\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                        &[],
+                    );
                 }
                 outfile = get_tmpfile(&raw mut newnm);
                 if outfile.is_null() {
                     fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"cannot store makefile from stdin to a temporary file\0" as *const u8
+                        ::core::ptr::null_mut::<Floc>(),
+                        b"cannot store makefile from stdin to a temporary file\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                        &[],
+                    );
                 }
                 while feof(stdin) == 0 && ferror(stdin) == 0 {
                     let mut buf: [::core::ffi::c_char; 2048] = [0; 2048];
@@ -1887,12 +1886,16 @@ unsafe fn main_0(
                             != n
                     {
                         fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"fwrite: temporary file %s: %s\0" as *const u8
+                            ::core::ptr::null_mut::<Floc>(),
+                            b"fwrite: temporary file %s: %s\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((newnm) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                            &[
+                                FmtArg::Str((newnm) as *const ::core::ffi::c_char),
+                                FmtArg::Str(
+                                    (strerror(*__errno_location())) as *const ::core::ffi::c_char,
+                                ),
+                            ],
+                        );
                     }
                 }
                 fclose(outfile);
@@ -2027,11 +2030,11 @@ unsafe fn main_0(
     } else if !jobserver_auth.is_null() && arg_job_slots != old_arg_job_slots {
         if restarts == 0 {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
+                ::core::ptr::null_mut::<Floc>(),
+                b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Int((arg_job_slots) as i32 as i64)],
-    );
+                &[FmtArg::Int((arg_job_slots) as i32 as i64)],
+            );
         }
         reset_jobserver();
     }
@@ -2264,11 +2267,13 @@ unsafe fn main_0(
                     .name
             };
             error(
-        &raw mut d_1_ref.floc,
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((dep_name) as *const ::core::ffi::c_char),
-            FmtArg::Str((err) as *const ::core::ffi::c_char)],
-    );
+                &raw mut d_1_ref.floc,
+                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((dep_name) as *const ::core::ffi::c_char),
+                    FmtArg::Str((err) as *const ::core::ffi::c_char),
+                ],
+            );
             skipped_makefiles = d_1_ref.next;
             free_goaldep(d_1);
         }
@@ -2290,10 +2295,10 @@ unsafe fn main_0(
                     if f_3_ref.unloaded {
                         if load_file(&raw mut d_2_ref.floc, f_3, 0) == 0 {
                             fatal(
-        &raw mut d_2_ref.floc,
-        b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((f_3_ref.name) as *const ::core::ffi::c_char)],
-    );
+                                &raw mut d_2_ref.floc,
+                                b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
+                                &[FmtArg::Str((f_3_ref.name) as *const ::core::ffi::c_char)],
+                            );
                         }
                         f_3_ref.unloaded = false;
                         f_3_ref.loaded = true;
@@ -2317,21 +2322,20 @@ unsafe fn main_0(
                         if d_4_file.update_status as ::core::ffi::c_int
                             == UpdateStatus::Success as ::core::ffi::c_int
                         {
-                            any_remade |=
-                                ((if d_4_file.last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                    f_mtime(d_4_ref.file, 0)
-                                } else {
-                                    d_4_file.last_mtime
-                                }) != *makefile_mtimes.offset(i_3 as isize))
-                                    as ::core::ffi::c_int;
+                            any_remade |= ((if d_4_file.last_mtime == UNKNOWN_MTIME as uintmax_t {
+                                f_mtime(d_4_ref.file, 0)
+                            } else {
+                                d_4_file.last_mtime
+                            }) != *makefile_mtimes.offset(i_3 as isize))
+                                as ::core::ffi::c_int;
                         } else if d_4_ref.flags as ::core::ffi::c_int & RM_DONTCARE == 0 {
                             let mtime: uintmax_t;
                             error(
-        &raw mut d_4_ref.floc,
-        b"failed to remake makefile '%s'\0" as *const u8
+                                &raw mut d_4_ref.floc,
+                                b"failed to remake makefile '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((d_4_file.name) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str((d_4_file.name) as *const ::core::ffi::c_char)],
+                            );
                             mtime = if d_4_file.last_mtime == UNKNOWN_MTIME as uintmax_t {
                                 f_mtime(d_4_ref.file, 0)
                             } else {
@@ -2351,18 +2355,18 @@ unsafe fn main_0(
                         };
                         if d_4_ref.flags as ::core::ffi::c_int & RM_INCLUDED != 0 {
                             error(
-        &raw mut d_4_ref.floc,
-        b"included makefile '%s' was not found\0" as *const u8
+                                &raw mut d_4_ref.floc,
+                                b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+                            );
                         } else {
                             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"makefile '%s' was not found\0" as *const u8
+                                ::core::ptr::null_mut::<Floc>(),
+                                b"makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+                            );
                             any_failed = 1;
                         }
                     }
@@ -2572,9 +2576,9 @@ unsafe fn main_0(
                 if bad != 0 {
                     fatal(
                         ::core::ptr::null_mut::<Floc>(),
-                        0,
                         b"couldn't change back to original directory\0" as *const u8
                             as *const ::core::ffi::c_char,
+                        &[],
                     );
                 }
             }
@@ -2718,19 +2722,19 @@ unsafe fn main_0(
             if f_6.is_null() {
                 let ns: *mut NameSeq;
                 ns = parse_file_seq::<NameSeq>(
-        &raw mut p_6,
-        MAP_NUL,
+                    &raw mut p_6,
+                    MAP_NUL,
                     ::core::ptr::null::<::core::ffi::c_char>(),
                     PARSEFS_NONE,
-    );
+                );
                 if !ns.is_null() {
                     if !(*ns).next.is_null() {
                         fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b".DEFAULT_GOAL contains more than one target\0" as *const u8
+                            ::core::ptr::null_mut::<Floc>(),
+                            b".DEFAULT_GOAL contains more than one target\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[],
-    );
+                            &[],
+                        );
                     }
                     f_6 = enter_file(strcache_add((*ns).name));
                     (*ns).name = ::core::ptr::null::<::core::ffi::c_char>();
@@ -2755,17 +2759,17 @@ unsafe fn main_0(
             && *(*v_2).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
         {
             fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"No targets\0" as *const u8 as *const ::core::ffi::c_char,
-        &[],
-    );
+                ::core::ptr::null_mut::<Floc>(),
+                b"No targets\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"No targets specified and no makefile found\0" as *const u8
+            ::core::ptr::null_mut::<Floc>(),
+            b"No targets specified and no makefile found\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &[],
+        );
     }
     crate::shuffle::shuffle_deps_recursive(goals);
     if 0x1 as ::core::ffi::c_int & db_level != 0 {
@@ -2783,11 +2787,11 @@ unsafe fn main_0(
     }
     if clock_skew_detected != 0 {
         error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"warning: clock skew detected: your build may be incomplete\0" as *const u8
+            ::core::ptr::null_mut::<Floc>(),
+            b"warning: clock skew detected: your build may be incomplete\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &[],
+        );
     }
     die(makefile_status);
 }
@@ -3063,25 +3067,25 @@ unsafe extern "C" fn decode_switches(
                             if !(doit == 0) {
                                 // Resolve the option argument; an empty value is an error
                                 // and the option is skipped.
-                                let arg_ok = if coptarg.is_null() {
-                                    coptarg = (*cs).noarg_value as *const ::core::ffi::c_char;
-                                    true
-                                } else if *coptarg as ::core::ffi::c_int == 0 {
-                                    let mut opt: [::core::ffi::c_char; 2] = ::core::mem::transmute::<
-                                        [u8; 2],
-                                        [::core::ffi::c_char; 2],
-                                    >(
-                                        *b"c\0"
-                                    );
-                                    let mut op: *const ::core::ffi::c_char =
-                                        &raw mut opt as *mut ::core::ffi::c_char;
-                                    if (*cs).c <= CHAR_MAX {
-                                        opt[0 as ::core::ffi::c_int as usize] =
-                                            (*cs).c as ::core::ffi::c_char;
-                                    } else {
-                                        op = (*cs).long_name;
-                                    }
-                                    error(
+                                let arg_ok =
+                                    if coptarg.is_null() {
+                                        coptarg = (*cs).noarg_value as *const ::core::ffi::c_char;
+                                        true
+                                    } else if *coptarg as ::core::ffi::c_int == 0 {
+                                        let mut opt: [::core::ffi::c_char; 2] =
+                                            ::core::mem::transmute::<
+                                                [u8; 2],
+                                                [::core::ffi::c_char; 2],
+                                            >(*b"c\0");
+                                        let mut op: *const ::core::ffi::c_char =
+                                            &raw mut opt as *mut ::core::ffi::c_char;
+                                        if (*cs).c <= CHAR_MAX {
+                                            opt[0 as ::core::ffi::c_int as usize] =
+                                                (*cs).c as ::core::ffi::c_char;
+                                        } else {
+                                            op = (*cs).long_name;
+                                        }
+                                        error(
         NILF,
         b"the '%s%s' option requires a non-empty string argument\0"
                                             as *const u8
@@ -3093,11 +3097,11 @@ unsafe extern "C" fn decode_switches(
                                         }) as *const ::core::ffi::c_char),
             FmtArg::Str((op) as *const ::core::ffi::c_char)],
     );
-                                    bad = 1;
-                                    false
-                                } else {
-                                    true
-                                };
+                                        bad = 1;
+                                        false
+                                    } else {
+                                        true
+                                    };
                                 if arg_ok {
                                     if (*cs).type_0 as ::core::ffi::c_uint
                                         == string as ::core::ffi::c_int as ::core::ffi::c_uint
@@ -3190,11 +3194,11 @@ unsafe extern "C" fn decode_switches(
                                             } else if (*cs).c == TEMP_STDIN_OPT {
                                                 if stdin_offset > 0 {
                                                     fatal(
-                                                                NILF,
-                                                                0,
-                                                                b"INTERNAL: multiple --temp-stdin options provided!\0"
-                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                            );
+                                                        NILF,
+                                                        b"INTERNAL: multiple --temp-stdin options provided!\0"
+                                                            as *const u8 as *const ::core::ffi::c_char,
+                                                        &[],
+                                                    );
                                                 }
                                                 stdin_offset = (*sl).idx as ::core::ffi::c_int;
                                                 let fresh13 = (*sl).idx;
@@ -3950,11 +3954,11 @@ pub unsafe fn clean_jobserver(status: ::core::ffi::c_int) {
     if jobserver_enabled() != 0 && jobserver_tokens != 0 {
         if status != 2 {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
+                ::core::ptr::null_mut::<Floc>(),
+                b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((jobserver_tokens) as u32 as u64)],
-    );
+                &[FmtArg::Uint((jobserver_tokens) as u32 as u64)],
+            );
         } else {
             loop {
                 jobserver_tokens = jobserver_tokens.wrapping_sub(1);
@@ -3970,12 +3974,14 @@ pub unsafe fn clean_jobserver(status: ::core::ffi::c_int) {
             (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all());
         if tokens != master_job_slots {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
+                ::core::ptr::null_mut::<Floc>(),
+                b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
                     as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((tokens) as u32 as u64),
-            FmtArg::Uint((master_job_slots) as u32 as u64)],
-    );
+                &[
+                    FmtArg::Uint((tokens) as u32 as u64),
+                    FmtArg::Uint((master_job_slots) as u32 as u64),
+                ],
+            );
         }
     }
     reset_jobserver();

@@ -1,9 +1,9 @@
-use crate::file::{Dep, File};
+use crate::file::{Dep, File, GoalDep, NextLinked};
 use std::sync::{Mutex, OnceLock};
 
 use crate::make_main::not_parallel;
 use crate::misc::{make_rand, make_seed};
-use crate::output::fatal;
+use crate::output::{fatal, FmtArg};
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum Mode {

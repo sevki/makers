@@ -1,11 +1,7 @@
-pub use crate::output::{FmtArg, error, fatal, format_message};
-pub use crate::misc::concat;
-pub use crate::expand::allocated_expand_string_for_file;
-pub use crate::expand::recursively_expand_for_file;
-pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{File, VariableSet, VariableSetList};
+use crate::file::{file, Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::{next_token, skip_reference, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::output::FmtArg;
 use crate::stdio::FILE;
 use c2rust_bitfields;
 use libc::{abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, strstr};
@@ -59,7 +55,7 @@ use crate::make_main::{
     shell_var, stopchar_map,
 };
 use crate::misc::concat;
-use crate::output::{error, fatal, format};
+use crate::output::{error, fatal, format, format_message};
 use crate::posixos::jobserver_get_invalid_auth;
 use crate::read::reading_file;
 use crate::remote_stub::remote_description;
@@ -322,23 +318,25 @@ unsafe extern "C" fn check_valid_name(
     }
     if warning::is_active(Type::InvalidVar) {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format_message(
-        ::core::ptr::null::<::core::ffi::c_char>(),
-        b"invalid variable name '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Int((length as ::core::ffi::c_int) as i64),
-            FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    ));
+            ::core::ptr::null::<::core::ffi::c_char>(),
+            b"invalid variable name '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                FmtArg::Int((length as ::core::ffi::c_int) as i64),
+                FmtArg::Str((name) as *const ::core::ffi::c_char),
+            ],
+        ));
         if warning::action(Type::InvalidVar) == Action::Error {
             fatal(
-        flocp,
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
-    );
+                flocp,
+                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+            );
         }
         error(
-        flocp,
-        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
-    );
+            flocp,
+            b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+        );
         free(_a as *mut ::core::ffi::c_void);
     }
 }
@@ -632,23 +630,25 @@ unsafe extern "C" fn check_variable_reference(name: *const ::core::ffi::c_char, 
     }
     if warning::is_active(Type::InvalidRef) {
         let mut _a: *mut ::core::ffi::c_char = xstrdup(format_message(
-        ::core::ptr::null::<::core::ffi::c_char>(),
-        b"invalid variable reference '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Int((length as ::core::ffi::c_int) as i64),
-            FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    ));
+            ::core::ptr::null::<::core::ffi::c_char>(),
+            b"invalid variable reference '%.*s'\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                FmtArg::Int((length as ::core::ffi::c_int) as i64),
+                FmtArg::Str((name) as *const ::core::ffi::c_char),
+            ],
+        ));
         if warning::action(Type::InvalidRef) == Action::Error {
             fatal(
-        *expanding_var,
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
-    );
+                *expanding_var,
+                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+            );
         }
         error(
-        *expanding_var,
-        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
-    );
+            *expanding_var,
+            b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+        );
         free(_a as *mut ::core::ffi::c_void);
     }
 }
@@ -1488,7 +1488,11 @@ pub unsafe fn target_environment(
                 }
                 let fresh10 = result;
                 result = result.offset(1 as ::core::ffi::c_int as isize);
-                *fresh10 = xstrdup(concat(&[(*v_0).name, b"=\0" as *const u8 as *const ::core::ffi::c_char, value]));
+                *fresh10 = xstrdup(concat(&[
+                    (*v_0).name,
+                    b"=\0" as *const u8 as *const ::core::ffi::c_char,
+                    value,
+                ]));
                 free(cp as *mut ::core::ffi::c_void);
             }
         }
@@ -1497,7 +1501,11 @@ pub unsafe fn target_environment(
     if added_shell == 0 {
         let fresh11 = result;
         result = result.offset(1 as ::core::ffi::c_int as isize);
-        *fresh11 = xstrdup(concat(&[shell_var.name, b"=\0" as *const u8 as *const ::core::ffi::c_char, shell_var.value]));
+        *fresh11 = xstrdup(concat(&[
+            shell_var.name,
+            b"=\0" as *const u8 as *const ::core::ffi::c_char,
+            shell_var.value,
+        ]));
     }
     if found_makelevel == 0 {
         let mut val_0: [::core::ffi::c_char; 33] = [0; 33];
@@ -1945,10 +1953,10 @@ pub unsafe fn assign_variable_definition(
     (*v).name = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<File>());
     if *(*v).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
         fatal(
-        &raw mut (*v).fileinfo,
-        b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &raw mut (*v).fileinfo,
+            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     v
 }
@@ -2020,24 +2028,26 @@ pub unsafe fn warn_undefined(name: *const ::core::ffi::c_char, len: size_t) {
         }
         if warning::is_active(Type::UndefinedVar) {
             let mut _a: *mut ::core::ffi::c_char = xstrdup(format_message(
-        ::core::ptr::null::<::core::ffi::c_char>(),
-        b"reference to undefined variable '%.*s'\0" as *const u8
+                ::core::ptr::null::<::core::ffi::c_char>(),
+                b"reference to undefined variable '%.*s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Int((len as ::core::ffi::c_int) as i64),
-            FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    ));
+                &[
+                    FmtArg::Int((len as ::core::ffi::c_int) as i64),
+                    FmtArg::Str((name) as *const ::core::ffi::c_char),
+                ],
+            ));
             if warning::action(Type::UndefinedVar) == Action::Error {
                 fatal(
-        reading_file,
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
-    );
+                    reading_file,
+                    b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+                );
             }
             error(
-        reading_file,
-        b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
-    );
+                reading_file,
+                b"warning: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((_a) as *const ::core::ffi::c_char)],
+            );
             free(_a as *mut ::core::ffi::c_void);
         }
     }

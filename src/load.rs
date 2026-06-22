@@ -23,8 +23,8 @@ pub unsafe fn load_file(
     if noerror == 0 {
         fatal(
             flocp,
-            0,
             c"'load' is not supported on this platform".as_ptr(),
+            &[],
         );
     }
     0
@@ -38,8 +38,8 @@ pub unsafe fn load_file(
 pub unsafe fn unload_file(_name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
     fatal(
         ::core::ptr::null_mut::<Floc>(),
-        0,
         c"INTERNAL: cannot unload when load is not supported".as_ptr(),
+        &[],
     );
 }
 

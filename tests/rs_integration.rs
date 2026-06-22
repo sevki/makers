@@ -81,8 +81,7 @@ fn normalize(bytes: &[u8], make_path: &Path) -> Vec<u8> {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    s.replace(&format!("{basename}:"), "make:")
-        .into_bytes()
+    s.replace(&format!("{basename}:"), "make:").into_bytes()
 }
 
 fn assert_diff(name: &str, c: &Run, r: &Run, c_bin: &Path, r_bin: &Path) {
@@ -193,7 +192,12 @@ fn conditionals_release() {
 
 #[test]
 fn conditionals_debug() {
-    check("cond-debug", "04_cond.mk", "all", &["MODE=debug", "VERBOSE=1"]);
+    check(
+        "cond-debug",
+        "04_cond.mk",
+        "all",
+        &["MODE=debug", "VERBOSE=1"],
+    );
 }
 
 #[test]
@@ -223,7 +227,12 @@ fn shuffle_reverse() {
     // sm_reverse reorders the prereqs deterministically, but the resulting
     // stdout ordering is still subject to make's flush jitter (see
     // `check_unordered`) — assert both binaries build the same line set.
-    check_unordered("shuffle-reverse", "08_shuffle.mk", "all", &["--shuffle=reverse"]);
+    check_unordered(
+        "shuffle-reverse",
+        "08_shuffle.mk",
+        "all",
+        &["--shuffle=reverse"],
+    );
 }
 
 #[test]

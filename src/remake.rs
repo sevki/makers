@@ -1,23 +1,14 @@
-pub use crate::output::{FmtArg, error, fatal, message};
-pub use crate::commands::chop_commands;
-pub use crate::commands::execute_file_commands;
-pub use crate::file::enter_file;
-pub use crate::file::expand_deps;
-pub use crate::file::lookup_file;
-pub use crate::file::rehash_file;
-pub use crate::file::rename_file;
-pub use crate::file::set_command_state;
-pub use crate::implicit::try_implicit_rule;
-pub use crate::make_main::default_file;
-use crate::misc::copy_goal_chain;
-use crate::file::free_seq_chain;
-pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
-use crate::file::{Dep, File, VariableSet, VariableSetList};
-use crate::misc::{find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::file::free_seq_chain;
+use crate::file::{
+    cs_deps_running, cs_finished, cs_running, dep, file, update_status, us_none, us_success,
+    CommandState, Dep, File, GoalDep, UpdateStatus, VariableSet, VariableSetList,
+};
+use crate::misc::{copy_goal_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use libc::{
@@ -145,15 +136,17 @@ pub unsafe fn check_also_make(file: *const file) {
         while !ad.is_null() {
             if (*(*ad).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
                 error(
-        if !(*file).cmds.is_null() {
+                    if !(*file).cmds.is_null() {
                         &raw mut (*(*file).cmds).fileinfo
                     } else {
                         ::core::ptr::null_mut::<Floc>()
                     },
-        b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
+                    b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*(*ad).file).name) as *const ::core::ffi::c_char)],
-    );
+                    &[FmtArg::Str(
+                        ((*(*ad).file).name) as *const ::core::ffi::c_char,
+                    )],
+                );
             }
             ad = (*ad).next;
         }
@@ -296,8 +289,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                             gm.changed = true;
                         }
                     }
-                    if (fail as ::core::ffi::c_uint != 0
-                        || fref(file).updated)
+                    if (fail as ::core::ffi::c_uint != 0 || fref(file).updated)
                         && (status as ::core::ffi::c_uint)
                             < UpdateStatus::Question as ::core::ffi::c_int as ::core::ffi::c_uint
                     {
@@ -322,17 +314,13 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                             while !fref(file).renamed.is_null() {
                                 file = fref(file).renamed;
                             }
-                            if fref(file).updated
-                                && mtime != fref(file).mtime_before_update
-                            {
+                            if fref(file).updated && mtime != fref(file).mtime_before_update {
                                 if rebuilding_makefiles == 0
                                     || just_print_flag == 0 && question_flag == 0
                                 {
                                     status = UpdateStatus::Success;
                                 }
-                                if rebuilding_makefiles != 0
-                                    && fref(file).dontcare
-                                {
+                                if rebuilding_makefiles != 0 && fref(file).dontcare {
                                     stop = 1;
                                 }
                             }
@@ -361,7 +349,6 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                 {
                     message(
                         1,
-                        strlen(fref(file).name) as size_t,
                         if fref(file).phony() as ::core::ffi::c_int != 0
                             || fref(file).cmds.is_null()
                         {
@@ -412,11 +399,13 @@ pub unsafe fn show_goal_error() {
         if (*goal_dep).file == (*goal).file {
             if (*goal).error != 0 {
                 error(
-        &raw mut (*goal).floc,
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*(*goal).file).name) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror((*goal).error)) as *const ::core::ffi::c_char)],
-    );
+                    &raw mut (*goal).floc,
+                    b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str(((*(*goal).file).name) as *const ::core::ffi::c_char),
+                        FmtArg::Str((strerror((*goal).error)) as *const ::core::ffi::c_char),
+                    ],
+                );
                 (*goal).error = 0;
             }
             return;
@@ -457,10 +446,10 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
             }
             return (if fr.command_state() as ::core::ffi::c_int == cs_finished as ::core::ffi::c_int
             {
-                fr.update_status() as ::core::ffi::c_int
+                fr.update_status()
             } else {
-                us_success as ::core::ffi::c_int
-            }) as update_status;
+                us_success
+            });
         }
     }
     while !f.is_null() {
@@ -497,7 +486,8 @@ pub unsafe fn complain(file: *mut file) {
     d = (*file).deps;
     while !d.is_null() {
         if (*(*d).file).updated
-            && (*(*d).file).update_status as ::core::ffi::c_int > UpdateStatus::None as ::core::ffi::c_int
+            && (*(*d).file).update_status as ::core::ffi::c_int
+                > UpdateStatus::None as ::core::ffi::c_int
             && (*file).no_diag
         {
             complain((*d).file);
@@ -575,15 +565,7 @@ unsafe extern "C" fn update_file_1(
     let mut du: *mut dep;
     let mut d: *mut dep;
     let mut ad: *mut dep;
-    let mut amake: dep = dep {
-        next: ::core::ptr::null_mut::<dep>(),
-        name: ::core::ptr::null::<::core::ffi::c_char>(),
-        file: ::core::ptr::null_mut::<File>(),
-        shuf: ::core::ptr::null_mut::<Dep>(),
-        stem: ::core::ptr::null::<::core::ffi::c_char>(),
-        flags_changed_ignore_mtime_staticpattern_need_2nd_expansion_ignore_automatic_vars_is_explicit_wait_here: [0; 2],
-        c2rust_padding: [0; 6],
-    };
+    let mut amake: dep = Dep::default();
     let mut running: ::core::ffi::c_int = 0;
     if 0x2 as ::core::ffi::c_int & db_level != 0 {
         print_spaces(depth);
@@ -718,11 +700,11 @@ unsafe extern "C" fn update_file_1(
             as ::core::ffi::c_int;
         if ns != 0 {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
+                ::core::ptr::null_mut::<Floc>(),
+                b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
                     as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+            );
         }
         this_mtime = this_mtime.wrapping_add(
             ((if FILE_TIMESTAMP_HI_RES != 0 {
@@ -835,21 +817,25 @@ unsafe extern "C" fn update_file_1(
             {
                 if warning::action(Type::CircularDep) == Action::Error {
                     fatal(
-        ::core::ptr::null_mut::<Floc>(),
-        b"circular %s <- %s dependency detected\0" as *const u8
+                        ::core::ptr::null_mut::<Floc>(),
+                        b"circular %s <- %s dependency detected\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
-            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
-    );
+                        &[
+                            FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+                            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char),
+                        ],
+                    );
                 }
                 if warning::is_active(Type::CircularDep) {
                     error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"circular %s <- %s dependency dropped\0" as *const u8
+                        ::core::ptr::null_mut::<Floc>(),
+                        b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
-            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
-    );
+                        &[
+                            FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+                            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char),
+                        ],
+                    );
                 }
                 if let Some(tail) = lastd.as_mut() {
                     tail.next = (*du).next;
@@ -881,8 +867,7 @@ unsafe extern "C" fn update_file_1(
                     dep_status = new;
                 }
                 if rebuilding_makefiles != 0 {
-                    (*(*d).file)
-                        .dontcare = dontcare != 0;
+                    (*(*d).file).dontcare = dontcare != 0;
                 }
                 if !(*d).ignore_mtime {
                     must_make = maybe_make;
@@ -954,8 +939,7 @@ unsafe extern "C" fn update_file_1(
                     dep_status = new_0;
                 }
                 if rebuilding_makefiles != 0 {
-                    (*(*d).file)
-                        .dontcare = dontcare_0 != 0;
+                    (*(*d).file).dontcare = dontcare_0 != 0;
                 }
                 while !(*(*d).file).renamed.is_null() {
                     (*d).file = (*(*d).file).renamed;
@@ -1042,15 +1026,17 @@ unsafe extern "C" fn update_file_1(
         }
         if depth == 0 && keep_going_flag != 0 && just_print_flag == 0 && question_flag == 0 {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"Target '%s' not remade because of errors.\0" as *const u8
+                ::core::ptr::null_mut::<Floc>(),
+                b"Target '%s' not remade because of errors.\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+            );
         }
         return dep_status;
     }
-    if (*file).command_state as ::core::ffi::c_int == CommandState::DepsRunning as ::core::ffi::c_int {
+    if (*file).command_state as ::core::ffi::c_int
+        == CommandState::DepsRunning as ::core::ffi::c_int
+    {
         set_command_state(file, CommandState::NotStarted);
     }
     deps_changed = 0;
@@ -1275,7 +1261,8 @@ pub unsafe fn notice_finished_file(file: *mut file) {
     (*file).command_state = CommandState::Finished;
     (*file).updated = true;
     if touch_flag != 0
-        && (*file).update_status as ::core::ffi::c_int == UpdateStatus::Success as ::core::ffi::c_int
+        && (*file).update_status as ::core::ffi::c_int
+            == UpdateStatus::Success as ::core::ffi::c_int
     {
         // Touch the file unless every command line is recursive (flagged
         // COMMANDS_RECURSE); a single non-recursive line means we touch.
@@ -1359,7 +1346,9 @@ pub unsafe fn notice_finished_file(file: *mut file) {
             }
         }
     }
-    if ran != 0 && (*file).update_status as ::core::ffi::c_int != UpdateStatus::None as ::core::ffi::c_int {
+    if ran != 0
+        && (*file).update_status as ::core::ffi::c_int != UpdateStatus::None as ::core::ffi::c_int
+    {
         d = (*file).also_make;
         while !d.is_null() {
             (*(*d).file).command_state = CommandState::Finished;
@@ -1386,7 +1375,9 @@ pub unsafe fn notice_finished_file(file: *mut file) {
         if (*file).tried_implicit && !(*file).also_make.is_null() {
             check_also_make(file);
         }
-    } else if (*file).update_status as ::core::ffi::c_int == UpdateStatus::None as ::core::ffi::c_int {
+    } else if (*file).update_status as ::core::ffi::c_int
+        == UpdateStatus::None as ::core::ffi::c_int
+    {
         (*file).update_status = UpdateStatus::Success;
     }
 }
@@ -1456,7 +1447,9 @@ unsafe extern "C" fn check_dep(
         } else {
             let mut ld: *mut Dep;
             let mut deps_running: ::core::ffi::c_int = 0;
-            if (*file).command_state as ::core::ffi::c_int != CommandState::Running as ::core::ffi::c_int {
+            if (*file).command_state as ::core::ffi::c_int
+                != CommandState::Running as ::core::ffi::c_int
+            {
                 if (*file).command_state as ::core::ffi::c_int
                     == CommandState::DepsRunning as ::core::ffi::c_int
                 {
@@ -1477,11 +1470,9 @@ unsafe extern "C" fn check_dep(
                     let dep_name = fref(dep_file).name;
                     error(
                         ::core::ptr::null_mut::<Floc>(),
-                        (strlen((*file).name) as size_t).wrapping_add(strlen(dep_name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*file).name,
-                        dep_name,
+                        &[FmtArg::Str((*file).name), FmtArg::Str(dep_name)],
                     );
                     let next_dep = dep_ref.next;
                     if let Some(tail) = ld.as_mut() {
@@ -1546,10 +1537,10 @@ unsafe extern "C" fn check_dep(
 pub unsafe fn touch_file(file: *mut file) -> update_status {
     if run_silent == 0 {
         message(
-        0,
-        b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
-    );
+            0,
+            b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+        );
     }
     if just_print_flag != 0 {
         return UpdateStatus::Success;
@@ -1720,16 +1711,16 @@ pub unsafe fn remake_file(file: *mut file) {
 pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut mtime: uintmax_t;
-    let propagate_timestamp: ::core::ffi::c_uint;
-    // Checked view of FILE; a null argument is a caller bug.
-    let mut file = file.as_mut().expect("f_mtime: null file");
-    if ar_name(file.name) != 0 {
+    let propagate_timestamp: bool;
+    assert!(!file.is_null(), "f_mtime: null file");
+    let mut file = file;
+    if ar_name((*file).name) != 0 {
         let memmtime: uintmax_t;
         let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut arfile: *mut File;
         let member_date: time_t;
-        ar_parse_name(file_ref.name, &raw mut arname, &raw mut memname);
+        ar_parse_name((*file).name, &raw mut arname, &raw mut memname);
         memmtime = name_mtime(memname);
         arfile = lookup_file(arname);
         if arfile.is_null() {
@@ -1771,8 +1762,8 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
             } else {
                 rehash_file(file, strcache_add(name));
             }
-            while !file.renamed.is_null() {
-                file = file.renamed.as_mut().expect("f_mtime: null renamed file");
+            while !(*file).renamed.is_null() {
+                file = (*file).renamed;
             }
         }
         free(arname as *mut ::core::ffi::c_void);
@@ -1832,8 +1823,8 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                     .wrapping_sub(1) as size_t;
                 if gpath_search(name_0, name_len) != 0 {
                     rename_file(file, name_0);
-                    while !file.renamed.is_null() {
-                        file = file.renamed.as_mut().expect("f_mtime: null renamed file");
+                    while !(*file).renamed.is_null() {
+                        file = (*file).renamed;
                     }
                     return if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
                         f_mtime(file, 1)
@@ -1842,8 +1833,8 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                     };
                 }
                 rehash_file(file, name_0);
-                while !file.renamed.is_null() {
-                    file = file.renamed.as_mut().expect("f_mtime: null renamed file");
+                while !(*file).renamed.is_null() {
+                    file = (*file).renamed;
                 }
                 if mtime != OLD_MTIME as uintmax_t
                     && mtime
@@ -1918,26 +1909,29 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
                     );
                 }
                 error(
-        ::core::ptr::null_mut::<Floc>(),
-        b"warning: file '%s' has modification time %s s in the future\0" as *const u8
+                    ::core::ptr::null_mut::<Floc>(),
+                    b"warning: file '%s' has modification time %s s in the future\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str((file_now_ref.name) as *const ::core::ffi::c_char),
-            FmtArg::Str((&raw mut from_now_string as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char)],
-    );
+                    &[
+                        FmtArg::Str((file_now_ref.name) as *const ::core::ffi::c_char),
+                        FmtArg::Str(
+                            (&raw mut from_now_string as *mut ::core::ffi::c_char)
+                                as *const ::core::ffi::c_char,
+                        ),
+                    ],
+                );
                 clock_skew_detected = 1;
             }
         }
     }
-    if !file.double_colon.is_null() {
-        file = file
-            .double_colon
-            .as_mut()
-            .expect("f_mtime: null double_colon");
+    if !(*file).double_colon.is_null() {
+        file = (*file).double_colon;
     }
     propagate_timestamp = (*file).updated;
     loop {
         if mtime != NONEXISTENT_MTIME as uintmax_t
-            && (*file).command_state as ::core::ffi::c_int == CommandState::NotStarted as ::core::ffi::c_int
+            && (*file).command_state as ::core::ffi::c_int
+                == CommandState::NotStarted as ::core::ffi::c_int
             && !(*file).tried_implicit
             && (*file).intermediate
         {
@@ -1946,8 +1940,8 @@ pub unsafe fn f_mtime(file: *mut file, search: ::core::ffi::c_int) -> uintmax_t 
         if (*file).updated == propagate_timestamp {
             (*file).last_mtime = mtime;
         }
-        match file.prev.as_mut() {
-            Some(prev) => file = prev,
+        match (*file).prev.as_mut() {
+            Some(prev) => file = prev as *mut File,
             None => break,
         }
     }
@@ -2133,11 +2127,11 @@ unsafe extern "C" fn library_search(
         p3 = find_percent(p);
         if p3.is_null() {
             error(
-        ::core::ptr::null_mut::<Floc>(),
-        b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
+                ::core::ptr::null_mut::<Floc>(),
+                b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+            );
             *p.offset(len as isize) = c;
         } else {
             p4 = variable_buffer_output(

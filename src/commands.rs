@@ -21,7 +21,7 @@ use crate::make_main::{
     always_make_flag, cmd_prefix, default_file, one_shell, stopchar_map, temp_stdin_unlink,
 };
 use crate::misc::{make_pid, xmalloc, xrealloc, xstrdup, xstrndup};
-use crate::output::{error, fatal, perror_with_name, pfatal_with_name, INTSTR_LENGTH};
+use crate::output::{error, fatal, perror_with_name, pfatal_with_name, FmtArg, INTSTR_LENGTH};
 use crate::posixos::{jobserver_clear, osync_clear};
 use crate::remake::notice_finished_file;
 use crate::stdio::FILE;
@@ -428,9 +428,8 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
             if nlines as c_int == c_ushort::MAX as c_int {
                 fatal(
                     &raw mut cmds.fileinfo,
-                    INTSTR_LENGTH,
                     c"recipe has too many lines (limit %hu)".as_ptr(),
-                    nlines as c_int,
+                    &[FmtArg::Uint(nlines as u64)],
                 );
             }
             if nlines as size_t == max {
@@ -608,17 +607,14 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
             if !on_behalf_of.is_null() {
                 error(
                     null::<Floc>(),
-                    strlen(on_behalf_of) + strlen(file.name),
                     c"*** [%s] archive member '%s' may be bogus; not deleted".as_ptr(),
-                    on_behalf_of,
-                    file.name,
+                    &[FmtArg::Str(on_behalf_of), FmtArg::Str(file.name)],
                 );
             } else {
                 error(
                     null::<Floc>(),
-                    strlen(file.name),
                     c"*** archive member '%s' may be bogus; not deleted".as_ptr(),
-                    file.name,
+                    &[FmtArg::Str(file.name)],
                 );
             }
         }
@@ -641,17 +637,14 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
         if !on_behalf_of.is_null() {
             error(
                 null::<Floc>(),
-                strlen(on_behalf_of) + strlen(file.name),
                 c"*** [%s] deleting file '%s'".as_ptr(),
-                on_behalf_of,
-                file.name,
+                &[FmtArg::Str(on_behalf_of), FmtArg::Str(file.name)],
             );
         } else {
             error(
                 null::<Floc>(),
-                strlen(file.name),
                 c"*** deleting file '%s'".as_ptr(),
-                file.name,
+                &[FmtArg::Str(file.name)],
             );
         }
         if unlink(file.name) < 0 && *__errno_location() != ENOENT {
