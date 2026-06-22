@@ -14,6 +14,7 @@ pub mod commands;
 pub mod content_hash;
 pub mod default;
 pub mod dir;
+pub mod execctx;
 pub mod expand;
 pub mod ffi_types;
 pub mod file;

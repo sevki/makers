@@ -852,7 +852,7 @@ pub unsafe fn install_program_name_for_test() {
             Box::leak(Box::new(std::ffi::CString::new("make").unwrap())).as_c_str();
         program = leaked.as_ptr();
     }
-    makelevel = 0;
+    install_makelevel(0);
 }
 
 pub fn env_overrides() -> bool {
@@ -898,7 +898,7 @@ pub fn should_print_dir_mirror() -> i32 {
     with_options(|o| match o.print_directory.get() {
         Some(v) => v as i32,
         None => {
-            let ml = unsafe { makelevel };
+            let ml = makelevel();
             (!o.silent.get() && ml > 0) as i32
         }
     })
@@ -1086,7 +1086,11 @@ pub static mut directory_before_chdir: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 pub static mut starting_directory: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-pub static mut makelevel: ::core::ffi::c_uint = 0;
+// `$(MAKELEVEL)` now lives in the immutable, write-once `execctx::Config`
+// (installed once during startup). Re-exported here so the existing
+// `make_main::makelevel` import path keeps resolving — now to a safe accessor
+// instead of a `static mut`.
+pub use crate::execctx::{install_makelevel, makelevel};
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
 pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut file;
 /// Set once the `.POSIX` special target has been seen, selecting POSIX-pedantic
@@ -1856,9 +1860,9 @@ unsafe fn main_0(
         && *(*v_0).value.offset(0_i32 as isize) as i32 != 0
         && *(*v_0).value.offset(0_i32 as isize) as i32 != '-' as i32
     {
-        makelevel = make_toui(::core::ffi::CStr::from_ptr((*v_0).value)).unwrap_or(0);
+        install_makelevel(make_toui(::core::ffi::CStr::from_ptr((*v_0).value)).unwrap_or(0));
     } else {
-        makelevel = 0;
+        install_makelevel(0);
     }
     always_make_flag = (options.always_make.get() && restarts == 0) as i32;
     if options.no_builtin_variables.get() {
@@ -2850,7 +2854,7 @@ unsafe fn main_0(
                         *p_4,
                         b"%s=%u\0" as *const u8 as *const ::core::ffi::c_char,
                         MAKELEVEL_NAME.as_ptr(),
-                        makelevel,
+                        makelevel(),
                     );
                 } else if strncmp(
                     *p_4,
@@ -4068,15 +4072,11 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
 /// Returns the explicit `--print-directory` / `--no-print-directory`
 /// choice when one was given; otherwise it prints unless `--silent` is set
 /// and both the make level is top-level and no `-C` directory was supplied.
-///
-/// The lone `unsafe` is a contained integer read of the `makelevel` global
-/// (`static mut` owned by main); no pointer is dereferenced.
 pub fn should_print_dir(options: &Options) -> bool {
     if let Some(v) = options.print_directory.get() {
         return v;
     }
-    // SAFETY: reads the `makelevel` integer global; no pointer is dereferenced.
-    let nested = unsafe { makelevel } > 0;
+    let nested = makelevel() > 0;
     !options.silent.get() && (nested || !options.directories.borrow().is_empty())
 }
 /// # Safety
@@ -5351,7 +5351,7 @@ mod should_print_dir_unsafe_oracle {
         if let Some(v) = options.print_directory.get() {
             return v as i32;
         }
-        (!options.silent.get() && (makelevel > 0 || !options.directories.borrow().is_empty()))
+        (!options.silent.get() && (makelevel() > 0 || !options.directories.borrow().is_empty()))
             as i32
     }
 }

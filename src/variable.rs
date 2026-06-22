@@ -1034,7 +1034,7 @@ pub unsafe fn define_automatic_variables() {
     sprintf(
         &raw mut buf as *mut ::core::ffi::c_char,
         b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-        makelevel,
+        makelevel(),
     );
     define_variable_in_set(
         b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1423,7 +1423,7 @@ pub unsafe fn target_environment(file: *mut file, recursive: i32) -> *mut *mut :
                     sprintf(
                         &raw mut val as *mut ::core::ffi::c_char,
                         b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-                        makelevel.wrapping_add(1),
+                        makelevel().wrapping_add(1),
                     );
                     free(cp as *mut ::core::ffi::c_void);
                     cp = xstrdup(&raw mut val as *mut ::core::ffi::c_char);
@@ -1539,7 +1539,7 @@ pub unsafe fn target_environment(file: *mut file, recursive: i32) -> *mut *mut :
             &raw mut val_0 as *mut ::core::ffi::c_char,
             b"%s=%u\0" as *const u8 as *const ::core::ffi::c_char,
             MAKELEVEL_NAME.as_ptr(),
-            makelevel.wrapping_add(1),
+            makelevel().wrapping_add(1),
         );
         let fresh12 = result;
         result = result.offset(1_i32 as isize);
