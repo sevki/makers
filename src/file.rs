@@ -1,15 +1,13 @@
 pub use crate::ffi_types::{
-    __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
-    intmax_t, size_t, time_t, uintmax_t,
+    __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t, size_t,
+    time_t, uintmax_t,
 };
 use crate::misc::free_ns_chain;
 use crate::misc::{copy_dep_chain, end_of_token, xmalloc, xrealloc, xstrdup};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add_len, strcache_iscached};
 use c2rust_bitfields;
-use libc::{
-    __errno_location, abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, unlink,
-};
+use libc::{__errno_location, abort, free, printf, putchar, puts, strchr, strcmp, strcpy, unlink};
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -20,7 +18,6 @@ extern "C" {
     fn fflush(__stream: *mut FILE) -> i32;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
-    fn localtime(__timer: *const time_t) -> *mut tm;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -1572,53 +1569,80 @@ pub unsafe fn file_timestamp_now(
         ns as ::core::ffi::c_long,
     )
 }
+/// Render a packed `FILE_TIMESTAMP` exactly as GNU make's
+/// `file_timestamp_sprintf`: `YYYY-MM-DD HH:MM:SS` in **local** time, followed
+/// by the sub-second fraction with trailing zeros trimmed (and the `.` dropped
+/// entirely when the fraction is zero). When the broken-down local time can't
+/// be computed (`localtime_r` failure, e.g. an out-of-range year) it falls
+/// back to the raw seconds count — signed if negative, unsigned otherwise —
+/// matching the C `%ld`/`%lu` branches.
+///
+/// Local broken-down time comes from a single reentrant `localtime_r` call
+/// (no `localtime` static buffer, no global state); all formatting, fraction
+/// trimming, and the fallback are safe Rust. Output is byte-for-byte identical
+/// to the C oracle.
+pub fn file_timestamp_string(ts: uintmax_t) -> String {
+    let shift = if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 };
+    let units = ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t);
+    let t = (units >> shift) as time_t;
+    // Sub-second units; the `& (2^shift - 1)` mask yields 0 when HI_RES is off.
+    let frac = (units & (((1u64 << shift) - 1) as uintmax_t)) as i32;
+
+    // Broken-down LOCAL time via the reentrant `localtime_r`: it writes into a
+    // caller-owned `tm` (no shared static) and returns NULL on failure. The
+    // single `unsafe` block is the only FFI here; the pointers are a valid
+    // stack `time_t` and a valid stack `tm`, so the call is sound.
+    let mut tmv: libc::tm = unsafe { std::mem::zeroed() };
+    let ok = !unsafe {
+        libc::localtime_r(
+            &t as *const time_t as *const libc::time_t,
+            &mut tmv as *mut libc::tm,
+        )
+    }
+    .is_null();
+
+    let mut out = if ok {
+        // `%04ld` of `tm_year + 1900`; for every realistic file timestamp this
+        // is a >= 4-digit non-negative year, so `{:04}` matches `%04ld`.
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            tmv.tm_year as i64 + 1900,
+            tmv.tm_mon + 1,
+            tmv.tm_mday,
+            tmv.tm_hour,
+            tmv.tm_min,
+            tmv.tm_sec,
+        )
+    } else if t < 0 {
+        format!("{}", t as i64) // C `%ld`
+    } else {
+        format!("{}", t as u64) // C `%lu`
+    };
+
+    // C prints `.%09d` then walks back over trailing '0's, dropping the '.'
+    // too when nothing but zeros remain.
+    let mut frac_str = format!(".{frac:09}");
+    while frac_str.ends_with('0') {
+        frac_str.pop();
+    }
+    if frac_str.ends_with('.') {
+        frac_str.pop();
+    }
+    out.push_str(&frac_str);
+    out
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn file_timestamp_sprintf(mut p: *mut ::core::ffi::c_char, ts: uintmax_t) {
-    let mut t: time_t = (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-        >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) as time_t;
-    let tm: *mut tm = localtime(&raw mut t);
-    if !tm.is_null() {
-        let year: intmax_t = (*tm).tm_year as intmax_t;
-        p = p.offset(sprintf(
-            p,
-            b"%04ld-%02d-%02d %02d:%02d:%02d\0" as *const u8 as *const ::core::ffi::c_char,
-            year + 1900 as intmax_t,
-            (*tm).tm_mon + 1,
-            (*tm).tm_mday,
-            (*tm).tm_hour,
-            (*tm).tm_min,
-            (*tm).tm_sec,
-        ) as isize);
-    } else if t < 0 as time_t {
-        p = p.offset(sprintf(
-            p,
-            b"%ld\0" as *const u8 as *const ::core::ffi::c_char,
-            t as intmax_t,
-        ) as isize);
-    } else {
-        p = p.offset(sprintf(
-            p,
-            b"%lu\0" as *const u8 as *const ::core::ffi::c_char,
-            t as uintmax_t,
-        ) as isize);
-    }
-    p = p.offset(
-        (sprintf(
-            p,
-            b".%09d\0" as *const u8 as *const ::core::ffi::c_char,
-            (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1) as uintmax_t)
-                as i32,
-        ) - 1) as isize,
-    );
-    while *p as i32 == '0' as i32 {
-        p = p.offset(-1_i32 as isize);
-    }
-    p = p.offset((*p as i32 != '.' as i32) as i32 as isize);
-    *p = 0;
+/// translation; `p` must point to a buffer with room for the formatted
+/// timestamp plus its NUL terminator (callers use a 43-byte buffer, the
+/// `FILE_TIMESTAMP_PRINT_LEN_BOUND` GNU make guarantees). Thin shim over the
+/// safe [`file_timestamp_string`]; it only copies the bytes out.
+pub unsafe fn file_timestamp_sprintf(p: *mut ::core::ffi::c_char, ts: uintmax_t) {
+    let s = file_timestamp_string(ts);
+    let bytes = s.as_bytes();
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, bytes.len());
+    *p.add(bytes.len()) = 0;
 }
 /// # Safety
 ///
@@ -2168,6 +2192,124 @@ mod tests {
             (decoded_new - decoded_oracle).abs() <= 2,
             "new={decoded_new} oracle={decoded_oracle} differ by more than 2s"
         );
+    }
+
+    // FFI the verbatim `file_timestamp_sprintf` oracle depends on. Production
+    // dropped the `localtime` global and the `sprintf` formatting when the
+    // function moved to safe Rust over `localtime_r`, so we re-declare them
+    // here (test-only) to keep the original compilable as the differential
+    // oracle (AGENTS.md "preserve the original as a test oracle").
+    use crate::ffi_types::intmax_t;
+    extern "C" {
+        fn localtime(__timer: *const time_t) -> *mut tm;
+        fn sprintf(__s: *mut ::core::ffi::c_char, __format: *const ::core::ffi::c_char, ...)
+            -> i32;
+    }
+
+    /// Verbatim copy of the pre-std `file_timestamp_sprintf`: `localtime` +
+    /// `sprintf` into the caller buffer, then the manual trailing-zero / dot
+    /// trim. Kept test-only as the byte-for-byte oracle for the safe
+    /// `file_timestamp_string`.
+    unsafe fn file_timestamp_sprintf_unsafe_oracle(mut p: *mut ::core::ffi::c_char, ts: uintmax_t) {
+        let mut t: time_t = (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+            >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
+            as time_t;
+        let tm: *mut tm = localtime(&raw mut t);
+        if !tm.is_null() {
+            let year: intmax_t = (*tm).tm_year as intmax_t;
+            p = p.offset(sprintf(
+                p,
+                b"%04ld-%02d-%02d %02d:%02d:%02d\0" as *const u8 as *const ::core::ffi::c_char,
+                year + 1900 as intmax_t,
+                (*tm).tm_mon + 1,
+                (*tm).tm_mday,
+                (*tm).tm_hour,
+                (*tm).tm_min,
+                (*tm).tm_sec,
+            ) as isize);
+        } else if t < 0 as time_t {
+            p = p.offset(sprintf(
+                p,
+                b"%ld\0" as *const u8 as *const ::core::ffi::c_char,
+                t as intmax_t,
+            ) as isize);
+        } else {
+            p = p.offset(sprintf(
+                p,
+                b"%lu\0" as *const u8 as *const ::core::ffi::c_char,
+                t as uintmax_t,
+            ) as isize);
+        }
+        p = p.offset(
+            (sprintf(
+                p,
+                b".%09d\0" as *const u8 as *const ::core::ffi::c_char,
+                (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+                    & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1) as uintmax_t)
+                    as i32,
+            ) - 1) as isize,
+        );
+        while *p as i32 == '0' as i32 {
+            p = p.offset(-1_i32 as isize);
+        }
+        p = p.offset((*p as i32 != '.' as i32) as i32 as isize);
+        *p = 0;
+    }
+
+    /// Drive the verbatim oracle through a 43-byte buffer (the
+    /// `FILE_TIMESTAMP_PRINT_LEN_BOUND` callers use) and read the result back.
+    fn oracle_string(ts: uintmax_t) -> String {
+        let mut buf = [0_i8; 43];
+        unsafe { file_timestamp_sprintf_unsafe_oracle(buf.as_mut_ptr(), ts) };
+        unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// Differential test: the safe `file_timestamp_string` must produce
+    /// byte-for-byte the same output as the preserved `localtime`/`sprintf`
+    /// oracle across a representative spread of seconds and sub-second
+    /// fractions (epoch, recent, far-future-in-range, and every fraction shape
+    /// that exercises the trailing-zero / bare-dot trimming).
+    #[test]
+    fn file_timestamp_string_matches_unsafe_oracle() {
+        let shift = if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 };
+        let mask: uintmax_t = ((1u64 << shift) - 1) as uintmax_t;
+        // Pack the same way the decoders read it back: high bits = seconds,
+        // low `shift` bits = fraction, biased by ORDINARY_MTIME_MIN. Both the
+        // safe fn and the oracle decode any `ts` identically, so equality of
+        // their *outputs* is what we assert.
+        let pack = |secs: u64, frac: u64| -> uintmax_t {
+            (((secs << shift) | (frac & mask as u64)) as uintmax_t)
+                .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
+        };
+        let secs_cases: [u64; 6] = [
+            0,
+            1,
+            1_700_000_000,
+            2_000_000_000,
+            9_999_999_999,
+            17_179_869_183,
+        ];
+        let frac_cases: [u64; 6] = [
+            0,
+            1,
+            123_000_000,
+            500_000_000,
+            (1u64 << 30) - 1,
+            999_999_999,
+        ];
+        for &s in &secs_cases {
+            for &fr in &frac_cases {
+                let ts = pack(s, fr);
+                assert_eq!(
+                    file_timestamp_string(ts),
+                    oracle_string(ts),
+                    "mismatch at secs={s} frac={fr} (ts={ts})"
+                );
+            }
+        }
     }
 
     #[test]
