@@ -1907,14 +1907,14 @@ unsafe fn main_0(
     );
     {
         let include_dirs = options.include_dirs.borrow();
-        let mut inc_ptrs: Vec<*const ::core::ffi::c_char> =
-            include_dirs.iter().map(|s| s.as_ptr()).collect();
-        construct_include_path(if include_dirs.is_empty() {
-            ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
-        } else {
-            inc_ptrs.push(::core::ptr::null());
-            inc_ptrs.as_mut_ptr()
-        });
+        let inc_paths: Vec<std::path::PathBuf> = include_dirs
+            .iter()
+            .map(|s| {
+                use std::os::unix::ffi::OsStrExt;
+                std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
+            })
+            .collect();
+        construct_include_path(&inc_paths);
     }
     if options.jobserver_auth.borrow().is_some() {
         // Reset the jobserver unless we successfully inherited the parent's.
@@ -3209,14 +3209,14 @@ pub unsafe fn reset_makeflags(options: &Options, origin: variable_origin) {
     );
     {
         let include_dirs = options.include_dirs.borrow();
-        let mut inc_ptrs2: Vec<*const ::core::ffi::c_char> =
-            include_dirs.iter().map(|s| s.as_ptr()).collect();
-        construct_include_path(if include_dirs.is_empty() {
-            ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
-        } else {
-            inc_ptrs2.push(::core::ptr::null());
-            inc_ptrs2.as_mut_ptr()
-        });
+        let inc_paths: Vec<std::path::PathBuf> = include_dirs
+            .iter()
+            .map(|s| {
+                use std::os::unix::ffi::OsStrExt;
+                std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
+            })
+            .collect();
+        construct_include_path(&inc_paths);
     }
     disable_builtins(options);
     define_makeflags(options, rebuilding_makefiles() as ::core::ffi::c_int);

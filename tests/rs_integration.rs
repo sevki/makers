@@ -1197,3 +1197,62 @@ fn oneshell_special() {
     // first line is visible on the next. Byte-checked against the C oracle.
     check("oneshell", "29_oneshell.mk", "all", &[]);
 }
+
+/// `-I <dir>` include resolution. A makefile `include`s a file that exists only
+/// under the `-I` search directory; with the right `-I` both binaries resolve
+/// and print the variable defined there, and with a bogus `-I` both fail
+/// identically. Exercises the native-Rust `include_directories` lookup path.
+fn run_in(make_bin: &Path, workdir: &Path, args: &[&std::ffi::OsStr]) -> Run {
+    Command::new(make_bin)
+        .arg("--no-print-directory")
+        .args(args)
+        .current_dir(workdir)
+        .output()
+        .expect("failed to spawn make")
+        .into()
+}
+
+#[test]
+fn dash_i_include_resolution_found_and_not_found() {
+    let base = tempdir();
+    let incdir = base.join("incs");
+    std::fs::create_dir_all(&incdir).unwrap();
+    // Included file lives ONLY in the -I directory, not next to the makefile.
+    std::fs::write(incdir.join("extra.mk"), b"FROM_INCLUDE := yes\n").unwrap();
+    let mkfile = base.join("Makefile");
+    std::fs::write(
+        &mkfile,
+        b"include extra.mk\nall:\n\t@echo got=$(FROM_INCLUDE)\n",
+    )
+    .unwrap();
+
+    use std::ffi::OsStr;
+    let c = c_make();
+    let r = PathBuf::from(RUST_MAKE);
+
+    // Found case: -I points at the dir holding extra.mk.
+    let found: Vec<&OsStr> = vec![
+        OsStr::new("-I"),
+        incdir.as_os_str(),
+        OsStr::new("-f"),
+        mkfile.as_os_str(),
+        OsStr::new("all"),
+    ];
+    let c_found = run_in(&c, &base, &found);
+    let r_found = run_in(&r, &base, &found);
+    assert_diff("dash_i_found", &c_found, &r_found, &c, &r);
+
+    // Not-found case: -I points at an empty dir; the include is unresolvable.
+    let emptydir = base.join("empty");
+    std::fs::create_dir_all(&emptydir).unwrap();
+    let notfound: Vec<&OsStr> = vec![
+        OsStr::new("-I"),
+        emptydir.as_os_str(),
+        OsStr::new("-f"),
+        mkfile.as_os_str(),
+        OsStr::new("all"),
+    ];
+    let c_nf = run_in(&c, &base, &notfound);
+    let r_nf = run_in(&r, &base, &notfound);
+    assert_diff("dash_i_not_found", &c_nf, &r_nf, &c, &r);
+}
