@@ -1,23 +1,8 @@
-pub use crate::output::{FmtArg, error, fatal};
-pub use crate::commands::print_commands;
-pub use crate::commands::set_file_variables;
-pub use crate::expand::expand_string_for_file;
-pub use crate::variable::initialize_file_variables;
-pub use crate::variable::print_file_variables;
-pub use crate::variable::print_target_variables;
-use crate::read::parse_file_seq;
+use crate::content_hash::ContentHash;
+
 pub use crate::ffi_types::{
-    __clockid_t,
-    __off64_t,
-    __off_t,
-    __suseconds_t,
-    __syscall_slong_t,
-    __time_t,
-    clockid_t,
-    intmax_t,
-    size_t,
-    time_t,
-    uintmax_t,
+    __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
+    intmax_t, size_t, time_t, uintmax_t,
 };
 use crate::misc::free_ns_chain;
 use crate::misc::{copy_dep_chain, end_of_token, xmalloc, xrealloc, xstrdup};
@@ -187,7 +172,7 @@ pub struct VariableSet {
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
-/// One edge in the dependency graph: a prerequisite of a target.
+
 #[derive(Copy, Clone)]
 pub struct Dep {
     pub next: *mut Dep,
@@ -224,6 +209,42 @@ impl Default for Dep {
     }
 }
 
+const HASH_SIZE: usize = 32;
+
+/// Idiomatic Rust dep edge for the new dependency graph layer.
+/// Replaces `Dep` once all FFI bodies have been migrated.
+#[derive(Debug, Clone, ContentHash)]
+pub struct DepNode {
+    pub name: String,
+    pub file: Option<FileId>,
+    pub shuf: Option<DepId>,
+    pub stem: Option<String>,
+    pub flags: DepFlags,
+    pub changed: bool,
+    pub ignore_mtime: bool,
+    pub static_pattern: bool,
+    pub needs_second_expansion: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
+}
+
+/// Stable identity for a dep edge: content-hash of the full (immutable) `DepNode`.
+id_wireformat!(DepId[HASH_SIZE] <- DepNode);
+
+/// Stable identity for a file: derived from its canonical name only.
+/// Mutable runtime state (timestamps, flags, command state) does not
+/// contribute to the key, so a file's identity survives updates.
+id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
+
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DepFlags: u32 {
+        const NONE = 0;
+        // fill these from GNU make’s DEP_* flags
+        // const SOME_FLAG = 1 << 0;
+    }
+}
 impl Default for GoalDep {
     fn default() -> Self {
         GoalDep {
@@ -300,7 +321,7 @@ use crate::hash::{
 use crate::make_main::{
     db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP,
 };
-use crate::output::{error, fatal, perror_with_name};
+use crate::output::{error, fatal, perror_with_name, FmtArg};
 use crate::read::{find_percent, parse_file_seq};
 use crate::variable::{
     initialize_file_variables, lookup_variable, lookup_variable_in_set, merge_variable_set_lists,
@@ -461,6 +482,202 @@ pub struct NameSeq {
     pub next: *mut NameSeq,
     pub name: *const ::core::ffi::c_char,
 }
+
+#[allow(non_camel_case_types)]
+pub type file = File;
+#[allow(non_camel_case_types)]
+pub type dep = Dep;
+#[allow(non_camel_case_types)]
+pub type nameseq = NameSeq;
+#[allow(non_camel_case_types)]
+pub type commands = Commands;
+#[allow(non_camel_case_types)]
+pub type cmd_state = CommandState;
+#[allow(non_camel_case_types)]
+pub type update_status = UpdateStatus;
+
+pub const cs_not_started: CommandState = CommandState::NotStarted;
+pub const cs_deps_running: CommandState = CommandState::DepsRunning;
+pub const cs_running: CommandState = CommandState::Running;
+pub const cs_finished: CommandState = CommandState::Finished;
+
+pub const us_success: UpdateStatus = UpdateStatus::Success;
+pub const us_none: UpdateStatus = UpdateStatus::None;
+pub const us_question: UpdateStatus = UpdateStatus::Question;
+pub const us_failed: UpdateStatus = UpdateStatus::Failed;
+
+impl File {
+    fn bool_value(value: bool) -> ::core::ffi::c_uint {
+        value as ::core::ffi::c_uint
+    }
+
+    pub fn command_state(&self) -> CommandState {
+        self.command_state
+    }
+
+    pub fn set_command_state(&mut self, state: CommandState) {
+        self.command_state = state;
+    }
+
+    pub fn update_status(&self) -> UpdateStatus {
+        self.update_status
+    }
+
+    pub fn set_update_status(&mut self, status: UpdateStatus) {
+        self.update_status = status;
+    }
+
+    pub fn builtin(&self) -> ::core::ffi::c_uint {
+        self.builtin as ::core::ffi::c_uint
+    }
+
+    pub fn set_builtin(&mut self, value: ::core::ffi::c_uint) {
+        self.builtin = value != 0;
+    }
+
+    pub fn is_target(&self) -> ::core::ffi::c_uint {
+        self.is_target as ::core::ffi::c_uint
+    }
+
+    pub fn set_is_target(&mut self, value: ::core::ffi::c_uint) {
+        self.is_target = value != 0;
+    }
+
+    pub fn suffix(&self) -> ::core::ffi::c_uint {
+        self.suffix as ::core::ffi::c_uint
+    }
+
+    pub fn set_suffix(&mut self, value: ::core::ffi::c_uint) {
+        self.suffix = value != 0;
+    }
+
+    pub fn precious(&self) -> ::core::ffi::c_uint {
+        Self::bool_value(self.precious)
+    }
+
+    pub fn loaded(&self) -> ::core::ffi::c_uint {
+        Self::bool_value(self.loaded)
+    }
+
+    pub fn set_loaded(&mut self, value: ::core::ffi::c_uint) {
+        self.loaded = value != 0;
+    }
+
+    pub fn set_unloaded(&mut self, value: ::core::ffi::c_uint) {
+        self.unloaded = value != 0;
+    }
+
+    pub fn updating(&self) -> ::core::ffi::c_uint {
+        Self::bool_value(self.updating)
+    }
+
+    pub fn set_updating(&mut self, value: ::core::ffi::c_uint) {
+        self.updating = value != 0;
+    }
+
+    pub fn updated(&self) -> ::core::ffi::c_uint {
+        Self::bool_value(self.updated)
+    }
+
+    pub fn set_updated(&mut self, value: ::core::ffi::c_uint) {
+        self.updated = value != 0;
+    }
+
+    pub fn phony(&self) -> ::core::ffi::c_uint {
+        Self::bool_value(self.phony)
+    }
+
+    pub fn dontcare(&self) -> ::core::ffi::c_uint {
+        Self::bool_value(self.dontcare)
+    }
+
+    pub fn set_dontcare(&mut self, value: ::core::ffi::c_uint) {
+        self.dontcare = value != 0;
+    }
+
+    pub fn no_diag(&self) -> ::core::ffi::c_uint {
+        Self::bool_value(self.no_diag)
+    }
+
+    pub fn set_no_diag(&mut self, value: ::core::ffi::c_uint) {
+        self.no_diag = value != 0;
+    }
+}
+
+impl Dep {
+    pub fn changed(&self) -> ::core::ffi::c_uint {
+        self.changed as ::core::ffi::c_uint
+    }
+
+    pub fn set_changed(&mut self, value: ::core::ffi::c_uint) {
+        self.changed = value != 0;
+    }
+
+    pub fn ignore_mtime(&self) -> ::core::ffi::c_uint {
+        self.ignore_mtime as ::core::ffi::c_uint
+    }
+
+    pub fn set_ignore_mtime(&mut self, value: ::core::ffi::c_uint) {
+        self.ignore_mtime = value != 0;
+    }
+
+    pub fn need_2nd_expansion(&self) -> ::core::ffi::c_uint {
+        self.need_2nd_expansion as ::core::ffi::c_uint
+    }
+
+    pub fn set_need_2nd_expansion(&mut self, value: ::core::ffi::c_uint) {
+        self.need_2nd_expansion = value != 0;
+    }
+
+    pub fn ignore_automatic_vars(&self) -> ::core::ffi::c_uint {
+        self.ignore_automatic_vars as ::core::ffi::c_uint
+    }
+
+    pub fn set_ignore_automatic_vars(&mut self, value: ::core::ffi::c_uint) {
+        self.ignore_automatic_vars = value != 0;
+    }
+
+    pub fn wait_here(&self) -> ::core::ffi::c_uint {
+        self.wait_here as ::core::ffi::c_uint
+    }
+
+    pub fn set_wait_here(&mut self, value: ::core::ffi::c_uint) {
+        self.wait_here = value != 0;
+    }
+}
+
+impl GoalDep {
+    pub fn flags(&self) -> ::core::ffi::c_uint {
+        self.flags
+    }
+
+    pub fn set_flags(&mut self, value: ::core::ffi::c_uint) {
+        self.flags = value;
+    }
+
+    pub fn changed(&self) -> ::core::ffi::c_uint {
+        self.changed as ::core::ffi::c_uint
+    }
+
+    pub fn set_changed(&mut self, value: ::core::ffi::c_uint) {
+        self.changed = value != 0;
+    }
+
+    pub fn wait_here(&self) -> ::core::ffi::c_uint {
+        self.wait_here as ::core::ffi::c_uint
+    }
+
+    pub fn set_wait_here(&mut self, value: ::core::ffi::c_uint) {
+        self.wait_here = value != 0;
+    }
+}
+
+impl crate::content_hash::ContentHash for DepFlags {
+    fn hash(&self, state: &mut impl crate::content_hash::DigestUpdate) {
+        state.update(&self.bits().to_le_bytes());
+    }
+}
+
 pub type hash_map_func_t = crate::hash::hash_map_func_t;
 pub type qsort_cmp_t =
     Option<unsafe extern "C" fn(*const ::core::ffi::c_void, *const ::core::ffi::c_void) -> i32>;
@@ -927,8 +1144,8 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                                 strlen((*f).name) as size_t,
                                 b"*** deleting intermediate file '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+                            );
                         } else {
                             if doneany == 0 && 0x1_i32 & db_level != 0 {
                                 printf(
@@ -1502,8 +1719,8 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             0,
             b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &[],
+        );
     }
     f = lookup_file(b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
     if f.as_ref().is_some_and(|fr| fr.is_target() as i32 != 0) {
@@ -1765,9 +1982,13 @@ pub unsafe fn file_timestamp_cons(
                 .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
             b"%s: timestamp out of range: substituting %s\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((f) as *const ::core::ffi::c_char),
-            FmtArg::Str((&raw mut buf as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char)],
-    );
+            &[
+                FmtArg::Str((f) as *const ::core::ffi::c_char),
+                FmtArg::Str(
+                    (&raw mut buf as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char,
+                ),
+            ],
+        );
     }
 }
 /// Sample the wall clock and pack it into a `FILE_TIMESTAMP`, returning the
@@ -2087,7 +2308,8 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
                         as *const ::core::ffi::c_char,
                 );
             }
-        }
+            _ => {}
+        },
         _ => {
             puts(
                 b"#  Invalid value in 'command_state' member!\0" as *const u8

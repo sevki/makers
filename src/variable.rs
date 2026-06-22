@@ -1,8 +1,3 @@
-pub use crate::output::{FmtArg, error, fatal, format_message};
-pub use crate::misc::concat;
-pub use crate::expand::allocated_expand_string_for_file;
-pub use crate::expand::recursively_expand_for_file;
-pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};

@@ -1,17 +1,12 @@
-pub use crate::output::{FmtArg, error, fatal};
-pub use crate::expand::allocated_expand_string_for_file;
-pub use crate::job::construct_command_argv;
-pub use crate::variable::target_environment;
-use crate::read::parse_file_seq;
-pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
 };
-use crate::file::{File, VariableSet, VariableSetList};
+use crate::file::{File, NameSeq, VariableSet, VariableSetList};
 use crate::misc::{
     end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
 };
+use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
@@ -2977,9 +2972,11 @@ unsafe fn expand_builtin_function(
             strlen((*entry_p).name) as size_t,
             b"insufficient number of arguments (%u) to function '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((argc) as u32 as u64),
-            FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char)],
-    );
+            &[
+                FmtArg::Uint((argc) as u32 as u64),
+                FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char),
+            ],
+        );
     }
     if argc == 0 && (*entry_p).alloc_fn() == 0 {
         return o;
@@ -2991,8 +2988,8 @@ unsafe fn expand_builtin_function(
             strlen((*entry_p).name) as size_t,
             b"unimplemented on this platform: function '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char)],
-    );
+            &[FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char)],
+        );
     }
     if (*entry_p).adds_command() != 0 {
         crate::make_main::bump_command_count();
@@ -3334,9 +3331,11 @@ pub unsafe fn define_new_function(
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
             b"invalid minimum argument count (%u) for function %s\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((min) as u32 as u64),
-            FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+            &[
+                FmtArg::Uint((min) as u32 as u64),
+                FmtArg::Str((name) as *const ::core::ffi::c_char),
+            ],
+        );
     }
     if max > 255 || max != 0 && max < min {
         fatal(
@@ -3345,9 +3344,11 @@ pub unsafe fn define_new_function(
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
             b"invalid maximum argument count (%u) for function %s\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((max) as u32 as u64),
-            FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+            &[
+                FmtArg::Uint((max) as u32 as u64),
+                FmtArg::Str((name) as *const ::core::ffi::c_char),
+            ],
+        );
     }
     ent = xmalloc(::core::mem::size_of::<function_table_entry>() as size_t)
         as *mut function_table_entry;
