@@ -243,6 +243,14 @@ fn log_functions_error() {
 }
 
 #[test]
+fn notdir_suffix_functions() {
+    // $(notdir)/$(suffix) share func_notdir_suffix, now selected via the typed
+    // NotdirSuffix AST classifier instead of the raw `*funcname == 's'` byte
+    // test. Output is byte-stable, so compare directly against the C oracle.
+    check("notdir-suffix", "61_notdir_suffix.mk", "all", &[]);
+}
+
+#[test]
 fn variable_expansion() {
     check("vars", "02_vars.mk", "all", &["FROMCMD=cli"]);
 }
