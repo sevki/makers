@@ -30,12 +30,23 @@ pub struct Config {
 pub struct ExecContext {
     /// Read-only process configuration.
     pub config: Config,
+
+    /// `f_mtime`'s future-timestamp cache: the most recently sampled "adjusted
+    /// now" (`file_timestamp_now` plus the timestamp resolution slack). When a
+    /// file's mtime is at or before this value it is known not to be in the
+    /// future without re-reading the system clock, so the warning check only
+    /// re-samples the clock when a file's mtime is past the cache. Per-run
+    /// mutable state — interior mutability keeps readers on `&ExecContext`.
+    pub mtime_adjusted_now: ::core::cell::Cell<crate::ffi_types::uintmax_t>,
 }
 
 impl ExecContext {
     /// Build a context over the given immutable [`Config`].
     pub fn new(config: Config) -> Self {
-        Self { config }
+        Self {
+            config,
+            ..Self::default()
+        }
     }
 
     /// `$(MAKELEVEL)` for this make process.

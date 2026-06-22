@@ -1762,6 +1762,17 @@ pub unsafe fn remake_file(ctx: &crate::execctx::ExecContext, file: *mut file) {
     }
     notice_finished_file(ctx, file);
 }
+/// Refresh `f_mtime`'s cached "adjusted now" from a freshly sampled clock.
+///
+/// Adds the timestamp resolution slack (`resolution - 1`) the original used so
+/// a file at most one clock tick ahead of `now` is not flagged as being in the
+/// future. Extracted as a pure function over the raw clock sample so the cache
+/// arithmetic can be differential-tested against the original `static mut`
+/// implementation (see `adjusted_now_from_clock_oracle` in the tests).
+fn adjusted_now_from_clock(now: uintmax_t, resolution: i32) -> uintmax_t {
+    now.wrapping_add((resolution - 1) as uintmax_t)
+}
+
 /// Return the mtime of file F, computing it if necessary. Returns
 /// NONEXISTENT_MTIME if the file does not exist.
 ///
@@ -1932,12 +1943,12 @@ pub unsafe fn f_mtime(
             })
         && (*file).updated() == 0
     {
-        static mut adjusted_now: uintmax_t = 0;
         let adjusted_mtime: uintmax_t = mtime;
-        if adjusted_now < adjusted_mtime {
+        if ctx.mtime_adjusted_now.get() < adjusted_mtime {
             let mut resolution: i32 = 0;
             let now: uintmax_t = file_timestamp_now(ctx, &raw mut resolution);
-            adjusted_now = now.wrapping_add((resolution - 1) as uintmax_t);
+            let adjusted_now: uintmax_t = adjusted_now_from_clock(now, resolution);
+            ctx.mtime_adjusted_now.set(adjusted_now);
             if adjusted_now < adjusted_mtime {
                 let from_now: ::core::ffi::c_double = (mtime
                     .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
@@ -2489,6 +2500,106 @@ mod f_mtime_tests {
         }
         crate::make_main::CLOCK_SKEW_DETECTED.store(saved_skew, Ordering::Relaxed);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Verbatim port of the original future-mtime cache arithmetic, before the
+    /// `static mut adjusted_now` was moved onto `ExecContext`: the cached
+    /// "adjusted now" is the freshly sampled clock plus one tick less than the
+    /// timestamp resolution. Kept as a `#[cfg(test)]` oracle per `AGENTS.md`
+    /// so the extracted `adjusted_now_from_clock` is proven behavior-preserving.
+    fn adjusted_now_from_clock_oracle(now: uintmax_t, resolution: i32) -> uintmax_t {
+        now.wrapping_add((resolution - 1) as uintmax_t)
+    }
+
+    /// `adjusted_now_from_clock` matches the original arithmetic across
+    /// representative clock samples and resolutions, including `resolution == 0`
+    /// (which subtracts one and wraps, exactly as the C `uintmax_t` did) and a
+    /// coarse resolution that pushes the cache ahead of the raw clock.
+    #[test]
+    fn adjusted_now_from_clock_matches_oracle() {
+        let cases: &[(uintmax_t, i32)] = &[
+            (0, 0),
+            (0, 1),
+            (1_000_000_000, 1),
+            (1_000_000_000, 1_000_000_000),
+            (uintmax_t::MAX, 1), // resolution 1 => +0, no wrap
+            (0, 1_000_000_000),  // now 0, coarse resolution
+            (5, 0),              // resolution 0 => wrapping_sub(1)
+        ];
+        for &(now, resolution) in cases {
+            assert_eq!(
+                adjusted_now_from_clock(now, resolution),
+                adjusted_now_from_clock_oracle(now, resolution),
+                "diverged for now={now}, resolution={resolution}"
+            );
+        }
+    }
+
+    /// Models `f_mtime`'s cross-call cache gate: the system clock is re-sampled
+    /// only when a file's mtime is past the cached "adjusted now", and a file
+    /// warns only when it is still past the cache after that refresh. Drives a
+    /// sequence of files through a model of the gate (with a stubbed clock) and
+    /// against an oracle of the original `static mut` control flow, asserting
+    /// they agree on which calls re-read the clock and which warn — the
+    /// behavior that must survive moving the cache onto `ExecContext`.
+    #[test]
+    fn future_mtime_cache_gate_matches_oracle() {
+        // One file's pass through the gate, returning the carried cache plus
+        // whether this call re-sampled the clock and whether it warned.
+        fn step_new(
+            cached: uintmax_t,
+            mtime: uintmax_t,
+            clock_now: uintmax_t,
+            resolution: i32,
+        ) -> (uintmax_t, bool, bool) {
+            if cached < mtime {
+                let adjusted_now = adjusted_now_from_clock(clock_now, resolution);
+                (adjusted_now, true, adjusted_now < mtime)
+            } else {
+                (cached, false, false)
+            }
+        }
+        // The original control flow, transcribed against threaded state.
+        fn step_oracle(
+            adjusted_now: uintmax_t,
+            mtime: uintmax_t,
+            clock_now: uintmax_t,
+            resolution: i32,
+        ) -> (uintmax_t, bool, bool) {
+            let adjusted_mtime = mtime;
+            if adjusted_now < adjusted_mtime {
+                let new_adjusted = clock_now.wrapping_add((resolution - 1) as uintmax_t);
+                let warned = new_adjusted < adjusted_mtime;
+                (new_adjusted, true, warned)
+            } else {
+                (adjusted_now, false, false)
+            }
+        }
+
+        // (mtime, clock_now, resolution) for a run of files. The clock advances
+        // monotonically; mixes files behind, at, and ahead of the cache.
+        let timeline: &[(uintmax_t, uintmax_t, i32)] = &[
+            (100, 100, 1), // first file: cache 0 < 100 -> sample, now==mtime, no warn
+            (50, 100, 1),  // behind cache -> skip clock, no warn
+            (100, 100, 1), // at cache (100 < 100 false) -> skip
+            (200, 150, 1), // ahead of cache -> sample, 150 < 200 -> warn
+            (200, 250, 1), // 200(cache from prev=150) < 200 false -> skip
+            (300, 260, 1), // sample, 260 < 300 -> warn
+            (300, 400, 1), // cache 260 < 300 -> sample, 400 >= 300 -> no warn
+            (300, 400, 5), // cache 400 -> skip
+        ];
+        let (mut c_new, mut c_ora) = (0 as uintmax_t, 0 as uintmax_t);
+        for &(mtime, clock_now, resolution) in timeline {
+            let (nn, n_read, n_warn) = step_new(c_new, mtime, clock_now, resolution);
+            let (on, o_read, o_warn) = step_oracle(c_ora, mtime, clock_now, resolution);
+            assert_eq!(
+                (nn, n_read, n_warn),
+                (on, o_read, o_warn),
+                "gate diverged at mtime={mtime}, clock_now={clock_now}, resolution={resolution}"
+            );
+            c_new = nn;
+            c_ora = on;
+        }
     }
 }
 
