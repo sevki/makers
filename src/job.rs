@@ -997,26 +997,38 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
     if handling_fatal_signal != 0 {
         return;
     }
-    if !(*child).command_lines.is_null() {
-        let mut i: ::core::ffi::c_uint;
-        i = 0;
-        while i
-            < (*child)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .cmds
-                .as_ref()
-                .expect("a child being run has a recipe")
-                .ncommand_lines as ::core::ffi::c_uint
-        {
-            free(*(*child).command_lines.offset(i as isize) as *mut ::core::ffi::c_void);
-            i = i.wrapping_add(1);
-        }
-        free((*child).command_lines as *mut ::core::ffi::c_void);
-    }
+    free_command_lines(child);
     free_childbase(child as *mut childbase);
     free(child as *mut ::core::ffi::c_void);
+}
+
+/// Free a child's expanded per-line recipe argv — each line buffer and then the
+/// array itself — if one was built. Split out of `free_child` to keep that
+/// function's complexity flat.
+///
+/// # Safety
+///
+/// `child` must be a valid `child` whose `command_lines`, when non-null, holds
+/// `ncommand_lines` heap-allocated line pointers.
+unsafe fn free_command_lines(child: *mut child) {
+    if (*child).command_lines.is_null() {
+        return;
+    }
+    let mut i: ::core::ffi::c_uint = 0;
+    while i
+        < (*child)
+            .file
+            .as_ref()
+            .expect("a child always has a file")
+            .cmds
+            .as_ref()
+            .expect("a child being run has a recipe")
+            .ncommand_lines as ::core::ffi::c_uint
+    {
+        free(*(*child).command_lines.offset(i as isize) as *mut ::core::ffi::c_void);
+        i = i.wrapping_add(1);
+    }
+    free((*child).command_lines as *mut ::core::ffi::c_void);
 }
 /// # Safety
 ///

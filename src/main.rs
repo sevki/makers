@@ -3765,26 +3765,38 @@ unsafe extern "C" fn quote_for_env(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+/// Drop the built-in suffix rules: free `.SUFFIXES`' builtin dependency chain
+/// and reset the `SUFFIXES` variable to empty. Split out of `disable_builtins`
+/// so that function stays a flat sequence of flag checks.
+///
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; the global rule/variable tables must be initialized.
+unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) {
+    if !suffix_file.is_null() && (*suffix_file).builtin() as i32 != 0 {
+        free_dep_chain((*suffix_file).deps);
+        (*suffix_file).deps = ::core::ptr::null_mut::<dep>();
+    }
+    define_variable_in_set(
+        ctx,
+        b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
+        (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+        (*current_variable_set_list).set,
+        NILF,
+    );
+}
+
 pub unsafe fn disable_builtins(ctx: &crate::execctx::ExecContext, options: &Options) {
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
     if options.no_builtin_rules.get() && old_builtin_rules_flag == 0 {
         old_builtin_rules_flag = 1;
-        if !suffix_file.is_null() && (*suffix_file).builtin() as i32 != 0 {
-            free_dep_chain((*suffix_file).deps);
-            (*suffix_file).deps = ::core::ptr::null_mut::<dep>();
-        }
-        define_variable_in_set(
-            ctx,
-            b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-            (*current_variable_set_list).set,
-            NILF,
-        );
+        clear_builtin_rules(ctx);
     }
     if options.no_builtin_variables.get() && old_builtin_variables_flag == 0 {
         old_builtin_variables_flag = 1;
