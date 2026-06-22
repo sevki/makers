@@ -971,6 +971,27 @@ pub unsafe fn free_childbase(child: *mut childbase) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
     crate::output::output_close(ctx, &raw mut (*child).output);
+    release_jobserver_token(ctx, child);
+    if handling_fatal_signal != 0 {
+        return;
+    }
+    free_command_lines(child);
+    free_childbase(child as *mut childbase);
+    free(child as *mut ::core::ffi::c_void);
+}
+
+/// Account for this child's jobserver token as it is freed: assert a token is
+/// still outstanding, hand one back to the jobserver when more than one is held
+/// (tracing the release under `-d`), and decrement the local token count. Split
+/// out of `free_child` so that function stays a flat teardown sequence — these
+/// jobserver paths only fire under specific token/debug conditions and are
+/// exercised by the parallel-build integration tests rather than unit tests.
+///
+/// # Safety
+///
+/// `child` must be a valid `child` whose `file` is live; the jobserver globals
+/// must be initialized.
+unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut child) {
     if jobserver_tokens() == 0 {
         fatal(
             ctx,
@@ -1008,12 +1029,6 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
         }
     }
     JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
-    if handling_fatal_signal != 0 {
-        return;
-    }
-    free_command_lines(child);
-    free_childbase(child as *mut childbase);
-    free(child as *mut ::core::ffi::c_void);
 }
 
 /// Free a child's expanded per-line recipe argv — each line buffer and then the
