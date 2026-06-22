@@ -1919,125 +1919,46 @@ pub unsafe fn print_targets() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+unsafe fn verify_field_cached(
+    ctx: &crate::execctx::ExecContext,
+    owner: *const ::core::ffi::c_char,
+    field: &::core::ffi::CStr,
+    value: *const ::core::ffi::c_char,
+) {
+    // A field is well-formed when it is null/empty, or interned in the strcache.
+    if value.is_null() || *value as i32 == 0 || strcache_iscached(value) != 0 {
+        return;
+    }
+    error(
+        ctx,
+        ::core::ptr::null::<Floc>(),
+        (strlen(owner) as size_t)
+            .wrapping_add(field.count_bytes() as size_t)
+            .wrapping_add(strlen(value) as size_t),
+        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        owner,
+        field.as_ptr(),
+        value,
+    );
+}
+
 pub unsafe fn verify_file(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     // Invoked via `hash_map_arg`; `arg` carries the borrowed `ExecContext` so the
     // diagnostics below can be prefixed correctly without any global.
     let ctx = &*(arg as *const crate::execctx::ExecContext);
     let f: *const file = item as *const file;
-    let mut d: *const dep;
-    if !(*f).name.is_null()
-        && *(*f).name.offset(0_i32 as isize) as i32 != 0
-        && strcache_iscached((*f).name) == 0
-    {
-        error(
-            ctx,
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).name) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"name\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-        );
-    }
-    if !(*f).hname.is_null()
-        && *(*f).hname.offset(0_i32 as isize) as i32 != 0
-        && strcache_iscached((*f).hname) == 0
-    {
-        error(
-            ctx,
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).hname) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"hname\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).hname,
-        );
-    }
-    if !(*f).vpath.is_null()
-        && *(*f).vpath.offset(0_i32 as isize) as i32 != 0
-        && strcache_iscached((*f).vpath) == 0
-    {
-        error(
-            ctx,
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).vpath) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"vpath\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).vpath,
-        );
-    }
-    if !(*f).stem.is_null()
-        && *(*f).stem.offset(0_i32 as isize) as i32 != 0
-        && strcache_iscached((*f).stem) == 0
-    {
-        error(
-            ctx,
-            ::core::ptr::null::<Floc>(),
-            (strlen((*f).name) as size_t)
-                .wrapping_add(
-                    (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-                )
-                .wrapping_add(strlen((*f).stem) as size_t),
-            b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).name,
-            b"stem\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).stem,
-        );
-    }
-    d = (*f).deps;
+
+    verify_field_cached(ctx, (*f).name, c"name", (*f).name);
+    verify_field_cached(ctx, (*f).name, c"hname", (*f).hname);
+    verify_field_cached(ctx, (*f).name, c"vpath", (*f).vpath);
+    verify_field_cached(ctx, (*f).name, c"stem", (*f).stem);
+
+    let mut d: *const dep = (*f).deps;
     while !d.is_null() {
-        if (*d).need_2nd_expansion() == 0
-            && !(*d).name.is_null()
-            && *(*d).name.offset(0_i32 as isize) as i32 != 0
-            && strcache_iscached((*d).name) == 0
-        {
-            error(
-                ctx,
-                ::core::ptr::null::<Floc>(),
-                (strlen((*d).name) as size_t)
-                    .wrapping_add(
-                        (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
-                            .wrapping_sub(1),
-                    )
-                    .wrapping_add(strlen((*d).name) as size_t),
-                b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).name,
-                b"name\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).name,
-            );
+        if (*d).need_2nd_expansion() == 0 {
+            verify_field_cached(ctx, (*d).name, c"name", (*d).name);
         }
-        if !(*d).stem.is_null()
-            && *(*d).stem.offset(0_i32 as isize) as i32 != 0
-            && strcache_iscached((*d).stem) == 0
-        {
-            error(
-                ctx,
-                ::core::ptr::null::<Floc>(),
-                (strlen((*d).name) as size_t)
-                    .wrapping_add(
-                        (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t)
-                            .wrapping_sub(1),
-                    )
-                    .wrapping_add(strlen((*d).stem) as size_t),
-                b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).name,
-                b"stem\0" as *const u8 as *const ::core::ffi::c_char,
-                (*d).stem,
-            );
-        }
+        verify_field_cached(ctx, (*d).name, c"stem", (*d).stem);
         d = (*d).next;
     }
 }

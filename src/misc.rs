@@ -665,47 +665,75 @@ const DEFAULT_TMPFILE: &::core::ffi::CStr = c"GmXXXXXX";
 /// # Safety
 /// Must run single-threaded: it caches its result in a static and reads the
 /// environment.
+/// Outcome of probing one `$TMPDIR`-style environment variable.
+enum TmpdirCandidate {
+    /// Unset or empty: skip silently.
+    Unset,
+    /// Set and pointing at a usable directory.
+    Usable(*const c_char),
+    /// Set but unusable (missing, stat error, or not a directory): already
+    /// reported, and means the caller should fall back to the default.
+    Invalid,
+}
+
+/// Probe one candidate environment variable, reporting any set-but-unusable
+/// value via `error`. Pulled out of `get_tmpdir` to keep that function flat.
+unsafe fn eval_tmpdir_var(
+    ctx: &crate::execctx::ExecContext,
+    var: &::core::ffi::CStr,
+) -> TmpdirCandidate {
+    let val = getenv(var.as_ptr());
+    if val.is_null() || *val == 0 {
+        return TmpdirCandidate::Unset;
+    }
+
+    let mut st: stat = ::core::mem::zeroed();
+    let mut r: i32;
+    loop {
+        r = stat(val, &mut st);
+        if !(r == -1 && *__errno_location() == EINTR) {
+            break;
+        }
+    }
+    if r < 0 {
+        error(
+            ctx,
+            null::<Floc>(),
+            var.count_bytes() + strlen(val) + strlen(strerror(*__errno_location())),
+            c"%s value %s: %s".as_ptr(),
+            var.as_ptr(),
+            val,
+            strerror(*__errno_location()),
+        );
+        return TmpdirCandidate::Invalid;
+    }
+    if st.st_mode & S_IFMT != S_IFDIR {
+        error(
+            ctx,
+            null::<Floc>(),
+            var.count_bytes() + strlen(val),
+            c"%s value %s: not a directory".as_ptr(),
+            var.as_ptr(),
+            val,
+        );
+        return TmpdirCandidate::Invalid;
+    }
+    TmpdirCandidate::Usable(val)
+}
+
 pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
     static mut tmpdir: *const c_char = null();
 
     if tmpdir.is_null() {
         let mut found = false;
         for var in [c"MAKE_TMPDIR", c"TMPDIR"] {
-            tmpdir = getenv(var.as_ptr());
-            if tmpdir.is_null() || *tmpdir == 0 {
-                continue;
-            }
-            found = true;
-
-            let mut st: stat = ::core::mem::zeroed();
-            let mut r: i32;
-            loop {
-                r = stat(tmpdir, &mut st);
-                if !(r == -1 && *__errno_location() == EINTR) {
-                    break;
+            match eval_tmpdir_var(ctx, var) {
+                TmpdirCandidate::Unset => {}
+                TmpdirCandidate::Usable(val) => {
+                    tmpdir = val;
+                    return tmpdir;
                 }
-            }
-            if r < 0 {
-                error(
-                    ctx,
-                    null::<Floc>(),
-                    var.count_bytes() + strlen(tmpdir) + strlen(strerror(*__errno_location())),
-                    c"%s value %s: %s".as_ptr(),
-                    var.as_ptr(),
-                    tmpdir,
-                    strerror(*__errno_location()),
-                );
-            } else if st.st_mode & S_IFMT != S_IFDIR {
-                error(
-                    ctx,
-                    null::<Floc>(),
-                    var.count_bytes() + strlen(tmpdir),
-                    c"%s value %s: not a directory".as_ptr(),
-                    var.as_ptr(),
-                    tmpdir,
-                );
-            } else {
-                return tmpdir;
+                TmpdirCandidate::Invalid => found = true,
             }
         }
 
