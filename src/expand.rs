@@ -7,6 +7,7 @@
 pub use crate::ffi_types::size_t;
 use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{lindex, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::output::FmtArg;
 use crate::stdio::FILE;
 use libc::{free, memcpy, printf, strchr, strlen, strncmp};
 extern "C" {

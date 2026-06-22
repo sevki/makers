@@ -1,4 +1,4 @@
-use crate::file::{Dep, File};
+use crate::file::{Dep, File, GoalDep, NextLinked};
 use std::sync::{Mutex, OnceLock};
 
 use crate::fatal;

@@ -23,6 +23,7 @@ pub mod getopt;
 pub mod getopt1;
 pub mod guile;
 pub mod hash;
+pub mod id_wireformat;
 pub mod implicit;
 pub mod job;
 pub mod load;

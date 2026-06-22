@@ -1,14 +1,3 @@
-pub use crate::output::{FmtArg, error, fatal};
-pub use crate::misc::concat;
-pub use crate::file::enter_file;
-pub use crate::file::lookup_file;
-pub use crate::load::load_file;
-pub use crate::read::read_all_makefiles;
-pub use crate::remake::f_mtime;
-pub use crate::remake::update_goal_chain;
-pub use crate::rule::suffix_file;
-use crate::read::parse_file_seq;
-pub use crate::file::{CommandState, UpdateStatus};
 use crate::default::{
     define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
     set_default_suffixes, undefine_default_variables,
@@ -18,7 +7,10 @@ pub use crate::ffi_types::{
     __clock_t, __off64_t, __off_t, __pid_t, __sig_atomic_t, __uid_t, pid_t, sig_atomic_t, size_t,
     uintmax_t,
 };
-use crate::file::{Dep, File, VariableSet, VariableSetList};
+use crate::file::{
+    dep, file, CommandState, Dep, File, GoalDep, NameSeq, UpdateStatus, VariableSet,
+    VariableSetList,
+};
 use crate::floc::Floc;
 use crate::load::unload_all;
 use crate::misc::free_ns_chain;
@@ -1636,8 +1628,8 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
                             strlen(p) as size_t,
                             b"unknown debug level specification '%s'\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
-    );
+                            &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+                        );
                     }
                 }
                 loop {
@@ -2343,8 +2335,8 @@ unsafe fn main_0(
                         0,
                         b"Makefile from standard input specified twice\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                        &[],
+                    );
                 }
                 outfile = get_tmpfile(&ctx, &raw mut newnm);
                 if outfile.is_null() {
@@ -2354,8 +2346,8 @@ unsafe fn main_0(
                         0,
                         b"cannot store makefile from stdin to a temporary file\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                        &[],
+                    );
                 }
                 while feof(stdin) == 0 && ferror(stdin) == 0 {
                     let mut buf: [::core::ffi::c_char; 2048] = [0; 2048];
@@ -2381,9 +2373,13 @@ unsafe fn main_0(
                                 .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                             b"fwrite: temporary file %s: %s\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((newnm) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                            &[
+                                FmtArg::Str((newnm) as *const ::core::ffi::c_char),
+                                FmtArg::Str(
+                                    (strerror(*__errno_location())) as *const ::core::ffi::c_char,
+                                ),
+                            ],
+                        );
                     }
                 }
                 fclose(outfile);
@@ -2912,8 +2908,8 @@ unsafe fn main_0(
                                 strlen(dnm) as size_t,
                                 b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+                            );
                         } else {
                             error(
                                 &ctx,
@@ -2921,8 +2917,8 @@ unsafe fn main_0(
                                 strlen(dnm) as size_t,
                                 b"makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+                            );
                             any_failed = 1;
                         }
                     }
@@ -3132,9 +3128,9 @@ unsafe fn main_0(
                     fatal(
                         &ctx,
                         ::core::ptr::null_mut::<Floc>(),
-                        0,
                         b"couldn't change back to original directory\0" as *const u8
                             as *const ::core::ffi::c_char,
+                        &[],
                     );
                 }
             }
@@ -3281,7 +3277,7 @@ unsafe fn main_0(
                     MAP_NUL,
                     ::core::ptr::null::<::core::ffi::c_char>(),
                     PARSEFS_NONE,
-    );
+                );
                 if !ns.is_null() {
                     if !(*ns).next.is_null() {
                         fatal(
@@ -3290,8 +3286,8 @@ unsafe fn main_0(
                             0,
                             b".DEFAULT_GOAL contains more than one target\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[],
-    );
+                            &[],
+                        );
                     }
                     f_6 = enter_file(strcache_add((*ns).name));
                     (*ns).name = ::core::ptr::null::<::core::ffi::c_char>();
@@ -3329,8 +3325,8 @@ unsafe fn main_0(
             0,
             b"No targets specified and no makefile found\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &[],
+        );
     }
     crate::shuffle::shuffle_deps_recursive(goals as *mut crate::file::Dep);
     if 0x1_i32 & db_level != 0 {
@@ -3353,8 +3349,8 @@ unsafe fn main_0(
             0,
             b"warning: clock skew detected: your build may be incomplete\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &[],
+        );
     }
     die(&ctx, makefile_status);
 }

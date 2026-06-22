@@ -1,13 +1,8 @@
-pub use crate::output::{FmtArg, error, fatal};
-pub use crate::misc::concat;
-pub use crate::file::enter_file;
-pub use crate::file::lookup_file;
-pub use crate::remake::f_mtime;
-pub use crate::file::{CommandState, UpdateStatus};
+use crate::output::FmtArg;
 use libc::{fnmatch, free, strchr};
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
-use crate::file::{Dep, File};
+use crate::file::{Dep, File, SeqNode};
 use crate::misc::{xcalloc, xstrdup};
 use crate::strcache::strcache_add;
 extern "C" {
@@ -60,7 +55,7 @@ use crate::output::{error, fatal, out_of_memory, perror_with_name};
 use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct ar_glob_state {
+pub struct ArGlobState<T: SeqNode> {
     pub arname: *const ::core::ffi::c_char,
     pub pattern: *const ::core::ffi::c_char,
     pub chain: *mut T,
@@ -324,9 +319,11 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
                 (strlen(memname) as size_t).wrapping_add(strlen(arname) as size_t),
                 b"touch: member '%s' does not exist in '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((memname) as *const ::core::ffi::c_char),
-            FmtArg::Str((arname) as *const ::core::ffi::c_char)],
-    );
+                &[
+                    FmtArg::Str((memname) as *const ::core::ffi::c_char),
+                    FmtArg::Str((arname) as *const ::core::ffi::c_char),
+                ],
+            );
         }
         0 => {
             val = 0;
@@ -338,8 +335,8 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
                 strlen(name) as size_t,
                 b"touch: bad return code from ar_member_touch on '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+            );
         }
     }
     free(arname as *mut ::core::ffi::c_void);
@@ -363,7 +360,15 @@ unsafe fn ar_glob_match(
     let state: *mut ArGlobState<T> = arg as *mut ArGlobState<T>;
     if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
         let new: *mut T = T::alloc();
-        T::set_name(new, strcache_add(concat(&[(*state).arname, b"(\0" as *const u8 as *const ::core::ffi::c_char, mem, b")\0" as *const u8 as *const ::core::ffi::c_char])));
+        T::set_name(
+            new,
+            strcache_add(concat(&[
+                (*state).arname,
+                b"(\0" as *const u8 as *const ::core::ffi::c_char,
+                mem,
+                b")\0" as *const u8 as *const ::core::ffi::c_char,
+            ])),
+        );
         T::set_next(new, (*state).chain);
         (*state).chain = new;
         (*state).n = (*state).n.wrapping_add(1);

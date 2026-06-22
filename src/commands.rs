@@ -469,7 +469,6 @@ pub unsafe fn chop_commands(ctx: &crate::execctx::ExecContext, cmds: *mut comman
                 fatal(
                     ctx,
                     &raw mut cmds.fileinfo,
-                    INTSTR_LENGTH,
                     c"recipe has too many lines (limit %hu)".as_ptr(),
                     nlines as i32,
                 );
@@ -674,18 +673,15 @@ unsafe fn delete_target(
                 error(
                     ctx,
                     null::<Floc>(),
-                    strlen(on_behalf_of) + strlen(file.name),
                     c"*** [%s] archive member '%s' may be bogus; not deleted".as_ptr(),
-                    on_behalf_of,
-                    file.name,
+                    &[FmtArg::Str(on_behalf_of), FmtArg::Str(file.name)],
                 );
             } else {
                 error(
                     ctx,
                     null::<Floc>(),
-                    strlen(file.name),
                     c"*** archive member '%s' may be bogus; not deleted".as_ptr(),
-                    file.name,
+                    &[FmtArg::Str(file.name)],
                 );
             }
         }
@@ -712,18 +708,15 @@ unsafe fn delete_target(
             error(
                 ctx,
                 null::<Floc>(),
-                strlen(on_behalf_of) + strlen(file.name),
                 c"*** [%s] deleting file '%s'".as_ptr(),
-                on_behalf_of,
-                file.name,
+                &[FmtArg::Str(on_behalf_of), FmtArg::Str(file.name)],
             );
         } else {
             error(
                 ctx,
                 null::<Floc>(),
-                strlen(file.name),
                 c"*** deleting file '%s'".as_ptr(),
-                file.name,
+                &[FmtArg::Str(file.name)],
             );
         }
         if unlink(file.name) < 0 && *__errno_location() != ENOENT {

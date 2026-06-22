@@ -282,7 +282,6 @@ pub unsafe fn hash_insert_at(
         if old_item.is_null() {
             (*ht).ht_empty_slots = (*ht).ht_empty_slots.wrapping_sub(1);
         }
-        *slot_ref = item as HashItemPtr;
     }
     *slot = item;
 
