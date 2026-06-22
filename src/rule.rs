@@ -163,12 +163,16 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
 /// # Safety
 /// The global pattern-rule list and all linked structures must be valid;
 /// must run single-threaded (mutates rule-database globals).
-pub unsafe fn snap_implicit_rules() {
+pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
     let mut dirname: Vec<u8> = Vec::new();
-    let prereqs: *mut dep = expand_extra_prereqs(lookup_variable(
-        c".EXTRA_PREREQS".as_ptr(),
-        ".EXTRA_PREREQS".len() as size_t,
-    ));
+    let prereqs: *mut dep = expand_extra_prereqs(
+        ctx,
+        lookup_variable(
+            ctx,
+            c".EXTRA_PREREQS".as_ptr(),
+            ".EXTRA_PREREQS".len() as size_t,
+        ),
+    );
     let mut pre_deps: ::core::ffi::c_uint = 0;
     max_pattern_dep_length = 0;
     let mut d: *mut dep = prereqs;
@@ -243,7 +247,7 @@ pub unsafe fn snap_implicit_rules() {
                     .extend_from_slice(::core::slice::from_raw_parts(dname.cast::<u8>(), dirlen));
                 dirname.push(0);
                 dr.set_changed(
-                    (dir_file_exists_p(dirname.as_ptr().cast(), c"".as_ptr()) == 0)
+                    (dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr()) == 0)
                         as ::core::ffi::c_uint,
                 );
             } else {
@@ -481,7 +485,11 @@ unsafe fn append_to_pattern_rules(rule: *mut rule) {
 /// # Safety
 /// `p` must point to a valid `pspec` whose strings are NUL-terminated and
 /// live for the program's lifetime; must run single-threaded.
-pub unsafe fn install_pattern_rule(p: *const pspec, terminal: i32) {
+pub unsafe fn install_pattern_rule(
+    ctx: &crate::execctx::ExecContext,
+    p: *const pspec,
+    terminal: i32,
+) {
     let spec = p.as_ref().expect("install_pattern_rule requires a pspec");
     let r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
     let rr = r.as_mut().expect("xmalloc returned null");
@@ -505,6 +513,7 @@ pub unsafe fn install_pattern_rule(p: *const pspec, terminal: i32) {
     *suffix_slot = suffix_slot.add(1);
     let mut ptr: *const ::core::ffi::c_char = spec.dep;
     rr.deps = parse_file_seq(
+        ctx,
         &raw mut ptr as *mut *mut ::core::ffi::c_char,
         ::core::mem::size_of::<dep>() as size_t,
         MAP_NUL,

@@ -519,8 +519,8 @@ unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *con
 /// `name` must be NUL-terminated; the directory tables must be
 /// initialized.
 pub unsafe fn file_exists_p(ctx: &crate::execctx::ExecContext, name: *const c_char) -> i32 {
-    if crate::ar::ar_name(::core::ffi::CStr::from_ptr(name)) {
-        return (crate::ar::ar_member_date(name) != -1) as i32;
+    if crate::ar::ar_name(ctx, ::core::ffi::CStr::from_ptr(name)) {
+        return (crate::ar::ar_member_date(ctx, name) != -1) as i32;
     }
     match split_dir(name) {
         None => dir_file_exists_p(ctx, c".".as_ptr(), name),
@@ -574,10 +574,7 @@ pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *cons
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_impossible_p(
-    ctx: &crate::execctx::ExecContext,
-    filename: *const c_char,
-) -> i32 {
+pub unsafe fn file_impossible_p(ctx: &crate::execctx::ExecContext, filename: *const c_char) -> i32 {
     let (dir, filename) = match split_dir(filename) {
         None => {
             let dir_ptr = find_directory(ctx, c".".as_ptr());
@@ -709,7 +706,13 @@ pub unsafe fn print_dir_data_base() {
 /// glob `opendir` callback: position a cursor over the cached contents of
 /// `directory`, reading it to completion first.
 unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
-    let dir = find_directory(directory)
+    // This is a glob `gl_opendir` callback invoked by the C glob machinery; its
+    // C-ABI signature cannot carry the owned `ExecContext`, and there is
+    // deliberately no global to read it from. The only use of `ctx` in the
+    // callees below is the `make[N]:` prefix on a rare readdir-failure `fatal`,
+    // which is cosmetic here, so we hand them a default (top-level) context.
+    let ctx = crate::execctx::ExecContext::default();
+    let dir = find_directory(&ctx, directory)
         .as_mut()
         .expect("find_directory never returns null");
     let Some(dc) = dir.contents.as_mut() else {
@@ -721,7 +724,7 @@ unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
         return null_mut();
     }
     // Read it all in now so the cache is complete.
-    dir_contents_file_exists_p(&raw mut *dir, null());
+    dir_contents_file_exists_p(&ctx, &raw mut *dir, null());
 
     let new = (xmalloc(::core::mem::size_of::<dirstream>() as size_t) as *mut dirstream)
         .as_mut()

@@ -15,9 +15,9 @@ use libc::{
     EINTR, SEEK_END, SEEK_SET,
 };
 
+use crate::execctx::ExecContext;
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
-use crate::execctx::ExecContext;
 use crate::make_main::{die, output_sync, program, starting_directory};
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
@@ -221,8 +221,8 @@ pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
 ///
 /// # Safety
 /// Always safe; unsafe for C-API compatibility.
-pub unsafe fn output_tmpfd() -> i32 {
-    let fd: i32 = get_tmpfd(null_mut());
+pub unsafe fn output_tmpfd(ctx: &ExecContext) -> i32 {
+    let fd: i32 = get_tmpfd(ctx, null_mut());
     fd_set_append(fd);
     fd
 }
@@ -245,11 +245,15 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     // reaching its end is the success path (the C code used `goto`).
     'setup: {
         if io_state & (IO_STDOUT_OK | IO_STDERR_OK) == 0 {
-            perror_with_name(ctx, c"output-sync suppressed: ".as_ptr(), c"stderr".as_ptr());
+            perror_with_name(
+                ctx,
+                c"output-sync suppressed: ".as_ptr(),
+                c"stderr".as_ptr(),
+            );
             break 'setup;
         }
         if io_state & IO_STDOUT_OK != 0 {
-            let fd: i32 = output_tmpfd();
+            let fd: i32 = output_tmpfd(ctx);
             if fd < 0 {
                 break 'setup;
             }
@@ -260,7 +264,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
             if (*out).out != OUTPUT_NONE && io_state & IO_COMBINED_OUTERR != 0 {
                 (*out).err = (*out).out;
             } else {
-                let fd_0: i32 = output_tmpfd();
+                let fd_0: i32 = output_tmpfd(ctx);
                 if fd_0 < 0 {
                     break 'setup;
                 }
@@ -277,7 +281,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
         0,
         c"cannot open output-sync lock file: suppressing output-sync".as_ptr(),
     );
-    output_close(out);
+    output_close(ctx, out);
     output_sync = OUTPUT_SYNC_NONE;
     osync_clear();
     IN_SETUP.store(false, Ordering::Relaxed);
@@ -408,11 +412,11 @@ pub unsafe fn output_start(ctx: &ExecContext) {
 ///
 /// # Safety
 /// `msg` must be null or a valid NUL-terminated string.
-pub unsafe fn outputs(is_err: i32, msg: *const ::core::ffi::c_char) {
+pub unsafe fn outputs(ctx: &ExecContext, is_err: i32, msg: *const ::core::ffi::c_char) {
     if msg.is_null() || *msg as i32 == 0 {
         return;
     }
-    output_start();
+    output_start(ctx);
     _outputs(output_context, is_err, msg);
 }
 static mut fmtbuf: fmtstring = fmtstring {
@@ -472,7 +476,7 @@ pub unsafe extern "C" fn message(
         *start.add(len - 1) == 0,
         "formatted message overran its buffer"
     );
-    outputs(0, start);
+    outputs(ctx, 0, start);
 }
 /// printf-style error to stderr with a file:line or program prefix;
 /// `len` must bound the formatted arguments' length.
@@ -525,7 +529,7 @@ pub unsafe extern "C" fn error(
         *start.add(len - 1) == 0,
         "formatted message overran its buffer"
     );
-    outputs(1, start);
+    outputs(ctx, 1, start);
 }
 /// Like [`error`] but adds the `*** ` marker and `.  Stop.` suffix, then
 /// dies with `MAKE_FAILURE`.
@@ -577,8 +581,8 @@ pub unsafe extern "C" fn fatal(
         *start.add(len - 1) == 0,
         "formatted message overran its buffer"
     );
-    outputs(1, start);
-    die(MAKE_FAILURE);
+    outputs(ctx, 1, start);
+    die(ctx, MAKE_FAILURE);
 }
 /// Format into the shared buffer with an optional prefix and return it.
 ///
@@ -702,12 +706,13 @@ pub mod msg {
         }
     }
 
-    fn write_line(line: String, is_err: bool) {
+    fn write_line(ctx: &ExecContext, line: String, is_err: bool) {
         let mut bytes = line.into_bytes();
         bytes.push(0);
         // SAFETY: `outputs` reads up to the trailing NUL we just appended.
         unsafe {
             outputs(
+                ctx,
                 if is_err { 1 } else { 0 },
                 bytes.as_ptr() as *const ::core::ffi::c_char,
             );
@@ -722,14 +727,14 @@ pub mod msg {
         } else {
             format!("{msg}\n")
         };
-        write_line(line, false);
+        write_line(ctx, line, false);
     }
 
     /// Print `msg` to stderr with the make program/file:line prefix and a
     /// trailing newline.
     pub fn error(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) {
         let line = format!("{}{msg}\n", build_prefix(ctx, loc, false));
-        write_line(line, true);
+        write_line(ctx, line, true);
     }
 
     /// Print `msg` to stderr with the make program/file:line prefix plus
@@ -737,9 +742,9 @@ pub mod msg {
     /// `MAKE_FAILURE`.
     pub fn fatal(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) -> ! {
         let line = format!("{}{msg}.  Stop.\n", build_prefix(ctx, loc, true));
-        write_line(line, true);
+        write_line(ctx, line, true);
         // SAFETY: `die` is the make-process exit point and never returns.
-        unsafe { die(MAKE_FAILURE) }
+        unsafe { die(ctx, MAKE_FAILURE) }
     }
 }
 

@@ -21,7 +21,7 @@ use crate::make_main::{
     always_make_flag, cmd_prefix, default_file, one_shell, stopchar_map, temp_stdin_unlink,
 };
 use crate::misc::{make_pid, xmalloc, xrealloc, xstrdup, xstrndup};
-use crate::output::{error, fatal, perror_with_name, pfatal_with_name, INTSTR_LENGTH};
+use crate::output::{error, fatal, perror_with_name, INTSTR_LENGTH};
 use crate::posixos::{jobserver_clear, osync_clear};
 use crate::remake::notice_finished_file;
 use crate::stdio::FILE;
@@ -109,8 +109,14 @@ fn finish_list(buf: &mut [u8], len: usize) {
     }
 }
 
-unsafe fn define_automatic(file: &mut File, name: &CStr, value: *const c_char) {
+unsafe fn define_automatic(
+    ctx: &crate::execctx::ExecContext,
+    file: &mut File,
+    name: &CStr,
+    value: *const c_char,
+) {
     define_variable_in_set(
+        ctx,
         name.as_ptr(),
         name.to_bytes().len() as size_t,
         value,
@@ -142,7 +148,11 @@ fn split_archive_ref(name: &[u8]) -> Option<(&[u8], &[u8])> {
 ///
 /// `file` must be a valid file with initialized per-file variables; `stem`
 /// must be null or a NUL-terminated string that outlives the call.
-pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
+pub unsafe fn set_file_variables(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    mut stem: *const c_char,
+) {
     let file = file.as_mut().expect("set_file_variables: null file");
 
     // For an archive member `lib(member)`, `$@` is `lib` and `$%` is
@@ -151,7 +161,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     let mut percent_buf: Vec<u8>;
     let at: *const c_char;
     let percent: *const c_char;
-    if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
+    if ar_name(ctx, ::core::ffi::CStr::from_ptr(file.name)) {
         let (lib, member) = split_archive_ref(CStr::from_ptr(file.name).to_bytes())
             .expect("ar_name guarantees a lib(member) reference");
         at_buf = lib.to_vec();
@@ -170,7 +180,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
     if stem.is_null() {
         let name: *const c_char;
         let len: size_t;
-        if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
+        if ar_name(ctx, ::core::ffi::CStr::from_ptr(file.name)) {
             name = strchr(file.name, '(' as i32).add(1);
             len = strlen(name) - 1;
         } else {
@@ -219,10 +229,10 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         less = at;
     }
 
-    define_automatic(file, c"<", less);
-    define_automatic(file, c"*", star);
-    define_automatic(file, c"@", at);
-    define_automatic(file, c"%", percent);
+    define_automatic(ctx, file, c"<", less);
+    define_automatic(ctx, file, c"*", star);
+    define_automatic(ctx, file, c"@", at);
+    define_automatic(ctx, file, c"%", percent);
 
     // Grow-on-demand buffers for `$+` / `$|` / `$?`, kept across calls
     // exactly like the C statics.
@@ -272,7 +282,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         {
             let mut c = dep_name(d);
             let len;
-            if ar_name(::core::ffi::CStr::from_ptr(c)) {
+            if ar_name(ctx, ::core::ffi::CStr::from_ptr(c)) {
                 c = strchr(c, '(' as i32).add(1);
                 len = strlen(c) - 1;
             } else {
@@ -295,7 +305,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         ::core::slice::from_raw_parts_mut(plus_value as *mut u8, (plus_filled).max(1)),
         plus_filled,
     );
-    define_automatic(file, c"+", plus_value);
+    define_automatic(ctx, file, c"+", plus_value);
 
     if qmark_len > qmark_max {
         qmark_max = qmark_len;
@@ -357,7 +367,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         {
             let mut c = dep_name(d);
             let len;
-            if ar_name(::core::ffi::CStr::from_ptr(c)) {
+            if ar_name(ctx, ::core::ffi::CStr::from_ptr(c)) {
                 c = strchr(c, '(' as i32).add(1);
                 len = strlen(c) - 1;
             } else {
@@ -388,19 +398,19 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         ::core::slice::from_raw_parts_mut(caret_value as *mut u8, (caret_filled).max(1)),
         caret_filled,
     );
-    define_automatic(file, c"^", caret_value);
+    define_automatic(ctx, file, c"^", caret_value);
     let qmark_filled = qp as usize - qmark_value as usize;
     finish_list(
         ::core::slice::from_raw_parts_mut(qmark_value as *mut u8, (qmark_filled).max(1)),
         qmark_filled,
     );
-    define_automatic(file, c"?", qmark_value);
+    define_automatic(ctx, file, c"?", qmark_value);
     let bar_filled = bp as usize - bar_value as usize;
     finish_list(
         ::core::slice::from_raw_parts_mut(bar_value as *mut u8, (bar_filled).max(1)),
         bar_filled,
     );
-    define_automatic(file, c"|", bar_value);
+    define_automatic(ctx, file, c"|", bar_value);
 }
 
 /// Split `cmds.commands` into individual recipe lines (respecting
@@ -411,7 +421,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
 ///
 /// `cmds` must be null or a valid `commands` whose `commands` string is
 /// NUL-terminated.
-pub unsafe fn chop_commands(cmds: *mut commands) {
+pub unsafe fn chop_commands(ctx: &crate::execctx::ExecContext, cmds: *mut commands) {
     // Recipes are chopped lazily; only do it once.
     let Some(cmds) = cmds.as_mut() else { return };
     if !cmds.command_lines.is_null() {
@@ -463,6 +473,7 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
 
             if nlines as i32 == c_ushort::MAX as i32 {
                 fatal(
+                    ctx,
                     &raw mut cmds.fileinfo,
                     INTSTR_LENGTH,
                     c"recipe has too many lines (limit %hu)".as_ptr(),
@@ -523,7 +534,7 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
 /// # Safety
 ///
 /// `file` must be a valid file with a non-null `cmds`.
-pub unsafe fn execute_file_commands(file: *mut file) {
+pub unsafe fn execute_file_commands(ctx: &crate::execctx::ExecContext, file: *mut file) {
     // A recipe of nothing but whitespace and `-`/`@`/`+` prefixes means
     // there is nothing to execute.
     let mut p: *const c_char = (*file)
@@ -544,20 +555,20 @@ pub unsafe fn execute_file_commands(file: *mut file) {
     if *p == 0 {
         set_command_state(file, cs_running);
         (*file).set_update_status(us_success as update_status);
-        notice_finished_file(file);
+        notice_finished_file(ctx, file);
         return;
     }
 
-    initialize_file_variables(file, 0);
-    set_file_variables(file, (*file).stem);
+    initialize_file_variables(ctx, file, 0);
+    set_file_variables(ctx, file, (*file).stem);
 
     // A loaded dynamic object being rebuilt must be unloaded first.
-    if (*file).loaded() != 0 && unload_file((*file).name) == 0 {
+    if (*file).loaded() != 0 && unload_file(ctx, (*file).name) == 0 {
         (*file).set_loaded(0);
         (*file).set_unloaded(1);
     }
 
-    new_job(file);
+    new_job(ctx, file);
 }
 
 /// Nonzero while a fatal signal is being handled; checked by code that
@@ -574,7 +585,14 @@ pub static mut handling_fatal_signal: sig_atomic_t = 0;
 pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     ::core::ptr::write_volatile(&raw mut handling_fatal_signal, 1);
     signal(sig, SIG_DFL);
-    temp_stdin_unlink();
+    // This is a kernel-invoked signal handler: it cannot be passed the owned
+    // `ExecContext`, and there is deliberately no global to read it from. The
+    // only use of `ctx` in the cleanup paths below is the `make[N]:` message
+    // prefix, which is cosmetic here, so we hand the cleanup helpers a default
+    // (top-level) context. No converted *printer* is called with this ctx
+    // (see the prefix-free `kill` failure path at the end).
+    let ctx = crate::execctx::ExecContext::default();
+    temp_stdin_unlink(&ctx);
     osync_clear();
     jobserver_clear();
 
@@ -599,20 +617,20 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         }
         let mut c = children;
         while !c.is_null() {
-            delete_child_targets(c);
+            delete_child_targets(&ctx, c);
             c = (*c).next;
         }
         // Wait for them all to die before cleaning up.
         while job_slots_used() > 0 {
-            reap_children(1, 0);
+            reap_children(&ctx, 1, 0);
         }
     } else {
         while job_slots_used() > 0 {
-            reap_children(1, 1);
+            reap_children(&ctx, 1, 1);
         }
     }
 
-    remove_intermediates(1);
+    remove_intermediates(&ctx, 1);
 
     if sig == SIGQUIT {
         exit(MAKE_TROUBLE);
@@ -621,20 +639,35 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     // Re-raise with the default handler so our exit status reflects the
     // signal.
     if kill(make_pid(), sig) < 0 {
-        pfatal_with_name(c"kill".as_ptr());
+        // Prefix-free error path: we are in a kernel-invoked signal handler and
+        // must not route through a `ctx`-taking printer. Write the bare
+        // diagnostic (no `make[N]:` prefix) straight to stderr, then die.
+        let err = libc::strerror(*__errno_location());
+        let msg = format!(
+            "kill: {}\n",
+            std::ffi::CStr::from_ptr(err).to_string_lossy()
+        );
+        let mut bytes = msg.into_bytes();
+        bytes.push(0);
+        crate::output::outputs(&ctx, 1, bytes.as_ptr() as *const ::core::ffi::c_char);
+        crate::make_main::die(&ctx, MAKE_TROUBLE);
     }
 }
 
 /// Delete `file` if it exists and was modified since make last recorded
 /// its timestamp (i.e. it is a half-finished build product).
-unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
+unsafe fn delete_target(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    on_behalf_of: *const c_char,
+) {
     let file = file.as_mut().expect("delete_target: null file");
     if file.precious() != 0 || file.phony() != 0 {
         return;
     }
 
     // An archive member can't be unlinked; just warn if it looks touched.
-    if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
+    if ar_name(ctx, ::core::ffi::CStr::from_ptr(file.name)) {
         let file_date: time_t = if file.last_mtime == NONEXISTENT_MTIME as uintmax_t {
             -1
         } else {
@@ -643,9 +676,10 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }) as time_t
         };
-        if ar_member_date(file.name) != file_date {
+        if ar_member_date(ctx, file.name) != file_date {
             if !on_behalf_of.is_null() {
                 error(
+                    ctx,
                     null::<Floc>(),
                     strlen(on_behalf_of) + strlen(file.name),
                     c"*** [%s] archive member '%s' may be bogus; not deleted".as_ptr(),
@@ -654,6 +688,7 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
                 );
             } else {
                 error(
+                    ctx,
                     null::<Floc>(),
                     strlen(file.name),
                     c"*** archive member '%s' may be bogus; not deleted".as_ptr(),
@@ -674,11 +709,16 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
     }
     if e == 0
         && st.st_mode & S_IFMT == S_IFREG
-        && file_timestamp_cons(file.name, st.st_mtime as time_t, st.st_mtime_nsec as c_long)
-            != file.last_mtime
+        && file_timestamp_cons(
+            ctx,
+            file.name,
+            st.st_mtime as time_t,
+            st.st_mtime_nsec as c_long,
+        ) != file.last_mtime
     {
         if !on_behalf_of.is_null() {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(on_behalf_of) + strlen(file.name),
                 c"*** [%s] deleting file '%s'".as_ptr(),
@@ -687,6 +727,7 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
             );
         } else {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(file.name),
                 c"*** deleting file '%s'".as_ptr(),
@@ -694,7 +735,7 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
             );
         }
         if unlink(file.name) < 0 && *__errno_location() != ENOENT {
-            perror_with_name(c"unlink: ".as_ptr(), file.name);
+            perror_with_name(ctx, c"unlink: ".as_ptr(), file.name);
         }
     }
 }
@@ -705,15 +746,15 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
 /// # Safety
 ///
 /// `child` must be a valid child record.
-pub unsafe fn delete_child_targets(child: *mut child) {
+pub unsafe fn delete_child_targets(ctx: &crate::execctx::ExecContext, child: *mut child) {
     if (*child).deleted() != 0 || (*child).pid < 0 {
         return;
     }
-    delete_target((*child).file, null());
+    delete_target(ctx, (*child).file, null());
     let cf = (*child).file.as_ref().expect("a started child has a file");
     let mut d = cf.also_make;
     while !d.is_null() {
-        delete_target((*d).file, cf.name);
+        delete_target(ctx, (*d).file, cf.name);
         d = (*d).next;
     }
     (*child).set_deleted(1);

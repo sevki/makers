@@ -842,9 +842,8 @@ pub fn install_default_options_for_test() {
 /// shipping behavior.
 ///
 /// # Safety
-/// Writes the `program`/`makelevel` process globals; callers must serialize
-/// against other code touching those globals (e.g. via the relevant test
-/// mutex).
+/// Writes the `program` process global; callers must serialize against other
+/// code touching that global (e.g. via the relevant test mutex).
 #[cfg(test)]
 pub unsafe fn install_program_name_for_test() {
     if program.is_null() {
@@ -852,7 +851,6 @@ pub unsafe fn install_program_name_for_test() {
             Box::leak(Box::new(std::ffi::CString::new("make").unwrap())).as_c_str();
         program = leaked.as_ptr();
     }
-    makelevel = 0;
 }
 
 pub fn env_overrides() -> bool {
@@ -1086,7 +1084,6 @@ pub static mut directory_before_chdir: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 pub static mut starting_directory: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-pub static mut makelevel: ::core::ffi::c_uint = 0;
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
 pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut file;
 /// Set once the `.POSIX` special target has been seen, selecting POSIX-pedantic
@@ -1271,35 +1268,47 @@ pub unsafe extern "C" fn close_stdout() {
     let prev_fail: i32 = ferror(stdout);
     let fclose_fail: i32 = fclose(stdout);
     if prev_fail != 0 || fclose_fail != 0 {
-        if fclose_fail != 0 {
-            perror_with_name(
-                b"write error: stdout\0" as *const u8 as *const ::core::ffi::c_char,
-                b"\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+        // This is the `atexit`-registered handler: it cannot be passed the
+        // owned `ExecContext` and there is deliberately no global to read it
+        // from, so it must not route through a `ctx`-taking printer. Write the
+        // bare diagnostic (no `make[N]:` prefix) straight to stderr.
+        let msg = if fclose_fail != 0 {
+            let err = libc::strerror(*__errno_location());
+            format!(
+                "write error: stdout: {}\n",
+                std::ffi::CStr::from_ptr(err).to_string_lossy()
+            )
         } else {
-            error(
-                ::core::ptr::null_mut::<Floc>(),
-                0,
-                b"write error: stdout\0" as *const u8 as *const ::core::ffi::c_char,
-            );
-        }
+            "write error: stdout\n".to_string()
+        };
+        let mut bytes = msg.into_bytes();
+        bytes.push(0);
+        // Prefix-free path (atexit handler): a default ctx yields no `make[N]:`
+        // prefix and reads no global.
+        crate::output::outputs(
+            &crate::execctx::ExecContext::default(),
+            1,
+            bytes.as_ptr() as *const ::core::ffi::c_char,
+        );
         exit(MAKE_TROUBLE);
     }
 }
-unsafe extern "C" fn expand_command_line_file(
+unsafe fn expand_command_line_file(
+    ctx: &crate::execctx::ExecContext,
     mut name: *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
     let cp: *const ::core::ffi::c_char;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0_i32 as isize) as i32 == 0 {
         fatal(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
             b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
         );
     }
     if *name.offset(0_i32 as isize) as i32 == '~' as i32 {
-        expanded = tilde_expand(name);
+        expanded = tilde_expand(ctx, name);
         if !expanded.is_null() && *expanded.offset(0_i32 as isize) as i32 != 0 {
             name = expanded;
         }
@@ -1330,7 +1339,7 @@ pub unsafe extern "C" fn debug_signal_handler(mut _sig: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn decode_debug_flags(options: &Options) {
+pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Options) {
     if options.debug_flag.get() {
         db_level = DB_ALL;
     }
@@ -1372,6 +1381,7 @@ pub unsafe fn decode_debug_flags(options: &Options) {
                     }
                     _ => {
                         fatal(
+                            ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             strlen(p) as size_t,
                             b"unknown debug level specification '%s'\0" as *const u8
@@ -1424,13 +1434,14 @@ fn classify_output_sync(value: &[u8]) -> Option<i32> {
 /// Reads the global `FLAGS.output_sync_option` / `FLAGS.sync_mutex` C strings; both must be
 /// null or valid NUL-terminated strings, and this must run single-threaded
 /// during option decoding.
-pub unsafe fn decode_output_sync_flags(options: &Options) {
+pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, options: &Options) {
     if let Some(opt) = options.output_sync_option.borrow().as_ref() {
         match classify_output_sync(opt.as_bytes()) {
             Some(mode) => output_sync = mode,
             None => {
                 let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
                 fatal(
+                    ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     opt.len() as size_t,
                     b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1441,14 +1452,14 @@ pub unsafe fn decode_output_sync_flags(options: &Options) {
     }
     if let Some(mtx) = options.sync_mutex.borrow().as_ref() {
         let c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
-        osync_parse_mutex(c.as_ptr());
+        osync_parse_mutex(ctx, c.as_ptr());
     }
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_usage(options: &Options, bad: i32) -> ! {
+pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i32) -> ! {
     let mut cpp: *const *const ::core::ffi::c_char;
     let usageto: *mut FILE;
     if options.print_version.get() {
@@ -1484,7 +1495,7 @@ pub unsafe fn print_usage(options: &Options, bad: i32) -> ! {
         usageto,
         b"Report bugs to <bug-make@gnu.org>\n\0" as *const u8 as *const ::core::ffi::c_char,
     );
-    die(if bad != 0 { MAKE_FAILURE } else { MAKE_SUCCESS });
+    die(ctx, if bad != 0 { MAKE_FAILURE } else { MAKE_SUCCESS });
 }
 /// # Safety
 ///
@@ -1506,7 +1517,7 @@ pub unsafe fn reset_jobserver_mirror() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn temp_stdin_unlink() {
+pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
     if stdin_offset >= 0 && !temp_stdin_name.is_null() {
         let nm: *const ::core::ffi::c_char = temp_stdin_name;
         let mut r: i32;
@@ -1519,6 +1530,7 @@ pub unsafe fn temp_stdin_unlink() {
         }
         if r < 0 && *__errno_location() != ENOENT && handling_fatal_signal == 0 {
             perror_with_name(
+                ctx,
                 b"unlink (temporary file): \0" as *const u8 as *const ::core::ffi::c_char,
                 nm,
             );
@@ -1541,9 +1553,9 @@ unsafe fn main_0(
     // through the call graph. Replaces the former `static mut FLAGS` global.
     let options = Options::new();
     // Owned execution context for this make invocation, threaded (`&ctx`) down
-    // the call graph in place of the former `static mut makelevel` global. It
-    // starts at level 0 (matching the global's startup default) and is rebuilt
-    // from the parsed `MAKELEVEL` env var below.
+    // the call graph in place of the former process-global makelevel. It
+    // starts at level 0 (matching the old startup default) and is rebuilt from
+    // the parsed `MAKELEVEL` env var below.
     let mut ctx = crate::execctx::ExecContext::new(crate::execctx::Config { makelevel: 0 });
     // Install a borrow channel to `options` for the single deep makefile-time
     // callback (`set_special_var` -> `reset_makeflags`) that cannot receive an
@@ -1584,7 +1596,7 @@ unsafe fn main_0(
         }
     }
     initialize_global_hash_tables();
-    get_tmpdir();
+    get_tmpdir(&ctx);
     if getcwd(
         &raw mut current_directory as *mut ::core::ffi::c_char,
         GET_PATH_MAX as size_t,
@@ -1592,6 +1604,7 @@ unsafe fn main_0(
     .is_null()
     {
         perror_with_name(
+            &ctx,
             b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
             b"\0" as *const u8 as *const ::core::ffi::c_char,
         );
@@ -1601,6 +1614,7 @@ unsafe fn main_0(
         directory_before_chdir = xstrdup(&raw mut current_directory as *mut ::core::ffi::c_char);
     }
     let fresh34 = &mut (*define_variable_in_set(
+        &ctx,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1611,6 +1625,7 @@ unsafe fn main_0(
     ));
     (*fresh34).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     let fresh35 = &mut (*define_variable_in_set(
+        &ctx,
         b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 11]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1621,6 +1636,7 @@ unsafe fn main_0(
     ));
     (*fresh35).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     let fresh36 = &mut (*define_variable_in_set(
+        &ctx,
         b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1631,6 +1647,7 @@ unsafe fn main_0(
     ));
     (*fresh36).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     let fresh37 = &mut (*define_variable_in_set(
+        &ctx,
         b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1641,6 +1658,7 @@ unsafe fn main_0(
     ));
     (*fresh37).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     define_variable_in_set(
+        &ctx,
         b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),
         b"-c\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1650,6 +1668,7 @@ unsafe fn main_0(
         NILF,
     );
     define_variable_in_set(
+        &ctx,
         b".LOADED\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1661,6 +1680,7 @@ unsafe fn main_0(
     let features: *const ::core::ffi::c_char = b"target-specific order-only second-expansion else-if shortest-stem undefine oneshell nocomment grouped-target extra-prereqs notintermediate shell-export archives jobserver jobserver-fifo output-sync check-symlink maintainer\0"
         as *const u8 as *const ::core::ffi::c_char;
     define_variable_in_set(
+        &ctx,
         b".FEATURES\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         features,
@@ -1702,6 +1722,7 @@ unsafe fn main_0(
                 export = v_noexport;
             }
             v = define_variable_in_set(
+                &ctx,
                 *envp.offset(i as isize),
                 len,
                 ep,
@@ -1728,18 +1749,21 @@ unsafe fn main_0(
         i = i.wrapping_add(1);
     }
     if !lookup_variable(
+        &ctx,
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
     )
     .is_null()
     {
         decode_env_switches(
+            &ctx,
             &options,
             b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             o_command,
         );
         define_variable_in_set(
+            &ctx,
             b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1750,6 +1774,7 @@ unsafe fn main_0(
         );
     }
     decode_env_switches(
+        &ctx,
         &options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
@@ -1767,6 +1792,7 @@ unsafe fn main_0(
     let env_slots: Option<u32> = options.arg_job_slots.get();
     options.arg_job_slots.set(None);
     decode_switches(
+        &ctx,
         &options,
         argc,
         argv as *mut *const ::core::ffi::c_char,
@@ -1777,11 +1803,11 @@ unsafe fn main_0(
         options.arg_job_slots.set(env_slots);
     }
     if options.print_usage.get() {
-        print_usage(&options, 0);
+        print_usage(&ctx, &options, 0);
     }
     if options.print_version.get() {
         print_version();
-        die(MAKE_SUCCESS);
+        die(&ctx, MAKE_SUCCESS);
     }
     setvbuf(
         stdout,
@@ -1798,6 +1824,7 @@ unsafe fn main_0(
     }
     if isatty(fileno(stdout)) != 0
         && lookup_variable(
+            &ctx,
             b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         )
@@ -1805,6 +1832,7 @@ unsafe fn main_0(
     {
         let tty: *const ::core::ffi::c_char = ttyname(fileno(stdout));
         let fresh39 = &mut (*define_variable_in_set(
+            &ctx,
             b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             if !tty.is_null() {
@@ -1821,6 +1849,7 @@ unsafe fn main_0(
     }
     if isatty(fileno(stderr)) != 0
         && lookup_variable(
+            &ctx,
             b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         )
@@ -1828,6 +1857,7 @@ unsafe fn main_0(
     {
         let tty_0: *const ::core::ffi::c_char = ttyname(fileno(stderr));
         let fresh40 = &mut (*define_variable_in_set(
+            &ctx,
             b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             if !tty_0.is_null() {
@@ -1845,7 +1875,7 @@ unsafe fn main_0(
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET) as i32
         as ::core::ffi::c_uint;
     if make_sync_syncout() as i32 != 0 && syncing == 0 {
-        crate::output::output_close(&raw mut make_sync);
+        crate::output::output_close(&ctx, &raw mut make_sync);
     }
     set_make_sync_syncout(syncing as ::core::ffi::c_uint);
     output_context = if make_sync_syncout() as i32 != 0 {
@@ -1854,6 +1884,7 @@ unsafe fn main_0(
         ::core::ptr::null_mut::<output>()
     };
     let v_0: *mut variable = lookup_variable(
+        &ctx,
         b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
     );
@@ -1894,7 +1925,7 @@ unsafe fn main_0(
         for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
             if chdir(dir) < 0 {
-                pfatal_with_name(dir);
+                pfatal_with_name(&ctx, dir);
             }
         }
     }
@@ -1906,6 +1937,7 @@ unsafe fn main_0(
         .is_null()
         {
             perror_with_name(
+                &ctx,
                 b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
                 b"\0" as *const u8 as *const ::core::ffi::c_char,
             );
@@ -1915,6 +1947,7 @@ unsafe fn main_0(
         }
     }
     define_variable_in_set(
+        &ctx,
         b"CURDIR\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
         &raw mut current_directory as *mut ::core::ffi::c_char,
@@ -1932,7 +1965,7 @@ unsafe fn main_0(
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
-        construct_include_path(&inc_paths);
+        construct_include_path(&ctx, &inc_paths);
     }
     if options.jobserver_auth.borrow().is_some() {
         // Reset the jobserver unless we successfully inherited the parent's.
@@ -1940,10 +1973,11 @@ unsafe fn main_0(
         if argv_slots.is_none() {
             let auth = options.jobserver_auth.borrow().clone().unwrap();
             let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
-            if jobserver_parse_auth(auth_c.as_ptr()) != 0 {
+            if jobserver_parse_auth(&ctx, auth_c.as_ptr()) != 0 {
                 do_reset = false;
             } else {
                 error(
+                    &ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
@@ -1953,6 +1987,7 @@ unsafe fn main_0(
             }
         } else if restarts == 0 && argv_slots != Some(1) {
             error(
+                &ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH,
                 b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
@@ -1965,6 +2000,7 @@ unsafe fn main_0(
         }
     }
     define_variable_in_set(
+        &ctx,
         b"MAKE_COMMAND\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         *argv.offset(0_i32 as isize),
@@ -1974,6 +2010,7 @@ unsafe fn main_0(
         NILF,
     );
     define_variable_in_set(
+        &ctx,
         b"MAKE\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
         b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2024,6 +2061,7 @@ unsafe fn main_0(
         }
         *p.offset(-1_i32 as isize) = 0;
         define_variable_in_set(
+            &ctx,
             b"-*-command-variables-*-\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t).wrapping_sub(1),
             value,
@@ -2034,6 +2072,7 @@ unsafe fn main_0(
         );
         drop(value_buf);
         define_variable_in_set(
+            &ctx,
             b"MAKEOVERRIDES\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
             b"${-*-command-variables-*-}\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2053,15 +2092,17 @@ unsafe fn main_0(
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
                 if stdin_offset >= 0 {
                     fatal(
+                        &ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         0,
                         b"Makefile from standard input specified twice\0" as *const u8
                             as *const ::core::ffi::c_char,
                     );
                 }
-                outfile = get_tmpfile(&raw mut newnm);
+                outfile = get_tmpfile(&ctx, &raw mut newnm);
                 if outfile.is_null() {
                     fatal(
+                        &ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         0,
                         b"cannot store makefile from stdin to a temporary file\0" as *const u8
@@ -2086,6 +2127,7 @@ unsafe fn main_0(
                             != n
                     {
                         fatal(
+                            &ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             (strlen(newnm) as size_t)
                                 .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2116,7 +2158,7 @@ unsafe fn main_0(
         (*f).set_command_state(cs_finished as cmd_state);
         (*f).set_intermediate(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         (*f).set_dontcare(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        (*f).mtime_before_update = f_mtime(f, 0);
+        (*f).mtime_before_update = f_mtime(&ctx, f, 0);
         (*f).last_mtime = (*f).mtime_before_update;
     }
     bsd_signal(
@@ -2133,6 +2175,7 @@ unsafe fn main_0(
     ) < 0
     {
         pfatal_with_name(
+            &ctx,
             b"sigprocmask(SIG_SETMASK, SIGCHLD)\0" as *const u8 as *const ::core::ffi::c_char,
         );
     }
@@ -2140,15 +2183,16 @@ unsafe fn main_0(
         SIGUSR1,
         Some(debug_signal_handler as unsafe extern "C" fn(i32) -> ()),
     );
-    set_default_suffixes(&options);
-    define_automatic_variables();
-    let fresh46 = &mut (*define_makeflags(&options, 0));
+    set_default_suffixes(&ctx, &options);
+    define_automatic_variables(&ctx);
+    let fresh46 = &mut (*define_makeflags(&ctx, &options, 0));
     (*fresh46).set_export(v_export as variable_export);
-    define_default_variables(&options);
+    define_default_variables(&ctx, &options);
     default_file = enter_file(strcache_add(
         b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
     ));
     default_goal_var = define_variable_in_set(
+        &ctx,
         b".DEFAULT_GOAL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2173,6 +2217,7 @@ unsafe fn main_0(
             let mut owned: Vec<u8> = es.as_bytes_with_nul().to_vec();
             len_1 = len_1.wrapping_add((2 as size_t).wrapping_mul((owned.len() - 1) as size_t));
             eval_buffer(
+                &ctx,
                 owned.as_mut_ptr() as *mut ::core::ffi::c_char,
                 ::core::ptr::null::<Floc>(),
             );
@@ -2191,6 +2236,7 @@ unsafe fn main_0(
         }
         *endp = 0;
         define_variable_in_set(
+            &ctx,
             b"-*-eval-flags-*-\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 17]>() as size_t).wrapping_sub(1),
             value_0,
@@ -2216,12 +2262,15 @@ unsafe fn main_0(
         .map(|s| strcache_add(s.as_ptr()))
         .collect();
     let makefiles_empty = options.makefiles.borrow().is_empty();
-    read_files = read_all_makefiles(if makefiles_empty {
-        ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
-    } else {
-        mf_ptrs.push(::core::ptr::null());
-        mf_ptrs.as_mut_ptr()
-    });
+    read_files = read_all_makefiles(
+        &ctx,
+        if makefiles_empty {
+            ::core::ptr::null_mut::<*const ::core::ffi::c_char>()
+        } else {
+            mf_ptrs.push(::core::ptr::null());
+            mf_ptrs.as_mut_ptr()
+        },
+    );
     // `read_all_makefiles` rewrites each array entry in place to the actual
     // (strcache'd) makefile name it resolved/remade. Mirror those updates back
     // into `options.makefiles` so the restart path emits the resolved names.
@@ -2236,12 +2285,14 @@ unsafe fn main_0(
     }
     options.arg_job_slots.set(None);
     decode_env_switches(
+        &ctx,
         &options,
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         o_env,
     );
     define_variable_in_set(
+        &ctx,
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2251,6 +2302,7 @@ unsafe fn main_0(
         NILF,
     );
     decode_env_switches(
+        &ctx,
         &options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
@@ -2263,6 +2315,7 @@ unsafe fn main_0(
     {
         if restarts == 0 {
             error(
+                &ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH,
                 b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
@@ -2275,7 +2328,7 @@ unsafe fn main_0(
     syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET) as i32
         as ::core::ffi::c_uint;
     if make_sync_syncout() as i32 != 0 && syncing == 0 {
-        crate::output::output_close(&raw mut make_sync);
+        crate::output::output_close(&ctx, &raw mut make_sync);
     }
     set_make_sync_syncout(syncing as ::core::ffi::c_uint);
     output_context = if make_sync_syncout() as i32 != 0 {
@@ -2283,7 +2336,7 @@ unsafe fn main_0(
     } else {
         ::core::ptr::null_mut::<output>()
     };
-    disable_builtins(&options);
+    disable_builtins(&ctx, &options);
     if options.jobserver_auth.borrow().is_some() {
         job_slots = 0;
     } else if options.arg_job_slots.get().is_none() {
@@ -2301,7 +2354,7 @@ unsafe fn main_0(
             .as_ref()
             .map(|c| c.as_ptr())
             .unwrap_or(::core::ptr::null());
-        if jobserver_setup(job_slots.wrapping_sub(1) as i32, style_ptr) != 0 {
+        if jobserver_setup(&ctx, job_slots.wrapping_sub(1) as i32, style_ptr) != 0 {
             let auth = jobserver_get_auth();
             if !auth.is_null() {
                 *options.jobserver_auth.borrow_mut() = Some(
@@ -2317,14 +2370,14 @@ unsafe fn main_0(
     }
     if syncing != 0 && job_slots == 1 {
         output_context = ::core::ptr::null_mut::<output>();
-        crate::output::output_close(&raw mut make_sync);
+        crate::output::output_close(&ctx, &raw mut make_sync);
         syncing = 0;
         output_sync = OUTPUT_SYNC_NONE;
     }
     if syncing != 0 {
         let has_mutex = options.sync_mutex.borrow().is_some();
         if !has_mutex {
-            osync_setup();
+            osync_setup(&ctx);
             let m = osync_get_mutex();
             if !m.is_null() {
                 *options.sync_mutex.borrow_mut() = Some(
@@ -2337,7 +2390,7 @@ unsafe fn main_0(
         } else {
             let mtx = options.sync_mutex.borrow().clone().unwrap();
             let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
-            if osync_parse_mutex(mtx_c.as_ptr()) == 0 {
+            if osync_parse_mutex(&ctx, mtx_c.as_ptr()) == 0 {
                 osync_clear();
                 *options.sync_mutex.borrow_mut() = None;
             }
@@ -2361,13 +2414,13 @@ unsafe fn main_0(
         );
         fflush(stdout);
     }
-    define_makeflags(&options, 0);
-    snap_deps();
+    define_makeflags(&ctx, &options, 0);
+    snap_deps(&ctx);
     install_default_suffix_rules(&options);
-    convert_to_pattern();
-    install_default_implicit_rules(&options);
-    snap_implicit_rules();
-    build_vpath_lists();
+    convert_to_pattern(&ctx);
+    install_default_implicit_rules(&ctx, &options);
+    snap_implicit_rules(&ctx);
+    build_vpath_lists(&ctx);
     if !options.old_files.borrow().is_empty() {
         for of in options.old_files.borrow().iter() {
             let f_0: *mut file = enter_file(strcache_add(of.as_ptr()));
@@ -2380,7 +2433,7 @@ unsafe fn main_0(
     }
     if options.print_targets.get() {
         print_targets();
-        die(EXIT_SUCCESS);
+        die(&ctx, EXIT_SUCCESS);
     }
     if restarts == 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
@@ -2399,7 +2452,7 @@ unsafe fn main_0(
     }
     remote_setup();
     output_context = ::core::ptr::null_mut::<output>();
-    crate::output::output_close(&raw mut make_sync);
+    crate::output::output_close(&ctx, &raw mut make_sync);
     if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level != 0 {
         let sm = options.shuffle_mode.borrow().clone().unwrap();
         let sm_c = ::std::ffi::CString::new(sm.as_bytes()).unwrap_or_default();
@@ -2460,7 +2513,7 @@ unsafe fn main_0(
                 mm_idx = mm_idx.wrapping_add(1);
                 *makefile_mtimes.offset(fresh48 as isize) =
                     if f2_init.last_mtime == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime(d0r.file, 0)
+                        f_mtime(&ctx, d0r.file, 0)
                     } else {
                         f2_init.last_mtime
                     };
@@ -2493,13 +2546,13 @@ unsafe fn main_0(
                 };
             }
         }
-        define_makeflags(&options, 1);
+        define_makeflags(&ctx, &options, 1);
         let orig_db_level: i32 = db_level;
         if 0x100_i32 & db_level == 0 {
             db_level = DB_NONE;
         }
         REBUILDING_MAKEFILES.store(true, Ordering::Relaxed);
-        status = update_goal_chain(read_files) as update_status;
+        status = update_goal_chain(&ctx, read_files) as update_status;
         REBUILDING_MAKEFILES.store(false, Ordering::Relaxed);
         db_level = orig_db_level;
         while !skipped_makefiles.is_null() {
@@ -2512,6 +2565,7 @@ unsafe fn main_0(
                 d_1r.file.as_ref().map_or(::core::ptr::null(), |fr| fr.name)
             };
             error(
+                &ctx,
                 &raw mut d_1r.floc,
                 (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
                 b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2534,8 +2588,9 @@ unsafe fn main_0(
                     let f_3: *mut file = d_2r.file;
                     if let Some(f3r) = f_3.as_mut() {
                         if f3r.unloaded() != 0 {
-                            if load_file(&raw mut d_2r.floc, f_3, 0) == 0 {
+                            if load_file(&ctx, &raw mut d_2r.floc, f_3, 0) == 0 {
                                 fatal(
+                                    &ctx,
                                     &raw mut d_2r.floc,
                                     strlen(f3r.name) as size_t,
                                     b"%s: failed to load\0" as *const u8
@@ -2563,13 +2618,14 @@ unsafe fn main_0(
                         let f4r = f_4.as_ref().expect("f_4 checked non-null above");
                         if f4r.update_status() as i32 == us_success as i32 {
                             any_remade |= ((if f4r.last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime(f_4, 0)
+                                f_mtime(&ctx, f_4, 0)
                             } else {
                                 f4r.last_mtime
                             }) != *makefile_mtimes.offset(i_3 as isize))
                                 as i32;
                         } else if d_4r.flags() as i32 & RM_DONTCARE == 0 {
                             error(
+                                &ctx,
                                 &raw mut d_4r.floc,
                                 strlen(f4r.name) as size_t,
                                 b"failed to remake makefile '%s'\0" as *const u8
@@ -2577,7 +2633,7 @@ unsafe fn main_0(
                                 f4r.name,
                             );
                             let mtime: uintmax_t = if f4r.last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime(f_4, 0)
+                                f_mtime(&ctx, f_4, 0)
                             } else {
                                 f4r.last_mtime
                             };
@@ -2595,6 +2651,7 @@ unsafe fn main_0(
                         };
                         if d_4r.flags() as i32 & RM_INCLUDED != 0 {
                             error(
+                                &ctx,
                                 &raw mut d_4r.floc,
                                 strlen(dnm) as size_t,
                                 b"included makefile '%s' was not found\0" as *const u8
@@ -2603,6 +2660,7 @@ unsafe fn main_0(
                             );
                         } else {
                             error(
+                                &ctx,
                                 ::core::ptr::null_mut::<Floc>(),
                                 strlen(dnm) as size_t,
                                 b"makefile '%s' was not found\0" as *const u8
@@ -2621,11 +2679,11 @@ unsafe fn main_0(
             2 | _ => false,
         };
         if needs_restart {
-            remove_intermediates(0);
+            remove_intermediates(&ctx, 0);
             if options.print_data_base.get() {
-                print_data_base();
+                print_data_base(&ctx);
             }
-            clean_jobserver(0);
+            clean_jobserver(&ctx, 0);
             if !options.makefiles.borrow().is_empty() {
                 let mut mfidx: i32 = 0;
                 let mut av: *mut *mut ::core::ffi::c_char = argv;
@@ -2806,6 +2864,7 @@ unsafe fn main_0(
                 if !directory_before_chdir.is_null() {
                     if chdir(directory_before_chdir) < 0 {
                         perror_with_name(
+                            &ctx,
                             b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
                             b"\0" as *const u8 as *const ::core::ffi::c_char,
                         );
@@ -2815,6 +2874,7 @@ unsafe fn main_0(
                 }
                 if bad != 0 {
                     fatal(
+                        &ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         0,
                         b"couldn't change back to original directory\0" as *const u8
@@ -2909,16 +2969,16 @@ unsafe fn main_0(
             fflush(stderr);
             osync_clear();
             jobserver_pre_child(1);
-            exec_command(nargv as *mut *mut ::core::ffi::c_char, environ);
+            exec_command(&ctx, nargv as *mut *mut ::core::ffi::c_char, environ);
             jobserver_post_child(1);
-            temp_stdin_unlink();
+            temp_stdin_unlink(&ctx);
             _exit(127);
         }
         if any_failed != 0 {
-            die(MAKE_FAILURE);
+            die(&ctx, MAKE_FAILURE);
         }
     }
-    define_makeflags(&options, 0);
+    define_makeflags(&ctx, &options, 0);
     always_make_flag = options.always_make.get() as i32;
     if restarts != 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
@@ -2935,11 +2995,12 @@ unsafe fn main_0(
             (*f_5).last_mtime = (*f_5).mtime_before_update;
         }
     }
-    temp_stdin_unlink();
+    temp_stdin_unlink(&ctx);
     if goals.is_null() {
         let mut p_6: *mut ::core::ffi::c_char;
         if (*default_goal_var).recursive() != 0 {
             p_6 = expand_string_buf(
+                &ctx,
                 ::core::ptr::null_mut::<::core::ffi::c_char>(),
                 (*default_goal_var).value,
                 SIZE_MAX as size_t,
@@ -2958,6 +3019,7 @@ unsafe fn main_0(
             if f_6.is_null() {
                 let ns: *mut nameseq;
                 ns = parse_file_seq(
+                    &ctx,
                     &raw mut p_6,
                     ::core::mem::size_of::<nameseq>() as size_t,
                     MAP_NUL,
@@ -2967,6 +3029,7 @@ unsafe fn main_0(
                 if !ns.is_null() {
                     if !(*ns).next.is_null() {
                         fatal(
+                            &ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             0,
                             b".DEFAULT_GOAL contains more than one target\0" as *const u8
@@ -2988,6 +3051,7 @@ unsafe fn main_0(
     }
     if goals.is_null() {
         let v_2: *mut variable = lookup_variable(
+            &ctx,
             b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
         );
@@ -2996,12 +3060,14 @@ unsafe fn main_0(
             && *(*v_2).value.offset(0_i32 as isize) as i32 != 0
         {
             fatal(
+                &ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 0,
                 b"No targets\0" as *const u8 as *const ::core::ffi::c_char,
             );
         }
         fatal(
+            &ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
             b"No targets specified and no makefile found\0" as *const u8
@@ -3013,7 +3079,7 @@ unsafe fn main_0(
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
-    match update_goal_chain(goals) as ::core::ffi::c_uint {
+    match update_goal_chain(&ctx, goals) as ::core::ffi::c_uint {
         2 => {
             makefile_status = MAKE_TROUBLE;
         }
@@ -3024,13 +3090,14 @@ unsafe fn main_0(
     }
     if clock_skew_detected() {
         error(
+            &ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
             b"warning: clock skew detected: your build may be incomplete\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    die(makefile_status);
+    die(&ctx, makefile_status);
 }
 static mut getopt_shorts: [::core::ffi::c_char; 127] = [0; 127];
 static mut long_options: [option; 51] = [option {
@@ -3106,7 +3173,8 @@ pub unsafe fn init_switches() {
     }
     long_options[i as usize].name = ::core::ptr::null::<::core::ffi::c_char>();
 }
-unsafe extern "C" fn handle_non_switch_argument(
+unsafe fn handle_non_switch_argument(
+    ctx: &crate::execctx::ExecContext,
     arg: *const ::core::ffi::c_char,
     origin: variable_origin,
 ) -> ::core::ffi::c_uint {
@@ -3115,7 +3183,7 @@ unsafe extern "C" fn handle_non_switch_argument(
     if *arg.offset(0_i32 as isize) as i32 == '-' as i32 && *arg.offset(1_i32 as isize) as i32 == 0 {
         return 0;
     }
-    v = try_variable_definition(::core::ptr::null::<Floc>(), arg, origin, s_global);
+    v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global);
     if !v.is_null() {
         let mut cv: *mut command_variable;
         cv = command_variables;
@@ -3139,7 +3207,7 @@ unsafe extern "C" fn handle_non_switch_argument(
         if strcmp(arg, b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
             return 1;
         }
-        f = enter_file(strcache_add(expand_command_line_file(arg)));
+        f = enter_file(strcache_add(expand_command_line_file(ctx, arg)));
         (*f).set_cmd_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         if goals.is_null() {
             goals = alloc_goaldep();
@@ -3152,6 +3220,7 @@ unsafe extern "C" fn handle_non_switch_argument(
         let gv: *mut variable;
         let value: *const ::core::ffi::c_char;
         gv = lookup_variable(
+            ctx,
             b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         );
@@ -3183,6 +3252,7 @@ unsafe extern "C" fn handle_non_switch_argument(
             value = vp;
         }
         define_variable_in_set(
+            ctx,
             b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             value,
@@ -3201,13 +3271,18 @@ unsafe extern "C" fn handle_non_switch_argument(
 /// `reset_makeflags` for the makefile-time `MAKEFLAGS` reassignment callback
 /// (`set_special_var`), which is reached through `do_variable_definition` and
 /// cannot thread an `&Options`. Uses the `main_0`-installed borrow.
-pub unsafe fn reset_makeflags_special(origin: variable_origin) {
-    reset_makeflags(installed_options(), origin);
+pub unsafe fn reset_makeflags_special(ctx: &crate::execctx::ExecContext, origin: variable_origin) {
+    reset_makeflags(ctx, installed_options(), origin);
 }
 
-pub unsafe fn reset_makeflags(options: &Options, origin: variable_origin) {
+pub unsafe fn reset_makeflags(
+    ctx: &crate::execctx::ExecContext,
+    options: &Options,
+    origin: variable_origin,
+) {
     options.env_overrides.set(false);
     decode_env_switches(
+        ctx,
         options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
@@ -3222,12 +3297,13 @@ pub unsafe fn reset_makeflags(options: &Options, origin: variable_origin) {
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
-        construct_include_path(&inc_paths);
+        construct_include_path(ctx, &inc_paths);
     }
-    disable_builtins(options);
-    define_makeflags(options, rebuilding_makefiles() as i32);
+    disable_builtins(ctx, options);
+    define_makeflags(ctx, options, rebuilding_makefiles() as i32);
 }
 unsafe fn decode_switches(
+    ctx: &crate::execctx::ExecContext,
     options: &Options,
     argc: i32,
     argv: *mut *const ::core::ffi::c_char,
@@ -3317,24 +3393,24 @@ unsafe fn decode_switches(
                             if !(doit == 0) {
                                 // Resolve the option argument; an empty value is an error
                                 // and the option is skipped.
-                                let arg_ok = if coptarg.is_null() {
-                                    coptarg = (*cs).noarg_value as *const ::core::ffi::c_char;
-                                    true
-                                } else if *coptarg as i32 == 0 {
-                                    let mut opt: [::core::ffi::c_char; 2] = ::core::mem::transmute::<
-                                        [u8; 2],
-                                        [::core::ffi::c_char; 2],
-                                    >(
-                                        *b"c\0"
-                                    );
-                                    let mut op: *const ::core::ffi::c_char =
-                                        &raw mut opt as *mut ::core::ffi::c_char;
-                                    if (*cs).c <= CHAR_MAX {
-                                        opt[0_i32 as usize] = (*cs).c as ::core::ffi::c_char;
-                                    } else {
-                                        op = (*cs).long_name;
-                                    }
-                                    error(
+                                let arg_ok =
+                                    if coptarg.is_null() {
+                                        coptarg = (*cs).noarg_value as *const ::core::ffi::c_char;
+                                        true
+                                    } else if *coptarg as i32 == 0 {
+                                        let mut opt: [::core::ffi::c_char; 2] =
+                                            ::core::mem::transmute::<
+                                                [u8; 2],
+                                                [::core::ffi::c_char; 2],
+                                            >(*b"c\0");
+                                        let mut op: *const ::core::ffi::c_char =
+                                            &raw mut opt as *mut ::core::ffi::c_char;
+                                        if (*cs).c <= CHAR_MAX {
+                                            opt[0_i32 as usize] = (*cs).c as ::core::ffi::c_char;
+                                        } else {
+                                            op = (*cs).long_name;
+                                        }
+                                        error(ctx,
                                         NILF,
                                         strlen(op) as size_t,
                                         b"the '%s%s' option requires a non-empty string argument\0"
@@ -3347,11 +3423,11 @@ unsafe fn decode_switches(
                                         },
                                         op,
                                     );
-                                    bad = 1;
-                                    false
-                                } else {
-                                    true
-                                };
+                                        bad = 1;
+                                        false
+                                    } else {
+                                        true
+                                    };
                                 if arg_ok {
                                     if (*cs).type_0 as ::core::ffi::c_uint
                                         == string as i32 as ::core::ffi::c_uint
@@ -3425,7 +3501,7 @@ unsafe fn decode_switches(
                                                 ::core::ffi::CStr::from_ptr(coptarg).to_owned()
                                             } else if (*cs).c == TEMP_STDIN_OPT {
                                                 if stdin_offset > 0 {
-                                                    fatal(
+                                                    fatal(ctx,
                                                                 NILF,
                                                                 0,
                                                                 b"INTERNAL: multiple --temp-stdin options provided!\0"
@@ -3438,7 +3514,7 @@ unsafe fn decode_switches(
                                                 ::core::ffi::CStr::from_ptr(cached).to_owned()
                                             } else {
                                                 ::core::ffi::CStr::from_ptr(
-                                                    expand_command_line_file(coptarg),
+                                                    expand_command_line_file(ctx, coptarg),
                                                 )
                                                 .to_owned()
                                             };
@@ -3472,7 +3548,7 @@ unsafe fn decode_switches(
                                     let i = make_toui(::core::ffi::CStr::from_ptr(coptarg))
                                         .unwrap_or(0);
                                     if i == 0 {
-                                        error(
+                                        error(ctx,
                                             NILF,
                                             0,
                                             b"the '-%c' option requires a positive integer argument\0"
@@ -3553,32 +3629,33 @@ unsafe fn decode_switches(
     a = targets.list;
     while !(*a).is_null() {
         let prior_found_wait: i32 = found_wait as i32;
-        found_wait = handle_non_switch_argument(*a, origin);
+        found_wait = handle_non_switch_argument(ctx, *a, origin);
         if prior_found_wait != 0 && !lastgoal.is_null() {
             (*lastgoal).set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
         a = a.offset(1_i32 as isize);
     }
     if bad != 0 && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint {
-        print_usage(options, bad);
+        print_usage(ctx, options, bad);
     }
-    decode_debug_flags(options);
-    decode_output_sync_flags(options);
+    decode_debug_flags(ctx, options);
+    decode_output_sync_flags(ctx, options);
     if options.warn_undefined_variables.get() {
-        crate::warning::decode_actions("undefined-var", None);
+        crate::warning::decode_actions(ctx, "undefined-var", None);
         options.warn_undefined_variables.set(false);
     }
     {
         let warn_flags = options.warn_flags.borrow();
         for wf in warn_flags.iter() {
             let arg = wf.to_str().unwrap_or("");
-            crate::warning::decode_actions(arg, None);
+            crate::warning::decode_actions(ctx, arg, None);
         }
     }
     run_silent = options.silent.get() as i32;
     reset_env_override();
 }
 unsafe fn decode_env_switches(
+    ctx: &crate::execctx::ExecContext,
     options: &Options,
     envar: *const ::core::ffi::c_char,
     mut len: size_t,
@@ -3589,7 +3666,12 @@ unsafe fn decode_env_switches(
     let buf: *mut ::core::ffi::c_char;
     let mut argc: i32;
     let argv: *mut *const ::core::ffi::c_char;
-    value = expand_variable_buf(::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len);
+    value = expand_variable_buf(
+        ctx,
+        ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        envar,
+        len,
+    );
     while stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & (0x2_i32 | 0x4_i32) != 0
     {
         value = value.offset(1_i32 as isize);
@@ -3651,7 +3733,7 @@ unsafe fn decode_env_switches(
         let fresh7 = &mut (*argv.offset(1_i32 as isize));
         *fresh7 = buf;
     }
-    decode_switches(options, argc, argv, origin);
+    decode_switches(ctx, options, argc, argv, origin);
     free(buf as *mut ::core::ffi::c_void);
     free(argv as *mut ::core::ffi::c_void);
 }
@@ -3683,7 +3765,7 @@ unsafe extern "C" fn quote_for_env(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn disable_builtins(options: &Options) {
+pub unsafe fn disable_builtins(ctx: &crate::execctx::ExecContext, options: &Options) {
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
@@ -3694,6 +3776,7 @@ pub unsafe fn disable_builtins(options: &Options) {
             (*suffix_file).deps = ::core::ptr::null_mut::<dep>();
         }
         define_variable_in_set(
+            ctx,
             b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
             b"\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3705,14 +3788,18 @@ pub unsafe fn disable_builtins(options: &Options) {
     }
     if options.no_builtin_variables.get() && old_builtin_variables_flag == 0 {
         old_builtin_variables_flag = 1;
-        undefine_default_variables();
+        undefine_default_variables(ctx);
     }
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variable {
+pub unsafe fn define_makeflags(
+    ctx: &crate::execctx::ExecContext,
+    options: &Options,
+    makefile: i32,
+) -> *mut variable {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let ref_0: [::core::ffi::c_char; 14] =
         ::core::mem::transmute::<[u8; 14], [::core::ffi::c_char; 14]>(*b"MAKEOVERRIDES\0");
@@ -4008,6 +4095,7 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
     }
     *fp = 0;
     define_variable_in_set(
+        ctx,
         b"MFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
         variable_buffer.offset(
@@ -4037,7 +4125,7 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
         &raw const ref_0 as *const ::core::ffi::c_char
     };
     let l: size_t = strlen(r) as size_t;
-    v = lookup_variable(r, l);
+    v = lookup_variable(ctx, r, l);
     if v.as_ref()
         .is_some_and(|vr| !vr.value.is_null() && *vr.value.offset(0) as i32 != 0)
     {
@@ -4055,6 +4143,7 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
         fp = fp.offset(1_i32 as isize);
     }
     v = define_variable_in_set(
+        ctx,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         fp,
@@ -4136,12 +4225,12 @@ pub unsafe fn print_version() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_data_base() {
+pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     let mut resolution: i32 = 0;
     let mut buf: [::core::ffi::c_char; 43] = [0; 43];
     file_timestamp_sprintf(
         &raw mut buf as *mut ::core::ffi::c_char,
-        file_timestamp_now(&raw mut resolution),
+        file_timestamp_now(ctx, &raw mut resolution),
     );
     print_version();
     printf(
@@ -4150,13 +4239,13 @@ pub unsafe fn print_data_base() {
     );
     print_variable_data_base();
     print_dir_data_base();
-    print_rule_data_base();
+    print_rule_data_base(ctx);
     print_file_data_base();
     print_vpath_data_base();
     strcache_print_stats(b"#\0" as *const u8 as *const ::core::ffi::c_char);
     file_timestamp_sprintf(
         &raw mut buf as *mut ::core::ffi::c_char,
-        file_timestamp_now(&raw mut resolution),
+        file_timestamp_now(ctx, &raw mut resolution),
     );
     printf(
         b"\n# Finished Make data base on %s\n\n\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4167,10 +4256,11 @@ pub unsafe fn print_data_base() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn clean_jobserver(status: i32) {
+pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
     if jobserver_enabled() != 0 && jobserver_tokens() != 0 {
         if status != 2 {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH,
                 b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
@@ -4183,16 +4273,17 @@ pub unsafe fn clean_jobserver(status: i32) {
                 if jobserver_tokens() == 0 {
                     break;
                 }
-                jobserver_release(0);
+                jobserver_release(ctx, 0);
             }
         }
     }
     let master_slots = master_job_slots();
     if master_slots != 0 {
         let tokens: ::core::ffi::c_uint =
-            (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all());
+            (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all(ctx));
         if tokens != master_slots {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 INTSTR_LENGTH.wrapping_mul(2),
                 b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
@@ -4208,36 +4299,36 @@ pub unsafe fn clean_jobserver(status: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn die(status: i32) -> ! {
+pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
     static DYING: AtomicBool = AtomicBool::new(false);
     if !DYING.swap(true, Ordering::Relaxed) {
         let err: i32;
         if opt_print_version() {
             print_version();
         }
-        temp_stdin_unlink();
+        temp_stdin_unlink(ctx);
         err = (status != 0) as i32;
         while job_slots_used() > 0 {
-            reap_children(1, err);
+            reap_children(ctx, 1, err);
         }
         remote_cleanup();
-        remove_intermediates(0);
+        remove_intermediates(ctx, 0);
         if opt_print_data_base() {
-            print_data_base();
+            print_data_base(ctx);
         }
         if verify_flag != 0 {
-            verify_file_data_base();
+            verify_file_data_base(ctx);
         }
         unload_all();
-        clean_jobserver(status);
+        clean_jobserver(ctx, status);
         if !output_context.is_null() {
-            crate::output::output_close(output_context);
+            crate::output::output_close(ctx, output_context);
             if output_context != &raw mut make_sync {
-                crate::output::output_close(&raw mut make_sync);
+                crate::output::output_close(ctx, &raw mut make_sync);
             }
             output_context = ::core::ptr::null_mut::<output>();
         }
-        crate::output::output_close(::core::ptr::null_mut::<output>());
+        crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
         osync_clear();
         if !directory_before_chdir.is_null() {
             let mut _x: i32 = 0;
@@ -5360,8 +5451,8 @@ mod should_print_dir_unsafe_oracle {
         if let Some(v) = options.print_directory.get() {
             return v as i32;
         }
-        (!options.silent.get()
-            && (ctx.makelevel() > 0 || !options.directories.borrow().is_empty())) as i32
+        (!options.silent.get() && (ctx.makelevel() > 0 || !options.directories.borrow().is_empty()))
+            as i32
     }
 }
 
@@ -5430,10 +5521,11 @@ mod jobserver_and_stdin_cleanup_tests {
     #[test]
     fn temp_stdin_unlink_removes_file_and_noops() {
         // No temp stdin registered (defaults): must be a harmless no-op.
+        let ctx = crate::execctx::ExecContext::default();
         unsafe {
             stdin_offset = -1;
             temp_stdin_name = ::core::ptr::null();
-            temp_stdin_unlink();
+            temp_stdin_unlink(&ctx);
         }
 
         // Real unlink path: create a temp file and register it.
@@ -5445,7 +5537,7 @@ mod jobserver_and_stdin_cleanup_tests {
         unsafe {
             stdin_offset = 0;
             temp_stdin_name = cpath.as_ptr();
-            temp_stdin_unlink();
+            temp_stdin_unlink(&ctx);
             // Restore globals before `cpath` is dropped to avoid a dangling ptr.
             temp_stdin_name = ::core::ptr::null();
             stdin_offset = -1;

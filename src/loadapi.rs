@@ -87,7 +87,17 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
     let mut eval_input = ::std::ffi::CStr::from_ptr(buffer)
         .to_bytes_with_nul()
         .to_vec();
-    eval_buffer(eval_input.as_mut_ptr() as *mut ::core::ffi::c_char, flp);
+    // This is a `gmk_*` plugin-ABI entry point invoked from loaded C objects;
+    // its C-ABI signature cannot carry the owned `ExecContext`, and there is
+    // deliberately no global to read it from. The only use of `ctx` in the
+    // callees is the `make[N]:` message prefix, which is cosmetic here, so we
+    // hand them a default (top-level) context.
+    let ctx = crate::execctx::ExecContext::default();
+    eval_buffer(
+        &ctx,
+        eval_input.as_mut_ptr() as *mut ::core::ffi::c_char,
+        flp,
+    );
     restore_variable_buffer(pbuf, plen);
 }
 /// # Safety
@@ -96,7 +106,12 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
 /// translation; all pointer arguments must be valid for the call.
 #[no_mangle]
 pub unsafe extern "C" fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
-    allocated_expand_string_for_file(ref_0, ::core::ptr::null_mut::<file>())
+    // `gmk_*` plugin-ABI entry point: its C-ABI signature cannot carry the
+    // owned `ExecContext` and there is deliberately no global for it. Hand the
+    // callee a default (top-level) context (only the cosmetic `make[N]:` prefix
+    // depends on it).
+    let ctx = crate::execctx::ExecContext::default();
+    allocated_expand_string_for_file(&ctx, ref_0, ::core::ptr::null_mut::<file>())
 }
 /// # Safety
 ///
@@ -110,5 +125,10 @@ pub unsafe extern "C" fn gmk_add_function(
     max: ::core::ffi::c_uint,
     flags: ::core::ffi::c_uint,
 ) {
-    define_new_function(reading_file, name, min, max, flags, func);
+    // `gmk_*` plugin-ABI entry point: its C-ABI signature cannot carry the
+    // owned `ExecContext` and there is deliberately no global for it. Hand the
+    // callee a default (top-level) context (only the cosmetic `make[N]:` prefix
+    // depends on it).
+    let ctx = crate::execctx::ExecContext::default();
+    define_new_function(&ctx, reading_file, name, min, max, flags, func);
 }

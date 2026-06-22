@@ -106,7 +106,7 @@ fn percent_off(pattern: *const c_char, percent: *const c_char) -> Option<usize> 
 /// # Safety
 /// Must run single-threaded: it reads and writes the module's vpath chains
 /// and expands make variables through the global variable tables.
-pub unsafe fn build_vpath_lists() {
+pub unsafe fn build_vpath_lists(ctx: &crate::execctx::ExecContext) {
     // Reverse the chain so vpaths are searched in the order their
     // directives appeared in the makefile.
     let mut reversed: *mut Vpath = null_mut();
@@ -119,10 +119,10 @@ pub unsafe fn build_vpath_lists() {
     }
     vpaths = reversed;
 
-    if let Some(list) = vpath_from_variable(b"VPATH\0") {
+    if let Some(list) = vpath_from_variable(ctx, b"VPATH\0") {
         general_vpath = list;
     }
-    if let Some(list) = vpath_from_variable(b"GPATH\0") {
+    if let Some(list) = vpath_from_variable(ctx, b"GPATH\0") {
         gpaths = list;
     }
 }
@@ -130,8 +130,12 @@ pub unsafe fn build_vpath_lists() {
 /// Expand the named make variable and build a `%`-pattern vpath chain from
 /// its value, leaving the directive-built `vpaths` chain untouched. Returns
 /// `None` when the value is empty or whitespace-only.
-unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
+unsafe fn vpath_from_variable(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+) -> Option<*mut Vpath> {
     let p = expand_variable_buf(
+        ctx,
         null_mut(),
         name.as_ptr() as *const c_char,
         (name.len() - 1) as size_t,
@@ -152,6 +156,7 @@ unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
     vpaths = null_mut();
     let mut pattern = *b"%\0";
     construct_vpath_list(
+        ctx,
         pattern.as_mut_ptr() as *mut c_char,
         buf[start..].as_mut_ptr() as *mut c_char,
     );
@@ -170,7 +175,11 @@ unsafe fn vpath_from_variable(name: &[u8]) -> Option<*mut Vpath> {
 /// # Safety
 /// `pattern` and `dirpath` must be null or valid nul-terminated strings,
 /// and the caller must be single-threaded with respect to the vpath chains.
-pub unsafe fn construct_vpath_list(pattern: *mut c_char, dirpath: *mut c_char) {
+pub unsafe fn construct_vpath_list(
+    ctx: &crate::execctx::ExecContext,
+    pattern: *mut c_char,
+    dirpath: *mut c_char,
+) {
     let percent: *const c_char = if pattern.is_null() {
         null()
     } else {
@@ -229,7 +238,7 @@ pub unsafe fn construct_vpath_list(pattern: *mut c_char, dirpath: *mut c_char) {
         // Skip "." entries: searching "." is implicit.
         if len > 1 || bytes[start] != b'.' {
             let cached = strcache_add_len(bytes[start..].as_ptr() as *const c_char, len as size_t);
-            entries.push(dir_name(cached));
+            entries.push(dir_name(ctx, cached));
             if len as size_t > maxvpath {
                 maxvpath = len as size_t;
             }
@@ -378,6 +387,7 @@ mod gpath_search_unsafe_oracle {
 /// into `*mtime_ptr` (when non-null) and the index of the matching search
 /// path into `*path_index` (when non-null). Returns null if not found.
 unsafe fn selective_vpath_search(
+    ctx: &crate::execctx::ExecContext,
     path: *mut Vpath,
     file: *const c_char,
     mut mtime_ptr: *mut uintmax_t,
@@ -459,7 +469,7 @@ unsafe fn selective_vpath_search(
             // (the directory cache knows it already), and ask the cache
             // whether the file exists there.
             name_buf[p] = 0;
-            exists = dir_file_exists_p(name, filename) != 0;
+            exists = dir_file_exists_p(ctx, name, filename) != 0;
             exists_in_cache = exists;
         }
 
@@ -484,8 +494,12 @@ unsafe fn selective_vpath_search(
                     // entries instead of returning it.
                     exists = false;
                 } else if let Some(slot) = mtime_ptr.as_mut() {
-                    *slot =
-                        file_timestamp_cons(name, st.st_mtim.tv_sec as time_t, st.st_mtim.tv_nsec);
+                    *slot = file_timestamp_cons(
+                        ctx,
+                        name,
+                        st.st_mtim.tv_sec as time_t,
+                        st.st_mtim.tv_nsec,
+                    );
                     mtime_ptr = null_mut();
                 }
             }
@@ -517,6 +531,7 @@ unsafe fn selective_vpath_search(
 /// and `path_index` must each be null or valid for writes. When
 /// `vpath_index` is non-null, `path_index` must be non-null too.
 pub unsafe fn vpath_search(
+    ctx: &crate::execctx::ExecContext,
     file: *const c_char,
     mtime_ptr: *mut uintmax_t,
     vpath_index: *mut c_uint,
@@ -543,7 +558,7 @@ pub unsafe fn vpath_search(
     let mut v = vpaths;
     while !v.is_null() {
         if pattern_matches((*v).pattern, (*v).percent, file) != 0 {
-            let p = selective_vpath_search(v, file, mtime_ptr, path_index);
+            let p = selective_vpath_search(ctx, v, file, mtime_ptr, path_index);
             if !p.is_null() {
                 return p;
             }
@@ -555,7 +570,7 @@ pub unsafe fn vpath_search(
     }
 
     if !general_vpath.is_null() {
-        let p = selective_vpath_search(general_vpath, file, mtime_ptr, path_index);
+        let p = selective_vpath_search(ctx, general_vpath, file, mtime_ptr, path_index);
         if !p.is_null() {
             return p;
         }

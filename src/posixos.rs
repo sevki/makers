@@ -189,7 +189,7 @@ pub unsafe fn jobserver_setup(
     JOB_ROOT.store(true, Ordering::Relaxed);
 
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
-        let tmpdir = get_tmpdir();
+        let tmpdir = get_tmpdir(ctx);
         fifo_name = xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
             as *mut c_char;
         sprintf(
@@ -650,8 +650,8 @@ pub fn osync_enabled() -> c_uint {
 ///
 /// # Safety
 /// Must run single-threaded during startup.
-pub unsafe fn osync_setup() {
-    let h = get_tmpfd(&raw mut osync_tmpfile);
+pub unsafe fn osync_setup(ctx: &crate::execctx::ExecContext) {
+    let h = get_tmpfd(ctx, &raw mut osync_tmpfile);
     OSYNC_HANDLE.store(h, Ordering::Relaxed);
     fd_noinherit(h);
     SYNC_ROOT.store(true, Ordering::Relaxed);
@@ -677,10 +677,7 @@ pub unsafe fn osync_get_mutex() -> *mut c_char {
 /// # Safety
 /// `mutex` must be a valid NUL-terminated string; must run single-threaded
 /// during startup.
-pub unsafe fn osync_parse_mutex(
-    ctx: &crate::execctx::ExecContext,
-    mutex: *const c_char,
-) -> c_uint {
+pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const c_char) -> c_uint {
     if strncmp(mutex, MUTEX_PREFIX.as_ptr(), MUTEX_PREFIX.to_bytes().len()) != 0 {
         error(
             ctx,
@@ -866,7 +863,7 @@ pub unsafe fn fd_reset_append(fd: i32, flags: i32) {
 /// # Safety
 /// Must run single-threaded (reports errors through the printers).
 pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
-    let tdir = get_tmpdir();
+    let tdir = get_tmpdir(ctx);
     let mut fd: i32 = -1;
     static TMPFILE_WORKS: AtomicBool = AtomicBool::new(true);
 
