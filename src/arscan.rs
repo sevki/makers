@@ -151,11 +151,6 @@ pub unsafe fn ar_scan(
             let mut name: *mut ::core::ffi::c_char;
             let is_namemap: i32;
             let mut long_name: i32 = 0;
-            let eltsize: ::core::ffi::c_long;
-            let eltmode: ::core::ffi::c_uint;
-            let eltdate: intmax_t;
-            let eltuid: i32;
-            let eltgid: i32;
             let fnval: intmax_t;
             let mut o: off_t;
             memset(
@@ -306,13 +301,13 @@ pub unsafe fn ar_scan(
                     )
                 })
             };
-            eltmode = parse_field(mode_field, 8, ::core::ffi::c_uint::MAX as u64, "mode")
+            let eltmode = parse_field(mode_field, 8, ::core::ffi::c_uint::MAX as u64, "mode")
                 as ::core::ffi::c_uint;
-            eltsize = parse_field(size_field, 10, ::core::ffi::c_long::MAX as u64, "size")
+            let eltsize = parse_field(size_field, 10, ::core::ffi::c_long::MAX as u64, "size")
                 as ::core::ffi::c_long;
-            eltdate = parse_field(date_field, 10, intmax_t::MAX as u64, "date") as intmax_t;
-            eltuid = parse_field(uid_field, 10, i32::MAX as u64, "uid") as i32;
-            eltgid = parse_field(gid_field, 10, i32::MAX as u64, "gid") as i32;
+            let eltdate = parse_field(date_field, 10, intmax_t::MAX as u64, "date") as intmax_t;
+            let eltuid = parse_field(uid_field, 10, i32::MAX as u64, "uid") as i32;
+            let eltgid = parse_field(gid_field, 10, i32::MAX as u64, "gid") as i32;
             fnval = Some(function.expect("non-null function pointer"))
                 .expect("non-null function pointer")(
                 desc,
