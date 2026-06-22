@@ -968,6 +968,23 @@ all: ; @printf 'REC=[%s] SIM=[%s] EXPND=[%s] APP=[%s] SHL=[%s] COND=[%s]\\n' '$(
 }
 
 #[test]
+fn shell_assignment_expands_through_owned_cstr() {
+    // Focused coverage for the `!=` shell-assignment path in
+    // do_variable_definition (flavor branch 5): the expanded recipe text is
+    // owned by an `OwnedCStr` RAII guard, fed to `shell_result`, and the
+    // command's stdout becomes the variable's value. Deterministic (echo only).
+    let mk = "\
+X != echo hello
+Y != printf 'a\\nb\\nc'
+all: ; @printf 'X=[%s] Y=[%s]\\n' '$(X)' '$(Y)'
+";
+    let (out, code) = run_make(mk, &[], &[]);
+    assert_eq!(code, Some(0), "stdout: {out}");
+    // GNU make collapses the captured newlines to single spaces.
+    assert_eq!(out.trim_end(), "X=[hello] Y=[a b c]");
+}
+
+#[test]
 fn func_realpath_matches_c_oracle() {
     // Differential coverage for the rewritten realpath (now std::fs::canonicalize).
     // Absolute, existing inputs make the result cwd-independent, so the C oracle

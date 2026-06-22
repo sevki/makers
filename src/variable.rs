@@ -1711,7 +1711,7 @@ pub unsafe fn do_variable_definition(
             // The expanded recipe text is scratch consumed only by
             // `shell_result`; `OwnedCStr` frees it on drop (RAII) instead of
             // the manual `free` the C code performed here.
-            let q = OwnedCStr(allocated_expand_string_for_file(
+            let q = OwnedCStr::from_owned_ptr(allocated_expand_string_for_file(
                 value,
                 ::core::ptr::null_mut::<file>(),
             ));

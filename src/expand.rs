@@ -17,9 +17,18 @@ extern "C" {
 
 /// Owns a `malloc`ed C string and frees it on drop, replacing the manual
 /// `xstrdup`/`expand_argument` + `free` ownership pairs across the port.
-pub(crate) struct OwnedCStr(pub(crate) *mut ::core::ffi::c_char);
+pub(crate) struct OwnedCStr(*mut ::core::ffi::c_char);
 
 impl OwnedCStr {
+    /// Wrap a `malloc`-allocated, NUL-terminated C string, taking ownership so
+    /// it is `free`d on drop. The pointer MUST come from the C allocator (e.g.
+    /// `xmalloc`/`xstrdup`/`expand_argument`/`allocated_expand_string_for_file`)
+    /// and MUST NOT be borrowed, static, or otherwise non-owned: dropping the
+    /// guard `free`s it. A null pointer is permitted (drop frees nothing).
+    pub(crate) fn from_owned_ptr(p: *mut ::core::ffi::c_char) -> Self {
+        OwnedCStr(p)
+    }
+
     /// Borrow the underlying NUL-terminated buffer.
     pub(crate) fn as_ptr(&self) -> *mut ::core::ffi::c_char {
         self.0
