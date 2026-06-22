@@ -259,6 +259,15 @@ fn basename_dir_functions() {
 }
 
 #[test]
+fn verify_flag_file_lookup() {
+    // Every file lookup consults `verify_flag()`, now backed by the VERIFY_FLAG
+    // atomic rather than `static mut verify_flag`. A multi-target build drives
+    // the lookup/assert path repeatedly; output stays byte-identical to the C
+    // oracle, confirming the read site is behavior-preserving.
+    check("verify-flag", "63_verify_flag.mk", "all", &[]);
+}
+
+#[test]
 fn variable_expansion() {
     check("vars", "02_vars.mk", "all", &["FROMCMD=cli"]);
 }

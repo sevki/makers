@@ -440,7 +440,15 @@ pub const OLD_MTIME: i32 = 2;
 pub const no_argument: i32 = 0;
 pub const required_argument: i32 = 1;
 pub const optional_argument: i32 = 2;
-pub static mut verify_flag: i32 = 0;
+pub static VERIFY_FLAG: AtomicBool = AtomicBool::new(false);
+
+/// Maintainer invariant flag (set with `verify_flag = 1`): when true, every
+/// file lookup asserts the looked-up name is interned in the string cache.
+/// Reads the `VERIFY_FLAG` atomic; preserves the single-threaded read/write
+/// ordering of the original `static mut verify_flag`.
+pub fn verify_flag() -> bool {
+    VERIFY_FLAG.load(Ordering::Relaxed)
+}
 static mut default_silent_flag: i32 = 0;
 pub static mut run_silent: i32 = 0;
 pub static mut db_level: i32 = 0;
@@ -1398,7 +1406,7 @@ pub unsafe fn decode_debug_flags(options: &Options) {
         }
     }
     if db_level != 0 {
-        verify_flag = 1;
+        VERIFY_FLAG.store(true, Ordering::Relaxed);
     }
     if db_level == 0 {
         options.debug_flag.set(false);
@@ -1552,7 +1560,7 @@ unsafe fn main_0(
     crate::output::output_init(&raw mut make_sync);
     initialize_stopchar_map();
     crate::warning::init();
-    verify_flag = 1;
+    VERIFY_FLAG.store(true, Ordering::Relaxed);
     setlocale(LC_ALL, b"\0" as *const u8 as *const ::core::ffi::c_char);
     sigemptyset(&raw mut fatal_signal_set);
     install_fatal_signal(1);
@@ -4218,7 +4226,7 @@ pub unsafe fn die(status: i32) -> ! {
         if opt_print_data_base() {
             print_data_base();
         }
-        if verify_flag != 0 {
+        if verify_flag() {
             verify_file_data_base();
         }
         unload_all();
@@ -5065,6 +5073,29 @@ mod output_sync_tests {
         assert_eq!(classify_output_sync(b"nonsense"), None);
         assert_eq!(classify_output_sync(b"NONE"), None); // case-sensitive, like make
         assert_eq!(classify_output_sync(b"none "), None); // exact match only
+    }
+}
+
+#[cfg(test)]
+mod verify_flag_tests {
+    use super::{verify_flag, VERIFY_FLAG};
+    use std::sync::atomic::Ordering;
+
+    /// `verify_flag()` reflects the `VERIFY_FLAG` atomic: false until the
+    /// maintainer invariant check is enabled (e.g. `-d`/init sets it), true
+    /// after. Restores the prior value so the global stays isolated from other
+    /// tests.
+    #[test]
+    fn verify_flag_tracks_atomic() {
+        let saved = VERIFY_FLAG.load(Ordering::Relaxed);
+
+        VERIFY_FLAG.store(false, Ordering::Relaxed);
+        assert!(!verify_flag(), "flag clear");
+
+        VERIFY_FLAG.store(true, Ordering::Relaxed);
+        assert!(verify_flag(), "flag set");
+
+        VERIFY_FLAG.store(saved, Ordering::Relaxed);
     }
 }
 
