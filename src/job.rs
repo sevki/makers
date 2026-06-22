@@ -1900,9 +1900,46 @@ fn loadavg_running_jobs(contents: &[u8]) -> Option<u32> {
     crate::misc::parse_uint_strtoul(numerator).ok()
 }
 
+/// The per-second load-sample fold from [`load_too_high`], extracted as a pure
+/// function over its cache state so the smoothing arithmetic can be
+/// differential-tested against the original `static mut last_now`/`last_sec`
+/// implementation (see `load_sample_fold_oracle` in the tests).
+///
+/// Once per new wall-clock second it rolls the sample window forward: the
+/// previous second's job count is carried at weight B only when the cached
+/// second is exactly adjacent to `now` (otherwise the carry resets to zero),
+/// the running job counter resets, and the cached second advances. It then
+/// returns the updated cache triple plus the smoothed load `guess` (the actual
+/// `load` plus weight A times the live job count and the carried weight). The
+/// caller writes the returned `sample_second`/`prev_weight` back into the
+/// `ExecContext` cells and the job counter back into `JOB_COUNTER`; this matches
+/// the original, where `JOB_COUNTER` was reset inside the per-second branch and
+/// re-read when forming the guess.
+fn load_sample_fold(
+    sample_second: time_t,
+    prev_weight: ::core::ffi::c_double,
+    job_counter: u64,
+    now: time_t,
+    load: ::core::ffi::c_double,
+) -> (time_t, ::core::ffi::c_double, u64, ::core::ffi::c_double) {
+    let mut sample_second = sample_second;
+    let mut prev_weight = prev_weight;
+    let mut job_counter = job_counter;
+    if sample_second < now {
+        if sample_second == now - 1 as time_t {
+            prev_weight = LOAD_WEIGHT_B * job_counter as ::core::ffi::c_double;
+        } else {
+            prev_weight = 0.0f64;
+        }
+        job_counter = 0;
+        sample_second = now;
+    }
+    let guess: ::core::ffi::c_double =
+        load + LOAD_WEIGHT_A * (job_counter as ::core::ffi::c_double + prev_weight);
+    (sample_second, prev_weight, job_counter, guess)
+}
+
 pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
-    static mut last_sec: ::core::ffi::c_double = 0.;
-    static mut last_now: time_t = 0;
     static mut proc_fd: i32 = -2_i32;
     let mut load: ::core::ffi::c_double = 0.;
     let now: time_t;
@@ -2021,17 +2058,16 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
         load = 0_i32 as ::core::ffi::c_double;
     }
     now = time(::core::ptr::null_mut::<time_t>());
-    if last_now < now {
-        if last_now == now - 1 as time_t {
-            last_sec = LOAD_WEIGHT_B * JOB_COUNTER.load(Ordering::Relaxed) as ::core::ffi::c_double;
-        } else {
-            last_sec = 0.0f64;
-        }
-        JOB_COUNTER.store(0, Ordering::Relaxed);
-        last_now = now;
-    }
-    let guess: ::core::ffi::c_double = load
-        + LOAD_WEIGHT_A * (JOB_COUNTER.load(Ordering::Relaxed) as ::core::ffi::c_double + last_sec);
+    let (next_sample_second, next_prev_weight, next_job_counter, guess) = load_sample_fold(
+        ctx.load_sample_second.get(),
+        ctx.load_prev_weight.get(),
+        JOB_COUNTER.load(Ordering::Relaxed),
+        now,
+        load,
+    );
+    ctx.load_sample_second.set(next_sample_second);
+    ctx.load_prev_weight.set(next_prev_weight);
+    JOB_COUNTER.store(next_job_counter, Ordering::Relaxed);
     if 0x4_i32 & db_level != 0 {
         printf(
             b"Estimated system load = %f (actual = %f) (max requested = %f)\n\0" as *const u8
@@ -3019,6 +3055,108 @@ mod loadavg_tests {
         assert_eq!(loadavg_running_jobs(b"0.0 0.0 0.0 x/9 1"), None); // non-numeric
         assert_eq!(loadavg_running_jobs(b"0.0 0.0 0.0 /9 1"), None); // empty numerator
         assert_eq!(loadavg_running_jobs(b""), None);
+    }
+}
+
+#[cfg(test)]
+mod load_sample_fold_tests {
+    use super::{load_sample_fold, time_t, LOAD_WEIGHT_A, LOAD_WEIGHT_B};
+
+    /// Verbatim port of the original per-second fold from `load_too_high` as it
+    /// stood before the cache was de-globalized — the `static mut last_now`
+    /// (last sampled second) and `static mut last_sec` (carried weight) logic,
+    /// with the global `JOB_COUNTER` reset modeled by the threaded
+    /// `job_counter`. Kept as a `#[cfg(test)]` oracle per `AGENTS.md:30-37` so we
+    /// can prove the extracted `load_sample_fold` is behavior-preserving.
+    fn load_sample_fold_oracle(
+        last_now: time_t,
+        last_sec: ::core::ffi::c_double,
+        job_counter: u64,
+        now: time_t,
+        load: ::core::ffi::c_double,
+    ) -> (time_t, ::core::ffi::c_double, u64, ::core::ffi::c_double) {
+        let mut last_now = last_now;
+        let mut last_sec = last_sec;
+        let mut job_counter = job_counter;
+        if last_now < now {
+            if last_now == now - 1 as time_t {
+                last_sec = LOAD_WEIGHT_B * job_counter as ::core::ffi::c_double;
+            } else {
+                last_sec = 0.0f64;
+            }
+            job_counter = 0; // JOB_COUNTER.store(0, Relaxed)
+            last_now = now;
+        }
+        let guess: ::core::ffi::c_double =
+            load + LOAD_WEIGHT_A * (job_counter as ::core::ffi::c_double + last_sec);
+        (last_now, last_sec, job_counter, guess)
+    }
+
+    /// Drive representative cache states through both the extracted
+    /// `load_sample_fold` and the preserved oracle, asserting identical updated
+    /// state and smoothed guess. Covers: first sample (gap from 0), an exactly
+    /// adjacent second (carry of weight B), a multi-second gap (carry reset), a
+    /// stale `now` that does not advance the window, and a zero-job second.
+    #[test]
+    fn matches_original_static_mut_fold() {
+        let cases: &[(
+            time_t,
+            ::core::ffi::c_double,
+            u64,
+            time_t,
+            ::core::ffi::c_double,
+        )] = &[
+            // (sample_second, prev_weight, job_counter, now, load)
+            (0, 0.0, 8, 1000, 0.5),       // first sample: gap from 0 -> reset
+            (1000, 0.0, 4, 1001, 0.5),    // adjacent second -> carry weight B
+            (1000, 0.25, 12, 1005, 1.5),  // multi-second gap -> reset
+            (1001, 1.0, 7, 1000, 2.0),    // stale now (< cached) -> no advance
+            (1001, 1.0, 7, 1001, 2.0),    // equal now -> no advance
+            (1000, 0.0, 0, 1001, 0.0),    // adjacent second, zero jobs
+            (2000, 3.0, 99, 2001, 10.25), // adjacent second, large counter
+        ];
+        for &(sample_second, prev_weight, job_counter, now, load) in cases {
+            let got = load_sample_fold(sample_second, prev_weight, job_counter, now, load);
+            let want = load_sample_fold_oracle(sample_second, prev_weight, job_counter, now, load);
+            assert_eq!(
+                got, want,
+                "fold diverged for (sample_second={sample_second}, prev_weight={prev_weight}, \
+                 job_counter={job_counter}, now={now}, load={load})"
+            );
+        }
+    }
+
+    /// The carry/reset behavior is path-dependent across consecutive seconds, so
+    /// also compare the two implementations when chained call-to-call: feed each
+    /// one's output back as the next call's cache state and assert they stay in
+    /// lockstep across a realistic timeline (steady ticks, a stall, a burst).
+    #[test]
+    fn matches_original_when_chained() {
+        // (now, job_counter_at_call, load) for each successive sample.
+        let timeline: &[(time_t, u64, ::core::ffi::c_double)] = &[
+            (1000, 5, 0.10),
+            (1001, 3, 0.20), // adjacent: carry from 1000
+            (1002, 9, 0.30), // adjacent: carry from 1001
+            (1010, 2, 0.40), // gap: reset
+            (1011, 6, 0.50), // adjacent: carry from 1010
+            (1011, 6, 0.55), // same second: no advance
+            (1012, 0, 0.60), // adjacent, zero jobs
+        ];
+        let (mut s_new, mut w_new) = (0 as time_t, 0.0f64);
+        let (mut s_ora, mut w_ora) = (0 as time_t, 0.0f64);
+        for &(now, job_counter, load) in timeline {
+            let (ns, nw, njc, ng) = load_sample_fold(s_new, w_new, job_counter, now, load);
+            let (os, ow, ojc, og) = load_sample_fold_oracle(s_ora, w_ora, job_counter, now, load);
+            assert_eq!(
+                (ns, nw, njc, ng),
+                (os, ow, ojc, og),
+                "diverged at now={now}"
+            );
+            s_new = ns;
+            w_new = nw;
+            s_ora = os;
+            w_ora = ow;
+        }
     }
 }
 
