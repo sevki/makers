@@ -832,7 +832,12 @@ unsafe fn func_basename_dir(
     let mut p2: *const ::core::ffi::c_char;
     let mut doneany: i32 = 0;
     let mut len: size_t = 0;
-    let is_basename: i32 = (*funcname as i32 == 'b' as i32) as i32;
+    // Classify the path-component function (`basename`/`dir`) through the typed
+    // AST layer instead of switching on the raw first byte of the name.
+    let is_basename: i32 = matches!(
+        crate::parser::BasenameDir::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+        Some(crate::parser::BasenameDir::Basename)
+    ) as i32;
     let is_dir: i32 = (is_basename == 0) as i32;
     let stop: i32 = MAP_DIRSEP | (if is_basename != 0 { MAP_DOT } else { 0 }) | MAP_NUL;
     loop {

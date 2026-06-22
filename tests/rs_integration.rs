@@ -251,6 +251,14 @@ fn notdir_suffix_functions() {
 }
 
 #[test]
+fn basename_dir_functions() {
+    // $(basename)/$(dir) share func_basename_dir, now selected via the typed
+    // BasenameDir AST classifier instead of the raw `*funcname == 'b'` byte
+    // test. Output is byte-stable, so compare directly against the C oracle.
+    check("basename-dir", "62_basename_dir.mk", "all", &[]);
+}
+
+#[test]
 fn variable_expansion() {
     check("vars", "02_vars.mk", "all", &["FROMCMD=cli"]);
 }

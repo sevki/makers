@@ -379,6 +379,42 @@ impl NotdirSuffix {
     }
 }
 
+/// The two path-component functions that make routes to a single shared handler
+/// (`func_basename_dir`): `$(basename …)` and `$(dir …)`. Both walk a
+/// whitespace-separated list and emit a slice of each token, differing only in
+/// which part they keep — the directory part up to and including the last
+/// directory separator (`$(dir)`, defaulting to `./`), or the token with its
+/// extension (from the last `.`) stripped (`$(basename)`).
+///
+/// make's c2rust handler distinguished the two by reading the raw first byte of
+/// the function name (`*funcname == 'b'`), an opaque magic-number wall. Which
+/// function is selected is a pure function of the name bytes, so it belongs in
+/// the AST layer as a typed classifier rather than as an inline byte comparison.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum BasenameDir {
+    /// `$(basename …)` — keep each token with its extension (from the last `.`)
+    /// removed; the scan also stops at directory separators so a `.` in a
+    /// parent directory is not mistaken for an extension.
+    Basename,
+    /// `$(dir …)` — keep each token's directory part up to and including the
+    /// last directory separator, defaulting to `./` when there is none.
+    Dir,
+}
+
+impl BasenameDir {
+    /// Classify a built-in function `name` as one of the two path-component
+    /// functions, or `None` if it is not one of them. Matching is exact on the
+    /// full name, mirroring the closed set the function table routes to
+    /// `func_basename_dir`.
+    pub fn from_funcname(name: &[u8]) -> Option<BasenameDir> {
+        Some(match name {
+            b"basename" => BasenameDir::Basename,
+            b"dir" => BasenameDir::Dir,
+            _ => return None,
+        })
+    }
+}
+
 /// The typed classification of a whole logical (non-recipe) line: which of
 /// make's four `eval` dispatch arms the line takes. It is composed from the
 /// leading-word classifiers in make's `eval` order — conditional directives are
@@ -1865,6 +1901,39 @@ mod tests {
         ] {
             assert_eq!(
                 NotdirSuffix::from_funcname(w),
+                None,
+                "{:?} must not classify",
+                w
+            );
+        }
+    }
+
+    #[test]
+    fn basename_dir_classify() {
+        assert_eq!(
+            BasenameDir::from_funcname(b"basename"),
+            Some(BasenameDir::Basename)
+        );
+        assert_eq!(BasenameDir::from_funcname(b"dir"), Some(BasenameDir::Dir));
+    }
+
+    #[test]
+    fn basename_dir_reject_non_matches() {
+        // Other built-in functions sharing a first byte ('b' for basename,
+        // 'd' for dir) must not classify — the old wall switched on the first
+        // byte alone (`*funcname == 'b'`).
+        for w in [
+            b"basenam".as_slice(),
+            b"basenames".as_slice(),
+            b"Basename".as_slice(),
+            b"d".as_slice(),
+            b"directory".as_slice(),
+            b"notdir".as_slice(),
+            b"suffix".as_slice(),
+            b"".as_slice(),
+        ] {
+            assert_eq!(
+                BasenameDir::from_funcname(w),
                 None,
                 "{:?} must not classify",
                 w
