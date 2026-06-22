@@ -1356,6 +1356,117 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     }
     1
 }
+/// Collapse `$`-reference continuations in one already-NUL-terminated recipe
+/// line, rewriting it in place (this was the inner per-line loop of
+/// [`new_job`]). Outside a `$(...)`/`${...}` reference the bytes are copied
+/// verbatim; inside one, an unescaped backslash-newline (and the whitespace
+/// around it) is folded to a single space, exactly as GNU make does before a
+/// recipe line is expanded.
+///
+/// # Safety
+///
+/// `line` must be a writable, NUL-terminated buffer; the rewrite only ever
+/// shortens the line, so it stays within the original allocation.
+unsafe fn collapse_dollar_refs(line: *mut ::core::ffi::c_char) {
+    let mut out: *mut ::core::ffi::c_char = line;
+    let mut in_0: *mut ::core::ffi::c_char = line;
+    let mut ref_0: *mut ::core::ffi::c_char;
+    loop {
+        ref_0 = strchr(in_0, '$' as i32);
+        if ref_0.is_null() {
+            break;
+        }
+        ref_0 = ref_0.offset(1_i32 as isize);
+        if out != in_0 {
+            memmove(
+                out as *mut ::core::ffi::c_void,
+                in_0 as *const ::core::ffi::c_void,
+                ref_0.offset_from(in_0) as ::core::ffi::c_long as size_t,
+            );
+        }
+        out = out.offset(ref_0.offset_from(in_0) as ::core::ffi::c_long as isize);
+        in_0 = ref_0;
+        if *ref_0 as i32 == '(' as i32 || *ref_0 as i32 == '{' as i32 {
+            let openparen: ::core::ffi::c_char = *ref_0;
+            let closeparen: ::core::ffi::c_char = (if openparen as i32 == '(' as i32 {
+                ')' as i32
+            } else {
+                '}' as i32
+            }) as ::core::ffi::c_char;
+            let mut count: i32;
+            let mut p: *mut ::core::ffi::c_char;
+            let fresh0 = in_0;
+            in_0 = in_0.offset(1_i32 as isize);
+            let fresh1 = out;
+            out = out.offset(1_i32 as isize);
+            *fresh1 = *fresh0;
+            let outref: *mut ::core::ffi::c_char = out;
+            count = 0;
+            while *in_0 as i32 != 0 {
+                if *in_0 as i32 == '\\' as i32 && *in_0.offset(1_i32 as isize) as i32 == '\n' as i32
+                {
+                    let mut quoted: i32 = 0;
+                    p = in_0.offset(-(1_i32 as isize));
+                    while p > ref_0 && *p as i32 == '\\' as i32 {
+                        quoted = (quoted == 0) as i32;
+                        p = p.offset(-1_i32 as isize);
+                    }
+                    if quoted != 0 {
+                        let fresh2 = in_0;
+                        in_0 = in_0.offset(1_i32 as isize);
+                        let fresh3 = out;
+                        out = out.offset(1_i32 as isize);
+                        *fresh3 = *fresh2;
+                    } else {
+                        in_0 = in_0.offset(2_i32 as isize);
+                        while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
+                            .offset(*in_0 as ::core::ffi::c_uchar as isize)
+                            as i32
+                            & (0x2_i32 | 0x4_i32)
+                            != 0
+                        {
+                            in_0 = in_0.offset(1_i32 as isize);
+                        }
+                        while out > outref
+                            && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(
+                                *out.offset(-1_i32 as isize) as ::core::ffi::c_uchar as isize,
+                            ) as i32
+                                & 0x2_i32
+                                != 0
+                        {
+                            out = out.offset(-1_i32 as isize);
+                        }
+                        let fresh4 = out;
+                        out = out.offset(1_i32 as isize);
+                        *fresh4 = ' ' as i32 as ::core::ffi::c_char;
+                    }
+                } else {
+                    if *in_0 as i32 == closeparen as i32 && {
+                        count -= 1;
+                        count < 0
+                    } {
+                        break;
+                    }
+                    if *in_0 as i32 == openparen as i32 {
+                        count += 1;
+                    }
+                    let fresh5 = in_0;
+                    in_0 = in_0.offset(1_i32 as isize);
+                    let fresh6 = out;
+                    out = out.offset(1_i32 as isize);
+                    *fresh6 = *fresh5;
+                }
+            }
+        }
+    }
+    if out != in_0 {
+        memmove(
+            out as *mut ::core::ffi::c_void,
+            in_0 as *const ::core::ffi::c_void,
+            strlen(in_0).wrapping_add(1),
+        );
+    }
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -1385,108 +1496,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
     ) as *mut *mut ::core::ffi::c_char;
     i = 0;
     while i < (*cmds).ncommand_lines as ::core::ffi::c_uint {
-        let mut in_0: *mut ::core::ffi::c_char;
-        let mut out: *mut ::core::ffi::c_char;
-        let mut ref_0: *mut ::core::ffi::c_char;
-        out = *(*cmds).command_lines.offset(i as isize);
-        in_0 = out;
-        loop {
-            ref_0 = strchr(in_0, '$' as i32);
-            if ref_0.is_null() {
-                break;
-            }
-            ref_0 = ref_0.offset(1_i32 as isize);
-            if out != in_0 {
-                memmove(
-                    out as *mut ::core::ffi::c_void,
-                    in_0 as *const ::core::ffi::c_void,
-                    ref_0.offset_from(in_0) as ::core::ffi::c_long as size_t,
-                );
-            }
-            out = out.offset(ref_0.offset_from(in_0) as ::core::ffi::c_long as isize);
-            in_0 = ref_0;
-            if *ref_0 as i32 == '(' as i32 || *ref_0 as i32 == '{' as i32 {
-                let openparen: ::core::ffi::c_char = *ref_0;
-                let closeparen: ::core::ffi::c_char = (if openparen as i32 == '(' as i32 {
-                    ')' as i32
-                } else {
-                    '}' as i32
-                }) as ::core::ffi::c_char;
-                let outref: *mut ::core::ffi::c_char;
-                let mut count: i32;
-                let mut p: *mut ::core::ffi::c_char;
-                let fresh0 = in_0;
-                in_0 = in_0.offset(1_i32 as isize);
-                let fresh1 = out;
-                out = out.offset(1_i32 as isize);
-                *fresh1 = *fresh0;
-                outref = out;
-                count = 0;
-                while *in_0 as i32 != 0 {
-                    if *in_0 as i32 == '\\' as i32
-                        && *in_0.offset(1_i32 as isize) as i32 == '\n' as i32
-                    {
-                        let mut quoted: i32 = 0;
-                        p = in_0.offset(-(1_i32 as isize));
-                        while p > ref_0 && *p as i32 == '\\' as i32 {
-                            quoted = (quoted == 0) as i32;
-                            p = p.offset(-1_i32 as isize);
-                        }
-                        if quoted != 0 {
-                            let fresh2 = in_0;
-                            in_0 = in_0.offset(1_i32 as isize);
-                            let fresh3 = out;
-                            out = out.offset(1_i32 as isize);
-                            *fresh3 = *fresh2;
-                        } else {
-                            in_0 = in_0.offset(2_i32 as isize);
-                            while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                                .offset(*in_0 as ::core::ffi::c_uchar as isize)
-                                as i32
-                                & (0x2_i32 | 0x4_i32)
-                                != 0
-                            {
-                                in_0 = in_0.offset(1_i32 as isize);
-                            }
-                            while out > outref
-                                && *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                                    .offset(*out.offset(-1_i32 as isize) as ::core::ffi::c_uchar
-                                        as isize) as i32
-                                    & 0x2_i32
-                                    != 0
-                            {
-                                out = out.offset(-1_i32 as isize);
-                            }
-                            let fresh4 = out;
-                            out = out.offset(1_i32 as isize);
-                            *fresh4 = ' ' as i32 as ::core::ffi::c_char;
-                        }
-                    } else {
-                        if *in_0 as i32 == closeparen as i32 && {
-                            count -= 1;
-                            count < 0
-                        } {
-                            break;
-                        }
-                        if *in_0 as i32 == openparen as i32 {
-                            count += 1;
-                        }
-                        let fresh5 = in_0;
-                        in_0 = in_0.offset(1_i32 as isize);
-                        let fresh6 = out;
-                        out = out.offset(1_i32 as isize);
-                        *fresh6 = *fresh5;
-                    }
-                }
-            }
-        }
-        if out != in_0 {
-            memmove(
-                out as *mut ::core::ffi::c_void,
-                in_0 as *const ::core::ffi::c_void,
-                strlen(in_0).wrapping_add(1),
-            );
-        }
+        collapse_dollar_refs(*(*cmds).command_lines.offset(i as isize));
         (*cmds).fileinfo.offset = i as ::core::ffi::c_ulong;
         let fresh7 = &mut (*lines.offset(i as isize));
         *fresh7 =
@@ -3100,5 +3110,51 @@ mod batch_mode_shell_tests {
     #[test]
     fn batch_mode_shell_is_zero() {
         assert_eq!(batch_mode_shell, 0);
+    }
+}
+
+#[cfg(test)]
+mod collapse_dollar_refs_tests {
+    use super::collapse_dollar_refs;
+
+    /// Run `collapse_dollar_refs` over `input` (NUL-terminated in a writable
+    /// buffer, as `new_job` would) and return the rewritten line as a `String`.
+    fn collapse(input: &str) -> String {
+        let mut buf: Vec<u8> = input.bytes().chain(std::iter::once(0)).collect();
+        unsafe {
+            collapse_dollar_refs(buf.as_mut_ptr() as *mut ::core::ffi::c_char);
+        }
+        let nul = buf.iter().position(|&b| b == 0).unwrap();
+        String::from_utf8(buf[..nul].to_vec()).unwrap()
+    }
+
+    /// A line with no `$` is copied through unchanged.
+    #[test]
+    fn plain_line_unchanged() {
+        assert_eq!(collapse("cc -c foo.c -o foo.o"), "cc -c foo.c -o foo.o");
+    }
+
+    /// A bare `$X` reference (no paren) is left exactly as-is.
+    #[test]
+    fn bare_dollar_unchanged() {
+        assert_eq!(collapse("echo $X done"), "echo $X done");
+        assert_eq!(collapse("$@: $<"), "$@: $<");
+    }
+
+    /// Inside a `$(...)`/`${...}` reference an unescaped backslash-newline and
+    /// the whitespace around it fold to a single space; text outside the
+    /// reference is untouched. The whitespace folding consults the global
+    /// stopchar map, so initialize it first (as the real program does).
+    #[test]
+    fn folds_continuation_inside_reference() {
+        crate::make_main::initialize_stopchar_map();
+        assert_eq!(collapse("$(foo \\\n   bar)"), "$(foo bar)");
+        assert_eq!(collapse("${a \\\n b} z"), "${a b} z");
+    }
+
+    /// A reference with no continuation passes through verbatim.
+    #[test]
+    fn reference_without_continuation_unchanged() {
+        assert_eq!(collapse("$(subst a,b,$(x))"), "$(subst a,b,$(x))");
     }
 }
