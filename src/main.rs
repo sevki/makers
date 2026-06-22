@@ -444,8 +444,6 @@ pub static mut verify_flag: i32 = 0;
 static mut default_silent_flag: i32 = 0;
 pub static mut run_silent: i32 = 0;
 pub static mut db_level: i32 = 0;
-static mut old_builtin_rules_flag: i32 = 0;
-static mut old_builtin_variables_flag: i32 = 0;
 pub static mut export_all_variables: i32 = 0;
 /// Read-only `--keep-going` default: only referenced via `&raw const` as the
 /// option table's `default_value`, never written. Immutable removes a mutable
@@ -499,6 +497,16 @@ pub struct Options {
     pub question: ::core::cell::Cell<bool>,
     pub no_builtin_rules: ::core::cell::Cell<bool>,
     pub no_builtin_variables: ::core::cell::Cell<bool>,
+    /// Apply-once latches for [`disable_builtins`]. The original C kept these as
+    /// function-local `static` flags so the built-in rule/variable cleanup runs
+    /// exactly once per process even though `disable_builtins` is reached again
+    /// on every `MAKEFLAGS` re-parse. They live on the run-owner `Options`
+    /// (reached process-wide via `installed_options()`) rather than on a
+    /// threaded `ExecContext`, because `MAKEFLAGS` can be assigned through the
+    /// load-API `gmk_eval` path, which carries a throwaway context — latching
+    /// there would leave the real run unlatched and re-run the cleanup.
+    pub prev_no_builtin_rules: ::core::cell::Cell<bool>,
+    pub prev_no_builtin_variables: ::core::cell::Cell<bool>,
     pub keep_going: ::core::cell::Cell<bool>,
     pub keep_going_origin: ::core::cell::Cell<variable_origin>,
     pub check_symlink: ::core::cell::Cell<bool>,
@@ -554,6 +562,8 @@ impl Options {
             question: ::core::cell::Cell::new(false),
             no_builtin_rules: ::core::cell::Cell::new(false),
             no_builtin_variables: ::core::cell::Cell::new(false),
+            prev_no_builtin_rules: ::core::cell::Cell::new(false),
+            prev_no_builtin_variables: ::core::cell::Cell::new(false),
             keep_going: ::core::cell::Cell::new(false),
             keep_going_origin: ::core::cell::Cell::new(o_default),
             check_symlink: ::core::cell::Cell::new(false),
@@ -2248,8 +2258,12 @@ unsafe fn main_0(
         drop(value_0_buf);
     }
     let old_arg_job_slots: Option<u32> = options.arg_job_slots.get();
-    old_builtin_rules_flag = options.no_builtin_rules.get() as i32;
-    old_builtin_variables_flag = options.no_builtin_variables.get() as i32;
+    options
+        .prev_no_builtin_rules
+        .set(options.no_builtin_rules.get());
+    options
+        .prev_no_builtin_variables
+        .set(options.no_builtin_variables.get());
     // Intern each makefile name in the strcache so the pointers handed to
     // read_all_makefiles (and stored as floc.filenm during eval) stay valid
     // for the whole run, matching the C code where makefiles->list holds
@@ -3794,12 +3808,12 @@ pub unsafe fn disable_builtins(ctx: &crate::execctx::ExecContext, options: &Opti
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
-    if options.no_builtin_rules.get() && old_builtin_rules_flag == 0 {
-        old_builtin_rules_flag = 1;
+    if options.no_builtin_rules.get() && !options.prev_no_builtin_rules.get() {
+        options.prev_no_builtin_rules.set(true);
         clear_builtin_rules(ctx);
     }
-    if options.no_builtin_variables.get() && old_builtin_variables_flag == 0 {
-        old_builtin_variables_flag = 1;
+    if options.no_builtin_variables.get() && !options.prev_no_builtin_variables.get() {
+        options.prev_no_builtin_variables.set(true);
         undefine_default_variables(ctx);
     }
 }
@@ -5356,6 +5370,55 @@ mod option_default_statics_tests {
         assert_eq!(default_keep_going_flag, 0);
         assert_eq!(default_print_directory_flag, -1);
         assert_eq!(inf_jobs, 0);
+    }
+}
+
+#[cfg(test)]
+mod disable_builtins_latch_tests {
+    use super::Options;
+
+    /// The apply-once latches start cleared on a fresh `Options`, matching the
+    /// original `static mut old_builtin_*_flag = 0` initial values.
+    #[test]
+    fn builtin_latches_start_cleared() {
+        let options = Options::new();
+        assert!(!options.prev_no_builtin_rules.get());
+        assert!(!options.prev_no_builtin_variables.get());
+        assert!(!Options::default().prev_no_builtin_variables.get());
+    }
+
+    /// `disable_builtins` clears the built-in rules/variables only on the
+    /// `false -> true` transition of its latch, so the guarded work runs exactly
+    /// once even though the function is reached repeatedly as `MAKEFLAGS` is
+    /// re-parsed. This models that fold against the relocated `Options` latch
+    /// (the run-owner reached process-wide via `installed_options()`), the field
+    /// that replaced the `static mut old_builtin_rules_flag`.
+    #[test]
+    fn builtin_latch_fires_once_on_transition() {
+        let options = Options::new();
+        options.no_builtin_rules.set(true);
+        let mut fired = 0;
+        // The guard from disable_builtins, applied repeatedly: the flag stays
+        // set, the latch transitions and the guard opens exactly once.
+        for _ in 0..5 {
+            if options.no_builtin_rules.get() && !options.prev_no_builtin_rules.get() {
+                options.prev_no_builtin_rules.set(true);
+                fired += 1;
+            }
+        }
+        assert_eq!(fired, 1, "the cleanup runs exactly once across re-parses");
+
+        // A pre-seeded latch (as main_0 seeds it from the startup options)
+        // suppresses the work entirely.
+        let seeded = Options::new();
+        seeded.no_builtin_variables.set(true);
+        seeded.prev_no_builtin_variables.set(true);
+        let mut fired2 = 0;
+        if seeded.no_builtin_variables.get() && !seeded.prev_no_builtin_variables.get() {
+            seeded.prev_no_builtin_variables.set(true);
+            fired2 += 1;
+        }
+        assert_eq!(fired2, 0, "a pre-seeded latch suppresses the work");
     }
 }
 
