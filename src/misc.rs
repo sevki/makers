@@ -669,6 +669,22 @@ enum TmpdirCandidate {
     Invalid,
 }
 
+/// `stat(2)` retried across `EINTR`, mirroring the C `EINTRLOOP`. Pulled out of
+/// `eval_tmpdir_var` so that probe isn't carrying the bare retry loop.
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated C string and `st` a valid `stat`
+/// pointer for the duration of the call.
+unsafe fn stat_retrying_eintr(path: *const c_char, st: *mut stat) -> i32 {
+    loop {
+        let r = stat(path, st);
+        if !(r == -1 && *__errno_location() == EINTR) {
+            return r;
+        }
+    }
+}
+
 /// Probe one candidate environment variable, reporting any set-but-unusable
 /// value via `error`. Pulled out of `get_tmpdir` to keep that function flat.
 unsafe fn eval_tmpdir_var(
@@ -681,13 +697,7 @@ unsafe fn eval_tmpdir_var(
     }
 
     let mut st: stat = ::core::mem::zeroed();
-    let mut r: i32;
-    loop {
-        r = stat(val, &mut st);
-        if !(r == -1 && *__errno_location() == EINTR) {
-            break;
-        }
-    }
+    let r = stat_retrying_eintr(val, &mut st);
     if r < 0 {
         error(
             ctx,
@@ -1256,5 +1266,43 @@ mod end_of_token_unsafe_oracle {
             let oracle = unsafe { end_of_token_oracle(buf.as_ptr() as *const c_char) };
             assert_eq!(safe, oracle, "mismatch buf={buf:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod eval_tmpdir_var_tests {
+    use super::{eval_tmpdir_var, TmpdirCandidate};
+
+    /// An unset variable yields `Unset`; a variable pointing at a real directory
+    /// yields `Usable` carrying its value. Drives the common (non-error) arms of
+    /// the probe and, through them, the `EINTR`-retrying `stat` wrapper — without
+    /// touching the `error`-reporting path.
+    #[test]
+    fn unset_then_usable_directory() {
+        let ctx = crate::execctx::ExecContext::default();
+
+        std::env::remove_var("MAKE_PROBE_TMPDIR_UNSET");
+        // SAFETY: pass the c2rust probe a NUL-terminated name; it only reads the
+        // process environment and `stat`s the value.
+        let unset = unsafe { eval_tmpdir_var(&ctx, c"MAKE_PROBE_TMPDIR_UNSET") };
+        assert!(
+            matches!(unset, TmpdirCandidate::Unset),
+            "an unset variable is skipped",
+        );
+
+        std::env::set_var("MAKE_PROBE_TMPDIR_DIR", "/tmp");
+        // SAFETY: as above; `/tmp` is a real directory, so the success arm runs.
+        let usable = unsafe { eval_tmpdir_var(&ctx, c"MAKE_PROBE_TMPDIR_DIR") };
+        match usable {
+            // SAFETY: `Usable` carries the `getenv` value pointer, valid until
+            // the next environment mutation; we read it before removing the var.
+            TmpdirCandidate::Usable(p) => assert_eq!(
+                unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes(),
+                b"/tmp",
+                "a usable directory returns its value",
+            ),
+            _ => panic!("expected a usable directory"),
+        }
+        std::env::remove_var("MAKE_PROBE_TMPDIR_DIR");
     }
 }
