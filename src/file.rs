@@ -13,16 +13,14 @@ use libc::{
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(__stream: *mut FILE) -> i32;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
-    fn gettimeofday(__tv: *mut timeval, __tz: *mut ::core::ffi::c_void) -> i32;
-    fn time(__timer: *mut time_t) -> time_t;
     fn localtime(__timer: *const time_t) -> *mut tm;
-    fn clock_gettime(__clock_id: clockid_t, __tp: *mut timespec) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -39,12 +37,6 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct timeval {
-    pub tv_sec: __time_t,
-    pub tv_usec: __suseconds_t,
 }
 pub use crate::sys_stat::timespec;
 pub type C2RustUnnamed = ::core::ffi::c_uint;
@@ -285,7 +277,6 @@ pub type hash_map_func_t = crate::hash::hash_map_func_t;
 pub type qsort_cmp_t =
     Option<unsafe extern "C" fn(*const ::core::ffi::c_void, *const ::core::ffi::c_void) -> i32>;
 pub const ENOENT: i32 = 2;
-pub const CLOCK_REALTIME: i32 = 0;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const INTSTR_LENGTH: usize = 53_usize
@@ -1515,37 +1506,19 @@ pub unsafe fn file_timestamp_cons(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn file_timestamp_now(resolution: *mut i32) -> uintmax_t {
-    let r: i32;
-    let s: time_t;
-    let ns: i32;
-    let mut timespec: timespec = timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
+    // The original c2rust translation tried clock_gettime(CLOCK_REALTIME),
+    // then gettimeofday, then time(). On supported platforms the
+    // clock_gettime path (nanosecond resolution, r = 1) always succeeds, so
+    // std::time::SystemTime (backed by CLOCK_REALTIME on Linux) preserves the
+    // observed behavior.
+    let (s, ns): (time_t, i32) = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() as time_t, d.subsec_nanos() as i32),
+        // Clock before the Unix epoch (pre-1970): not reachable in practice.
+        // Mirror what time()/seconds-since-epoch would yield: a negative count
+        // of whole seconds. Keep it correct rather than panicking.
+        Err(e) => (-(e.duration().as_secs() as time_t), 0),
     };
-    if clock_gettime(CLOCK_REALTIME, &raw mut timespec) == 0 {
-        r = 1;
-        s = timespec.tv_sec as time_t;
-        ns = timespec.tv_nsec as i32;
-    } else {
-        let mut timeval: timeval = timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        };
-        if gettimeofday(
-            &raw mut timeval,
-            ::core::ptr::null_mut::<::core::ffi::c_void>(),
-        ) == 0
-        {
-            r = 1000_i32;
-            s = timeval.tv_sec as time_t;
-            ns = (timeval.tv_usec * 1000 as __suseconds_t) as i32;
-        } else {
-            r = 1000000000_i32;
-            s = time(::core::ptr::null_mut::<time_t>());
-            ns = 0;
-        }
-    }
-    *resolution = r;
+    *resolution = 1;
     file_timestamp_cons(
         ::core::ptr::null::<::core::ffi::c_char>(),
         s,
@@ -2106,6 +2079,107 @@ mod tests {
         assert!(snapped_deps(), "snapped");
 
         SNAPPED_DEPS.store(saved, Ordering::Relaxed);
+    }
+
+    // FFI declarations and types the pre-std clock cascade depended on. They
+    // were removed from production code when `file_timestamp_now` moved to
+    // `std::time::SystemTime`, so we re-declare them here (test-only) purely to
+    // keep the verbatim oracle compilable per AGENTS.md "preserve the original
+    // as a test oracle". Production stays free of this FFI/unsafe.
+    const CLOCK_REALTIME: i32 = 0;
+    #[derive(Copy, Clone)]
+    #[repr(C)]
+    struct timeval {
+        pub tv_sec: __time_t,
+        pub tv_usec: __suseconds_t,
+    }
+    extern "C" {
+        fn gettimeofday(__tv: *mut timeval, __tz: *mut ::core::ffi::c_void) -> i32;
+        fn time(__timer: *mut time_t) -> time_t;
+        fn clock_gettime(__clock_id: clockid_t, __tp: *mut timespec) -> i32;
+    }
+
+    /// Verbatim copy of the pre-std `file_timestamp_now` clock cascade:
+    /// `clock_gettime(CLOCK_REALTIME)` -> `gettimeofday` -> `time()` fallback.
+    /// Kept test-only as the differential oracle for the new safe
+    /// `std::time::SystemTime` implementation (AGENTS.md verbatim-oracle rule).
+    unsafe fn file_timestamp_now_oracle(resolution: *mut i32) -> uintmax_t {
+        let r: i32;
+        let s: time_t;
+        let ns: i32;
+        let mut timespec: timespec = timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        if clock_gettime(CLOCK_REALTIME, &raw mut timespec) == 0 {
+            r = 1;
+            s = timespec.tv_sec as time_t;
+            ns = timespec.tv_nsec as i32;
+        } else {
+            let mut timeval: timeval = timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            if gettimeofday(
+                &raw mut timeval,
+                ::core::ptr::null_mut::<::core::ffi::c_void>(),
+            ) == 0
+            {
+                r = 1000_i32;
+                s = timeval.tv_sec as time_t;
+                ns = (timeval.tv_usec * 1000 as __suseconds_t) as i32;
+            } else {
+                r = 1000000000_i32;
+                s = time(::core::ptr::null_mut::<time_t>());
+                ns = 0;
+            }
+        }
+        *resolution = r;
+        file_timestamp_cons(
+            ::core::ptr::null::<::core::ffi::c_char>(),
+            s,
+            ns as ::core::ffi::c_long,
+        )
+    }
+
+    /// Unpack the whole-seconds field the same way `file_timestamp_sprintf`
+    /// does, so we can compare two packed timestamps in seconds-since-epoch.
+    fn decode_secs(ts: uintmax_t) -> i64 {
+        (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+            >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) as i64
+    }
+
+    /// Differential test: the new `std::time` `file_timestamp_now` must agree
+    /// with the preserved unsafe clock cascade. Resolution must match exactly
+    /// (both use the nanosecond CLOCK_REALTIME path => 1). The packed
+    /// timestamps decode to within a small wall-clock tolerance because the two
+    /// `now()` reads happen microseconds apart; we deliberately do not assert
+    /// exact equality or subsec_nanos equality, which would be flaky.
+    #[test]
+    fn file_timestamp_now_matches_unsafe_oracle() {
+        let mut res_new: i32 = -1;
+        let ts_new = unsafe { file_timestamp_now(&raw mut res_new) };
+
+        let mut res_oracle: i32 = -1;
+        let ts_oracle = unsafe { file_timestamp_now_oracle(&raw mut res_oracle) };
+
+        assert_eq!(res_new, 1, "std path sets resolution to 1");
+        assert_eq!(
+            res_new, res_oracle,
+            "resolution must match oracle (CLOCK_REALTIME ns path)"
+        );
+
+        assert_ne!(ts_new, 0, "packed timestamp is non-zero");
+        assert_ne!(ts_oracle, 0, "oracle packed timestamp is non-zero");
+
+        let decoded_new = decode_secs(ts_new);
+        let decoded_oracle = decode_secs(ts_oracle);
+
+        // Two separate now() reads occur microseconds apart; 2s is safe.
+        assert!(
+            (decoded_new - decoded_oracle).abs() <= 2,
+            "new={decoded_new} oracle={decoded_oracle} differ by more than 2s"
+        );
     }
 
     #[test]
