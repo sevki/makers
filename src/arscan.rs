@@ -69,21 +69,13 @@ pub const AR_HDR_SIZE: usize = ::core::mem::size_of::<ar_hdr>();
 ///
 /// `field` is the raw bytes (space-padded ASCII), `base` is the numeric base
 /// (8 for `ar_mode`, 10 for `ar_size`/`ar_date`/`ar_uid`/`ar_gid`), and `max`
-/// is the largest accepted value. The remaining args supply context for the
-/// fatal-error message on parse failure.
+/// is the largest accepted value.
 ///
-/// Aborts via `msg::fatal` on a malformed digit, an overflow, or a value
-/// exceeding `max`. An all-spaces (or empty) field returns 0, matching the
-/// original C behavior.
-fn parse_int(
-    ctx: &crate::execctx::ExecContext,
-    field: &[u8],
-    base: u32,
-    max: u64,
-    what: &str,
-    archive: &str,
-    name: &str,
-) -> u64 {
+/// This is a pure parser: it returns `None` on a malformed digit, an overflow,
+/// or a value exceeding `max`, leaving error *reporting* to the caller (which
+/// owns the `ExecContext` and the archive/member names). An all-spaces (or
+/// empty) field returns `Some(0)`, matching the original C behavior.
+fn parse_int(field: &[u8], base: u32, max: u64) -> Option<u64> {
     // Skip leading spaces, then take everything up to the next space or
     // end-of-field. Mirrors the C parser's two `while` loops.
     let start = field.iter().position(|&b| b != b' ').unwrap_or(field.len());
@@ -95,11 +87,11 @@ fn parse_int(
     let token = &trailing[..end];
 
     if token.is_empty() {
-        return 0;
+        return Some(0);
     }
 
     let max_char = b'0' + base as u8 - 1;
-    let parsed = token
+    let value = token
         .iter()
         .all(|&b| (b'0'..=max_char).contains(&b))
         .then(|| {
@@ -108,16 +100,9 @@ fn parse_int(
                 .ok()
                 .and_then(|s| u64::from_str_radix(s, base).ok())
         })
-        .flatten();
+        .flatten()?;
 
-    match parsed {
-        Some(v) if v <= max => v,
-        _ => crate::output::msg::fatal(
-            ctx,
-            None,
-            &format!("invalid {what} for archive {archive} member {name}"),
-        ),
-    }
+    (value <= max).then_some(value)
 }
 /// # Safety
 ///
@@ -310,51 +295,24 @@ pub unsafe fn ar_scan(
                 member_header.ar_gid.as_ptr() as *const u8,
                 member_header.ar_gid.len(),
             );
-            eltmode = parse_int(
-                ctx,
-                mode_field,
-                8,
-                ::core::ffi::c_uint::MAX as u64,
-                "mode",
-                &archive_str,
-                &name_str,
-            ) as ::core::ffi::c_uint;
-            eltsize = parse_int(
-                ctx,
-                size_field,
-                10,
-                ::core::ffi::c_long::MAX as u64,
-                "size",
-                &archive_str,
-                &name_str,
-            ) as ::core::ffi::c_long;
-            eltdate = parse_int(
-                ctx,
-                date_field,
-                10,
-                intmax_t::MAX as u64,
-                "date",
-                &archive_str,
-                &name_str,
-            ) as intmax_t;
-            eltuid = parse_int(
-                ctx,
-                uid_field,
-                10,
-                i32::MAX as u64,
-                "uid",
-                &archive_str,
-                &name_str,
-            ) as i32;
-            eltgid = parse_int(
-                ctx,
-                gid_field,
-                10,
-                i32::MAX as u64,
-                "gid",
-                &archive_str,
-                &name_str,
-            ) as i32;
+            // `parse_int` is pure; reporting the fatal lives here, at the
+            // impure boundary that owns `ctx` and the archive/member names.
+            let parse_field = |field: &[u8], base: u32, max: u64, what: &str| -> u64 {
+                parse_int(field, base, max).unwrap_or_else(|| {
+                    crate::output::msg::fatal(
+                        ctx,
+                        None,
+                        &format!("invalid {what} for archive {archive_str} member {name_str}"),
+                    )
+                })
+            };
+            eltmode = parse_field(mode_field, 8, ::core::ffi::c_uint::MAX as u64, "mode")
+                as ::core::ffi::c_uint;
+            eltsize = parse_field(size_field, 10, ::core::ffi::c_long::MAX as u64, "size")
+                as ::core::ffi::c_long;
+            eltdate = parse_field(date_field, 10, intmax_t::MAX as u64, "date") as intmax_t;
+            eltuid = parse_field(uid_field, 10, i32::MAX as u64, "uid") as i32;
+            eltgid = parse_field(gid_field, 10, i32::MAX as u64, "gid") as i32;
             fnval = Some(function.expect("non-null function pointer"))
                 .expect("non-null function pointer")(
                 desc,
