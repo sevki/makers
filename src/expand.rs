@@ -295,7 +295,7 @@ pub unsafe fn expand_variable_output(
         // read-only bridge to the safe `warn_undefined`.
         warn_undefined(::core::slice::from_raw_parts(name as *const u8, length));
     }
-    if v.is_null() || *(*v).value.offset(0 as i32 as isize) as i32 == 0 && (*v).append() == 0 {
+    if v.is_null() || *(*v).value.offset(0_i32 as isize) as i32 == 0 && (*v).append() == 0 {
         return ptr;
     }
     // A recursive variable's value is freshly expanded and owned here; an

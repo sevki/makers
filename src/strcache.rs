@@ -145,10 +145,7 @@ pub unsafe fn strcache_add(str: *const c_char) -> *const c_char {
 ///
 /// `str` must be valid for reads of `len` bytes.
 pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char {
-    intern(::core::slice::from_raw_parts(
-        str.cast::<u8>(),
-        len as usize,
-    ))
+    intern(::core::slice::from_raw_parts(str.cast::<u8>(), len))
 }
 
 /// Intern an arbitrary byte slice and return the canonical, NUL-terminated

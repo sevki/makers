@@ -193,21 +193,21 @@ pub struct a_pattern {
     pub percent: *mut ::core::ffi::c_char,
     pub length: size_t,
 }
-pub const EOF: i32 = -(1 as i32);
+pub const EOF: i32 = -1_i32;
 pub const ENOENT: i32 = 2;
 pub const EINTR: i32 = 4;
 pub const ERANGE: i32 = 34;
-pub const PATH_MAX: i32 = 4096 as i32;
+pub const PATH_MAX: i32 = 4096_i32;
 pub const GET_PATH_MAX: i32 = PATH_MAX;
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const MAP_NUL: i32 = 0x1 as i32;
-pub const MAP_BLANK: i32 = 0x2 as i32;
-pub const MAP_NEWLINE: i32 = 0x4 as i32;
-pub const MAP_VARSEP: i32 = 0x80 as i32;
-pub const MAP_DOT: i32 = 0x200 as i32;
-pub const MAP_COMMA: i32 = 0x400 as i32;
-pub const MAP_DIRSEP: i32 = 0x8000 as i32;
+pub const MAP_NUL: i32 = 0x1_i32;
+pub const MAP_BLANK: i32 = 0x2_i32;
+pub const MAP_NEWLINE: i32 = 0x4_i32;
+pub const MAP_VARSEP: i32 = 0x80_i32;
+pub const MAP_DOT: i32 = 0x200_i32;
+pub const MAP_COMMA: i32 = 0x400_i32;
+pub const MAP_DIRSEP: i32 = 0x8000_i32;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
@@ -215,10 +215,10 @@ fn stop_set(c: u8, mask: i32) -> bool {
     stopchar_map()[c as usize] as i32 & mask != 0
 }
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
-pub const INTSTR_LENGTH: usize = (53 as usize)
+pub const INTSTR_LENGTH: usize = 53_usize
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
-    .wrapping_div(22 as usize)
-    .wrapping_add(3 as usize);
+    .wrapping_div(22_usize)
+    .wrapping_add(3_usize);
 pub const EXP_COUNT_BITS: i32 = 15;
 pub const EXP_COUNT_MAX: i32 = ((1) << EXP_COUNT_BITS) - 1;
 unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
@@ -435,7 +435,7 @@ pub unsafe fn patsubst_expand_pat(
         }
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -452,10 +452,10 @@ pub unsafe fn patsubst_expand(
     let mut pattern_percent: *const ::core::ffi::c_char = find_percent(pattern);
     let mut replace_percent: *const ::core::ffi::c_char = find_percent(replace);
     if !replace_percent.is_null() {
-        replace_percent = replace_percent.offset(1 as i32 as isize);
+        replace_percent = replace_percent.offset(1_i32 as isize);
     }
     if !pattern_percent.is_null() {
-        pattern_percent = pattern_percent.offset(1 as i32 as isize);
+        pattern_percent = pattern_percent.offset(1_i32 as isize);
     }
     patsubst_expand_pat(o, text, pattern, replace, pattern_percent, replace_percent)
 }
@@ -472,15 +472,15 @@ unsafe extern "C" fn lookup_function(s: *const ::core::ffi::c_char) -> *const fu
     let mut e: *const ::core::ffi::c_char = s;
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*e as ::core::ffi::c_uchar as isize) as i32
-        & 0x2000 as i32
+        & 0x2000_i32
         != 0
     {
-        e = e.offset(1 as i32 as isize);
+        e = e.offset(1_i32 as isize);
     }
     if e == s
         || !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*e as ::core::ffi::c_uchar as isize) as i32
-            & (0x1 as i32 | (0x2 as i32 | 0x4 as i32))
+            & (0x1_i32 | (0x2_i32 | 0x4_i32))
             != 0)
     {
         return ::core::ptr::null::<function_table_entry>();
@@ -581,9 +581,9 @@ pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ff
     chain = parse_file_seq(
         &raw mut line,
         ::core::mem::size_of::<nameseq>() as size_t,
-        0x1 as i32,
+        0x1_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
-        0x1 as i32 | 0x10 as i32 | 0x8 as i32,
+        0x1_i32 | 0x10_i32 | 0x8_i32,
     ) as *mut nameseq;
     if result.is_null() {
         length = 100;
@@ -612,7 +612,7 @@ pub unsafe fn string_glob(mut line: *mut ::core::ffi::c_char) -> *mut ::core::ff
         chain = next;
     }
     if idx == 0 {
-        *result.offset(0 as i32 as isize) = 0;
+        *result.offset(0_i32 as isize) = 0;
     } else {
         *result.offset(idx.wrapping_sub(1) as isize) = 0;
     }
@@ -625,9 +625,9 @@ unsafe fn func_patsubst(
 ) -> *mut ::core::ffi::c_char {
     o = patsubst_expand(
         o,
-        *argv.offset(2 as i32 as isize),
-        *argv.offset(0 as i32 as isize),
-        *argv.offset(1 as i32 as isize),
+        *argv.offset(2_i32 as isize),
+        *argv.offset(0_i32 as isize),
+        *argv.offset(1_i32 as isize),
     );
     o
 }
@@ -639,8 +639,8 @@ unsafe fn func_join(
     let mut doneany: i32 = 0;
     let mut tp: *const ::core::ffi::c_char;
     let mut pp: *const ::core::ffi::c_char;
-    let mut list1_iterator: *const ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
-    let mut list2_iterator: *const ::core::ffi::c_char = *argv.offset(1 as i32 as isize);
+    let mut list1_iterator: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
+    let mut list2_iterator: *const ::core::ffi::c_char = *argv.offset(1_i32 as isize);
     loop {
         let mut len1: size_t = 0;
         let mut len2: size_t = 0;
@@ -661,7 +661,7 @@ unsafe fn func_join(
         }
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -671,8 +671,8 @@ unsafe fn func_origin(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let v: *mut variable = lookup_variable(
-        *argv.offset(0 as i32 as isize),
-        strlen(*argv.offset(0 as i32 as isize)) as size_t,
+        *argv.offset(0_i32 as isize),
+        strlen(*argv.offset(0_i32 as isize)) as size_t,
     );
     if v.is_null() {
         o = variable_buffer_output(
@@ -745,8 +745,8 @@ unsafe fn func_flavor(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let v: *mut variable = lookup_variable(
-        *argv.offset(0 as i32 as isize),
-        strlen(*argv.offset(0 as i32 as isize)) as size_t,
+        *argv.offset(0_i32 as isize),
+        strlen(*argv.offset(0_i32 as isize)) as size_t,
     );
     if v.is_null() {
         o = variable_buffer_output(
@@ -770,7 +770,7 @@ unsafe fn func_notdir_suffix(
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut list_iterator: *const ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
+    let mut list_iterator: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     let mut p2: *const ::core::ffi::c_char;
     let mut doneany: i32 = 0;
     let mut len: size_t = 0;
@@ -819,7 +819,7 @@ unsafe fn func_notdir_suffix(
         }
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -828,7 +828,7 @@ unsafe fn func_basename_dir(
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p3: *const ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
+    let mut p3: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     let mut p2: *const ::core::ffi::c_char;
     let mut doneany: i32 = 0;
     let mut len: size_t = 0;
@@ -867,7 +867,7 @@ unsafe fn func_basename_dir(
         doneany = 1;
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -876,9 +876,9 @@ unsafe fn func_addsuffix_addprefix(
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let fixlen: size_t = strlen(*argv.offset(0 as i32 as isize)) as size_t;
-    let mut list_iterator: *const ::core::ffi::c_char = *argv.offset(1 as i32 as isize);
-    let is_addprefix: i32 = (*funcname.offset(3 as i32 as isize) as i32 == 'p' as i32) as i32;
+    let fixlen: size_t = strlen(*argv.offset(0_i32 as isize)) as size_t;
+    let mut list_iterator: *const ::core::ffi::c_char = *argv.offset(1_i32 as isize);
+    let is_addprefix: i32 = (*funcname.offset(3_i32 as isize) as i32 == 'p' as i32) as i32;
     let is_addsuffix: i32 = (is_addprefix == 0) as i32;
     let mut doneany: i32 = 0;
     let mut p: *const ::core::ffi::c_char;
@@ -889,17 +889,17 @@ unsafe fn func_addsuffix_addprefix(
             break;
         }
         if is_addprefix != 0 {
-            o = variable_buffer_output(o, *argv.offset(0 as i32 as isize), fixlen);
+            o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
         }
         o = variable_buffer_output(o, p, len);
         if is_addsuffix != 0 {
-            o = variable_buffer_output(o, *argv.offset(0 as i32 as isize), fixlen);
+            o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
         }
         o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         doneany = 1;
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -910,11 +910,11 @@ unsafe fn func_subst(
 ) -> *mut ::core::ffi::c_char {
     o = subst_expand(
         o,
-        *argv.offset(2 as i32 as isize),
-        *argv.offset(0 as i32 as isize),
-        *argv.offset(1 as i32 as isize),
-        strlen(*argv.offset(0 as i32 as isize)) as size_t,
-        strlen(*argv.offset(1 as i32 as isize)) as size_t,
+        *argv.offset(2_i32 as isize),
+        *argv.offset(0_i32 as isize),
+        *argv.offset(1_i32 as isize),
+        strlen(*argv.offset(0_i32 as isize)) as size_t,
+        strlen(*argv.offset(1_i32 as isize)) as size_t,
         0,
     );
     o
@@ -968,7 +968,7 @@ unsafe fn func_firstword(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0 as i32 as isize)).to_bytes();
+    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
     if let Some(w) = tokens(bytes).next() {
         o = variable_buffer_output(
             o,
@@ -983,7 +983,7 @@ unsafe fn func_lastword(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0 as i32 as isize)).to_bytes();
+    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
     if let Some(w) = tokens(bytes).next_back() {
         o = variable_buffer_output(
             o,
@@ -998,7 +998,7 @@ unsafe fn func_words(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0 as i32 as isize)).to_bytes();
+    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
     let i = tokens(bytes).count() as ::core::ffi::c_uint;
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     o = variable_buffer_output(
@@ -1155,7 +1155,7 @@ unsafe fn func_word(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let i = parse_numeric(
-        ::core::ffi::CStr::from_ptr(*argv.offset(0 as i32 as isize)),
+        ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
         c"invalid first argument to 'word' function",
     );
     if i < 1 {
@@ -1165,7 +1165,7 @@ unsafe fn func_word(
             c"first argument to 'word' function must be greater than 0".as_ptr(),
         );
     }
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(1 as i32 as isize)).to_bytes();
+    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
     // `i >= 1` here; an index too large for `usize` (only reachable on 32-bit
     // targets) scans past the end and yields the empty string, as in C make.
     if let Some(w) = usize::try_from(i - 1)
@@ -1189,7 +1189,7 @@ unsafe fn func_wordlist(
     let badfirst = c"invalid first argument to 'wordlist' function";
     let badsecond = c"invalid second argument to 'wordlist' function";
     let start = parse_numeric(
-        ::core::ffi::CStr::from_ptr(*argv.offset(0 as i32 as isize)),
+        ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
         badfirst,
     );
     if start < 1 {
@@ -1205,7 +1205,7 @@ unsafe fn func_wordlist(
         );
     }
     let stop = parse_numeric(
-        ::core::ffi::CStr::from_ptr(*argv.offset(1 as i32 as isize)),
+        ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)),
         badsecond,
     );
     if stop < 0 {
@@ -1220,7 +1220,7 @@ unsafe fn func_wordlist(
             make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char),
         );
     }
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(2 as i32 as isize)).to_bytes();
+    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(2_i32 as isize)).to_bytes();
     // `start >= 1` and `stop >= 0` here. An index beyond `usize` (only
     // reachable on 32-bit) falls off the end; `word_span` returns `None` when
     // `stop < start`, matching the original `count > 0` guard.
@@ -1241,16 +1241,11 @@ unsafe fn func_findstring(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    if !strstr(
-        *argv.offset(1 as i32 as isize),
-        *argv.offset(0 as i32 as isize),
-    )
-    .is_null()
-    {
+    if !strstr(*argv.offset(1_i32 as isize), *argv.offset(0_i32 as isize)).is_null() {
         o = variable_buffer_output(
             o,
-            *argv.offset(0 as i32 as isize),
-            strlen(*argv.offset(0 as i32 as isize)) as size_t,
+            *argv.offset(0_i32 as isize),
+            strlen(*argv.offset(0_i32 as isize)) as size_t,
         );
     }
     o
@@ -1261,14 +1256,14 @@ unsafe fn func_foreach(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let varname = ExpandedArg::new(
-        *argv.offset(0 as i32 as isize),
+        *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let list = ExpandedArg::new(
-        *argv.offset(1 as i32 as isize),
+        *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let body: *const ::core::ffi::c_char = *argv.offset(2 as i32 as isize);
+    let body: *const ::core::ffi::c_char = *argv.offset(2_i32 as isize);
     let mut doneany: i32 = 0;
     let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
     let mut p: *const ::core::ffi::c_char;
@@ -1308,7 +1303,7 @@ unsafe fn func_foreach(
         doneany = 1;
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     pop_variable_scope();
     o
@@ -1319,14 +1314,14 @@ unsafe fn func_let(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let varnames = ExpandedArg::new(
-        *argv.offset(0 as i32 as isize),
+        *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let list = ExpandedArg::new(
-        *argv.offset(1 as i32 as isize),
+        *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
-    let body: *const ::core::ffi::c_char = *argv.offset(2 as i32 as isize);
+    let body: *const ::core::ffi::c_char = *argv.offset(2_i32 as isize);
     let mut vp: *const ::core::ffi::c_char;
     let mut vp_next: *const ::core::ffi::c_char = varnames.as_ptr();
     let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
@@ -1335,16 +1330,16 @@ unsafe fn func_let(
     vp = find_next_token(&raw mut vp_next, &raw mut vlen);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*vp_next as ::core::ffi::c_uchar as isize) as i32
-        & (0x2 as i32 | 0x4 as i32)
+        & (0x2_i32 | 0x4_i32)
         != 0
     {
-        vp_next = vp_next.offset(1 as i32 as isize);
+        vp_next = vp_next.offset(1_i32 as isize);
     }
     while *vp_next as i32 != 0 {
         let mut len: size_t = 0;
         let p: *mut ::core::ffi::c_char = find_next_token(&raw mut list_iterator, &raw mut len);
         if !p.is_null() && *list_iterator as i32 != 0 {
-            list_iterator = list_iterator.offset(1 as i32 as isize);
+            list_iterator = list_iterator.offset(1_i32 as isize);
             *p.offset(len as isize) = 0;
         }
         define_variable_in_set(
@@ -1363,10 +1358,10 @@ unsafe fn func_let(
         vp = find_next_token(&raw mut vp_next, &raw mut vlen);
         while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*vp_next as ::core::ffi::c_uchar as isize) as i32
-            & (0x2 as i32 | 0x4 as i32)
+            & (0x2_i32 | 0x4_i32)
             != 0
         {
-            vp_next = vp_next.offset(1 as i32 as isize);
+            vp_next = vp_next.offset(1_i32 as isize);
         }
     }
     if !vp.is_null() {
@@ -1407,7 +1402,7 @@ unsafe fn a_word_hash_cmp(x: *const ::core::ffi::c_void, y: *const ::core::ffi::
         return if (*ax).length > (*ay).length {
             1
         } else {
-            -(1 as i32)
+            -1_i32
         };
     }
     if (*ax).str_0 == (*ay).str_0 {
@@ -1449,7 +1444,7 @@ unsafe fn func_filter_filterout(
         c2rust_padding: [0; 3],
     };
     let is_filter: i32 = (*funcname.offset(
-        (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize).wrapping_sub(1 as usize)
+        (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize).wrapping_sub(1_usize)
             as isize,
     ) as i32
         == 0) as i32;
@@ -1459,7 +1454,7 @@ unsafe fn func_filter_filterout(
     let mut p: *mut ::core::ffi::c_char;
     let mut len: size_t = 0;
     let mut doneany: i32 = 0;
-    cp = *argv.offset(1 as i32 as isize);
+    cp = *argv.offset(1_i32 as isize);
     loop {
         p = find_next_token(&raw mut cp, ::core::ptr::null_mut::<size_t>());
         if p.is_null() {
@@ -1477,7 +1472,7 @@ unsafe fn func_filter_filterout(
     words_vec.resize_with(word_count as usize, || unsafe { ::core::mem::zeroed() });
     words = words_vec.as_mut_ptr();
     word_end = words.offset(word_count as isize);
-    cp = *argv.offset(0 as i32 as isize);
+    cp = *argv.offset(0_i32 as isize);
     loop {
         p = find_next_token(&raw mut cp, ::core::ptr::null_mut::<size_t>());
         if p.is_null() {
@@ -1489,7 +1484,7 @@ unsafe fn func_filter_filterout(
     patterns_vec.resize_with(pat_count as usize, || unsafe { ::core::mem::zeroed() });
     patterns = patterns_vec.as_mut_ptr();
     pat_end = patterns.offset(pat_count as isize);
-    cp = *argv.offset(0 as i32 as isize);
+    cp = *argv.offset(0_i32 as isize);
     pp = patterns;
     loop {
         p = find_next_token(&raw mut cp, &raw mut len);
@@ -1497,7 +1492,7 @@ unsafe fn func_filter_filterout(
             break;
         }
         if *cp as i32 != 0 {
-            cp = cp.offset(1 as i32 as isize);
+            cp = cp.offset(1_i32 as isize);
         }
         *p.offset(len as isize) = 0;
         (*pp).str_0 = p;
@@ -1506,9 +1501,9 @@ unsafe fn func_filter_filterout(
             literals += 1;
         }
         (*pp).length = strlen((*pp).str_0) as size_t;
-        pp = pp.offset(1 as i32 as isize);
+        pp = pp.offset(1_i32 as isize);
     }
-    cp = *argv.offset(1 as i32 as isize);
+    cp = *argv.offset(1_i32 as isize);
     wp = words;
     loop {
         p = find_next_token(&raw mut cp, &raw mut len);
@@ -1516,12 +1511,12 @@ unsafe fn func_filter_filterout(
             break;
         }
         if *cp as i32 != 0 {
-            cp = cp.offset(1 as i32 as isize);
+            cp = cp.offset(1_i32 as isize);
         }
         *p.offset(len as isize) = 0;
         (*wp).str_0 = p;
         (*wp).length = len;
-        wp = wp.offset(1 as i32 as isize);
+        wp = wp.offset(1_i32 as isize);
     }
     hashing =
         (literals > 1 && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10) as i32;
@@ -1540,7 +1535,7 @@ unsafe fn func_filter_filterout(
             if !owp.is_null() {
                 (*wp).chain = owp;
             }
-            wp = wp.offset(1 as i32 as isize);
+            wp = wp.offset(1_i32 as isize);
         }
     }
     pp = patterns;
@@ -1549,7 +1544,7 @@ unsafe fn func_filter_filterout(
             wp = words;
             while wp < word_end {
                 (*wp).matched |= pattern_matches((*pp).str_0, (*pp).percent, (*wp).str_0);
-                wp = wp.offset(1 as i32 as isize);
+                wp = wp.offset(1_i32 as isize);
             }
         } else if hashing != 0 {
             let mut a_word_key: a_word = a_word {
@@ -1577,10 +1572,10 @@ unsafe fn func_filter_filterout(
                         (*wp).str_0 as *const ::core::ffi::c_void,
                         (*wp).length as size_t,
                     ) == 0) as i32;
-                wp = wp.offset(1 as i32 as isize);
+                wp = wp.offset(1_i32 as isize);
             }
         }
-        pp = pp.offset(1 as i32 as isize);
+        pp = pp.offset(1_i32 as isize);
     }
     wp = words;
     while wp < word_end {
@@ -1594,10 +1589,10 @@ unsafe fn func_filter_filterout(
             o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
             doneany = 1;
         }
-        wp = wp.offset(1 as i32 as isize);
+        wp = wp.offset(1_i32 as isize);
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     if hashing != 0 {
         hash_free(&raw mut a_word_table, 0);
@@ -1611,7 +1606,7 @@ unsafe fn func_strip(
 ) -> *mut ::core::ffi::c_char {
     // View the argument as a byte slice and walk it by index, so word
     // boundaries are found without raw pointer arithmetic or dereferences.
-    let s: *const ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
+    let s: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     let bytes = ::core::ffi::CStr::from_ptr(s).to_bytes();
     let mut idx = 0usize;
     let mut doneany = false;
@@ -1638,7 +1633,7 @@ unsafe fn func_strip(
     }
     if doneany {
         // Drop the trailing separator space appended after the last word.
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -1655,23 +1650,23 @@ unsafe fn func_error(
         Some(crate::parser::LogFunction::Error) => {
             fatal(
                 reading_file,
-                strlen(*argv.offset(0 as i32 as isize)) as size_t,
+                strlen(*argv.offset(0_i32 as isize)) as size_t,
                 b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                *argv.offset(0 as i32 as isize),
+                *argv.offset(0_i32 as isize),
             );
         }
         Some(crate::parser::LogFunction::Warning) => {
             error(
                 reading_file,
-                strlen(*argv.offset(0 as i32 as isize)) as size_t,
+                strlen(*argv.offset(0_i32 as isize)) as size_t,
                 b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                *argv.offset(0 as i32 as isize),
+                *argv.offset(0_i32 as isize),
             );
         }
         Some(crate::parser::LogFunction::Info) => {
             // $(info ...): build "<arg>\n\0" in an owned buffer instead of a
             // malloc/memcpy/free sequence.
-            let src = *argv.offset(0 as i32 as isize);
+            let src = *argv.offset(0_i32 as isize);
             let len = strlen(src) as usize;
             let mut msg = Vec::<u8>::with_capacity(len + 2);
             msg.extend_from_slice(::core::slice::from_raw_parts(src as *const u8, len));
@@ -1714,7 +1709,7 @@ unsafe fn func_sort(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0 as i32 as isize)).to_bytes();
+    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
     let mut words: Vec<&[u8]> = tokens(bytes).collect();
     if !words.is_empty() {
         words.sort_by(|a, b| alpha_cmp(a, b));
@@ -1728,7 +1723,7 @@ unsafe fn func_sort(
             o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         }
         // Drop the trailing separator space appended after the last word.
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -1862,11 +1857,11 @@ unsafe fn func_intcmp(
     let mut lnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut rnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let lhs_str = ExpandedArg::new(
-        *argv.offset(0 as i32 as isize),
+        *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let rhs_str = ExpandedArg::new(
-        *argv.offset(1 as i32 as isize),
+        *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
     );
     let llim: *const ::core::ffi::c_char = parse_textint(
@@ -1889,7 +1884,7 @@ unsafe fn func_intcmp(
     let rdigits = ::core::slice::from_raw_parts(rnum as *const u8, rlim.offset_from(rnum) as usize);
     let llen: ptrdiff_t = ldigits.len() as ptrdiff_t;
     let cmp: i32 = compare_textint(lsign, ldigits, rsign, rdigits);
-    argv = argv.offset(2 as i32 as isize);
+    argv = argv.offset(2_i32 as isize);
     if (*argv).is_null() && cmp == 0 {
         if lsign < 0 {
             o = variable_buffer_output(o, b"-\0" as *const u8 as *const ::core::ffi::c_char, 1);
@@ -1901,9 +1896,9 @@ unsafe fn func_intcmp(
         );
     }
     if !(*argv).is_null() && cmp >= 0 {
-        argv = argv.offset(1 as i32 as isize);
-        if cmp > 0 && !(*argv).is_null() && !(*argv.offset(1 as i32 as isize)).is_null() {
-            argv = argv.offset(1 as i32 as isize);
+        argv = argv.offset(1_i32 as isize);
+        if cmp > 0 && !(*argv).is_null() && !(*argv.offset(1_i32 as isize)).is_null() {
+            argv = argv.offset(1_i32 as isize);
         }
     }
     if !(*argv).is_null() {
@@ -1917,15 +1912,15 @@ unsafe fn func_if(
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut begp: *const ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
+    let mut begp: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     let mut endp: *const ::core::ffi::c_char = begp
-        .offset(strlen(*argv.offset(0 as i32 as isize)) as isize)
-        .offset(-(1 as i32 as isize));
+        .offset(strlen(*argv.offset(0_i32 as isize)) as isize)
+        .offset(-(1_i32 as isize));
     let mut result: i32 = 0;
     strip_whitespace(&raw mut begp, &raw mut endp);
     if begp <= endp {
-        let expansion = ExpandedArg::new(begp, endp.offset(1 as i32 as isize));
-        result = (*expansion.as_ptr().offset(0 as i32 as isize) as i32 != 0) as i32;
+        let expansion = ExpandedArg::new(begp, endp.offset(1_i32 as isize));
+        result = (*expansion.as_ptr().offset(0_i32 as isize) as i32 != 0) as i32;
     }
     argv = argv.offset((1 + (result == 0) as i32) as isize);
     if !(*argv).is_null() {
@@ -1943,17 +1938,17 @@ unsafe fn func_or(
         let mut begp: *const ::core::ffi::c_char = *argv;
         let mut endp: *const ::core::ffi::c_char = begp
             .offset(strlen(*argv) as isize)
-            .offset(-(1 as i32 as isize));
+            .offset(-(1_i32 as isize));
         strip_whitespace(&raw mut begp, &raw mut endp);
         if !(begp > endp) {
-            let expansion = ExpandedArg::new(begp, endp.offset(1 as i32 as isize));
+            let expansion = ExpandedArg::new(begp, endp.offset(1_i32 as isize));
             let result = strlen(expansion.as_ptr()) as size_t;
             if result != 0 {
                 o = variable_buffer_output(o, expansion.as_ptr(), result);
                 break;
             }
         }
-        argv = argv.offset(1 as i32 as isize);
+        argv = argv.offset(1_i32 as isize);
     }
     o
 }
@@ -1966,17 +1961,17 @@ unsafe fn func_and(
         let mut begp: *const ::core::ffi::c_char = *argv;
         let mut endp: *const ::core::ffi::c_char = begp
             .offset(strlen(*argv) as isize)
-            .offset(-(1 as i32 as isize));
+            .offset(-(1_i32 as isize));
         strip_whitespace(&raw mut begp, &raw mut endp);
         if begp > endp {
             return o;
         }
-        let expansion = ExpandedArg::new(begp, endp.offset(1 as i32 as isize));
+        let expansion = ExpandedArg::new(begp, endp.offset(1_i32 as isize));
         let result = strlen(expansion.as_ptr()) as size_t;
         if result == 0 {
             break;
         }
-        argv = argv.offset(1 as i32 as isize);
+        argv = argv.offset(1_i32 as isize);
         if (*argv).is_null() {
             o = variable_buffer_output(o, expansion.as_ptr(), result);
             break;
@@ -1990,7 +1985,7 @@ unsafe fn func_wildcard(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let p: *mut ::core::ffi::c_char = string_glob(*argv.offset(0 as i32 as isize));
+    let p: *mut ::core::ffi::c_char = string_glob(*argv.offset(0_i32 as isize));
     o = variable_buffer_output(o, p, strlen(p) as size_t);
     o
 }
@@ -2002,7 +1997,7 @@ unsafe fn func_eval(
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     install_variable_buffer(&raw mut buf, &raw mut len);
-    eval_buffer(*argv.offset(0 as i32 as isize), ::core::ptr::null::<Floc>());
+    eval_buffer(*argv.offset(0_i32 as isize), ::core::ptr::null::<Floc>());
     restore_variable_buffer(buf, len);
     o
 }
@@ -2012,8 +2007,8 @@ unsafe fn func_value(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let v: *mut variable = lookup_variable(
-        *argv.offset(0 as i32 as isize),
-        strlen(*argv.offset(0 as i32 as isize)) as size_t,
+        *argv.offset(0_i32 as isize),
+        strlen(*argv.offset(0_i32 as isize)) as size_t,
     );
     if !v.is_null() {
         o = variable_buffer_output(o, (*v).value, strlen((*v).value) as size_t);
@@ -2143,7 +2138,7 @@ pub unsafe fn shell_completed(mut exit_code: i32, exit_sig: i32) {
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     SHELL_FUNCTION_PID.store(0, Ordering::Relaxed);
     if exit_sig == 0 && exit_code == 127 {
-        SHELL_FUNCTION_COMPLETED.store(-(1 as i32), Ordering::Relaxed);
+        SHELL_FUNCTION_COMPLETED.store(-1_i32, Ordering::Relaxed);
     } else {
         SHELL_FUNCTION_COMPLETED.store(1, Ordering::Relaxed);
     }
@@ -2191,7 +2186,7 @@ pub unsafe fn func_shell_base(
     let mut pipedes: [i32; 2] = [0; 2];
     let pid: pid_t;
     command_argv = construct_command_argv(
-        *argv.offset(0 as i32 as isize),
+        *argv.offset(0_i32 as isize),
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
         ::core::ptr::null_mut::<file>(),
         0,
@@ -2215,12 +2210,12 @@ pub unsafe fn func_shell_base(
             strerror(*__errno_location()),
         );
     } else {
-        fd_noinherit(pipedes[1 as i32 as usize]);
-        fd_noinherit(pipedes[0 as i32 as usize]);
+        fd_noinherit(pipedes[1_i32 as usize]);
+        fd_noinherit(pipedes[0_i32 as usize]);
         child
             .output
             .set_syncout(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        child.output.out = pipedes[1 as i32 as usize];
+        child.output.out = pipedes[1_i32 as usize];
         child.output.err = errfd;
         pid = child_execute_job(&raw mut child, 1, command_argv);
         if pid < 0 {
@@ -2231,8 +2226,8 @@ pub unsafe fn func_shell_base(
             let mut cc: i32;
             SHELL_FUNCTION_PID.store(pid, Ordering::Relaxed);
             SHELL_FUNCTION_COMPLETED.store(0, Ordering::Relaxed);
-            if pipedes[1 as i32 as usize] >= 0 {
-                close(pipedes[1 as i32 as usize]);
+            if pipedes[1_i32 as usize] >= 0 {
+                close(pipedes[1_i32 as usize]);
             }
             maxlen = 200;
             // Owned read buffer (was xmalloc/xrealloc/free). `i` tracks the
@@ -2248,11 +2243,11 @@ pub unsafe fn func_shell_base(
                 }
                 loop {
                     cc = read(
-                        pipedes[0 as i32 as usize],
+                        pipedes[0_i32 as usize],
                         buffer.as_mut_ptr().add(i as usize) as *mut ::core::ffi::c_void,
                         (maxlen as size_t).wrapping_sub(i as size_t),
                     ) as i32;
-                    if !(cc == -(1 as i32) && *__errno_location() == EINTR) {
+                    if !(cc == -1_i32 && *__errno_location() == EINTR) {
                         break;
                     }
                 }
@@ -2262,12 +2257,12 @@ pub unsafe fn func_shell_base(
                 i = i.wrapping_add(cc as size_t);
             }
             *buffer.as_mut_ptr().add(i as usize) = 0;
-            close(pipedes[0 as i32 as usize]);
+            close(pipedes[0_i32 as usize]);
             while shell_function_completed() == 0 {
                 reap_children(1, 0);
             }
             if !batch_filename.is_null() {
-                if 0x2 as i32 & db_level != 0 {
+                if 0x2_i32 & db_level != 0 {
                     printf(
                         b"Cleaning up temporary batch file %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -2288,7 +2283,7 @@ pub unsafe fn func_shell_base(
         }
     }
     if !command_argv.is_null() {
-        free(*command_argv.offset(0 as i32 as isize) as *mut ::core::ffi::c_void);
+        free(*command_argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
         free(command_argv as *mut ::core::ffi::c_void);
     }
     free_childbase(&raw mut child);
@@ -2427,7 +2422,7 @@ unsafe fn func_realpath(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
+    let mut p: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     let mut path: *const ::core::ffi::c_char;
     let mut doneany: i32 = 0;
     let mut len: size_t = 0;
@@ -2451,7 +2446,7 @@ unsafe fn func_realpath(
         }
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -2461,20 +2456,20 @@ unsafe fn func_file(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut fn_0: *mut ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
-    if *fn_0.offset(0 as i32 as isize) as i32 == '>' as i32 {
+    let mut fn_0: *mut ::core::ffi::c_char = *argv.offset(0_i32 as isize);
+    if *fn_0.offset(0_i32 as isize) as i32 == '>' as i32 {
         let start: *const ::core::ffi::c_char;
         let nm: *mut ::core::ffi::c_char;
         let mut fp: *mut FILE;
         let mut mode: *const ::core::ffi::c_char =
             b"w\0" as *const u8 as *const ::core::ffi::c_char;
-        fn_0 = fn_0.offset(1 as i32 as isize);
-        if *fn_0.offset(0 as i32 as isize) as i32 == '>' as i32 {
+        fn_0 = fn_0.offset(1_i32 as isize);
+        if *fn_0.offset(0_i32 as isize) as i32 == '>' as i32 {
             mode = b"a\0" as *const u8 as *const ::core::ffi::c_char;
-            fn_0 = fn_0.offset(1 as i32 as isize);
+            fn_0 = fn_0.offset(1_i32 as isize);
         }
         start = next_token(fn_0);
-        if *start.offset(0 as i32 as isize) as i32 == 0 {
+        if *start.offset(0_i32 as isize) as i32 == 0 {
             fatal(
                 *expanding_var,
                 0,
@@ -2513,12 +2508,12 @@ unsafe fn func_file(
             );
         }
         command_count = command_count.wrapping_add(1);
-        if !(*argv.offset(1 as i32 as isize)).is_null() {
-            let l: size_t = strlen(*argv.offset(1 as i32 as isize)) as size_t;
+        if !(*argv.offset(1_i32 as isize)).is_null() {
+            let l: size_t = strlen(*argv.offset(1_i32 as isize)) as size_t;
             let nl: i32 = (l == 0
-                || *(*argv.offset(1 as i32 as isize)).offset(l.wrapping_sub(1) as isize) as i32
+                || *(*argv.offset(1_i32 as isize)).offset(l.wrapping_sub(1) as isize) as i32
                     != '\n' as i32) as i32;
-            if fputs(*argv.offset(1 as i32 as isize), fp) == EOF
+            if fputs(*argv.offset(1_i32 as isize), fp) == EOF
                 || nl != 0 && fputc('\n' as i32, fp) == EOF
             {
                 fatal(
@@ -2541,20 +2536,20 @@ unsafe fn func_file(
                 strerror(*__errno_location()),
             );
         }
-    } else if *fn_0.offset(0 as i32 as isize) as i32 == '<' as i32 {
+    } else if *fn_0.offset(0_i32 as isize) as i32 == '<' as i32 {
         let mut n: size_t = 0;
         let start_0: *const ::core::ffi::c_char;
         let nm_0: *mut ::core::ffi::c_char;
         let mut fp_0: *mut FILE;
-        start_0 = next_token(fn_0.offset(1 as i32 as isize));
-        if *start_0.offset(0 as i32 as isize) as i32 == 0 {
+        start_0 = next_token(fn_0.offset(1_i32 as isize));
+        if *start_0.offset(0_i32 as isize) as i32 == 0 {
             fatal(
                 *expanding_var,
                 0,
                 b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
             );
         }
-        if !(*argv.offset(1 as i32 as isize)).is_null() {
+        if !(*argv.offset(1_i32 as isize)).is_null() {
             fatal(
                 *expanding_var,
                 0,
@@ -2584,7 +2579,7 @@ unsafe fn func_file(
         }
         if fp_0.is_null() {
             if *__errno_location() == ENOENT {
-                if 0x2 as i32 & db_level != 0 {
+                if 0x2_i32 & db_level != 0 {
                     printf(
                         b"file: Failed to open '%s': %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -2640,9 +2635,9 @@ unsafe fn func_file(
                 strerror(*__errno_location()),
             );
         }
-        if n != 0 && *o.offset(-(1 as i32) as isize) as i32 == '\n' as i32 {
+        if n != 0 && *o.offset(-1_i32 as isize) as i32 == '\n' as i32 {
             o = o.offset(
-                -((1 + (n > 1 && *o.offset(-(2 as i32) as isize) as i32 == '\r' as i32) as i32)
+                -((1 + (n > 1 && *o.offset(-2_i32 as isize) as i32 == '\r' as i32) as i32)
                     as isize),
             );
         }
@@ -2661,7 +2656,7 @@ unsafe fn func_abspath(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char = *argv.offset(0 as i32 as isize);
+    let mut p: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     let mut path: *const ::core::ffi::c_char;
     let mut doneany: i32 = 0;
     let mut len: size_t = 0;
@@ -2693,7 +2688,7 @@ unsafe fn func_abspath(
         }
     }
     if doneany != 0 {
-        o = o.offset(-(1 as i32) as isize);
+        o = o.offset(-1_i32 as isize);
     }
     o
 }
@@ -2863,7 +2858,7 @@ pub unsafe fn handle_function(
 ) -> i32 {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let entry_p: *const function_table_entry;
-    let openparen: ::core::ffi::c_char = *(*stringp).offset(0 as i32 as isize);
+    let openparen: ::core::ffi::c_char = *(*stringp).offset(0_i32 as isize);
     let closeparen: ::core::ffi::c_char = (if openparen as i32 == '(' as i32 {
         ')' as i32
     } else {
@@ -2875,7 +2870,7 @@ pub unsafe fn handle_function(
     let argv: *mut *mut ::core::ffi::c_char;
     let mut argvp: *mut *mut ::core::ffi::c_char;
     let mut nargs: ::core::ffi::c_uint;
-    beg = (*stringp).offset(1 as i32 as isize);
+    beg = (*stringp).offset(1_i32 as isize);
     entry_p = lookup_function(beg);
     if entry_p.is_null() {
         return 0;
@@ -2883,17 +2878,17 @@ pub unsafe fn handle_function(
     beg = beg.offset((*entry_p).len as i32 as isize);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*beg as ::core::ffi::c_uchar as isize) as i32
-        & (0x2 as i32 | 0x4 as i32)
+        & (0x2_i32 | 0x4_i32)
         != 0
     {
-        beg = beg.offset(1 as i32 as isize);
+        beg = beg.offset(1_i32 as isize);
     }
     nargs = 1;
     end = beg;
     while *end as i32 != 0 {
         if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*end as ::core::ffi::c_uchar as isize) as i32
-            & (0x80 as i32 | 0x400 as i32)
+            & (0x80_i32 | 0x400_i32)
             != 0
         {
             if *end as i32 == ',' as i32 {
@@ -2907,7 +2902,7 @@ pub unsafe fn handle_function(
                 break;
             }
         }
-        end = end.offset(1 as i32 as isize);
+        end = end.offset(1_i32 as isize);
     }
     if count >= 0 {
         fatal(
@@ -2941,8 +2936,8 @@ pub unsafe fn handle_function(
                 next = end;
             }
             *argvp = expand_argument(p, next);
-            p = next.offset(1 as i32 as isize);
-            argvp = argvp.offset(1 as i32 as isize);
+            p = next.offset(1_i32 as isize);
+            argvp = argvp.offset(1_i32 as isize);
         }
     } else {
         let len: size_t = end.offset_from(beg) as ::core::ffi::c_long as size_t;
@@ -2976,8 +2971,8 @@ pub unsafe fn handle_function(
             }
             *argvp = p_0;
             *next_0.as_mut().expect("split_args: next_0 is null") = 0;
-            p_0 = next_0.offset(1 as i32 as isize);
-            argvp = argvp.offset(1 as i32 as isize);
+            p_0 = next_0.offset(1_i32 as isize);
+            argvp = argvp.offset(1_i32 as isize);
         }
     }
     *argvp = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -2986,7 +2981,7 @@ pub unsafe fn handle_function(
         argvp = argv;
         while !(*argvp).is_null() {
             free(*argvp as *mut ::core::ffi::c_void);
-            argvp = argvp.offset(1 as i32 as isize);
+            argvp = argvp.offset(1_i32 as isize);
         }
     }
     // In the non-expand-args branch the former `free(abeg)` is now handled by
@@ -3009,7 +3004,7 @@ unsafe fn func_call(
     let mut i: ::core::ffi::c_uint;
     let entry_p: *const function_table_entry;
     let v: *mut variable;
-    fname = next_token(*argv.offset(0 as i32 as isize));
+    fname = next_token(*argv.offset(0_i32 as isize));
     // Bridge to the safe `end_of_token`: terminate the function name by writing
     // a NUL at `fname + token_len` (offset of the first whitespace/NUL).
     let fname_eot = fname.add(end_of_token(::core::slice::from_raw_parts(
@@ -3026,7 +3021,7 @@ unsafe fn func_call(
         while !(*argv.offset(i.wrapping_add(1) as isize)).is_null() {
             i = i.wrapping_add(1);
         }
-        return expand_builtin_function(o, i, argv.offset(1 as i32 as isize), entry_p);
+        return expand_builtin_function(o, i, argv.offset(1_i32 as isize), entry_p);
     }
     flen = strlen(fname) as size_t;
     v = lookup_variable(fname, flen);
@@ -3056,7 +3051,7 @@ unsafe fn func_call(
             NILF,
         );
         i = i.wrapping_add(1);
-        argv = argv.offset(1 as i32 as isize);
+        argv = argv.offset(1_i32 as isize);
     }
     while i < MAX_ARGS.load(Ordering::Relaxed) {
         let mut num_0: [::core::ffi::c_char; 22] = [0; 22];
@@ -3101,10 +3096,10 @@ pub unsafe fn define_new_function(
     let len: size_t;
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*e as ::core::ffi::c_uchar as isize) as i32
-        & 0x2000 as i32
+        & 0x2000_i32
         != 0
     {
-        e = e.offset(1 as i32 as isize);
+        e = e.offset(1_i32 as isize);
     }
     len = e.offset_from(name) as ::core::ffi::c_long as size_t;
     if len == 0 {

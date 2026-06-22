@@ -288,10 +288,10 @@ pub const ENOENT: i32 = 2;
 pub const CLOCK_REALTIME: i32 = 0;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
-pub const INTSTR_LENGTH: usize = (53 as usize)
+pub const INTSTR_LENGTH: usize = 53_usize
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
-    .wrapping_div(22 as usize)
-    .wrapping_add(3 as usize);
+    .wrapping_div(22_usize)
+    .wrapping_add(3_usize);
 pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
 pub const COMMANDS_SILENT: i32 = 2;
 pub const COMMANDS_NOERROR: i32 = 4;
@@ -760,7 +760,7 @@ pub unsafe fn remove_intermediates(sig: i32) {
                                 (*f).name,
                             );
                         } else {
-                            if doneany == 0 && 0x1 as i32 & db_level != 0 {
+                            if doneany == 0 && 0x1_i32 & db_level != 0 {
                                 printf(
                                     b"Removing intermediate files...\n\0" as *const u8
                                         as *const ::core::ffi::c_char,
@@ -810,19 +810,19 @@ pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
     let mut new: *mut dep = parse_file_seq(
         &raw mut p,
         ::core::mem::size_of::<dep>() as size_t,
-        0x100 as i32,
+        0x100_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
-        0x40 as i32,
+        0x40_i32,
     ) as *mut dep;
     if p.as_ref().is_some_and(|c| *c != 0) {
         let mut ood: *mut dep;
-        p = p.offset(1 as i32 as isize);
+        p = p.offset(1_i32 as isize);
         ood = parse_file_seq(
             &raw mut p,
             ::core::mem::size_of::<dep>() as size_t,
-            0x1 as i32,
+            0x1_i32,
             ::core::ptr::null::<::core::ffi::c_char>(),
-            0x40 as i32,
+            0x40_i32,
         ) as *mut dep;
         if new.is_null() {
             new = ood;
@@ -869,10 +869,10 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
             percent = find_percent(nm);
             if !percent.is_null() {
                 let o: *mut ::core::ffi::c_char;
-                if *stem.offset(0 as i32 as isize) as i32 == 0 {
+                if *stem.offset(0_i32 as isize) as i32 == 0 {
                     memmove(
                         percent as *mut ::core::ffi::c_void,
-                        percent.offset(1 as i32 as isize) as *const ::core::ffi::c_void,
+                        percent.offset(1_i32 as isize) as *const ::core::ffi::c_void,
                         strlen(percent),
                     );
                     o = variable_buffer_output(
@@ -886,11 +886,11 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
                         stem,
                         pattern,
                         nm,
-                        pattern.offset(1 as i32 as isize),
-                        percent.offset(1 as i32 as isize),
+                        pattern.offset(1_i32 as isize),
+                        percent.offset(1_i32 as isize),
                     );
                 }
-                if *variable_buffer.offset(0 as i32 as isize) as i32 == 0 {
+                if *variable_buffer.offset(0_i32 as isize) as i32 == 0 {
                     let df: *mut dep = dp;
                     if dp == deps {
                         // `dpr` is the null-checked reference to `dp`, and here
@@ -973,7 +973,7 @@ pub unsafe fn expand_deps(f: *mut file) {
                         break;
                     }
                     nperc = nperc.wrapping_add(1);
-                    cs = cs.offset(1 as i32 as isize);
+                    cs = cs.offset(1_i32 as isize);
                 }
                 if nperc != 0 {
                     let name_len = strlen((*d).name) as size_t;
@@ -994,12 +994,12 @@ pub unsafe fn expand_deps(f: *mut file) {
                             cs.offset_from(pcs) as ::core::ffi::c_long as size_t,
                         ) as *mut ::core::ffi::c_char;
                         let fresh0 = s;
-                        s = s.offset(1 as i32 as isize);
+                        s = s.offset(1_i32 as isize);
                         *fresh0 = '$' as i32 as ::core::ffi::c_char;
                         let fresh1 = s;
-                        s = s.offset(1 as i32 as isize);
+                        s = s.offset(1_i32 as isize);
                         *fresh1 = '*' as i32 as ::core::ffi::c_char;
-                        cs = cs.offset(1 as i32 as isize);
+                        cs = cs.offset(1_i32 as isize);
                         pcs = cs;
                         // Bridge to the safe `end_of_token`: it returns the
                         // offset of the first whitespace/NUL within `[cs, NUL)`,
@@ -1386,7 +1386,7 @@ pub unsafe fn snap_deps() {
     let mut filep: *mut *mut ::core::ffi::c_void = filedump;
     while let Some(&fp) = filep.as_ref().filter(|p| !p.is_null()) {
         snap_file(fp as *mut file, prereqs);
-        filep = filep.offset(1 as i32 as isize);
+        filep = filep.offset(1_i32 as isize);
     }
     free(filedump as *mut ::core::ffi::c_void);
     free_dep_chain(prereqs);
@@ -1425,33 +1425,33 @@ pub unsafe fn file_timestamp_cons(
     let product: uintmax_t = s << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 });
     let mut ts: uintmax_t = product.wrapping_add(offset as uintmax_t);
     if !(s
-        <= ((!(0 as i32 as uintmax_t))
-            .wrapping_sub(if !(-(1 as i32) as uintmax_t <= 0 as uintmax_t) {
-                0 as i32 as uintmax_t
+        <= ((!(0_i32 as uintmax_t))
+            .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                0_i32 as uintmax_t
             } else {
-                !(0 as i32 as uintmax_t)
+                !(0_i32 as uintmax_t)
                     << (::core::mem::size_of::<uintmax_t>() as usize)
-                        .wrapping_mul(8 as usize)
-                        .wrapping_sub(1 as usize)
+                        .wrapping_mul(8_usize)
+                        .wrapping_sub(1_usize)
             })
             .wrapping_sub((2 + 1) as uintmax_t)
             >> (if 1 != 0 { 30 } else { 0 })
             << (if 1 != 0 { 30 } else { 0 }))
         .wrapping_add((2 + 1) as uintmax_t)
-        .wrapping_add((if 1 != 0 { 1000000000 as i32 } else { 1 }) as uintmax_t)
+        .wrapping_add((if 1 != 0 { 1000000000_i32 } else { 1 }) as uintmax_t)
         .wrapping_sub(1 as uintmax_t)
         .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
             >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
         && product <= ts
         && ts
-            <= ((!(0 as i32 as uintmax_t))
-                .wrapping_sub(if !(-(1 as i32) as uintmax_t <= 0 as uintmax_t) {
-                    0 as i32 as uintmax_t
+            <= ((!(0_i32 as uintmax_t))
+                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
                 } else {
-                    !(0 as i32 as uintmax_t)
+                    !(0_i32 as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(8 as usize)
-                            .wrapping_sub(1 as usize)
+                            .wrapping_mul(8_usize)
+                            .wrapping_sub(1_usize)
                 })
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
@@ -1459,7 +1459,7 @@ pub unsafe fn file_timestamp_cons(
             .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
             .wrapping_add(
                 (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000 as i32
+                    1000000000_i32
                 } else {
                     1
                 }) as uintmax_t,
@@ -1475,14 +1475,14 @@ pub unsafe fn file_timestamp_cons(
         ts = if s <= OLD_MTIME as uintmax_t {
             ORDINARY_MTIME_MIN as uintmax_t
         } else {
-            ((!(0 as i32 as uintmax_t))
-                .wrapping_sub(if !(-(1 as i32) as uintmax_t <= 0 as uintmax_t) {
-                    0 as i32 as uintmax_t
+            ((!(0_i32 as uintmax_t))
+                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
                 } else {
-                    !(0 as i32 as uintmax_t)
+                    !(0_i32 as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(8 as usize)
-                            .wrapping_sub(1 as usize)
+                            .wrapping_mul(8_usize)
+                            .wrapping_sub(1_usize)
                 })
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
@@ -1490,7 +1490,7 @@ pub unsafe fn file_timestamp_cons(
             .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
             .wrapping_add(
                 (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000 as i32
+                    1000000000_i32
                 } else {
                     1
                 }) as uintmax_t,
@@ -1536,11 +1536,11 @@ pub unsafe fn file_timestamp_now(resolution: *mut i32) -> uintmax_t {
             ::core::ptr::null_mut::<::core::ffi::c_void>(),
         ) == 0
         {
-            r = 1000 as i32;
+            r = 1000_i32;
             s = timeval.tv_sec as time_t;
             ns = (timeval.tv_usec * 1000 as __suseconds_t) as i32;
         } else {
-            r = 1000000000 as i32;
+            r = 1000000000_i32;
             s = time(::core::ptr::null_mut::<time_t>());
             ns = 0;
         }
@@ -1595,7 +1595,7 @@ pub unsafe fn file_timestamp_sprintf(mut p: *mut ::core::ffi::c_char, ts: uintma
         ) - 1) as isize,
     );
     while *p as i32 == '0' as i32 {
-        p = p.offset(-(1 as i32) as isize);
+        p = p.offset(-1_i32 as isize);
     }
     p = p.offset((*p as i32 != '.' as i32) as i32 as isize);
     *p = 0;
@@ -1903,7 +1903,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     let mut d: *const dep;
     if !(*f).name.is_null()
-        && *(*f).name.offset(0 as i32 as isize) as i32 != 0
+        && *(*f).name.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).name) == 0
     {
         error(
@@ -1920,7 +1920,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         );
     }
     if !(*f).hname.is_null()
-        && *(*f).hname.offset(0 as i32 as isize) as i32 != 0
+        && *(*f).hname.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).hname) == 0
     {
         error(
@@ -1937,7 +1937,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         );
     }
     if !(*f).vpath.is_null()
-        && *(*f).vpath.offset(0 as i32 as isize) as i32 != 0
+        && *(*f).vpath.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).vpath) == 0
     {
         error(
@@ -1954,7 +1954,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         );
     }
     if !(*f).stem.is_null()
-        && *(*f).stem.offset(0 as i32 as isize) as i32 != 0
+        && *(*f).stem.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).stem) == 0
     {
         error(
@@ -1974,7 +1974,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
     while !d.is_null() {
         if (*d).need_2nd_expansion() == 0
             && !(*d).name.is_null()
-            && *(*d).name.offset(0 as i32 as isize) as i32 != 0
+            && *(*d).name.offset(0_i32 as isize) as i32 != 0
             && strcache_iscached((*d).name) == 0
         {
             error(
@@ -1992,7 +1992,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
             );
         }
         if !(*d).stem.is_null()
-            && *(*d).stem.offset(0 as i32 as isize) as i32 != 0
+            && *(*d).stem.offset(0_i32 as isize) as i32 != 0
             && strcache_iscached((*d).stem) == 0
         {
             error(
@@ -2061,11 +2061,11 @@ pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::c
                     l as size_t,
                 ) as *mut ::core::ffi::c_char;
                 let fresh4 = p;
-                p = p.offset(1 as i32 as isize);
+                p = p.offset(1_i32 as isize);
                 *fresh4 = ' ' as i32 as ::core::ffi::c_char;
             }
         }
-        *p.offset(-(1 as i32 as isize)) = 0;
+        *p.offset(-(1_i32 as isize)) = 0;
         last_targ_count = files.ht_fill;
     }
     value

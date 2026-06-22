@@ -853,7 +853,7 @@ pub unsafe fn os_anontmp() -> i32 {
 
     if TMPFILE_WORKS.load(Ordering::Relaxed) {
         loop {
-            fd = open(tdir, O_RDWR | O_TMPFILE | O_EXCL, 0o600 as i32);
+            fd = open(tdir, O_RDWR | O_TMPFILE | O_EXCL, 0o600_i32);
             if !(fd == -1 && *__errno_location() == EINTR) {
                 break;
             }

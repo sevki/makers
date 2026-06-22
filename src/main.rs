@@ -351,49 +351,49 @@ pub const ENOENT: i32 = 2;
 pub const EINTR: i32 = 4;
 pub const SIGCHLD: i32 = 17;
 pub const SIGUSR1: i32 = 10;
-pub const SA_RESTART: i32 = 0x10000000 as i32;
+pub const SA_RESTART: i32 = 0x10000000_i32;
 pub const SIG_SETMASK: i32 = 2;
 pub const _IOLBF: i32 = 1;
-pub const BUFSIZ: i32 = 8192 as i32;
-pub const EOF: i32 = -(1 as i32);
+pub const BUFSIZ: i32 = 8192_i32;
+pub const EOF: i32 = -1_i32;
 pub const UCHAR_MAX: i32 = __SCHAR_MAX__ * 2 + 1;
 pub const CHAR_BIT: i32 = __CHAR_BIT__;
 pub const CHAR_MAX: i32 = __SCHAR_MAX__;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const PATH_MAX: i32 = 4096 as i32;
+pub const PATH_MAX: i32 = 4096_i32;
 pub const GET_PATH_MAX: i32 = PATH_MAX;
 pub const EXIT_SUCCESS: i32 = 0;
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const __LC_ALL: i32 = 6;
 pub const LC_ALL: i32 = __LC_ALL;
 pub const DB_NONE: i32 = 0;
-pub const DB_BASIC: i32 = 0x1 as i32;
-pub const DB_VERBOSE: i32 = 0x2 as i32;
-pub const DB_JOBS: i32 = 0x4 as i32;
-pub const DB_IMPLICIT: i32 = 0x8 as i32;
-pub const DB_PRINT: i32 = 0x10 as i32;
-pub const DB_WHY: i32 = 0x20 as i32;
-pub const DB_MAKEFILES: i32 = 0x100 as i32;
-pub const DB_ALL: i32 = 0xfff as i32;
-pub const MAP_NUL: i32 = 0x1 as i32;
-pub const MAP_BLANK: i32 = 0x2 as i32;
-pub const MAP_NEWLINE: i32 = 0x4 as i32;
-pub const MAP_COMMENT: i32 = 0x8 as i32;
-pub const MAP_SEMI: i32 = 0x10 as i32;
-pub const MAP_EQUALS: i32 = 0x20 as i32;
-pub const MAP_COLON: i32 = 0x40 as i32;
-pub const MAP_VARSEP: i32 = 0x80 as i32;
-pub const MAP_PIPE: i32 = 0x100 as i32;
-pub const MAP_DOT: i32 = 0x200 as i32;
-pub const MAP_COMMA: i32 = 0x400 as i32;
-pub const MAP_USERFUNC: i32 = 0x2000 as i32;
-pub const MAP_VARIABLE: i32 = 0x4000 as i32;
-pub const MAP_DIRSEP: i32 = 0x8000 as i32;
+pub const DB_BASIC: i32 = 0x1_i32;
+pub const DB_VERBOSE: i32 = 0x2_i32;
+pub const DB_JOBS: i32 = 0x4_i32;
+pub const DB_IMPLICIT: i32 = 0x8_i32;
+pub const DB_PRINT: i32 = 0x10_i32;
+pub const DB_WHY: i32 = 0x20_i32;
+pub const DB_MAKEFILES: i32 = 0x100_i32;
+pub const DB_ALL: i32 = 0xfff_i32;
+pub const MAP_NUL: i32 = 0x1_i32;
+pub const MAP_BLANK: i32 = 0x2_i32;
+pub const MAP_NEWLINE: i32 = 0x4_i32;
+pub const MAP_COMMENT: i32 = 0x8_i32;
+pub const MAP_SEMI: i32 = 0x10_i32;
+pub const MAP_EQUALS: i32 = 0x20_i32;
+pub const MAP_COLON: i32 = 0x40_i32;
+pub const MAP_VARSEP: i32 = 0x80_i32;
+pub const MAP_PIPE: i32 = 0x100_i32;
+pub const MAP_DOT: i32 = 0x200_i32;
+pub const MAP_COMMA: i32 = 0x400_i32;
+pub const MAP_USERFUNC: i32 = 0x2000_i32;
+pub const MAP_VARIABLE: i32 = 0x4000_i32;
+pub const MAP_DIRSEP: i32 = 0x8000_i32;
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
-pub const INTSTR_LENGTH: usize = (53 as usize)
+pub const INTSTR_LENGTH: usize = 53_usize
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
-    .wrapping_div(22 as usize)
-    .wrapping_add(3 as usize);
+    .wrapping_div(22_usize)
+    .wrapping_add(3_usize);
 pub const OUTPUT_SYNC_NONE: i32 = 0;
 pub const OUTPUT_SYNC_LINE: i32 = 1;
 pub const OUTPUT_SYNC_TARGET: i32 = 2;
@@ -454,9 +454,9 @@ static default_keep_going_flag: i32 = 0;
 /// Read-only `--print-directory` default: only referenced via `&raw const` as
 /// the option table's `default_value`, never written. Immutable removes a
 /// mutable global.
-static default_print_directory_flag: i32 = -(1 as i32);
+static default_print_directory_flag: i32 = -1_i32;
 pub static mut job_slots: ::core::ffi::c_uint = 0;
-pub const INVALID_JOB_SLOTS: i32 = -(1 as i32);
+pub const INVALID_JOB_SLOTS: i32 = -1_i32;
 /// Number of job slots handed to the jobserver when this make is the master.
 /// Set once during jobserver setup and read while draining tokens at exit.
 /// Stored in an atomic so its reads/write are plain safe operations; all
@@ -892,7 +892,7 @@ pub static mut shell_var: variable = variable {
 pub static mut cmd_prefix: ::core::ffi::c_char = '\t' as i32 as ::core::ffi::c_char;
 pub static mut no_intermediates: ::core::ffi::c_uint = 0;
 pub static mut command_count: ::core::ffi::c_ulong = 1;
-static mut stdin_offset: i32 = -(1 as i32);
+static mut stdin_offset: i32 = -1_i32;
 /// Strcache'd name of the temporary file holding the makefile read from stdin
 /// (or null). Mirrors `options.makefiles[stdin_offset]` so `temp_stdin_unlink`
 /// can run from the deep `die` path without an `&Options` borrow. The pointer
@@ -1150,7 +1150,7 @@ unsafe extern "C" fn bsd_signal(sig: i32, func: bsd_signal_ret_t) -> bsd_signal_
     sigaddset(&raw mut act.sa_mask, sig);
     if sigaction(sig, &raw mut act, &raw mut oact) != 0 {
         return ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(
-            -(1 as i32) as ::libc::intptr_t,
+            -1_i32 as ::libc::intptr_t,
         );
     }
     oact.__sigaction_handler.sa_handler as bsd_signal_ret_t
@@ -1160,7 +1160,7 @@ fn signal_handler_addr(handler: bsd_signal_ret_t) -> usize {
 }
 
 unsafe fn sig_ign_handler() -> bsd_signal_ret_t {
-    ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(1 as i32 as ::libc::intptr_t)
+    ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(1_i32 as ::libc::intptr_t)
 }
 
 unsafe fn install_fatal_signal(sig: i32) {
@@ -1215,7 +1215,7 @@ pub fn initialize_stopchar_map() {
     while i <= UCHAR_MAX {
         let cls = unsafe { *ctype.offset(i as isize) } as i32;
         if cls & _ISspace as i32 as ::core::ffi::c_ushort as i32 != 0
-            && map[i as usize] as i32 & 0x2 as i32 == 0
+            && map[i as usize] as i32 & 0x2_i32 == 0
         {
             map[i as usize] = (map[i as usize] as i32 | MAP_NEWLINE) as ::core::ffi::c_ushort;
         } else if cls & _ISalnum as i32 as ::core::ffi::c_ushort as i32 != 0 {
@@ -1253,28 +1253,28 @@ unsafe extern "C" fn expand_command_line_file(
 ) -> *const ::core::ffi::c_char {
     let cp: *const ::core::ffi::c_char;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    if *name.offset(0 as i32 as isize) as i32 == 0 {
+    if *name.offset(0_i32 as isize) as i32 == 0 {
         fatal(
             ::core::ptr::null_mut::<Floc>(),
             0,
             b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
         );
     }
-    if *name.offset(0 as i32 as isize) as i32 == '~' as i32 {
+    if *name.offset(0_i32 as isize) as i32 == '~' as i32 {
         expanded = tilde_expand(name);
-        if !expanded.is_null() && *expanded.offset(0 as i32 as isize) as i32 != 0 {
+        if !expanded.is_null() && *expanded.offset(0_i32 as isize) as i32 != 0 {
             name = expanded;
         }
     }
-    while *name.offset(0 as i32 as isize) as i32 == '.' as i32
-        && *name.offset(1 as i32 as isize) as i32 == '/' as i32
+    while *name.offset(0_i32 as isize) as i32 == '.' as i32
+        && *name.offset(1_i32 as isize) as i32 == '/' as i32
     {
-        name = name.offset(2 as i32 as isize);
-        while *name.offset(0 as i32 as isize) as i32 == '/' as i32 {
-            name = name.offset(1 as i32 as isize);
+        name = name.offset(2_i32 as isize);
+        while *name.offset(0_i32 as isize) as i32 == '/' as i32 {
+            name = name.offset(1_i32 as isize);
         }
     }
-    if *name.offset(0 as i32 as isize) as i32 == 0 {
+    if *name.offset(0_i32 as isize) as i32 == 0 {
         name = b"./\0" as *const u8 as *const ::core::ffi::c_char;
     }
     cp = strcache_add(name);
@@ -1304,7 +1304,7 @@ pub unsafe fn decode_debug_flags(options: &Options) {
         for entry in db_flags.iter() {
             let mut p: *const ::core::ffi::c_char = entry.as_ptr();
             loop {
-                match tolower(*p.offset(0 as i32 as isize) as i32) {
+                match tolower(*p.offset(0_i32 as isize) as i32) {
                     97 => {
                         db_level |= DB_ALL;
                     }
@@ -1343,14 +1343,14 @@ pub unsafe fn decode_debug_flags(options: &Options) {
                     }
                 }
                 loop {
-                    p = p.offset(1 as i32 as isize);
+                    p = p.offset(1_i32 as isize);
                     if !(*p as i32 != 0) {
                         break;
                     }
                     if !(*p as i32 == ',' as i32 || *p as i32 == ' ' as i32) {
                         continue;
                     }
-                    p = p.offset(1 as i32 as isize);
+                    p = p.offset(1_i32 as isize);
                     break;
                 }
                 if *p as i32 == 0 {
@@ -1426,7 +1426,7 @@ pub unsafe fn print_usage(options: &Options, bad: i32) -> ! {
     cpp = &raw const usage as *const *const ::core::ffi::c_char;
     while !(*cpp).is_null() {
         fputs(*cpp, usageto);
-        cpp = cpp.offset(1 as i32 as isize);
+        cpp = cpp.offset(1_i32 as isize);
     }
     if remote_description.is_null() || *remote_description as i32 == 0 {
         fprintf(
@@ -1472,10 +1472,10 @@ pub unsafe fn temp_stdin_unlink() {
     if stdin_offset >= 0 && !temp_stdin_name.is_null() {
         let nm: *const ::core::ffi::c_char = temp_stdin_name;
         let mut r: i32;
-        stdin_offset = -(1 as i32);
+        stdin_offset = -1_i32;
         loop {
             r = unlink(nm);
-            if !(r == -(1 as i32) && *__errno_location() == EINTR) {
+            if !(r == -1_i32 && *__errno_location() == EINTR) {
                 break;
             }
         }
@@ -1526,18 +1526,18 @@ unsafe fn main_0(
     install_fatal_signal(25);
     bsd_signal(SIGCHLD, SIG_DFL);
     crate::output::output_init(::core::ptr::null_mut::<output>());
-    if (*argv.offset(0 as i32 as isize)).is_null() {
-        let fresh33 = &mut (*argv.offset(0 as i32 as isize));
+    if (*argv.offset(0_i32 as isize)).is_null() {
+        let fresh33 = &mut (*argv.offset(0_i32 as isize));
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
     }
-    if *(*argv.offset(0 as i32 as isize)).offset(0 as i32 as isize) as i32 == 0 {
+    if *(*argv.offset(0_i32 as isize)).offset(0_i32 as isize) as i32 == 0 {
         program = b"make\0" as *const u8 as *const ::core::ffi::c_char;
     } else {
-        program = strrchr(*argv.offset(0 as i32 as isize), '/' as i32);
+        program = strrchr(*argv.offset(0_i32 as isize), '/' as i32);
         if program.is_null() {
-            program = *argv.offset(0 as i32 as isize);
+            program = *argv.offset(0_i32 as isize);
         } else {
-            program = program.offset(1 as i32 as isize);
+            program = program.offset(1_i32 as isize);
         }
     }
     initialize_global_hash_tables();
@@ -1552,7 +1552,7 @@ unsafe fn main_0(
             b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
             b"\0" as *const u8 as *const ::core::ffi::c_char,
         );
-        current_directory[0 as i32 as usize] = 0;
+        current_directory[0_i32 as usize] = 0;
         directory_before_chdir = ::core::ptr::null_mut::<::core::ffi::c_char>();
     } else {
         directory_before_chdir = xstrdup(&raw mut current_directory as *mut ::core::ffi::c_char);
@@ -1634,15 +1634,14 @@ unsafe fn main_0(
         let mut ep: *const ::core::ffi::c_char = *envp.offset(i as isize);
         let mut export: variable_export = v_export;
         let len: size_t;
-        while !(stopchar_map()[*ep as ::core::ffi::c_uchar as usize] as i32
-            & (0x20 as i32 | 0x1 as i32)
+        while !(stopchar_map()[*ep as ::core::ffi::c_uchar as usize] as i32 & (0x20_i32 | 0x1_i32)
             != 0)
         {
-            ep = ep.offset(1 as i32 as isize);
+            ep = ep.offset(1_i32 as isize);
         }
         if !(*ep as i32 == 0) {
             let fresh38 = ep;
-            ep = ep.offset(1 as i32 as isize);
+            ep = ep.offset(1_i32 as isize);
             len = fresh38.offset_from(*envp.offset(i as isize)) as ::core::ffi::c_long as size_t;
             if len == 13
                 && memcmp(
@@ -1654,7 +1653,7 @@ unsafe fn main_0(
             {
                 if *ep as i32 == '-' as i32 {
                     STDIO_TRACED.store(true, Ordering::Relaxed);
-                    ep = ep.offset(1 as i32 as isize);
+                    ep = ep.offset(1_i32 as isize);
                 }
                 restarts = make_toui(::core::ffi::CStr::from_ptr(ep)).unwrap_or(0);
                 export = v_noexport;
@@ -1671,9 +1670,9 @@ unsafe fn main_0(
             if *(*v).name as i32 == *(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char) as i32
                 && (*(*v).name as i32 == 0
                     || strcmp(
-                        (*v).name.offset(1 as i32 as isize),
+                        (*v).name.offset(1_i32 as isize),
                         (b"SHELL\0" as *const u8 as *const ::core::ffi::c_char)
-                            .offset(1 as i32 as isize),
+                            .offset(1_i32 as isize),
                     ) == 0)
             {
                 export = v_noexport;
@@ -1816,8 +1815,8 @@ unsafe fn main_0(
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
     );
     if !v_0.is_null()
-        && *(*v_0).value.offset(0 as i32 as isize) as i32 != 0
-        && *(*v_0).value.offset(0 as i32 as isize) as i32 != '-' as i32
+        && *(*v_0).value.offset(0_i32 as isize) as i32 != 0
+        && *(*v_0).value.offset(0_i32 as isize) as i32 != '-' as i32
     {
         makelevel = make_toui(::core::ffi::CStr::from_ptr((*v_0).value)).unwrap_or(0);
     } else {
@@ -1827,21 +1826,21 @@ unsafe fn main_0(
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
-    if 0x1 as i32 & db_level != 0 {
+    if 0x1_i32 & db_level != 0 {
         print_version();
         fflush(stdout);
     }
-    if current_directory[0 as i32 as usize] as i32 != 0
-        && !(*argv.offset(0 as i32 as isize)).is_null()
-        && *(*argv.offset(0 as i32 as isize)).offset(0 as i32 as isize) as i32 != '/' as i32
-        && !strchr(*argv.offset(0 as i32 as isize), '/' as i32).is_null()
+    if current_directory[0_i32 as usize] as i32 != 0
+        && !(*argv.offset(0_i32 as isize)).is_null()
+        && *(*argv.offset(0_i32 as isize)).offset(0_i32 as isize) as i32 != '/' as i32
+        && !strchr(*argv.offset(0_i32 as isize), '/' as i32).is_null()
     {
-        let fresh41 = &mut (*argv.offset(0 as i32 as isize));
+        let fresh41 = &mut (*argv.offset(0_i32 as isize));
         *fresh41 = xstrdup(concat(
             3,
             &raw mut current_directory as *mut ::core::ffi::c_char,
             b"/\0" as *const u8 as *const ::core::ffi::c_char,
-            *argv.offset(0 as i32 as isize),
+            *argv.offset(0_i32 as isize),
         ));
     }
     starting_directory = &raw mut current_directory as *mut ::core::ffi::c_char;
@@ -1922,7 +1921,7 @@ unsafe fn main_0(
     define_variable_in_set(
         b"MAKE_COMMAND\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        *argv.offset(0 as i32 as isize),
+        *argv.offset(0_i32 as isize),
         o_default,
         0,
         (*current_variable_set_list).set,
@@ -1965,19 +1964,19 @@ unsafe fn main_0(
             p = quote_for_env(p, (*v_1).name);
             if (*v_1).recursive() == 0 {
                 let fresh42 = p;
-                p = p.offset(1 as i32 as isize);
+                p = p.offset(1_i32 as isize);
                 *fresh42 = ':' as i32 as ::core::ffi::c_char;
             }
             let fresh43 = p;
-            p = p.offset(1 as i32 as isize);
+            p = p.offset(1_i32 as isize);
             *fresh43 = '=' as i32 as ::core::ffi::c_char;
             p = quote_for_env(p, (*v_1).value);
             let fresh44 = p;
-            p = p.offset(1 as i32 as isize);
+            p = p.offset(1_i32 as isize);
             *fresh44 = ' ' as i32 as ::core::ffi::c_char;
             cv = (*cv).next;
         }
-        *p.offset(-(1 as i32) as isize) = 0;
+        *p.offset(-1_i32 as isize) = 0;
         define_variable_in_set(
             b"-*-command-variables-*-\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t).wrapping_sub(1),
@@ -2140,7 +2139,7 @@ unsafe fn main_0(
             p_0 = stpcpy(p_0, b"--eval=\0" as *const u8 as *const ::core::ffi::c_char);
             p_0 = quote_for_env(p_0, es.as_ptr());
             let fresh47 = p_0;
-            p_0 = p_0.offset(1 as i32 as isize);
+            p_0 = p_0.offset(1_i32 as isize);
             endp = fresh47;
             *endp = ' ' as i32 as ::core::ffi::c_char;
         }
@@ -2298,7 +2297,7 @@ unsafe fn main_0(
             }
         }
     }
-    if options.jobserver_auth.borrow().is_some() && (0x2 as i32 | 0x4 as i32) & db_level != 0 {
+    if options.jobserver_auth.borrow().is_some() && (0x2_i32 | 0x4_i32) & db_level != 0 {
         let auth = options.jobserver_auth.borrow().clone().unwrap();
         let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
         printf(
@@ -2307,7 +2306,7 @@ unsafe fn main_0(
         );
         fflush(stdout);
     }
-    if options.sync_mutex.borrow().is_some() && 0x2 as i32 & db_level != 0 {
+    if options.sync_mutex.borrow().is_some() && 0x2_i32 & db_level != 0 {
         let mtx = options.sync_mutex.borrow().clone().unwrap();
         let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
         printf(
@@ -2340,23 +2339,22 @@ unsafe fn main_0(
     if restarts == 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
             let f_1: *mut file = enter_file(strcache_add(nf.as_ptr()));
-            (*f_1).mtime_before_update = (!(0 as i32 as uintmax_t)).wrapping_sub(
-                if !(-(1 as i32) as uintmax_t <= 0 as uintmax_t) {
-                    0 as i32 as uintmax_t
+            (*f_1).mtime_before_update =
+                (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
                 } else {
-                    !(0 as i32 as uintmax_t)
+                    !(0_i32 as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
-                            .wrapping_sub(1 as usize)
-                },
-            );
+                            .wrapping_sub(1_usize)
+                });
             (*f_1).last_mtime = (*f_1).mtime_before_update;
         }
     }
     remote_setup();
     output_context = ::core::ptr::null_mut::<output>();
     crate::output::output_close(&raw mut make_sync);
-    if options.shuffle_mode.borrow().is_some() && 0x1 as i32 & db_level != 0 {
+    if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level != 0 {
         let sm = options.shuffle_mode.borrow().clone().unwrap();
         let sm_c = ::std::ffi::CString::new(sm.as_bytes()).unwrap_or_default();
         printf(
@@ -2371,7 +2369,7 @@ unsafe fn main_0(
         let mut nargv: *mut *const ::core::ffi::c_char = argv as *mut *const ::core::ffi::c_char;
         let mut any_failed: i32 = 0;
         let mut status: update_status;
-        if 0x1 as i32 & db_level != 0 {
+        if 0x1_i32 & db_level != 0 {
             printf(b"Updating makefiles....\n\0" as *const u8 as *const ::core::ffi::c_char);
             fflush(stdout);
         }
@@ -2423,7 +2421,7 @@ unsafe fn main_0(
                 last = d_0;
                 d_0 = d0r.next;
             } else {
-                if 0x2 as i32 & db_level != 0 {
+                if 0x2_i32 & db_level != 0 {
                     printf(
                         b"Makefile '%s' might loop; not remaking it.\n\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -2451,7 +2449,7 @@ unsafe fn main_0(
         }
         define_makeflags(&options, 1);
         let orig_db_level: i32 = db_level;
-        if 0x100 as i32 & db_level == 0 {
+        if 0x100_i32 & db_level == 0 {
             db_level = DB_NONE;
         }
         REBUILDING_MAKEFILES.store(true, Ordering::Relaxed);
@@ -2595,9 +2593,9 @@ unsafe fn main_0(
                     as *mut *const ::core::ffi::c_char;
                 nv = nargv;
                 let fresh49 = av;
-                av = av.offset(1 as i32 as isize);
+                av = av.offset(1_i32 as isize);
                 let fresh50 = nv;
-                nv = nv.offset(1 as i32 as isize);
+                nv = nv.offset(1_i32 as isize);
                 *fresh50 = *fresh49;
                 while !(*av).is_null() {
                     let f_4: *mut ::core::ffi::c_char;
@@ -2616,8 +2614,8 @@ unsafe fn main_0(
                         panic!("assertion failed: strlen (a) > 0");
                     };
                     *nv = a;
-                    if !(*a.offset(0 as i32 as isize) as i32 != '-' as i32) {
-                        if *a.offset(1 as i32 as isize) as i32 == '-' as i32 {
+                    if !(*a.offset(0_i32 as isize) as i32 != '-' as i32) {
+                        if *a.offset(1_i32 as isize) as i32 == '-' as i32 {
                             // Rewrite -f/--file long options so the restart
                             // reads the makefile we just remade.
                             let substitute = if strcmp(
@@ -2629,7 +2627,7 @@ unsafe fn main_0(
                                     b"--makefile\0" as *const u8 as *const ::core::ffi::c_char,
                                 ) == 0
                             {
-                                av = av.offset(1 as i32 as isize);
+                                av = av.offset(1_i32 as isize);
                                 true
                             } else {
                                 strncmp(
@@ -2682,8 +2680,8 @@ unsafe fn main_0(
                         } else {
                             f_4 = strchr(a, 'f' as i32);
                             if !f_4.is_null() {
-                                if *f_4.offset(1 as i32 as isize) as i32 == 0 {
-                                    av = av.offset(1 as i32 as isize);
+                                if *f_4.offset(1_i32 as isize) as i32 == 0 {
+                                    av = av.offset(1_i32 as isize);
                                 }
                                 if mfidx == stdin_offset {
                                     let al: size_t =
@@ -2703,7 +2701,7 @@ unsafe fn main_0(
                                         );
                                         *na_1.add(al) = 0;
                                         let fresh51 = nv;
-                                        nv = nv.offset(1 as i32 as isize);
+                                        nv = nv.offset(1_i32 as isize);
                                         *fresh51 = na_1;
                                     }
                                     alloca_allocations.push(::std::vec::from_elem(
@@ -2722,8 +2720,8 @@ unsafe fn main_0(
                                         mf,
                                     );
                                     *nv = na_1;
-                                } else if *f_4.offset(1 as i32 as isize) as i32 == 0 {
-                                    nv = nv.offset(1 as i32 as isize);
+                                } else if *f_4.offset(1_i32 as isize) as i32 == 0 {
+                                    nv = nv.offset(1_i32 as isize);
                                     *nv = mf;
                                 } else {
                                     let al_0: size_t =
@@ -2752,8 +2750,8 @@ unsafe fn main_0(
                             }
                         }
                     }
-                    av = av.offset(1 as i32 as isize);
-                    nv = nv.offset(1 as i32 as isize);
+                    av = av.offset(1_i32 as isize);
+                    nv = nv.offset(1_i32 as isize);
                 }
                 *nv = ::core::ptr::null::<::core::ffi::c_char>();
             }
@@ -2779,7 +2777,7 @@ unsafe fn main_0(
                 }
             }
             restarts = restarts.wrapping_add(1);
-            if 0x1 as i32 & db_level != 0 {
+            if 0x1_i32 & db_level != 0 {
                 let mut p_3: *mut *const ::core::ffi::c_char;
                 printf(
                     b"Re-executing[%u]:\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2788,7 +2786,7 @@ unsafe fn main_0(
                 p_3 = nargv;
                 while !(*p_3).is_null() {
                     printf(b" %s\0" as *const u8 as *const ::core::ffi::c_char, *p_3);
-                    p_3 = p_3.offset(1 as i32 as isize);
+                    p_3 = p_3.offset(1_i32 as isize);
                 }
                 putchar('\n' as i32);
                 fflush(stdout);
@@ -2806,7 +2804,7 @@ unsafe fn main_0(
                 {
                     alloca_allocations.push(::std::vec::from_elem(
                         0,
-                        40 as i32 as ::core::ffi::c_ulong as usize,
+                        40_i32 as ::core::ffi::c_ulong as usize,
                     ));
                     *p_4 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
                         as *mut ::core::ffi::c_char;
@@ -2824,7 +2822,7 @@ unsafe fn main_0(
                 {
                     alloca_allocations.push(::std::vec::from_elem(
                         0,
-                        40 as i32 as ::core::ffi::c_ulong as usize,
+                        40_i32 as ::core::ffi::c_ulong as usize,
                     ));
                     *p_4 = alloca_allocations.last_mut().unwrap().as_mut_ptr()
                         as *mut ::core::ffi::c_char;
@@ -2840,12 +2838,12 @@ unsafe fn main_0(
                     );
                     restarts = 0;
                 }
-                p_4 = p_4.offset(1 as i32 as isize);
+                p_4 = p_4.offset(1_i32 as isize);
             }
             if restarts != 0 {
                 alloca_allocations.push(::std::vec::from_elem(
                     0,
-                    40 as i32 as ::core::ffi::c_ulong as usize,
+                    40_i32 as ::core::ffi::c_ulong as usize,
                 ));
                 let b: *mut ::core::ffi::c_char =
                     alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
@@ -2879,16 +2877,15 @@ unsafe fn main_0(
     if restarts != 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
             let f_5: *mut file = enter_file(strcache_add(nf.as_ptr()));
-            (*f_5).mtime_before_update = (!(0 as i32 as uintmax_t)).wrapping_sub(
-                if !(-(1 as i32) as uintmax_t <= 0 as uintmax_t) {
-                    0 as i32 as uintmax_t
+            (*f_5).mtime_before_update =
+                (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
                 } else {
-                    !(0 as i32 as uintmax_t)
+                    !(0_i32 as uintmax_t)
                         << (::core::mem::size_of::<uintmax_t>() as usize)
                             .wrapping_mul(CHAR_BIT as usize)
-                            .wrapping_sub(1 as usize)
-                },
-            );
+                            .wrapping_sub(1_usize)
+                });
             (*f_5).last_mtime = (*f_5).mtime_before_update;
         }
     }
@@ -2950,7 +2947,7 @@ unsafe fn main_0(
         );
         if !v_2.is_null()
             && !(*v_2).value.is_null()
-            && *(*v_2).value.offset(0 as i32 as isize) as i32 != 0
+            && *(*v_2).value.offset(0_i32 as isize) as i32 != 0
         {
             fatal(
                 ::core::ptr::null_mut::<Floc>(),
@@ -2966,7 +2963,7 @@ unsafe fn main_0(
         );
     }
     crate::shuffle::shuffle_deps_recursive(goals as *mut crate::file::Dep);
-    if 0x1 as i32 & db_level != 0 {
+    if 0x1_i32 & db_level != 0 {
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
@@ -3004,12 +3001,12 @@ pub unsafe fn init_switches() {
     let mut p: *mut ::core::ffi::c_char;
     let mut c: ::core::ffi::c_uint;
     let mut i: ::core::ffi::c_uint;
-    if getopt_shorts[0 as i32 as usize] as i32 != 0 {
+    if getopt_shorts[0_i32 as usize] as i32 != 0 {
         return;
     }
     p = &raw mut getopt_shorts as *mut ::core::ffi::c_char;
     let fresh24 = p;
-    p = p.offset(1 as i32 as isize);
+    p = p.offset(1_i32 as isize);
     *fresh24 = '-' as i32 as ::core::ffi::c_char;
     i = 0;
     while switches[i as usize].c != 0 {
@@ -3022,7 +3019,7 @@ pub unsafe fn init_switches() {
         long_options[i as usize].val = switches[i as usize].c;
         if switches[i as usize].c <= CHAR_MAX {
             let fresh25 = p;
-            p = p.offset(1 as i32 as isize);
+            p = p.offset(1_i32 as isize);
             *fresh25 = switches[i as usize].c as ::core::ffi::c_char;
         }
         match switches[i as usize].type_0 as ::core::ffi::c_uint {
@@ -3032,13 +3029,13 @@ pub unsafe fn init_switches() {
             2 | 3 | 4 | 5 | 6 => {
                 if switches[i as usize].c <= CHAR_MAX {
                     let fresh26 = p;
-                    p = p.offset(1 as i32 as isize);
+                    p = p.offset(1_i32 as isize);
                     *fresh26 = ':' as i32 as ::core::ffi::c_char;
                 }
                 if !switches[i as usize].noarg_value.is_null() {
                     if switches[i as usize].c <= CHAR_MAX {
                         let fresh27 = p;
-                        p = p.offset(1 as i32 as isize);
+                        p = p.offset(1_i32 as isize);
                         *fresh27 = ':' as i32 as ::core::ffi::c_char;
                     }
                     long_options[i as usize].has_arg = optional_argument;
@@ -3069,9 +3066,7 @@ unsafe extern "C" fn handle_non_switch_argument(
 ) -> ::core::ffi::c_uint {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let v: *mut variable;
-    if *arg.offset(0 as i32 as isize) as i32 == '-' as i32
-        && *arg.offset(1 as i32 as isize) as i32 == 0
-    {
+    if *arg.offset(0_i32 as isize) as i32 == '-' as i32 && *arg.offset(1_i32 as isize) as i32 == 0 {
         return 0;
     }
     v = try_variable_definition(::core::ptr::null::<Floc>(), arg, origin, s_global);
@@ -3091,7 +3086,7 @@ unsafe extern "C" fn handle_non_switch_argument(
             (*cv).next = command_variables;
             command_variables = cv;
         }
-    } else if *arg.offset(0 as i32 as isize) as i32 != 0
+    } else if *arg.offset(0_i32 as isize) as i32 != 0
         && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint
     {
         let f: *mut file;
@@ -3289,7 +3284,7 @@ unsafe fn decode_switches(
                                     let mut op: *const ::core::ffi::c_char =
                                         &raw mut opt as *mut ::core::ffi::c_char;
                                     if (*cs).c <= CHAR_MAX {
-                                        opt[0 as i32 as usize] = (*cs).c as ::core::ffi::c_char;
+                                        opt[0_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                                     } else {
                                         op = (*cs).long_name;
                                     }
@@ -3414,13 +3409,13 @@ unsafe fn decode_switches(
                             if coptarg.is_null() && argc > optind {
                                 let mut cp: *const ::core::ffi::c_char;
                                 cp = *argv.offset(optind as isize);
-                                while (*cp.offset(0 as i32 as isize) as ::core::ffi::c_uint)
+                                while (*cp.offset(0_i32 as isize) as ::core::ffi::c_uint)
                                     .wrapping_sub('0' as i32 as ::core::ffi::c_uint)
                                     <= 9
                                 {
-                                    cp = cp.offset(1 as i32 as isize);
+                                    cp = cp.offset(1_i32 as isize);
                                 }
-                                if *cp.offset(0 as i32 as isize) as i32 == 0 {
+                                if *cp.offset(0_i32 as isize) as i32 == 0 {
                                     let fresh18 = optind;
                                     optind += 1;
                                     coptarg = *argv.offset(fresh18 as isize);
@@ -3461,11 +3456,11 @@ unsafe fn decode_switches(
                         6 => {
                             if coptarg.is_null()
                                 && optind < argc
-                                && ((*(*argv.offset(optind as isize)).offset(0 as i32 as isize)
+                                && ((*(*argv.offset(optind as isize)).offset(0_i32 as isize)
                                     as ::core::ffi::c_uint)
                                     .wrapping_sub('0' as i32 as ::core::ffi::c_uint)
                                     <= 9
-                                    || *(*argv.offset(optind as isize)).offset(0 as i32 as isize)
+                                    || *(*argv.offset(optind as isize)).offset(0_i32 as isize)
                                         as i32
                                         == '.' as i32)
                             {
@@ -3493,7 +3488,7 @@ unsafe fn decode_switches(
                     }
                     break;
                 } else {
-                    cs = cs.offset(1 as i32 as isize);
+                    cs = cs.offset(1_i32 as isize);
                 }
             }
         }
@@ -3516,7 +3511,7 @@ unsafe fn decode_switches(
         if prior_found_wait != 0 && !lastgoal.is_null() {
             (*lastgoal).set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
-        a = a.offset(1 as i32 as isize);
+        a = a.offset(1_i32 as isize);
     }
     if bad != 0 && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint {
         print_usage(options, bad);
@@ -3549,10 +3544,9 @@ unsafe fn decode_env_switches(
     let mut argc: i32;
     let argv: *mut *const ::core::ffi::c_char;
     value = expand_variable_buf(::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len);
-    while stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & (0x2 as i32 | 0x4 as i32)
-        != 0
+    while stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & (0x2_i32 | 0x4_i32) != 0
     {
-        value = value.offset(1 as i32 as isize);
+        value = value.offset(1_i32 as isize);
     }
     len = strlen(value) as size_t;
     if len == 0 {
@@ -3564,28 +3558,27 @@ unsafe fn decode_env_switches(
             .wrapping_add(1)
             .wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
     ) as *mut *const ::core::ffi::c_char;
-    let fresh0 = &mut (*argv.offset(0 as i32 as isize));
+    let fresh0 = &mut (*argv.offset(0_i32 as isize));
     *fresh0 = b"\0" as *const u8 as *const ::core::ffi::c_char;
     argc = 1;
     buf = xmalloc((1 as size_t).wrapping_add(len).wrapping_add(1)) as *mut ::core::ffi::c_char;
-    *buf.offset(0 as i32 as isize) = '-' as i32 as ::core::ffi::c_char;
-    p = buf.offset(1 as i32 as isize);
+    *buf.offset(0_i32 as isize) = '-' as i32 as ::core::ffi::c_char;
+    p = buf.offset(1_i32 as isize);
     let fresh1 = &mut (*argv.offset(argc as isize));
     *fresh1 = p;
     while *value as i32 != 0 {
-        if *value as i32 == '\\' as i32 && *value.offset(1 as i32 as isize) as i32 != 0 {
-            value = value.offset(1 as i32 as isize);
-        } else if stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & 0x2 as i32 != 0 {
+        if *value as i32 == '\\' as i32 && *value.offset(1_i32 as isize) as i32 != 0 {
+            value = value.offset(1_i32 as isize);
+        } else if stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & 0x2_i32 != 0 {
             let fresh2 = p;
-            p = p.offset(1 as i32 as isize);
+            p = p.offset(1_i32 as isize);
             *fresh2 = 0;
             argc += 1;
             let fresh3 = &mut (*argv.offset(argc as isize));
             *fresh3 = p;
             loop {
-                value = value.offset(1 as i32 as isize);
-                if !(stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & 0x2 as i32
-                    != 0)
+                value = value.offset(1_i32 as isize);
+                if !(stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & 0x2_i32 != 0)
                 {
                     break;
                 }
@@ -3593,23 +3586,23 @@ unsafe fn decode_env_switches(
             continue;
         }
         let fresh4 = value;
-        value = value.offset(1 as i32 as isize);
+        value = value.offset(1_i32 as isize);
         let fresh5 = p;
-        p = p.offset(1 as i32 as isize);
+        p = p.offset(1_i32 as isize);
         *fresh5 = *fresh4;
     }
     *p = 0;
     argc += 1;
     let fresh6 = &mut (*argv.offset(argc as isize));
     *fresh6 = ::core::ptr::null::<::core::ffi::c_char>();
-    if p < buf.offset(len as isize).offset(2 as i32 as isize) {
+    if p < buf.offset(len as isize).offset(2_i32 as isize) {
     } else {
         panic!("assertion failed: p < buf + len + 2");
     };
-    if *(*argv.offset(1 as i32 as isize)).offset(0 as i32 as isize) as i32 != '-' as i32
-        && strchr(*argv.offset(1 as i32 as isize), '=' as i32).is_null()
+    if *(*argv.offset(1_i32 as isize)).offset(0_i32 as isize) as i32 != '-' as i32
+        && strchr(*argv.offset(1_i32 as isize), '=' as i32).is_null()
     {
-        let fresh7 = &mut (*argv.offset(1 as i32 as isize));
+        let fresh7 = &mut (*argv.offset(1_i32 as isize));
         *fresh7 = buf;
     }
     decode_switches(options, argc, argv, origin);
@@ -3623,19 +3616,19 @@ unsafe extern "C" fn quote_for_env(
     while *in_0 as i32 != 0 {
         if *in_0 as i32 == '$' as i32 {
             let fresh29 = out;
-            out = out.offset(1 as i32 as isize);
+            out = out.offset(1_i32 as isize);
             *fresh29 = '$' as i32 as ::core::ffi::c_char;
-        } else if stopchar_map()[*in_0 as ::core::ffi::c_uchar as usize] as i32 & 0x2 as i32 != 0
+        } else if stopchar_map()[*in_0 as ::core::ffi::c_uchar as usize] as i32 & 0x2_i32 != 0
             || *in_0 as i32 == '\\' as i32
         {
             let fresh30 = out;
-            out = out.offset(1 as i32 as isize);
+            out = out.offset(1_i32 as isize);
             *fresh30 = '\\' as i32 as ::core::ffi::c_char;
         }
         let fresh31 = in_0;
-        in_0 = in_0.offset(1 as i32 as isize);
+        in_0 = in_0.offset(1_i32 as isize);
         let fresh32 = out;
-        out = out.offset(1 as i32 as isize);
+        out = out.offset(1_i32 as isize);
         *fresh32 = *fresh31;
     }
     out
@@ -3709,10 +3702,10 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                     || (*cs).specified() as i32 != 0
                     || opt_flag_int(options, (*cs).c) != *((*cs).default_value as *mut i32)))
         {
-            c[0 as i32 as usize] = (*cs).c as ::core::ffi::c_char;
+            c[0_i32 as usize] = (*cs).c as ::core::ffi::c_char;
             fp = variable_buffer_output(fp, &raw mut c as *mut ::core::ffi::c_char, 1);
         }
-        cs = cs.offset(1 as i32 as isize);
+        cs = cs.offset(1_i32 as isize);
     }
     memcpy(
         &raw mut c as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
@@ -3736,14 +3729,14 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                                     != *((*cs).default_value as *mut i32)))
                     {
                         if (*cs).c <= CHAR_MAX {
-                            c[2 as i32 as usize] = (*cs).c as ::core::ffi::c_char;
+                            c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                         } else {
-                            c[2 as i32 as usize] = '-' as i32 as ::core::ffi::c_char;
+                            c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
@@ -3763,14 +3756,14 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                             == *((*cs).default_value as *mut ::core::ffi::c_uint))
                     {
                         if (*cs).c <= CHAR_MAX {
-                            c[2 as i32 as usize] = (*cs).c as ::core::ffi::c_char;
+                            c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                         } else {
-                            c[2 as i32 as usize] = '-' as i32 as ::core::ffi::c_char;
+                            c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
@@ -3788,7 +3781,7 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                         {
                             alloca_allocations.push(::std::vec::from_elem(
                                 0,
-                                30 as i32 as ::core::ffi::c_ulong as usize,
+                                30_i32 as ::core::ffi::c_ulong as usize,
                             ));
                             let buf: *mut ::core::ffi::c_char =
                                 alloca_allocations.last_mut().unwrap().as_mut_ptr()
@@ -3815,14 +3808,14 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                             == *((*cs).default_value as *mut ::core::ffi::c_double))
                     {
                         if (*cs).c <= CHAR_MAX {
-                            c[2 as i32 as usize] = (*cs).c as ::core::ffi::c_char;
+                            c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                         } else {
-                            c[2 as i32 as usize] = '-' as i32 as ::core::ffi::c_char;
+                            c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
@@ -3840,7 +3833,7 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                         {
                             alloca_allocations.push(::std::vec::from_elem(
                                 0,
-                                100 as i32 as ::core::ffi::c_ulong as usize,
+                                100_i32 as ::core::ffi::c_ulong as usize,
                             ));
                             let buf_0: *mut ::core::ffi::c_char =
                                 alloca_allocations.last_mut().unwrap().as_mut_ptr()
@@ -3870,14 +3863,14 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                     };
                     if !p.is_null() {
                         if (*cs).c <= CHAR_MAX {
-                            c[2 as i32 as usize] = (*cs).c as ::core::ffi::c_char;
+                            c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                         } else {
-                            c[2 as i32 as usize] = '-' as i32 as ::core::ffi::c_char;
+                            c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
@@ -3926,14 +3919,14 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                         {
                             for &item in items.iter() {
                                 if (*cs).c <= CHAR_MAX {
-                                    c[2 as i32 as usize] = (*cs).c as ::core::ffi::c_char;
+                                    c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                                     fp = variable_buffer_output(
                                         fp,
                                         &raw mut c as *mut ::core::ffi::c_char,
                                         3,
                                     );
                                 } else {
-                                    c[2 as i32 as usize] = '-' as i32 as ::core::ffi::c_char;
+                                    c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                                     fp = variable_buffer_output(
                                         fp,
                                         &raw mut c as *mut ::core::ffi::c_char,
@@ -3962,9 +3955,9 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
                 }
             }
         }
-        cs = cs.offset(1 as i32 as isize);
+        cs = cs.offset(1_i32 as isize);
     }
-    if fp == variable_buffer.offset(1 as i32 as isize) {
+    if fp == variable_buffer.offset(1_i32 as isize) {
         fp = variable_buffer;
     }
     *fp = 0;
@@ -3972,8 +3965,8 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
         b"MFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
         variable_buffer.offset(
-            (if *variable_buffer.offset(0 as i32 as isize) as i32 == '-' as i32
-                && *variable_buffer.offset(1 as i32 as isize) as i32 == ' ' as i32
+            (if *variable_buffer.offset(0_i32 as isize) as i32 == '-' as i32
+                && *variable_buffer.offset(1_i32 as isize) as i32 == ' ' as i32
             {
                 2
             } else {
@@ -4012,8 +4005,8 @@ pub unsafe fn define_makeflags(options: &Options, makefile: i32) -> *mut variabl
     }
     *fp = 0;
     fp = variable_buffer;
-    if *fp.offset(0 as i32 as isize) as i32 == '-' as i32 {
-        fp = fp.offset(1 as i32 as isize);
+    if *fp.offset(0_i32 as isize) as i32 == '-' as i32 {
+        fp = fp.offset(1_i32 as isize);
     }
     v = define_variable_in_set(
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,

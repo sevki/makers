@@ -124,7 +124,7 @@ pub unsafe fn ar_scan(
     let mut namemap_size: ::core::ffi::c_uint = 0;
     let desc: i32 = open(archive, O_RDONLY, 0);
     if desc < 0 {
-        return -(1 as i32) as intmax_t;
+        return -1_i32 as intmax_t;
     }
     let mut buf: [::core::ffi::c_char; 8] = [0; 8];
     let nread: i32;
@@ -170,7 +170,7 @@ pub unsafe fn ar_scan(
             );
             loop {
                 o = lseek(desc, member_offset as __off_t, 0) as off_t;
-                if !(o == -(1 as i32) as off_t && *__errno_location() == EINTR) {
+                if !(o == -1_i32 as off_t && *__errno_location() == EINTR) {
                     break;
                 }
             }
@@ -209,7 +209,7 @@ pub unsafe fn ar_scan(
             loop {
                 *p = 0;
                 if !(p > name && {
-                    p = p.offset(-(1 as i32) as isize);
+                    p = p.offset(-1_i32 as isize);
                     *p as i32 == ' ' as i32
                 }) {
                     break;
@@ -224,12 +224,12 @@ pub unsafe fn ar_scan(
                 *p = 0;
             }
             if is_namemap == 0
-                && (*name.offset(0 as i32 as isize) as i32 == ' ' as i32
-                    || *name.offset(0 as i32 as isize) as i32 == '/' as i32)
+                && (*name.offset(0_i32 as isize) as i32 == ' ' as i32
+                    || *name.offset(0_i32 as isize) as i32 == '/' as i32)
                 && !namemap.is_null()
             {
                 let Ok(name_off) =
-                    make_toui(::core::ffi::CStr::from_ptr(name.offset(1 as i32 as isize)))
+                    make_toui(::core::ffi::CStr::from_ptr(name.offset(1_i32 as isize)))
                 else {
                     break;
                 };
@@ -242,19 +242,19 @@ pub unsafe fn ar_scan(
                     break;
                 }
                 long_name = 1;
-            } else if *name.offset(0 as i32 as isize) as i32 == '#' as i32
-                && *name.offset(1 as i32 as isize) as i32 == '1' as i32
-                && *name.offset(2 as i32 as isize) as i32 == '/' as i32
+            } else if *name.offset(0_i32 as isize) as i32 == '#' as i32
+                && *name.offset(1_i32 as isize) as i32 == '1' as i32
+                && *name.offset(2_i32 as isize) as i32 == '/' as i32
             {
                 let name_len_0 =
-                    make_toui(::core::ffi::CStr::from_ptr(name.offset(3 as i32 as isize)))
+                    make_toui(::core::ffi::CStr::from_ptr(name.offset(3_i32 as isize)))
                         .unwrap_or(0);
                 if name_len_0 == 0
                     || name_len_0
-                        >= (if (4096 as i32) < 2147483647 as i32 {
-                            4096 as i32
+                        >= (if 4096_i32 < 2147483647_i32 {
+                            4096_i32
                         } else {
-                            2147483647 as i32
+                            2147483647_i32
                         }) as ::core::ffi::c_uint
                 {
                     break;
@@ -380,11 +380,11 @@ pub unsafe fn ar_scan(
                 while clear < limit {
                     if *clear as i32 == '\n' as i32 {
                         *clear = 0;
-                        if *clear.offset(-(1 as i32) as isize) as i32 == '/' as i32 {
-                            *clear.offset(-(1 as i32) as isize) = 0;
+                        if *clear.offset(-1_i32 as isize) as i32 == '/' as i32 {
+                            *clear.offset(-1_i32 as isize) = 0;
                         }
                     }
-                    clear = clear.offset(1 as i32 as isize);
+                    clear = clear.offset(1_i32 as isize);
                 }
                 *limit = 0;
             }
@@ -397,7 +397,7 @@ pub unsafe fn ar_scan(
         }
     }
     close(desc);
-    -(2 as i32) as intmax_t
+    -2_i32 as intmax_t
 }
 /// # Safety
 ///
@@ -533,17 +533,17 @@ pub unsafe fn ar_member_touch(
     }
     opos = pos as off_t;
     loop {
-        fd = open(arname, 0o2 as i32, 0o666 as i32);
-        if !(fd == -(1 as i32) && *__errno_location() == EINTR) {
+        fd = open(arname, 0o2_i32, 0o666_i32);
+        if !(fd == -1_i32 && *__errno_location() == EINTR) {
             break;
         }
     }
     if fd < 0 {
-        return -(3 as i32);
+        return -3_i32;
     }
     loop {
         o = lseek(fd, opos as __off_t, 0) as off_t;
-        if !(o == -(1 as i32) as off_t && *__errno_location() == EINTR) {
+        if !(o == -1_i32 as off_t && *__errno_location() == EINTR) {
             break;
         }
     }
@@ -552,7 +552,7 @@ pub unsafe fn ar_member_touch(
         if !(r as usize != AR_HDR_SIZE) {
             loop {
                 r = fstat(fd, &raw mut statbuf);
-                if !(r == -(1 as i32) && *__errno_location() == EINTR) {
+                if !(r == -1_i32 && *__errno_location() == EINTR) {
                     break;
                 }
             }
@@ -576,7 +576,7 @@ pub unsafe fn ar_member_touch(
                     );
                     loop {
                         o = lseek(fd, opos as __off_t, 0) as off_t;
-                        if !(o == -(1 as i32) as off_t && *__errno_location() == EINTR) {
+                        if !(o == -1_i32 as off_t && *__errno_location() == EINTR) {
                             break;
                         }
                     }
@@ -598,10 +598,10 @@ pub unsafe fn ar_member_touch(
     r = *__errno_location();
     close(fd);
     *__errno_location() = r;
-    -(3 as i32)
+    -3_i32
 }
 pub const __CHAR_BIT__: i32 = 8;
-pub const __INT_MAX__: i32 = 2147483647 as i32;
+pub const __INT_MAX__: i32 = 2147483647_i32;
 
 #[cfg(test)]
 mod ar_name_equal_tests {

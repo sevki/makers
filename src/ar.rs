@@ -139,7 +139,7 @@ pub unsafe fn ar_parse_name(
         );
     }
     let fresh0 = p;
-    p = p.offset(1 as i32 as isize);
+    p = p.offset(1_i32 as isize);
     *fresh0 = 0;
     *p.offset(strlen(p).wrapping_sub(1) as isize) = 0;
     *memname_p = p;
@@ -251,13 +251,13 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     );
     if (0 as intmax_t) < val
         && val
-            <= (if (0 as i32 as time_t) < -(1 as i32) as time_t {
-                -(1 as i32) as time_t
+            <= (if (0_i32 as time_t) < -1_i32 as time_t {
+                -1_i32 as time_t
             } else {
-                (((1 as i32 as time_t)
+                (((1_i32 as time_t)
                     << (::core::mem::size_of::<time_t>() as usize)
                         .wrapping_mul(CHAR_BIT as usize)
-                        .wrapping_sub(2 as usize))
+                        .wrapping_sub(2_usize))
                     - 1 as time_t)
                     * 2 as time_t
                     + 1 as time_t
@@ -265,7 +265,7 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     {
         val as time_t
     } else {
-        -(1 as i32) as time_t
+        -1_i32 as time_t
     }
 }
 /// # Safety
