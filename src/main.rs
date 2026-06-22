@@ -3761,10 +3761,6 @@ unsafe extern "C" fn quote_for_env(
     }
     out
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 /// Drop the built-in suffix rules: free `.SUFFIXES`' builtin dependency chain
 /// and reset the `SUFFIXES` variable to empty. Split out of `disable_builtins`
 /// so that function stays a flat sequence of flag checks.
@@ -3790,6 +3786,10 @@ unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) {
     );
 }
 
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe fn disable_builtins(ctx: &crate::execctx::ExecContext, options: &Options) {
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
