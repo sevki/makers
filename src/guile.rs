@@ -4,7 +4,7 @@ use crate::floc::Floc;
 ///
 /// Safe: the `flocp` argument is ignored, so no pointer is ever dereferenced —
 /// the function carries no safety preconditions despite its C-ABI signature.
-pub fn guile_gmake_setup(_flocp: *const Floc) -> ::core::ffi::c_int {
+pub fn guile_gmake_setup(_flocp: *const Floc) -> i32 {
     1
 }
 

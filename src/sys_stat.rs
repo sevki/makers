@@ -23,7 +23,7 @@ pub struct stat {
     pub st_mode: libc::mode_t,
     pub st_uid: libc::uid_t,
     pub st_gid: libc::gid_t,
-    pub __pad0: ::core::ffi::c_int,
+    pub __pad0: i32,
     pub st_rdev: libc::dev_t,
     pub st_size: libc::off_t,
     pub st_blksize: libc::blksize_t,

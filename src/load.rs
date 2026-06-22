@@ -15,11 +15,7 @@ pub type file = crate::file::File;
 /// # Safety
 ///
 /// `flocp` must be null or point to a valid location record.
-pub unsafe fn load_file(
-    flocp: *const Floc,
-    _file: *mut file,
-    noerror: ::core::ffi::c_int,
-) -> ::core::ffi::c_int {
+pub unsafe fn load_file(flocp: *const Floc, _file: *mut file, noerror: i32) -> i32 {
     if noerror == 0 {
         fatal!(flocp.as_ref(), "'load' is not supported on this platform");
     }
@@ -31,7 +27,7 @@ pub unsafe fn load_file(
 /// Safe: the `_name` argument is ignored (never dereferenced) and the
 /// function never returns, so it carries no safety preconditions despite its
 /// C-ABI signature.
-pub fn unload_file(_name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub fn unload_file(_name: *const ::core::ffi::c_char) -> i32 {
     fatal!(None, "INTERNAL: cannot unload when load is not supported")
 }
 

@@ -15,7 +15,7 @@ use crate::strcache::strcache_add_len;
 use libc::{abort, free, memcpy, printf, putchar, puts, strchr, strlen, strrchr};
 extern "C" {
     static mut stdout: *mut FILE;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
+    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
 }
 pub type dep = Dep;
 pub type commands = Commands;
@@ -50,10 +50,10 @@ use crate::make_main::{posix_pedantic, second_expansion};
 use crate::output::{error, fatal};
 use crate::read::{find_percent_cached, parse_file_seq};
 use crate::variable::lookup_variable;
-pub const MAP_NUL: ::core::ffi::c_int = 0x1;
+pub const MAP_NUL: i32 = 0x1;
 pub const INTSTR_LENGTH: usize = 53 * ::core::mem::size_of::<uintmax_t>() / 22 + 3;
-pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
-pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
+pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
+pub const PARSEFS_NONE: i32 = 0;
 #[inline]
 unsafe fn alloc_dep() -> *mut dep {
     xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
@@ -406,7 +406,7 @@ pub unsafe fn convert_to_pattern() {
 /// Install `rule` into the pattern-rule database, replacing any rule with
 /// identical targets and deps when `override_0` is set. Returns 1 if the rule
 /// was installed, 0 if it was discarded as a non-overriding duplicate.
-unsafe fn new_pattern_rule(rule: *mut rule, override_0: ::core::ffi::c_int) -> ::core::ffi::c_int {
+unsafe fn new_pattern_rule(rule: *mut rule, override_0: i32) -> i32 {
     let new_rule = rule.as_mut().expect("new_pattern_rule requires a rule");
     new_rule.in_use = 0;
     new_rule.terminal = 0;
@@ -479,7 +479,7 @@ unsafe fn append_to_pattern_rules(rule: *mut rule) {
 /// # Safety
 /// `p` must point to a valid `pspec` whose strings are NUL-terminated and
 /// live for the program's lifetime; must run single-threaded.
-pub unsafe fn install_pattern_rule(p: *const pspec, terminal: ::core::ffi::c_int) {
+pub unsafe fn install_pattern_rule(p: *const pspec, terminal: i32) {
     let spec = p.as_ref().expect("install_pattern_rule requires a pspec");
     let r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
     let rr = r.as_mut().expect("xmalloc returned null");
@@ -559,10 +559,10 @@ pub unsafe fn create_pattern_rule(
     targets: *mut *const ::core::ffi::c_char,
     target_percents: *mut *const ::core::ffi::c_char,
     n: ::core::ffi::c_ushort,
-    terminal: ::core::ffi::c_int,
+    terminal: i32,
     deps: *mut dep,
     commands: *mut commands,
-    override_0: ::core::ffi::c_int,
+    override_0: i32,
 ) {
     let r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
     let rr = r.as_mut().expect("xmalloc returned null");

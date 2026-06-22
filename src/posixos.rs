@@ -5,7 +5,7 @@
 //! with C-shaped accessors because `job.rs` and `main.rs` drive it through
 //! the original entry points.
 
-use ::core::ffi::{c_char, c_int, c_longlong, c_uint, c_void, CStr};
+use ::core::ffi::{c_char, c_longlong, c_uint, c_void, CStr};
 use ::core::ptr::{null, null_mut};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU8, Ordering};
@@ -30,22 +30,22 @@ extern "C" {
     static mut stdin: *mut FILE;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
-    fn fflush(stream: *mut FILE) -> c_int;
-    fn fileno(stream: *mut FILE) -> c_int;
+    fn fflush(stream: *mut FILE) -> i32;
+    fn fileno(stream: *mut FILE) -> i32;
 }
 
 /// Stream fileno for `crate::stdio::FILE` streams (libc's `fileno` takes
 /// `libc::FILE`, which is a distinct type).
-unsafe fn stream_fd(stream: *mut FILE) -> c_int {
+unsafe fn stream_fd(stream: *mut FILE) -> i32 {
     fileno(stream)
 }
 
 /// `check_io_state` bits (see os.h).
-pub const IO_UNKNOWN: c_int = 0x1;
-pub const IO_COMBINED_OUTERR: c_int = 0x2;
-pub const IO_STDIN_OK: c_int = 0x4;
-pub const IO_STDOUT_OK: c_int = 0x8;
-pub const IO_STDERR_OK: c_int = 0x10;
+pub const IO_UNKNOWN: i32 = 0x1;
+pub const IO_COMBINED_OUTERR: i32 = 0x2;
+pub const IO_STDIN_OK: i32 = 0x4;
+pub const IO_STDOUT_OK: i32 = 0x8;
+pub const IO_STDERR_OK: i32 = 0x10;
 
 /// Which validity bits hold for stdin/stdout/stderr, computed once.
 ///
@@ -120,11 +120,11 @@ fn js_type_set(t: JsType) {
 /// True in the process that created the jobserver (and so owns the fifo).
 static JOB_ROOT: AtomicBool = AtomicBool::new(false);
 /// The token pipe/fifo: `[read end, write end]`.
-static mut job_fds: [c_int; 2] = [-1, -1];
+static mut job_fds: [i32; 2] = [-1, -1];
 /// A private dup of the read side (closed by a fatal signal to wake us).
 static JOB_RFD: AtomicI32 = AtomicI32::new(-1);
 
-fn job_rfd() -> c_int {
+fn job_rfd() -> i32 {
     JOB_RFD.load(Ordering::Relaxed)
 }
 /// The token character written for each available job slot.
@@ -133,12 +133,12 @@ static mut fifo_name: *mut c_char = null_mut();
 
 /// On POSIX with pselect there is no need for a separate read dup; the
 /// blocking read is interruptible already.
-fn make_job_rfd() -> c_int {
+fn make_job_rfd() -> i32 {
     0
 }
 
 /// Retry-on-EINTR wrapper around `fcntl(fd, cmd)`.
-unsafe fn fcntl_retry(fd: c_int, cmd: c_int) -> c_int {
+unsafe fn fcntl_retry(fd: i32, cmd: i32) -> i32 {
     loop {
         let r = fcntl(fd, cmd);
         if !(r == -1 && *__errno_location() == EINTR) {
@@ -148,7 +148,7 @@ unsafe fn fcntl_retry(fd: c_int, cmd: c_int) -> c_int {
 }
 
 /// Retry-on-EINTR wrapper around `fcntl(fd, cmd, arg)`.
-unsafe fn fcntl_set_retry(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
+unsafe fn fcntl_set_retry(fd: i32, cmd: i32, arg: i32) -> i32 {
     loop {
         let r = fcntl(fd, cmd, arg);
         if !(r == -1 && *__errno_location() == EINTR) {
@@ -158,7 +158,7 @@ unsafe fn fcntl_set_retry(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
 }
 
 /// Set or clear `O_NONBLOCK` on `fd`, dying on failure.
-unsafe fn set_blocking(fd: c_int, blocking: bool) {
+unsafe fn set_blocking(fd: i32, blocking: bool) {
     let flags = fcntl_retry(fd, F_GETFL);
     if flags < 0 {
         return;
@@ -179,8 +179,8 @@ unsafe fn set_blocking(fd: c_int, blocking: bool) {
 /// # Safety
 /// `style` must be null or a valid NUL-terminated string; must run
 /// single-threaded during startup.
-pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
-    let mut r: c_int;
+pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
+    let mut r: i32;
 
     JOB_ROOT.store(true, Ordering::Relaxed);
 
@@ -250,7 +250,7 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
             );
         }
         loop {
-            r = pipe(&raw mut job_fds as *mut c_int);
+            r = pipe(&raw mut job_fds as *mut i32);
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -272,7 +272,7 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
     set_blocking(job_fds[1], false);
     for k in 0..slots {
         loop {
-            r = write(job_fds[1], &raw const token as *const c_void, 1) as c_int;
+            r = write(job_fds[1], &raw const token as *const c_void, 1) as i32;
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -304,8 +304,8 @@ pub unsafe fn jobserver_setup(slots: c_int, style: *const c_char) -> c_uint {
 /// `auth` must be a valid NUL-terminated string; must run single-threaded
 /// during startup.
 pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
-    let mut rfd: c_int = 0;
-    let mut wfd: c_int = 0;
+    let mut rfd: i32 = 0;
+    let mut wfd: i32 = 0;
 
     if strncmp(auth, FIFO_PREFIX.as_ptr(), FIFO_PREFIX.to_bytes().len()) == 0 {
         fifo_name = xstrdup(auth.add(FIFO_PREFIX.to_bytes().len()));
@@ -430,7 +430,7 @@ pub unsafe fn jobserver_clear() {
 
     if !fifo_name.is_null() {
         if JOB_ROOT.load(Ordering::Relaxed) {
-            let mut r: c_int;
+            let mut r: i32;
             loop {
                 r = unlink(fifo_name);
                 if !(r == -1 && *__errno_location() == EINTR) {
@@ -452,10 +452,10 @@ pub unsafe fn jobserver_clear() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_release(is_fatal: c_int) {
-    let mut r: c_int;
+pub unsafe fn jobserver_release(is_fatal: i32) {
+    let mut r: i32;
     loop {
-        r = write(job_fds[1], &raw const token as *const c_void, 1) as c_int;
+        r = write(job_fds[1], &raw const token as *const c_void, 1) as i32;
         if !(r == -1 && *__errno_location() == EINTR) {
             break;
         }
@@ -483,9 +483,9 @@ pub unsafe fn jobserver_acquire_all() -> c_uint {
 
     loop {
         let mut intake: c_char = 0;
-        let mut r: c_int;
+        let mut r: i32;
         loop {
-            r = read(job_fds[0], &mut intake as *mut c_char as *mut c_void, 1) as c_int;
+            r = read(job_fds[0], &mut intake as *mut c_char as *mut c_void, 1) as i32;
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -510,7 +510,7 @@ pub unsafe fn jobserver_acquire_all() -> c_uint {
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-pub unsafe fn jobserver_pre_child(recursive: c_int) {
+pub unsafe fn jobserver_pre_child(recursive: i32) {
     if recursive != 0 && js_type_get() == JsType::Pipe {
         fd_inherit(job_fds[0]);
         fd_inherit(job_fds[1]);
@@ -521,7 +521,7 @@ pub unsafe fn jobserver_pre_child(recursive: c_int) {
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-pub unsafe fn jobserver_post_child(recursive: c_int) {
+pub unsafe fn jobserver_post_child(recursive: i32) {
     if recursive != 0 && js_type_get() == JsType::Pipe {
         fd_noinherit(job_fds[0]);
         fd_noinherit(job_fds[1]);
@@ -534,7 +534,7 @@ pub fn jobserver_signal() {
     let rfd = job_rfd();
     if rfd >= 0 {
         // SAFETY: `close` is async-signal-safe, and closing a file descriptor
-        // is not a Rust memory-safety hazard; any `c_int` is a valid argument.
+        // is not a Rust memory-safety hazard; any `i32` is a valid argument.
         unsafe { close(rfd) };
         JOB_RFD.store(-1, Ordering::Relaxed);
     }
@@ -555,7 +555,7 @@ pub unsafe fn jobserver_pre_acquire() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_acquire(timeout: c_int) -> c_uint {
+pub unsafe fn jobserver_acquire(timeout: i32) -> c_uint {
     let mut spec = timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -600,7 +600,7 @@ pub unsafe fn jobserver_acquire(timeout: c_int) -> c_uint {
 
         let mut intake: c_char = 0;
         loop {
-            r = read(job_fds[0], &mut intake as *mut c_char as *mut c_void, 1) as c_int;
+            r = read(job_fds[0], &mut intake as *mut c_char as *mut c_void, 1) as i32;
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -708,7 +708,7 @@ pub unsafe fn osync_clear() {
         OSYNC_HANDLE.store(-1, Ordering::Relaxed);
     }
     if SYNC_ROOT.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
-        let mut r: c_int;
+        let mut r: i32;
         loop {
             r = unlink(osync_tmpfile);
             if !(r == -1 && *__errno_location() == EINTR) {
@@ -765,14 +765,14 @@ pub unsafe fn osync_release() {
 ///
 /// # Safety
 /// Must run single-threaded the first time.
-pub unsafe fn get_bad_stdin() -> c_int {
+pub unsafe fn get_bad_stdin() -> i32 {
     static BAD_STDIN: AtomicI32 = AtomicI32::new(-1);
     let cached = BAD_STDIN.load(Ordering::Relaxed);
     if cached != -1 {
         return cached;
     }
 
-    let mut pd: [c_int; 2] = [0; 2];
+    let mut pd: [i32; 2] = [0; 2];
     if pipe(pd.as_mut_ptr()) == 0 {
         // Close the write side so reads see EOF.
         close(pd[1]);
@@ -793,7 +793,7 @@ pub unsafe fn get_bad_stdin() -> c_int {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-pub unsafe fn fd_inherit(fd: c_int) {
+pub unsafe fn fd_inherit(fd: i32) {
     let flags = fcntl_retry(fd, F_GETFD);
     if flags >= 0 {
         fcntl_set_retry(fd, F_SETFD, flags & !FD_CLOEXEC);
@@ -804,7 +804,7 @@ pub unsafe fn fd_inherit(fd: c_int) {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-pub unsafe fn fd_noinherit(fd: c_int) {
+pub unsafe fn fd_noinherit(fd: i32) {
     let flags = fcntl_retry(fd, F_GETFD);
     if flags >= 0 {
         fcntl_set_retry(fd, F_SETFD, flags | FD_CLOEXEC);
@@ -817,8 +817,8 @@ pub unsafe fn fd_noinherit(fd: c_int) {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-pub unsafe fn fd_set_append(fd: c_int) -> c_int {
-    let mut flags: c_int = -1;
+pub unsafe fn fd_set_append(fd: i32) -> i32 {
+    let mut flags: i32 = -1;
     let mut stbuf: libc::stat = ::core::mem::zeroed();
     if fstat(fd, &mut stbuf) == 0 && stbuf.st_mode & S_IFMT == S_IFREG {
         flags = fcntl(fd, F_GETFL, 0);
@@ -834,7 +834,7 @@ pub unsafe fn fd_set_append(fd: c_int) -> c_int {
 /// # Safety
 /// `fd` must be an open descriptor; `flags` must come from
 /// [`fd_set_append`].
-pub unsafe fn fd_reset_append(fd: c_int, flags: c_int) {
+pub unsafe fn fd_reset_append(fd: i32, flags: i32) {
     if flags >= 0 {
         fcntl_set_retry(fd, F_SETFL, flags);
     }
@@ -846,14 +846,14 @@ pub unsafe fn fd_reset_append(fd: c_int, flags: c_int) {
 ///
 /// # Safety
 /// Must run single-threaded (reports errors through the printers).
-pub unsafe fn os_anontmp() -> c_int {
+pub unsafe fn os_anontmp() -> i32 {
     let tdir = get_tmpdir();
-    let mut fd: c_int = -1;
+    let mut fd: i32 = -1;
     static TMPFILE_WORKS: AtomicBool = AtomicBool::new(true);
 
     if TMPFILE_WORKS.load(Ordering::Relaxed) {
         loop {
-            fd = open(tdir, O_RDWR | O_TMPFILE | O_EXCL, 0o600 as c_int);
+            fd = open(tdir, O_RDWR | O_TMPFILE | O_EXCL, 0o600 as i32);
             if !(fd == -1 && *__errno_location() == EINTR) {
                 break;
             }

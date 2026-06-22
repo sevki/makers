@@ -15,12 +15,8 @@ extern "C" {
     );
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
-pub type __compar_fn_t = Option<
-    unsafe extern "C" fn(
-        *const ::core::ffi::c_void,
-        *const ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int,
->;
+pub type __compar_fn_t =
+    Option<unsafe extern "C" fn(*const ::core::ffi::c_void, *const ::core::ffi::c_void) -> i32>;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
@@ -38,15 +34,15 @@ use crate::floc::Floc;
 
 pub type ar_member_func_t = Option<
     unsafe fn(
-        ::core::ffi::c_int,
+        i32,
         *const ::core::ffi::c_char,
-        ::core::ffi::c_int,
+        i32,
         ::core::ffi::c_long,
         ::core::ffi::c_long,
         ::core::ffi::c_long,
         intmax_t,
-        ::core::ffi::c_int,
-        ::core::ffi::c_int,
+        i32,
+        i32,
         ::core::ffi::c_uint,
         *const ::core::ffi::c_void,
     ) -> intmax_t,
@@ -67,10 +63,10 @@ pub struct ar_glob_state {
     pub chain: *mut nameseq,
     pub n: ::core::ffi::c_uint,
 }
-pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
+pub const CHAR_BIT: i32 = __CHAR_BIT__;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const FNM_PATHNAME: ::core::ffi::c_int = (1) << 0;
-pub const FNM_PERIOD: ::core::ffi::c_int = (1) << 2;
+pub const FNM_PATHNAME: i32 = (1) << 0;
+pub const FNM_PERIOD: i32 = (1) << 2;
 /// Classification of a target name with respect to the `archive(member)`
 /// syntax recognized by [`ar_name`].
 enum ArName {
@@ -143,7 +139,7 @@ pub unsafe fn ar_parse_name(
         );
     }
     let fresh0 = p;
-    p = p.offset(1 as ::core::ffi::c_int as isize);
+    p = p.offset(1 as i32 as isize);
     *fresh0 = 0;
     *p.offset(strlen(p).wrapping_sub(1) as isize) = 0;
     *memname_p = p;
@@ -151,15 +147,15 @@ pub unsafe fn ar_parse_name(
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
 unsafe fn ar_member_date_1(
-    mut _desc: ::core::ffi::c_int,
+    mut _desc: i32,
     mem: *const ::core::ffi::c_char,
-    truncated: ::core::ffi::c_int,
+    truncated: i32,
     mut _hdrpos: ::core::ffi::c_long,
     mut _datapos: ::core::ffi::c_long,
     mut _size: ::core::ffi::c_long,
     date: intmax_t,
-    mut _uid: ::core::ffi::c_int,
-    mut _gid: ::core::ffi::c_int,
+    mut _uid: i32,
+    mut _gid: i32,
     mut _mode: ::core::ffi::c_uint,
     name: *const ::core::ffi::c_void,
 ) -> intmax_t {
@@ -255,10 +251,10 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     );
     if (0 as intmax_t) < val
         && val
-            <= (if (0 as ::core::ffi::c_int as time_t) < -(1 as ::core::ffi::c_int) as time_t {
-                -(1 as ::core::ffi::c_int) as time_t
+            <= (if (0 as i32 as time_t) < -(1 as i32) as time_t {
+                -(1 as i32) as time_t
             } else {
-                (((1 as ::core::ffi::c_int as time_t)
+                (((1 as i32 as time_t)
                     << (::core::mem::size_of::<time_t>() as usize)
                         .wrapping_mul(CHAR_BIT as usize)
                         .wrapping_sub(2 as usize))
@@ -269,17 +265,17 @@ pub unsafe fn ar_member_date(name: *const ::core::ffi::c_char) -> time_t {
     {
         val as time_t
     } else {
-        -(1 as ::core::ffi::c_int) as time_t
+        -(1 as i32) as time_t
     }
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
+pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> i32 {
     let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut val: ::core::ffi::c_int;
+    let mut val: i32;
     ar_parse_name(name, &raw mut arname, &raw mut memname);
     let arfile: *mut file;
     arfile = enter_file(strcache_add(arname));
@@ -337,15 +333,15 @@ pub unsafe fn ar_touch(name: *const ::core::ffi::c_char) -> ::core::ffi::c_int {
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
 unsafe fn ar_glob_match(
-    mut _desc: ::core::ffi::c_int,
+    mut _desc: i32,
     mem: *const ::core::ffi::c_char,
-    mut _truncated: ::core::ffi::c_int,
+    mut _truncated: i32,
     mut _hdrpos: ::core::ffi::c_long,
     mut _datapos: ::core::ffi::c_long,
     mut _size: ::core::ffi::c_long,
     mut _date: intmax_t,
-    mut _uid: ::core::ffi::c_int,
-    mut _gid: ::core::ffi::c_int,
+    mut _uid: i32,
+    mut _gid: i32,
     mut _mode: ::core::ffi::c_uint,
     arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
@@ -484,7 +480,7 @@ pub unsafe fn ar_glob(
     }
     state.chain
 }
-pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
+pub const __CHAR_BIT__: i32 = 8;
 
 #[cfg(test)]
 mod ar_name_tests {

@@ -17,7 +17,7 @@ use crate::output::fatal;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add_len;
 
-use ::core::ffi::{c_char, c_int, c_long, c_short, c_uchar, c_uint, c_ulong, c_ushort, c_void};
+use ::core::ffi::{c_char, c_long, c_short, c_uchar, c_uint, c_ulong, c_ushort, c_void};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
@@ -28,11 +28,11 @@ use libc::{
 pub use crate::sys_stat::{stat, timespec};
 
 extern "C" {
-    fn stat(file: *const c_char, buf: *mut stat) -> c_int;
-    fn lstat(file: *const c_char, buf: *mut stat) -> c_int;
+    fn stat(file: *const c_char, buf: *mut stat) -> i32;
+    fn lstat(file: *const c_char, buf: *mut stat) -> i32;
     static mut stdout: *mut FILE;
-    fn fflush(stream: *mut FILE) -> c_int;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> c_int;
+    fn fflush(stream: *mut FILE) -> i32;
+    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
 }
 
 /// `glob_t` as laid out by gnulib's glob with `GLOB_ALTDIRFUNC` support;
@@ -43,12 +43,12 @@ pub struct glob_t {
     pub gl_pathc: __size_t,
     pub gl_pathv: *mut *mut c_char,
     pub gl_offs: __size_t,
-    pub gl_flags: c_int,
+    pub gl_flags: i32,
     pub gl_closedir: Option<unsafe extern "C" fn(*mut c_void)>,
     pub gl_readdir: Option<unsafe extern "C" fn(*mut c_void) -> *mut dirent>,
     pub gl_opendir: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
-    pub gl_lstat: Option<unsafe extern "C" fn(*const c_char, *mut stat) -> c_int>,
-    pub gl_stat: Option<unsafe extern "C" fn(*const c_char, *mut stat) -> c_int>,
+    pub gl_lstat: Option<unsafe extern "C" fn(*const c_char, *mut stat) -> i32>,
+    pub gl_stat: Option<unsafe extern "C" fn(*const c_char, *mut stat) -> i32>,
 }
 
 /// `struct dirent` layout handed back to glob by [`read_dirstream`]; the
@@ -109,11 +109,11 @@ pub struct dirstream {
 }
 
 /// `DB_VERBOSE`: `-d`-style debug output enabled in `db_level`.
-const DB_VERBOSE: c_int = 0x2;
+const DB_VERBOSE: i32 = 0x2;
 
-pub const MAX_OPEN_DIRECTORIES: c_int = 10;
-pub const DIRECTORY_BUCKETS: c_int = 199;
-pub const DIRFILE_BUCKETS: c_int = 107;
+pub const MAX_OPEN_DIRECTORIES: i32 = 10;
+pub const DIRECTORY_BUCKETS: i32 = 199;
+pub const DIRFILE_BUCKETS: i32 = 107;
 
 static mut open_directories: c_uint = 0;
 
@@ -145,7 +145,7 @@ unsafe fn directory_contents_hash_2(key: *const c_void) -> c_ulong {
     ((key.dev as c_uint) << 4 ^ !key.ino as c_uint) as c_ulong
 }
 
-unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
+unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
     let x = (xv as *const directory_contents)
         .as_ref()
         .expect("hash callback got a null key");
@@ -183,7 +183,7 @@ pub fn directory_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
-unsafe fn directory_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
+unsafe fn directory_hash_cmp(x: *const c_void, y: *const c_void) -> i32 {
     let xn = (x as *const directory)
         .as_ref()
         .expect("hash callback got a null key")
@@ -220,7 +220,7 @@ pub fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
-unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
+unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
     let x = (xv as *const dirfile)
         .as_ref()
         .expect("hash callback got a null key");
@@ -228,7 +228,7 @@ unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> c_int {
         .as_ref()
         .expect("hash callback got a null key");
     // Compare lengths first (cheap), then interned pointers, then bytes.
-    let result = x.length.wrapping_sub(y.length) as c_int;
+    let result = x.length.wrapping_sub(y.length) as i32;
     if result != 0 {
         return result;
     }
@@ -369,7 +369,7 @@ pub unsafe fn find_directory(name: *const c_char) -> *mut directory {
 
 /// Does `filename` exist in `dir`? Reads the directory incrementally,
 /// caching every entry seen; a null `filename` reads to the end.
-unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_char) -> c_int {
+unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_char) -> i32 {
     let dir = dir.as_ref().expect("dir_contents_file_exists_p: null dir");
     let Some(dc) = dir.contents.as_mut() else {
         // The directory could not be stat'd.
@@ -391,7 +391,7 @@ unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_cha
         let df =
             hash_find_item(&raw mut dc.dirfiles, (&raw const dirfile_key).cast()) as *const dirfile;
         if let Some(df) = df.as_ref() {
-            return (df.impossible == 0) as c_int;
+            return (df.impossible == 0) as i32;
         }
     }
 
@@ -471,7 +471,7 @@ unsafe fn dir_contents_file_exists_p(dir: *mut directory, filename: *const c_cha
 /// # Safety
 ///
 /// Both must be NUL-terminated; the directory tables must be initialized.
-pub unsafe fn dir_file_exists_p(dirname: *const c_char, filename: *const c_char) -> c_int {
+pub unsafe fn dir_file_exists_p(dirname: *const c_char, filename: *const c_char) -> i32 {
     dir_contents_file_exists_p(find_directory(dirname), filename)
 }
 
@@ -506,9 +506,9 @@ unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *con
 ///
 /// `name` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_exists_p(name: *const c_char) -> c_int {
+pub unsafe fn file_exists_p(name: *const c_char) -> i32 {
     if crate::ar::ar_name(::core::ffi::CStr::from_ptr(name)) {
-        return (crate::ar::ar_member_date(name) != -1) as c_int;
+        return (crate::ar::ar_member_date(name) != -1) as i32;
     }
     match split_dir(name) {
         None => dir_file_exists_p(c".".as_ptr(), name),
@@ -562,7 +562,7 @@ pub unsafe fn file_impossible(filename: *const c_char) {
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_impossible_p(filename: *const c_char) -> c_int {
+pub unsafe fn file_impossible_p(filename: *const c_char) -> i32 {
     let (dir, filename) = match split_dir(filename) {
         None => {
             let dir_ptr = find_directory(c".".as_ptr());
@@ -590,7 +590,7 @@ pub unsafe fn file_impossible_p(filename: *const c_char) -> c_int {
     let df =
         hash_find_item(&raw mut dir.dirfiles, (&raw const dirfile_key).cast()) as *const dirfile;
     match df.as_ref() {
-        Some(df) => df.impossible as c_int,
+        Some(df) => df.impossible as i32,
         None => 0,
     }
 }

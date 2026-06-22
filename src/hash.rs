@@ -7,7 +7,7 @@
 //! through `#[repr(C)]`.
 
 use ::core::{
-    ffi::{c_char, c_double, c_int, c_uint, c_ulong, c_void},
+    ffi::{c_char, c_double, c_uint, c_ulong, c_void},
     ptr::null_mut,
 };
 
@@ -21,15 +21,15 @@ use crate::{
 
 extern "C" {
     static mut stderr: *mut FILE;
-    fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> c_int;
+    fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> i32;
 }
 
-pub type __compar_fn_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>;
+pub type __compar_fn_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> i32>;
 pub type hash_func_t = Option<unsafe fn(*const c_void) -> c_ulong>;
-pub type hash_cmp_func_t = Option<unsafe fn(*const c_void, *const c_void) -> c_int>;
+pub type hash_cmp_func_t = Option<unsafe fn(*const c_void, *const c_void) -> i32>;
 pub type hash_map_func_t = Option<unsafe fn(*const c_void)>;
 pub type hash_map_arg_func_t = Option<unsafe fn(*const c_void, *mut c_void)>;
-pub type qsort_cmp_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>;
+pub type qsort_cmp_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> i32>;
 
 /// An open-addressed (double-hashed) table of `void *` items. Deleted
 /// slots hold [`hash_deleted_item`]; empty slots hold null.
@@ -57,7 +57,7 @@ pub struct hash_table {
     pub c2rust_padding: [u8; 3],
 }
 
-pub const MAKE_TROUBLE: c_int = 1;
+pub const MAKE_TROUBLE: i32 = 1;
 
 /// Sentinel stored in slots whose item was deleted (its own address, so it
 /// can never equal a real item).
@@ -160,12 +160,22 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
     // returned slot pointer always valid (never a null sentinel).
     let mut deleted_idx: Option<usize> = None;
     let mut hash_2: c_uint = 0;
-    let mut hash_1 = ht.as_ref().expect("hash table pointer is null").ht_hash_1.expect("hash table without ht_hash_1")(key) as c_uint;
+    let mut hash_1 = ht
+        .as_ref()
+        .expect("hash table pointer is null")
+        .ht_hash_1
+        .expect("hash table without ht_hash_1")(key) as c_uint;
 
-    ht.as_mut().expect("hash table pointer is null").ht_lookups = ht.as_ref().expect("hash table pointer is null").ht_lookups.wrapping_add(1);
+    ht.as_mut().expect("hash table pointer is null").ht_lookups = ht
+        .as_ref()
+        .expect("hash table pointer is null")
+        .ht_lookups
+        .wrapping_add(1);
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
-        hash_1 = (hash_1 as c_ulong & (ht.as_ref().expect("hash table pointer is null").ht_size - 1)) as c_uint;
+        hash_1 = (hash_1 as c_ulong
+            & (ht.as_ref().expect("hash table pointer is null").ht_size - 1))
+            as c_uint;
         let idx = hash_1 as usize;
         let slot_val = *table_slots_mut(ht)
             .get(idx)
@@ -184,16 +194,33 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
             if ::core::ptr::eq(key, slot_val) {
                 return &raw mut table_slots_mut(ht)[idx];
             }
-            if ht.as_ref().expect("hash table pointer is null").ht_compare.expect("hash table without ht_compare")(key, slot_val) == 0 {
+            if ht
+                .as_ref()
+                .expect("hash table pointer is null")
+                .ht_compare
+                .expect("hash table without ht_compare")(key, slot_val)
+                == 0
+            {
                 return &raw mut table_slots_mut(ht)[idx];
             }
-            ht.as_mut().expect("hash table pointer is null").ht_collisions = ht.as_ref().expect("hash table pointer is null").ht_collisions.wrapping_add(1);
+            ht.as_mut()
+                .expect("hash table pointer is null")
+                .ht_collisions = ht
+                .as_ref()
+                .expect("hash table pointer is null")
+                .ht_collisions
+                .wrapping_add(1);
         }
 
         // Probe again with the secondary hash (forced odd, so it is
         // coprime with the power-of-two size).
         if hash_2 == 0 {
-            hash_2 = (ht.as_ref().expect("hash table pointer is null").ht_hash_2.expect("hash table without ht_hash_2")(key) | 1) as c_uint;
+            hash_2 = (ht
+                .as_ref()
+                .expect("hash table pointer is null")
+                .ht_hash_2
+                .expect("hash table without ht_hash_2")(key)
+                | 1) as c_uint;
         }
         hash_1 = hash_1.wrapping_add(hash_2);
     }
@@ -333,7 +360,7 @@ pub unsafe fn hash_delete_items(ht: *mut hash_table) {
 /// # Safety
 /// `ht` must be initialized; with `free_items` every stored item must be
 /// an owned allocation.
-pub unsafe fn hash_free(ht: *mut hash_table, free_items: c_int) {
+pub unsafe fn hash_free(ht: *mut hash_table, free_items: i32) {
     assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
     if free_items != 0 {
         hash_free_items(ht);

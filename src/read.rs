@@ -17,20 +17,20 @@ use libc::{
 extern "C" {
     pub type dirent;
     static mut stdout: *mut FILE;
-    fn fclose(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
+    fn fclose(__stream: *mut FILE) -> i32;
+    fn fflush(__stream: *mut FILE) -> i32;
     fn fopen(
         __filename: *const ::core::ffi::c_char,
         __modes: *const ::core::ffi::c_char,
     ) -> *mut FILE;
-    fn fdopen(__fd: ::core::ffi::c_int, __modes: *const ::core::ffi::c_char) -> *mut FILE;
+    fn fdopen(__fd: i32, __modes: *const ::core::ffi::c_char) -> *mut FILE;
     fn fgets(
         __s: *mut ::core::ffi::c_char,
-        __n: ::core::ffi::c_int,
+        __n: i32,
         __stream: *mut FILE,
     ) -> *mut ::core::ffi::c_char;
-    fn ferror(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn fileno(__stream: *mut FILE) -> ::core::ffi::c_int;
+    fn ferror(__stream: *mut FILE) -> i32;
+    fn fileno(__stream: *mut FILE) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -41,23 +41,14 @@ extern "C" {
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn memset(
-        __s: *mut ::core::ffi::c_void,
-        __c: ::core::ffi::c_int,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
+    fn memset(__s: *mut ::core::ffi::c_void, __c: i32, __n: size_t) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn glob(
         __pattern: *const ::core::ffi::c_char,
-        __flags: ::core::ffi::c_int,
-        __errfunc: Option<
-            unsafe extern "C" fn(
-                *const ::core::ffi::c_char,
-                ::core::ffi::c_int,
-            ) -> ::core::ffi::c_int,
-        >,
+        __flags: i32,
+        __errfunc: Option<unsafe extern "C" fn(*const ::core::ffi::c_char, i32) -> i32>,
         __pglob: *mut glob_t,
-    ) -> ::core::ffi::c_int;
+    ) -> i32;
     fn globfree(__pglob: *mut glob_t);
     fn getpwnam(__name: *const ::core::ffi::c_char) -> *mut passwd;
 }
@@ -70,15 +61,13 @@ pub struct glob_t {
     pub gl_pathc: __size_t,
     pub gl_pathv: *mut *mut ::core::ffi::c_char,
     pub gl_offs: __size_t,
-    pub gl_flags: ::core::ffi::c_int,
+    pub gl_flags: i32,
     pub gl_closedir: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> ()>,
     pub gl_readdir: Option<unsafe extern "C" fn(*mut ::core::ffi::c_void) -> *mut dirent>,
     pub gl_opendir:
         Option<unsafe extern "C" fn(*const ::core::ffi::c_char) -> *mut ::core::ffi::c_void>,
-    pub gl_lstat:
-        Option<unsafe extern "C" fn(*const ::core::ffi::c_char, *mut stat) -> ::core::ffi::c_int>,
-    pub gl_stat:
-        Option<unsafe extern "C" fn(*const ::core::ffi::c_char, *mut stat) -> ::core::ffi::c_int>,
+    pub gl_lstat: Option<unsafe extern "C" fn(*const ::core::ffi::c_char, *mut stat) -> i32>,
+    pub gl_stat: Option<unsafe extern "C" fn(*const ::core::ffi::c_char, *mut stat) -> i32>,
 }
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
@@ -192,7 +181,7 @@ pub struct goaldep {
         [u8; 2],
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 2],
-    pub error: ::core::ffi::c_int,
+    pub error: i32,
     pub floc: Floc,
 }
 #[derive(Copy, Clone)]
@@ -244,29 +233,29 @@ pub const c_else: C2RustUnnamed = 4;
 pub const c_ifeq: C2RustUnnamed = 2;
 pub const c_ifndef: C2RustUnnamed = 1;
 pub const c_ifdef: C2RustUnnamed = 0;
-pub const __S_IFMT: ::core::ffi::c_int = 0o170000 as ::core::ffi::c_int;
-pub const ENOENT: ::core::ffi::c_int = 2;
-pub const EINTR: ::core::ffi::c_int = 4;
-pub const ENOMEM: ::core::ffi::c_int = 12;
-pub const ENFILE: ::core::ffi::c_int = 23;
-pub const EMFILE: ::core::ffi::c_int = 24;
+pub const __S_IFMT: i32 = 0o170000 as i32;
+pub const ENOENT: i32 = 2;
+pub const EINTR: i32 = 4;
+pub const ENOMEM: i32 = 12;
+pub const ENFILE: i32 = 23;
+pub const EMFILE: i32 = 24;
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const MAP_NUL: ::core::ffi::c_int = 0x1 as ::core::ffi::c_int;
-pub const MAP_BLANK: ::core::ffi::c_int = 0x2 as ::core::ffi::c_int;
-pub const MAP_COMMENT: ::core::ffi::c_int = 0x8 as ::core::ffi::c_int;
-pub const MAP_SEMI: ::core::ffi::c_int = 0x10 as ::core::ffi::c_int;
-pub const MAP_VARIABLE: ::core::ffi::c_int = 0x4000 as ::core::ffi::c_int;
-pub const MAP_VMSCOMMA: ::core::ffi::c_int = 0;
-pub const GLOB_ALTDIRFUNC: ::core::ffi::c_int = (1) << 9;
-pub const GLOB_NOSPACE: ::core::ffi::c_int = 1;
-pub const GLOB_NOMATCH: ::core::ffi::c_int = 3;
+pub const MAP_NUL: i32 = 0x1 as i32;
+pub const MAP_BLANK: i32 = 0x2 as i32;
+pub const MAP_COMMENT: i32 = 0x8 as i32;
+pub const MAP_SEMI: i32 = 0x10 as i32;
+pub const MAP_VARIABLE: i32 = 0x4000 as i32;
+pub const MAP_VMSCOMMA: i32 = 0;
+pub const GLOB_ALTDIRFUNC: i32 = (1) << 9;
+pub const GLOB_NOSPACE: i32 = 1;
+pub const GLOB_NOMATCH: i32 = 3;
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
-pub const RM_NO_DEFAULT_GOAL: ::core::ffi::c_int = (1) << 0;
-pub const RM_INCLUDED: ::core::ffi::c_int = (1) << 1;
-pub const RM_DONTCARE: ::core::ffi::c_int = (1) << 2;
-pub const RM_NO_TILDE: ::core::ffi::c_int = (1) << 3;
-pub const PARSEFS_NONE: ::core::ffi::c_int = 0;
+pub const RM_NO_DEFAULT_GOAL: i32 = (1) << 0;
+pub const RM_INCLUDED: i32 = (1) << 1;
+pub const RM_DONTCARE: i32 = (1) << 2;
+pub const RM_NO_TILDE: i32 = (1) << 3;
+pub const PARSEFS_NONE: i32 = 0;
 #[inline]
 unsafe extern "C" fn alloc_dep() -> *mut dep {
     xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
@@ -283,7 +272,7 @@ unsafe extern "C" fn free_ns(n: *mut nameseq) {
 unsafe extern "C" fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
-pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
+pub const NONEXISTENT_MTIME: i32 = 1;
 static mut toplevel_conditionals: conditionals = conditionals {
     if_cmds: 0,
     allocated: 0,
@@ -293,11 +282,8 @@ static mut toplevel_conditionals: conditionals = conditionals {
 static mut conditionals: *mut conditionals = &raw const toplevel_conditionals as *mut conditionals;
 /// Default system include directories searched when `-I` does not disable them.
 /// Genuine Rust byte slices (no NUL terminators, no `*const c_char`).
-static DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] = [
-    b"/usr/gnu/include",
-    b"/usr/local/include",
-    b"/usr/include",
-];
+static DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] =
+    [b"/usr/gnu/include", b"/usr/local/include", b"/usr/include"];
 pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
 static mut read_files: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 /// # Safety
@@ -315,7 +301,7 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
         (*current_variable_set_list).set,
         NILF,
     );
-    if 0x1 as ::core::ffi::c_int & db_level != 0 {
+    if 0x1 as i32 & db_level != 0 {
         printf(b"Reading makefiles...\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
@@ -336,9 +322,9 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
         if name.is_null() {
             break;
         }
-        if *p as ::core::ffi::c_int != 0 {
+        if *p as i32 != 0 {
             let fresh10 = p;
-            p = p.offset(1 as ::core::ffi::c_int as isize);
+            p = p.offset(1 as i32 as isize);
             *fresh10 = 0;
         }
         eval_makefile(
@@ -359,7 +345,7 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
                 (*(*d).file).name
             };
             num_makefiles = num_makefiles.wrapping_add(1);
-            makefiles = makefiles.offset(1 as ::core::ffi::c_int as isize);
+            makefiles = makefiles.offset(1 as i32 as isize);
         }
     }
     if num_makefiles == 0 {
@@ -372,7 +358,7 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
         let mut p_0: *const *const ::core::ffi::c_char =
             &raw const default_makefiles as *const *const ::core::ffi::c_char;
         while !(*p_0).is_null() && file_exists_p(*p_0) == 0 {
-            p_0 = p_0.offset(1 as ::core::ffi::c_int as isize);
+            p_0 = p_0.offset(1 as i32 as isize);
         }
         if !(*p_0).is_null() {
             eval_makefile(*p_0, 0);
@@ -387,7 +373,7 @@ pub unsafe fn read_all_makefiles(mut makefiles: *mut *const ::core::ffi::c_char)
                 (*d_0).set_flags(RM_DONTCARE as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 (*d_0).next = read_files;
                 read_files = d_0;
-                p_0 = p_0.offset(1 as ::core::ffi::c_int as isize);
+                p_0 = p_0.offset(1 as i32 as isize);
             }
         }
     }
@@ -441,28 +427,26 @@ unsafe extern "C" fn eval_makefile(
     ebuf.floc.filenm = filename;
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
-    if 0x2 as ::core::ffi::c_int & db_level != 0 {
+    if 0x2 as i32 & db_level != 0 {
         printf(
             b"Reading makefile '%s'\0" as *const u8 as *const ::core::ffi::c_char,
             filename,
         );
-        if flags as ::core::ffi::c_int & RM_NO_DEFAULT_GOAL != 0 {
+        if flags as i32 & RM_NO_DEFAULT_GOAL != 0 {
             printf(b" (no default goal)\0" as *const u8 as *const ::core::ffi::c_char);
         }
-        if flags as ::core::ffi::c_int & RM_INCLUDED != 0 {
+        if flags as i32 & RM_INCLUDED != 0 {
             printf(b" (search path)\0" as *const u8 as *const ::core::ffi::c_char);
         }
-        if flags as ::core::ffi::c_int & RM_DONTCARE != 0 {
+        if flags as i32 & RM_DONTCARE != 0 {
             printf(b" (don't care)\0" as *const u8 as *const ::core::ffi::c_char);
         }
-        if flags as ::core::ffi::c_int & RM_NO_TILDE != 0 {
+        if flags as i32 & RM_NO_TILDE != 0 {
             printf(b" (no ~ expansion)\0" as *const u8 as *const ::core::ffi::c_char);
         }
         puts(b"...\0" as *const u8 as *const ::core::ffi::c_char);
     }
-    if flags as ::core::ffi::c_int & RM_NO_TILDE == 0
-        && *filename.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '~' as i32
-    {
+    if flags as i32 & RM_NO_TILDE == 0 && *filename.offset(0 as i32 as isize) as i32 == '~' as i32 {
         expanded = tilde_expand(filename);
         if !expanded.is_null() {
             filename = expanded;
@@ -491,10 +475,11 @@ unsafe extern "C" fn eval_makefile(
     }
     if ebuf.fp.is_null()
         && (*deps).error == ENOENT
-        && flags as ::core::ffi::c_int & (1) << 1 != 0
+        && flags as i32 & (1) << 1 != 0
         && !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(*filename.as_ref().expect("eval_makefile: null filename") as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & 0x8000 as ::core::ffi::c_int
+            .offset(*filename.as_ref().expect("eval_makefile: null filename")
+                as ::core::ffi::c_uchar as isize) as i32
+            & 0x8000 as i32
             != 0)
     {
         use std::os::unix::ffi::OsStrExt;
@@ -507,9 +492,8 @@ unsafe extern "C" fn eval_makefile(
         // through the `with_options` borrow channel (no `static mut`). Snapshot
         // it into a local `Vec` so the `RefCell` borrow is released before the
         // file-open work below (which re-enters the eval engine on success).
-        let search_dirs: Vec<std::path::PathBuf> = crate::make_main::with_options(|o| {
-            o.resolved_include_dirs.borrow().clone()
-        });
+        let search_dirs: Vec<std::path::PathBuf> =
+            crate::make_main::with_options(|o| o.resolved_include_dirs.borrow().clone());
         for dir in &search_dirs {
             // Native path construction: PathBuf::join, not the C `concat` helper.
             let candidate = dir.join(filename_os);
@@ -530,17 +514,15 @@ unsafe extern "C" fn eval_makefile(
                         f.into_raw_fd(),
                         b"r\0" as *const u8 as *const ::core::ffi::c_char,
                     ) as *mut FILE;
-                    filename = crate::strcache::strcache_add_bytes(
-                        candidate.as_os_str().as_bytes(),
-                    );
+                    filename =
+                        crate::strcache::strcache_add_bytes(candidate.as_os_str().as_bytes());
                     break;
                 }
                 Err(e) => {
                     let errno = e.raw_os_error().unwrap_or(ENOENT);
                     if errno != ENOENT {
-                        filename = crate::strcache::strcache_add_bytes(
-                            candidate.as_os_str().as_bytes(),
-                        );
+                        filename =
+                            crate::strcache::strcache_add_bytes(candidate.as_os_str().as_bytes());
                         (*deps).error = errno;
                         break;
                     }
@@ -584,7 +566,7 @@ unsafe extern "C" fn eval_makefile(
     reading_file = &raw mut ebuf.floc;
     eval(
         &raw mut ebuf,
-        (flags as ::core::ffi::c_int & RM_NO_DEFAULT_GOAL == 0) as ::core::ffi::c_int,
+        (flags as i32 & RM_NO_DEFAULT_GOAL == 0) as i32,
     );
     reading_file = curfile;
     fclose(ebuf.fp);
@@ -640,7 +622,7 @@ pub unsafe fn eval_buffer(buffer: *mut ::core::ffi::c_char, flocp: *const Floc) 
 }
 unsafe extern "C" fn parse_var_assignment(
     line: *const ::core::ffi::c_char,
-    targvar: ::core::ffi::c_int,
+    targvar: i32,
     flocp: *const Floc,
     vmod: *mut vmodifiers,
 ) -> *mut ::core::ffi::c_char {
@@ -720,7 +702,7 @@ fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
+pub unsafe fn eval(ebuf: *mut ebuffer, set_default: i32) {
     let mut collapsed: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut collapsed_length: size_t = 0;
     let mut commands_len: size_t = 200;
@@ -728,14 +710,14 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
     let mut commands_idx: size_t = 0;
     let mut cmds_started: ::core::ffi::c_uint;
     let mut tgts_started: ::core::ffi::c_uint;
-    let mut ignoring: ::core::ffi::c_int = 0;
-    let mut in_ignored_define: ::core::ffi::c_int = 0;
-    let mut no_targets: ::core::ffi::c_int = 0;
-    let mut also_make_targets: ::core::ffi::c_int = 0;
+    let mut ignoring: i32 = 0;
+    let mut in_ignored_define: i32 = 0;
+    let mut no_targets: i32 = 0;
+    let mut also_make_targets: i32 = 0;
     let mut filenames: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
     let mut depstr: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut nlines: ::core::ffi::c_long = 0;
-    let mut two_colon: ::core::ffi::c_int = 0;
+    let mut two_colon: i32 = 0;
     let mut prefix: ::core::ffi::c_char = cmd_prefix;
     let mut pattern: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut pattern_percent: *const ::core::ffi::c_char;
@@ -779,15 +761,12 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
         line = (*ebuf).buffer;
         if (*ebuf).floc.lineno == 1 {
             let ul: *mut ::core::ffi::c_uchar = line as *mut ::core::ffi::c_uchar;
-            if *ul.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                == 0xef as ::core::ffi::c_int
-                && *ul.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == 0xbb as ::core::ffi::c_int
-                && *ul.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == 0xbf as ::core::ffi::c_int
+            if *ul.offset(0 as i32 as isize) as i32 == 0xef as i32
+                && *ul.offset(1 as i32 as isize) as i32 == 0xbb as i32
+                && *ul.offset(2 as i32 as isize) as i32 == 0xbf as i32
             {
-                line = line.offset(3 as ::core::ffi::c_int as isize);
-                if 0x1 as ::core::ffi::c_int & db_level != 0 {
+                line = line.offset(3 as i32 as isize);
+                if 0x1 as i32 & db_level != 0 {
                     if !(*ebuf).floc.filenm.is_null() {
                         printf(
                             b"Skipping UTF-8 BOM in makefile '%s'\n\0" as *const u8
@@ -805,14 +784,13 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
         }
         // Classify the line by its first byte through the typed AST: empty
         // line, recipe line (begins with `cmd_prefix`), or a line to parse.
-        let first_byte = *line.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_uchar;
+        let first_byte = *line.offset(0 as i32 as isize) as ::core::ffi::c_uchar;
         let line_kind =
             crate::parser::LineKind::classify(first_byte, cmd_prefix as ::core::ffi::c_uchar);
         if line_kind == crate::parser::LineKind::Blank {
             continue;
         }
-        let initial_tab = (first_byte as ::core::ffi::c_int == '\t' as i32) as ::core::ffi::c_int
-            as ::core::ffi::c_uint;
+        let initial_tab = (first_byte as i32 == '\t' as i32) as i32 as ::core::ffi::c_uint;
         linelen = strlen(line) as size_t;
         if line_kind == crate::parser::LineKind::Recipe {
             if no_targets != 0 {
@@ -833,7 +811,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                 memcpy(
                     commands.offset(commands_idx as isize) as *mut ::core::ffi::c_char
                         as *mut ::core::ffi::c_void,
-                    line.offset(1 as ::core::ffi::c_int as isize) as *const ::core::ffi::c_void,
+                    line.offset(1 as i32 as isize) as *const ::core::ffi::c_void,
                     (linelen as size_t).wrapping_sub(1),
                 );
                 commands_idx = commands_idx.wrapping_add(linelen.wrapping_sub(1));
@@ -853,11 +831,12 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
         remove_comments(collapsed);
         p = collapsed;
         while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-            .offset(*p.as_ref().expect("eval: null line pointer") as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
+            .offset(*p.as_ref().expect("eval: null line pointer") as ::core::ffi::c_uchar as isize)
+            as i32
+            & (0x2 as i32 | 0x4 as i32)
             != 0
         {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
+            p = p.offset(1 as i32 as isize);
         }
         p = parse_var_assignment(
             p,
@@ -871,10 +850,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
         );
         if vmod.assign_v() != 0 {
             let v: *mut variable;
-            let origin: variable_origin = (if vmod.override_v() as ::core::ffi::c_int != 0 {
-                o_override as ::core::ffi::c_int
+            let origin: variable_origin = (if vmod.override_v() as i32 != 0 {
+                o_override as i32
             } else {
-                o_file as ::core::ffi::c_int
+                o_file as i32
             }) as variable_origin;
             if ignoring != 0 {
                 if vmod.define_v() != 0 {
@@ -912,7 +891,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         v = try_variable_definition(fstart, p, origin, s_global);
                     }
                     let vref = v.as_mut().expect("assertion failed: v != NULL");
-                    if vmod.export_v() as ::core::ffi::c_int != v_default as ::core::ffi::c_int {
+                    if vmod.export_v() as i32 != v_default as i32 {
                         vref.set_export(vmod.export_v() as variable_export);
                     }
                     if vmod.private_v() != 0 {
@@ -921,7 +900,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                 }
             }
         } else {
-            if *p as ::core::ffi::c_int == 0 {
+            if *p as i32 == 0 {
                 continue;
             }
             // Measure the first token, skip its trailing blanks, and decide
@@ -938,9 +917,9 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                     in_ignored_define = 0;
                 }
             } else {
-                let i: ::core::ffi::c_int = conditional_line(p, wlen, fstart, initial_tab);
-                if i != -(2 as ::core::ffi::c_int) {
-                    if i == -(1 as ::core::ffi::c_int) {
+                let i: i32 = conditional_line(p, wlen, fstart, initial_tab);
+                if i != -(2 as i32) {
+                    if i == -(1 as i32) {
                         fatal(
                             fstart,
                             0,
@@ -976,12 +955,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 | crate::parser::VarModifier::Unexport
                         )
                     ) {
-                        let exporting: ::core::ffi::c_int =
-                            if *p as ::core::ffi::c_int == 'u' as i32 {
-                                0
-                            } else {
-                                1
-                            };
+                        let exporting: i32 = if *p as i32 == 'u' as i32 { 0 } else { 1 };
                         if initial_tab != 0 {
                             error(
                                 &raw mut (*ebuf).floc,
@@ -1021,7 +995,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         no_targets = 0;
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
-                        if *p2 as ::core::ffi::c_int == 0 {
+                        if *p2 as i32 == 0 {
                             export_all_variables = exporting;
                         } else {
                             let mut l: size_t = 0;
@@ -1048,9 +1022,9 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 }
                                 v_0.as_mut().expect("export: null variable").set_export(
                                     (if exporting != 0 {
-                                        v_export as ::core::ffi::c_int
+                                        v_export as i32
                                     } else {
-                                        v_noexport as ::core::ffi::c_int
+                                        v_noexport as i32
                                     }) as variable_export
                                         as variable_export,
                                 );
@@ -1142,24 +1116,23 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
                         };
                         let mut files: *mut nameseq;
-                        let noerror: ::core::ffi::c_int =
-                            (*p.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                                != 'i' as i32) as ::core::ffi::c_int;
+                        let noerror: i32 =
+                            (*p.offset(0 as i32 as isize) as i32 != 'i' as i32) as i32;
                         if initial_tab != 0 {
                             error(
                                 &raw mut (*ebuf).floc,
-                                strlen(if *p as ::core::ffi::c_int == 'i' as i32 {
+                                strlen(if *p as i32 == 'i' as i32 {
                                     b"include\0" as *const u8 as *const ::core::ffi::c_char
-                                } else if *p as ::core::ffi::c_int == '-' as i32 {
+                                } else if *p as i32 == '-' as i32 {
                                     b"-include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
                                 }) as size_t,
                                 b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                if *p as ::core::ffi::c_int == 'i' as i32 {
+                                if *p as i32 == 'i' as i32 {
                                     b"include\0" as *const u8 as *const ::core::ffi::c_char
-                                } else if *p as ::core::ffi::c_int == '-' as i32 {
+                                } else if *p as i32 == '-' as i32 {
                                     b"-include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
@@ -1189,16 +1162,16 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
                         p = allocated_expand_string_for_file(p2, ::core::ptr::null_mut::<file>());
-                        if *p as ::core::ffi::c_int == 0 {
+                        if *p as i32 == 0 {
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
                             files = parse_file_seq(
                                 &raw mut p2,
                                 ::core::mem::size_of::<nameseq>() as size_t,
-                                0x1 as ::core::ffi::c_int,
+                                0x1 as i32,
                                 ::core::ptr::null::<::core::ffi::c_char>(),
-                                0x2 as ::core::ffi::c_int,
+                                0x2 as i32,
                             ) as *mut nameseq;
                             free(p as *mut ::core::ffi::c_void);
                             save = install_conditionals(&raw mut new_conditionals);
@@ -1251,9 +1224,8 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                     ) && is_rule == 0
                     {
                         let mut files_0: *mut nameseq;
-                        let noerror_0: ::core::ffi::c_int =
-                            (*p.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                                == '-' as i32) as ::core::ffi::c_int;
+                        let noerror_0: i32 =
+                            (*p.offset(0 as i32 as isize) as i32 == '-' as i32) as i32;
                         if initial_tab != 0 {
                             error(
                                 &raw mut (*ebuf).floc,
@@ -1294,16 +1266,16 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
                         p = allocated_expand_string_for_file(p2, ::core::ptr::null_mut::<file>());
-                        if *p as ::core::ffi::c_int == 0 {
+                        if *p as i32 == 0 {
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
                             files_0 = parse_file_seq(
                                 &raw mut p2,
                                 ::core::mem::size_of::<nameseq>() as size_t,
-                                0x1 as ::core::ffi::c_int,
+                                0x1 as i32,
                                 ::core::ptr::null::<::core::ffi::c_char>(),
-                                0x2 as ::core::ffi::c_int,
+                                0x2 as i32,
                             ) as *mut nameseq;
                             free(p as *mut ::core::ffi::c_void);
                             while let Some(fref) = files_0.as_mut() {
@@ -1311,7 +1283,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 let mut name: *const ::core::ffi::c_char = fref.name;
                                 let deps: *mut goaldep;
                                 let mut f: *mut file;
-                                let r: ::core::ffi::c_int;
+                                let r: i32;
                                 let mut file: file = {
                                     let mut init = file {
                                         update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
@@ -1377,11 +1349,15 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                 if f.is_null() {
                                     f = enter_file(name);
                                 }
-                                f.as_mut().expect("eval: null loaded file").set_loaded(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                                f.as_mut().expect("eval: null loaded file").set_unloaded(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                                f.as_mut()
+                                    .expect("eval: null loaded file")
+                                    .set_loaded(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                                f.as_mut()
+                                    .expect("eval: null loaded file")
+                                    .set_unloaded(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                                 free_ns(files_0);
                                 files_0 = next_0;
-                                if r == -(1 as ::core::ffi::c_int) {
+                                if r == -(1 as i32) {
                                     continue;
                                 }
                                 deps = alloc_goaldep();
@@ -1392,9 +1368,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                             }
                         }
                     } else {
-                        if *line.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                            == cmd_prefix as ::core::ffi::c_int
-                        {
+                        if *line.offset(0 as i32 as isize) as i32 == cmd_prefix as i32 {
                             fatal(
                                 fstart,
                                 0,
@@ -1436,13 +1410,12 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                         also_make_targets = 0;
                         tgts_started = (*fstart).lineno as ::core::ffi::c_uint;
                         cmdleft = find_map_unquote(line, MAP_SEMI | MAP_COMMENT | MAP_VARIABLE);
-                        if !cmdleft.is_null() && cbyte(cmdleft) as ::core::ffi::c_int == '#' as i32
-                        {
+                        if !cmdleft.is_null() && cbyte(cmdleft) as i32 == '#' as i32 {
                             ::core::slice::from_raw_parts_mut(cmdleft as *mut u8, 1)[0] = 0;
                             cmdleft = ::core::ptr::null_mut::<::core::ffi::c_char>();
                         } else if !cmdleft.is_null() {
                             let fresh12 = cmdleft;
-                            cmdleft = cmdleft.offset(1 as ::core::ffi::c_int as isize);
+                            cmdleft = cmdleft.offset(1 as i32 as isize);
                             semip = fresh12;
                             ::core::slice::from_raw_parts_mut(semip as *mut u8, 1)[0] = 0;
                         }
@@ -1497,11 +1470,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             as size_t;
                                         if colonp > p2
                                             && crate::expand::variable_buffer_byte(colon_off - 1)
-                                                as ::core::ffi::c_int
+                                                as i32
                                                 == '&' as i32
                                         {
-                                            colonp =
-                                                colonp.offset(-(1 as ::core::ffi::c_int) as isize);
+                                            colonp = colonp.offset(-(1 as i32) as isize);
                                         }
                                         break;
                                     } else {
@@ -1511,25 +1483,25 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             &raw mut wlen,
                                         );
                                         if wtype as ::core::ffi::c_uint
-                                            == w_eol as ::core::ffi::c_int as ::core::ffi::c_uint
+                                            == w_eol as i32 as ::core::ffi::c_uint
                                         {
                                             break;
                                         }
                                         p2 = p2.offset(strlen(p2) as isize);
                                         let fresh13 = p2;
-                                        p2 = p2.offset(1 as ::core::ffi::c_int as isize);
+                                        p2 = p2.offset(1 as i32 as isize);
                                         *fresh13 = ' ' as i32 as ::core::ffi::c_char;
                                         p2 = expand_string_buf(p2, lb_next, wlen);
                                     }
                                 }
                                 p2 = next_token(variable_buffer);
                                 if wtype as ::core::ffi::c_uint
-                                    == w_eol as ::core::ffi::c_int as ::core::ffi::c_uint
+                                    == w_eol as i32 as ::core::ffi::c_uint
                                 {
-                                    if *p2 as ::core::ffi::c_int == 0 {
+                                    if *p2 as i32 == 0 {
                                         continue;
                                     }
-                                    if cmd_prefix as ::core::ffi::c_int == '\t' as i32
+                                    if cmd_prefix as i32 == '\t' as i32
                                         && crate::parser::starts_with_eight_spaces(
                                             ::std::ffi::CStr::from_ptr(line).to_bytes(),
                                         )
@@ -1569,7 +1541,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                         as size_t;
                                     let save_0: ::core::ffi::c_char =
                                         crate::expand::variable_buffer_byte(colon_off);
-                                    if save_0 as ::core::ffi::c_int == '&' as i32 {
+                                    if save_0 as i32 == '&' as i32 {
                                         also_make_targets = 1;
                                     }
                                     crate::expand::set_variable_buffer_byte(colon_off, 0);
@@ -1582,25 +1554,21 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                     )
                                         as *mut nameseq;
                                     crate::expand::set_variable_buffer_byte(colon_off, save_0);
-                                    p2 = colonp.offset(
-                                        (save_0 as ::core::ffi::c_int == '&' as i32)
-                                            as ::core::ffi::c_int
-                                            as isize,
-                                    );
+                                    p2 = colonp
+                                        .offset((save_0 as i32 == '&' as i32) as i32 as isize);
                                     if filenames.is_null() {
                                         no_targets = 1;
                                     } else {
-                                        if *p2 as ::core::ffi::c_int != 0 {
+                                        if *p2 as i32 != 0 {
                                         } else {
                                             panic!("assertion failed: *p2 != '\'");
                                         };
-                                        p2 = p2.offset(1 as ::core::ffi::c_int as isize);
-                                        two_colon = (*p2 as ::core::ffi::c_int == ':' as i32)
-                                            as ::core::ffi::c_int;
+                                        p2 = p2.offset(1 as i32 as isize);
+                                        two_colon = (*p2 as i32 == ':' as i32) as i32;
                                         if two_colon != 0 {
-                                            p2 = p2.offset(1 as ::core::ffi::c_int as isize);
+                                            p2 = p2.offset(1 as i32 as isize);
                                         }
-                                        if *lb_next as ::core::ffi::c_int != 0 {
+                                        if *lb_next as i32 != 0 {
                                             let l_1: size_t = p2.offset_from(variable_buffer)
                                                 as ::core::ffi::c_long
                                                 as size_t;
@@ -1638,10 +1606,10 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             record_target_var(
                                                 filenames,
                                                 p2,
-                                                (if vmod.override_v() as ::core::ffi::c_int != 0 {
-                                                    o_override as ::core::ffi::c_int
+                                                (if vmod.override_v() as i32 != 0 {
+                                                    o_override as i32
                                                 } else {
-                                                    o_file as ::core::ffi::c_int
+                                                    o_file as i32
                                                 })
                                                     as variable_origin,
                                                 &raw mut vmod,
@@ -1652,7 +1620,7 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             find_char_unquote(lb_next, '=' as i32);
                                             prefix = cmd_prefix;
                                             no_targets = 0;
-                                            if *lb_next as ::core::ffi::c_int != 0 {
+                                            if *lb_next as i32 != 0 {
                                                 let l_3: size_t = p2.offset_from(variable_buffer)
                                                     as ::core::ffi::c_long
                                                     as size_t;
@@ -1680,9 +1648,8 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                                             let split =
                                                                 p2.offset(cmdleft_off as isize);
                                                             *split = 0;
-                                                            cmdleft = split.offset(
-                                                                1 as ::core::ffi::c_int as isize,
-                                                            );
+                                                            cmdleft =
+                                                                split.offset(1 as i32 as isize);
                                                         } else {
                                                             cmdleft = ::core::ptr::null_mut::<
                                                                 ::core::ffi::c_char,
@@ -1694,46 +1661,37 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             }
                                             p = strchr(p2, ':' as i32);
                                             while !p.is_null()
-                                                && *p.offset(-(1 as ::core::ffi::c_int) as isize)
-                                                    as ::core::ffi::c_int
+                                                && *p.offset(-(1 as i32) as isize) as i32
                                                     == '\\' as i32
                                             {
                                                 let mut q: *mut ::core::ffi::c_char = p
-                                                    .offset(-(1 as ::core::ffi::c_int) as isize)
+                                                    .offset(-(1 as i32) as isize)
                                                     as *mut ::core::ffi::c_char;
-                                                let mut backslash: ::core::ffi::c_int = 0;
+                                                let mut backslash: i32 = 0;
                                                 loop {
                                                     let fresh15 = q;
-                                                    q = q.offset(
-                                                        -(1 as ::core::ffi::c_int) as isize,
-                                                    );
-                                                    if !(*fresh15 as ::core::ffi::c_int
-                                                        == '\\' as i32)
-                                                    {
+                                                    q = q.offset(-(1 as i32) as isize);
+                                                    if !(*fresh15 as i32 == '\\' as i32) {
                                                         break;
                                                     }
-                                                    backslash =
-                                                        (backslash == 0) as ::core::ffi::c_int;
+                                                    backslash = (backslash == 0) as i32;
                                                 }
                                                 if !(backslash != 0) {
                                                     break;
                                                 }
-                                                p = strchr(
-                                                    p.offset(1 as ::core::ffi::c_int as isize),
-                                                    ':' as i32,
-                                                );
+                                                p = strchr(p.offset(1 as i32 as isize), ':' as i32);
                                             }
                                             if !p.is_null() {
                                                 let target: *mut nameseq;
                                                 target = parse_file_seq(
                                                     &raw mut p2,
                                                     ::core::mem::size_of::<nameseq>() as size_t,
-                                                    0x40 as ::core::ffi::c_int,
+                                                    0x40 as i32,
                                                     ::core::ptr::null::<::core::ffi::c_char>(),
-                                                    0x4 as ::core::ffi::c_int,
+                                                    0x4 as i32,
                                                 )
                                                     as *mut nameseq;
-                                                p2 = p2.offset(1 as ::core::ffi::c_int as isize);
+                                                p2 = p2.offset(1 as i32 as isize);
                                                 if target.is_null() {
                                                     fatal(
                                                         fstart,
@@ -1769,9 +1727,9 @@ pub unsafe fn eval(ebuf: *mut ebuffer, set_default: ::core::ffi::c_int) {
                                             beg = p2;
                                             end = beg
                                                 .offset(strlen(beg) as isize)
-                                                .offset(-(1 as ::core::ffi::c_int as isize));
+                                                .offset(-(1 as i32 as isize));
                                             strip_whitespace(&raw mut beg, &raw mut end);
-                                            if beg <= end && *beg as ::core::ffi::c_int != 0 {
+                                            if beg <= end && *beg as i32 != 0 {
                                                 depstr = xstrndup(
                                                     beg,
                                                     (end.offset_from(beg) as ::core::ffi::c_long
@@ -1900,7 +1858,7 @@ unsafe extern "C" fn do_define(
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     let mut defstart: Floc;
-    let mut nlevels: ::core::ffi::c_int = 1;
+    let mut nlevels: i32 = 1;
     let mut length: size_t = 100;
     // Owned accumulation buffer for the `define` body (was xmalloc/xrealloc/
     // free); `length` tracks the live length and `idx` the fill position as
@@ -1917,7 +1875,7 @@ unsafe extern "C" fn do_define(
         var.set_flavor(f_recursive as variable_flavor);
         var.set_conditional(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     } else {
-        if *var.value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 {
+        if *var.value.offset(0 as i32 as isize) as i32 != 0 {
             error(
                 &raw mut defstart,
                 0,
@@ -1957,9 +1915,7 @@ unsafe extern "C" fn do_define(
             .wrapping_add(nlines as ::core::ffi::c_ulong);
         line = (*ebuf).buffer;
         collapse_continuations(line);
-        if *line.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-            != cmd_prefix as ::core::ffi::c_int
-        {
+        if *line.offset(0 as i32 as isize) as i32 != cmd_prefix as i32 {
             p = next_token(line);
             // Classify the leading `define`/`endef` keyword through the typed
             // AST layer (token delimited by a blank or NUL, matching make's
@@ -2006,7 +1962,7 @@ unsafe extern "C" fn do_define(
         *definition.offset(fresh30 as isize) = '\n' as i32 as ::core::ffi::c_char;
     }
     if idx == 0 {
-        *definition.offset(0 as ::core::ffi::c_int as isize) = 0;
+        *definition.offset(0 as i32 as isize) = 0;
     } else {
         *definition.offset(idx.wrapping_sub(1) as isize) = 0;
     }
@@ -2016,7 +1972,7 @@ unsafe extern "C" fn do_define(
         definition,
         origin,
         var.flavor(),
-        var.conditional() as ::core::ffi::c_int,
+        var.conditional() as i32,
         s_global,
     );
     free(n as *mut ::core::ffi::c_void);
@@ -2040,7 +1996,7 @@ unsafe extern "C" fn conditional_line(
     mut len: size_t,
     flocp: *const Floc,
     initial_tab: ::core::ffi::c_uint,
-) -> ::core::ffi::c_int {
+) -> i32 {
     let cmdname: *const ::core::ffi::c_char;
     let cmdtype: C2RustUnnamed;
     let mut i: ::core::ffi::c_uint;
@@ -2054,7 +2010,7 @@ unsafe extern "C" fn conditional_line(
             cmdtype = directive_cmdtype(d);
             cmdname = d.name().as_ptr();
         }
-        None => return -(2 as ::core::ffi::c_int),
+        None => return -(2 as i32),
     }
     if initial_tab != 0 {
         error(
@@ -2066,14 +2022,14 @@ unsafe extern "C" fn conditional_line(
     }
     line = line.offset(len as isize);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-        .offset(*line as ::core::ffi::c_uchar as isize) as ::core::ffi::c_int
-        & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
+        .offset(*line as ::core::ffi::c_uchar as isize) as i32
+        & (0x2 as i32 | 0x4 as i32)
         != 0
     {
-        line = line.offset(1 as ::core::ffi::c_int as isize);
+        line = line.offset(1 as i32 as isize);
     }
-    if cmdtype as ::core::ffi::c_uint == c_endif as ::core::ffi::c_int as ::core::ffi::c_uint {
-        if *line as ::core::ffi::c_int != 0 {
+    if cmdtype as ::core::ffi::c_uint == c_endif as i32 as ::core::ffi::c_uint {
+        if *line as i32 != 0 {
             error(
                 flocp,
                 strlen(cmdname) as size_t,
@@ -2091,8 +2047,7 @@ unsafe extern "C" fn conditional_line(
             );
         }
         (*conditionals).if_cmds = (*conditionals).if_cmds.wrapping_sub(1);
-    } else if cmdtype as ::core::ffi::c_uint == c_else as ::core::ffi::c_int as ::core::ffi::c_uint
-    {
+    } else if cmdtype as ::core::ffi::c_uint == c_else as i32 as ::core::ffi::c_uint {
         let mut p: *const ::core::ffi::c_char;
         if (*conditionals).if_cmds == 0 {
             fatal(
@@ -2110,7 +2065,7 @@ unsafe extern "C" fn conditional_line(
                 b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
             );
         }
-        match *(*conditionals).ignoring.offset(o as isize) as ::core::ffi::c_int {
+        match *(*conditionals).ignoring.offset(o as isize) as i32 {
             0 => {
                 *(*conditionals).ignoring.offset(o as isize) = 2;
             }
@@ -2119,17 +2074,16 @@ unsafe extern "C" fn conditional_line(
             }
             _ => {}
         }
-        if *line as ::core::ffi::c_int == 0 {
+        if *line as i32 == 0 {
             *(*conditionals).seen_else.offset(o as isize) = 1;
         } else {
-            p = line.offset(1 as ::core::ffi::c_int as isize);
+            p = line.offset(1 as i32 as isize);
             while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                .offset(*p as ::core::ffi::c_uchar as isize)
-                as ::core::ffi::c_int
-                & (0x2 as ::core::ffi::c_int | 0x1 as ::core::ffi::c_int)
+                .offset(*p as ::core::ffi::c_uchar as isize) as i32
+                & (0x2 as i32 | 0x1 as i32)
                 != 0)
             {
-                p = p.offset(1 as ::core::ffi::c_int as isize);
+                p = p.offset(1 as i32 as isize);
             }
             len = p.offset_from(line) as ::core::ffi::c_long as size_t;
             // `else <directive>` is only valid when the trailing directive is a
@@ -2152,7 +2106,7 @@ unsafe extern "C" fn conditional_line(
                     cmdname,
                 );
             } else {
-                if (*(*conditionals).ignoring.offset(o as isize) as ::core::ffi::c_int) < 2 {
+                if (*(*conditionals).ignoring.offset(o as isize) as i32) < 2 {
                     *(*conditionals).ignoring.offset(o as isize) =
                         *(*conditionals).ignoring.offset(o.wrapping_add(1) as isize);
                 }
@@ -2190,9 +2144,8 @@ unsafe extern "C" fn conditional_line(
             }
             i = i.wrapping_add(1);
         }
-        if cmdtype as ::core::ffi::c_uint == c_ifdef as ::core::ffi::c_int as ::core::ffi::c_uint
-            || cmdtype as ::core::ffi::c_uint
-                == c_ifndef as ::core::ffi::c_int as ::core::ffi::c_uint
+        if cmdtype as ::core::ffi::c_uint == c_ifdef as i32 as ::core::ffi::c_uint
+            || cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint
         {
             let v: *mut variable;
             let var: *mut ::core::ffi::c_char =
@@ -2203,16 +2156,14 @@ unsafe extern "C" fn conditional_line(
             let l: size_t =
                 match crate::parser::lone_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
                     Some(l) => l as size_t,
-                    None => return -(1 as ::core::ffi::c_int),
+                    None => return -(1 as i32),
                 };
             *var.add(l) = 0;
             v = lookup_variable(var, l);
             *(*conditionals).ignoring.offset(o as isize) =
-                ((!v.is_null() && *(*v).value as ::core::ffi::c_int != 0) as ::core::ffi::c_int
-                    == (cmdtype as ::core::ffi::c_uint
-                        == c_ifndef as ::core::ffi::c_int as ::core::ffi::c_uint)
-                        as ::core::ffi::c_int) as ::core::ffi::c_int
-                    as ::core::ffi::c_char;
+                ((!v.is_null() && *(*v).value as i32 != 0) as i32
+                    == (cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint)
+                        as i32) as i32 as ::core::ffi::c_char;
             free(var as *mut ::core::ffi::c_void);
         } else {
             // The `ifeq`/`ifneq` argument forms — `(a,b)`, `"a" "b"`, `'a' 'b'`
@@ -2234,12 +2185,12 @@ unsafe extern "C" fn conditional_line(
             };
             match crate::parser::parse_conditional_args(::std::ffi::CStr::from_ptr(line).to_bytes())
             {
-                ConditionalArgs::Error => return -(1 as ::core::ffi::c_int),
+                ConditionalArgs::Error => return -(1 as i32),
                 ConditionalArgs::FirstArgOnly { arg1 } => {
                     // make expands the first argument (for its side effects)
                     // before reporting the second-argument syntax error.
                     expand_arg(arg1);
-                    return -(1 as ::core::ffi::c_int);
+                    return -(1 as i32);
                 }
                 ConditionalArgs::Both {
                     arg1,
@@ -2261,8 +2212,8 @@ unsafe extern "C" fn conditional_line(
                     let a2 = expand_arg(arg2);
                     *(*conditionals).ignoring.offset(o as isize) = ((a1 == a2)
                         == (cmdtype as ::core::ffi::c_uint
-                            == c_ifneq as ::core::ffi::c_int as ::core::ffi::c_uint))
-                        as ::core::ffi::c_int
+                            == c_ifneq as i32 as ::core::ffi::c_uint))
+                        as i32
                         as ::core::ffi::c_char;
                 }
             }
@@ -2301,7 +2252,7 @@ unsafe extern "C" fn record_target_var(
             v = assign_variable_definition(&raw mut (*p).variable, defn);
             let vref = v.as_mut().expect("assertion failed: v != 0");
             vref.set_origin(origin as variable_origin);
-            if vref.flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
+            if vref.flavor() as i32 == f_simple as i32 {
                 vref.value =
                     allocated_expand_string_for_file(vref.value, ::core::ptr::null_mut::<file>());
             } else {
@@ -2315,7 +2266,12 @@ unsafe extern "C" fn record_target_var(
             } else if let Some(fref) = f.as_ref().filter(|x| !x.double_colon.is_null()) {
                 f = fref.double_colon;
             }
-            initialize_file_variables(::core::ptr::NonNull::new(f).expect("record_target_var: null file").as_ptr(), 1);
+            initialize_file_variables(
+                ::core::ptr::NonNull::new(f)
+                    .expect("record_target_var: null file")
+                    .as_ptr(),
+                1,
+            );
             current_variable_set_list = f.as_ref().expect("record_target_var: null file").variables;
             v = try_variable_definition(flocp, defn, origin, s_target);
             if v.is_null() {
@@ -2331,16 +2287,16 @@ unsafe extern "C" fn record_target_var(
         let vref = v.as_mut().expect("record_target_var: null variable");
         vref.set_per_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         vref.set_private_var((*vmod).private_v() as ::core::ffi::c_uint);
-        if (*vmod).export_v() as ::core::ffi::c_int != v_default as ::core::ffi::c_int {
+        if (*vmod).export_v() as i32 != v_default as i32 {
             vref.set_export((*vmod).export_v() as variable_export);
         }
-        if vref.origin() as ::core::ffi::c_int != o_override as ::core::ffi::c_int {
+        if vref.origin() as i32 != o_override as i32 {
             let len: size_t = strlen(vref.name) as size_t;
             let gv: *mut variable = lookup_variable(vref.name, len);
             if !gv.is_null()
                 && v != gv
-                && ((*gv).origin() as ::core::ffi::c_int == o_env_override as ::core::ffi::c_int
-                    || (*gv).origin() as ::core::ffi::c_int == o_command as ::core::ffi::c_int)
+                && ((*gv).origin() as i32 == o_env_override as i32
+                    || (*gv).origin() as i32 == o_command as i32)
             {
                 free(vref.value as *mut ::core::ffi::c_void);
                 vref.value = xstrdup((*gv).value);
@@ -2371,7 +2327,7 @@ unsafe fn dep_name_bytes<'a>(dp: *mut dep) -> &'a [u8] {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_int) {
+pub unsafe fn check_specials(files: *mut nameseq, set_default: i32) {
     let mut t: *mut nameseq;
     t = files;
     while !t.is_null() {
@@ -2449,11 +2405,9 @@ pub unsafe fn check_specials(files: *mut nameseq, set_default: ::core::ffi::c_in
             crate::make_main::SECOND_EXPANSION.store(true, ::std::sync::atomic::Ordering::Relaxed);
         } else if !one_shell() && special == Some(crate::parser::SpecialTarget::OneShell) {
             crate::make_main::ONE_SHELL.store(true, ::std::sync::atomic::Ordering::Relaxed);
-        } else if set_default != 0
-            && *(*default_goal_var).value.offset(0) as ::core::ffi::c_int == 0
-        {
+        } else if set_default != 0 && *(*default_goal_var).value.offset(0) as i32 == 0 {
             let mut d: *mut dep;
-            let mut reject: ::core::ffi::c_int = 0;
+            let mut reject: i32 = 0;
             // Pattern targets (containing `%`) are never the default goal; test
             // the name as a byte slice via CStr rather than strchr.
             let nm_bytes = ::std::ffi::CStr::from_ptr(nm).to_bytes();
@@ -2531,14 +2485,14 @@ pub unsafe fn check_special_file(file: *mut file, flocp: *const Floc) {
 }
 unsafe extern "C" fn record_files(
     filenames: *mut nameseq,
-    are_also_makes: ::core::ffi::c_int,
+    are_also_makes: i32,
     pattern: *const ::core::ffi::c_char,
     pattern_percent: *const ::core::ffi::c_char,
     mut depstr: *mut ::core::ffi::c_char,
     cmds_started: ::core::ffi::c_uint,
     commands: *mut ::core::ffi::c_char,
     commands_idx: size_t,
-    two_colon: ::core::ffi::c_int,
+    two_colon: i32,
     prefix: ::core::ffi::c_char,
     flocp: *const Floc,
 ) {
@@ -2555,7 +2509,9 @@ unsafe extern "C" fn record_files(
                 as *const ::core::ffi::c_char,
         );
     }
-    let mut filenames = ::core::ptr::NonNull::new(filenames).expect("record_files: null filenames").as_ptr();
+    let mut filenames = ::core::ptr::NonNull::new(filenames)
+        .expect("record_files: null filenames")
+        .as_ptr();
     name = (*filenames).name;
     implicit_percent = find_percent_cached(&raw mut name);
     if commands_idx > 0 {
@@ -2589,7 +2545,7 @@ unsafe extern "C" fn record_files(
             (*deps).name = depstr;
             (*deps).set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             (*deps).set_staticpattern(
-                (pattern != ::core::ptr::null::<::core::ffi::c_char>()) as ::core::ffi::c_int
+                (pattern != ::core::ptr::null::<::core::ffi::c_char>()) as i32
                     as ::core::ffi::c_uint as ::core::ffi::c_uint,
             );
         } else {
@@ -2629,9 +2585,9 @@ unsafe extern "C" fn record_files(
             (c as size_t)
                 .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
         ) as *mut *const ::core::ffi::c_char;
-        let fresh17 = &mut (*targets.offset(0 as ::core::ffi::c_int as isize));
+        let fresh17 = &mut (*targets.offset(0 as i32 as isize));
         *fresh17 = name;
-        let fresh18 = &mut (*target_pats.offset(0 as ::core::ffi::c_int as isize));
+        let fresh18 = &mut (*target_pats.offset(0 as i32 as isize));
         *fresh18 = implicit_percent;
         c = 1;
         while !filenames.is_null() {
@@ -2695,10 +2651,7 @@ unsafe extern "C" fn record_files(
                         as *const ::core::ffi::c_char,
                     (*f).name,
                 );
-            } else if !cmds.is_null()
-                && !(*f).cmds.is_null()
-                && (*f).is_target() as ::core::ffi::c_int != 0
-            {
+            } else if !cmds.is_null() && !(*f).cmds.is_null() && (*f).is_target() as i32 != 0 {
                 let l: size_t = strlen((*f).name) as size_t;
                 error(
                     &raw mut (*cmds).fileinfo,
@@ -2729,7 +2682,7 @@ unsafe extern "C" fn record_files(
             f = lookup_file(name);
             if let Some(fref) = f
                 .as_ref()
-                .filter(|x| x.is_target() as ::core::ffi::c_int != 0 && x.double_colon.is_null())
+                .filter(|x| x.is_target() as i32 != 0 && x.double_colon.is_null())
             {
                 fatal(
                     flocp,
@@ -2764,8 +2717,8 @@ unsafe extern "C" fn record_files(
                 name,
                 pattern,
                 percent,
-                pattern_percent.offset(1 as ::core::ffi::c_int as isize),
-                percent.offset(1 as ::core::ffi::c_int as isize),
+                pattern_percent.offset(1 as i32 as isize),
+                percent.offset(1 as i32 as isize),
             );
             fr.stem = strcache_add_len(
                 variable_buffer,
@@ -2826,7 +2779,10 @@ unsafe extern "C" fn record_files(
             .expect("record_files: null also-make target file");
         if !f0.also_make.is_null() {
             error(
-                &raw mut cmds.as_mut().expect("record_files: null cmds in group warning").fileinfo,
+                &raw mut cmds
+                    .as_mut()
+                    .expect("record_files: null cmds in group warning")
+                    .fileinfo,
                 strlen(f0.name) as size_t,
                 b"warning: overriding group membership for target '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -2866,7 +2822,7 @@ unsafe fn cbyte(p: *const ::core::ffi::c_char) -> u8 {
 }
 unsafe extern "C" fn find_map_unquote(
     string: *mut ::core::ffi::c_char,
-    stopmap: ::core::ffi::c_int,
+    stopmap: i32,
 ) -> *mut ::core::ffi::c_char {
     // Bridge to the pure parser routine over a byte slice covering the C string
     // plus its NUL, instead of the c2rust stopchar_map/memmove pointer walk.
@@ -2879,7 +2835,7 @@ unsafe extern "C" fn find_map_unquote(
 }
 unsafe extern "C" fn find_char_unquote(
     string: *mut ::core::ffi::c_char,
-    stop: ::core::ffi::c_int,
+    stop: i32,
 ) -> *mut ::core::ffi::c_char {
     // Bridge to the pure parser routine over a byte slice covering the C string
     // plus its NUL terminator, instead of the c2rust strchr/strlen/memmove walk.
@@ -2894,7 +2850,7 @@ unsafe extern "C" fn find_char_unquote(
 }
 unsafe extern "C" fn unescape_char(
     string: *mut ::core::ffi::c_char,
-    c: ::core::ffi::c_int,
+    c: i32,
 ) -> *mut ::core::ffi::c_char {
     let len = ::std::ffi::CStr::from_ptr(string).to_bytes().len();
     // The pure routine reads the bytes and returns the (never longer)
@@ -2951,12 +2907,12 @@ pub unsafe fn find_percent_cached(
 pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
     let mut eol: *mut ::core::ffi::c_char;
     if (*ebuf).bufnext >= (*ebuf).bufstart.offset((*ebuf).size as isize) {
-        return -(1 as ::core::ffi::c_int) as ::core::ffi::c_long;
+        return -(1 as i32) as ::core::ffi::c_long;
     }
     (*ebuf).buffer = (*ebuf).bufnext;
     eol = (*ebuf).buffer;
     loop {
-        let mut backslash: ::core::ffi::c_int = 0;
+        let mut backslash: i32 = 0;
         let bol: *const ::core::ffi::c_char = eol;
         let mut p: *const ::core::ffi::c_char;
         eol = strchr(eol, '\n' as i32);
@@ -2966,18 +2922,18 @@ pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
             return 0;
         }
         while p > bol && {
-            p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-            *p as ::core::ffi::c_int == '\\' as i32
+            p = p.offset(-(1 as i32) as isize);
+            *p as i32 == '\\' as i32
         } {
-            backslash = (backslash == 0) as ::core::ffi::c_int;
+            backslash = (backslash == 0) as i32;
         }
         if backslash == 0 {
             break;
         }
-        eol = eol.offset(1 as ::core::ffi::c_int as isize);
+        eol = eol.offset(1 as i32 as isize);
     }
     *eol = 0;
-    (*ebuf).bufnext = eol.offset(1 as ::core::ffi::c_int as isize);
+    (*ebuf).bufnext = eol.offset(1 as i32 as isize);
     0
 }
 /// # Safety
@@ -2998,14 +2954,14 @@ pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
     *p = 0;
     while !fgets(
         p,
-        end.offset_from(p) as ::core::ffi::c_long as ::core::ffi::c_int,
+        end.offset_from(p) as ::core::ffi::c_long as i32,
         (*ebuf).fp,
     )
     .is_null()
     {
         let mut p2: *mut ::core::ffi::c_char;
         let mut len: size_t;
-        let mut backslash: ::core::ffi::c_int;
+        let mut backslash: i32;
         len = strlen(p) as size_t;
         if len == 0 {
             error(
@@ -3014,34 +2970,33 @@ pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
                 b"warning: NUL character seen; rest of line ignored\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
-            *p.offset(0 as ::core::ffi::c_int as isize) = '\n' as i32 as ::core::ffi::c_char;
+            *p.offset(0 as i32 as isize) = '\n' as i32 as ::core::ffi::c_char;
             len = 1;
         }
         p = p.offset(len as isize);
-        if !(*p.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int != '\n' as i32) {
+        if !(*p.offset(-(1 as i32) as isize) as i32 != '\n' as i32) {
             nlines += 1;
             if p.offset_from(start) as ::core::ffi::c_long > 1
-                && *p.offset(-(2 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
-                    == '\r' as i32
+                && *p.offset(-(2 as i32) as isize) as i32 == '\r' as i32
             {
-                p = p.offset(-(1 as ::core::ffi::c_int) as isize);
+                p = p.offset(-(1 as i32) as isize);
                 memmove(
-                    p.offset(-(1 as ::core::ffi::c_int as isize)) as *mut ::core::ffi::c_void,
+                    p.offset(-(1 as i32 as isize)) as *mut ::core::ffi::c_void,
                     p as *const ::core::ffi::c_void,
                     strlen(p).wrapping_add(1),
                 );
             }
             backslash = 0;
-            p2 = p.offset(-(2 as ::core::ffi::c_int as isize));
+            p2 = p.offset(-(2 as i32 as isize));
             while p2 >= start {
-                if *p2 as ::core::ffi::c_int != '\\' as i32 {
+                if *p2 as i32 != '\\' as i32 {
                     break;
                 }
-                backslash = (backslash == 0) as ::core::ffi::c_int;
-                p2 = p2.offset(-(1 as ::core::ffi::c_int) as isize);
+                backslash = (backslash == 0) as i32;
+                p2 = p2.offset(-(1 as i32) as isize);
             }
             if backslash == 0 {
-                *p.offset(-(1 as ::core::ffi::c_int) as isize) = 0;
+                *p.offset(-(1 as i32) as isize) = 0;
                 break;
             } else if end.offset_from(p) as ::core::ffi::c_long >= 80 {
                 continue;
@@ -3064,7 +3019,7 @@ pub unsafe fn readline(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
         nlines
     } else {
         (if p == (*ebuf).bufstart {
-            -(1 as ::core::ffi::c_int)
+            -(1 as i32)
         } else {
             1
         }) as ::core::ffi::c_long
@@ -3201,11 +3156,11 @@ pub unsafe fn construct_include_path(arg_dirs: &[std::path::PathBuf]) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
-    if *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '/' as i32
-        || *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
+    if *name.offset(1 as i32 as isize) as i32 == '/' as i32
+        || *name.offset(1 as i32 as isize) as i32 == 0
     {
         let mut home_dir: *mut ::core::ffi::c_char;
-        let is_variable: ::core::ffi::c_int;
+        let is_variable: i32;
         let save: Action = warning::action(Type::UndefinedVar);
         warning::set_action(Type::UndefinedVar, Action::Ignore);
         home_dir = allocated_expand_variable(
@@ -3213,15 +3168,12 @@ pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi
             (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
         );
         warning::set_action(Type::UndefinedVar, save);
-        is_variable = (*home_dir.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-            != 0) as ::core::ffi::c_int;
+        is_variable = (*home_dir.offset(0 as i32 as isize) as i32 != 0) as i32;
         if is_variable == 0 {
             free(home_dir as *mut ::core::ffi::c_void);
             home_dir = getenv(b"HOME\0" as *const u8 as *const ::core::ffi::c_char);
         }
-        if home_dir.is_null()
-            || *home_dir.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
-        {
+        if home_dir.is_null() || *home_dir.offset(0 as i32 as isize) as i32 == 0 {
             let logname: *mut ::core::ffi::c_char = getlogin();
             home_dir = ::core::ptr::null_mut::<::core::ffi::c_char>();
             if !logname.is_null() {
@@ -3232,11 +3184,8 @@ pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi
             }
         }
         if !home_dir.is_null() {
-            let new: *mut ::core::ffi::c_char = xstrdup(concat(
-                2,
-                home_dir,
-                name.offset(1 as ::core::ffi::c_int as isize),
-            ));
+            let new: *mut ::core::ffi::c_char =
+                xstrdup(concat(2, home_dir, name.offset(1 as i32 as isize)));
             if is_variable != 0 {
                 free(home_dir as *mut ::core::ffi::c_void);
             }
@@ -3281,14 +3230,13 @@ pub unsafe fn tilde_expand(name: *const ::core::ffi::c_char) -> *mut ::core::ffi
 pub unsafe fn parse_file_seq(
     stringp: *mut *mut ::core::ffi::c_char,
     mut size: size_t,
-    mut stopmap: ::core::ffi::c_int,
+    mut stopmap: i32,
     prefix: *const ::core::ffi::c_char,
-    flags: ::core::ffi::c_int,
+    flags: i32,
 ) -> *mut ::core::ffi::c_void {
     static mut tmpbuf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-    let cachep: ::core::ffi::c_int =
-        !(flags & 0x10 as ::core::ffi::c_int != 0) as ::core::ffi::c_int;
+    let cachep: i32 = !(flags & 0x10 as i32 != 0) as i32;
     let mut new: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
     let mut newp: *mut *mut nameseq = &raw mut new;
     let mut p: *mut ::core::ffi::c_char;
@@ -3304,22 +3252,23 @@ pub unsafe fn parse_file_seq(
         gl_stat: None,
     };
     let mut tp: *mut ::core::ffi::c_char;
-    let mut findmap: ::core::ffi::c_int = stopmap | MAP_VMSCOMMA | MAP_NUL;
-    let mut found_wait: ::core::ffi::c_int = 0;
-    if !(flags & 0x20 as ::core::ffi::c_int != 0) {
+    let mut findmap: i32 = stopmap | MAP_VMSCOMMA | MAP_NUL;
+    let mut found_wait: i32 = 0;
+    if !(flags & 0x20 as i32 != 0) {
         findmap |= MAP_BLANK;
     }
     stopmap |= MAP_NUL;
     if size < ::core::mem::size_of::<nameseq>() as usize {
         size = ::core::mem::size_of::<nameseq>() as usize as size_t;
     }
-    if !(flags & 0x4 as ::core::ffi::c_int != 0) {
+    if !(flags & 0x4 as i32 != 0) {
         // read.rs carries its own layout-identical glob_t; reconcile the
         // nominal types until the duplicate struct is unified.
         dir_setup_glob((&raw mut gl).cast());
     }
     static mut tmpbuf_len: size_t = 0;
-    let l: size_t = (strlen(*stringp.as_ref().expect("parse_file_seq: null stringp")) as size_t).wrapping_add(1);
+    let l: size_t = (strlen(*stringp.as_ref().expect("parse_file_seq: null stringp")) as size_t)
+        .wrapping_add(1);
     if l > tmpbuf_len {
         tmpbuf = xrealloc(tmpbuf as *mut ::core::ffi::c_void, l) as *mut ::core::ffi::c_char;
         tmpbuf_len = l;
@@ -3331,22 +3280,21 @@ pub unsafe fn parse_file_seq(
         let mut nlist: *mut *const ::core::ffi::c_char =
             ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
         let mut tildep: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut globme: ::core::ffi::c_int = 1;
+        let mut globme: i32 = 1;
         let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut s: *mut ::core::ffi::c_char;
         let mut nlen: size_t;
-        let mut tot: ::core::ffi::c_int = 0;
-        let mut i: ::core::ffi::c_int;
+        let mut tot: i32 = 0;
+        let mut i: i32;
         while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(cbyte(p) as isize)
-            as ::core::ffi::c_int
-            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
+            as i32
+            & (0x2 as i32 | 0x4 as i32)
             != 0
         {
-            p = p.offset(1 as ::core::ffi::c_int as isize);
+            p = p.offset(1 as i32 as isize);
         }
-        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(cbyte(p) as isize)
-            as ::core::ffi::c_int
+        if *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort).offset(cbyte(p) as isize) as i32
             & stopmap
             != 0
         {
@@ -3357,7 +3305,7 @@ pub unsafe fn parse_file_seq(
         if p.is_null() {
             p = s.offset(strlen(s) as isize);
         }
-        if flags & 0x40 as ::core::ffi::c_int != 0
+        if flags & 0x40 as i32 != 0
             && crate::parser::is_wait_token(::core::slice::from_raw_parts(
                 s as *const u8,
                 p.offset_from(s) as usize,
@@ -3365,7 +3313,7 @@ pub unsafe fn parse_file_seq(
         {
             found_wait = 1;
         } else {
-            if !(flags & 0x1 as ::core::ffi::c_int != 0) {
+            if !(flags & 0x1 as i32 != 0) {
                 // Strip redundant leading `./` prefixes via the pure parser
                 // helper instead of walking the buffer with raw pointers.
                 let token =
@@ -3373,9 +3321,9 @@ pub unsafe fn parse_file_seq(
                 s = s.add(crate::parser::strip_dot_slash_prefix(token));
             }
             if s == p {
-                *tp.offset(0 as ::core::ffi::c_int as isize) = '.' as i32 as ::core::ffi::c_char;
-                *tp.offset(1 as ::core::ffi::c_int as isize) = '/' as i32 as ::core::ffi::c_char;
-                *tp.offset(2 as ::core::ffi::c_int as isize) = 0;
+                *tp.offset(0 as i32 as isize) = '.' as i32 as ::core::ffi::c_char;
+                *tp.offset(1 as i32 as isize) = '/' as i32 as ::core::ffi::c_char;
+                *tp.offset(2 as i32 as isize) = 0;
                 nlen = 2;
             } else {
                 nlen = p.offset_from(s) as ::core::ffi::c_long as size_t;
@@ -3386,10 +3334,10 @@ pub unsafe fn parse_file_seq(
                 );
                 *tp.offset(nlen as isize) = 0;
             }
-            if !(flags & 0x2 as ::core::ffi::c_int != 0)
+            if !(flags & 0x2 as i32 != 0)
                 && tp == tmpbuf
-                && *tp.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != '(' as i32
-                && *tp.offset(nlen.wrapping_sub(1) as isize) as ::core::ffi::c_int != ')' as i32
+                && *tp.offset(0 as i32 as isize) as i32 != '(' as i32
+                && *tp.offset(nlen.wrapping_sub(1) as isize) as i32 != ')' as i32
             {
                 let n: *mut ::core::ffi::c_char = strchr(tp, '(' as i32);
                 if !n.is_null() {
@@ -3397,36 +3345,29 @@ pub unsafe fn parse_file_seq(
                     loop {
                         let o: *const ::core::ffi::c_char = e;
                         while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                            .offset(cbyte(e) as isize)
-                            as ::core::ffi::c_int
-                            & (0x2 as ::core::ffi::c_int | 0x4 as ::core::ffi::c_int)
+                            .offset(cbyte(e) as isize) as i32
+                            & (0x2 as i32 | 0x4 as i32)
                             != 0
                         {
-                            e = e.offset(1 as ::core::ffi::c_int as isize);
+                            e = e.offset(1 as i32 as isize);
                         }
                         while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
-                            .offset(cbyte(e) as isize)
-                            as ::core::ffi::c_int
+                            .offset(cbyte(e) as isize) as i32
                             & findmap
                             != 0)
                         {
-                            e = e.offset(1 as ::core::ffi::c_int as isize);
+                            e = e.offset(1 as i32 as isize);
                         }
                         if e == o {
                             break;
                         }
-                        if cbyte(e.offset(-(1 as ::core::ffi::c_int) as isize))
-                            as ::core::ffi::c_int
-                            == ')' as i32
-                        {
-                            nlen = nlen.wrapping_sub(
-                                n.offset(1 as ::core::ffi::c_int as isize).offset_from(tp)
-                                    as ::core::ffi::c_long
-                                    as size_t,
-                            );
-                            tp = n.offset(1 as ::core::ffi::c_int as isize);
+                        if cbyte(e.offset(-(1 as i32) as isize)) as i32 == ')' as i32 {
+                            nlen = nlen.wrapping_sub(n.offset(1 as i32 as isize).offset_from(tp)
+                                as ::core::ffi::c_long
+                                as size_t);
+                            tp = n.offset(1 as i32 as isize);
                             break;
-                        } else if !(cbyte(e) as ::core::ffi::c_int != 0) {
+                        } else if !(cbyte(e) as i32 != 0) {
                             break;
                         }
                     }
@@ -3436,7 +3377,7 @@ pub unsafe fn parse_file_seq(
                 }
             }
             if tp > tmpbuf {
-                if *tp.offset(nlen.wrapping_sub(1) as isize) as ::core::ffi::c_int == ')' as i32 {
+                if *tp.offset(nlen.wrapping_sub(1) as isize) as i32 == ')' as i32 {
                     tp = tmpbuf;
                     if nlen == 1 {
                         continue;
@@ -3448,7 +3389,7 @@ pub unsafe fn parse_file_seq(
                     *tp.offset(nlen as isize) = 0;
                 }
             }
-            if flags & 0x4 as ::core::ffi::c_int != 0 {
+            if flags & 0x4 as i32 != 0 {
                 let mut _ns: *mut nameseq = xcalloc(size) as *mut nameseq;
                 let mut __n: *const ::core::ffi::c_char = concat(2, prefix, tmpbuf);
                 let ns = _ns
@@ -3470,19 +3411,17 @@ pub unsafe fn parse_file_seq(
                 newp = &raw mut ns.next;
             } else {
                 name = tmpbuf;
-                if *tmpbuf.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == '~' as i32
-                {
+                if *tmpbuf.offset(0 as i32 as isize) as i32 == '~' as i32 {
                     tildep = tilde_expand(tmpbuf);
                     if !tildep.is_null() {
                         name = tildep;
                     }
                 }
-                if !(flags & 0x2 as ::core::ffi::c_int != 0) && ar_name(CStr::from_ptr(name)) {
+                if !(flags & 0x2 as i32 != 0) && ar_name(CStr::from_ptr(name)) {
                     ar_parse_name(name, &raw mut arname, &raw mut memname);
                     name = arname;
                 }
-                if !(flags & 0x8 as ::core::ffi::c_int != 0)
+                if !(flags & 0x8 as i32 != 0)
                     && strpbrk(name, b"?*[\0" as *const u8 as *const ::core::ffi::c_char).is_null()
                 {
                     globme = 0;
@@ -3497,11 +3436,11 @@ pub unsafe fn parse_file_seq(
                             out_of_memory();
                         }
                         0 => {
-                            tot = gl.gl_pathc as ::core::ffi::c_int;
+                            tot = gl.gl_pathc as i32;
                             nlist = gl.gl_pathv as *mut *const ::core::ffi::c_char;
                         }
                         GLOB_NOMATCH => {
-                            if flags & 0x8 as ::core::ffi::c_int != 0 {
+                            if flags & 0x8 as i32 != 0 {
                                 tot = 0;
                             } else {
                                 use_literal = true;

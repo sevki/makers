@@ -24,7 +24,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use core::ffi::{c_char, c_int, CStr};
+use core::ffi::{c_char, CStr};
 
 use crate::ffi_types::size_t;
 
@@ -165,11 +165,11 @@ pub fn strcache_add_bytes(bytes: &[u8]) -> *const c_char {
 /// Does not dereference `str`, so it is sound to call on any pointer value
 /// (matching the original, which compared pointer ranges rather than reading the
 /// string).
-pub fn strcache_iscached(str: *const c_char) -> c_int {
+pub fn strcache_iscached(str: *const c_char) -> i32 {
     addrs()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .contains(&(str as usize)) as c_int
+        .contains(&(str as usize)) as i32
 }
 
 /// Print cache statistics, prefixed with `prefix`. Used by `make -p`.
