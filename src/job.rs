@@ -1956,7 +1956,6 @@ fn wall_clock_seconds() -> time_t {
 pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     static mut proc_fd: i32 = -2_i32;
     let mut load: ::core::ffi::c_double = 0.;
-    let now: time_t;
     if crate::make_main::opt_max_load_average() < 0_i32 as ::core::ffi::c_double {
         return 0;
     }
@@ -2071,7 +2070,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
         lossage = *__errno_location();
         load = 0_i32 as ::core::ffi::c_double;
     }
-    now = wall_clock_seconds();
+    let now: time_t = wall_clock_seconds();
     let (next_sample_second, next_prev_weight, next_job_counter, guess) = load_sample_fold(
         ctx.load_sample_second.get(),
         ctx.load_prev_weight.get(),
