@@ -12,6 +12,7 @@ use libc::{
     strchr, strcmp, strerror, strsignal,
 };
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 extern "C" {
     pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
@@ -27,7 +28,6 @@ extern "C" {
     static mut stderr: *mut FILE;
     fn fflush(__stream: *mut FILE) -> i32;
     fn fileno(__stream: *mut FILE) -> i32;
-    fn time(__timer: *mut time_t) -> time_t;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -1939,10 +1939,23 @@ fn load_sample_fold(
     (sample_second, prev_weight, job_counter, guess)
 }
 
+/// Current wall-clock time in whole seconds since the Unix epoch, read through
+/// `std::time` (CLOCK_REALTIME on Linux) rather than the C `time()` syscall.
+/// `load_too_high` uses this only to bucket its per-second job-load samples, so
+/// whole-second resolution — identical to what `time(NULL)` returned — is all
+/// that is needed.
+fn wall_clock_seconds() -> time_t {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as time_t,
+        // Clock before the Unix epoch (pre-1970): not reachable in practice.
+        // Mirror time()'s negative whole-second count rather than panicking.
+        Err(e) => -(e.duration().as_secs() as time_t),
+    }
+}
+
 pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     static mut proc_fd: i32 = -2_i32;
     let mut load: ::core::ffi::c_double = 0.;
-    let now: time_t;
     if crate::make_main::opt_max_load_average() < 0_i32 as ::core::ffi::c_double {
         return 0;
     }
@@ -2057,7 +2070,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
         lossage = *__errno_location();
         load = 0_i32 as ::core::ffi::c_double;
     }
-    now = time(::core::ptr::null_mut::<time_t>());
+    let now: time_t = wall_clock_seconds();
     let (next_sample_second, next_prev_weight, next_job_counter, guess) = load_sample_fold(
         ctx.load_sample_second.get(),
         ctx.load_prev_weight.get(),
@@ -3157,6 +3170,47 @@ mod load_sample_fold_tests {
             s_ora = os;
             w_ora = ow;
         }
+    }
+}
+
+#[cfg(test)]
+mod wall_clock_seconds_tests {
+    use super::{time_t, wall_clock_seconds};
+
+    extern "C" {
+        fn time(__timer: *mut time_t) -> time_t;
+    }
+
+    /// Preserved original clock read: the C `time(NULL)` call that
+    /// `load_too_high` used before the `std::time` conversion. Kept as a
+    /// `#[cfg(test)]` oracle per `AGENTS.md:30-37` so the safe replacement can
+    /// be differential-tested against it.
+    unsafe fn wall_clock_seconds_oracle() -> time_t {
+        time(::core::ptr::null_mut::<time_t>())
+    }
+
+    /// The `std::time` `wall_clock_seconds` must agree with the C `time()`
+    /// oracle. Both read CLOCK_REALTIME and truncate to whole seconds, so they
+    /// agree exactly except for the rare case where a second boundary falls
+    /// between the two reads (microseconds apart) — a 1s tolerance covers that
+    /// without being flaky, mirroring the `file_timestamp_now` oracle test.
+    #[test]
+    fn wall_clock_seconds_matches_time_oracle() {
+        let oracle_before = unsafe { wall_clock_seconds_oracle() };
+        let got = wall_clock_seconds();
+        let oracle_after = unsafe { wall_clock_seconds_oracle() };
+
+        assert!(got > 0, "wall clock is well past the Unix epoch");
+        // `got` was sampled between the two oracle reads, so it must lie within
+        // their (monotonic, <=1s wide) range.
+        assert!(
+            got >= oracle_before && got <= oracle_after,
+            "got={got} not in [{oracle_before}, {oracle_after}]"
+        );
+        assert!(
+            oracle_after - oracle_before <= 1,
+            "oracle reads bracket at most a 1s boundary"
+        );
     }
 }
 
