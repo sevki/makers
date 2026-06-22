@@ -2734,3 +2734,34 @@ mod initialize_file_variables_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod assign_variable_definition_tests {
+    use super::{assign_variable_definition, variable};
+
+    /// When the line is not a variable definition, `parse_variable_definition`
+    /// fails and `assign_variable_definition` returns null up front — before any
+    /// name allocation or expansion. This early-return arm is the self-contained
+    /// half of the function (no global expansion bootstrap needed); the success
+    /// arm is driven by the makefile differential suite through a fully
+    /// initialized runtime.
+    #[test]
+    fn rejects_non_definition_line() {
+        // The assignment parser keys off the global stopchar map to find the
+        // line terminator; initialize it first (idempotent) so the scan stops.
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: `assign_variable_definition` is the c2rust raw-pointer API. We
+        // pass a freshly zeroed `variable` and a valid NUL-terminated line,
+        // matching how `try_variable_definition` calls it. A bare word is not an
+        // assignment, so parsing fails and the call returns null without
+        // allocating or expanding anything.
+        unsafe {
+            let mut v: variable = ::core::mem::zeroed();
+            let not_def = c"just_a_bare_word";
+            let r = assign_variable_definition(&ctx, &raw mut v, not_def.as_ptr());
+            assert!(r.is_null(), "a non-definition line yields null");
+            assert!(v.name.is_null(), "no name is allocated on the reject path");
+        }
+    }
+}
