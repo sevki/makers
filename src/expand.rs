@@ -12,7 +12,7 @@ use libc::{free, memcpy, printf, strchr, strlen, strncmp};
 extern "C" {
     static mut environ: *mut *mut ::core::ffi::c_char;
     static mut stdout: *mut FILE;
-    fn fflush(stream: *mut FILE) -> ::core::ffi::c_int;
+    fn fflush(stream: *mut FILE) -> i32;
 }
 
 /// Owns a `malloc`ed C string and frees it on drop, replacing the manual
@@ -63,19 +63,19 @@ use crate::variable::{
 pub const SIZE_MAX: size_t = size_t::MAX;
 
 /// `DB_VERBOSE`: `-d`-style debug output enabled in `db_level`.
-const DB_VERBOSE: ::core::ffi::c_int = 0x2;
+const DB_VERBOSE: i32 = 0x2;
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
-const MAP_BLANK: ::core::ffi::c_int = 0x0002;
-const MAP_NEWLINE: ::core::ffi::c_int = 0x0004;
+const MAP_BLANK: i32 = 0x0002;
+const MAP_NEWLINE: i32 = 0x0004;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-fn stop_set(c: ::core::ffi::c_char, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map()[c as u8 as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set(c: ::core::ffi::c_char, mask: i32) -> bool {
+    stopchar_map()[c as u8 as usize] as i32 & mask != 0
 }
 pub static mut expanding_var: *mut *const Floc = &raw const reading_file as *mut *const Floc;
-pub const VARIABLE_BUFFER_ZONE: ::core::ffi::c_int = 5;
+pub const VARIABLE_BUFFER_ZONE: i32 = 5;
 /// Process-wide lock serializing tests that drive the `variable_buffer`
 /// global (the output buffer for `$(...)` expansion). Tests in different
 /// modules share this single lock so they never race on the buffer.
@@ -196,7 +196,7 @@ pub unsafe fn recursively_expand_for_file(
 ) -> *mut ::core::ffi::c_char {
     let mut this_var: *const Floc;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut set_reading: ::core::ffi::c_int = 0;
+    let mut set_reading: i32 = 0;
     let nl: size_t = strlen((*v).name) as size_t;
     let mut parent: *mut variable = ::core::ptr::null_mut::<variable>();
     if (*v).expanding() != 0 && env_recursion() != 0 {
@@ -251,10 +251,7 @@ pub unsafe fn recursively_expand_for_file(
         sl = current_variable_set_list;
         while !sl.is_null() && parent.is_null() {
             let vp: *mut variable = lookup_variable_in_set((*v).name, nl, (*sl).set);
-            if !vp.is_null()
-                && vp != v
-                && (*vp).origin() as ::core::ffi::c_int == o_override as ::core::ffi::c_int
-            {
+            if !vp.is_null() && vp != v && (*vp).origin() as i32 == o_override as i32 {
                 parent = vp;
             }
             sl = (*sl).next;
@@ -298,10 +295,7 @@ pub unsafe fn expand_variable_output(
         // read-only bridge to the safe `warn_undefined`.
         warn_undefined(::core::slice::from_raw_parts(name as *const u8, length));
     }
-    if v.is_null()
-        || *(*v).value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0
-            && (*v).append() == 0
-    {
+    if v.is_null() || *(*v).value.offset(0_i32 as isize) as i32 == 0 && (*v).append() == 0 {
         return ptr;
     }
     // A recursive variable's value is freshly expanded and owned here; an
@@ -429,7 +423,7 @@ pub unsafe fn expand_string_buf(
                 let mut end: *const ::core::ffi::c_char;
                 let mut colon: *const ::core::ffi::c_char;
                 if handle_function(&raw mut o, &raw mut p) == 0 {
-                    end = strchr(beg, closeparen as ::core::ffi::c_int);
+                    end = strchr(beg, closeparen as i32);
                     if end.is_null() {
                         fatal(
                             *expanding_var,
@@ -666,12 +660,12 @@ unsafe fn variable_append(
     name: *const ::core::ffi::c_char,
     length: size_t,
     set: *const variable_set_list,
-    local: ::core::ffi::c_int,
+    local: i32,
 ) -> *mut ::core::ffi::c_char {
     if set.is_null() {
         return initialize_variable_output();
     }
-    let nextlocal = (local != 0 && (*set).next_is_parent == 0) as ::core::ffi::c_int;
+    let nextlocal = (local != 0 && (*set).next_is_parent == 0) as i32;
     let v: *const variable = lookup_variable_in_set(name, length, (*set).set);
     if v.is_null() || (local == 0 && (*v).private_var() != 0) {
         return variable_append(name, length, (*set).next, nextlocal);

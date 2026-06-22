@@ -28,7 +28,7 @@ use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use crate::variable::{define_variable_in_set, initialize_file_variables, o_automatic};
 
-use ::core::ffi::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void, CStr};
+use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void, CStr};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
@@ -38,7 +38,7 @@ use libc::{
 
 extern "C" {
     static mut stdout: *mut FILE;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> c_int;
+    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
     fn mempcpy(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void;
 }
 
@@ -46,23 +46,23 @@ pub type file = File;
 pub type dep = Dep;
 pub type commands = Commands;
 
-pub const MAKE_TROUBLE: c_int = 1;
+pub const MAKE_TROUBLE: i32 = 1;
 
 /// Recipe-line flag bits stored in `commands.lines_flags`.
-pub const COMMANDS_RECURSE: c_int = 1;
-pub const COMMANDS_SILENT: c_int = 2;
-pub const COMMANDS_NOERROR: c_int = 4;
+pub const COMMANDS_RECURSE: i32 = 1;
+pub const COMMANDS_SILENT: i32 = 2;
+pub const COMMANDS_NOERROR: i32 = 4;
 
 pub const FILE_LIST_SEPARATOR: c_char = b' ' as c_char;
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
-const MAP_BLANK: c_int = 0x0002;
-const MAP_NEWLINE: c_int = 0x0004;
+const MAP_BLANK: i32 = 0x0002;
+const MAP_NEWLINE: i32 = 0x0004;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-fn stop_set(c: c_char, mask: c_int) -> bool {
-    stopchar_map()[c as u8 as usize] as c_int & mask != 0
+fn stop_set(c: c_char, mask: i32) -> bool {
+    stopchar_map()[c as u8 as usize] as i32 & mask != 0
 }
 
 /// The name a dependency goes by: its own name, or its file's name when
@@ -91,7 +91,7 @@ pub fn dep_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
-unsafe fn dep_hash_cmp(x: *const c_void, y: *const c_void) -> c_int {
+unsafe fn dep_hash_cmp(x: *const c_void, y: *const c_void) -> i32 {
     strcmp(dep_name(x as *const dep), dep_name(y as *const dep))
 }
 
@@ -171,7 +171,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
         let name: *const c_char;
         let len: size_t;
         if ar_name(::core::ffi::CStr::from_ptr(file.name)) {
-            name = strchr(file.name, '(' as c_int).add(1);
+            name = strchr(file.name, '(' as i32).add(1);
             len = strlen(name) - 1;
         } else {
             name = file.name;
@@ -273,7 +273,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
             let mut c = dep_name(d);
             let len;
             if ar_name(::core::ffi::CStr::from_ptr(c)) {
-                c = strchr(c, '(' as c_int).add(1);
+                c = strchr(c, '(' as i32).add(1);
                 len = strlen(c) - 1;
             } else {
                 len = strlen(c);
@@ -358,7 +358,7 @@ pub unsafe fn set_file_variables(file: *mut file, mut stem: *const c_char) {
             let mut c = dep_name(d);
             let len;
             if ar_name(::core::ffi::CStr::from_ptr(c)) {
-                c = strchr(c, '(' as c_int).add(1);
+                c = strchr(c, '(' as i32).add(1);
                 len = strlen(c) - 1;
             } else {
                 len = strlen(c);
@@ -439,7 +439,7 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
             // backslashes preceding it) or the end of the recipe.
             let mut end: *const c_char = p;
             loop {
-                end = strchr(end, '\n' as c_int);
+                end = strchr(end, '\n' as i32);
                 if end.is_null() {
                     end = p.add(strlen(p) as usize);
                     break;
@@ -461,12 +461,12 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
                 end = end.add(1);
             }
 
-            if nlines as c_int == c_ushort::MAX as c_int {
+            if nlines as i32 == c_ushort::MAX as i32 {
                 fatal(
                     &raw mut cmds.fileinfo,
                     INTSTR_LENGTH,
                     c"recipe has too many lines (limit %hu)".as_ptr(),
-                    nlines as c_int,
+                    nlines as i32,
                 );
             }
             if nlines as size_t == max {
@@ -506,16 +506,14 @@ pub unsafe fn chop_commands(cmds: *mut commands) {
             p = p.add(1);
         }
         // A line invoking $(MAKE) recurses even without a `+` prefix.
-        if flags as c_int & COMMANDS_RECURSE == 0
+        if flags as i32 & COMMANDS_RECURSE == 0
             && (!strstr(p, c"$(MAKE)".as_ptr()).is_null()
                 || !strstr(p, c"${MAKE}".as_ptr()).is_null())
         {
             flags |= COMMANDS_RECURSE as c_uchar;
         }
         *cmds.lines_flags.add(i) = flags;
-        cmds.set_any_recurse(
-            cmds.any_recurse() | (flags as c_int & COMMANDS_RECURSE != 0) as c_uint,
-        );
+        cmds.set_any_recurse(cmds.any_recurse() | (flags as i32 & COMMANDS_RECURSE != 0) as c_uint);
     }
 }
 
@@ -573,7 +571,7 @@ pub static mut handling_fatal_signal: sig_atomic_t = 0;
 ///
 /// Only callable as a signal handler (or from one); touches global job
 /// state.
-pub unsafe extern "C" fn fatal_error_signal(sig: c_int) {
+pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     ::core::ptr::write_volatile(&raw mut handling_fatal_signal, 1);
     signal(sig, SIG_DFL);
     temp_stdin_unlink();
@@ -667,7 +665,7 @@ unsafe fn delete_target(file: *mut file, on_behalf_of: *const c_char) {
     }
 
     let mut st: libc::stat = ::core::mem::zeroed();
-    let mut e: c_int;
+    let mut e: i32;
     loop {
         e = libc::stat(file.name, &mut st);
         if !(e == -1 && *__errno_location() == EINTR) {
@@ -753,15 +751,15 @@ pub unsafe fn print_commands(cmds: *const commands) {
         }
         printf(
             c"%c%.*s\n".as_ptr(),
-            cmd_prefix as c_int,
-            end.offset_from(s) as c_int,
+            cmd_prefix as i32,
+            end.offset_from(s) as i32,
             s,
         );
         s = end.add((*end == b'\n' as c_char) as usize);
     }
 }
 
-pub const FILE_TIMESTAMP_HI_RES: c_int = 1;
+pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 
 #[cfg(test)]
 mod finish_list_unsafe_oracle {

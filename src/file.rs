@@ -16,13 +16,13 @@ use std::sync::Mutex;
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
-    fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
+    fn fflush(__stream: *mut FILE) -> i32;
+    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
-    fn gettimeofday(__tv: *mut timeval, __tz: *mut ::core::ffi::c_void) -> ::core::ffi::c_int;
+    fn gettimeofday(__tv: *mut timeval, __tz: *mut ::core::ffi::c_void) -> i32;
     fn time(__timer: *mut time_t) -> time_t;
     fn localtime(__timer: *const time_t) -> *mut tm;
-    fn clock_gettime(__clock_id: clockid_t, __tp: *mut timespec) -> ::core::ffi::c_int;
+    fn clock_gettime(__clock_id: clockid_t, __tp: *mut timespec) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -63,15 +63,15 @@ pub const _ISupper: C2RustUnnamed = 256;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct tm {
-    pub tm_sec: ::core::ffi::c_int,
-    pub tm_min: ::core::ffi::c_int,
-    pub tm_hour: ::core::ffi::c_int,
-    pub tm_mday: ::core::ffi::c_int,
-    pub tm_mon: ::core::ffi::c_int,
-    pub tm_year: ::core::ffi::c_int,
-    pub tm_wday: ::core::ffi::c_int,
-    pub tm_yday: ::core::ffi::c_int,
-    pub tm_isdst: ::core::ffi::c_int,
+    pub tm_sec: i32,
+    pub tm_min: i32,
+    pub tm_hour: i32,
+    pub tm_mday: i32,
+    pub tm_mon: i32,
+    pub tm_year: i32,
+    pub tm_wday: i32,
+    pub tm_yday: i32,
+    pub tm_isdst: i32,
     pub tm_gmtoff: ::core::ffi::c_long,
     pub tm_zone: *const ::core::ffi::c_char,
 }
@@ -95,7 +95,7 @@ pub struct File {
     pub last_mtime: uintmax_t,
     pub mtime_before_update: uintmax_t,
     pub considered: ::core::ffi::c_uint,
-    pub command_flags: ::core::ffi::c_int,
+    pub command_flags: i32,
     #[bitfield(name = "update_status", ty = "update_status", bits = "0..=1")]
     #[bitfield(name = "command_state", ty = "cmd_state", bits = "2..=3")]
     #[bitfield(name = "builtin", ty = "::core::ffi::c_uint", bits = "4..=4")]
@@ -172,7 +172,7 @@ pub const us_success: update_status_0 = 0;
 pub struct VariableSetList {
     pub next: *mut VariableSetList,
     pub set: *mut VariableSet,
-    pub next_is_parent: ::core::ffi::c_int,
+    pub next_is_parent: i32,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -282,23 +282,19 @@ pub struct nameseq {
     pub name: *const ::core::ffi::c_char,
 }
 pub type hash_map_func_t = crate::hash::hash_map_func_t;
-pub type qsort_cmp_t = Option<
-    unsafe extern "C" fn(
-        *const ::core::ffi::c_void,
-        *const ::core::ffi::c_void,
-    ) -> ::core::ffi::c_int,
->;
-pub const ENOENT: ::core::ffi::c_int = 2;
-pub const CLOCK_REALTIME: ::core::ffi::c_int = 0;
+pub type qsort_cmp_t =
+    Option<unsafe extern "C" fn(*const ::core::ffi::c_void, *const ::core::ffi::c_void) -> i32>;
+pub const ENOENT: i32 = 2;
+pub const CLOCK_REALTIME: i32 = 0;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
-pub const INTSTR_LENGTH: usize = (53 as usize)
+pub const INTSTR_LENGTH: usize = 53_usize
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
-    .wrapping_div(22 as usize)
-    .wrapping_add(3 as usize);
-pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
-pub const COMMANDS_SILENT: ::core::ffi::c_int = 2;
-pub const COMMANDS_NOERROR: ::core::ffi::c_int = 4;
+    .wrapping_div(22_usize)
+    .wrapping_add(3_usize);
+pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
+pub const COMMANDS_SILENT: i32 = 2;
+pub const COMMANDS_NOERROR: i32 = 4;
 
 impl File {
     fn new_named(name: *const ::core::ffi::c_char) -> Self {
@@ -337,10 +333,10 @@ pub unsafe fn free_dep(d: *mut dep) {
 pub unsafe fn free_dep_chain(d: *mut dep) {
     free_ns_chain(d as *mut nameseq);
 }
-pub const UNKNOWN_MTIME: ::core::ffi::c_int = 0;
-pub const NONEXISTENT_MTIME: ::core::ffi::c_int = 1;
-pub const OLD_MTIME: ::core::ffi::c_int = 2;
-pub const ORDINARY_MTIME_MIN: ::core::ffi::c_int = OLD_MTIME + 1;
+pub const UNKNOWN_MTIME: i32 = 0;
+pub const NONEXISTENT_MTIME: i32 = 1;
+pub const OLD_MTIME: i32 = 2;
+pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
 /// Set once `snap_deps` has run, so the reader (`eval`) knows the global
 /// dependency snapshot is in place. Stored in an atomic so its reads are plain
 /// safe operations; all access is single-threaded, so `Relaxed` preserves the
@@ -367,10 +363,7 @@ pub fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe fn file_hash_cmp(
-    x: *const ::core::ffi::c_void,
-    y: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_int {
+unsafe fn file_hash_cmp(x: *const ::core::ffi::c_void, y: *const ::core::ffi::c_void) -> i32 {
     let xh = (x as *const file)
         .as_ref()
         .map_or(::core::ptr::null(), |xf| xf.hname);
@@ -419,8 +412,8 @@ fn all_secondary() -> bool {
     ALL_SECONDARY.load(Ordering::Relaxed)
 }
 
-fn stop_set_byte(c: u8, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set_byte(c: u8, mask: i32) -> bool {
+    stopchar_map()[c as usize] as i32 & mask != 0
 }
 
 unsafe fn normalize_lookup_name(name: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char {
@@ -465,7 +458,7 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     let f: *mut file;
     let file_slot: *mut *mut file;
     let mut file_key = File::default();
-    if name.as_ref().is_some_and(|c| *c as ::core::ffi::c_int != 0) {
+    if name.as_ref().is_some_and(|c| *c as i32 != 0) {
     } else {
         panic!("assertion failed: *name != '\'");
     };
@@ -647,7 +640,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     }
     merge_variable_set_lists(&raw mut (*to_file).variables, fr2.variables);
     if !(*to_file).double_colon.is_null()
-        && fr2.is_target() as ::core::ffi::c_int != 0
+        && fr2.is_target() as i32 != 0
         && fr2.double_colon.is_null()
     {
         fatal(
@@ -677,57 +670,31 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         (*to_file).last_mtime = fr2.last_mtime;
     }
     (*to_file).mtime_before_update = fr2.mtime_before_update;
-    (*to_file).set_precious(
-        (*to_file).precious()
-            | fr2.precious() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
-    (*to_file).set_loaded(
-        (*to_file).loaded() | fr2.loaded() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
+    (*to_file).set_precious((*to_file).precious() | fr2.precious() as i32 as ::core::ffi::c_uint);
+    (*to_file).set_loaded((*to_file).loaded() | fr2.loaded() as i32 as ::core::ffi::c_uint);
     (*to_file).set_tried_implicit(
-        (*to_file).tried_implicit()
-            | fr2.tried_implicit() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).tried_implicit() | fr2.tried_implicit() as i32 as ::core::ffi::c_uint,
     );
-    (*to_file).set_updating(
-        (*to_file).updating()
-            | fr2.updating() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
-    (*to_file).set_updated(
-        (*to_file).updated() | fr2.updated() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
-    (*to_file).set_is_target(
-        (*to_file).is_target()
-            | fr2.is_target() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
-    (*to_file).set_cmd_target(
-        (*to_file).cmd_target()
-            | fr2.cmd_target() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
-    (*to_file).set_phony(
-        (*to_file).phony() | fr2.phony() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
+    (*to_file).set_updating((*to_file).updating() | fr2.updating() as i32 as ::core::ffi::c_uint);
+    (*to_file).set_updated((*to_file).updated() | fr2.updated() as i32 as ::core::ffi::c_uint);
+    (*to_file)
+        .set_is_target((*to_file).is_target() | fr2.is_target() as i32 as ::core::ffi::c_uint);
+    (*to_file)
+        .set_cmd_target((*to_file).cmd_target() | fr2.cmd_target() as i32 as ::core::ffi::c_uint);
+    (*to_file).set_phony((*to_file).phony() | fr2.phony() as i32 as ::core::ffi::c_uint);
     (*to_file).set_is_explicit(
-        (*to_file).is_explicit()
-            | fr2.is_explicit() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).is_explicit() | fr2.is_explicit() as i32 as ::core::ffi::c_uint,
     );
-    (*to_file).set_secondary(
-        (*to_file).secondary()
-            | fr2.secondary() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
+    (*to_file)
+        .set_secondary((*to_file).secondary() | fr2.secondary() as i32 as ::core::ffi::c_uint);
     (*to_file).set_notintermediate(
-        (*to_file).notintermediate()
-            | fr2.notintermediate() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).notintermediate() | fr2.notintermediate() as i32 as ::core::ffi::c_uint,
     );
     (*to_file).set_ignore_vpath(
-        (*to_file).ignore_vpath()
-            | fr2.ignore_vpath() as ::core::ffi::c_int as ::core::ffi::c_uint,
+        (*to_file).ignore_vpath() | fr2.ignore_vpath() as i32 as ::core::ffi::c_uint,
     );
-    (*to_file).set_snapped(
-        (*to_file).snapped() | fr2.snapped() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
-    (*to_file).set_suffix(
-        (*to_file).suffix() | fr2.suffix() as ::core::ffi::c_int as ::core::ffi::c_uint,
-    );
+    (*to_file).set_snapped((*to_file).snapped() | fr2.snapped() as i32 as ::core::ffi::c_uint);
+    (*to_file).set_suffix((*to_file).suffix() | fr2.suffix() as i32 as ::core::ffi::c_uint);
     (*to_file).set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     fr2.renamed = to_file;
     REHASHED_FILES
@@ -750,9 +717,13 @@ pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
-    let mut doneany: ::core::ffi::c_int = 0;
-    if crate::make_main::opt_question() || crate::make_main::opt_touch() || all_secondary() || no_intermediates != 0 {
+pub unsafe fn remove_intermediates(sig: i32) {
+    let mut doneany: i32 = 0;
+    if crate::make_main::opt_question()
+        || crate::make_main::opt_touch()
+        || all_secondary()
+        || no_intermediates != 0
+    {
         return;
     }
     if sig != 0 && crate::make_main::opt_just_print() {
@@ -761,14 +732,14 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
     for slot in table_slots(&raw const files) {
         if is_real_item(*slot) {
             let f = *slot as *mut file;
-            if (*f).intermediate() as ::core::ffi::c_int != 0
-                && ((*f).dontcare() as ::core::ffi::c_int != 0 || (*f).precious() == 0)
+            if (*f).intermediate() as i32 != 0
+                && ((*f).dontcare() as i32 != 0 || (*f).precious() == 0)
                 && (*f).secondary() == 0
                 && (*f).notintermediate() == 0
                 && (*f).cmd_target() == 0
             {
-                let status: ::core::ffi::c_int;
-                if (*f).update_status() as ::core::ffi::c_int != us_none as ::core::ffi::c_int {
+                let status: i32;
+                if (*f).update_status() as i32 != us_none as i32 {
                     // ENOENT from unlink means the file was already gone: skip the
                     // diagnostic/bookkeeping below (the C code `continue`d here).
                     let skip: bool;
@@ -789,7 +760,7 @@ pub unsafe fn remove_intermediates(sig: ::core::ffi::c_int) {
                                 (*f).name,
                             );
                         } else {
-                            if doneany == 0 && 0x1 as ::core::ffi::c_int & db_level != 0 {
+                            if doneany == 0 && 0x1_i32 & db_level != 0 {
                                 printf(
                                     b"Removing intermediate files...\n\0" as *const u8
                                         as *const ::core::ffi::c_char,
@@ -839,19 +810,19 @@ pub unsafe fn split_prereqs(mut p: *mut ::core::ffi::c_char) -> *mut dep {
     let mut new: *mut dep = parse_file_seq(
         &raw mut p,
         ::core::mem::size_of::<dep>() as size_t,
-        0x100 as ::core::ffi::c_int,
+        0x100_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
-        0x40 as ::core::ffi::c_int,
+        0x40_i32,
     ) as *mut dep;
     if p.as_ref().is_some_and(|c| *c != 0) {
         let mut ood: *mut dep;
-        p = p.offset(1 as ::core::ffi::c_int as isize);
+        p = p.offset(1_i32 as isize);
         ood = parse_file_seq(
             &raw mut p,
             ::core::mem::size_of::<dep>() as size_t,
-            0x1 as ::core::ffi::c_int,
+            0x1_i32,
             ::core::ptr::null::<::core::ffi::c_char>(),
-            0x40 as ::core::ffi::c_int,
+            0x40_i32,
         ) as *mut dep;
         if new.is_null() {
             new = ood;
@@ -898,11 +869,10 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
             percent = find_percent(nm);
             if !percent.is_null() {
                 let o: *mut ::core::ffi::c_char;
-                if *stem.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
+                if *stem.offset(0_i32 as isize) as i32 == 0 {
                     memmove(
                         percent as *mut ::core::ffi::c_void,
-                        percent.offset(1 as ::core::ffi::c_int as isize)
-                            as *const ::core::ffi::c_void,
+                        percent.offset(1_i32 as isize) as *const ::core::ffi::c_void,
                         strlen(percent),
                     );
                     o = variable_buffer_output(
@@ -916,13 +886,11 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
                         stem,
                         pattern,
                         nm,
-                        pattern.offset(1 as ::core::ffi::c_int as isize),
-                        percent.offset(1 as ::core::ffi::c_int as isize),
+                        pattern.offset(1_i32 as isize),
+                        percent.offset(1_i32 as isize),
                     );
                 }
-                if *variable_buffer.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == 0
-                {
+                if *variable_buffer.offset(0_i32 as isize) as i32 == 0 {
                     let df: *mut dep = dp;
                     if dp == deps {
                         // `dpr` is the null-checked reference to `dp`, and here
@@ -980,8 +948,8 @@ pub unsafe fn expand_deps(f: *mut file) {
     let mut d: *mut dep;
     let mut dp: *mut *mut dep;
     let mut fstem: *const ::core::ffi::c_char;
-    let mut initialized: ::core::ffi::c_int = 0;
-    let mut changed_dep: ::core::ffi::c_int = 0;
+    let mut initialized: i32 = 0;
+    let mut changed_dep: i32 = 0;
     if (*f).snapped() != 0 {
         return;
     }
@@ -1005,7 +973,7 @@ pub unsafe fn expand_deps(f: *mut file) {
                         break;
                     }
                     nperc = nperc.wrapping_add(1);
-                    cs = cs.offset(1 as ::core::ffi::c_int as isize);
+                    cs = cs.offset(1_i32 as isize);
                 }
                 if nperc != 0 {
                     let name_len = strlen((*d).name) as size_t;
@@ -1026,12 +994,12 @@ pub unsafe fn expand_deps(f: *mut file) {
                             cs.offset_from(pcs) as ::core::ffi::c_long as size_t,
                         ) as *mut ::core::ffi::c_char;
                         let fresh0 = s;
-                        s = s.offset(1 as ::core::ffi::c_int as isize);
+                        s = s.offset(1_i32 as isize);
                         *fresh0 = '$' as i32 as ::core::ffi::c_char;
                         let fresh1 = s;
-                        s = s.offset(1 as ::core::ffi::c_int as isize);
+                        s = s.offset(1_i32 as isize);
                         *fresh1 = '*' as i32 as ::core::ffi::c_char;
-                        cs = cs.offset(1 as ::core::ffi::c_int as isize);
+                        cs = cs.offset(1_i32 as isize);
                         pcs = cs;
                         // Bridge to the safe `end_of_token`: it returns the
                         // offset of the first whitespace/NUL within `[cs, NUL)`,
@@ -1160,12 +1128,7 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
             d = prereqs;
             while let Some(dr) = d.as_mut() {
                 if dr.name.is_null() {
-                    dr.name = xstrdup(
-                        dr.file
-                            .as_ref()
-                            .expect("a nameless prereq has a file")
-                            .name,
-                    );
+                    dr.name = xstrdup(dr.file.as_ref().expect("a nameless prereq has a file").name);
                 }
                 dr.set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 d = dr.next;
@@ -1185,9 +1148,8 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
             let fname = fr.name;
             let same = match (dname.as_ref(), fname.as_ref()) {
                 (Some(&db), Some(&fb)) => {
-                    fb as ::core::ffi::c_int == db as ::core::ffi::c_int
-                        && (fb as ::core::ffi::c_int == 0
-                            || strcmp(fname.offset(1), dname.offset(1)) == 0)
+                    fb as i32 == db as i32
+                        && (fb as i32 == 0 || strcmp(fname.offset(1), dname.offset(1)) == 0)
                 }
                 _ => false,
             };
@@ -1354,16 +1316,11 @@ pub unsafe fn snap_deps() {
         );
     }
     f = lookup_file(b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
-    if f.as_ref()
-        .is_some_and(|fr| fr.is_target() as ::core::ffi::c_int != 0)
-    {
+    if f.as_ref().is_some_and(|fr| fr.is_target() as i32 != 0) {
         export_all_variables = 1;
     }
     f = lookup_file(b".IGNORE\0" as *const u8 as *const ::core::ffi::c_char);
-    if let Some(fr) = f
-        .as_ref()
-        .filter(|fr| fr.is_target() as ::core::ffi::c_int != 0)
-    {
+    if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         if fr.deps.is_null() {
             crate::make_main::set_ignore_errors_mirror(true);
         } else {
@@ -1379,10 +1336,7 @@ pub unsafe fn snap_deps() {
         }
     }
     f = lookup_file(b".SILENT\0" as *const u8 as *const ::core::ffi::c_char);
-    if let Some(fr) = f
-        .as_ref()
-        .filter(|fr| fr.is_target() as ::core::ffi::c_int != 0)
-    {
+    if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         if fr.deps.is_null() {
             run_silent = 1;
         } else {
@@ -1398,10 +1352,7 @@ pub unsafe fn snap_deps() {
         }
     }
     f = lookup_file(b".NOTPARALLEL\0" as *const u8 as *const ::core::ffi::c_char);
-    if let Some(fr) = f
-        .as_ref()
-        .filter(|fr| fr.is_target() as ::core::ffi::c_int != 0)
-    {
+    if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         let mut d2: *mut dep;
         if fr.deps.is_null() {
             crate::make_main::NOT_PARALLEL.store(true, ::std::sync::atomic::Ordering::Relaxed);
@@ -1435,7 +1386,7 @@ pub unsafe fn snap_deps() {
     let mut filep: *mut *mut ::core::ffi::c_void = filedump;
     while let Some(&fp) = filep.as_ref().filter(|p| !p.is_null()) {
         snap_file(fp as *mut file, prereqs);
-        filep = filep.offset(1 as ::core::ffi::c_int as isize);
+        filep = filep.offset(1_i32 as isize);
     }
     free(filedump as *mut ::core::ffi::c_void);
     free_dep_chain(prereqs);
@@ -1468,58 +1419,47 @@ pub unsafe fn file_timestamp_cons(
     stamp: time_t,
     ns: ::core::ffi::c_long,
 ) -> uintmax_t {
-    let offset: ::core::ffi::c_int = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
-        + (if FILE_TIMESTAMP_HI_RES != 0 { ns } else { 0 }))
-        as ::core::ffi::c_int;
+    let offset: i32 = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
+        + (if FILE_TIMESTAMP_HI_RES != 0 { ns } else { 0 })) as i32;
     let s: uintmax_t = stamp as uintmax_t;
     let product: uintmax_t = s << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 });
     let mut ts: uintmax_t = product.wrapping_add(offset as uintmax_t);
     if !(s
-        <= ((!(0 as ::core::ffi::c_int as uintmax_t))
-            .wrapping_sub(
-                if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
-                    0 as ::core::ffi::c_int as uintmax_t
-                } else {
-                    !(0 as ::core::ffi::c_int as uintmax_t)
-                        << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(8 as usize)
-                            .wrapping_sub(1 as usize)
-                },
-            )
+        <= ((!(0_i32 as uintmax_t))
+            .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                0_i32 as uintmax_t
+            } else {
+                !(0_i32 as uintmax_t)
+                    << (::core::mem::size_of::<uintmax_t>() as usize)
+                        .wrapping_mul(8_usize)
+                        .wrapping_sub(1_usize)
+            })
             .wrapping_sub((2 + 1) as uintmax_t)
             >> (if 1 != 0 { 30 } else { 0 })
             << (if 1 != 0 { 30 } else { 0 }))
         .wrapping_add((2 + 1) as uintmax_t)
-        .wrapping_add(
-            (if 1 != 0 {
-                1000000000 as ::core::ffi::c_int
-            } else {
-                1
-            }) as uintmax_t,
-        )
+        .wrapping_add((if 1 != 0 { 1000000000_i32 } else { 1 }) as uintmax_t)
         .wrapping_sub(1 as uintmax_t)
         .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
             >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
         && product <= ts
         && ts
-            <= ((!(0 as ::core::ffi::c_int as uintmax_t))
-                .wrapping_sub(
-                    if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
-                        0 as ::core::ffi::c_int as uintmax_t
-                    } else {
-                        !(0 as ::core::ffi::c_int as uintmax_t)
-                            << (::core::mem::size_of::<uintmax_t>() as usize)
-                                .wrapping_mul(8 as usize)
-                                .wrapping_sub(1 as usize)
-                    },
-                )
+            <= ((!(0_i32 as uintmax_t))
+                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
+                } else {
+                    !(0_i32 as uintmax_t)
+                        << (::core::mem::size_of::<uintmax_t>() as usize)
+                            .wrapping_mul(8_usize)
+                            .wrapping_sub(1_usize)
+                })
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
                 << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
             .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
             .wrapping_add(
                 (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000 as ::core::ffi::c_int
+                    1000000000_i32
                 } else {
                     1
                 }) as uintmax_t,
@@ -1535,24 +1475,22 @@ pub unsafe fn file_timestamp_cons(
         ts = if s <= OLD_MTIME as uintmax_t {
             ORDINARY_MTIME_MIN as uintmax_t
         } else {
-            ((!(0 as ::core::ffi::c_int as uintmax_t))
-                .wrapping_sub(
-                    if !(-(1 as ::core::ffi::c_int) as uintmax_t <= 0 as uintmax_t) {
-                        0 as ::core::ffi::c_int as uintmax_t
-                    } else {
-                        !(0 as ::core::ffi::c_int as uintmax_t)
-                            << (::core::mem::size_of::<uintmax_t>() as usize)
-                                .wrapping_mul(8 as usize)
-                                .wrapping_sub(1 as usize)
-                    },
-                )
+            ((!(0_i32 as uintmax_t))
+                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
+                } else {
+                    !(0_i32 as uintmax_t)
+                        << (::core::mem::size_of::<uintmax_t>() as usize)
+                            .wrapping_mul(8_usize)
+                            .wrapping_sub(1_usize)
+                })
                 .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
                 << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
             .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
             .wrapping_add(
                 (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000 as ::core::ffi::c_int
+                    1000000000_i32
                 } else {
                     1
                 }) as uintmax_t,
@@ -1576,10 +1514,10 @@ pub unsafe fn file_timestamp_cons(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn file_timestamp_now(resolution: *mut ::core::ffi::c_int) -> uintmax_t {
-    let r: ::core::ffi::c_int;
+pub unsafe fn file_timestamp_now(resolution: *mut i32) -> uintmax_t {
+    let r: i32;
     let s: time_t;
-    let ns: ::core::ffi::c_int;
+    let ns: i32;
     let mut timespec: timespec = timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -1587,7 +1525,7 @@ pub unsafe fn file_timestamp_now(resolution: *mut ::core::ffi::c_int) -> uintmax
     if clock_gettime(CLOCK_REALTIME, &raw mut timespec) == 0 {
         r = 1;
         s = timespec.tv_sec as time_t;
-        ns = timespec.tv_nsec as ::core::ffi::c_int;
+        ns = timespec.tv_nsec as i32;
     } else {
         let mut timeval: timeval = timeval {
             tv_sec: 0,
@@ -1598,11 +1536,11 @@ pub unsafe fn file_timestamp_now(resolution: *mut ::core::ffi::c_int) -> uintmax
             ::core::ptr::null_mut::<::core::ffi::c_void>(),
         ) == 0
         {
-            r = 1000 as ::core::ffi::c_int;
+            r = 1000_i32;
             s = timeval.tv_sec as time_t;
-            ns = (timeval.tv_usec * 1000 as __suseconds_t) as ::core::ffi::c_int;
+            ns = (timeval.tv_usec * 1000 as __suseconds_t) as i32;
         } else {
-            r = 1000000000 as ::core::ffi::c_int;
+            r = 1000000000_i32;
             s = time(::core::ptr::null_mut::<time_t>());
             ns = 0;
         }
@@ -1653,13 +1591,13 @@ pub unsafe fn file_timestamp_sprintf(mut p: *mut ::core::ffi::c_char, ts: uintma
             b".%09d\0" as *const u8 as *const ::core::ffi::c_char,
             (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                 & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1) as uintmax_t)
-                as ::core::ffi::c_int,
+                as i32,
         ) - 1) as isize,
     );
-    while *p as ::core::ffi::c_int == '0' as i32 {
-        p = p.offset(-(1 as ::core::ffi::c_int) as isize);
+    while *p as i32 == '0' as i32 {
+        p = p.offset(-1_i32 as isize);
     }
-    p = p.offset((*p as ::core::ffi::c_int != '.' as i32) as ::core::ffi::c_int as isize);
+    p = p.offset((*p as i32 != '.' as i32) as i32 as isize);
     *p = 0;
 }
 /// # Safety
@@ -1672,7 +1610,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
         if (*deps).ignore_mtime() == 0 {
             printf(
                 b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                if (*deps).wait_here() as ::core::ffi::c_int != 0 {
+                if (*deps).wait_here() as i32 != 0 {
                     b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
                 } else {
                     b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -1695,7 +1633,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
     if let Some(oodr) = ood.as_ref() {
         printf(
             b" | %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            if oodr.wait_here() as ::core::ffi::c_int != 0 {
+            if oodr.wait_here() as i32 != 0 {
                 b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
             } else {
                 b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -1703,11 +1641,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
             if !oodr.name.is_null() {
                 oodr.name
             } else {
-                oodr
-                    .file
-                    .as_ref()
-                    .expect("a nameless dep has a file")
-                    .name
+                oodr.file.as_ref().expect("a nameless dep has a file").name
             },
         );
         ood = oodr.next;
@@ -1715,7 +1649,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
             if oodn.ignore_mtime() != 0 {
                 printf(
                     b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    if oodn.wait_here() as ::core::ffi::c_int != 0 {
+                    if oodn.wait_here() as i32 != 0 {
                         b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
                     } else {
                         b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -1723,10 +1657,7 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
                     if !oodn.name.is_null() {
                         oodn.name
                     } else {
-                        oodn.file
-                            .as_ref()
-                            .expect("a nameless dep has a file")
-                            .name
+                        oodn.file.as_ref().expect("a nameless dep has a file").name
                     },
                 );
             }
@@ -1741,14 +1672,14 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
-    if crate::make_main::opt_no_builtin_rules() && (*f).builtin() as ::core::ffi::c_int != 0 {
+    if crate::make_main::opt_no_builtin_rules() && (*f).builtin() as i32 != 0 {
         return;
     }
     putchar('\n' as i32);
     if (*f)
         .cmds
         .as_ref()
-        .is_some_and(|c| c.recipe_prefix as ::core::ffi::c_int != cmd_prefix as ::core::ffi::c_int)
+        .is_some_and(|c| c.recipe_prefix as i32 != cmd_prefix as i32)
     {
         fputs(
             b".RECIPEPREFIX = \0" as *const u8 as *const ::core::ffi::c_char,
@@ -1759,8 +1690,8 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
             .as_ref()
             .expect("cmds is non-null when its recipe_prefix differs")
             .recipe_prefix;
-        if cmd_prefix as ::core::ffi::c_int != RECIPEPREFIX_DEFAULT {
-            putchar(cmd_prefix as ::core::ffi::c_int);
+        if cmd_prefix as i32 != RECIPEPREFIX_DEFAULT {
+            putchar(cmd_prefix as i32);
         }
         putchar('\n' as i32);
     }
@@ -1804,7 +1735,7 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
     if (*f).builtin() != 0 {
         puts(b"#  Builtin rule\0" as *const u8 as *const ::core::ffi::c_char);
     }
-    puts(if (*f).tried_implicit() as ::core::ffi::c_int != 0 {
+    puts(if (*f).tried_implicit() as i32 != 0 {
         b"#  Implicit rule search has been done.\0" as *const u8 as *const ::core::ffi::c_char
     } else {
         b"#  Implicit rule search has not been done.\0" as *const u8 as *const ::core::ffi::c_char
@@ -1870,12 +1801,12 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
             &raw mut buf as *mut ::core::ffi::c_char,
         );
     }
-    puts(if (*f).updated() as ::core::ffi::c_int != 0 {
+    puts(if (*f).updated() as i32 != 0 {
         b"#  File has been updated.\0" as *const u8 as *const ::core::ffi::c_char
     } else {
         b"#  File has not been updated.\0" as *const u8 as *const ::core::ffi::c_char
     });
-    match (*f).command_state() as ::core::ffi::c_int {
+    match (*f).command_state() as i32 {
         2 => {
             puts(
                 b"#  Recipe currently running (THIS IS A BUG).\0" as *const u8
@@ -1888,7 +1819,7 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
                     as *const ::core::ffi::c_char,
             );
         }
-        0 | 3 => match (*f).update_status() as ::core::ffi::c_int {
+        0 | 3 => match (*f).update_status() as i32 {
             0 => {
                 puts(b"#  Successfully updated.\0" as *const u8 as *const ::core::ffi::c_char);
             }
@@ -1946,7 +1877,7 @@ pub unsafe fn print_file_data_base() {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
-    if (*f).is_target() == 0 || (*f).suffix() as ::core::ffi::c_int != 0 {
+    if (*f).is_target() == 0 || (*f).suffix() as i32 != 0 {
         return;
     }
     // Skip built-in special targets, whose names are a dot followed by one
@@ -1972,7 +1903,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
     let f: *const file = item as *const file;
     let mut d: *const dep;
     if !(*f).name.is_null()
-        && *(*f).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+        && *(*f).name.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).name) == 0
     {
         error(
@@ -1989,7 +1920,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         );
     }
     if !(*f).hname.is_null()
-        && *(*f).hname.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+        && *(*f).hname.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).hname) == 0
     {
         error(
@@ -2006,7 +1937,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         );
     }
     if !(*f).vpath.is_null()
-        && *(*f).vpath.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+        && *(*f).vpath.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).vpath) == 0
     {
         error(
@@ -2023,7 +1954,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
         );
     }
     if !(*f).stem.is_null()
-        && *(*f).stem.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+        && *(*f).stem.offset(0_i32 as isize) as i32 != 0
         && strcache_iscached((*f).stem) == 0
     {
         error(
@@ -2043,7 +1974,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
     while !d.is_null() {
         if (*d).need_2nd_expansion() == 0
             && !(*d).name.is_null()
-            && *(*d).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+            && *(*d).name.offset(0_i32 as isize) as i32 != 0
             && strcache_iscached((*d).name) == 0
         {
             error(
@@ -2061,7 +1992,7 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void) {
             );
         }
         if !(*d).stem.is_null()
-            && *(*d).stem.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0
+            && *(*d).stem.offset(0_i32 as isize) as i32 != 0
             && strcache_iscached((*d).stem) == 0
         {
             error(
@@ -2130,11 +2061,11 @@ pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::c
                     l as size_t,
                 ) as *mut ::core::ffi::c_char;
                 let fresh4 = p;
-                p = p.offset(1 as ::core::ffi::c_int as isize);
+                p = p.offset(1_i32 as isize);
                 *fresh4 = ' ' as i32 as ::core::ffi::c_char;
             }
         }
-        *p.offset(-(1 as ::core::ffi::c_int as isize)) = 0;
+        *p.offset(-(1_i32 as isize)) = 0;
         last_targ_count = files.ht_fill;
     }
     value
@@ -2152,7 +2083,7 @@ pub unsafe fn init_hash_files() {
         Some(file_hash_cmp),
     );
 }
-pub const FILE_TIMESTAMP_HI_RES: ::core::ffi::c_int = 1;
+pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 
 #[cfg(test)]
 mod tests {
@@ -2386,6 +2317,78 @@ mod tests {
             // dropped and freed; the returned chain is empty.
             let head = enter_prereqs(d, stem);
             assert!(head.is_null(), "the empty-expanding prereq is removed");
+        }
+    }
+
+    /// `file_timestamp_cons` packs an in-range `(seconds, nanoseconds)` pair
+    /// into a `FILE_TIMESTAMP`. Two ordinary stamps round-trip without the
+    /// out-of-range substitution, and a later second yields a strictly larger
+    /// encoded timestamp than an earlier one (ordering, not absolute value).
+    #[test]
+    fn file_timestamp_cons_in_range_is_monotonic() {
+        unsafe {
+            let earlier = file_timestamp_cons(c"probe_a".as_ptr(), 1_000_000, 0);
+            let later = file_timestamp_cons(c"probe_b".as_ptr(), 1_000_001, 0);
+            assert!(
+                later > earlier,
+                "a later second encodes to a larger timestamp ({later} > {earlier})"
+            );
+            // Both land in the ordinary range, above the reserved sentinels.
+            assert!(earlier > ORDINARY_MTIME_MIN as uintmax_t);
+            // The nanosecond component widens the value within the same second.
+            let with_ns = file_timestamp_cons(c"probe_a".as_ptr(), 1_000_000, 500_000_000);
+            assert!(
+                with_ns > earlier,
+                "added nanoseconds raise the encoded timestamp within a second"
+            );
+        }
+    }
+
+    /// Serializes the tests that drive the real `error()` output path, which
+    /// reads the process-global `program`/`makelevel`.
+    static TIMESTAMP_ERR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A stamp below the encodable range (`s <= OLD_MTIME`) drives the
+    /// out-of-range substitution branch: it formats the clamped timestamp and
+    /// calls `error()` ("timestamp out of range: substituting"), then returns
+    /// the substituted value `ORDINARY_MTIME_MIN`. Driving this requires a
+    /// valid `program` name so `error()` does not dereference a null pointer.
+    #[test]
+    fn file_timestamp_cons_low_out_of_range_substitutes() {
+        let _g = TIMESTAMP_ERR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            crate::make_main::install_default_options_for_test();
+            crate::make_main::install_program_name_for_test();
+            // s = 0 <= OLD_MTIME (2): below the encodable range.
+            let ts = file_timestamp_cons(c"too_old".as_ptr(), 0, 0);
+            assert_eq!(
+                ts, ORDINARY_MTIME_MIN as uintmax_t,
+                "an underflowing stamp is substituted with ORDINARY_MTIME_MIN"
+            );
+        }
+    }
+
+    /// A stamp above the encodable range drives the same out-of-range
+    /// substitution `error()` branch but takes the upper clamp (the `else` arm
+    /// of the `s <= OLD_MTIME` selection). A null `fname` exercises the
+    /// "Current time" default label inside that branch.
+    #[test]
+    fn file_timestamp_cons_high_out_of_range_substitutes() {
+        let _g = TIMESTAMP_ERR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            crate::make_main::install_default_options_for_test();
+            crate::make_main::install_program_name_for_test();
+            // A stamp near time_t::MAX overflows the 30-bit left shift, so it
+            // is above the encodable range and clamps to the upper bound.
+            let ts = file_timestamp_cons(
+                ::core::ptr::null::<::core::ffi::c_char>(),
+                ::core::ffi::c_long::MAX as time_t,
+                0,
+            );
+            assert!(
+                ts > ORDINARY_MTIME_MIN as uintmax_t,
+                "an overflowing stamp clamps to the upper ordinary bound"
+            );
         }
     }
 }

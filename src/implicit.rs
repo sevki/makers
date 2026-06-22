@@ -16,7 +16,7 @@ use c2rust_bitfields;
 use libc::{printf, strchr, strlen};
 extern "C" {
     static mut stdout: *mut FILE;
-    fn fflush(__stream: *mut FILE) -> ::core::ffi::c_int;
+    fn fflush(__stream: *mut FILE) -> i32;
 }
 pub type file = File;
 pub type dep = Dep;
@@ -40,20 +40,20 @@ use crate::variable::{
 use crate::vpath::vpath_search;
 
 /// `DB_IMPLICIT`: `-d` implicit-rule tracing enabled in `db_level`.
-const DB_IMPLICIT: ::core::ffi::c_int = 0x8;
+const DB_IMPLICIT: i32 = 0x8;
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
-const MAP_NUL: ::core::ffi::c_int = 0x0001;
-const MAP_BLANK: ::core::ffi::c_int = 0x0002;
-const MAP_NEWLINE: ::core::ffi::c_int = 0x0004;
-const MAP_PIPE: ::core::ffi::c_int = 0x0100;
+const MAP_NUL: i32 = 0x0001;
+const MAP_BLANK: i32 = 0x0002;
+const MAP_NEWLINE: i32 = 0x0004;
+const MAP_PIPE: i32 = 0x0100;
 /// `parse_file_seq` flags (see `dep.h`).
-const PARSEFS_ONEWORD: ::core::ffi::c_int = 0x20;
-const PARSEFS_WAIT: ::core::ffi::c_int = 0x40;
+const PARSEFS_ONEWORD: i32 = 0x20;
+const PARSEFS_WAIT: i32 = 0x40;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set(c: u8, mask: i32) -> bool {
+    stopchar_map()[c as usize] as i32 & mask != 0
 }
 
 /// `DBS (DB_IMPLICIT, ...)` from the C original: print an indented trace
@@ -141,7 +141,7 @@ unsafe fn free_dep_chain(d: *mut dep) {
 /// # Safety
 /// `file` must point to a valid file entry; the rule database and all linked
 /// structures must be valid; must run single-threaded.
-pub unsafe fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> ::core::ffi::c_int {
+pub unsafe fn try_implicit_rule(file: *mut file, depth: ::core::ffi::c_uint) -> i32 {
     let name = file
         .as_ref()
         .expect("try_implicit_rule requires a file")
@@ -238,11 +238,11 @@ unsafe fn rule_target(r: &rule, ti: usize) -> (*const ::core::ffi::c_char, &[u8]
 }
 unsafe fn pattern_search(
     file: *mut file,
-    archive: ::core::ffi::c_int,
+    archive: i32,
     mut depth: ::core::ffi::c_uint,
     recursions: ::core::ffi::c_uint,
-    allow_compat_rules: ::core::ffi::c_int,
-) -> ::core::ffi::c_int {
+    allow_compat_rules: i32,
+) -> i32 {
     let file_ref = file.as_mut().expect("pattern_search requires a file");
     // The target name (inside the parens for an archive member reference).
     let filename: *const ::core::ffi::c_char = if archive != 0 {
@@ -277,10 +277,10 @@ unsafe fn pattern_search(
             .wrapping_mul(MAX_PATTERN_TARGETS.load(Ordering::Relaxed)) as usize,
     );
     let foundrule: usize;
-    let mut file_vars_initialized: ::core::ffi::c_int = 0;
+    let mut file_vars_initialized: i32 = 0;
     let mut specific_rule_matched: bool = false;
     let mut ri: usize = 0;
-    let mut found_compat_rule: ::core::ffi::c_int = 0;
+    let mut found_compat_rule: i32 = 0;
     let mut rule: *mut rule;
     let mut pathdir: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
     let mut pathdir_buf: Vec<u8> = Vec::new();
@@ -375,7 +375,7 @@ unsafe fn pattern_search(
         // Second pass: try each candidate; the first round requires every
         // prerequisite to exist or "ought to exist", the second round
         // ("trying harder") also accepts buildable intermediate files.
-        let mut intermed_ok: ::core::ffi::c_int = 0;
+        let mut intermed_ok: i32 = 0;
         while intermed_ok < 2 {
             deplist.clear();
             if intermed_ok != 0 {
@@ -384,9 +384,9 @@ unsafe fn pattern_search(
             ri = 0;
             while ri < tryrules.len() {
                 let mut failed = false;
-                let mut file_variables_set: ::core::ffi::c_int = 0;
+                let mut file_variables_set: i32 = 0;
                 let mut deps_found: ::core::ffi::c_uint = 0;
-                let mut order_only: ::core::ffi::c_int = 0;
+                let mut order_only: i32 = 0;
                 let tr = tryrules[ri];
                 rule = tr.rule;
                 let rule_terminal = rule.as_ref().map_or(0, |r| r.terminal);
@@ -412,7 +412,7 @@ unsafe fn pattern_search(
                         depth,
                         c"Trying pattern rule '%s' with stem '%.*s'.\n".as_ptr(),
                         get_rule_defn(rule),
-                        stemlen as ::core::ffi::c_int,
+                        stemlen as i32,
                         name[stem_off..].as_ptr()
                     );
                     if stemlen + if check_lastslash { pathlen } else { 0 } > GET_PATH_MAX {
@@ -424,7 +424,7 @@ unsafe fn pattern_search(
                             } else {
                                 c"".as_ptr()
                             },
-                            stemlen as ::core::ffi::c_int,
+                            stemlen as i32,
                             name[stem_off..].as_ptr()
                         );
                     } else {
@@ -462,7 +462,7 @@ unsafe fn pattern_search(
                             if dep_ref.need_2nd_expansion() == 0 {
                                 // No second expansion: substitute the stem
                                 // for '%' and parse the whole name at once.
-                                let mut is_explicit: ::core::ffi::c_int = 1;
+                                let mut is_explicit: i32 = 1;
                                 let dep_bytes = cstr_bytes(nptr);
                                 depname.clear();
                                 if let Some(cp) = dep_bytes.iter().position(|&b| b == b'%') {
@@ -499,7 +499,7 @@ unsafe fn pattern_search(
                                 // Second expansion: take one word at a time,
                                 // replace '%' with $* (or $(*F)), expand, and
                                 // parse the result.
-                                let mut add_dir: ::core::ffi::c_int = 0;
+                                let mut add_dir: i32 = 0;
                                 let mut len: size_t = 0;
                                 nptr = get_next_word(nptr, &raw mut len);
                                 if nptr.is_null() {
@@ -513,7 +513,7 @@ unsafe fn pattern_search(
                                     nptr = end;
                                     continue;
                                 }
-                                let is_explicit: ::core::ffi::c_int;
+                                let is_explicit: i32;
                                 depname.clear();
                                 match word.iter().position(|&b| b == b'%') {
                                     None => {

@@ -5,7 +5,7 @@
 //! their callers (the makefile reader, the variable expander, the job
 //! runner) are still C-shaped.
 
-use ::core::ffi::{c_char, c_int, c_longlong, c_uint, c_ulonglong, c_void};
+use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
 use ::core::ptr::{null, null_mut};
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -26,29 +26,29 @@ use crate::stdio::FILE;
 use crate::sys_stat::stat;
 
 extern "C" {
-    fn stat(file: *const c_char, buf: *mut stat) -> c_int;
+    fn stat(file: *const c_char, buf: *mut stat) -> i32;
     static mut stderr: *mut FILE;
-    fn fclose(stream: *mut FILE) -> c_int;
-    fn fflush(stream: *mut FILE) -> c_int;
+    fn fclose(stream: *mut FILE) -> i32;
+    fn fflush(stream: *mut FILE) -> i32;
     fn fopen(filename: *const c_char, modes: *const c_char) -> *mut FILE;
-    fn fdopen(fd: c_int, modes: *const c_char) -> *mut FILE;
-    fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> c_int;
-    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> c_int;
+    fn fdopen(fd: i32, modes: *const c_char) -> *mut FILE;
+    fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> i32;
+    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> i32;
     fn time(timer: *mut time_t) -> time_t;
 }
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
-const MAP_NUL: c_int = 0x0001;
-const MAP_BLANK: c_int = 0x0002;
-const MAP_NEWLINE: c_int = 0x0004;
-const MAP_VARSEP: c_int = 0x0080;
-const MAP_DIRSEP: c_int = 0x8000;
-const MAP_SPACE: c_int = MAP_BLANK | MAP_NEWLINE;
+const MAP_NUL: i32 = 0x0001;
+const MAP_BLANK: i32 = 0x0002;
+const MAP_NEWLINE: i32 = 0x0004;
+const MAP_VARSEP: i32 = 0x0080;
+const MAP_DIRSEP: i32 = 0x8000;
+const MAP_SPACE: i32 = MAP_BLANK | MAP_NEWLINE;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-fn stop_set(c: c_char, mask: c_int) -> bool {
-    stopchar_map()[c as u8 as usize] as c_int & mask != 0
+fn stop_set(c: c_char, mask: i32) -> bool {
+    stopchar_map()[c as u8 as usize] as i32 & mask != 0
 }
 
 /// File-type test from `S_ISDIR`: `(mode & S_IFMT) == S_IFDIR`.
@@ -168,11 +168,11 @@ pub unsafe fn make_rand() -> c_uint {
 /// # Safety
 /// `v1` and `v2` must point to valid `char *` values that point to valid
 /// NUL-terminated strings.
-pub unsafe extern "C" fn alpha_compare(v1: *const c_void, v2: *const c_void) -> c_int {
+pub unsafe extern "C" fn alpha_compare(v1: *const c_void, v2: *const c_void) -> i32 {
     let s1: *const c_char = *(v1 as *mut *mut c_char);
     let s2: *const c_char = *(v2 as *mut *mut c_char);
     if *s1 != *s2 {
-        return *s1 as c_int - *s2 as c_int;
+        return *s1 as i32 - *s2 as i32;
     }
     strcmp(s1, s2)
 }
@@ -202,7 +202,7 @@ fn collapse_continuations_bytes(
     loop {
         let p = q;
         // Count the preceding backslashes: `i` ends as 1 - (their count).
-        let mut i: c_int;
+        let mut i: i32;
         if p > 0 && buf[p - 1] == b'\\' {
             i = -2;
             while p as isize + i as isize >= 0 && buf[(p as isize + i as isize) as usize] == b'\\' {
@@ -438,14 +438,14 @@ pub unsafe fn next_token(mut s: *const c_char) -> *mut c_char {
 /// parentheses or braces. `bytes` must contain the terminating NUL slot.
 pub fn skip_reference(bytes: &[u8]) -> usize {
     let openparen = bytes[0] as c_char;
-    let mut count: c_int = 1;
+    let mut count: i32 = 1;
 
     if openparen == 0 {
         return 0;
     }
-    let closeparen: c_char = if openparen as c_int == '(' as i32 {
+    let closeparen: c_char = if openparen as i32 == '(' as i32 {
         ')' as c_char
-    } else if openparen as c_int == '{' as i32 {
+    } else if openparen as i32 == '{' as i32 {
         '}' as c_char
     } else {
         // Single-character reference like $X.
@@ -519,7 +519,7 @@ unsafe fn end_of_token_raw(mut p: *const c_char) -> *mut c_char {
 /// writes. Returns `len` on success or -1 on failure.
 /// # Safety
 /// `buffer` must be valid for reads of `len` bytes; `fd` must be open.
-pub unsafe fn writebuf(fd: c_int, buffer: *const c_void, len: size_t) -> ssize_t {
+pub unsafe fn writebuf(fd: i32, buffer: *const c_void, len: size_t) -> ssize_t {
     let mut msg: *const c_char = buffer as *const c_char;
     let mut l = len;
     while l != 0 {
@@ -543,7 +543,7 @@ pub unsafe fn writebuf(fd: c_int, buffer: *const c_void, len: size_t) -> ssize_t
 /// short reads. Returns the number of bytes read, or -1 on failure.
 /// # Safety
 /// `buffer` must be valid for writes of `len` bytes; `fd` must be open.
-pub unsafe fn readbuf(fd: c_int, buffer: *mut c_void, mut len: size_t) -> ssize_t {
+pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, mut len: size_t) -> ssize_t {
     let mut msg: *mut c_char = buffer as *mut c_char;
     while len != 0 {
         let mut r: ssize_t;
@@ -678,7 +678,7 @@ pub unsafe fn get_tmpdir() -> *const c_char {
             found = true;
 
             let mut st: stat = ::core::mem::zeroed();
-            let mut r: c_int;
+            let mut r: i32;
             loop {
                 r = stat(tmpdir, &mut st);
                 if !(r == -1 && *__errno_location() == EINTR) {
@@ -744,8 +744,8 @@ pub unsafe fn get_tmptemplate() -> *mut c_char {
 /// # Safety
 /// `name` must be null or valid for writes; the caller takes ownership of
 /// `*name`.
-pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> c_int {
-    let mut fd: c_int;
+pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> i32 {
+    let mut fd: i32;
 
     if !name.is_null() {
         *name = null_mut();
@@ -782,7 +782,7 @@ pub unsafe fn get_tmpfd(name: *mut *mut c_char) -> c_int {
     if !name.is_null() {
         *name = tmpnm;
     } else {
-        let mut r: c_int;
+        let mut r: i32;
         loop {
             r = unlink(tmpnm);
             if !(r == -1 && *__errno_location() == EINTR) {
@@ -1017,7 +1017,7 @@ mod next_token_tests {
 #[cfg(test)]
 mod lindex_unsafe_oracle {
     use super::lindex;
-    use ::core::ffi::{c_char, c_int};
+    use ::core::ffi::c_char;
     use ::core::ptr::null_mut;
 
     /// Verbatim copy of the original c2rust-derived `lindex`, preserved as a
@@ -1025,13 +1025,9 @@ mod lindex_unsafe_oracle {
     ///
     /// # Safety
     /// `s..limit` must be a valid readable range.
-    unsafe fn lindex_oracle(
-        mut s: *const c_char,
-        limit: *const c_char,
-        c: c_int,
-    ) -> *mut c_char {
+    unsafe fn lindex_oracle(mut s: *const c_char, limit: *const c_char, c: i32) -> *mut c_char {
         while s < limit {
-            if matches!(s.as_ref(), Some(&b) if b as c_int == c) {
+            if matches!(s.as_ref(), Some(&b) if b as i32 == c) {
                 return s as *mut c_char;
             }
             s = s.add(1);
@@ -1045,26 +1041,26 @@ mod lindex_unsafe_oracle {
     /// `Some(i)` -> `s.add(i)`, `None` -> null.
     ///
     /// The safe API searches for a `u8`; the oracle compares the (signed)
-    /// `c_char` sign-extended to `c_int`. To exercise that boundary faithfully
-    /// we feed the oracle `(c as i8) as c_int`, which is exactly the value its
-    /// `b as c_int` comparison produces for byte `b == c` (this is what proves
+    /// `c_char` sign-extended to `i32`. To exercise that boundary faithfully
+    /// we feed the oracle `(c as i8) as i32`, which is exactly the value its
+    /// `b as i32` comparison produces for byte `b == c` (this is what proves
     /// sign-extension parity for the high byte `0xff`).
     #[test]
     fn matches_oracle() {
         let cases: &[(&[u8], u8)] = &[
-            (b"hello", b'l'),     // first match mid-string
-            (b"hello", b'h'),     // match at start
-            (b"hello", b'o'),     // match at last byte
-            (b"hello", b'z'),     // no match
-            (b"", b'a'),          // empty range
-            (b"a\0b", 0),         // searching for NUL, embedded
-            (b"aaa", b'a'),       // returns the first of repeats
-            (b"\xff\x01", 0xff),  // high byte (sign-extension parity)
+            (b"hello", b'l'),    // first match mid-string
+            (b"hello", b'h'),    // match at start
+            (b"hello", b'o'),    // match at last byte
+            (b"hello", b'z'),    // no match
+            (b"", b'a'),         // empty range
+            (b"a\0b", 0),        // searching for NUL, embedded
+            (b"aaa", b'a'),      // returns the first of repeats
+            (b"\xff\x01", 0xff), // high byte (sign-extension parity)
         ];
 
         for &(buf, c) in cases {
             let s = buf.as_ptr() as *const c_char;
-            let c_oracle = (c as i8) as c_int;
+            let c_oracle = (c as i8) as i32;
             // Exercise every prefix length so the boundary is covered.
             for len in 0..=buf.len() {
                 let safe = lindex(&buf[..len], c);
@@ -1075,10 +1071,7 @@ mod lindex_unsafe_oracle {
                     Some(i) => (unsafe { s.add(i) }) as *mut c_char,
                     None => null_mut(),
                 };
-                assert_eq!(
-                    safe_ptr, oracle,
-                    "mismatch buf={buf:?} c={c} len={len}"
-                );
+                assert_eq!(safe_ptr, oracle, "mismatch buf={buf:?} c={c} len={len}");
             }
         }
     }
@@ -1087,14 +1080,14 @@ mod lindex_unsafe_oracle {
 #[cfg(test)]
 mod skip_reference_unsafe_oracle {
     use super::skip_reference;
-    use ::core::ffi::{c_char, c_int};
+    use ::core::ffi::c_char;
 
     // Re-derive the helpers the oracle needs, identical to the module ones.
-    const MAP_NUL: c_int = 0x0001;
-    const MAP_VARSEP: c_int = 0x0080;
+    const MAP_NUL: i32 = 0x0001;
+    const MAP_VARSEP: i32 = 0x0080;
 
-    fn stop_set(c: c_char, mask: c_int) -> bool {
-        crate::make_main::stopchar_map()[c as u8 as usize] as c_int & mask != 0
+    fn stop_set(c: c_char, mask: i32) -> bool {
+        crate::make_main::stopchar_map()[c as u8 as usize] as i32 & mask != 0
     }
 
     /// Verbatim copy of the original c2rust-derived `skip_reference`, preserved
@@ -1104,14 +1097,14 @@ mod skip_reference_unsafe_oracle {
     /// `p` must be a valid NUL-terminated string.
     unsafe fn skip_reference_oracle(mut p: *const c_char) -> *mut c_char {
         let openparen: c_char = *p;
-        let mut count: c_int = 1;
+        let mut count: i32 = 1;
 
         if openparen == 0 {
             return p as *mut c_char;
         }
-        let closeparen: c_char = if openparen as c_int == '(' as i32 {
+        let closeparen: c_char = if openparen as i32 == '(' as i32 {
             ')' as c_char
-        } else if openparen as c_int == '{' as i32 {
+        } else if openparen as i32 == '{' as i32 {
             '}' as c_char
         } else {
             return p.add(1) as *mut c_char;
@@ -1180,10 +1173,10 @@ mod skip_reference_unsafe_oracle {
 #[cfg(test)]
 mod end_of_token_unsafe_oracle {
     use super::{end_of_token, MAP_NUL, MAP_SPACE};
-    use ::core::ffi::{c_char, c_int};
+    use ::core::ffi::c_char;
 
-    fn stop_set(c: c_char, mask: c_int) -> bool {
-        crate::make_main::stopchar_map()[c as u8 as usize] as c_int & mask != 0
+    fn stop_set(c: c_char, mask: i32) -> bool {
+        crate::make_main::stopchar_map()[c as u8 as usize] as i32 & mask != 0
     }
 
     /// Verbatim copy of the original c2rust-derived `end_of_token`, preserved

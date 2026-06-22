@@ -12,7 +12,7 @@
 //! and `optimize_for_exec` code paths are implemented for completeness so the
 //! function remains a faithful drop-in for the C ABI symbol.
 
-use ::core::ffi::{c_char, c_int};
+use ::core::ffi::c_char;
 
 /// True if `path` is executable (`X_OK`) and is not a directory, matching the
 /// gnulib check that skips directories whose search bit happens to be set.
@@ -108,7 +108,7 @@ pub unsafe fn find_in_given_path(
     optimize_for_exec: bool,
 ) -> *const c_char {
     // A name containing a slash is a path itself; it is never searched in PATH.
-    if !libc::strchr(progname, b'/' as c_int).is_null() {
+    if !libc::strchr(progname, b'/' as i32).is_null() {
         if optimize_for_exec {
             return progname;
         }

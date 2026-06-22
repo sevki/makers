@@ -5,7 +5,7 @@
 //! cache) because they are shared with `read.rs`, `remake.rs`, and
 //! `implicit.rs` through `extern "C"` boundaries.
 
-use ::core::ffi::{c_char, c_int, c_uint, c_void};
+use ::core::ffi::{c_char, c_uint, c_void};
 use ::core::ptr::{null, null_mut};
 
 use libc::{__errno_location, free, printf, puts, strcmp, strlen};
@@ -23,24 +23,24 @@ use crate::strcache::{strcache_add, strcache_add_len};
 use crate::sys_stat::stat;
 
 extern "C" {
-    fn stat(file: *const c_char, buf: *mut stat) -> c_int;
+    fn stat(file: *const c_char, buf: *mut stat) -> i32;
     static mut stdout: *mut FILE;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> c_int;
+    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
 }
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
-const MAP_BLANK: c_int = 0x0002;
-const MAP_NEWLINE: c_int = 0x0004;
-const MAP_COLON: c_int = 0x0040;
-const MAP_SPACE: c_int = MAP_BLANK | MAP_NEWLINE;
+const MAP_BLANK: i32 = 0x0002;
+const MAP_NEWLINE: i32 = 0x0004;
+const MAP_COLON: i32 = 0x0040;
+const MAP_SPACE: i32 = MAP_BLANK | MAP_NEWLINE;
 /// On POSIX the search-path separator is `:`.
-const MAP_PATHSEP: c_int = MAP_COLON;
-const PATH_SEPARATOR_CHAR: c_int = ':' as i32;
+const MAP_PATHSEP: i32 = MAP_COLON;
+const PATH_SEPARATOR_CHAR: i32 = ':' as i32;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-fn stop_set(c: u8, mask: c_int) -> bool {
-    stopchar_map()[c as usize] as c_int & mask != 0
+fn stop_set(c: u8, mask: i32) -> bool {
+    stopchar_map()[c as usize] as i32 & mask != 0
 }
 
 /// Borrow a NUL-terminated C string as a byte slice (without the NUL).
@@ -216,7 +216,7 @@ pub unsafe fn construct_vpath_list(pattern: *mut c_char, dirpath: *mut c_char) {
         // Find the end of this entry.
         let start = i;
         while i < bytes.len()
-            && bytes[i] as c_int != PATH_SEPARATOR_CHAR
+            && bytes[i] as i32 != PATH_SEPARATOR_CHAR
             && !stop_set(bytes[i], MAP_BLANK)
         {
             i += 1;
@@ -302,8 +302,8 @@ mod gpath_search_unsafe_oracle {
     use super::*;
 
     /// Verbatim pre-conversion implementation, preserved as a differential
-    /// oracle. Operates on a raw pointer + length and returns `c_int`.
-    unsafe fn gpath_search_oracle(file: *const c_char, len: size_t) -> c_int {
+    /// oracle. Operates on a raw pointer + length and returns `i32`.
+    unsafe fn gpath_search_oracle(file: *const c_char, len: size_t) -> i32 {
         if !gpaths.is_null() && len <= (*gpaths).maxlen {
             let needle = ::core::slice::from_raw_parts(file as *const u8, len);
             for &entry in searchpath_entries(gpaths) {
@@ -353,15 +353,16 @@ mod gpath_search_unsafe_oracle {
             b"src",
             b"include",
             b"a/b/c",
-            b"a/b",          // shorter than an entry, not a match
-            b"srcx",         // longer, exceeds maxlen check or differs
-            b"",             // empty needle
-            b"includ",       // prefix only
-            b"a/b/c/d/e/f",  // longer than maxlen
+            b"a/b",         // shorter than an entry, not a match
+            b"srcx",        // longer, exceeds maxlen check or differs
+            b"",            // empty needle
+            b"includ",      // prefix only
+            b"a/b/c/d/e/f", // longer than maxlen
         ];
         for &needle in cases {
             let safe = gpath_search(needle);
-            let oracle = unsafe { gpath_search_oracle(needle.as_ptr() as *const c_char, needle.len()) };
+            let oracle =
+                unsafe { gpath_search_oracle(needle.as_ptr() as *const c_char, needle.len()) };
             assert_eq!(
                 safe,
                 oracle != 0,
@@ -471,7 +472,7 @@ unsafe fn selective_vpath_search(
                 // file really exists in the filesystem, because higher
                 // levels get confused otherwise.
                 let mut st: stat = ::core::mem::zeroed();
-                let mut e: c_int;
+                let mut e: i32;
                 loop {
                     e = stat(name, &mut st);
                     if !(e == -1 && *__errno_location() == libc::EINTR) {
@@ -603,7 +604,7 @@ unsafe fn print_search_path(path: *const Vpath) {
     let entries = searchpath_entries(path);
     for (idx, &entry) in entries.iter().enumerate() {
         let sep = if idx + 1 == entries.len() {
-            '\n' as c_int
+            '\n' as i32
         } else {
             PATH_SEPARATOR_CHAR
         };

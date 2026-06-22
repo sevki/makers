@@ -6,8 +6,8 @@ use c2rust_bitfields;
 use libc::{abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, strstr};
 extern "C" {
     static mut stdout: *mut FILE;
-    fn putc(__c: ::core::ffi::c_int, __stream: *mut FILE) -> ::core::ffi::c_int;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> ::core::ffi::c_int;
+    fn putc(__c: i32, __stream: *mut FILE) -> i32;
+    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -17,12 +17,12 @@ extern "C" {
         __s1: *const ::core::ffi::c_void,
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
-    ) -> ::core::ffi::c_int;
+    ) -> i32;
     fn strncmp(
         __s1: *const ::core::ffi::c_char,
         __s2: *const ::core::ffi::c_char,
         __n: size_t,
-    ) -> ::core::ffi::c_int;
+    ) -> i32;
     fn mempcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -61,10 +61,7 @@ use crate::hash::{
     hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
 };
 use crate::job::default_shell;
-use crate::make_main::{
-    cmd_prefix, export_all_variables, makelevel,
-    shell_var, stopchar_map,
-};
+use crate::make_main::{cmd_prefix, export_all_variables, makelevel, shell_var, stopchar_map};
 use crate::misc::concat;
 use crate::output::fatal;
 use crate::output::msg;
@@ -141,7 +138,7 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
     unsafe { ::core::mem::transmute::<[u8; 10], [::core::ffi::c_char; 10]>(*b"MAKELEVEL\0") };
-pub const RECIPEPREFIX_DEFAULT: ::core::ffi::c_int = '\t' as i32;
+pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
 /// Depth of the in-progress environment-variable expansion (used to detect
 /// self-referential recursion). Stored in an atomic so its reads are plain
 /// safe operations; all access is single-threaded, so `Relaxed` preserves the
@@ -207,7 +204,7 @@ pub unsafe fn create_pattern_var(
     }
     (*p).target = target;
     (*p).len = len;
-    (*p).suffix = suffix.offset(1 as ::core::ffi::c_int as isize);
+    (*p).suffix = suffix.offset(1_i32 as isize);
     if len < 256 {
         last_pattern_vars[len as usize] = p;
     }
@@ -237,21 +234,17 @@ unsafe extern "C" fn lookup_pattern_var(
                     target,
                     stem.offset_from(target) as ::core::ffi::c_long as size_t,
                 ) == 0))
-                && *(*p).suffix as ::core::ffi::c_int
-                    == *stem.offset(stemlen as isize) as ::core::ffi::c_int
-                && (*(*p).suffix as ::core::ffi::c_int == 0
-                    || *(*p).suffix.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                        == *stem.offset(stemlen.wrapping_add(1) as isize) as ::core::ffi::c_int
-                        && (*(*p).suffix.offset(1 as ::core::ffi::c_int as isize)
-                            as ::core::ffi::c_int
-                            == 0
+                && *(*p).suffix as i32 == *stem.offset(stemlen as isize) as i32
+                && (*(*p).suffix as i32 == 0
+                    || *(*p).suffix.offset(1_i32 as isize) as i32
+                        == *stem.offset(stemlen.wrapping_add(1) as isize) as i32
+                        && (*(*p).suffix.offset(1_i32 as isize) as i32 == 0
                             || strcmp(
-                                ((*p).suffix.offset(1 as ::core::ffi::c_int as isize)
-                                    as *const ::core::ffi::c_char)
-                                    .offset(1 as ::core::ffi::c_int as isize),
+                                ((*p).suffix.offset(1_i32 as isize) as *const ::core::ffi::c_char)
+                                    .offset(1_i32 as isize),
                                 (stem.offset(stemlen.wrapping_add(1) as isize)
                                     as *const ::core::ffi::c_char)
-                                    .offset(1 as ::core::ffi::c_int as isize),
+                                    .offset(1_i32 as isize),
                             ) == 0))
             {
                 break;
@@ -283,13 +276,10 @@ pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
-unsafe fn variable_hash_cmp(
-    xv: *const ::core::ffi::c_void,
-    yv: *const ::core::ffi::c_void,
-) -> ::core::ffi::c_int {
+unsafe fn variable_hash_cmp(xv: *const ::core::ffi::c_void, yv: *const ::core::ffi::c_void) -> i32 {
     let x: *const variable = xv as *const variable;
     let y: *const variable = yv as *const variable;
-    let result: ::core::ffi::c_int = (*x).length.wrapping_sub((*y).length) as ::core::ffi::c_int;
+    let result: i32 = (*x).length.wrapping_sub((*y).length) as i32;
     if result != 0 {
         return result;
     }
@@ -303,9 +293,9 @@ unsafe fn variable_hash_cmp(
         )
     }
 }
-pub const VARIABLE_BUCKETS: ::core::ffi::c_int = 523;
-pub const PERFILE_VARIABLE_BUCKETS: ::core::ffi::c_int = 23;
-pub const SMALL_SCOPE_VARIABLE_BUCKETS: ::core::ffi::c_int = 13;
+pub const VARIABLE_BUCKETS: i32 = 523;
+pub const PERFILE_VARIABLE_BUCKETS: i32 = 23;
+pub const SMALL_SCOPE_VARIABLE_BUCKETS: i32 = 13;
 static mut global_variable_set: variable_set = variable_set {
     table: hash_table {
         ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
@@ -331,13 +321,13 @@ static mut global_setlist: variable_set_list = variable_set_list {
 pub static mut current_variable_set_list: *mut variable_set_list =
     &raw const global_setlist as *mut variable_set_list;
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
-const MAP_BLANK: ::core::ffi::c_int = 0x2;
-const MAP_NEWLINE: ::core::ffi::c_int = 0x4;
+const MAP_BLANK: i32 = 0x2;
+const MAP_NEWLINE: i32 = 0x4;
 
 /// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
 /// classes selected by `mask`?
-fn stop_set(c: u8, mask: ::core::ffi::c_int) -> bool {
-    stopchar_map()[c as usize] as ::core::ffi::c_int & mask != 0
+fn stop_set(c: u8, mask: i32) -> bool {
+    stopchar_map()[c as usize] as i32 & mask != 0
 }
 
 /// Emit the "invalid/undefined variable" diagnostic shared by the three
@@ -403,7 +393,7 @@ pub unsafe fn define_variable_in_set(
     length: size_t,
     value: *const ::core::ffi::c_char,
     mut origin: variable_origin,
-    recursive: ::core::ffi::c_int,
+    recursive: i32,
     set: *mut variable_set,
     flocp: *const Floc,
 ) -> *mut variable {
@@ -436,18 +426,17 @@ pub unsafe fn define_variable_in_set(
     ) as *mut *mut variable;
     v = *var_slot;
     if crate::make_main::env_overrides()
-        && origin as ::core::ffi::c_uint == o_env as ::core::ffi::c_int as ::core::ffi::c_uint
+        && origin as ::core::ffi::c_uint == o_env as i32 as ::core::ffi::c_uint
     {
         origin = o_env_override;
     }
     if !(v.is_null()
         || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        if crate::make_main::env_overrides() && (*v).origin() as ::core::ffi::c_int == o_env as ::core::ffi::c_int
-        {
+        if crate::make_main::env_overrides() && (*v).origin() as i32 == o_env as i32 {
             (*v).set_origin(o_env_override as variable_origin);
         }
-        if origin as ::core::ffi::c_int >= (*v).origin() as ::core::ffi::c_int {
+        if origin as i32 >= (*v).origin() as i32 {
             free((*v).value as *mut ::core::ffi::c_void);
             (*v).value = xstrdup(value);
             if !flocp.is_null() {
@@ -480,27 +469,25 @@ pub unsafe fn define_variable_in_set(
     (*v).set_export(v_default as variable_export);
     (*v).set_exportable(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     name = (*v).name;
-    if *name as ::core::ffi::c_int != '_' as i32
-        && ((*name as ::core::ffi::c_int) < 'A' as i32 || *name as ::core::ffi::c_int > 'Z' as i32)
-        && ((*name as ::core::ffi::c_int) < 'a' as i32 || *name as ::core::ffi::c_int > 'z' as i32)
+    if *name as i32 != '_' as i32
+        && ((*name as i32) < 'A' as i32 || *name as i32 > 'Z' as i32)
+        && ((*name as i32) < 'a' as i32 || *name as i32 > 'z' as i32)
     {
         (*v).set_exportable(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     } else {
-        name = name.offset(1 as ::core::ffi::c_int as isize);
-        while *name as ::core::ffi::c_int != 0 {
-            if *name as ::core::ffi::c_int != '_' as i32
-                && ((*name as ::core::ffi::c_int) < 'a' as i32
-                    || *name as ::core::ffi::c_int > 'z' as i32)
-                && ((*name as ::core::ffi::c_int) < 'A' as i32
-                    || *name as ::core::ffi::c_int > 'Z' as i32)
+        name = name.offset(1_i32 as isize);
+        while *name as i32 != 0 {
+            if *name as i32 != '_' as i32
+                && ((*name as i32) < 'a' as i32 || *name as i32 > 'z' as i32)
+                && ((*name as i32) < 'A' as i32 || *name as i32 > 'Z' as i32)
                 && !((*name as ::core::ffi::c_uint).wrapping_sub('0' as i32 as ::core::ffi::c_uint)
                     <= 9)
             {
                 break;
             }
-            name = name.offset(1 as ::core::ffi::c_int as isize);
+            name = name.offset(1_i32 as isize);
         }
-        if *name as ::core::ffi::c_int != 0 {
+        if *name as i32 != 0 {
             (*v).set_exportable(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
     }
@@ -567,7 +554,7 @@ pub unsafe fn undefine_variable_in_set(
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
     if crate::make_main::env_overrides()
-        && origin as ::core::ffi::c_uint == o_env as ::core::ffi::c_int as ::core::ffi::c_uint
+        && origin as ::core::ffi::c_uint == o_env as i32 as ::core::ffi::c_uint
     {
         origin = o_env_override;
     }
@@ -575,11 +562,10 @@ pub unsafe fn undefine_variable_in_set(
     if !(v.is_null()
         || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        if crate::make_main::env_overrides() && (*v).origin() as ::core::ffi::c_int == o_env as ::core::ffi::c_int
-        {
+        if crate::make_main::env_overrides() && (*v).origin() as i32 == o_env as i32 {
             (*v).set_origin(o_env_override as variable_origin);
         }
-        if origin as ::core::ffi::c_int >= (*v).origin() as ::core::ffi::c_int {
+        if origin as i32 >= (*v).origin() as i32 {
             hash_delete_at(&raw mut set.table, var_slot as *const ::core::ffi::c_void);
             free_variable_name_and_value(v as *const ::core::ffi::c_void);
             free(v as *mut ::core::ffi::c_void);
@@ -599,13 +585,13 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
     // access is single-threaded, so `Relaxed` preserves the original order.
     static LAST_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
     if variable_changenum() != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
-        && (*(*var).name as ::core::ffi::c_int
-            == *(b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
-            && (*(*var).name as ::core::ffi::c_int == 0
+        && (*(*var).name as i32
+            == *(b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char) as i32
+            && (*(*var).name as i32 == 0
                 || strcmp(
-                    (*var).name.offset(1 as ::core::ffi::c_int as isize),
+                    (*var).name.offset(1_i32 as isize),
                     (b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char)
-                        .offset(1 as ::core::ffi::c_int as isize),
+                        .offset(1_i32 as isize),
                 ) == 0))
     {
         let mut max: size_t = (strlen((*var).value) as size_t)
@@ -626,7 +612,7 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
                 || *vp as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
             {
                 let v: *mut variable = *vp;
-                let l: ::core::ffi::c_int = (*v).length as ::core::ffi::c_int;
+                let l: i32 = (*v).length as i32;
                 len = len.wrapping_add((l + 1) as size_t);
                 if len > max {
                     let off: size_t = p.offset_from((*var).value) as ::core::ffi::c_long as size_t;
@@ -641,12 +627,12 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
                     l as size_t,
                 ) as *mut ::core::ffi::c_char;
                 let fresh4 = p;
-                p = p.offset(1 as ::core::ffi::c_int as isize);
+                p = p.offset(1_i32 as isize);
                 *fresh4 = ' ' as i32 as ::core::ffi::c_char;
             }
-            vp = vp.offset(1 as ::core::ffi::c_int as isize);
+            vp = vp.offset(1_i32 as isize);
         }
-        *p.offset(-(1 as ::core::ffi::c_int as isize)) = 0;
+        *p.offset(-(1_i32 as isize)) = 0;
         LAST_CHANGENUM.store(variable_changenum(), ::std::sync::atomic::Ordering::Relaxed);
     }
     var
@@ -689,7 +675,7 @@ pub unsafe fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) 
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    let mut is_parent: ::core::ffi::c_int = 0;
+    let mut is_parent: i32 = 0;
     check_variable_reference(name, length);
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
@@ -702,7 +688,7 @@ pub unsafe fn lookup_variable(name: *const ::core::ffi::c_char, length: size_t) 
             &raw mut var_key as *const ::core::ffi::c_void,
         ) as *mut variable;
         if !v.is_null() && (is_parent == 0 || (*v).private_var() == 0) {
-            return if (*v).special() as ::core::ffi::c_int != 0 {
+            return if (*v).special() as i32 != 0 {
                 lookup_special_var(v)
             } else {
                 v
@@ -767,7 +753,7 @@ pub unsafe fn lookup_variable_in_set(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c_int) {
+pub unsafe fn initialize_file_variables(file: *mut file, reading: i32) {
     let mut l: *mut variable_set_list = (*file).variables;
     if l.is_null() {
         l = xmalloc(::core::mem::size_of::<variable_set_list>() as size_t)
@@ -813,7 +799,7 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
                 // below is a reference access (no raw deref for CodeQL) and the
                 // `f_simple` flavor write reuses that same binding — no extra
                 // statement line and no added branch.
-                let v = if (*p).variable.flavor() as ::core::ffi::c_int == f_simple as ::core::ffi::c_int {
+                let v = if (*p).variable.flavor() as i32 == f_simple as i32 {
                     let v = define_variable_in_set(
                         (*p).variable.name,
                         strlen((*p).variable.name) as size_t,
@@ -822,7 +808,9 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
                         0,
                         (*current_variable_set_list).set,
                         &raw mut (*p).variable.fileinfo,
-                    ).as_mut().expect("define_variable_in_set returned null");
+                    )
+                    .as_mut()
+                    .expect("define_variable_in_set returned null");
                     v.set_flavor(f_simple as variable_flavor);
                     v
                 } else {
@@ -832,9 +820,11 @@ pub unsafe fn initialize_file_variables(file: *mut file, reading: ::core::ffi::c
                         (*p).variable.value,
                         (*p).variable.origin(),
                         (*p).variable.flavor(),
-                        (*p).variable.conditional() as ::core::ffi::c_int,
+                        (*p).variable.conditional() as i32,
                         s_pattern,
-                    ).as_mut().expect("do_variable_definition returned null")
+                    )
+                    .as_mut()
+                    .expect("do_variable_definition returned null")
                 };
                 v.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
                 v.set_export((*p).variable.export() as variable_export);
@@ -955,11 +945,10 @@ unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *m
     let Some(from_set_ref) = from_set.as_ref() else {
         return;
     };
-    let mut from_var_slot: *mut *mut variable =
-        from_set_ref.table.ht_vec as *mut *mut variable;
+    let mut from_var_slot: *mut *mut variable = from_set_ref.table.ht_vec as *mut *mut variable;
     let from_var_end: *mut *mut variable =
         from_var_slot.offset(from_set_ref.table.ht_size as isize);
-    let inc: ::core::ffi::c_int = if to_set == &raw mut global_variable_set {
+    let inc: i32 = if to_set == &raw mut global_variable_set {
         1
     } else {
         0
@@ -990,7 +979,7 @@ unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *m
                 free(from_var as *mut ::core::ffi::c_void);
             }
         }
-        from_var_slot = from_var_slot.offset(1 as ::core::ffi::c_int as isize);
+        from_var_slot = from_var_slot.offset(1_i32 as isize);
     }
 }
 /// # Safety
@@ -1060,18 +1049,12 @@ pub unsafe fn define_automatic_variables() {
         &raw mut buf as *mut ::core::ffi::c_char,
         b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
         crate::version::version_string(),
-        if remote_description.is_null()
-            || *remote_description.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                == 0
-        {
+        if remote_description.is_null() || *remote_description.offset(0_i32 as isize) as i32 == 0 {
             b"\0" as *const u8 as *const ::core::ffi::c_char
         } else {
             b"-\0" as *const u8 as *const ::core::ffi::c_char
         },
-        if remote_description.is_null()
-            || *remote_description.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                == 0
-        {
+        if remote_description.is_null() || *remote_description.offset(0_i32 as isize) as i32 == 0 {
             b"\0" as *const u8 as *const ::core::ffi::c_char
         } else {
             remote_description as *const ::core::ffi::c_char
@@ -1104,9 +1087,9 @@ pub unsafe fn define_automatic_variables() {
         (*current_variable_set_list).set,
         NILF,
     );
-    if *(*v).value as ::core::ffi::c_int == 0
-        || (*v).origin() as ::core::ffi::c_int == o_env as ::core::ffi::c_int
-        || (*v).origin() as ::core::ffi::c_int == o_env_override as ::core::ffi::c_int
+    if *(*v).value as i32 == 0
+        || (*v).origin() as i32 == o_env as i32
+        || (*v).origin() as i32 == o_env_override as i32
     {
         free((*v).value as *mut ::core::ffi::c_void);
         (*v).set_origin(o_file as variable_origin);
@@ -1297,10 +1280,7 @@ pub fn should_export(v: &variable) -> bool {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn target_environment(
-    file: *mut file,
-    recursive: ::core::ffi::c_int,
-) -> *mut *mut ::core::ffi::c_char {
+pub unsafe fn target_environment(file: *mut file, recursive: i32) -> *mut *mut ::core::ffi::c_char {
     let set_list: *mut variable_set_list;
     let mut s: *mut variable_set_list;
     let mut table: hash_table = hash_table {
@@ -1323,11 +1303,11 @@ pub unsafe fn target_environment(
     let result_0: *mut *mut ::core::ffi::c_char;
     let mut result: *mut *mut ::core::ffi::c_char;
     let mut invalid: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut added_shell: ::core::ffi::c_int =
-        (shell_var.value == ::core::ptr::null_mut::<::core::ffi::c_char>()) as ::core::ffi::c_int;
-    let mut found_makelevel: ::core::ffi::c_int = 0;
-    let mut found_mflags: ::core::ffi::c_int = 0;
-    let mut found_makeflags: ::core::ffi::c_int = 0;
+    let mut added_shell: i32 =
+        (shell_var.value == ::core::ptr::null_mut::<::core::ffi::c_char>()) as i32;
+    let mut found_makelevel: i32 = 0;
+    let mut found_mflags: i32 = 0;
+    let mut found_makeflags: i32 = 0;
     if file.is_null() {
         ENV_RECURSION.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
@@ -1349,9 +1329,8 @@ pub unsafe fn target_environment(
     s = set_list;
     while !s.is_null() {
         let set: *mut variable_set = (*s).set;
-        let islocal: ::core::ffi::c_int = (s == set_list) as ::core::ffi::c_int;
-        let isglobal: ::core::ffi::c_int =
-            (set == &raw mut global_variable_set) as ::core::ffi::c_int;
+        let islocal: i32 = (s == set_list) as i32;
+        let isglobal: i32 = (set == &raw mut global_variable_set) as i32;
         v_slot = (*set).table.ht_vec as *mut *mut variable;
         v_end = v_slot.offset((*set).table.ht_size as isize);
         while v_slot < v_end {
@@ -1361,7 +1340,7 @@ pub unsafe fn target_environment(
             {
                 let evslot: *mut *mut variable;
                 let v: *mut variable = *v_slot;
-                if !(islocal == 0 && (*v).private_var() as ::core::ffi::c_int != 0) {
+                if !(islocal == 0 && (*v).private_var() as i32 != 0) {
                     evslot = hash_find_slot(&raw mut table, v as *const ::core::ffi::c_void)
                         as *mut *mut variable;
                     if (*evslot).is_null()
@@ -1377,14 +1356,12 @@ pub unsafe fn target_environment(
                                 evslot as *const ::core::ffi::c_void,
                             );
                         }
-                    } else if (**evslot).export() as ::core::ffi::c_int
-                        == v_default as ::core::ffi::c_int
-                    {
+                    } else if (**evslot).export() as i32 == v_default as i32 {
                         (**evslot).set_export((*v).export() as variable_export);
                     }
                 }
             }
-            v_slot = v_slot.offset(1 as ::core::ffi::c_int as isize);
+            v_slot = v_slot.offset(1_i32 as isize);
         }
         s = (*s).next;
     }
@@ -1406,44 +1383,40 @@ pub unsafe fn target_environment(
             // `v_0` is a live, non-null variable taken from an
             // occupied hash slot just above.
             if should_export(&*v_0) {
-                if (*v_0).recursive() as ::core::ffi::c_int != 0
-                    && ((*v_0).origin() as ::core::ffi::c_int != o_env as ::core::ffi::c_int
-                        && (*v_0).origin() as ::core::ffi::c_int
-                            != o_env_override as ::core::ffi::c_int
-                        || *(*v_0).name as ::core::ffi::c_int
-                            == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                as ::core::ffi::c_int
-                            && (*(*v_0).name as ::core::ffi::c_int == 0
+                if (*v_0).recursive() as i32 != 0
+                    && ((*v_0).origin() as i32 != o_env as i32
+                        && (*v_0).origin() as i32 != o_env_override as i32
+                        || *(*v_0).name as i32
+                            == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
+                            && (*(*v_0).name as i32 == 0
                                 || strcmp(
-                                    (*v_0).name.offset(1 as ::core::ffi::c_int as isize),
+                                    (*v_0).name.offset(1_i32 as isize),
                                     (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                        .offset(1 as ::core::ffi::c_int as isize),
+                                        .offset(1_i32 as isize),
                                 ) == 0))
                 {
                     cp = recursively_expand_for_file(v_0, file);
                     value = cp;
                 }
                 if added_shell == 0
-                    && (*(*v_0).name as ::core::ffi::c_int
-                        == *(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char)
-                            as ::core::ffi::c_int
-                        && (*(*v_0).name as ::core::ffi::c_int == 0
+                    && (*(*v_0).name as i32
+                        == *(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char) as i32
+                        && (*(*v_0).name as i32 == 0
                             || strcmp(
-                                (*v_0).name.offset(1 as ::core::ffi::c_int as isize),
+                                (*v_0).name.offset(1_i32 as isize),
                                 (b"SHELL\0" as *const u8 as *const ::core::ffi::c_char)
-                                    .offset(1 as ::core::ffi::c_int as isize),
+                                    .offset(1_i32 as isize),
                             ) == 0))
                 {
                     added_shell = 1;
                 } else if found_makelevel == 0
-                    && (*(*v_0).name as ::core::ffi::c_int
-                        == *(b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char)
-                            as ::core::ffi::c_int
-                        && (*(*v_0).name as ::core::ffi::c_int == 0
+                    && (*(*v_0).name as i32
+                        == *(b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char) as i32
+                        && (*(*v_0).name as i32 == 0
                             || strcmp(
-                                (*v_0).name.offset(1 as ::core::ffi::c_int as isize),
+                                (*v_0).name.offset(1_i32 as isize),
                                 (b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char)
-                                    .offset(1 as ::core::ffi::c_int as isize),
+                                    .offset(1_i32 as isize),
                             ) == 0))
                 {
                     let mut val: [::core::ffi::c_char; 23] = [0; 23];
@@ -1458,14 +1431,13 @@ pub unsafe fn target_environment(
                     found_makelevel = 1;
                 } else if !invalid.is_null() {
                     if found_makeflags == 0
-                        && (*(*v_0).name as ::core::ffi::c_int
-                            == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                as ::core::ffi::c_int
-                            && (*(*v_0).name as ::core::ffi::c_int == 0
+                        && (*(*v_0).name as i32
+                            == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
+                            && (*(*v_0).name as i32 == 0
                                 || strcmp(
-                                    (*v_0).name.offset(1 as ::core::ffi::c_int as isize),
+                                    (*v_0).name.offset(1_i32 as isize),
                                     (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                        .offset(1 as ::core::ffi::c_int as isize),
+                                        .offset(1_i32 as isize),
                                 ) == 0))
                     {
                         let mf: *mut ::core::ffi::c_char;
@@ -1510,14 +1482,13 @@ pub unsafe fn target_environment(
                             }
                         }
                     } else if found_mflags == 0
-                        && (*(*v_0).name as ::core::ffi::c_int
-                            == *(b"MFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                as ::core::ffi::c_int
-                            && (*(*v_0).name as ::core::ffi::c_int == 0
+                        && (*(*v_0).name as i32
+                            == *(b"MFLAGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
+                            && (*(*v_0).name as i32 == 0
                                 || strcmp(
-                                    (*v_0).name.offset(1 as ::core::ffi::c_int as isize),
+                                    (*v_0).name.offset(1_i32 as isize),
                                     (b"MFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                        .offset(1 as ::core::ffi::c_int as isize),
+                                        .offset(1_i32 as isize),
                                 ) == 0))
                     {
                         let mf_0: *const ::core::ffi::c_char;
@@ -1527,8 +1498,7 @@ pub unsafe fn target_environment(
                             b" --jobserver-auth=\0" as *const u8 as *const ::core::ffi::c_char,
                         )
                         .is_null()
-                            && !((*v_0).origin() as ::core::ffi::c_int
-                                != o_env as ::core::ffi::c_int)
+                            && !((*v_0).origin() as i32 != o_env as i32)
                         {
                             mf_0 = concat(2, value, invalid);
                             free(cp as *mut ::core::ffi::c_void);
@@ -1541,7 +1511,7 @@ pub unsafe fn target_environment(
                     }
                 }
                 let fresh10 = result;
-                result = result.offset(1 as ::core::ffi::c_int as isize);
+                result = result.offset(1_i32 as isize);
                 *fresh10 = xstrdup(concat(
                     3,
                     (*v_0).name,
@@ -1551,11 +1521,11 @@ pub unsafe fn target_environment(
                 free(cp as *mut ::core::ffi::c_void);
             }
         }
-        v_slot = v_slot.offset(1 as ::core::ffi::c_int as isize);
+        v_slot = v_slot.offset(1_i32 as isize);
     }
     if added_shell == 0 {
         let fresh11 = result;
-        result = result.offset(1 as ::core::ffi::c_int as isize);
+        result = result.offset(1_i32 as isize);
         *fresh11 = xstrdup(concat(
             3,
             shell_var.name,
@@ -1572,7 +1542,7 @@ pub unsafe fn target_environment(
             makelevel.wrapping_add(1),
         );
         let fresh12 = result;
-        result = result.offset(1 as ::core::ffi::c_int as isize);
+        result = result.offset(1_i32 as isize);
         *fresh12 = xstrdup(&raw mut val_0 as *mut ::core::ffi::c_char);
     }
     *result = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1587,39 +1557,33 @@ unsafe extern "C" fn set_special_var(var: *mut variable, origin: variable_origin
         return var;
     };
     let vname: *const ::core::ffi::c_char = varr.name;
-    let vn0: ::core::ffi::c_int = vname.as_ref().map_or(-1, |c| *c as ::core::ffi::c_int);
-    if vn0
-        == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
+    let vn0: i32 = vname.as_ref().map_or(-1, |c| *c as i32);
+    if vn0 == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
-                vname.offset(1 as ::core::ffi::c_int as isize),
-                (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                    .offset(1 as ::core::ffi::c_int as isize),
+                vname.offset(1_i32 as isize),
+                (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1_i32 as isize),
             ) == 0)
     {
         crate::make_main::reset_makeflags_special(origin);
-    } else if vn0
-        == *(b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
+    } else if vn0 == *(b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
-                vname.offset(1 as ::core::ffi::c_int as isize),
+                vname.offset(1_i32 as isize),
                 (b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char)
-                    .offset(1 as ::core::ffi::c_int as isize),
+                    .offset(1_i32 as isize),
             ) == 0)
     {
-        cmd_prefix =
-            (if *varr.value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
-                RECIPEPREFIX_DEFAULT
-            } else {
-                *varr.value.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-            }) as ::core::ffi::c_char;
-    } else if vn0
-        == *(b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char) as ::core::ffi::c_int
+        cmd_prefix = (if *varr.value.offset(0_i32 as isize) as i32 == 0 {
+            RECIPEPREFIX_DEFAULT
+        } else {
+            *varr.value.offset(0_i32 as isize) as i32
+        }) as ::core::ffi::c_char;
+    } else if vn0 == *(b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
-                vname.offset(1 as ::core::ffi::c_int as isize),
-                (b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char)
-                    .offset(1 as ::core::ffi::c_int as isize),
+                vname.offset(1_i32 as isize),
+                (b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1_i32 as isize),
             ) == 0)
     {
         let actions: *mut ::core::ffi::c_char = allocated_expand_variable(
@@ -1642,8 +1606,8 @@ pub unsafe fn shell_result(p: *const ::core::ffi::c_char) -> *mut ::core::ffi::c
     let mut args: [*mut ::core::ffi::c_char; 2] =
         [::core::ptr::null_mut::<::core::ffi::c_char>(); 2];
     install_variable_buffer(&raw mut buf, &raw mut len);
-    args[0 as ::core::ffi::c_int as usize] = p as *mut ::core::ffi::c_char;
-    args[1 as ::core::ffi::c_int as usize] = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    args[0_i32 as usize] = p as *mut ::core::ffi::c_char;
+    args[1_i32 as usize] = ::core::ptr::null_mut::<::core::ffi::c_char>();
     func_shell_base(
         variable_buffer,
         &raw mut args as *mut *mut ::core::ffi::c_char,
@@ -1661,7 +1625,7 @@ pub unsafe fn do_variable_definition(
     value: *const ::core::ffi::c_char,
     origin: variable_origin,
     mut flavor: variable_flavor,
-    conditional: ::core::ffi::c_int,
+    conditional: i32,
     scope: variable_scope,
 ) -> *mut variable {
     // Set to false by the one branch that must keep the existing value
@@ -1670,7 +1634,7 @@ pub unsafe fn do_variable_definition(
     let mut newval: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut alloc_value: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
-    let mut append: ::core::ffi::c_int = 0;
+    let mut append: i32 = 0;
     if conditional != 0 {
         v = lookup_variable(varname, strlen(varname) as size_t);
         if !v.is_null() {
@@ -1689,17 +1653,16 @@ pub unsafe fn do_variable_definition(
                 as *mut ::core::ffi::c_char;
             let mut np: *mut ::core::ffi::c_char = alloc_value;
             let mut op: *mut ::core::ffi::c_char = t;
-            while *op.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int != 0 {
-                if *op.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == '$' as i32
-                {
+            while *op.offset(0_i32 as isize) as i32 != 0 {
+                if *op.offset(0_i32 as isize) as i32 == '$' as i32 {
                     let fresh0 = np;
-                    np = np.offset(1 as ::core::ffi::c_int as isize);
+                    np = np.offset(1_i32 as isize);
                     *fresh0 = '$' as i32 as ::core::ffi::c_char;
                 }
                 let fresh1 = op;
-                op = op.offset(1 as ::core::ffi::c_int as isize);
+                op = op.offset(1_i32 as isize);
                 let fresh2 = np;
-                np = np.offset(1 as ::core::ffi::c_int as isize);
+                np = np.offset(1_i32 as isize);
                 *fresh2 = *fresh1;
             }
             *np = 0;
@@ -1718,9 +1681,8 @@ pub unsafe fn do_variable_definition(
             newval = value;
         }
         4 | 6 => {
-            let mut override_0: ::core::ffi::c_int = 0;
-            if scope as ::core::ffi::c_uint == s_global as ::core::ffi::c_int as ::core::ffi::c_uint
-            {
+            let mut override_0: i32 = 0;
+            if scope as ::core::ffi::c_uint == s_global as i32 as ::core::ffi::c_uint {
                 v = lookup_variable(varname, strlen(varname) as size_t);
             } else {
                 append = 1;
@@ -1733,12 +1695,9 @@ pub unsafe fn do_variable_definition(
                     if vr.append() == 0 {
                         append = 0;
                     }
-                    if scope as ::core::ffi::c_uint
-                        == s_pattern as ::core::ffi::c_int as ::core::ffi::c_uint
-                        && (vr.origin() as ::core::ffi::c_int
-                            == o_env_override as ::core::ffi::c_int
-                            || vr.origin() as ::core::ffi::c_int
-                                == o_command as ::core::ffi::c_int)
+                    if scope as ::core::ffi::c_uint == s_pattern as i32 as ::core::ffi::c_uint
+                        && (vr.origin() as i32 == o_env_override as i32
+                            || vr.origin() as i32 == o_command as i32)
                     {
                         override_0 = 1;
                         append = 1;
@@ -1763,7 +1722,7 @@ pub unsafe fn do_variable_definition(
                 if vr.recursive() != 0 {
                     flavor = f_recursive;
                 } else if flavor as ::core::ffi::c_uint
-                    != f_append_value as ::core::ffi::c_int as ::core::ffi::c_uint
+                    != f_append_value as i32 as ::core::ffi::c_uint
                 {
                     tp = allocated_expand_string_for_file(val, ::core::ptr::null_mut::<file>());
                     val = tp;
@@ -1780,23 +1739,22 @@ pub unsafe fn do_variable_definition(
                     if oldlen != 0 {
                         let s: *mut ::core::ffi::c_char;
                         if varname.as_ref().is_some_and(|vn| {
-                            *vn as ::core::ffi::c_int
+                            *vn as i32
                                 == *(b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                    as ::core::ffi::c_int
-                                && (*vn as ::core::ffi::c_int == 0
+                                    as i32
+                                && (*vn as i32 == 0
                                     || strcmp(
-                                        varname.offset(1 as ::core::ffi::c_int as isize),
+                                        varname.offset(1_i32 as isize),
                                         (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char)
-                                            .offset(1 as ::core::ffi::c_int as isize),
+                                            .offset(1_i32 as isize),
                                     ) == 0)
                         }) && {
-                                s = strstr(
-                                    vr.value,
-                                    b" -- \0" as *const u8 as *const ::core::ffi::c_char,
-                                );
-                                !s.is_null()
-                            }
-                        {
+                            s = strstr(
+                                vr.value,
+                                b" -- \0" as *const u8 as *const ::core::ffi::c_char,
+                            );
+                            !s.is_null()
+                        } {
                             cp = mempcpy(
                                 cp as *mut ::core::ffi::c_void,
                                 vr.value as *const ::core::ffi::c_void,
@@ -1810,7 +1768,7 @@ pub unsafe fn do_variable_definition(
                             ) as *mut ::core::ffi::c_char;
                         }
                         let fresh3 = cp;
-                        cp = cp.offset(1 as ::core::ffi::c_int as isize);
+                        cp = cp.offset(1_i32 as isize);
                         *fresh3 = ' ' as i32 as ::core::ffi::c_char;
                     }
                     memcpy(
@@ -1836,13 +1794,10 @@ pub unsafe fn do_variable_definition(
             strlen(varname) as size_t,
             newval,
             origin,
-            (flavor as ::core::ffi::c_uint
-                == f_recursive as ::core::ffi::c_int as ::core::ffi::c_uint
-                || flavor as ::core::ffi::c_uint
-                    == f_expand as ::core::ffi::c_int as ::core::ffi::c_uint)
-                as ::core::ffi::c_int,
-            if scope as ::core::ffi::c_uint == s_global as ::core::ffi::c_int as ::core::ffi::c_uint
-            {
+            (flavor as ::core::ffi::c_uint == f_recursive as i32 as ::core::ffi::c_uint
+                || flavor as ::core::ffi::c_uint == f_expand as i32 as ::core::ffi::c_uint)
+                as i32,
+            if scope as ::core::ffi::c_uint == s_global as i32 as ::core::ffi::c_uint {
                 ::core::ptr::null_mut::<variable_set>()
             } else {
                 (*current_variable_set_list).set
@@ -1854,9 +1809,7 @@ pub unsafe fn do_variable_definition(
     }
     free(alloc_value as *mut ::core::ffi::c_void);
     match v.as_mut() {
-        Some(vr) if vr.special() as ::core::ffi::c_int != 0 => {
-            set_special_var(vr as *mut variable, origin)
-        }
+        Some(vr) if vr.special() as i32 != 0 => set_special_var(vr as *mut variable, origin),
         _ => v,
     }
 }
@@ -1911,7 +1864,7 @@ pub unsafe fn assign_variable_definition(
     );
     *name.offset((*v).length as isize) = 0;
     (*v).name = allocated_expand_string_for_file(name, ::core::ptr::null_mut::<file>());
-    if *(*v).name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int == 0 {
+    if *(*v).name.offset(0_i32 as isize) as i32 == 0 {
         fatal(
             &raw mut (*v).fileinfo,
             0,
@@ -1956,7 +1909,7 @@ pub unsafe fn try_variable_definition(
         v.value,
         origin,
         v.flavor(),
-        v.conditional() as ::core::ffi::c_int,
+        v.conditional() as i32,
         scope,
     );
     free(v.name as *mut ::core::ffi::c_void);
@@ -2025,7 +1978,7 @@ mod warn_undefined_unsafe_oracle {
                 {
                     return;
                 }
-                dp = dp.offset(1 as ::core::ffi::c_int as isize);
+                dp = dp.offset(1 as i32 as isize);
             }
             if warning::is_active(Type::UndefinedVar) {
                 emit_var_name_warning(
@@ -2071,7 +2024,7 @@ mod warn_undefined_unsafe_oracle {
                 {
                     return true;
                 }
-                dp = dp.offset(1 as ::core::ffi::c_int as isize);
+                dp = dp.offset(1 as i32 as isize);
             }
             false
         }
@@ -2112,14 +2065,14 @@ mod warn_undefined_unsafe_oracle {
 unsafe fn set_env_override(item: *const ::core::ffi::c_void, mut _arg: *mut ::core::ffi::c_void) {
     let v: *mut variable = item as *mut variable;
     let old: variable_origin = (if crate::make_main::env_overrides() {
-        o_env as ::core::ffi::c_int
+        o_env as i32
     } else {
-        o_env_override as ::core::ffi::c_int
+        o_env_override as i32
     }) as variable_origin;
     let new: variable_origin = (if crate::make_main::env_overrides() {
-        o_env_override as ::core::ffi::c_int
+        o_env_override as i32
     } else {
-        o_env as ::core::ffi::c_int
+        o_env as i32
     }) as variable_origin;
     if (*v).origin() as ::core::ffi::c_uint == old as ::core::ffi::c_uint {
         (*v).set_origin(new as variable_origin);
@@ -2140,7 +2093,7 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
     let v: *const variable = item as *const variable;
     let prefix: *const ::core::ffi::c_char = arg as *const ::core::ffi::c_char;
     let mut origin: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    match (*v).origin() as ::core::ffi::c_int {
+    match (*v).origin() as i32 {
         6 => {
             origin = b"automatic\0" as *const u8 as *const ::core::ffi::c_char;
         }
@@ -2184,7 +2137,7 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
     }
     putchar('\n' as i32);
     fputs(prefix, stdout);
-    if (*v).recursive() as ::core::ffi::c_int != 0 && !strchr((*v).value, '\n' as i32).is_null() {
+    if (*v).recursive() as i32 != 0 && !strchr((*v).value, '\n' as i32).is_null() {
         printf(
             b"define %s\n%s\nendef\n\0" as *const u8 as *const ::core::ffi::c_char,
             (*v).name,
@@ -2195,8 +2148,8 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
         printf(
             b"%s %s= \0" as *const u8 as *const ::core::ffi::c_char,
             (*v).name,
-            if (*v).recursive() as ::core::ffi::c_int != 0 {
-                if (*v).append() as ::core::ffi::c_int != 0 {
+            if (*v).recursive() as i32 != 0 {
+                if (*v).append() as i32 != 0 {
                     b"+\0" as *const u8 as *const ::core::ffi::c_char
                 } else {
                     b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -2206,7 +2159,7 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
             },
         );
         p = next_token((*v).value);
-        if p != (*v).value && *p as ::core::ffi::c_int == 0 {
+        if p != (*v).value && *p as i32 == 0 {
             printf(
                 b"$(subst ,,%s)\0" as *const u8 as *const ::core::ffi::c_char,
                 (*v).value,
@@ -2215,12 +2168,12 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
             fputs((*v).value, stdout);
         } else {
             p = (*v).value;
-            while *p as ::core::ffi::c_int != 0 {
-                if *p as ::core::ffi::c_int == '$' as i32 {
+            while *p as i32 != 0 {
+                if *p as i32 == '$' as i32 {
                     putchar('$' as i32);
                 }
-                putchar(*p as ::core::ffi::c_int);
-                p = p.offset(1 as ::core::ffi::c_int as isize);
+                putchar(*p as i32);
+                p = p.offset(1_i32 as isize);
             }
         }
         putchar('\n' as i32);
@@ -2228,20 +2181,20 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
 }
 unsafe fn print_auto_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     let v: *const variable = item as *const variable;
-    if (*v).origin() as ::core::ffi::c_int == o_automatic as ::core::ffi::c_int {
+    if (*v).origin() as i32 == o_automatic as i32 {
         print_variable(item, arg);
     }
 }
 unsafe fn print_noauto_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     let v: *const variable = item as *const variable;
-    if (*v).origin() as ::core::ffi::c_int != o_automatic as ::core::ffi::c_int {
+    if (*v).origin() as i32 != o_automatic as i32 {
         print_variable(item, arg);
     }
 }
 unsafe extern "C" fn print_variable_set(
     set: *mut variable_set,
     prefix: *const ::core::ffi::c_char,
-    pauto: ::core::ffi::c_int,
+    pauto: i32,
 ) {
     hash_map_arg(
         &raw mut (*set).table,
@@ -2461,8 +2414,8 @@ mod should_export_unsafe_oracle {
     };
 
     /// Original c2rust implementation, preserved verbatim as the behavioral
-    /// oracle (raw `*const variable`, `c_int` result, `static mut` read).
-    unsafe fn should_export_oracle(v: *const variable) -> ::core::ffi::c_int {
+    /// oracle (raw `*const variable`, `i32` result, `static mut` read).
+    unsafe fn should_export_oracle(v: *const variable) -> i32 {
         let v = v
             .as_ref()
             .expect("should_export requires a non-null variable");
@@ -2471,7 +2424,7 @@ mod should_export_unsafe_oracle {
             v.origin(),
             v.exportable() != 0,
             export_all_variables != 0,
-        ) as ::core::ffi::c_int
+        ) as i32
     }
 
     /// Build a zeroed `variable` carrying just the fields `should_export`
@@ -2513,7 +2466,7 @@ mod should_export_unsafe_oracle {
                         let v = make_var(export, origin, exportable);
                         // SAFETY: `v` is a live local.
                         let oracle = unsafe { should_export_oracle(&raw const v) };
-                        let safe = should_export(&v) as ::core::ffi::c_int;
+                        let safe = should_export(&v) as i32;
                         assert_eq!(
                             safe, oracle,
                             "mismatch: export={export} origin={origin} \
@@ -2631,6 +2584,72 @@ mod initialize_file_variables_tests {
 
             assert_eq!(f.pat_searched(), 1, "pattern search ran and was recorded");
             assert!(!f.variables.is_null(), "variable set still allocated");
+        }
+    }
+
+    /// A file with a `parent` recurses into the parent first, then links the
+    /// parent's variable set as the next (parent) scope. Drives the
+    /// non-null-`parent` arm (the recursion + parent-scope link).
+    #[test]
+    fn parent_chains_into_parent_scope() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let pname = strcache_add(c"ifv_parent_probe".as_ptr());
+            let cname = strcache_add(c"ifv_child_probe".as_ptr());
+            let mut parent = File::default();
+            parent.name = pname;
+            parent.hname = pname;
+            let mut child = File::default();
+            child.name = cname;
+            child.hname = cname;
+            child.parent = &raw mut parent;
+
+            initialize_file_variables(&raw mut child, 1);
+
+            assert!(!parent.variables.is_null(), "parent set is initialized");
+            let l = child.variables;
+            assert!(!l.is_null(), "child set is allocated");
+            assert_eq!(
+                (*l).next,
+                parent.variables,
+                "child's next scope is the parent's variable set"
+            );
+            assert_eq!((*l).next_is_parent, 1);
+        }
+    }
+
+    /// A file whose `double_colon` points at a distinct file recurses into that
+    /// entry and links its variable set as a (non-parent) sibling scope before
+    /// returning early. Drives the `double_colon` arm.
+    #[test]
+    fn double_colon_links_sibling_scope() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let dname = strcache_add(c"ifv_dcolon_probe".as_ptr());
+            let mname = strcache_add(c"ifv_main_probe".as_ptr());
+            let mut dc = File::default();
+            dc.name = dname;
+            dc.hname = dname;
+            let mut f = File::default();
+            f.name = mname;
+            f.hname = mname;
+            f.double_colon = &raw mut dc;
+
+            initialize_file_variables(&raw mut f, 1);
+
+            assert!(!dc.variables.is_null(), "double-colon set is initialized");
+            let l = f.variables;
+            assert!(!l.is_null());
+            assert_eq!(
+                (*l).next,
+                dc.variables,
+                "next scope is the double-colon entry's set"
+            );
+            assert_eq!(
+                (*l).next_is_parent,
+                0,
+                "double-colon scope is a sibling, not a parent"
+            );
         }
     }
 }

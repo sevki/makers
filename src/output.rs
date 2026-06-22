@@ -6,20 +6,18 @@
 //! are called with printf-style argument lists from all over the crate; the
 //! [`msg`] submodule provides native-Rust counterparts.
 
-use ::core::ffi::{c_char, c_int, c_uint, c_void};
+use ::core::ffi::{c_char, c_uint, c_void};
 use ::core::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libc::{
-    __errno_location, close, ftruncate, lseek, perror, read, sprintf, strcat, strerror,
-    strlen, EINTR, SEEK_END, SEEK_SET,
+    __errno_location, close, ftruncate, lseek, perror, read, sprintf, strcat, strerror, strlen,
+    EINTR, SEEK_END, SEEK_SET,
 };
 
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
-use crate::make_main::{
-    die, makelevel, output_sync, program, starting_directory,
-};
+use crate::make_main::{die, makelevel, output_sync, program, starting_directory};
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
@@ -30,11 +28,11 @@ use crate::stdio::FILE;
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
-    fn fflush(stream: *mut FILE) -> c_int;
-    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> c_int;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> c_int;
+    fn fflush(stream: *mut FILE) -> i32;
+    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> i32;
+    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
     fn fwrite(ptr: *const c_void, size: size_t, n: size_t, s: *mut FILE) -> ::core::ffi::c_ulong;
-    fn fileno(stream: *mut FILE) -> c_int;
+    fn fileno(stream: *mut FILE) -> i32;
     fn mempcpy(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void;
 }
 
@@ -43,8 +41,8 @@ extern "C" {
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct output {
-    pub out: c_int,
-    pub err: c_int,
+    pub out: i32,
+    pub err: i32,
     #[bitfield(name = "syncout", ty = "::core::ffi::c_uint", bits = "0..=0")]
     pub syncout: [u8; 1],
     #[bitfield(padding)]
@@ -63,9 +61,9 @@ struct fmtstring {
 /// approximates bits-to-decimal-digits), sign, and NUL (from makeint.h).
 pub const INTSTR_LENGTH: usize = 53 * ::core::mem::size_of::<uintmax_t>() / 22 + 3;
 
-pub const OUTPUT_SYNC_NONE: c_int = 0;
-pub const OUTPUT_SYNC_RECURSE: c_int = 3;
-pub const MAKE_FAILURE: c_int = 2;
+pub const OUTPUT_SYNC_NONE: i32 = 0;
+pub const OUTPUT_SYNC_RECURSE: i32 = 3;
+pub const MAKE_FAILURE: i32 = 2;
 
 /// `check_io_state` bits (see os.h).
 const IO_COMBINED_OUTERR: c_uint = 0x0002;
@@ -85,19 +83,15 @@ pub static STDIO_TRACED: AtomicBool = AtomicBool::new(false);
 pub fn stdio_traced() -> bool {
     STDIO_TRACED.load(Ordering::Relaxed)
 }
-pub const OUTPUT_NONE: ::core::ffi::c_int = -1;
-unsafe extern "C" fn _outputs(
-    out: *mut output,
-    is_err: ::core::ffi::c_int,
-    msg: *const ::core::ffi::c_char,
-) {
-    if !out.is_null() && (*out).syncout() as ::core::ffi::c_int != 0 {
-        let fd: ::core::ffi::c_int = if is_err != 0 { (*out).err } else { (*out).out };
+pub const OUTPUT_NONE: i32 = -1;
+unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
+    if !out.is_null() && (*out).syncout() as i32 != 0 {
+        let fd: i32 = if is_err != 0 { (*out).err } else { (*out).out };
         if fd != OUTPUT_NONE {
             let len: size_t = strlen(msg) as size_t;
-            let mut r: ::core::ffi::c_int;
+            let mut r: i32;
             loop {
-                r = lseek(fd, 0, 2) as ::core::ffi::c_int;
+                r = lseek(fd, 0, 2) as i32;
                 if !(r == -1 && *__errno_location() == EINTR) {
                     break;
                 }
@@ -114,7 +108,7 @@ unsafe extern "C" fn _outputs(
 ///
 /// # Safety
 /// Must run single-threaded: reads make globals and a static buffer.
-pub unsafe fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi::c_int {
+pub unsafe fn log_working_directory(entering: i32) -> i32 {
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut len: size_t = 0;
@@ -184,19 +178,19 @@ pub unsafe fn log_working_directory(entering: ::core::ffi::c_int) -> ::core::ffi
 /// # Safety
 /// `from` must be an open, seekable fd and `to` an open stream; uses a
 /// static buffer, so must run single-threaded.
-pub unsafe fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) {
+pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
     static mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
     if lseek(from, 0, SEEK_SET) == -1 as __off_t {
         perror(c"lseek()".as_ptr());
     }
     loop {
-        let mut len: ::core::ffi::c_int;
+        let mut len: i32;
         loop {
             len = read(
                 from,
                 &raw mut buffer as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
                 ::core::mem::size_of::<[::core::ffi::c_char; 8192]>() as size_t,
-            ) as ::core::ffi::c_int;
+            ) as i32;
             if !(len == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -225,8 +219,8 @@ pub unsafe fn pump_from_tmp(from: ::core::ffi::c_int, to: *mut FILE) {
 ///
 /// # Safety
 /// Always safe; unsafe for C-API compatibility.
-pub unsafe fn output_tmpfd() -> ::core::ffi::c_int {
-    let fd: ::core::ffi::c_int = get_tmpfd(null_mut());
+pub unsafe fn output_tmpfd() -> i32 {
+    let fd: i32 = get_tmpfd(null_mut());
     fd_set_append(fd);
     fd
 }
@@ -253,7 +247,7 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
             break 'setup;
         }
         if io_state & IO_STDOUT_OK != 0 {
-            let fd: ::core::ffi::c_int = output_tmpfd();
+            let fd: i32 = output_tmpfd();
             if fd < 0 {
                 break 'setup;
             }
@@ -264,7 +258,7 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
             if (*out).out != OUTPUT_NONE && io_state & IO_COMBINED_OUTERR != 0 {
                 (*out).err = (*out).out;
             } else {
-                let fd_0: ::core::ffi::c_int = output_tmpfd();
+                let fd_0: i32 = output_tmpfd();
                 if fd_0 < 0 {
                     break 'setup;
                 }
@@ -291,12 +285,12 @@ pub unsafe fn setup_tmpfile(out: *mut output) {
 /// # Safety
 /// `out` must point to a valid `output`; must run single-threaded.
 pub unsafe fn output_dump(out: *mut output) {
-    let outfd_not_empty: ::core::ffi::c_int =
-        ((*out).out != OUTPUT_NONE && lseek((*out).out, 0, SEEK_END) > 0) as ::core::ffi::c_int;
-    let errfd_not_empty: ::core::ffi::c_int =
-        ((*out).err != OUTPUT_NONE && lseek((*out).err, 0, SEEK_END) > 0) as ::core::ffi::c_int;
+    let outfd_not_empty: i32 =
+        ((*out).out != OUTPUT_NONE && lseek((*out).out, 0, SEEK_END) > 0) as i32;
+    let errfd_not_empty: i32 =
+        ((*out).err != OUTPUT_NONE && lseek((*out).err, 0, SEEK_END) > 0) as i32;
     if outfd_not_empty != 0 || errfd_not_empty != 0 {
-        let mut traced: ::core::ffi::c_int = 0;
+        let mut traced: i32 = 0;
         if osync_acquire() == 0 {
             error(
                 null::<Floc>(),
@@ -319,7 +313,7 @@ pub unsafe fn output_dump(out: *mut output) {
         }
         osync_release();
         if (*out).out != OUTPUT_NONE {
-            let mut e: ::core::ffi::c_int;
+            let mut e: i32;
             lseek((*out).out, 0, SEEK_SET);
             loop {
                 e = ftruncate((*out).out, 0);
@@ -329,7 +323,7 @@ pub unsafe fn output_dump(out: *mut output) {
             }
         }
         if (*out).err != OUTPUT_NONE && (*out).err != (*out).out {
-            let mut e_0: ::core::ffi::c_int;
+            let mut e_0: i32;
             lseek((*out).err, 0, SEEK_SET);
             loop {
                 e_0 = ftruncate((*out).err, 0);
@@ -355,9 +349,7 @@ pub unsafe fn output_init(out: *mut output) {
     if !out.is_null() {
         (*out).err = OUTPUT_NONE;
         (*out).out = (*out).err;
-        (*out).set_syncout(
-            (output_sync != 0) as ::core::ffi::c_int as ::core::ffi::c_uint as ::core::ffi::c_uint,
-        );
+        (*out).set_syncout((output_sync != 0) as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         return;
     }
     STDOUT_FLAGS.store(fd_set_append(fileno(stdout)), Ordering::Relaxed);
@@ -394,7 +386,7 @@ pub unsafe fn output_close(out: *mut output) {
 /// Must run single-threaded: touches output and trace globals.
 pub unsafe fn output_start() {
     if !output_context.is_null()
-        && (*output_context).syncout() as ::core::ffi::c_int != 0
+        && (*output_context).syncout() as i32 != 0
         && !((*output_context).out >= 0 || (*output_context).err >= 0)
     {
         setup_tmpfile(output_context);
@@ -411,8 +403,8 @@ pub unsafe fn output_start() {
 ///
 /// # Safety
 /// `msg` must be null or a valid NUL-terminated string.
-pub unsafe fn outputs(is_err: ::core::ffi::c_int, msg: *const ::core::ffi::c_char) {
-    if msg.is_null() || *msg as ::core::ffi::c_int == 0 {
+pub unsafe fn outputs(is_err: i32, msg: *const ::core::ffi::c_char) {
+    if msg.is_null() || *msg as i32 == 0 {
         return;
     }
     output_start();
@@ -442,7 +434,7 @@ pub unsafe fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
 /// `fmt` and the variadic arguments must form a valid printf invocation
 /// whose expansion fits in `len` extra bytes.
 pub unsafe extern "C" fn message(
-    prefix: ::core::ffi::c_int,
+    prefix: i32,
     mut len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: ...
@@ -750,4 +742,106 @@ macro_rules! fatal {
     ($loc:expr, $($arg:tt)*) => {
         $crate::output::msg::fatal($loc, &::std::format!($($arg)*))
     };
+}
+
+#[cfg(test)]
+mod outputs_tests {
+    use super::{_outputs, output, OUTPUT_NONE};
+    use std::ffi::CString;
+
+    /// A unique temp path; the file is created by `open_temp_fd`.
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("outputs-{tag}-{nanos}-{}", std::process::id()))
+    }
+
+    /// Open `path` for read/write, creating/truncating it, returning a raw fd.
+    unsafe fn open_temp_fd(path: &std::path::Path) -> i32 {
+        let c = CString::new(path.to_str().unwrap()).unwrap();
+        let fd = libc::open(
+            c.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o600,
+        );
+        assert!(fd >= 0, "open temp file");
+        fd
+    }
+
+    /// Read the whole file at `path` to a string.
+    fn read_all(path: &std::path::Path) -> String {
+        std::fs::read_to_string(path).expect("read temp file")
+    }
+
+    /// Build a zeroed `output` with `syncout` enabled and its stdout/stderr
+    /// descriptors pointed at two raw fds.
+    unsafe fn sync_output(out_fd: i32, err_fd: i32) -> output {
+        let mut o: output = ::core::mem::zeroed();
+        o.out = out_fd;
+        o.err = err_fd;
+        o.set_syncout(1);
+        o
+    }
+
+    /// With output-sync active and a valid stdout descriptor, `_outputs`
+    /// appends the message to that descriptor (the sync/`writebuf` path). The
+    /// stderr selection routes to the `err` fd instead. Uses real temp files so
+    /// the bytes can be read back; no dependence on the global stdio.
+    #[test]
+    fn writes_to_sync_descriptor_per_stream() {
+        let out_path = temp_path("out");
+        let err_path = temp_path("err");
+        unsafe {
+            let out_fd = open_temp_fd(&out_path);
+            let err_fd = open_temp_fd(&err_path);
+            let o = sync_output(out_fd, err_fd);
+
+            _outputs(
+                &o as *const output as *mut output,
+                0,
+                c"to-stdout\n".as_ptr(),
+            );
+            _outputs(
+                &o as *const output as *mut output,
+                1,
+                c"to-stderr\n".as_ptr(),
+            );
+            libc::close(out_fd);
+            libc::close(err_fd);
+        }
+        assert_eq!(
+            read_all(&out_path),
+            "to-stdout\n",
+            "is_err==0 writes to the out descriptor"
+        );
+        assert_eq!(
+            read_all(&err_path),
+            "to-stderr\n",
+            "is_err!=0 writes to the err descriptor"
+        );
+        let _ = std::fs::remove_file(&out_path);
+        let _ = std::fs::remove_file(&err_path);
+    }
+
+    /// When the selected descriptor is `OUTPUT_NONE`, the sync fast-path is
+    /// skipped and the call falls through to the stdio writer. Driving it with
+    /// an empty message keeps the test output clean while still exercising the
+    /// `fd == OUTPUT_NONE` branch and the `fputs`/`fflush` tail.
+    #[test]
+    fn falls_through_when_descriptor_is_none() {
+        unsafe {
+            let o = sync_output(OUTPUT_NONE, OUTPUT_NONE);
+            _outputs(&o as *const output as *mut output, 0, c"".as_ptr());
+        }
+    }
+
+    /// A null `output` (no sync context) goes straight to the stdio writer.
+    #[test]
+    fn null_output_uses_stdio() {
+        unsafe {
+            _outputs(::core::ptr::null_mut(), 0, c"".as_ptr());
+        }
+    }
 }

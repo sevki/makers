@@ -5,29 +5,25 @@ pub use crate::ffi_types::{
 use crate::misc::{make_toui, readbuf, writebuf};
 use libc::{__errno_location, close, open, strcmp};
 extern "C" {
-    fn fstat(__fd: ::core::ffi::c_int, __buf: *mut stat) -> ::core::ffi::c_int;
-    fn lseek(__fd: ::core::ffi::c_int, __offset: __off_t, __whence: ::core::ffi::c_int) -> __off_t;
+    fn fstat(__fd: i32, __buf: *mut stat) -> i32;
+    fn lseek(__fd: i32, __offset: __off_t, __whence: i32) -> __off_t;
     fn snprintf(
         __s: *mut ::core::ffi::c_char,
         __maxlen: size_t,
         __format: *const ::core::ffi::c_char,
         ...
-    ) -> ::core::ffi::c_int;
+    ) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
-    fn memset(
-        __s: *mut ::core::ffi::c_void,
-        __c: ::core::ffi::c_int,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
+    fn memset(__s: *mut ::core::ffi::c_void, __c: i32, __n: size_t) -> *mut ::core::ffi::c_void;
     fn memcmp(
         __s1: *const ::core::ffi::c_void,
         __s2: *const ::core::ffi::c_void,
         __n: size_t,
-    ) -> ::core::ffi::c_int;
+    ) -> i32;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
 pub use crate::sys_stat::stat;
@@ -35,15 +31,15 @@ pub use crate::sys_stat::timespec;
 
 pub type ar_member_func_t = Option<
     unsafe fn(
-        ::core::ffi::c_int,
+        i32,
         *const ::core::ffi::c_char,
-        ::core::ffi::c_int,
+        i32,
         ::core::ffi::c_long,
         ::core::ffi::c_long,
         ::core::ffi::c_long,
         intmax_t,
-        ::core::ffi::c_int,
-        ::core::ffi::c_int,
+        i32,
+        i32,
         ::core::ffi::c_uint,
         *const ::core::ffi::c_void,
     ) -> intmax_t,
@@ -59,13 +55,13 @@ pub struct ar_hdr {
     pub ar_size: [::core::ffi::c_char; 10],
     pub ar_fmag: [::core::ffi::c_char; 2],
 }
-pub const EINTR: ::core::ffi::c_int = 4;
-pub const INT_MAX: ::core::ffi::c_int = __INT_MAX__;
-pub const CHAR_BIT: ::core::ffi::c_int = __CHAR_BIT__;
-pub const O_RDONLY: ::core::ffi::c_int = 0;
+pub const EINTR: i32 = 4;
+pub const INT_MAX: i32 = __INT_MAX__;
+pub const CHAR_BIT: i32 = __CHAR_BIT__;
+pub const O_RDONLY: i32 = 0;
 pub const ARMAG: [::core::ffi::c_char; 9] =
     unsafe { ::core::mem::transmute::<[u8; 9], [::core::ffi::c_char; 9]>(*b"!<arch>\n\0") };
-pub const SARMAG: ::core::ffi::c_int = 8;
+pub const SARMAG: i32 = 8;
 pub const ARFMAG: [::core::ffi::c_char; 3] =
     unsafe { ::core::mem::transmute::<[u8; 3], [::core::ffi::c_char; 3]>(*b"`\n\0") };
 pub const AR_HDR_SIZE: usize = ::core::mem::size_of::<ar_hdr>();
@@ -126,17 +122,17 @@ pub unsafe fn ar_scan(
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut namemap: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut namemap_size: ::core::ffi::c_uint = 0;
-    let desc: ::core::ffi::c_int = open(archive, O_RDONLY, 0);
+    let desc: i32 = open(archive, O_RDONLY, 0);
     if desc < 0 {
-        return -(1 as ::core::ffi::c_int) as intmax_t;
+        return -1_i32 as intmax_t;
     }
     let mut buf: [::core::ffi::c_char; 8] = [0; 8];
-    let nread: ::core::ffi::c_int;
+    let nread: i32;
     nread = readbuf(
         desc,
         &raw mut buf as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
         SARMAG as size_t,
-    ) as ::core::ffi::c_int;
+    ) as i32;
     if !(nread != SARMAG
         || memcmp(
             &raw mut buf as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
@@ -158,13 +154,13 @@ pub unsafe fn ar_scan(
             };
             let mut namebuf: [::core::ffi::c_char; 17] = [0; 17];
             let mut name: *mut ::core::ffi::c_char;
-            let is_namemap: ::core::ffi::c_int;
-            let mut long_name: ::core::ffi::c_int = 0;
+            let is_namemap: i32;
+            let mut long_name: i32 = 0;
             let eltsize: ::core::ffi::c_long;
             let eltmode: ::core::ffi::c_uint;
             let eltdate: intmax_t;
-            let eltuid: ::core::ffi::c_int;
-            let eltgid: ::core::ffi::c_int;
+            let eltuid: i32;
+            let eltgid: i32;
             let fnval: intmax_t;
             let mut o: off_t;
             memset(
@@ -174,7 +170,7 @@ pub unsafe fn ar_scan(
             );
             loop {
                 o = lseek(desc, member_offset as __off_t, 0) as off_t;
-                if !(o == -(1 as ::core::ffi::c_int) as off_t && *__errno_location() == EINTR) {
+                if !(o == -1_i32 as off_t && *__errno_location() == EINTR) {
                     break;
                 }
             }
@@ -213,8 +209,8 @@ pub unsafe fn ar_scan(
             loop {
                 *p = 0;
                 if !(p > name && {
-                    p = p.offset(-(1 as ::core::ffi::c_int) as isize);
-                    *p as ::core::ffi::c_int == ' ' as i32
+                    p = p.offset(-1_i32 as isize);
+                    *p as i32 == ' ' as i32
                 }) {
                     break;
                 }
@@ -223,20 +219,18 @@ pub unsafe fn ar_scan(
                 || strcmp(
                     name,
                     b"ARFILENAMES/\0" as *const u8 as *const ::core::ffi::c_char,
-                ) == 0) as ::core::ffi::c_int;
-            if *p as ::core::ffi::c_int == '/' as i32 {
+                ) == 0) as i32;
+            if *p as i32 == '/' as i32 {
                 *p = 0;
             }
             if is_namemap == 0
-                && (*name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == ' ' as i32
-                    || *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                        == '/' as i32)
+                && (*name.offset(0_i32 as isize) as i32 == ' ' as i32
+                    || *name.offset(0_i32 as isize) as i32 == '/' as i32)
                 && !namemap.is_null()
             {
-                let Ok(name_off) = make_toui(::core::ffi::CStr::from_ptr(
-                    name.offset(1 as ::core::ffi::c_int as isize),
-                )) else {
+                let Ok(name_off) =
+                    make_toui(::core::ffi::CStr::from_ptr(name.offset(1_i32 as isize)))
+                else {
                     break;
                 };
                 if name_off >= namemap_size {
@@ -248,23 +242,19 @@ pub unsafe fn ar_scan(
                     break;
                 }
                 long_name = 1;
-            } else if *name.offset(0 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                == '#' as i32
-                && *name.offset(1 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == '1' as i32
-                && *name.offset(2 as ::core::ffi::c_int as isize) as ::core::ffi::c_int
-                    == '/' as i32
+            } else if *name.offset(0_i32 as isize) as i32 == '#' as i32
+                && *name.offset(1_i32 as isize) as i32 == '1' as i32
+                && *name.offset(2_i32 as isize) as i32 == '/' as i32
             {
-                let name_len_0 = make_toui(::core::ffi::CStr::from_ptr(
-                    name.offset(3 as ::core::ffi::c_int as isize),
-                ))
-                .unwrap_or(0);
+                let name_len_0 =
+                    make_toui(::core::ffi::CStr::from_ptr(name.offset(3_i32 as isize)))
+                        .unwrap_or(0);
                 if name_len_0 == 0
                     || name_len_0
-                        >= (if (4096 as ::core::ffi::c_int) < 2147483647 as ::core::ffi::c_int {
-                            4096 as ::core::ffi::c_int
+                        >= (if 4096_i32 < 2147483647_i32 {
+                            4096_i32
                         } else {
-                            2147483647 as ::core::ffi::c_int
+                            2147483647_i32
                         }) as ::core::ffi::c_uint
                 {
                     break;
@@ -337,24 +327,24 @@ pub unsafe fn ar_scan(
             eltuid = parse_int(
                 uid_field,
                 10,
-                ::core::ffi::c_int::MAX as u64,
+                i32::MAX as u64,
                 "uid",
                 &archive_str,
                 &name_str,
-            ) as ::core::ffi::c_int;
+            ) as i32;
             eltgid = parse_int(
                 gid_field,
                 10,
-                ::core::ffi::c_int::MAX as u64,
+                i32::MAX as u64,
                 "gid",
                 &archive_str,
                 &name_str,
-            ) as ::core::ffi::c_int;
+            ) as i32;
             fnval = Some(function.expect("non-null function pointer"))
                 .expect("non-null function pointer")(
                 desc,
                 name,
-                (long_name == 0) as ::core::ffi::c_int,
+                (long_name == 0) as i32,
                 member_offset,
                 (member_offset as usize).wrapping_add(AR_HDR_SIZE) as ::core::ffi::c_long,
                 eltsize,
@@ -388,15 +378,13 @@ pub unsafe fn ar_scan(
                 limit = namemap.offset(eltsize as isize);
                 clear = namemap;
                 while clear < limit {
-                    if *clear as ::core::ffi::c_int == '\n' as i32 {
+                    if *clear as i32 == '\n' as i32 {
                         *clear = 0;
-                        if *clear.offset(-(1 as ::core::ffi::c_int) as isize) as ::core::ffi::c_int
-                            == '/' as i32
-                        {
-                            *clear.offset(-(1 as ::core::ffi::c_int) as isize) = 0;
+                        if *clear.offset(-1_i32 as isize) as i32 == '/' as i32 {
+                            *clear.offset(-1_i32 as isize) = 0;
                         }
                     }
-                    clear = clear.offset(1 as ::core::ffi::c_int as isize);
+                    clear = clear.offset(1_i32 as isize);
                 }
                 *limit = 0;
             }
@@ -409,7 +397,7 @@ pub unsafe fn ar_scan(
         }
     }
     close(desc);
-    -(2 as ::core::ffi::c_int) as intmax_t
+    -2_i32 as intmax_t
 }
 /// # Safety
 ///
@@ -418,11 +406,11 @@ pub unsafe fn ar_scan(
 pub unsafe fn ar_name_equal(
     name: *const ::core::ffi::c_char,
     mem: *const ::core::ffi::c_char,
-    truncated: ::core::ffi::c_int,
-) -> ::core::ffi::c_int {
+    truncated: i32,
+) -> i32 {
     let name = ::core::ffi::CStr::from_ptr(name).to_bytes();
     let mem = ::core::ffi::CStr::from_ptr(mem).to_bytes();
-    ar_name_equal_bytes(name, mem, truncated != 0) as ::core::ffi::c_int
+    ar_name_equal_bytes(name, mem, truncated != 0) as i32
 }
 
 /// Number of significant `ar_name` bytes a truncated (System V/GNU short)
@@ -467,15 +455,15 @@ fn strncmp_eq(a: &[u8], b: &[u8], n: usize) -> bool {
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
 unsafe fn ar_member_pos(
-    mut _desc: ::core::ffi::c_int,
+    mut _desc: i32,
     mem: *const ::core::ffi::c_char,
-    truncated: ::core::ffi::c_int,
+    truncated: i32,
     hdrpos: ::core::ffi::c_long,
     mut _datapos: ::core::ffi::c_long,
     mut _size: ::core::ffi::c_long,
     mut _date: intmax_t,
-    mut _uid: ::core::ffi::c_int,
-    mut _gid: ::core::ffi::c_int,
+    mut _uid: i32,
+    mut _gid: i32,
     mut _mode: ::core::ffi::c_uint,
     name: *const ::core::ffi::c_void,
 ) -> intmax_t {
@@ -491,14 +479,14 @@ unsafe fn ar_member_pos(
 pub unsafe fn ar_member_touch(
     arname: *const ::core::ffi::c_char,
     memname: *const ::core::ffi::c_char,
-) -> ::core::ffi::c_int {
+) -> i32 {
     let pos: intmax_t = ar_scan(
         arname,
         Some(ar_member_pos),
         memname as *const ::core::ffi::c_void,
     );
     let opos: off_t;
-    let mut fd: ::core::ffi::c_int;
+    let mut fd: i32;
     let mut ar_hdr: ar_hdr = ar_hdr {
         ar_name: [0; 16],
         ar_date: [0; 12],
@@ -509,8 +497,8 @@ pub unsafe fn ar_member_touch(
         ar_fmag: [0; 2],
     };
     let mut o: off_t;
-    let mut r: ::core::ffi::c_int;
-    let datelen: ::core::ffi::c_int;
+    let mut r: i32;
+    let datelen: i32;
     let mut statbuf: stat = stat {
         st_dev: 0,
         st_ino: 0,
@@ -538,38 +526,33 @@ pub unsafe fn ar_member_touch(
         __glibc_reserved: [0; 3],
     };
     if pos < 0 as intmax_t {
-        return pos as ::core::ffi::c_int;
+        return pos as i32;
     }
     if pos == 0 {
         return 1;
     }
     opos = pos as off_t;
     loop {
-        fd = open(
-            arname,
-            0o2 as ::core::ffi::c_int,
-            0o666 as ::core::ffi::c_int,
-        );
-        if !(fd == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
+        fd = open(arname, 0o2_i32, 0o666_i32);
+        if !(fd == -1_i32 && *__errno_location() == EINTR) {
             break;
         }
     }
     if fd < 0 {
-        return -(3 as ::core::ffi::c_int);
+        return -3_i32;
     }
     loop {
         o = lseek(fd, opos as __off_t, 0) as off_t;
-        if !(o == -(1 as ::core::ffi::c_int) as off_t && *__errno_location() == EINTR) {
+        if !(o == -1_i32 as off_t && *__errno_location() == EINTR) {
             break;
         }
     }
     if !(o < 0 as off_t) {
-        r = readbuf(fd, &raw mut ar_hdr as *mut ::core::ffi::c_void, AR_HDR_SIZE)
-            as ::core::ffi::c_int;
+        r = readbuf(fd, &raw mut ar_hdr as *mut ::core::ffi::c_void, AR_HDR_SIZE) as i32;
         if !(r as usize != AR_HDR_SIZE) {
             loop {
                 r = fstat(fd, &raw mut statbuf);
-                if !(r == -(1 as ::core::ffi::c_int) && *__errno_location() == EINTR) {
+                if !(r == -1_i32 && *__errno_location() == EINTR) {
                     break;
                 }
             }
@@ -581,8 +564,7 @@ pub unsafe fn ar_member_touch(
                     statbuf.st_mtim.tv_sec as intmax_t,
                 );
                 if 0 <= datelen
-                    && datelen
-                        < ::core::mem::size_of::<[::core::ffi::c_char; 12]>() as ::core::ffi::c_int
+                    && datelen < ::core::mem::size_of::<[::core::ffi::c_char; 12]>() as i32
                 {
                     memset(
                         (&raw mut ar_hdr.ar_date as *mut ::core::ffi::c_char)
@@ -594,9 +576,7 @@ pub unsafe fn ar_member_touch(
                     );
                     loop {
                         o = lseek(fd, opos as __off_t, 0) as off_t;
-                        if !(o == -(1 as ::core::ffi::c_int) as off_t
-                            && *__errno_location() == EINTR)
-                        {
+                        if !(o == -1_i32 as off_t && *__errno_location() == EINTR) {
                             break;
                         }
                     }
@@ -605,7 +585,7 @@ pub unsafe fn ar_member_touch(
                             fd,
                             &raw mut ar_hdr as *const ::core::ffi::c_void,
                             AR_HDR_SIZE,
-                        ) as ::core::ffi::c_int;
+                        ) as i32;
                         if !(r as usize != AR_HDR_SIZE) {
                             close(fd);
                             return 0;
@@ -618,10 +598,10 @@ pub unsafe fn ar_member_touch(
     r = *__errno_location();
     close(fd);
     *__errno_location() = r;
-    -(3 as ::core::ffi::c_int)
+    -3_i32
 }
-pub const __CHAR_BIT__: ::core::ffi::c_int = 8;
-pub const __INT_MAX__: ::core::ffi::c_int = 2147483647 as ::core::ffi::c_int;
+pub const __CHAR_BIT__: i32 = 8;
+pub const __INT_MAX__: i32 = 2147483647_i32;
 
 #[cfg(test)]
 mod ar_name_equal_tests {
