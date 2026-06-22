@@ -1915,10 +1915,8 @@ pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
 pub unsafe fn print_targets() {
     hash_map(&raw mut files, Some(print_target));
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// Report (via `error`) when a single file/dep field is set but not interned
+/// in the strcache. A null/empty field, or one already cached, is silent.
 unsafe fn verify_field_cached(
     ctx: &crate::execctx::ExecContext,
     owner: *const ::core::ffi::c_char,
@@ -1942,6 +1940,10 @@ unsafe fn verify_field_cached(
     );
 }
 
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
 pub unsafe fn verify_file(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     // Invoked via `hash_map_arg`; `arg` carries the borrowed `ExecContext` so the
     // diagnostics below can be prefixed correctly without any global.
