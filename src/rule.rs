@@ -32,6 +32,10 @@ pub struct Rule {
     pub terminal: ::core::ffi::c_char,
     pub in_use: ::core::ffi::c_char,
 }
+
+#[allow(non_camel_case_types)]
+pub type rule = Rule;
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct pspec {

@@ -1,23 +1,14 @@
-pub use crate::output::{FmtArg, error, fatal, message};
-pub use crate::commands::chop_commands;
-pub use crate::commands::execute_file_commands;
-pub use crate::file::enter_file;
-pub use crate::file::expand_deps;
-pub use crate::file::lookup_file;
-pub use crate::file::rehash_file;
-pub use crate::file::rename_file;
-pub use crate::file::set_command_state;
-pub use crate::implicit::try_implicit_rule;
-pub use crate::make_main::default_file;
-use crate::misc::copy_goal_chain;
-use crate::file::free_seq_chain;
-pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
-use crate::file::{Dep, File, VariableSet, VariableSetList};
-use crate::misc::{find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::file::free_seq_chain;
+use crate::file::{
+    cs_deps_running, cs_finished, cs_running, dep, file, update_status, us_none, us_success,
+    CommandState, Dep, File, GoalDep, UpdateStatus, VariableSet, VariableSetList,
+};
+use crate::misc::{copy_goal_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use libc::{
@@ -142,10 +133,12 @@ pub unsafe fn check_also_make(ctx: &crate::execctx::ExecContext, file: *const fi
                     } else {
                         ::core::ptr::null_mut::<Floc>()
                     },
-        b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
+                    b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*(*ad).file).name) as *const ::core::ffi::c_char)],
-    );
+                    &[FmtArg::Str(
+                        ((*(*ad).file).name) as *const ::core::ffi::c_char,
+                    )],
+                );
             }
             ad = (*ad).next;
         }
@@ -722,8 +715,8 @@ unsafe extern "C" fn update_file_1(
                 strlen((*file).name) as size_t,
                 b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
                     as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+            );
         }
         this_mtime = this_mtime.wrapping_add(
             ((if FILE_TIMESTAMP_HI_RES != 0 {
@@ -842,9 +835,11 @@ unsafe extern "C" fn update_file_1(
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
                         b"circular %s <- %s dependency detected\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
-            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
-    );
+                        &[
+                            FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+                            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char),
+                        ],
+                    );
                 }
                 if warning::is_active(Type::CircularDep) {
                     error(
@@ -854,9 +849,11 @@ unsafe extern "C" fn update_file_1(
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
-            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char)],
-    );
+                        &[
+                            FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+                            FmtArg::Str(((*(*d).file).name) as *const ::core::ffi::c_char),
+                        ],
+                    );
                 }
                 if let Some(tail) = lastd.as_mut() {
                     tail.next = (*du).next;
@@ -1063,8 +1060,8 @@ unsafe extern "C" fn update_file_1(
                 strlen((*file).name) as size_t,
                 b"Target '%s' not remade because of errors.\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+            );
         }
         return dep_status;
     }
@@ -1496,11 +1493,9 @@ unsafe extern "C" fn check_dep(
                     error(
                         ctx,
                         ::core::ptr::null_mut::<Floc>(),
-                        (strlen((*file).name) as size_t).wrapping_add(strlen(dep_name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        (*file).name,
-                        dep_name,
+                        &[FmtArg::Str((*file).name), FmtArg::Str(dep_name)],
                     );
                     let next_dep = dep_ref.next;
                     if let Some(tail) = ld.as_mut() {
@@ -1814,8 +1809,8 @@ pub unsafe fn f_mtime(
             } else {
                 rehash_file(ctx, file, strcache_add(name));
             }
-            while !file.renamed.is_null() {
-                file = file.renamed.as_mut().expect("f_mtime: null renamed file");
+            while !(*file).renamed.is_null() {
+                file = (*file).renamed;
             }
         }
         free(arname as *mut ::core::ffi::c_void);
@@ -1974,11 +1969,8 @@ pub unsafe fn f_mtime(
             }
         }
     }
-    if !file.double_colon.is_null() {
-        file = file
-            .double_colon
-            .as_mut()
-            .expect("f_mtime: null double_colon");
+    if !(*file).double_colon.is_null() {
+        file = (*file).double_colon;
     }
     propagate_timestamp = (*file).updated;
     loop {
@@ -1992,8 +1984,8 @@ pub unsafe fn f_mtime(
         if (*file).updated == propagate_timestamp {
             (*file).last_mtime = mtime;
         }
-        match file.prev.as_mut() {
-            Some(prev) => file = prev,
+        match (*file).prev.as_mut() {
+            Some(prev) => file = prev as *mut File,
             None => break,
         }
     }
@@ -2191,8 +2183,8 @@ unsafe extern "C" fn library_search(
                 strlen(p) as size_t,
                 b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+            );
             *p.offset(len as isize) = c;
         } else {
             p4 = variable_buffer_output(

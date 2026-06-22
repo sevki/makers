@@ -1,27 +1,14 @@
-pub use crate::output::{FmtArg, error, fatal};
-pub use crate::misc::concat;
-pub use crate::expand::allocated_expand_string_for_file;
-pub use crate::file::enter_file;
-pub use crate::file::enter_prereqs;
-pub use crate::file::lookup_file;
-pub use crate::file::split_prereqs;
-pub use crate::load::load_file;
-pub use crate::make_main::default_file;
-pub use crate::rule::create_pattern_rule;
-pub use crate::rule::suffix_file;
-pub use crate::variable::initialize_file_variables;
-use crate::ar::ar_glob;
-use crate::file::SeqNode;
-pub use crate::file::{CommandState, UpdateStatus};
 pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __size_t, __syscall_slong_t, __time_t, __uid_t, size_t, uintmax_t,
 };
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{dep, file, NameSeq, SeqNode};
+use crate::file::{Commands, Dep, File, GoalDep, VariableSet, VariableSetList};
 use crate::misc::{
     collapse_continuations, copy_dep, copy_dep_chain, find_next_token, next_token, xcalloc,
     xmalloc, xrealloc, xstrdup, xstrndup,
 };
+use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use c2rust_bitfields;
@@ -966,8 +953,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                             0,
                             b"invalid syntax in conditional\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[],
-    );
+                            &[],
+                        );
                     }
                     ignoring = i;
                 } else {
@@ -1009,12 +996,15 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 }) as size_t,
                                 b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((if exporting != 0 {
-                                    b"export\0" as *const u8 as *const ::core::ffi::c_char
-                                } else {
-                                    b"unexport\0" as *const u8 as *const ::core::ffi::c_char
-                                }) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str(
+                                    (if exporting != 0 {
+                                        b"export\0" as *const u8 as *const ::core::ffi::c_char
+                                    } else {
+                                        b"unexport\0" as *const u8 as *const ::core::ffi::c_char
+                                    })
+                                        as *const ::core::ffi::c_char,
+                                )],
+                            );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1094,8 +1084,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 b"warning: vpath directive lines cannot start with TAB\0"
                                     as *const u8
                                     as *const ::core::ffi::c_char,
-        &[],
-    );
+                                &[],
+                            );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1297,12 +1287,15 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 }) as size_t,
                                 b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((if noerror_0 != 0 {
-                                    b"-load\0" as *const u8 as *const ::core::ffi::c_char
-                                } else {
-                                    b"load\0" as *const u8 as *const ::core::ffi::c_char
-                                }) as *const ::core::ffi::c_char)],
-    );
+                                &[FmtArg::Str(
+                                    (if noerror_0 != 0 {
+                                        b"-load\0" as *const u8 as *const ::core::ffi::c_char
+                                    } else {
+                                        b"load\0" as *const u8 as *const ::core::ffi::c_char
+                                    })
+                                        as *const ::core::ffi::c_char,
+                                )],
+                            );
                         }
                         if !filenames.is_null() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1409,8 +1402,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         strlen(name) as size_t,
                                         b"%s: failed to load\0" as *const u8
                                             as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+                                        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+                                    );
                                 }
                                 name = file.name;
                                 f = lookup_file(name);
@@ -1445,8 +1438,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 0,
                                 b"recipe commences before first target\0" as *const u8
                                     as *const ::core::ffi::c_char,
-        &[],
-    );
+                                &[],
+                            );
                         }
                         let mut wtype: make_word_type;
                         let mut cmdleft: *mut ::core::ffi::c_char;
@@ -1503,8 +1496,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         0,
                                         b"missing rule before recipe\0" as *const u8
                                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                                        &[],
+                                    );
                                 }
                             }
                             4 | 5 | 7 | 8 => {
@@ -1620,8 +1613,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         0,
                                         b"missing separator\0" as *const u8
                                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                                        &[],
+                                    );
                                 } else {
                                     let colon_off: size_t = colonp.offset_from(variable_buffer)
                                         as ::core::ffi::c_long
@@ -1789,8 +1782,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                         0,
                                                         b"missing target pattern\0" as *const u8
                                                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                                                        &[],
+                                                    );
                                                 } else if !(*target).next.is_null() {
                                                     fatal(
                                                         ctx,
@@ -1798,8 +1791,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                         0,
                                                         b"multiple target patterns\0" as *const u8
                                                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                                                        &[],
+                                                    );
                                                 }
                                                 pattern_percent =
                                                     find_percent_cached(&raw mut (*target).name);
@@ -1812,8 +1805,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                         b"target pattern contains no '%%'\0"
                                                             as *const u8
                                                             as *const ::core::ffi::c_char,
-        &[],
-    );
+                                                        &[],
+                                                    );
                                                 }
                                                 free_ns(target);
                                             } else {
@@ -1984,8 +1977,8 @@ unsafe fn do_define(
                 0,
                 b"extraneous text after 'define' directive\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[],
-    );
+                &[],
+            );
         }
         *var.name.offset(var.length as isize) = 0;
     }
@@ -2013,8 +2006,8 @@ unsafe fn do_define(
                 0,
                 b"missing 'endef', unterminated 'define'\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[],
-    );
+                &[],
+            );
         }
         (*ebuf).floc.lineno = (*ebuf)
             .floc
@@ -2129,8 +2122,8 @@ unsafe fn conditional_line(
             0,
             b"warning: conditional directive lines cannot start with TAB\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &[],
+        );
     }
     line = line.offset(len as isize);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
@@ -2148,8 +2141,8 @@ unsafe fn conditional_line(
                 strlen(cmdname) as size_t,
                 b"extraneous text after '%s' directive\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+            );
         }
         if (*conditionals).if_cmds == 0 {
             fatal(
@@ -2220,8 +2213,8 @@ unsafe fn conditional_line(
                     strlen(cmdname) as size_t,
                     b"extraneous text after '%s' directive\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
-    );
+                    &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+                );
             } else {
                 if (*(*conditionals).ignoring.offset(o as isize) as i32) < 2 {
                     *(*conditionals).ignoring.offset(o as isize) =
@@ -2405,8 +2398,8 @@ unsafe fn record_target_var(
                     0,
                     b"malformed target-specific variable definition\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[],
-    );
+                    &[],
+                );
             }
             current_variable_set_list = global;
         }
@@ -2654,8 +2647,8 @@ unsafe fn record_files(
             0,
             b"prerequisites cannot be defined in recipes\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[],
-    );
+            &[],
+        );
     }
     let mut filenames = ::core::ptr::NonNull::new(filenames)
         .expect("record_files: null filenames")
@@ -2716,8 +2709,8 @@ unsafe fn record_files(
                 0,
                 b"mixed implicit and static pattern rules\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[],
-    );
+                &[],
+            );
         }
         let first_target = pop_name_seq(filenames, "record_files target list is null");
         filenames = first_target.next;
@@ -2769,8 +2762,8 @@ unsafe fn record_files(
                 strlen(name) as size_t,
                 b"target '%s' doesn't match the target pattern\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+                &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+            );
         } else if !deps.is_null() {
             this = if !nextf_0.is_null() {
                 copy_dep_chain(deps)
@@ -2787,8 +2780,8 @@ unsafe fn record_files(
                     strlen((*f).name) as size_t,
                     b"target file '%s' has both : and :: entries\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
-    );
+                    &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+                );
             }
             if !cmds.is_null() && cmds == (*f).cmds {
                 error(
@@ -2807,16 +2800,16 @@ unsafe fn record_files(
                     l,
                     b"warning: overriding recipe for target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
-    );
+                    &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+                );
                 error(
                     ctx,
                     &raw mut (*(*f).cmds).fileinfo,
                     l,
                     b"warning: ignoring old recipe for target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
-    );
+                    &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+                );
             }
             if f == default_file && this.is_null() && cmds.is_null() {
                 (*f).cmds = ::core::ptr::null_mut::<Commands>();
@@ -2926,8 +2919,8 @@ unsafe fn record_files(
                 0,
                 b"*** mixed implicit and normal rules: deprecated syntax\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[],
-    );
+                &[],
+            );
         }
     }
     let mut i: *mut Dep = also_make;
@@ -2946,7 +2939,7 @@ unsafe fn record_files(
                 strlen(f0.name) as size_t,
                 b"warning: overriding group membership for target '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                f0.name,
+                &[FmtArg::Str(f0.name)],
             );
             free_dep_chain(f0.also_make);
             f0.also_make = ::core::ptr::null_mut::<dep>();
@@ -3570,14 +3563,11 @@ pub unsafe fn parse_file_seq(
                     xstrdup(__n) as *const ::core::ffi::c_char
                 });
                 if found_wait != 0 {
-                    let dep_ref = (ns as *mut nameseq as *mut dep)
-                        .as_mut()
-                        .expect("parse_file_seq: null wait marker dep");
-                    dep_ref.set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                    T::mark_wait(_ns);
                     found_wait = 0;
                 }
                 *newp = _ns;
-                newp = &raw mut ns.next;
+                newp = T::next_slot(_ns);
             } else {
                 name = tmpbuf;
                 if *tmpbuf.offset(0_i32 as isize) as i32 == '~' as i32 {
@@ -3631,32 +3621,27 @@ pub unsafe fn parse_file_seq(
                             ar_glob(ctx, *nlist.offset(i as isize), memname, size);
                         if found.is_null() {
                             let _ns_0: *mut T = T::alloc();
-                            let mut __n_0: *const ::core::ffi::c_char = concat(
-                                5,
+                            let __n_0: *const ::core::ffi::c_char = concat(&[
                                 prefix,
                                 *nlist.offset(i as isize),
                                 b"(\0" as *const u8 as *const ::core::ffi::c_char,
                                 memname,
                                 b")\0" as *const u8 as *const ::core::ffi::c_char,
+                            ]);
+                            T::set_name(
+                                _ns_0,
+                                if cachep != 0 {
+                                    strcache_add(__n_0)
+                                } else {
+                                    xstrdup(__n_0) as *const ::core::ffi::c_char
+                                },
                             );
-                            let ns = _ns_0
-                                .as_mut()
-                                .expect("parse_file_seq: xcalloc returned null archive nameseq");
-                            ns.name = if cachep != 0 {
-                                strcache_add(__n_0)
-                            } else {
-                                xstrdup(__n_0) as *const ::core::ffi::c_char
-                            });
                             if found_wait != 0 {
-                                let dep_ref = (ns as *mut nameseq as *mut dep)
-                                    .as_mut()
-                                    .expect("parse_file_seq: null archive wait marker dep");
-                                dep_ref
-                                    .set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                                T::mark_wait(_ns_0);
                                 found_wait = 0;
                             }
                             *newp = _ns_0;
-                            newp = &raw mut ns.next;
+                            newp = T::next_slot(_ns_0);
                         } else {
                             if let Some(node) = newp.as_mut().and_then(|s| s.as_mut()) {
                                 node.next = found;
@@ -3664,42 +3649,36 @@ pub unsafe fn parse_file_seq(
                                 *new_slot = found;
                             }
                             loop {
-                                let found_ref = found
-                                    .as_mut()
-                                    .expect("parse_file_seq: null archive glob result");
                                 if cachep == 0 {
-                                    found_ref.name = xstrdup(concat(2, prefix, name));
+                                    T::set_name(found, xstrdup(concat(&[prefix, name])));
                                 } else if !prefix.is_null() {
-                                    found_ref.name = strcache_add(concat(2, prefix, name));
+                                    T::set_name(found, strcache_add(concat(&[prefix, name])));
                                 }
-                                if found_ref.next.is_null() {
-                                    newp = &raw mut found_ref.next;
+                                if T::next(found).is_null() {
+                                    newp = T::next_slot(found);
                                     break;
                                 }
-                                found = found_ref.next;
+                                found = T::next(found);
                             }
                         }
                     } else {
                         let _ns_1: *mut T = T::alloc();
                         let __n_1: *const ::core::ffi::c_char =
-                            concat(2, prefix, *nlist.offset(i as isize));
-                        let ns = _ns_1
-                            .as_mut()
-                            .expect("parse_file_seq: xcalloc returned null nameseq");
-                        ns.name = if cachep != 0 {
-                            strcache_add(__n_1)
-                        } else {
-                            xstrdup(__n_1) as *const ::core::ffi::c_char
-                        });
+                            concat(&[prefix, *nlist.offset(i as isize)]);
+                        T::set_name(
+                            _ns_1,
+                            if cachep != 0 {
+                                strcache_add(__n_1)
+                            } else {
+                                xstrdup(__n_1) as *const ::core::ffi::c_char
+                            },
+                        );
                         if found_wait != 0 {
-                            let dep_ref = (ns as *mut nameseq as *mut dep)
-                                .as_mut()
-                                .expect("parse_file_seq: null wait marker dep");
-                            dep_ref.set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                            T::mark_wait(_ns_1);
                             found_wait = 0;
                         }
                         *newp = _ns_1;
-                        newp = &raw mut ns.next;
+                        newp = T::next_slot(_ns_1);
                     }
                     i += 1;
                 }

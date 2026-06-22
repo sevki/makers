@@ -283,8 +283,8 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     error(
         ctx,
         null::<Floc>(),
-        0,
         c"cannot open output-sync lock file: suppressing output-sync".as_ptr(),
+        &[],
     );
     output_close(ctx, out);
     crate::make_main::with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
@@ -307,8 +307,8 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             error(
                 ctx,
                 null::<Floc>(),
-                0,
                 c"warning: cannot acquire output lock: disabling output sync".as_ptr(),
+                &[],
             );
             osync_clear();
         }
@@ -446,12 +446,208 @@ pub unsafe fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
     *fmtbuf.buffer.add(need - 1) = 0;
     fmtbuf.buffer
 }
-/// printf-style message to stdout, optionally prefixed with the program
-/// name; `len` must bound the formatted arguments' length.
+/// One argument to the printf-subset formatter that replaced C varargs.
+#[derive(Copy, Clone)]
+pub enum FmtArg {
+    Str(*const ::core::ffi::c_char),
+    Int(i64),
+    Uint(u64),
+    Ptr(*const ::core::ffi::c_void),
+}
+
+/// Render printf-style `fmt` with `args` into `out`, byte-for-byte like the
+/// C printf subset this codebase uses: %s %d %i %u %x %c %p %% with flags,
+/// width and precision (including `*`), and h/l/ll/z length modifiers.
+pub unsafe fn vformat_into(out: &mut Vec<u8>, fmt: *const ::core::ffi::c_char, args: &[FmtArg]) {
+    let bytes = ::core::ffi::CStr::from_ptr(fmt).to_bytes();
+    let mut args = args.iter();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let mut zero_pad = false;
+        let mut left = false;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'0' => zero_pad = true,
+                b'-' => left = true,
+                _ => break,
+            }
+            i += 1;
+        }
+        let mut width = 0usize;
+        if i < bytes.len() && bytes[i] == b'*' {
+            if let Some(FmtArg::Int(n)) = args.next() {
+                width = (*n).max(0) as usize;
+            }
+            i += 1;
+        } else {
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                width = width * 10 + (bytes[i] - b'0') as usize;
+                i += 1;
+            }
+        }
+        let mut precision: Option<usize> = None;
+        if i < bytes.len() && bytes[i] == b'.' {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'*' {
+                if let Some(FmtArg::Int(n)) = args.next() {
+                    precision = Some((*n).max(0) as usize);
+                }
+                i += 1;
+            } else {
+                let mut p = 0usize;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    p = p * 10 + (bytes[i] - b'0') as usize;
+                    i += 1;
+                }
+                precision = Some(p);
+            }
+        }
+        while i < bytes.len() && matches!(bytes[i], b'l' | b'h' | b'z') {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let conv = bytes[i];
+        i += 1;
+        let piece: Vec<u8> = match conv {
+            b'%' => vec![b'%'],
+            b's' => {
+                let p = match args.next() {
+                    Some(FmtArg::Str(p)) => *p,
+                    _ => ::core::ptr::null(),
+                };
+                let mut v = if p.is_null() {
+                    b"(null)".to_vec()
+                } else {
+                    ::core::ffi::CStr::from_ptr(p).to_bytes().to_vec()
+                };
+                if let Some(prec) = precision {
+                    v.truncate(prec);
+                }
+                v
+            }
+            b'd' | b'i' => {
+                let n = match args.next() {
+                    Some(FmtArg::Int(n)) => *n,
+                    Some(FmtArg::Uint(n)) => *n as i64,
+                    _ => 0,
+                };
+                n.to_string().into_bytes()
+            }
+            b'u' => {
+                let n = match args.next() {
+                    Some(FmtArg::Uint(n)) => *n,
+                    Some(FmtArg::Int(n)) => *n as u64,
+                    _ => 0,
+                };
+                n.to_string().into_bytes()
+            }
+            b'x' => {
+                let n = match args.next() {
+                    Some(FmtArg::Uint(n)) => *n,
+                    Some(FmtArg::Int(n)) => *n as u64,
+                    _ => 0,
+                };
+                format!("{:x}", n).into_bytes()
+            }
+            b'c' => {
+                let n = match args.next() {
+                    Some(FmtArg::Int(n)) => *n,
+                    Some(FmtArg::Uint(n)) => *n as i64,
+                    _ => 0,
+                };
+                vec![n as u8]
+            }
+            b'p' => {
+                let p = match args.next() {
+                    Some(FmtArg::Ptr(p)) => *p as usize,
+                    Some(FmtArg::Str(p)) => *p as usize,
+                    _ => 0,
+                };
+                format!("0x{:x}", p).into_bytes()
+            }
+            other => {
+                out.push(b'%');
+                vec![other]
+            }
+        };
+        if piece.len() < width {
+            let pad = width - piece.len();
+            if left {
+                out.extend_from_slice(&piece);
+                out.extend(::core::iter::repeat(b' ').take(pad));
+            } else {
+                let fill = if zero_pad { b'0' } else { b' ' };
+                out.extend(::core::iter::repeat(fill).take(pad));
+                out.extend_from_slice(&piece);
+            }
+        } else {
+            out.extend_from_slice(&piece);
+        }
+    }
+}
+
+unsafe fn push_cstr(out: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
+    if !s.is_null() {
+        out.extend_from_slice(::core::ffi::CStr::from_ptr(s).to_bytes());
+    }
+}
+
+unsafe fn push_program_prefix(out: &mut Vec<u8>, fatal_marker: bool) {
+    push_cstr(out, program);
+    if makelevel == 0 {
+        out.extend_from_slice(b": ");
+    } else {
+        out.push(b'[');
+        out.extend_from_slice(makelevel.to_string().as_bytes());
+        out.extend_from_slice(b"]: ");
+    }
+    if fatal_marker {
+        out.extend_from_slice(b"*** ");
+    }
+}
+
+unsafe fn push_error_prefix(out: &mut Vec<u8>, flocp: *const Floc, fatal_marker: bool) {
+    if !flocp.is_null() && !(*flocp).filenm.is_null() {
+        push_cstr(out, (*flocp).filenm);
+        out.push(b':');
+        out.extend_from_slice(
+            (*flocp)
+                .lineno
+                .wrapping_add((*flocp).offset)
+                .to_string()
+                .as_bytes(),
+        );
+        out.extend_from_slice(b": ");
+        if fatal_marker {
+            out.extend_from_slice(b"*** ");
+        }
+    } else {
+        push_program_prefix(out, fatal_marker);
+    }
+}
+
+unsafe fn write_formatted(is_err: bool, mut out: Vec<u8>) {
+    out.push(0);
+    outputs(
+        if is_err { 1 } else { 0 },
+        out.as_ptr() as *const ::core::ffi::c_char,
+    );
+}
+
+/// printf-subset message to stdout, optionally prefixed with the program name.
 ///
 /// # Safety
-/// `fmt` and the variadic arguments must form a valid printf invocation
-/// whose expansion fits in `len` extra bytes.
+/// `fmt` must be a valid NUL-terminated format string. The format
+/// specifiers must match `args`.
+#[no_mangle]
 pub unsafe extern "C" fn message(
     ctx: &ExecContext,
     prefix: i32,
@@ -471,13 +667,7 @@ pub unsafe extern "C" fn message(
     let start: *mut ::core::ffi::c_char = get_buffer(len);
     let mut p = start;
     if prefix != 0 {
-        p = p.offset(
-            (if makelevel == 0 {
-                sprintf(p, c"%s: ".as_ptr(), program)
-            } else {
-                sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel)
-            }) as isize,
-        );
+        push_program_prefix(&mut out, false);
     }
     let args_0 = args.clone();
     vsprintf(p, fmt, args_0);
@@ -488,19 +678,18 @@ pub unsafe extern "C" fn message(
     );
     outputs(ctx, 0, start);
 }
-/// printf-style error to stderr with a file:line or program prefix;
-/// `len` must bound the formatted arguments' length.
+
+/// printf-subset error to stderr with a file:line or program prefix.
 ///
 /// # Safety
-/// `flocp` must be null or valid; `fmt` and the variadic arguments must
-/// form a valid printf invocation whose expansion fits in `len` extra
-/// bytes.
+/// `flocp` must be null or valid. `fmt` must be a valid NUL-terminated
+/// format string and the format specifiers must match `args`.
+#[no_mangle]
 pub unsafe extern "C" fn error(
     ctx: &ExecContext,
     flocp: *const Floc,
-    mut len: size_t,
     fmt: *const ::core::ffi::c_char,
-    args: ...
+    args: &[FmtArg],
 ) {
     let makelevel = ctx.makelevel();
     len = (len as ::core::ffi::c_ulong).wrapping_add(
@@ -541,6 +730,7 @@ pub unsafe extern "C" fn error(
     );
     outputs(ctx, 1, start);
 }
+
 /// Like [`error`] but adds the `*** ` marker and `.  Stop.` suffix, then
 /// dies with `MAKE_FAILURE`.
 ///
@@ -549,9 +739,8 @@ pub unsafe extern "C" fn error(
 pub unsafe extern "C" fn fatal(
     ctx: &ExecContext,
     flocp: *const Floc,
-    mut len: size_t,
     fmt: *const ::core::ffi::c_char,
-    args: ...
+    args: &[FmtArg],
 ) -> ! {
     let makelevel = ctx.makelevel();
     let stop: *const ::core::ffi::c_char = c".  Stop.\n".as_ptr();
@@ -594,35 +783,37 @@ pub unsafe extern "C" fn fatal(
     outputs(ctx, 1, start);
     die(ctx, MAKE_FAILURE);
 }
+
 /// Format into the shared buffer with an optional prefix and return it.
 ///
 /// # Safety
-/// Same printf contract as [`message`]; the returned buffer is shared.
+/// `prefix` may be null. `fmt` must be a valid NUL-terminated format string
+/// and the format specifiers must match `args`. The returned buffer is shared.
+#[no_mangle]
 pub unsafe extern "C" fn format(
     prefix: *const ::core::ffi::c_char,
     fmt: *const ::core::ffi::c_char,
     args: &[FmtArg],
 ) -> *mut ::core::ffi::c_char {
-    let plen: size_t = if !prefix.is_null() {
-        strlen(prefix) as size_t
-    } else {
-        0
-    };
-    len = len.wrapping_add(strlen(fmt).wrapping_add(plen as size_t).wrapping_add(1) as size_t);
-    let start: *mut ::core::ffi::c_char = get_buffer(len);
-    let mut p = start;
-    if plen != 0 {
-        p = mempcpy(
-            p as *mut ::core::ffi::c_void,
-            prefix as *const ::core::ffi::c_void,
-            plen as size_t,
-        ) as *mut ::core::ffi::c_char;
-    }
+    let mut out = Vec::new();
+    push_cstr(&mut out, prefix);
     vformat_into(&mut out, fmt, args);
     out.push(0);
     let buf = get_buffer(out.len() as size_t);
     ::core::ptr::copy_nonoverlapping(out.as_ptr(), buf as *mut u8, out.len());
     buf
+}
+
+/// Backwards-compatible name for callers migrated from the old printf helper.
+///
+/// # Safety
+/// Same contract as [`format`].
+pub unsafe fn format_message(
+    prefix: *const ::core::ffi::c_char,
+    fmt: *const ::core::ffi::c_char,
+    args: &[FmtArg],
+) -> *mut ::core::ffi::c_char {
+    format(prefix, fmt, args)
 }
 /// Report `str``name`: strerror(errno) via [`error`].
 ///
@@ -637,13 +828,8 @@ pub unsafe fn perror_with_name(
     error(
         ctx,
         null::<Floc>(),
-        (strlen(str) as size_t)
-            .wrapping_add(strlen(name) as size_t)
-            .wrapping_add(strlen(err) as size_t),
         c"%s%s: %s".as_ptr(),
-        str,
-        name,
-        err,
+        &[FmtArg::Str(str), FmtArg::Str(name), FmtArg::Str(err)],
     );
 }
 /// Report `name`: strerror(errno) via [`fatal`] and die.
@@ -655,10 +841,8 @@ pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_ch
     fatal(
         ctx,
         null::<Floc>(),
-        (strlen(name) as size_t).wrapping_add(strlen(err) as size_t),
         c"%s: %s".as_ptr(),
-        name,
-        err,
+        &[FmtArg::Str(name), FmtArg::Str(err)],
     );
 }
 /// Print the out-of-memory message without allocating and exit with

@@ -1,6 +1,5 @@
 //! Portable, stable hashing suitable for identifying values
 
-use blake2::Blake2b512;
 // Re-export DigestUpdate so that the ContentHash proc macro can be used in
 // external crates without directly depending on the digest crate.
 pub use digest::Update as DigestUpdate;
@@ -19,14 +18,6 @@ pub use jj_lib_proc_macros::ContentHash;
 pub trait ContentHash {
     /// Update the hasher state with this object's content
     fn hash(&self, state: &mut impl DigestUpdate);
-}
-
-/// The 512-bit BLAKE2b content hash.
-pub fn blake2b_hash(x: &(impl ContentHash + ?Sized)) -> digest::Output<Blake2b512> {
-    use digest::Digest as _;
-    let mut hasher = Blake2b512::default();
-    x.hash(&mut hasher);
-    hasher.finalize()
 }
 
 impl ContentHash for () {
@@ -113,6 +104,12 @@ impl ContentHash for str {
 impl ContentHash for String {
     fn hash(&self, state: &mut impl DigestUpdate) {
         self.as_str().hash(state);
+    }
+}
+
+impl<T: ContentHash + ?Sized> ContentHash for std::sync::Arc<T> {
+    fn hash(&self, state: &mut impl DigestUpdate) {
+        (**self).hash(state);
     }
 }
 
