@@ -2081,31 +2081,104 @@ mod tests {
         SNAPPED_DEPS.store(saved, Ordering::Relaxed);
     }
 
-    /// `file_timestamp_now` reads the wall clock via `std::time::SystemTime`.
-    /// It must set the resolution to 1 (nanosecond CLOCK_REALTIME path),
-    /// return a non-zero packed timestamp, and decode to roughly the current
-    /// Unix time. The bound is intentionally wide so the test is not flaky.
+    // FFI declarations and types the pre-std clock cascade depended on. They
+    // were removed from production code when `file_timestamp_now` moved to
+    // `std::time::SystemTime`, so we re-declare them here (test-only) purely to
+    // keep the verbatim oracle compilable per AGENTS.md "preserve the original
+    // as a test oracle". Production stays free of this FFI/unsafe.
+    const CLOCK_REALTIME: i32 = 0;
+    #[derive(Copy, Clone)]
+    #[repr(C)]
+    struct timeval {
+        pub tv_sec: __time_t,
+        pub tv_usec: __suseconds_t,
+    }
+    extern "C" {
+        fn gettimeofday(__tv: *mut timeval, __tz: *mut ::core::ffi::c_void) -> i32;
+        fn time(__timer: *mut time_t) -> time_t;
+        fn clock_gettime(__clock_id: clockid_t, __tp: *mut timespec) -> i32;
+    }
+
+    /// Verbatim copy of the pre-std `file_timestamp_now` clock cascade:
+    /// `clock_gettime(CLOCK_REALTIME)` -> `gettimeofday` -> `time()` fallback.
+    /// Kept test-only as the differential oracle for the new safe
+    /// `std::time::SystemTime` implementation (AGENTS.md verbatim-oracle rule).
+    unsafe fn file_timestamp_now_oracle(resolution: *mut i32) -> uintmax_t {
+        let r: i32;
+        let s: time_t;
+        let ns: i32;
+        let mut timespec: timespec = timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        if clock_gettime(CLOCK_REALTIME, &raw mut timespec) == 0 {
+            r = 1;
+            s = timespec.tv_sec as time_t;
+            ns = timespec.tv_nsec as i32;
+        } else {
+            let mut timeval: timeval = timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            if gettimeofday(
+                &raw mut timeval,
+                ::core::ptr::null_mut::<::core::ffi::c_void>(),
+            ) == 0
+            {
+                r = 1000_i32;
+                s = timeval.tv_sec as time_t;
+                ns = (timeval.tv_usec * 1000 as __suseconds_t) as i32;
+            } else {
+                r = 1000000000_i32;
+                s = time(::core::ptr::null_mut::<time_t>());
+                ns = 0;
+            }
+        }
+        *resolution = r;
+        file_timestamp_cons(
+            ::core::ptr::null::<::core::ffi::c_char>(),
+            s,
+            ns as ::core::ffi::c_long,
+        )
+    }
+
+    /// Unpack the whole-seconds field the same way `file_timestamp_sprintf`
+    /// does, so we can compare two packed timestamps in seconds-since-epoch.
+    fn decode_secs(ts: uintmax_t) -> i64 {
+        (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+            >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) as i64
+    }
+
+    /// Differential test: the new `std::time` `file_timestamp_now` must agree
+    /// with the preserved unsafe clock cascade. Resolution must match exactly
+    /// (both use the nanosecond CLOCK_REALTIME path => 1). The packed
+    /// timestamps decode to within a small wall-clock tolerance because the two
+    /// `now()` reads happen microseconds apart; we deliberately do not assert
+    /// exact equality or subsec_nanos equality, which would be flaky.
     #[test]
-    fn file_timestamp_now_uses_system_clock() {
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_secs() as i64;
+    fn file_timestamp_now_matches_unsafe_oracle() {
+        let mut res_new: i32 = -1;
+        let ts_new = unsafe { file_timestamp_now(&raw mut res_new) };
 
-        let mut resolution: i32 = -1;
-        let ts = unsafe { file_timestamp_now(&raw mut resolution) };
+        let mut res_oracle: i32 = -1;
+        let ts_oracle = unsafe { file_timestamp_now_oracle(&raw mut res_oracle) };
 
-        assert_eq!(resolution, 1, "SystemTime path sets resolution to 1");
-        assert_ne!(ts, 0, "packed timestamp is non-zero");
+        assert_eq!(res_new, 1, "std path sets resolution to 1");
+        assert_eq!(
+            res_new, res_oracle,
+            "resolution must match oracle (CLOCK_REALTIME ns path)"
+        );
 
-        // Unpack the whole-seconds field the same way file_timestamp_sprintf does.
-        let decoded = (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-            >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) as i64;
+        assert_ne!(ts_new, 0, "packed timestamp is non-zero");
+        assert_ne!(ts_oracle, 0, "oracle packed timestamp is non-zero");
 
-        // Within a generous 10-minute window of "now".
+        let decoded_new = decode_secs(ts_new);
+        let decoded_oracle = decode_secs(ts_oracle);
+
+        // Two separate now() reads occur microseconds apart; 2s is safe.
         assert!(
-            (decoded - now_secs).abs() < 600,
-            "decoded={decoded} now={now_secs}"
+            (decoded_new - decoded_oracle).abs() <= 2,
+            "new={decoded_new} oracle={decoded_oracle} differ by more than 2s"
         );
     }
 
