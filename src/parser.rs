@@ -347,6 +347,38 @@ impl LogFunction {
     }
 }
 
+/// The two list-token-trimming functions that make routes to a single shared
+/// handler (`func_notdir_suffix`): `$(notdir …)` and `$(suffix …)`. Both walk a
+/// whitespace-separated list and emit a slice of each token, differing only in
+/// which part they keep — the tail after the last directory separator
+/// (`$(notdir)`), or the file suffix from the last `.` (`$(suffix)`).
+///
+/// make's c2rust handler distinguished the two by reading the raw first byte of
+/// the function name (`*funcname == 's'`), an opaque magic-number wall. Which
+/// function is selected is a pure function of the name bytes, so it belongs in
+/// the AST layer as a typed classifier rather than as an inline byte comparison.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum NotdirSuffix {
+    /// `$(notdir …)` — keep each token's tail after the last directory separator.
+    Notdir,
+    /// `$(suffix …)` — keep each token's suffix from its last `.` (else nothing).
+    Suffix,
+}
+
+impl NotdirSuffix {
+    /// Classify a built-in function `name` as one of the two list-trimming
+    /// functions, or `None` if it is not one of them. Matching is exact on the
+    /// full name, mirroring the closed set the function table routes to
+    /// `func_notdir_suffix`.
+    pub fn from_funcname(name: &[u8]) -> Option<NotdirSuffix> {
+        Some(match name {
+            b"notdir" => NotdirSuffix::Notdir,
+            b"suffix" => NotdirSuffix::Suffix,
+            _ => return None,
+        })
+    }
+}
+
 /// The typed classification of a whole logical (non-recipe) line: which of
 /// make's four `eval` dispatch arms the line takes. It is composed from the
 /// leading-word classifiers in make's `eval` order — conditional directives are
@@ -1796,6 +1828,43 @@ mod tests {
         ] {
             assert_eq!(
                 LogFunction::from_funcname(w),
+                None,
+                "{:?} must not classify",
+                w
+            );
+        }
+    }
+
+    #[test]
+    fn notdir_suffix_classify() {
+        assert_eq!(
+            NotdirSuffix::from_funcname(b"notdir"),
+            Some(NotdirSuffix::Notdir)
+        );
+        assert_eq!(
+            NotdirSuffix::from_funcname(b"suffix"),
+            Some(NotdirSuffix::Suffix)
+        );
+    }
+
+    #[test]
+    fn notdir_suffix_reject_non_matches() {
+        // Other built-in functions sharing a first byte ('s' for suffix,
+        // 'n' for notdir) must not classify — the old wall switched on the
+        // first byte alone (`*funcname == 's'`).
+        for w in [
+            b"subst".as_slice(),
+            b"sort".as_slice(),
+            b"strip".as_slice(),
+            b"shell".as_slice(),
+            b"basename".as_slice(),
+            b"dir".as_slice(),
+            b"Suffix".as_slice(),
+            b"notdirs".as_slice(),
+            b"".as_slice(),
+        ] {
+            assert_eq!(
+                NotdirSuffix::from_funcname(w),
                 None,
                 "{:?} must not classify",
                 w

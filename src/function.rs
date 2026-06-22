@@ -783,8 +783,14 @@ unsafe fn func_notdir_suffix(
     let mut p2: *const ::core::ffi::c_char;
     let mut doneany: ::core::ffi::c_int = 0;
     let mut len: size_t = 0;
-    let is_suffix: ::core::ffi::c_int =
-        (*funcname as ::core::ffi::c_int == 's' as i32) as ::core::ffi::c_int;
+    // Select notdir vs suffix through the typed AST classifier instead of
+    // switching on the raw first byte of the name. The function table routes
+    // only `notdir`/`suffix` here; any other name falls back to notdir, exactly
+    // as the original `*funcname == 's'` test did.
+    let is_suffix: ::core::ffi::c_int = matches!(
+        crate::parser::NotdirSuffix::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+        Some(crate::parser::NotdirSuffix::Suffix)
+    ) as ::core::ffi::c_int;
     let is_notdir: ::core::ffi::c_int = (is_suffix == 0) as ::core::ffi::c_int;
     let stop: ::core::ffi::c_int = MAP_DIRSEP | (if is_suffix != 0 { MAP_DOT } else { 0 });
     loop {
