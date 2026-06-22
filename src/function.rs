@@ -2248,6 +2248,43 @@ pub unsafe fn shell_completed(
         NILF,
     );
 }
+/// Read everything from pipe `fd` into an owned, growing buffer (was the inline
+/// xmalloc/xrealloc read loop in `func_shell_base`). Retries on `EINTR`, grows
+/// by 512 bytes when full, stops at EOF/error, and NUL-terminates. Returns the
+/// buffer (kept fully initialized so a growth preserves bytes already read) and
+/// the filled length.
+///
+/// # Safety
+/// `fd` must be a valid readable file descriptor.
+unsafe fn read_all_pipe(fd: i32) -> (Vec<u8>, size_t) {
+    let mut maxlen: size_t = 200;
+    let mut buffer: Vec<u8> = vec![0u8; maxlen.wrapping_add(1) as usize];
+    let mut i: size_t = 0;
+    loop {
+        if i == maxlen {
+            maxlen = maxlen.wrapping_add(512);
+            buffer.resize(maxlen.wrapping_add(1) as usize, 0);
+        }
+        let mut cc: i32;
+        loop {
+            cc = read(
+                fd,
+                buffer.as_mut_ptr().add(i as usize) as *mut ::core::ffi::c_void,
+                (maxlen as size_t).wrapping_sub(i as size_t),
+            ) as i32;
+            if !(cc == -1_i32 && *__errno_location() == EINTR) {
+                break;
+            }
+        }
+        if cc <= 0 {
+            break;
+        }
+        i = i.wrapping_add(cc as size_t);
+    }
+    *buffer.as_mut_ptr().add(i as usize) = 0;
+    (buffer, i)
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -2312,42 +2349,12 @@ pub unsafe fn func_shell_base(
         if pid < 0 {
             shell_completed(ctx, 127, 0);
         } else {
-            let mut maxlen: size_t;
-            let mut i: size_t;
-            let mut cc: i32;
             SHELL_FUNCTION_PID.store(pid, Ordering::Relaxed);
             SHELL_FUNCTION_COMPLETED.store(0, Ordering::Relaxed);
             if pipedes[1_i32 as usize] >= 0 {
                 close(pipedes[1_i32 as usize]);
             }
-            maxlen = 200;
-            // Owned read buffer (was xmalloc/xrealloc/free). `i` tracks the
-            // filled length and `maxlen` the usable size. The Vec is kept fully
-            // initialized (len == capacity) so a growth preserves the bytes
-            // already read rather than only the [0, len) prefix.
-            let mut buffer: Vec<u8> = vec![0u8; maxlen.wrapping_add(1) as usize];
-            i = 0;
-            loop {
-                if i == maxlen {
-                    maxlen = maxlen.wrapping_add(512);
-                    buffer.resize(maxlen.wrapping_add(1) as usize, 0);
-                }
-                loop {
-                    cc = read(
-                        pipedes[0_i32 as usize],
-                        buffer.as_mut_ptr().add(i as usize) as *mut ::core::ffi::c_void,
-                        (maxlen as size_t).wrapping_sub(i as size_t),
-                    ) as i32;
-                    if !(cc == -1_i32 && *__errno_location() == EINTR) {
-                        break;
-                    }
-                }
-                if cc <= 0 {
-                    break;
-                }
-                i = i.wrapping_add(cc as size_t);
-            }
-            *buffer.as_mut_ptr().add(i as usize) = 0;
+            let (mut buffer, mut i) = read_all_pipe(pipedes[0_i32 as usize]);
             close(pipedes[0_i32 as usize]);
             while shell_function_completed() == 0 {
                 reap_children(ctx, 1, 0);
