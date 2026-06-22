@@ -141,6 +141,32 @@ fn split_archive_ref(name: &[u8]) -> Option<(&[u8], &[u8])> {
     Some((lib, member))
 }
 
+/// Whether dependency `d` contributes to the automatic-variable lists
+/// (`$+`, `$^`, `$?`, `$|`): deps awaiting second expansion and deps that
+/// explicitly opt out are skipped everywhere those lists are built.
+fn dep_uses_auto_vars(d: &dep) -> bool {
+    d.need_2nd_expansion() == 0 && d.ignore_automatic_vars() == 0
+}
+
+/// The bytes naming a dependency as they appear in `$+`/`$^`/`$|`: for an
+/// archive ref `lib(member)` only `member` (sans the trailing `)`), otherwise
+/// the whole name. Returns a `(ptr, len)` borrowing `c`'s own storage.
+///
+/// # Safety
+///
+/// `c` must be a NUL-terminated string valid for the duration of the call.
+unsafe fn autovar_dep_name(
+    ctx: &crate::execctx::ExecContext,
+    c: *const c_char,
+) -> (*const c_char, size_t) {
+    if ar_name(ctx, ::core::ffi::CStr::from_ptr(c)) {
+        let inner = strchr(c, '(' as i32).add(1);
+        (inner, strlen(inner) - 1)
+    } else {
+        (c, strlen(c))
+    }
+}
+
 /// Set the automatic variables (`$@`, `$<`, `$*`, `$%`, `$^`, `$+`, `$?`,
 /// `$|`) in `file`'s variable set, computing the stem first if needed.
 ///
@@ -178,15 +204,7 @@ pub unsafe fn set_file_variables(
 
     // If we don't have a stem, derive one by stripping a known suffix.
     if stem.is_null() {
-        let name: *const c_char;
-        let len: size_t;
-        if ar_name(ctx, ::core::ffi::CStr::from_ptr(file.name)) {
-            name = strchr(file.name, '(' as i32).add(1);
-            len = strlen(name) - 1;
-        } else {
-            name = file.name;
-            len = strlen(name);
-        }
+        let (name, len) = autovar_dep_name(ctx, file.name);
 
         let mut d = (*enter_file(strcache_add(c".SUFFIXES".as_ptr()))).deps;
         while !d.is_null() {
@@ -216,10 +234,7 @@ pub unsafe fn set_file_variables(
     let mut less = c"".as_ptr();
     let mut d = file.deps;
     while !d.is_null() {
-        if (*d).ignore_mtime() == 0
-            && (*d).ignore_automatic_vars() == 0
-            && (*d).need_2nd_expansion() == 0
-        {
+        if (*d).ignore_mtime() == 0 && dep_uses_auto_vars(&*d) {
             less = dep_name(d);
             break;
         }
@@ -249,7 +264,7 @@ pub unsafe fn set_file_variables(
     let mut bar_len: size_t = 0;
     let mut d = file.deps;
     while !d.is_null() {
-        if (*d).need_2nd_expansion() == 0 && (*d).ignore_automatic_vars() == 0 {
+        if dep_uses_auto_vars(&*d) {
             let len = strlen(dep_name(d)) + 1;
             if (*d).ignore_mtime() != 0 {
                 bar_len += len;
@@ -276,18 +291,8 @@ pub unsafe fn set_file_variables(
     let mut qmark_len = plus_len + 1;
     let mut d = file.deps;
     while !d.is_null() {
-        if (*d).ignore_mtime() == 0
-            && (*d).need_2nd_expansion() == 0
-            && (*d).ignore_automatic_vars() == 0
-        {
-            let mut c = dep_name(d);
-            let len;
-            if ar_name(ctx, ::core::ffi::CStr::from_ptr(c)) {
-                c = strchr(c, '(' as i32).add(1);
-                len = strlen(c) - 1;
-            } else {
-                len = strlen(c);
-            }
+        if (*d).ignore_mtime() == 0 && dep_uses_auto_vars(&*d) {
+            let (c, len) = autovar_dep_name(ctx, dep_name(d));
             cp = mempcpy(cp as *mut c_void, c as *const c_void, len) as *mut c_char;
             *cp = FILE_LIST_SEPARATOR;
             cp = cp.add(1);
@@ -329,7 +334,7 @@ pub unsafe fn set_file_variables(
 
     let mut d = file.deps;
     while !d.is_null() {
-        if (*d).need_2nd_expansion() == 0 && (*d).ignore_automatic_vars() == 0 {
+        if dep_uses_auto_vars(&*d) {
             let slot = hash_find_slot(&raw mut dep_hash, d as *const c_void)
                 .as_mut()
                 .expect("hash_find_slot always returns a slot");
@@ -361,18 +366,10 @@ pub unsafe fn set_file_variables(
     let mut d = file.deps;
     while !d.is_null() {
         // Take only each name's canonical (first-inserted) dep node.
-        if (*d).need_2nd_expansion() == 0
-            && (*d).ignore_automatic_vars() == 0
+        if dep_uses_auto_vars(&*d)
             && hash_find_item(&raw mut dep_hash, d as *const c_void) == d as *mut c_void
         {
-            let mut c = dep_name(d);
-            let len;
-            if ar_name(ctx, ::core::ffi::CStr::from_ptr(c)) {
-                c = strchr(c, '(' as i32).add(1);
-                len = strlen(c) - 1;
-            } else {
-                len = strlen(c);
-            }
+            let (c, len) = autovar_dep_name(ctx, dep_name(d));
             if (*d).ignore_mtime() != 0 {
                 bp = mempcpy(bp as *mut c_void, c as *const c_void, len) as *mut c_char;
                 *bp = FILE_LIST_SEPARATOR;
@@ -909,5 +906,30 @@ mod hash_2_tests {
             assert_eq!(crate::variable::variable_hash_2(key), 0);
             assert_eq!(crate::function::a_word_hash_2(key), 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod dep_uses_auto_vars_tests {
+    use super::*;
+
+    /// Build a zeroed `dep` and toggle the two flags that gate
+    /// automatic-variable inclusion.
+    fn dep_with(need_2nd: bool, ignore_auto: bool) -> dep {
+        let mut d: dep = unsafe { ::core::mem::zeroed() };
+        d.set_need_2nd_expansion(need_2nd as ::core::ffi::c_uint);
+        d.set_ignore_automatic_vars(ignore_auto as ::core::ffi::c_uint);
+        d
+    }
+
+    /// A dep counts toward `$+`/`$^`/`$?`/`$|` only when it is neither awaiting
+    /// second expansion nor explicitly opted out — the full truth table of the
+    /// two gating flags.
+    #[test]
+    fn only_plain_deps_count() {
+        assert!(dep_uses_auto_vars(&dep_with(false, false)));
+        assert!(!dep_uses_auto_vars(&dep_with(true, false)));
+        assert!(!dep_uses_auto_vars(&dep_with(false, true)));
+        assert!(!dep_uses_auto_vars(&dep_with(true, true)));
     }
 }
