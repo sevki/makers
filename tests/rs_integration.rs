@@ -174,6 +174,15 @@ fn basic() {
 }
 
 #[test]
+fn makelevel_recursive() {
+    // `$(MAKELEVEL)` is read via the safe `execctx::makelevel()` accessor (now
+    // backed by the immutable `Config`, not `static mut makelevel`). The top
+    // level reports 0 and the recursive `$(MAKE)` sub-make reports 1; both
+    // binaries must agree byte-for-byte.
+    check("makelevel_recursive", "63_makelevel.mk", "all", &[]);
+}
+
+#[test]
 fn eval_flags() {
     // Exercises the `--eval` command-line path (the eval-strings buffer that
     // now owns its scratch copy via RAII instead of xstrdup/free). Both

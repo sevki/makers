@@ -122,7 +122,7 @@ pub unsafe fn log_working_directory(entering: i32) -> i32 {
     if !starting_directory.is_null() {
         need = need.wrapping_add(strlen(starting_directory) as size_t);
     }
-    if makelevel == 0 {
+    if makelevel() == 0 {
         if starting_directory.is_null() {
             if entering != 0 {
                 fmt = c"%s: Entering an unknown directory\n".as_ptr();
@@ -159,16 +159,16 @@ pub unsafe fn log_working_directory(entering: i32) -> i32 {
         p = p.add(1);
         *fresh1 = ' ' as i32 as ::core::ffi::c_char;
     }
-    if makelevel == 0 {
+    if makelevel() == 0 {
         if starting_directory.is_null() {
             sprintf(p, fmt, program);
         } else {
             sprintf(p, fmt, program, starting_directory);
         }
     } else if starting_directory.is_null() {
-        sprintf(p, fmt, program, makelevel);
+        sprintf(p, fmt, program, makelevel());
     } else {
-        sprintf(p, fmt, program, makelevel, starting_directory);
+        sprintf(p, fmt, program, makelevel(), starting_directory);
     }
     _outputs(null_mut(), 0, buf);
     1
@@ -451,10 +451,10 @@ pub unsafe extern "C" fn message(
     let mut p = start;
     if prefix != 0 {
         p = p.offset(
-            (if makelevel == 0 {
+            (if makelevel() == 0 {
                 sprintf(p, c"%s: ".as_ptr(), program)
             } else {
-                sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel)
+                sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel())
             }) as isize,
         );
     }
@@ -503,10 +503,10 @@ pub unsafe extern "C" fn error(
                 (*flocp).filenm,
                 (*flocp).lineno.wrapping_add((*flocp).offset),
             )
-        } else if makelevel == 0 {
+        } else if makelevel() == 0 {
             sprintf(p, c"%s: ".as_ptr(), program)
         } else {
-            sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel)
+            sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel())
         }) as isize,
     );
     let args_0 = args.clone();
@@ -553,10 +553,10 @@ pub unsafe extern "C" fn fatal(
                 (*flocp).filenm,
                 (*flocp).lineno.wrapping_add((*flocp).offset),
             )
-        } else if makelevel == 0 {
+        } else if makelevel() == 0 {
             sprintf(p, c"%s: *** ".as_ptr(), program)
         } else {
-            sprintf(p, c"%s[%u]: *** ".as_ptr(), program, makelevel)
+            sprintf(p, c"%s[%u]: *** ".as_ptr(), program, makelevel())
         }) as isize,
     );
     let args_0 = args.clone();
@@ -672,7 +672,7 @@ pub mod msg {
                     format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
                 }
                 _ => {
-                    let lvl = makelevel;
+                    let lvl = makelevel();
                     let prog = program_name();
                     if lvl == 0 {
                         format!("{prog}: {marker}")
