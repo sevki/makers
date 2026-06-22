@@ -408,7 +408,8 @@ pub unsafe fn unblock_all_sigs() {
         ::core::ptr::null_mut::<sigset_t>(),
     );
 }
-unsafe extern "C" fn child_error(
+unsafe fn child_error(
+    ctx: &crate::execctx::ExecContext,
     child: *mut child,
     exit_code: i32,
     exit_sig: i32,
@@ -480,6 +481,7 @@ unsafe extern "C" fn child_error(
     show_goal_error();
     if exit_sig == 0 {
         error(
+            ctx,
             NILF,
             l.wrapping_add(INTSTR_LENGTH),
             b"%s[%s: %s] Error %d%s%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -497,6 +499,7 @@ unsafe extern "C" fn child_error(
     } else {
         let s: *const ::core::ffi::c_char = strsignal(exit_sig);
         error(
+            ctx,
             NILF,
             l.wrapping_add(strlen(s) as size_t)
                 .wrapping_add(strlen(dump) as size_t),
@@ -536,7 +539,7 @@ pub extern "C" fn child_handler(mut _sig: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn reap_children(mut block: i32, err: i32) {
+pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, err: i32) {
     let mut status: i32 = 0;
     let mut reap_more: i32 = 1;
     while (!children.is_null() || shell_function_pid() != 0) && (block != 0 || reap_more != 0) {
@@ -559,6 +562,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
             fflush(stdout);
             if !PRINTED.load(Ordering::Relaxed) {
                 error(
+                    ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"*** Waiting for unfinished jobs....\0" as *const u8
@@ -623,7 +627,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
             if pid > 0 {
                 remote = 1;
             } else if pid < 0 {
-                pfatal_with_name(b"remote_status\0" as *const u8 as *const ::core::ffi::c_char);
+                pfatal_with_name(ctx, b"remote_status\0" as *const u8 as *const ::core::ffi::c_char);
             } else {
                 if any_local != 0 {
                     if block == 0 {
@@ -640,7 +644,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
                     pid = 0_i32 as pid_t;
                 }
                 if pid < 0 {
-                    pfatal_with_name(b"wait\0" as *const u8 as *const ::core::ffi::c_char);
+                    pfatal_with_name(ctx, b"wait\0" as *const u8 as *const ::core::ffi::c_char);
                 } else if pid > 0 {
                     exit_code = (status & 0xff00_i32) >> 8;
                     exit_sig = if ((status & 0x7f_i32) + 1) as ::core::ffi::c_schar as i32 >> 1 > 0
@@ -663,6 +667,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
                     ) as pid_t;
                     if pid < 0 {
                         pfatal_with_name(
+                            ctx,
                             b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
                         );
                     }
@@ -759,6 +764,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
             }
             if !e.is_null() {
                 error(
+                    ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     (strlen((*c).cmd_name) as size_t).wrapping_add(strlen(e) as size_t),
                     b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -813,7 +819,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
             // the main thread), so `Relaxed` preserves the original order.
             static DELETE_ON_ERROR: AtomicI32 = AtomicI32::new(-1);
             if dontcare == 0 && child_failed == MAKE_FAILURE {
-                child_error(c, exit_code, exit_sig, coredump, 0);
+                child_error(ctx, c, exit_code, exit_sig, coredump, 0);
             }
             (*c).file
                 .as_mut()
@@ -838,7 +844,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
             }
         } else {
             if child_failed != 0 {
-                child_error(c, exit_code, exit_sig, coredump, 1);
+                child_error(ctx, c, exit_code, exit_sig, coredump, 1);
                 child_failed = 0;
             }
             if job_next_command(c) != 0 {
@@ -849,13 +855,13 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
                         .set_update_status(us_failed as update_status);
                 } else {
                     if output_sync == OUTPUT_SYNC_LINE {
-                        crate::output::output_dump(&raw mut (*c).output);
+                        crate::output::output_dump(ctx, &raw mut (*c).output);
                     }
                     (*c).set_remote(
                         crate::remote_stub::start_remote_job_p(0) as ::core::ffi::c_uint
                             as ::core::ffi::c_uint,
                     );
-                    start_job_command(c);
+                    start_job_command(ctx, c);
                     unblock_sigs();
                     if (*c)
                         .file
@@ -883,7 +889,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
                     .set_update_status(us_success as update_status);
             }
         }
-        crate::output::output_dump(&raw mut (*c).output);
+        crate::output::output_dump(ctx, &raw mut (*c).output);
         if handling_fatal_signal == 0 {
             notice_finished_file((*c).file);
         }
@@ -913,7 +919,7 @@ pub unsafe fn reap_children(mut block: i32, err: i32) {
         } else {
             children = (*c).next;
         }
-        free_child(c);
+        free_child(ctx, c);
         unblock_sigs();
         if err == 0
             && child_failed != 0
@@ -946,10 +952,11 @@ pub unsafe fn free_childbase(child: *mut childbase) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn free_child(child: *mut child) {
-    crate::output::output_close(&raw mut (*child).output);
+pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
+    crate::output::output_close(ctx, &raw mut (*child).output);
     if jobserver_tokens() == 0 {
         fatal(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             INTSTR_LENGTH.wrapping_add(strlen(
                 (*child)
@@ -1012,7 +1019,7 @@ pub unsafe fn free_child(child: *mut child) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn start_job_command(child: *mut child) {
+pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut child) {
     let mut flags: i32;
     let mut p: *mut ::core::ffi::c_char;
     let mut argv: *mut *mut ::core::ffi::c_char;
@@ -1087,6 +1094,7 @@ pub unsafe fn start_job_command(child: *mut child) {
         *p2 = *p1;
         let mut end: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         argv = construct_command_argv(
+            ctx,
             p,
             &raw mut end,
             (*child).file,
@@ -1146,13 +1154,14 @@ pub unsafe fn start_job_command(child: *mut child) {
                 ::core::ptr::null_mut::<output>()
             };
             if (*child).output.syncout() == 0 {
-                crate::output::output_dump(&raw mut (*child).output);
+                crate::output::output_dump(ctx, &raw mut (*child).output);
             }
             if crate::make_main::opt_just_print()
                 || 0x10_i32 & db_level != 0
                 || !(flags & 2 != 0) && run_silent == 0
             {
                 message(
+                    ctx,
                     0,
                     strlen(p) as size_t,
                     b"%s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1183,7 +1192,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                     free(argv as *mut ::core::ffi::c_void);
                 }
             } else {
-                crate::output::output_start();
+                crate::output::output_start(ctx);
                 fflush(stdout);
                 fflush(stderr);
                 (*child).set_good_stdin(
@@ -1242,6 +1251,7 @@ pub unsafe fn start_job_command(child: *mut child) {
                     (*child).set_remote(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                     jobserver_pre_child((flags & 1 != 0) as i32);
                     (*child).pid = child_execute_job(
+                        ctx,
                         child as *mut childbase,
                         (*child).good_stdin() as i32,
                         argv,
@@ -1262,7 +1272,7 @@ pub unsafe fn start_job_command(child: *mut child) {
         }
     }
     if job_next_command(child) != 0 {
-        start_job_command(child);
+        start_job_command(ctx, child);
     } else {
         set_command_state((*child).file, cs_running);
         (*child)
@@ -1278,18 +1288,18 @@ pub unsafe fn start_job_command(child: *mut child) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn start_waiting_job(c: *mut child) -> i32 {
+pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child) -> i32 {
     let f: *mut file = (*c).file;
     (*c).set_remote(
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
-    if (*c).remote() == 0 && (job_slots_used() > 0 && load_too_high() != 0) {
+    if (*c).remote() == 0 && (job_slots_used() > 0 && load_too_high(ctx) != 0) {
         set_command_state(f, cs_running);
         (*c).next = waiting_jobs;
         waiting_jobs = c;
         return 0;
     }
-    start_job_command(c);
+    start_job_command(ctx, c);
     // Finished states (cs_not_started reset to success, cs_finished) need the
     // file noticed and the child freed; a still-running job does not.
     let mut finish = false;
@@ -1338,7 +1348,7 @@ pub unsafe fn start_waiting_job(c: *mut child) -> i32 {
     }
     if finish {
         notice_finished_file(f);
-        free_child(c);
+        free_child(ctx, c);
     }
     1
 }
@@ -1346,14 +1356,14 @@ pub unsafe fn start_waiting_job(c: *mut child) -> i32 {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn new_job(file: *mut file) {
+pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let cmds: *mut commands = (*file).cmds;
     let c: *mut child;
     let lines: *mut *mut ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
-    start_waiting_jobs();
-    reap_children(0, 0);
+    start_waiting_jobs(ctx);
+    reap_children(ctx, 0, 0);
     chop_commands(cmds);
     c = xcalloc(::core::mem::size_of::<child>() as size_t) as *mut child;
     crate::output::output_init(&raw mut (*c).output);
@@ -1483,7 +1493,7 @@ pub unsafe fn new_job(file: *mut file) {
     job_next_command(c);
     if job_slots != 0 {
         while job_slots_used() == job_slots {
-            reap_children(1, 0);
+            reap_children(ctx, 1, 0);
         }
     } else if jobserver_enabled() != 0 {
         loop {
@@ -1504,13 +1514,14 @@ pub unsafe fn new_job(file: *mut file) {
                 break;
             }
             jobserver_pre_acquire();
-            reap_children(0, 0);
-            start_waiting_jobs();
+            reap_children(ctx, 0, 0);
+            start_waiting_jobs(ctx);
             if jobserver_tokens() == 0 {
                 break;
             }
             if children.is_null() {
                 fatal(
+                    ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"INTERNAL: no children as we go to sleep on read\0" as *const u8
@@ -1613,6 +1624,7 @@ pub unsafe fn new_job(file: *mut file) {
             != 0
         {
             message(
+                ctx,
                 0,
                 (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
                 b"%s: update target '%s' due to: target is .PHONY\0" as *const u8
@@ -1628,6 +1640,7 @@ pub unsafe fn new_job(file: *mut file) {
             == NONEXISTENT_MTIME as uintmax_t
         {
             message(
+                ctx,
                 0,
                 (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
                 b"%s: update target '%s' due to: target does not exist\0" as *const u8
@@ -1643,6 +1656,7 @@ pub unsafe fn new_job(file: *mut file) {
             );
             if *newer.offset(0_i32 as isize) as i32 != 0 {
                 message(
+                    ctx,
                     0,
                     (strlen(nm) as size_t)
                         .wrapping_add(strlen(tp) as size_t)
@@ -1675,6 +1689,7 @@ pub unsafe fn new_job(file: *mut file) {
                 }
                 if len_0 == 0 {
                     message(
+                        ctx,
                         0,
                         (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
                         b"%s: update target '%s' due to: unknown reasons\0" as *const u8
@@ -1709,6 +1724,7 @@ pub unsafe fn new_job(file: *mut file) {
                         d = (*d).next;
                     }
                     message(
+                        ctx,
                         0,
                         (strlen(nm) as size_t)
                             .wrapping_add(strlen(tp) as size_t)
@@ -1724,10 +1740,10 @@ pub unsafe fn new_job(file: *mut file) {
         }
         drop(nmbuf_buf);
     }
-    start_waiting_job(c);
+    start_waiting_job(ctx, c);
     if job_slots == 1 || not_parallel() {
         while (*file).command_state() as i32 == cs_running as i32 {
-            reap_children(1, 0);
+            reap_children(ctx, 1, 0);
         }
     }
     output_context = ::core::ptr::null_mut::<output>();
@@ -1793,7 +1809,7 @@ fn loadavg_running_jobs(contents: &[u8]) -> Option<u32> {
     crate::misc::parse_uint_strtoul(numerator).ok()
 }
 
-pub unsafe fn load_too_high() -> i32 {
+pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     static mut last_sec: ::core::ffi::c_double = 0.;
     static mut last_now: time_t = 0;
     static mut proc_fd: i32 = -2_i32;
@@ -1896,6 +1912,7 @@ pub unsafe fn load_too_high() -> i32 {
         if lossage == -1_i32 || *__errno_location() != lossage {
             if *__errno_location() == 0 {
                 error(
+                    ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"cannot enforce load limits on this operating system\0" as *const u8
@@ -1903,6 +1920,7 @@ pub unsafe fn load_too_high() -> i32 {
                 );
             } else {
                 perror_with_name(
+                    ctx,
                     b"cannot enforce load limit: \0" as *const u8 as *const ::core::ffi::c_char,
                     b"getloadavg\0" as *const u8 as *const ::core::ffi::c_char,
                 );
@@ -1939,16 +1957,16 @@ pub unsafe fn load_too_high() -> i32 {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn start_waiting_jobs() {
+pub unsafe fn start_waiting_jobs(ctx: &crate::execctx::ExecContext) {
     let mut job: *mut child;
     if waiting_jobs.is_null() {
         return;
     }
     loop {
-        reap_children(0, 0);
+        reap_children(ctx, 0, 0);
         job = waiting_jobs;
         waiting_jobs = (*job).next;
-        if !(start_waiting_job(job) != 0 && !waiting_jobs.is_null()) {
+        if !(start_waiting_job(ctx, job) != 0 && !waiting_jobs.is_null()) {
             break;
         }
     }
@@ -1980,6 +1998,7 @@ impl Drop for SpawnFileActions {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn child_execute_job(
+    ctx: &crate::execctx::ExecContext,
     child: *mut childbase,
     good_stdin: i32,
     argv: *mut *mut ::core::ffi::c_char,
@@ -2015,6 +2034,7 @@ pub unsafe fn child_execute_job(
     }
     if pid < 0 {
         error(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             (strlen(*argv.offset(0_i32 as isize)) as size_t)
                 .wrapping_add(strlen(strerror(r)) as size_t),
@@ -2196,6 +2216,7 @@ unsafe fn spawn_child(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn exec_command(
+    ctx: &crate::execctx::ExecContext,
     argv: *mut *mut ::core::ffi::c_char,
     envp: *mut *mut ::core::ffi::c_char,
 ) -> pid_t {
@@ -2209,6 +2230,7 @@ pub unsafe fn exec_command(
     match *__errno_location() {
         ENOENT => {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 (strlen(*argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2249,6 +2271,7 @@ pub unsafe fn exec_command(
             }
             execvp(shell, new_argv as *const *mut ::core::ffi::c_char);
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 (strlen(*new_argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2259,6 +2282,7 @@ pub unsafe fn exec_command(
         }
         _ => {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 (strlen(*argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
@@ -2270,7 +2294,8 @@ pub unsafe fn exec_command(
     }
     pid
 }
-unsafe extern "C" fn construct_command_argv_internal(
+unsafe fn construct_command_argv_internal(
+    ctx: &crate::execctx::ExecContext,
     mut line: *mut ::core::ffi::c_char,
     restp: *mut *mut ::core::ffi::c_char,
     mut shell: *const ::core::ffi::c_char,
@@ -2664,6 +2689,7 @@ unsafe extern "C" fn construct_command_argv_internal(
                 (sflags_len as size_t).wrapping_add(1),
             );
             argv = construct_command_argv_internal(
+                ctx,
                 f_0,
                 ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
                 ::core::ptr::null::<::core::ffi::c_char>(),
@@ -2791,6 +2817,7 @@ unsafe extern "C" fn construct_command_argv_internal(
     *ap = 0;
     if unixy_shell != 0 {
         new_argv = construct_command_argv_internal(
+            ctx,
             new_line,
             ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
             ::core::ptr::null::<::core::ffi::c_char>(),
@@ -2801,6 +2828,7 @@ unsafe extern "C" fn construct_command_argv_internal(
         );
     } else {
         fatal(
+            ctx,
             NILF,
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
                 .wrapping_sub(1)
@@ -2820,6 +2848,7 @@ pub const PRESERVE_BSNL: i32 = 1;
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn construct_command_argv(
+    ctx: &crate::execctx::ExecContext,
     line: *mut ::core::ffi::c_char,
     restp: *mut *mut ::core::ffi::c_char,
     file: *mut file,
@@ -2861,6 +2890,7 @@ pub unsafe fn construct_command_argv(
     );
     warning::set_action(Type::UndefinedVar, save);
     argv = construct_command_argv_internal(
+        ctx,
         line,
         restp,
         shell,

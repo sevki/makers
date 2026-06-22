@@ -131,11 +131,11 @@ pub const DROPPED_LIST_INCR: i32 = 5;
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn check_also_make(file: *const file) {
+pub unsafe fn check_also_make(ctx: &crate::execctx::ExecContext, file: *const file) {
     let mut ad: *mut dep;
     let mut mtime: uintmax_t = (*file).last_mtime;
     if mtime == UNKNOWN_MTIME as uintmax_t {
-        mtime = name_mtime((*file).name);
+        mtime = name_mtime(ctx, (*file).name);
     }
     if mtime >= ORDINARY_MTIME_MIN as uintmax_t
         && mtime
@@ -166,6 +166,7 @@ pub unsafe fn check_also_make(file: *const file) {
         while !ad.is_null() {
             if (*(*ad).file).last_mtime == NONEXISTENT_MTIME as uintmax_t {
                 error(
+                    ctx,
                     if !(*file).cmds.is_null() {
                         &raw mut (*(*file).cmds).fileinfo
                     } else {
@@ -212,7 +213,10 @@ unsafe fn double_colon_file_mut<'a>(f: *mut file) -> &'a mut file {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
+pub unsafe fn update_goal_chain(
+    ctx: &crate::execctx::ExecContext,
+    goaldeps: *mut goaldep,
+) -> update_status {
     let mut last_cmd_count: ::core::ffi::c_ulong = 0;
     let t: bool = crate::make_main::opt_touch();
     let q: bool = crate::make_main::opt_question();
@@ -305,7 +309,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                     }
                     break;
                 } else {
-                    fail = update_file(file, depth);
+                    fail = update_file(ctx, file, depth);
                     while !fref(file).renamed.is_null() {
                         file = fref(file).renamed;
                     }
@@ -330,12 +334,12 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                         } else {
                             let mtime: uintmax_t = if rebuilding_makefiles() {
                                 if fref(file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                    f_mtime(file, 0)
+                                    f_mtime(ctx, file, 0)
                                 } else {
                                     fref(file).last_mtime
                                 }
                             } else if fref(file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime(file, 1)
+                                f_mtime(ctx, file, 1)
                             } else {
                                 fref(file).last_mtime
                             };
@@ -378,6 +382,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
                     && !crate::make_main::opt_question()
                 {
                     message(
+                        ctx,
                         1,
                         strlen(fref(file).name) as size_t,
                         if fref(file).phony() as i32 != 0 || fref(file).cmds.is_null() {
@@ -418,7 +423,7 @@ pub unsafe fn update_goal_chain(goaldeps: *mut goaldep) -> update_status {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn show_goal_error() {
+pub unsafe fn show_goal_error(ctx: &crate::execctx::ExecContext) {
     let mut goal: *mut goaldep;
     if (*goal_dep).flags() as i32 & (RM_INCLUDED | RM_DONTCARE) != RM_INCLUDED {
         return;
@@ -428,6 +433,7 @@ pub unsafe fn show_goal_error() {
         if (*goal_dep).file == (*goal).file {
             if (*goal).error != 0 {
                 error(
+                    ctx,
                     &raw mut (*goal).floc,
                     (strlen((*(*goal).file).name) as size_t)
                         .wrapping_add(strlen(strerror((*goal).error)) as size_t),
@@ -442,7 +448,11 @@ pub unsafe fn show_goal_error() {
         goal = (*goal).next;
     }
 }
-unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) -> update_status {
+unsafe extern "C" fn update_file(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    depth: ::core::ffi::c_uint,
+) -> update_status {
     let mut status: update_status = us_success;
     // Checked view of FILE; a null argument is a caller bug.
     let file = file.as_mut().expect("update_file: null file");
@@ -483,7 +493,7 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
     while !f.is_null() {
         let mut fr = f.as_mut().expect("update_file: null file chain");
         fr.considered = CONSIDERED.load(Ordering::Relaxed);
-        let new: update_status = update_file_1(&raw mut *fr, depth);
+        let new: update_status = update_file_1(ctx, &raw mut *fr, depth);
         while !fr.renamed.is_null() {
             fr = fr.renamed.as_mut().expect("update_file: null renamed file");
         }
@@ -509,7 +519,7 @@ unsafe extern "C" fn update_file(file: *mut file, depth: ::core::ffi::c_uint) ->
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn complain(file: *mut file) {
+pub unsafe fn complain(ctx: &crate::execctx::ExecContext, file: *mut file) {
     let mut d: *mut dep;
     d = (*file).deps;
     while !d.is_null() {
@@ -517,14 +527,14 @@ pub unsafe fn complain(file: *mut file) {
             && (*(*d).file).update_status() as i32 > us_none as i32
             && (*file).no_diag() as i32 != 0
         {
-            complain((*d).file);
+            complain(ctx, (*d).file);
             break;
         } else {
             d = (*d).next;
         }
     }
     if d.is_null() {
-        show_goal_error();
+        show_goal_error(ctx);
         if !(*file).parent.is_null() {
             let l: size_t = (strlen((*file).name) as size_t)
                 .wrapping_add(strlen((*(*file).parent).name) as size_t)
@@ -534,6 +544,7 @@ pub unsafe fn complain(file: *mut file) {
                 as *const ::core::ffi::c_char;
             if !crate::make_main::opt_keep_going() {
                 fatal(
+                    ctx,
                     NILF,
                     l,
                     m,
@@ -544,6 +555,7 @@ pub unsafe fn complain(file: *mut file) {
                 );
             }
             error(
+                ctx,
                 NILF,
                 l,
                 m,
@@ -558,6 +570,7 @@ pub unsafe fn complain(file: *mut file) {
                 b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
             if !crate::make_main::opt_keep_going() {
                 fatal(
+                    ctx,
                     NILF,
                     l_0,
                     m_0,
@@ -567,6 +580,7 @@ pub unsafe fn complain(file: *mut file) {
                 );
             }
             error(
+                ctx,
                 NILF,
                 l_0,
                 m_0,
@@ -579,6 +593,7 @@ pub unsafe fn complain(file: *mut file) {
     }
 }
 unsafe extern "C" fn update_file_1(
+    ctx: &crate::execctx::ExecContext,
     file: *mut file,
     mut depth: ::core::ffi::c_uint,
 ) -> update_status {
@@ -622,7 +637,7 @@ unsafe extern "C" fn update_file_1(
                 fflush(stdout);
             }
             if (*file).no_diag() as i32 != 0 && (*file).dontcare() == 0 {
-                complain(file);
+                complain(ctx, file);
             }
             return (*file).update_status() as update_status;
         }
@@ -674,7 +689,7 @@ unsafe extern "C" fn update_file_1(
     let ofile: *mut file = &raw mut *file;
     depth = depth.wrapping_add(1);
     this_mtime = if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-        f_mtime(file, 1)
+        f_mtime(ctx, file, 1)
     } else {
         (*file).last_mtime
     };
@@ -733,6 +748,7 @@ unsafe extern "C" fn update_file_1(
             as i32;
         if ns != 0 {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 strlen((*file).name) as size_t,
                 b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
@@ -753,7 +769,7 @@ unsafe extern "C" fn update_file_1(
     while !ad.is_null() && noexist == 0 {
         let mut adfile: *mut file = (*ad).file;
         let fmtime: uintmax_t = if (*adfile).last_mtime == UNKNOWN_MTIME as uintmax_t {
-            f_mtime(adfile, 1)
+            f_mtime(ctx, adfile, 1)
         } else {
             (*adfile).last_mtime
         };
@@ -835,7 +851,7 @@ unsafe extern "C" fn update_file_1(
                 (*d).file = (*(*d).file).renamed;
             }
             mtime = if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                f_mtime((*d).file, 1)
+                f_mtime(ctx, (*d).file, 1)
             } else {
                 (*(*d).file).last_mtime
             };
@@ -852,6 +868,7 @@ unsafe extern "C" fn update_file_1(
             {
                 if warning::action(Type::CircularDep) == Action::Error {
                     fatal(
+                        ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
@@ -863,6 +880,7 @@ unsafe extern "C" fn update_file_1(
                 }
                 if warning::is_active(Type::CircularDep) {
                     error(
+                        ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t)
                             .wrapping_add(strlen((*(*d).file).name) as size_t),
@@ -897,7 +915,7 @@ unsafe extern "C" fn update_file_1(
                     dontcare = (*(*d).file).dontcare() as i32;
                     (*(*d).file).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
                 }
-                new = check_dep((*d).file, depth, this_mtime, &raw mut maybe_make);
+                new = check_dep(ctx, (*d).file, depth, this_mtime, &raw mut maybe_make);
                 if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new;
                 }
@@ -930,7 +948,7 @@ unsafe extern "C" fn update_file_1(
                 if running == 0 {
                     (*d).set_changed(
                         ((if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                            f_mtime((*d).file, 1)
+                            f_mtime(ctx, (*d).file, 1)
                         } else {
                             (*(*d).file).last_mtime
                         }) != mtime
@@ -959,7 +977,7 @@ unsafe extern "C" fn update_file_1(
                 let new_0: update_status;
                 let mut dontcare_0: i32 = 0;
                 let mtime_0: uintmax_t = if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                    f_mtime((*d).file, 1)
+                    f_mtime(ctx, (*d).file, 1)
                 } else {
                     (*(*d).file).last_mtime
                 };
@@ -972,7 +990,7 @@ unsafe extern "C" fn update_file_1(
                     (*(*d).file).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
                 }
                 (*(*d).file).considered = 0;
-                new_0 = update_file((*d).file, depth);
+                new_0 = update_file(ctx, (*d).file, depth);
                 if new_0 as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new_0;
                 }
@@ -1003,7 +1021,7 @@ unsafe extern "C" fn update_file_1(
                     (*d).set_changed(
                         ((*file).phony() as i32 != 0 && !(*file).cmds.is_null()
                             || (if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime((*d).file, 1)
+                                f_mtime(ctx, (*d).file, 1)
                             } else {
                                 (*(*d).file).last_mtime
                             }) != mtime_0) as i32 as ::core::ffi::c_uint
@@ -1057,7 +1075,7 @@ unsafe extern "C" fn update_file_1(
                 dep_status as ::core::ffi::c_uint
             }) as update_status as update_status,
         );
-        notice_finished_file(file);
+        notice_finished_file(ctx, file);
         if 0x2_i32 & db_level != 0 {
             print_spaces(depth);
             printf(
@@ -1072,6 +1090,7 @@ unsafe extern "C" fn update_file_1(
             && !crate::make_main::opt_question()
         {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 strlen((*file).name) as size_t,
                 b"Target '%s' not remade because of errors.\0" as *const u8
@@ -1088,7 +1107,7 @@ unsafe extern "C" fn update_file_1(
     d = (*file).deps;
     while !d.is_null() {
         let d_mtime: uintmax_t = if (*(*d).file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-            f_mtime((*d).file, 1)
+            f_mtime(ctx, (*d).file, 1)
         } else {
             (*(*d).file).last_mtime
         };
@@ -1210,7 +1229,7 @@ unsafe extern "C" fn update_file_1(
         if (*file).notintermediate() == 0 && no_intermediates == 0 {
             (*file).set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
-        notice_finished_file(file);
+        notice_finished_file(ctx, file);
         loop {
             file.name = file.hname;
             match file.prev.as_mut() {
@@ -1244,7 +1263,7 @@ unsafe extern "C" fn update_file_1(
         }
         (*file).set_ignore_vpath(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    remake_file(file);
+    remake_file(ctx, file);
     if (*file).command_state() as i32 != cs_finished as i32 {
         if 0x2_i32 & db_level != 0 {
             print_spaces(depth);
@@ -1299,7 +1318,7 @@ unsafe extern "C" fn update_file_1(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn notice_finished_file(file: *mut file) {
+pub unsafe fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: *mut file) {
     let mut d: *mut dep;
     let ran: i32 = ((*file).command_state() as i32 == cs_running as i32) as i32;
     let mut touched: i32 = 0;
@@ -1325,7 +1344,7 @@ pub unsafe fn notice_finished_file(file: *mut file) {
             if (*file).phony() != 0 {
                 (*file).set_update_status(us_success as update_status);
             } else if !(*file).cmds.is_null() {
-                (*file).set_update_status(touch_file(file) as update_status as update_status);
+                (*file).set_update_status(touch_file(ctx, file) as update_status as update_status);
                 COMMANDS_STARTED.fetch_add(1, Ordering::Relaxed);
                 touched = 1;
             }
@@ -1391,7 +1410,7 @@ pub unsafe fn notice_finished_file(file: *mut file) {
             (*(*d).file).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             (*(*d).file).set_update_status((*file).update_status() as update_status);
             if ran != 0 && (*(*d).file).phony() == 0 {
-                f_mtime((*d).file, 0);
+                f_mtime(ctx, (*d).file, 0);
                 if crate::make_main::opt_just_print() {
                     (*(*d).file).last_mtime = (!(0_i32 as uintmax_t)).wrapping_sub(
                         if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
@@ -1408,13 +1427,14 @@ pub unsafe fn notice_finished_file(file: *mut file) {
             d = (*d).next;
         }
         if (*file).tried_implicit() as i32 != 0 && !(*file).also_make.is_null() {
-            check_also_make(file);
+            check_also_make(ctx, file);
         }
     } else if (*file).update_status() as i32 == us_none as i32 {
         (*file).set_update_status(us_success as update_status);
     }
 }
 unsafe extern "C" fn check_dep(
+    ctx: &crate::execctx::ExecContext,
     mut file: *mut file,
     depth: ::core::ffi::c_uint,
     this_mtime: uintmax_t,
@@ -1427,12 +1447,12 @@ unsafe extern "C" fn check_dep(
     ofile = file;
     if (*file).phony() as i32 != 0 || (*file).intermediate() == 0 {
         let mtime: uintmax_t;
-        dep_status = update_file(file, depth);
+        dep_status = update_file(ctx, file, depth);
         while !(*file).renamed.is_null() {
             file = (*file).renamed;
         }
         mtime = if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-            f_mtime(file, 1)
+            f_mtime(ctx, file, 1)
         } else {
             (*file).last_mtime
         };
@@ -1468,7 +1488,7 @@ unsafe extern "C" fn check_dep(
             file = (*file).renamed;
         }
         mtime_0 = if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-            f_mtime(file, 1)
+            f_mtime(ctx, file, 1)
         } else {
             (*file).last_mtime
         };
@@ -1506,6 +1526,7 @@ unsafe extern "C" fn check_dep(
                 if double_colon_file_mut(dep_file).updating() != 0 {
                     let dep_name = fref(dep_file).name;
                     error(
+                        ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         (strlen((*file).name) as size_t).wrapping_add(strlen(dep_name) as size_t),
                         b"circular %s <- %s dependency dropped\0" as *const u8
@@ -1527,6 +1548,7 @@ unsafe extern "C" fn check_dep(
                     fref_mut(dep_file).parent = file;
                     maybe_make = *must_make_ptr;
                     new = check_dep(
+                        ctx,
                         dep_file,
                         depth.wrapping_add(1),
                         this_mtime,
@@ -1572,9 +1594,10 @@ unsafe extern "C" fn check_dep(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn touch_file(file: *mut file) -> update_status {
+pub unsafe fn touch_file(ctx: &crate::execctx::ExecContext, file: *mut file) -> update_status {
     if run_silent == 0 {
         message(
+            ctx,
             0,
             strlen((*file).name) as size_t,
             b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1600,6 +1623,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
         }
         if fd < 0 {
             perror_with_name(
+                ctx,
                 b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
                 (*file).name,
             );
@@ -1641,6 +1665,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
             }
             if e < 0 {
                 perror_with_name(
+                    ctx,
                     b"touch: fstat: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
@@ -1654,6 +1679,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
             }
             if e < 0 {
                 perror_with_name(
+                    ctx,
                     b"touch: read: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
@@ -1668,6 +1694,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
             }
             if o < 0 {
                 perror_with_name(
+                    ctx,
                     b"touch: lseek: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
@@ -1681,6 +1708,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
             }
             if e < 0 {
                 perror_with_name(
+                    ctx,
                     b"touch: write: \0" as *const u8 as *const ::core::ffi::c_char,
                     (*file).name,
                 );
@@ -1696,6 +1724,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
                 }
                 if fd < 0 {
                     perror_with_name(
+                        ctx,
                         b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
                         (*file).name,
                     );
@@ -1711,7 +1740,7 @@ pub unsafe fn touch_file(file: *mut file) -> update_status {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn remake_file(file: *mut file) {
+pub unsafe fn remake_file(ctx: &crate::execctx::ExecContext, file: *mut file) {
     if (*file).cmds.is_null() {
         if (*file).phony() != 0 {
             (*file).set_update_status(us_success as update_status);
@@ -1719,7 +1748,7 @@ pub unsafe fn remake_file(file: *mut file) {
             (*file).set_update_status(us_success as update_status);
         } else {
             if !rebuilding_makefiles() || (*file).dontcare() == 0 {
-                complain(file);
+                complain(ctx, file);
             }
             (*file).set_update_status(us_failed as update_status);
         }
@@ -1731,7 +1760,7 @@ pub unsafe fn remake_file(file: *mut file) {
         }
         (*file).set_update_status(us_success as update_status);
     }
-    notice_finished_file(file);
+    notice_finished_file(ctx, file);
 }
 /// Return the mtime of file F, computing it if necessary. Returns
 /// NONEXISTENT_MTIME if the file does not exist.
@@ -1739,7 +1768,11 @@ pub unsafe fn remake_file(file: *mut file) {
 /// # Safety
 /// `file` must point to a valid `File`; must run single-threaded with the
 /// global file table.
-pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
+pub unsafe fn f_mtime(
+    ctx: &crate::execctx::ExecContext,
+    file: *mut file,
+    search: i32,
+) -> uintmax_t {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut mtime: uintmax_t;
     let propagate_timestamp: ::core::ffi::c_uint;
@@ -1752,12 +1785,12 @@ pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
         let mut arfile: *mut file;
         let member_date: time_t;
         ar_parse_name((*file).name, &raw mut arname, &raw mut memname);
-        memmtime = name_mtime(memname);
+        memmtime = name_mtime(ctx, memname);
         arfile = lookup_file(arname);
         if arfile.is_null() {
             arfile = enter_file(strcache_add(arname));
         }
-        mtime = f_mtime(arfile, search);
+        mtime = f_mtime(ctx, arfile, search);
         // `arfile` is non-null here; follow the (non-null) renamed links via a
         // checked reference, keeping the walk a single branch and line count.
         while !arfile
@@ -1824,7 +1857,7 @@ pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
             mtime = file_timestamp_cons((*file).hname, member_date, 0);
         }
     } else {
-        mtime = name_mtime((*file).name);
+        mtime = name_mtime(ctx, (*file).name);
         if mtime == NONEXISTENT_MTIME as uintmax_t && search != 0 && (*file).ignore_vpath() == 0 {
             let mut name_0: *const ::core::ffi::c_char = vpath_search(
                 (*file).name,
@@ -1836,7 +1869,7 @@ pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
                 || *(*file).name.offset(0_i32 as isize) as i32 == '-' as i32
                     && *(*file).name.offset(1_i32 as isize) as i32 == 'l' as i32
                     && {
-                        name_0 = library_search((*file).name, &raw mut mtime);
+                        name_0 = library_search(ctx, (*file).name, &raw mut mtime);
                         !name_0.is_null()
                     }
             {
@@ -1858,7 +1891,7 @@ pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
                         file = file.renamed.as_mut().expect("f_mtime: null renamed file");
                     }
                     return if (*file).last_mtime == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime(file, 1)
+                        f_mtime(ctx, file, 1)
                     } else {
                         (*file).last_mtime
                     };
@@ -1880,7 +1913,7 @@ pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
                             },
                         )
                 {
-                    mtime = name_mtime(name_0);
+                    mtime = name_mtime(ctx, name_0);
                 }
             }
         }
@@ -1935,6 +1968,7 @@ pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
                     );
                 }
                 error(
+                    ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     (strlen((*file).name) as size_t).wrapping_add(strlen(
                         &raw mut from_now_string as *mut ::core::ffi::c_char,
@@ -1977,7 +2011,10 @@ pub unsafe fn f_mtime(file: *mut file, search: i32) -> uintmax_t {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
+pub unsafe fn name_mtime(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+) -> uintmax_t {
     let mut mtime: uintmax_t;
     let mut st: stat = stat {
         st_dev: 0,
@@ -2021,7 +2058,7 @@ pub unsafe fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
     } else if *__errno_location() == ENOENT || *__errno_location() == ENOTDIR {
         mtime = NONEXISTENT_MTIME as uintmax_t;
     } else {
-        perror_with_name(b"stat: \0" as *const u8 as *const ::core::ffi::c_char, name);
+        perror_with_name(ctx, b"stat: \0" as *const u8 as *const ::core::ffi::c_char, name);
         return NONEXISTENT_MTIME as uintmax_t;
     }
     if crate::make_main::opt_check_symlink() && strlen(name) <= GET_PATH_MAX as size_t {
@@ -2041,6 +2078,7 @@ pub unsafe fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
             if e != 0 {
                 if *__errno_location() != ENOENT && *__errno_location() != ENOTDIR {
                     perror_with_name(
+                        ctx,
                         b"lstat: \0" as *const u8 as *const ::core::ffi::c_char,
                         &raw mut lpath as *mut ::core::ffi::c_char,
                     );
@@ -2070,6 +2108,7 @@ pub unsafe fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
                 }
                 if llen < 0 {
                     perror_with_name(
+                        ctx,
                         b"readlink: \0" as *const u8 as *const ::core::ffi::c_char,
                         &raw mut lpath as *mut ::core::ffi::c_char,
                     );
@@ -2105,6 +2144,7 @@ pub unsafe fn name_mtime(name: *const ::core::ffi::c_char) -> uintmax_t {
     mtime
 }
 unsafe extern "C" fn library_search(
+    ctx: &crate::execctx::ExecContext,
     mut lib: *const ::core::ffi::c_char,
     mtime_ptr: *mut uintmax_t,
 ) -> *const ::core::ffi::c_char {
@@ -2149,6 +2189,7 @@ unsafe extern "C" fn library_search(
         p3 = find_percent(p);
         if p3.is_null() {
             error(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 strlen(p) as size_t,
                 b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
@@ -2170,7 +2211,7 @@ unsafe extern "C" fn library_search(
             );
             *p.offset(len as isize) = c;
             libbuf = variable_buffer;
-            mtime = name_mtime(libbuf);
+            mtime = name_mtime(ctx, libbuf);
             if mtime != NONEXISTENT_MTIME as uintmax_t {
                 if !mtime_ptr.is_null() {
                     *mtime_ptr = mtime;
@@ -2232,7 +2273,7 @@ unsafe extern "C" fn library_search(
                         *dp,
                         libbuf,
                     );
-                    mtime = name_mtime(buf);
+                    mtime = name_mtime(ctx, buf);
                     if mtime != NONEXISTENT_MTIME as uintmax_t
                         && (file.is_null() || vpath_index_0 < best_vpath)
                     {
@@ -2299,7 +2340,8 @@ mod f_mtime_tests {
             file.hname = name;
             file.set_updated(1);
 
-            let mtime = f_mtime(&raw mut file, 0);
+            let ctx = crate::execctx::ExecContext::default();
+            let mtime = f_mtime(&ctx, &raw mut file, 0);
             assert_ne!(
                 mtime, NONEXISTENT_MTIME as uintmax_t,
                 "an existing file has a real mtime"
@@ -2339,7 +2381,8 @@ mod f_mtime_tests {
             file.set_updated(1);
             file.set_ignore_vpath(1);
 
-            let mtime = f_mtime(&raw mut file, 0);
+            let ctx = crate::execctx::ExecContext::default();
+            let mtime = f_mtime(&ctx, &raw mut file, 0);
             assert_eq!(
                 mtime, NONEXISTENT_MTIME as uintmax_t,
                 "a missing file with no search reports nonexistent"
@@ -2365,7 +2408,8 @@ mod f_mtime_tests {
             file.hname = name;
             // updated() left at 0 so the clock-skew block's outer guard runs.
 
-            let mtime = f_mtime(&raw mut file, 0);
+            let ctx = crate::execctx::ExecContext::default();
+            let mtime = f_mtime(&ctx, &raw mut file, 0);
             assert!(
                 mtime > ORDINARY_MTIME_MIN as uintmax_t,
                 "an existing past-dated file resolves to an ordinary mtime"
@@ -2423,7 +2467,8 @@ mod f_mtime_tests {
             file.hname = name;
             // updated() left at 0 so the clock-skew block runs in full.
 
-            let mtime = f_mtime(&raw mut file, 0);
+            let ctx = crate::execctx::ExecContext::default();
+            let mtime = f_mtime(&ctx, &raw mut file, 0);
             assert!(
                 mtime > ORDINARY_MTIME_MIN as uintmax_t,
                 "the future-dated file still resolves to an ordinary mtime"

@@ -179,7 +179,7 @@ pub fn init() {
 /// Parse a `--warn=...` value (or a `.WARNINGS` variable value) and update
 /// either the flag-level data (`flocp == None`) or the variable-level data
 /// (`flocp == Some(...)`).
-pub fn decode_actions(value: &str, flocp: Option<&Floc>) {
+pub fn decode_actions(ctx: &crate::execctx::ExecContext, value: &str, flocp: Option<&Floc>) {
     let target_flag = flocp.is_none();
     let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
 
@@ -246,14 +246,14 @@ pub fn decode_actions(value: &str, flocp: Option<&Floc>) {
             ReportKind::Unknown => format!("unknown warning '{name}'"),
             ReportKind::UnknownAction => format!("unknown warning action '{name}'"),
         };
-        report_error(flocp, body);
+        report_error(ctx, flocp, body);
     }
 }
 
-fn report_error(flocp: Option<&Floc>, message: String) {
+fn report_error(ctx: &crate::execctx::ExecContext, flocp: Option<&Floc>, message: String) {
     match flocp {
-        None => msg::fatal(None, &message),
-        Some(fp) => msg::error(Some(fp), &format!("{message}: ignored")),
+        None => msg::fatal(ctx, None, &message),
+        Some(fp) => msg::error(ctx, Some(fp), &format!("{message}: ignored")),
     }
 }
 

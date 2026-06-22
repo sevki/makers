@@ -2783,7 +2783,8 @@ unsafe fn output_owned_result(
     let owned = ExpandedArg::from_raw(p);
     variable_buffer_output(o, owned.as_ptr(), strlen(owned.as_ptr()) as size_t)
 }
-unsafe extern "C" fn expand_builtin_function(
+unsafe fn expand_builtin_function(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argc: ::core::ffi::c_uint,
     argv: *mut *mut ::core::ffi::c_char,
@@ -2792,6 +2793,7 @@ unsafe extern "C" fn expand_builtin_function(
     let p: *mut ::core::ffi::c_char;
     if argc < (*entry_p).minimum_args as ::core::ffi::c_uint {
         fatal(
+            ctx,
             *expanding_var,
             strlen((*entry_p).name) as size_t,
             b"insufficient number of arguments (%u) to function '%s'\0" as *const u8
@@ -2805,6 +2807,7 @@ unsafe extern "C" fn expand_builtin_function(
     }
     if (*entry_p).fptr.func_ptr.is_none() {
         fatal(
+            ctx,
             *expanding_var,
             strlen((*entry_p).name) as size_t,
             b"unimplemented on this platform: function '%s'\0" as *const u8
@@ -2863,6 +2866,7 @@ fn copy_args_buffer(src: &[u8]) -> Vec<u8> {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn handle_function(
+    ctx: &crate::execctx::ExecContext,
     op: *mut *mut ::core::ffi::c_char,
     stringp: *mut *const ::core::ffi::c_char,
 ) -> i32 {
@@ -2916,6 +2920,7 @@ pub unsafe fn handle_function(
     }
     if count >= 0 {
         fatal(
+            ctx,
             *expanding_var,
             strlen((*entry_p).name) as size_t,
             b"unterminated call to function '%s': missing '%c'\0" as *const u8
@@ -2986,7 +2991,7 @@ pub unsafe fn handle_function(
         }
     }
     *argvp = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    *op = expand_builtin_function(*op, nargs, argv, entry_p);
+    *op = expand_builtin_function(ctx, *op, nargs, argv, entry_p);
     if (*entry_p).expand_args() != 0 {
         argvp = argv;
         while !(*argvp).is_null() {
@@ -3094,6 +3099,7 @@ unsafe fn func_call(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn define_new_function(
+    ctx: &crate::execctx::ExecContext,
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
     min: ::core::ffi::c_uint,
@@ -3114,6 +3120,7 @@ pub unsafe fn define_new_function(
     len = e.offset_from(name) as ::core::ffi::c_long as size_t;
     if len == 0 {
         fatal(
+            ctx,
             flocp,
             0,
             b"empty function name\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3121,6 +3128,7 @@ pub unsafe fn define_new_function(
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
         fatal(
+            ctx,
             flocp,
             strlen(name) as size_t,
             b"invalid function name: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3129,6 +3137,7 @@ pub unsafe fn define_new_function(
     }
     if len > 255 {
         fatal(
+            ctx,
             flocp,
             strlen(name) as size_t,
             b"function name too long: %s\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3137,6 +3146,7 @@ pub unsafe fn define_new_function(
     }
     if min > 255 {
         fatal(
+            ctx,
             flocp,
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
             b"invalid minimum argument count (%u) for function %s\0" as *const u8
@@ -3147,6 +3157,7 @@ pub unsafe fn define_new_function(
     }
     if max > 255 || max != 0 && max < min {
         fatal(
+            ctx,
             flocp,
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
             b"invalid maximum argument count (%u) for function %s\0" as *const u8

@@ -158,7 +158,7 @@ unsafe fn fcntl_set_retry(fd: i32, cmd: i32, arg: i32) -> i32 {
 }
 
 /// Set or clear `O_NONBLOCK` on `fd`, dying on failure.
-unsafe fn set_blocking(fd: i32, blocking: bool) {
+unsafe fn set_blocking(ctx: &crate::execctx::ExecContext, fd: i32, blocking: bool) {
     let flags = fcntl_retry(fd, F_GETFL);
     if flags < 0 {
         return;
@@ -169,7 +169,7 @@ unsafe fn set_blocking(fd: i32, blocking: bool) {
         flags | O_NONBLOCK
     };
     if fcntl_set_retry(fd, F_SETFL, new_flags) < 0 {
-        pfatal_with_name(c"fcntl(O_NONBLOCK)".as_ptr());
+        pfatal_with_name(ctx, c"fcntl(O_NONBLOCK)".as_ptr());
     }
 }
 
@@ -179,7 +179,11 @@ unsafe fn set_blocking(fd: i32, blocking: bool) {
 /// # Safety
 /// `style` must be null or a valid NUL-terminated string; must run
 /// single-threaded during startup.
-pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
+pub unsafe fn jobserver_setup(
+    ctx: &crate::execctx::ExecContext,
+    slots: i32,
+    style: *const c_char,
+) -> c_uint {
     let mut r: i32;
 
     JOB_ROOT.store(true, Ordering::Relaxed);
@@ -202,7 +206,7 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
             }
         }
         if r < 0 {
-            perror_with_name(c"jobserver mkfifo: ".as_ptr(), fifo_name);
+            perror_with_name(ctx, c"jobserver mkfifo: ".as_ptr(), fifo_name);
             free(fifo_name as *mut c_void);
             fifo_name = null_mut();
         } else {
@@ -214,6 +218,7 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
             }
             if job_fds[0] < 0 {
                 fatal(
+                    ctx,
                     null::<Floc>(),
                     strlen(fifo_name) + strlen(strerror(*__errno_location())),
                     c"cannot open jobserver %s: %s".as_ptr(),
@@ -229,6 +234,7 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
             }
             if job_fds[0] < 0 {
                 fatal(
+                    ctx,
                     null::<Floc>(),
                     strlen(fifo_name) + strlen(strerror(*__errno_location())),
                     c"cannot open jobserver %s: %s".as_ptr(),
@@ -243,6 +249,7 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
     if js_type_get() == JsType::None {
         if !style.is_null() && strcmp(style, c"pipe".as_ptr()) != 0 {
             fatal(
+                ctx,
                 null::<Floc>(),
                 strlen(style),
                 c"unknown jobserver auth style '%s'".as_ptr(),
@@ -256,7 +263,7 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
             }
         }
         if r < 0 {
-            pfatal_with_name(c"creating jobs pipe".as_ptr());
+            pfatal_with_name(ctx, c"creating jobs pipe".as_ptr());
         }
         js_type_set(JsType::Pipe);
     }
@@ -264,12 +271,12 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
     fd_noinherit(job_fds[0]);
     fd_noinherit(job_fds[1]);
     if make_job_rfd() < 0 {
-        pfatal_with_name(c"duping jobs pipe".as_ptr());
+        pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
     }
 
     // Fill the pipe with tokens, one per slot, without blocking so we can
     // detect when the requested job count exceeds the pipe capacity.
-    set_blocking(job_fds[1], false);
+    set_blocking(ctx, job_fds[1], false);
     for k in 0..slots {
         loop {
             r = write(job_fds[1], &raw const token as *const c_void, 1) as i32;
@@ -279,9 +286,10 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
         }
         if r != 1 {
             if *__errno_location() != EAGAIN {
-                pfatal_with_name(c"init jobserver pipe".as_ptr());
+                pfatal_with_name(ctx, c"init jobserver pipe".as_ptr());
             }
             fatal(
+                ctx,
                 null::<Floc>(),
                 INTSTR_LENGTH * 2,
                 c"requested job count (%d) is larger than system limit (%d)".as_ptr(),
@@ -290,8 +298,8 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
             );
         }
     }
-    set_blocking(job_fds[1], true);
-    set_blocking(job_fds[0], false);
+    set_blocking(ctx, job_fds[1], true);
+    set_blocking(ctx, job_fds[0], false);
 
     1
 }
@@ -303,7 +311,10 @@ pub unsafe fn jobserver_setup(slots: i32, style: *const c_char) -> c_uint {
 /// # Safety
 /// `auth` must be a valid NUL-terminated string; must run single-threaded
 /// during startup.
-pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
+pub unsafe fn jobserver_parse_auth(
+    ctx: &crate::execctx::ExecContext,
+    auth: *const c_char,
+) -> c_uint {
     let mut rfd: i32 = 0;
     let mut wfd: i32 = 0;
 
@@ -317,6 +328,7 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
         }
         if job_fds[0] < 0 {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(fifo_name) + strlen(strerror(*__errno_location())),
                 c"cannot open jobserver %s: %s".as_ptr(),
@@ -333,6 +345,7 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
         }
         if job_fds[1] < 0 {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(fifo_name) + strlen(strerror(*__errno_location())),
                 c"cannot open jobserver %s: %s".as_ptr(),
@@ -355,6 +368,7 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
         js_type_set(JsType::Pipe);
     } else {
         error(
+            ctx,
             null::<Floc>(),
             strlen(auth),
             c"invalid --jobserver-auth string '%s'".as_ptr(),
@@ -365,13 +379,13 @@ pub unsafe fn jobserver_parse_auth(auth: *const c_char) -> c_uint {
 
     if make_job_rfd() < 0 {
         if *__errno_location() != EBADF {
-            pfatal_with_name(c"jobserver readfd".as_ptr());
+            pfatal_with_name(ctx, c"jobserver readfd".as_ptr());
         }
         jobserver_clear();
         return 0;
     }
 
-    set_blocking(job_fds[0], false);
+    set_blocking(ctx, job_fds[0], false);
     fd_noinherit(job_fds[0]);
     fd_noinherit(job_fds[1]);
     1
@@ -452,7 +466,7 @@ pub unsafe fn jobserver_clear() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_release(is_fatal: i32) {
+pub unsafe fn jobserver_release(ctx: &crate::execctx::ExecContext, is_fatal: i32) {
     let mut r: i32;
     loop {
         r = write(job_fds[1], &raw const token as *const c_void, 1) as i32;
@@ -462,9 +476,9 @@ pub unsafe fn jobserver_release(is_fatal: i32) {
     }
     if r != 1 {
         if is_fatal != 0 {
-            pfatal_with_name(c"write jobserver".as_ptr());
+            pfatal_with_name(ctx, c"write jobserver".as_ptr());
         }
-        perror_with_name(c"write".as_ptr(), c"".as_ptr());
+        perror_with_name(ctx, c"write".as_ptr(), c"".as_ptr());
     }
 }
 
@@ -473,11 +487,11 @@ pub unsafe fn jobserver_release(is_fatal: i32) {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_acquire_all() -> c_uint {
+pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint {
     let mut tokens: c_uint = 0;
 
     // Close the write side so the read below sees EOF once the pipe drains.
-    set_blocking(job_fds[0], true);
+    set_blocking(ctx, job_fds[0], true);
     close(job_fds[1]);
     job_fds[1] = -1;
 
@@ -544,9 +558,9 @@ pub fn jobserver_signal() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_pre_acquire() {
+pub unsafe fn jobserver_pre_acquire(ctx: &crate::execctx::ExecContext) {
     if job_rfd() < 0 && job_fds[0] >= 0 && make_job_rfd() < 0 {
-        pfatal_with_name(c"duping jobs pipe".as_ptr());
+        pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
     }
 }
 
@@ -555,7 +569,7 @@ pub unsafe fn jobserver_pre_acquire() {
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_acquire(timeout: i32) -> c_uint {
+pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32) -> c_uint {
     let mut spec = timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -589,9 +603,9 @@ pub unsafe fn jobserver_acquire(timeout: i32) -> c_uint {
                 EINTR => return 0,
                 EBADF => {
                     // The read side was closed by jobserver_signal().
-                    fatal(null::<Floc>(), 0, c"job server shut down".as_ptr());
+                    fatal(ctx, null::<Floc>(), 0, c"job server shut down".as_ptr());
                 }
-                _ => pfatal_with_name(c"pselect jobs pipe".as_ptr()),
+                _ => pfatal_with_name(ctx, c"pselect jobs pipe".as_ptr()),
             }
         }
         if r == 0 {
@@ -611,7 +625,7 @@ pub unsafe fn jobserver_acquire(timeout: i32) -> c_uint {
             if *__errno_location() == EAGAIN {
                 continue;
             }
-            pfatal_with_name(c"read jobs pipe".as_ptr());
+            pfatal_with_name(ctx, c"read jobs pipe".as_ptr());
         }
         return (r > 0) as c_uint;
     }
@@ -663,9 +677,13 @@ pub unsafe fn osync_get_mutex() -> *mut c_char {
 /// # Safety
 /// `mutex` must be a valid NUL-terminated string; must run single-threaded
 /// during startup.
-pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
+pub unsafe fn osync_parse_mutex(
+    ctx: &crate::execctx::ExecContext,
+    mutex: *const c_char,
+) -> c_uint {
     if strncmp(mutex, MUTEX_PREFIX.as_ptr(), MUTEX_PREFIX.to_bytes().len()) != 0 {
         error(
+            ctx,
             null::<Floc>(),
             strlen(mutex),
             c"invalid --sync-mutex string '%s'".as_ptr(),
@@ -686,6 +704,7 @@ pub unsafe fn osync_parse_mutex(mutex: *const c_char) -> c_uint {
     }
     if OSYNC_HANDLE.load(Ordering::Relaxed) < 0 {
         fatal(
+            ctx,
             null::<Floc>(),
             strlen(osync_tmpfile) + strlen(strerror(*__errno_location())),
             c"cannot open output sync mutex %s: %s".as_ptr(),
@@ -846,7 +865,7 @@ pub unsafe fn fd_reset_append(fd: i32, flags: i32) {
 ///
 /// # Safety
 /// Must run single-threaded (reports errors through the printers).
-pub unsafe fn os_anontmp() -> i32 {
+pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
     let tdir = get_tmpdir();
     let mut fd: i32 = -1;
     static TMPFILE_WORKS: AtomicBool = AtomicBool::new(true);
@@ -886,6 +905,7 @@ pub unsafe fn os_anontmp() -> i32 {
         }
         if tfile.is_null() {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(strerror(*__errno_location())),
                 c"tmpfile: %s".as_ptr(),
@@ -902,6 +922,7 @@ pub unsafe fn os_anontmp() -> i32 {
         }
         if fd < 0 {
             error(
+                ctx,
                 null::<Floc>(),
                 strlen(strerror(*__errno_location())),
                 c"dup: %s".as_ptr(),

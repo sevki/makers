@@ -191,6 +191,7 @@ pub unsafe fn set_variable_buffer_byte(off: size_t, b: ::core::ffi::c_char) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn recursively_expand_for_file(
+    ctx: &crate::execctx::ExecContext,
     v: *mut variable,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
@@ -234,6 +235,7 @@ pub unsafe fn recursively_expand_for_file(
     if (*v).expanding() != 0 {
         if (*v).exp_count() == 0 {
             fatal(
+                ctx,
                 *expanding_var,
                 strlen((*v).name),
                 c"recursive variable '%s' references itself (eventually)".as_ptr(),
@@ -259,16 +261,16 @@ pub unsafe fn recursively_expand_for_file(
     }
     let value: *mut ::core::ffi::c_char = if let Some(pref) = parent.as_ref() {
         if (*v).origin() == o_override {
-            allocated_variable_append(v)
+            allocated_variable_append(ctx, v)
         } else {
             xstrdup(pref.value)
         }
     } else if (*v).origin() == o_command || (*v).origin() == o_env_override {
-        allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<file>())
+        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
     } else if (*v).append() != 0 {
-        allocated_variable_append(v)
+        allocated_variable_append(ctx, v)
     } else {
-        allocated_expand_string_for_file((*v).value, ::core::ptr::null_mut::<file>())
+        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
     };
     (*v).set_expanding(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if set_reading != 0 {
@@ -285,6 +287,7 @@ pub unsafe fn recursively_expand_for_file(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn expand_variable_output(
+    ctx: &crate::execctx::ExecContext,
     mut ptr: *mut ::core::ffi::c_char,
     name: *const ::core::ffi::c_char,
     length: size_t,
@@ -303,6 +306,7 @@ pub unsafe fn expand_variable_output(
     // did. A non-recursive variable's value is borrowed from the variable.
     let owned = ((*v).recursive() != 0).then(|| {
         OwnedCStr(recursively_expand_for_file(
+            ctx,
             v,
             ::core::ptr::null_mut::<file>(),
         ))
@@ -316,6 +320,7 @@ pub unsafe fn expand_variable_output(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn expand_variable_buf(
+    ctx: &crate::execctx::ExecContext,
     mut buf: *mut ::core::ffi::c_char,
     name: *const ::core::ffi::c_char,
     length: size_t,
@@ -329,7 +334,7 @@ pub unsafe fn expand_variable_buf(
         "output cursor past the buffer"
     );
     let offs = buf.offset_from(variable_buffer) as size_t;
-    expand_variable_output(buf, name, length);
+    expand_variable_output(ctx, buf, name, length);
     variable_buffer.add(offs as usize)
 }
 /// # Safety
@@ -337,13 +342,14 @@ pub unsafe fn expand_variable_buf(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn allocated_expand_variable(
+    ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(&raw mut obuf, &raw mut olen);
-    expand_variable_output(variable_buffer, name, length);
+    expand_variable_output(ctx, variable_buffer, name, length);
     swap_variable_buffer(obuf, olen)
 }
 /// # Safety
@@ -351,6 +357,7 @@ pub unsafe fn allocated_expand_variable(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn allocated_expand_variable_for_file(
+    ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
     file: *mut file,
@@ -358,10 +365,10 @@ pub unsafe fn allocated_expand_variable_for_file(
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
-        return allocated_expand_variable(name, length);
+        return allocated_expand_variable(ctx, name, length);
     }
     install_file_context(file, &raw mut savev, &raw mut savef);
-    let result = allocated_expand_variable(name, length);
+    let result = allocated_expand_variable(ctx, name, length);
     restore_file_context(savev, savef);
     result
 }
@@ -370,6 +377,7 @@ pub unsafe fn allocated_expand_variable_for_file(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn expand_string_buf(
+    ctx: &crate::execctx::ExecContext,
     mut buf: *mut ::core::ffi::c_char,
     string: *const ::core::ffi::c_char,
     length: size_t,
@@ -426,6 +434,7 @@ pub unsafe fn expand_string_buf(
                     end = strchr(beg, closeparen as i32);
                     if end.is_null() {
                         fatal(
+                            ctx,
                             *expanding_var,
                             0,
                             c"unterminated variable reference".as_ptr(),
@@ -479,7 +488,7 @@ pub unsafe fn expand_string_buf(
                             p = p.add(1);
                         }
                         if count == 0 {
-                            let owned = OwnedCStr(expand_argument(beg, p));
+                            let owned = OwnedCStr(expand_argument(ctx, beg, p));
                             beg = owned.as_ptr();
                             abeg = Some(owned);
                             end = strchr(beg, 0);
@@ -518,6 +527,7 @@ pub unsafe fn expand_string_buf(
                                 // the manual `free` below.
                                 let owned = (v.recursive() != 0).then(|| {
                                     OwnedCStr(recursively_expand_for_file(
+                                        ctx,
                                         &raw mut *v,
                                         ::core::ptr::null_mut::<file>(),
                                     ))
@@ -569,7 +579,7 @@ pub unsafe fn expand_string_buf(
                         }
                     }
                     if colon.is_null() {
-                        o = expand_variable_output(o, beg, end.offset_from(beg) as size_t);
+                        o = expand_variable_output(ctx, o, beg, end.offset_from(beg) as size_t);
                     }
                     // Free the expanded reference here, as the C code did.
                     drop(abeg);
@@ -579,7 +589,7 @@ pub unsafe fn expand_string_buf(
                 // `$X`: a single-character variable name. The guard mirrors
                 // the C original, which tests `p[-1]` (the `$` itself).
                 if !stop_set(*p1, MAP_BLANK | MAP_NEWLINE) {
-                    o = expand_variable_output(o, p, 1);
+                    o = expand_variable_output(ctx, o, p, 1);
                 }
             }
         }
@@ -595,6 +605,7 @@ pub unsafe fn expand_string_buf(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn expand_argument(
+    ctx: &crate::execctx::ExecContext,
     str: *const ::core::ffi::c_char,
     end: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
@@ -602,7 +613,7 @@ pub unsafe fn expand_argument(
         return xstrdup(c"".as_ptr());
     }
     if end.is_null() || *end == 0 {
-        return allocated_expand_string_for_file(str, ::core::ptr::null_mut::<file>());
+        return allocated_expand_string_for_file(ctx, str, ::core::ptr::null_mut::<file>());
     }
     // Copy the [str, end) slice into an owned, NUL-terminated buffer (the C
     // code chose alloca vs xmalloc by length; an owned Vec covers both).
@@ -610,6 +621,7 @@ pub unsafe fn expand_argument(
     let mut tmp_buf = ::core::slice::from_raw_parts(str as *const u8, len).to_vec();
     tmp_buf.push(0);
     allocated_expand_string_for_file(
+        ctx,
         tmp_buf.as_ptr() as *const ::core::ffi::c_char,
         ::core::ptr::null_mut::<file>(),
     )
@@ -619,6 +631,7 @@ pub unsafe fn expand_argument(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn expand_string_for_file(
+    ctx: &crate::execctx::ExecContext,
     string: *const ::core::ffi::c_char,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
@@ -626,6 +639,7 @@ pub unsafe fn expand_string_for_file(
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
         return expand_string_buf(
+            ctx,
             ::core::ptr::null_mut::<::core::ffi::c_char>(),
             string,
             SIZE_MAX,
@@ -633,6 +647,7 @@ pub unsafe fn expand_string_for_file(
     }
     install_file_context(file, &raw mut savev, &raw mut savef);
     let result = expand_string_buf(
+        ctx,
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
         string,
         SIZE_MAX,
@@ -645,18 +660,20 @@ pub unsafe fn expand_string_for_file(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn allocated_expand_string_for_file(
+    ctx: &crate::execctx::ExecContext,
     string: *const ::core::ffi::c_char,
     file: *mut file,
 ) -> *mut ::core::ffi::c_char {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(&raw mut obuf, &raw mut olen);
-    expand_string_for_file(string, file);
+    expand_string_for_file(ctx, string, file);
     swap_variable_buffer(obuf, olen)
 }
 /// Walk the variable-set chain outward, concatenating every `+=`-style
 /// definition of `name` (oldest first) into the variable buffer.
 unsafe fn variable_append(
+    ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
     set: *const variable_set_list,
@@ -668,12 +685,12 @@ unsafe fn variable_append(
     let nextlocal = (local != 0 && (*set).next_is_parent == 0) as i32;
     let v: *const variable = lookup_variable_in_set(name, length, (*set).set);
     if v.is_null() || (local == 0 && (*v).private_var() != 0) {
-        return variable_append(name, length, (*set).next, nextlocal);
+        return variable_append(ctx, name, length, (*set).next, nextlocal);
     }
 
     // An appending definition stacks on whatever the outer sets produce.
     let mut buf = if (*v).append() != 0 {
-        variable_append(name, length, (*set).next, nextlocal)
+        variable_append(ctx, name, length, (*set).next, nextlocal)
     } else {
         initialize_variable_output()
     };
@@ -683,18 +700,22 @@ unsafe fn variable_append(
     if (*v).recursive() == 0 {
         return variable_buffer_output(buf, (*v).value, strlen((*v).value));
     }
-    buf = expand_string_buf(buf, (*v).value, strlen((*v).value));
+    buf = expand_string_buf(ctx, buf, (*v).value, strlen((*v).value));
     buf.add(strlen(buf) as usize)
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn allocated_variable_append(v: *const variable) -> *mut ::core::ffi::c_char {
+pub unsafe fn allocated_variable_append(
+    ctx: &crate::execctx::ExecContext,
+    v: *const variable,
+) -> *mut ::core::ffi::c_char {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(&raw mut obuf, &raw mut olen);
     variable_append(
+        ctx,
         (*v).name,
         strlen((*v).name) as size_t,
         current_variable_set_list,

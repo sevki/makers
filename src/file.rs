@@ -493,7 +493,11 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi::c_char) {
+pub unsafe fn rehash_file(
+    ctx: &crate::execctx::ExecContext,
+    mut from_file: *mut file,
+    to_hname: *const ::core::ffi::c_char,
+) {
     let mut file_key = File::default();
     let file_slot: *mut *mut file;
     let to_file: *mut file;
@@ -583,6 +587,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
             let from_floc = &raw mut from_cmds.fileinfo;
             if !to_cmds.fileinfo.filenm.is_null() {
                 error(
+                    ctx,
                     from_floc,
                     l.wrapping_add(strlen(to_cmds.fileinfo.filenm) as size_t)
                         .wrapping_add(INTSTR_LENGTH),
@@ -594,6 +599,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
                 );
             } else {
                 error(
+                    ctx,
                     from_floc,
                     l,
                     b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
@@ -603,6 +609,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
             }
             l = l.wrapping_add(strlen(to_hname) as size_t);
             error(
+                ctx,
                 from_floc,
                 l,
                 b"but '%s' is now considered the same file as '%s'\0" as *const u8
@@ -611,6 +618,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
                 to_hname,
             );
             error(
+                ctx,
                 from_floc,
                 l,
                 b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
@@ -635,6 +643,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
         && fr2.double_colon.is_null()
     {
         fatal(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
             b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
@@ -646,6 +655,7 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
     if (*to_file).double_colon.is_null() && !fr2.double_colon.is_null() {
         if (*to_file).is_target() != 0 {
             fatal(
+                ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
                 b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
@@ -697,8 +707,12 @@ pub unsafe fn rehash_file(mut from_file: *mut file, to_hname: *const ::core::ffi
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi::c_char) {
-    rehash_file(from_file, to_hname);
+pub unsafe fn rename_file(
+    ctx: &crate::execctx::ExecContext,
+    mut from_file: *mut file,
+    to_hname: *const ::core::ffi::c_char,
+) {
+    rehash_file(ctx, from_file, to_hname);
     while let Some(ff) = from_file.as_mut() {
         ff.name = ff.hname;
         from_file = ff.prev;
@@ -708,7 +722,7 @@ pub unsafe fn rename_file(mut from_file: *mut file, to_hname: *const ::core::ffi
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn remove_intermediates(sig: i32) {
+pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) {
     let mut doneany: i32 = 0;
     if crate::make_main::opt_question()
         || crate::make_main::opt_touch()
@@ -744,6 +758,7 @@ pub unsafe fn remove_intermediates(sig: i32) {
                     if !skip && (*f).dontcare() == 0 {
                         if sig != 0 {
                             error(
+                                ctx,
                                 ::core::ptr::null_mut::<Floc>(),
                                 strlen((*f).name) as size_t,
                                 b"*** deleting intermediate file '%s'\0" as *const u8
@@ -778,6 +793,7 @@ pub unsafe fn remove_intermediates(sig: i32) {
                             }
                             fflush(stdout);
                             perror_with_name(
+                                ctx,
                                 b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
                                 (*f).name,
                             );
@@ -1174,7 +1190,7 @@ pub unsafe fn snap_file(f: *mut file, deps: *const dep) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn snap_deps() {
+pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     let mut f: *mut file;
     let mut f2: *mut file;
     let mut d: *mut dep;
@@ -1251,6 +1267,7 @@ pub unsafe fn snap_deps() {
             while let Some(f2r) = f2.as_mut() {
                 if f2r.notintermediate() != 0 {
                     fatal(
+                        ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         strlen(f2r.name) as size_t,
                         b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
@@ -1276,6 +1293,7 @@ pub unsafe fn snap_deps() {
                 while let Some(f2r) = f2.as_mut() {
                     if f2r.notintermediate() != 0 {
                         fatal(
+                            ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             strlen(f2r.name) as size_t,
                             b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
@@ -1300,6 +1318,7 @@ pub unsafe fn snap_deps() {
     }
     if no_intermediates != 0 && all_secondary() {
         fatal(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
             b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
@@ -1406,6 +1425,7 @@ pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn file_timestamp_cons(
+    ctx: &crate::execctx::ExecContext,
     fname: *const ::core::ffi::c_char,
     stamp: time_t,
     ns: ::core::ffi::c_long,
@@ -1490,6 +1510,7 @@ pub unsafe fn file_timestamp_cons(
         };
         file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, ts);
         error(
+            ctx,
             ::core::ptr::null_mut::<Floc>(),
             (strlen(f) as size_t)
                 .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
@@ -1505,7 +1526,10 @@ pub unsafe fn file_timestamp_cons(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn file_timestamp_now(resolution: *mut i32) -> uintmax_t {
+pub unsafe fn file_timestamp_now(
+    ctx: &crate::execctx::ExecContext,
+    resolution: *mut i32,
+) -> uintmax_t {
     // The original c2rust translation tried clock_gettime(CLOCK_REALTIME),
     // then gettimeofday, then time(). On supported platforms the
     // clock_gettime path (nanosecond resolution, r = 1) always succeeds, so
@@ -1520,6 +1544,7 @@ pub unsafe fn file_timestamp_now(resolution: *mut i32) -> uintmax_t {
     };
     *resolution = 1;
     file_timestamp_cons(
+        ctx,
         ::core::ptr::null::<::core::ffi::c_char>(),
         s,
         ns as ::core::ffi::c_long,
@@ -2103,7 +2128,10 @@ mod tests {
     /// `clock_gettime(CLOCK_REALTIME)` -> `gettimeofday` -> `time()` fallback.
     /// Kept test-only as the differential oracle for the new safe
     /// `std::time::SystemTime` implementation (AGENTS.md verbatim-oracle rule).
-    unsafe fn file_timestamp_now_oracle(resolution: *mut i32) -> uintmax_t {
+    unsafe fn file_timestamp_now_oracle(
+        ctx: &crate::execctx::ExecContext,
+        resolution: *mut i32,
+    ) -> uintmax_t {
         let r: i32;
         let s: time_t;
         let ns: i32;
@@ -2136,6 +2164,7 @@ mod tests {
         }
         *resolution = r;
         file_timestamp_cons(
+            ctx,
             ::core::ptr::null::<::core::ffi::c_char>(),
             s,
             ns as ::core::ffi::c_long,
@@ -2157,11 +2186,12 @@ mod tests {
     /// exact equality or subsec_nanos equality, which would be flaky.
     #[test]
     fn file_timestamp_now_matches_unsafe_oracle() {
+        let ctx = crate::execctx::ExecContext::default();
         let mut res_new: i32 = -1;
-        let ts_new = unsafe { file_timestamp_now(&raw mut res_new) };
+        let ts_new = unsafe { file_timestamp_now(&ctx, &raw mut res_new) };
 
         let mut res_oracle: i32 = -1;
-        let ts_oracle = unsafe { file_timestamp_now_oracle(&raw mut res_oracle) };
+        let ts_oracle = unsafe { file_timestamp_now_oracle(&ctx, &raw mut res_oracle) };
 
         assert_eq!(res_new, 1, "std path sets resolution to 1");
         assert_eq!(
@@ -2401,8 +2431,9 @@ mod tests {
     #[test]
     fn file_timestamp_cons_in_range_is_monotonic() {
         unsafe {
-            let earlier = file_timestamp_cons(c"probe_a".as_ptr(), 1_000_000, 0);
-            let later = file_timestamp_cons(c"probe_b".as_ptr(), 1_000_001, 0);
+            let ctx = crate::execctx::ExecContext::default();
+            let earlier = file_timestamp_cons(&ctx, c"probe_a".as_ptr(), 1_000_000, 0);
+            let later = file_timestamp_cons(&ctx, c"probe_b".as_ptr(), 1_000_001, 0);
             assert!(
                 later > earlier,
                 "a later second encodes to a larger timestamp ({later} > {earlier})"
@@ -2410,7 +2441,7 @@ mod tests {
             // Both land in the ordinary range, above the reserved sentinels.
             assert!(earlier > ORDINARY_MTIME_MIN as uintmax_t);
             // The nanosecond component widens the value within the same second.
-            let with_ns = file_timestamp_cons(c"probe_a".as_ptr(), 1_000_000, 500_000_000);
+            let with_ns = file_timestamp_cons(&ctx, c"probe_a".as_ptr(), 1_000_000, 500_000_000);
             assert!(
                 with_ns > earlier,
                 "added nanoseconds raise the encoded timestamp within a second"
@@ -2433,8 +2464,9 @@ mod tests {
         unsafe {
             crate::make_main::install_default_options_for_test();
             crate::make_main::install_program_name_for_test();
+            let ctx = crate::execctx::ExecContext::default();
             // s = 0 <= OLD_MTIME (2): below the encodable range.
-            let ts = file_timestamp_cons(c"too_old".as_ptr(), 0, 0);
+            let ts = file_timestamp_cons(&ctx, c"too_old".as_ptr(), 0, 0);
             assert_eq!(
                 ts, ORDINARY_MTIME_MIN as uintmax_t,
                 "an underflowing stamp is substituted with ORDINARY_MTIME_MIN"
@@ -2454,7 +2486,9 @@ mod tests {
             crate::make_main::install_program_name_for_test();
             // A stamp near time_t::MAX overflows the 30-bit left shift, so it
             // is above the encodable range and clamps to the upper bound.
+            let ctx = crate::execctx::ExecContext::default();
             let ts = file_timestamp_cons(
+                &ctx,
                 ::core::ptr::null::<::core::ffi::c_char>(),
                 ::core::ffi::c_long::MAX as time_t,
                 0,
