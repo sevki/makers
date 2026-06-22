@@ -47,7 +47,7 @@ use crate::dir::dir_file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{expand_extra_prereqs, lookup_file};
 use crate::make_main::{posix_pedantic, second_expansion};
-use crate::output::{error, fatal};
+use crate::output::fatal;
 use crate::read::{find_percent_cached, parse_file_seq};
 use crate::variable::lookup_variable;
 pub const MAP_NUL: i32 = 0x1;
@@ -328,17 +328,14 @@ fn suffix_rule_applies(
     if posix_pedantic() {
         return false;
     }
-    // SAFETY: a fixed format string with one matching `%s` arg, `fileinfo` a
-    // live borrow, and `ctx` outliving the call -- the only reason this helper
-    // touches `unsafe` at all is the variadic C-ABI `error`.
-    unsafe {
-        error(
-            ctx,
-            fileinfo,
-            0,
-            c"warning: ignoring prerequisites on suffix rule definition".as_ptr(),
-        );
-    }
+    // The safe native error path (no variadic C-ABI, no `unsafe`); byte-for-byte
+    // identical output to the old `error(...)` since `build_prefix` reproduces
+    // the same `file:line:` / `prog[level]:` prefix.
+    crate::error!(
+        ctx,
+        Some(fileinfo),
+        "warning: ignoring prerequisites on suffix rule definition"
+    );
     true
 }
 
