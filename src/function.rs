@@ -774,7 +774,12 @@ unsafe fn func_notdir_suffix(
     let mut p2: *const ::core::ffi::c_char;
     let mut doneany: i32 = 0;
     let mut len: size_t = 0;
-    let is_suffix: i32 = (*funcname as i32 == 's' as i32) as i32;
+    // Classify the list-trimming function (`notdir`/`suffix`) through the typed
+    // AST layer instead of switching on the raw first byte of the name.
+    let is_suffix: i32 = matches!(
+        crate::parser::NotdirSuffix::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+        Some(crate::parser::NotdirSuffix::Suffix)
+    ) as i32;
     let is_notdir: i32 = (is_suffix == 0) as i32;
     let stop: i32 = MAP_DIRSEP | (if is_suffix != 0 { MAP_DOT } else { 0 });
     loop {
