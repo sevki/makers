@@ -1945,8 +1945,7 @@ pub unsafe fn f_mtime(
     {
         let adjusted_mtime: uintmax_t = mtime;
         if ctx.mtime_adjusted_now.get() < adjusted_mtime {
-            let mut resolution: i32 = 0;
-            let now: uintmax_t = file_timestamp_now(ctx, &raw mut resolution);
+            let (now, resolution) = file_timestamp_now(ctx);
             let adjusted_now: uintmax_t = adjusted_now_from_clock(now, resolution);
             ctx.mtime_adjusted_now.set(adjusted_now);
             if adjusted_now < adjusted_mtime {

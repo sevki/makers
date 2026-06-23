@@ -4252,8 +4252,7 @@ pub unsafe fn print_version() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
-    let mut resolution: i32 = 0;
-    let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx, &raw mut resolution)))
+    let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx).0))
         .expect("formatted timestamp never contains an interior NUL");
     print_version();
     printf(
@@ -4266,7 +4265,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     print_file_data_base();
     print_vpath_data_base();
     strcache_print_stats(b"#\0" as *const u8 as *const ::core::ffi::c_char);
-    let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx, &raw mut resolution)))
+    let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx).0))
         .expect("formatted timestamp never contains an interior NUL");
     printf(
         b"\n# Finished Make data base on %s\n\n\0" as *const u8 as *const ::core::ffi::c_char,
