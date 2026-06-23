@@ -1547,10 +1547,11 @@ pub unsafe fn file_timestamp_cons(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn file_timestamp_now(
-    ctx: &crate::execctx::ExecContext,
-    resolution: *mut i32,
-) -> uintmax_t {
+/// Sample the wall clock and pack it into a `FILE_TIMESTAMP`, returning the
+/// packed value together with the clock resolution (always `1` ns on the
+/// `std::time` path). Safe: the only `unsafe` is the inner `file_timestamp_cons`
+/// call, which is sound with a null filename.
+pub fn file_timestamp_now(ctx: &crate::execctx::ExecContext) -> (uintmax_t, i32) {
     // The original c2rust translation tried clock_gettime(CLOCK_REALTIME),
     // then gettimeofday, then time(). On supported platforms the
     // clock_gettime path (nanosecond resolution, r = 1) always succeeds, so
@@ -1563,13 +1564,18 @@ pub unsafe fn file_timestamp_now(
         // of whole seconds. Keep it correct rather than panicking.
         Err(e) => (-(e.duration().as_secs() as time_t), 0),
     };
-    *resolution = 1;
-    file_timestamp_cons(
-        ctx,
-        ::core::ptr::null::<::core::ffi::c_char>(),
-        s,
-        ns as ::core::ffi::c_long,
-    )
+    let resolution = 1;
+    // SAFETY: a null filename is the documented "no name" sentinel that
+    // `file_timestamp_cons` handles; all other arguments are plain scalars.
+    let stamp = unsafe {
+        file_timestamp_cons(
+            ctx,
+            ::core::ptr::null::<::core::ffi::c_char>(),
+            s,
+            ns as ::core::ffi::c_long,
+        )
+    };
+    (stamp, resolution)
 }
 /// Render a packed `FILE_TIMESTAMP` exactly as GNU make's
 /// `file_timestamp_sprintf`: `YYYY-MM-DD HH:MM:SS` in **local** time, followed
@@ -2158,8 +2164,7 @@ mod tests {
     #[test]
     fn file_timestamp_now_matches_unsafe_oracle() {
         let ctx = crate::execctx::ExecContext::default();
-        let mut res_new: i32 = -1;
-        let ts_new = unsafe { file_timestamp_now(&ctx, &raw mut res_new) };
+        let (ts_new, res_new) = file_timestamp_now(&ctx);
 
         let mut res_oracle: i32 = -1;
         let ts_oracle = unsafe { file_timestamp_now_oracle(&ctx, &raw mut res_oracle) };
