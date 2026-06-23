@@ -11,7 +11,7 @@ use libc::{__errno_location, abort, free, printf, putchar, puts, strchr, strcmp,
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
@@ -1443,26 +1443,43 @@ pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-/// Pack a `(seconds, nanoseconds)` wall-clock reading into GNU make's
-/// `FILE_TIMESTAMP` encoding (whole seconds in the high bits, sub-second
-/// resolution units in the low `FILE_TIMESTAMP_HI_RES ? 30 : 0` bits, biased by
-/// `ORDINARY_MTIME_MIN`). Pure arithmetic — no I/O, no pointers.
+/// Build a [`SystemTime`] from a Unix `(seconds, nanoseconds)` pair as reported
+/// by `stat(2)`. `secs` may be negative (pre-1970); `nsec` is the in-second
+/// remainder in `[0, 1_000_000_000)`. This is the `std::time` boundary for the
+/// raw `time_t`/`c_long` values the filesystem hands us.
+pub fn system_time_from_unix(secs: i64, nsec: u32) -> SystemTime {
+    if secs >= 0 {
+        UNIX_EPOCH + Duration::new(secs as u64, nsec)
+    } else {
+        // `unsigned_abs` keeps `i64::MIN` well-defined; `nsec` shifts forward.
+        UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs()) + Duration::from_nanos(nsec as u64)
+    }
+}
+/// Pack a Unix `(seconds, nanoseconds)` offset into GNU make's `FILE_TIMESTAMP`
+/// encoding (whole seconds in the high bits, sub-second resolution units in the
+/// low `FILE_TIMESTAMP_HI_RES ? 30 : 0` bits, biased by `ORDINARY_MTIME_MIN`).
+/// Pure arithmetic — no I/O, no pointers.
 ///
 /// Returns `Ok(ts)` for a stamp inside the encodable range, or `Err(clamp)`
 /// when it falls outside: `ORDINARY_MTIME_MIN` when the stamp is at or below
 /// `OLD_MTIME` (underflow), otherwise the maximum ordinary timestamp
 /// (overflow). The caller decides what to do with the out-of-range report.
 ///
-/// All arithmetic is `wrapping_*` to reproduce the C macro's modular `uintmax_t`
-/// behavior byte-for-byte; this is differential-tested against the verbatim
-/// c2rust expression in the test module.
-fn pack_file_timestamp(stamp: time_t, ns: ::core::ffi::c_long) -> Result<uintmax_t, uintmax_t> {
+/// Operates on raw `i64`/`i64` so the full out-of-range domain (which
+/// `SystemTime` cannot represent) stays reachable; all arithmetic is
+/// `wrapping_*` to reproduce the C macro's modular `uintmax_t` behavior
+/// byte-for-byte, differential-tested against the verbatim c2rust expression.
+fn pack_unix_timestamp(stamp: i64, ns: i64) -> Result<uintmax_t, uintmax_t> {
     let hi = if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 };
-    let res = (if FILE_TIMESTAMP_HI_RES != 0 { 1_000_000_000 } else { 1 }) as uintmax_t;
+    let res = (if FILE_TIMESTAMP_HI_RES != 0 {
+        1_000_000_000
+    } else {
+        1
+    }) as uintmax_t;
     let min = ORDINARY_MTIME_MIN as uintmax_t;
 
-    let offset = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
-        + if FILE_TIMESTAMP_HI_RES != 0 { ns } else { 0 }) as i32;
+    let offset =
+        (ORDINARY_MTIME_MIN as i64 + if FILE_TIMESTAMP_HI_RES != 0 { ns } else { 0 }) as i32;
     let s = stamp as uintmax_t;
     let product = s << hi;
     let ts = product.wrapping_add(offset as uintmax_t);
@@ -1483,20 +1500,30 @@ fn pack_file_timestamp(stamp: time_t, ns: ::core::ffi::c_long) -> Result<uintmax
         Err(ordinary_max)
     }
 }
+/// Decompose a [`SystemTime`] to its Unix `(seconds, nanoseconds)` offset and
+/// pack it via [`pack_unix_timestamp`]. Pre-epoch times truncate to whole
+/// seconds, matching the original `file_timestamp_now` clock path.
+fn pack_file_timestamp(t: SystemTime) -> Result<uintmax_t, uintmax_t> {
+    let (secs, ns) = match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => (d.as_secs() as i64, d.subsec_nanos() as i64),
+        Err(e) => (-(e.duration().as_secs() as i64), 0),
+    };
+    pack_unix_timestamp(secs, ns)
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; `fname`, when non-null, must be a valid NUL-terminated C
 /// string. (`fname` and the variadic C `error` sink are deliberately retained
 /// so the out-of-range diagnostic stays byte-identical to GNU make's; the
-/// packing math itself is the safe [`pack_file_timestamp`].)
+/// timestamp `t` is now a `std::time::SystemTime` and the packing math itself
+/// is the safe [`pack_file_timestamp`].)
 pub unsafe fn file_timestamp_cons(
     ctx: &crate::execctx::ExecContext,
     fname: *const ::core::ffi::c_char,
-    stamp: time_t,
-    ns: ::core::ffi::c_long,
+    t: SystemTime,
 ) -> uintmax_t {
-    match pack_file_timestamp(stamp, ns) {
+    match pack_file_timestamp(t) {
         Ok(ts) => ts,
         Err(substitute) => {
             let f: *const ::core::ffi::c_char = if !fname.is_null() {
@@ -1522,36 +1549,25 @@ pub unsafe fn file_timestamp_cons(
         }
     }
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 /// Sample the wall clock and pack it into a `FILE_TIMESTAMP`, returning the
 /// packed value together with the clock resolution (always `1` ns on the
 /// `std::time` path). Safe: the only `unsafe` is the inner `file_timestamp_cons`
 /// call, which is sound with a null filename.
 pub fn file_timestamp_now(ctx: &crate::execctx::ExecContext) -> (uintmax_t, i32) {
     // The original c2rust translation tried clock_gettime(CLOCK_REALTIME),
-    // then gettimeofday, then time(). On supported platforms the
-    // clock_gettime path (nanosecond resolution, r = 1) always succeeds, so
-    // std::time::SystemTime (backed by CLOCK_REALTIME on Linux) preserves the
-    // observed behavior.
-    let (s, ns): (time_t, i32) = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => (d.as_secs() as time_t, d.subsec_nanos() as i32),
-        // Clock before the Unix epoch (pre-1970): not reachable in practice.
-        // Mirror what time()/seconds-since-epoch would yield: a negative count
-        // of whole seconds. Keep it correct rather than panicking.
-        Err(e) => (-(e.duration().as_secs() as time_t), 0),
-    };
+    // then gettimeofday, then time(). On supported platforms the clock_gettime
+    // path (nanosecond resolution, r = 1) always succeeds, so
+    // std::time::SystemTime::now (backed by CLOCK_REALTIME on Linux) preserves
+    // the observed behavior; its pre-epoch handling lives in
+    // `pack_file_timestamp`.
     let resolution = 1;
     // SAFETY: a null filename is the documented "no name" sentinel that
-    // `file_timestamp_cons` handles; all other arguments are plain scalars.
+    // `file_timestamp_cons` handles.
     let stamp = unsafe {
         file_timestamp_cons(
             ctx,
             ::core::ptr::null::<::core::ffi::c_char>(),
-            s,
-            ns as ::core::ffi::c_long,
+            SystemTime::now(),
         )
     };
     (stamp, resolution)
@@ -2122,8 +2138,7 @@ mod tests {
         file_timestamp_cons(
             ctx,
             ::core::ptr::null::<::core::ffi::c_char>(),
-            s,
-            ns as ::core::ffi::c_long,
+            system_time_from_unix(s as i64, ns as u32),
         )
     }
 
@@ -2507,8 +2522,16 @@ mod tests {
     fn file_timestamp_cons_in_range_is_monotonic() {
         unsafe {
             let ctx = crate::execctx::ExecContext::default();
-            let earlier = file_timestamp_cons(&ctx, c"probe_a".as_ptr(), 1_000_000, 0);
-            let later = file_timestamp_cons(&ctx, c"probe_b".as_ptr(), 1_000_001, 0);
+            let earlier = file_timestamp_cons(
+                &ctx,
+                c"probe_a".as_ptr(),
+                system_time_from_unix(1_000_000, 0),
+            );
+            let later = file_timestamp_cons(
+                &ctx,
+                c"probe_b".as_ptr(),
+                system_time_from_unix(1_000_001, 0),
+            );
             assert!(
                 later > earlier,
                 "a later second encodes to a larger timestamp ({later} > {earlier})"
@@ -2516,7 +2539,11 @@ mod tests {
             // Both land in the ordinary range, above the reserved sentinels.
             assert!(earlier > ORDINARY_MTIME_MIN as uintmax_t);
             // The nanosecond component widens the value within the same second.
-            let with_ns = file_timestamp_cons(&ctx, c"probe_a".as_ptr(), 1_000_000, 500_000_000);
+            let with_ns = file_timestamp_cons(
+                &ctx,
+                c"probe_a".as_ptr(),
+                system_time_from_unix(1_000_000, 500_000_000),
+            );
             assert!(
                 with_ns > earlier,
                 "added nanoseconds raise the encoded timestamp within a second"
@@ -2541,7 +2568,7 @@ mod tests {
             crate::make_main::install_program_name_for_test();
             let ctx = crate::execctx::ExecContext::default();
             // s = 0 <= OLD_MTIME (2): below the encodable range.
-            let ts = file_timestamp_cons(&ctx, c"too_old".as_ptr(), 0, 0);
+            let ts = file_timestamp_cons(&ctx, c"too_old".as_ptr(), system_time_from_unix(0, 0));
             assert_eq!(
                 ts, ORDINARY_MTIME_MIN as uintmax_t,
                 "an underflowing stamp is substituted with ORDINARY_MTIME_MIN"
@@ -2565,8 +2592,7 @@ mod tests {
             let ts = file_timestamp_cons(
                 &ctx,
                 ::core::ptr::null::<::core::ffi::c_char>(),
-                ::core::ffi::c_long::MAX as time_t,
-                0,
+                system_time_from_unix(i64::MAX, 0),
             );
             assert!(
                 ts > ORDINARY_MTIME_MIN as uintmax_t,
@@ -2687,11 +2713,35 @@ mod tests {
         for &stamp in &stamps {
             for &ns in &nss {
                 assert_eq!(
-                    pack_file_timestamp(stamp, ns),
+                    pack_unix_timestamp(stamp as i64, ns as i64),
                     pack_file_timestamp_oracle(stamp, ns),
                     "diverged at stamp={stamp}, ns={ns}"
                 );
             }
+        }
+    }
+
+    /// The `SystemTime` front door (`pack_file_timestamp`) must agree with the
+    /// integer core for every value `SystemTime` can faithfully represent: a
+    /// `(secs, nsec)` pair built via `system_time_from_unix` and decomposed back
+    /// round-trips, so the packed result matches `pack_unix_timestamp` directly.
+    #[test]
+    fn pack_file_timestamp_systemtime_matches_int_core() {
+        let cases: [(i64, u32); 6] = [
+            (0, 0),
+            (1, 1),
+            (1_700_000_000, 500_000_000),
+            (1_700_000_000, 999_999_999),
+            (4_000_000_000, 0),
+            (i64::MAX, 0),
+        ];
+        for &(secs, nsec) in &cases {
+            let t = system_time_from_unix(secs, nsec);
+            assert_eq!(
+                pack_file_timestamp(t),
+                pack_unix_timestamp(secs, nsec as i64),
+                "SystemTime path diverged at secs={secs}, nsec={nsec}"
+            );
         }
     }
 }

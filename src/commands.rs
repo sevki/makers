@@ -8,7 +8,8 @@ use crate::ar::{ar_member_date, ar_name};
 pub use crate::ffi_types::{pid_t, sig_atomic_t, size_t, time_t, uintmax_t};
 use crate::file::{
     cs_running, enter_file, file_timestamp_cons, remove_intermediates, set_command_state,
-    update_status, us_success, Commands, Dep, File, NONEXISTENT_MTIME, ORDINARY_MTIME_MIN,
+    system_time_from_unix, update_status, us_success, Commands, Dep, File, NONEXISTENT_MTIME,
+    ORDINARY_MTIME_MIN,
 };
 use crate::floc::Floc;
 use crate::hash::{
@@ -28,7 +29,7 @@ use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use crate::variable::{define_variable_in_set, initialize_file_variables, o_automatic};
 
-use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void, CStr};
+use ::core::ffi::{c_char, c_uchar, c_uint, c_ulong, c_ushort, c_void, CStr};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
@@ -709,8 +710,7 @@ unsafe fn delete_target(
         && file_timestamp_cons(
             ctx,
             file.name,
-            st.st_mtime as time_t,
-            st.st_mtime_nsec as c_long,
+            system_time_from_unix(st.st_mtime as i64, st.st_mtime_nsec as u32),
         ) != file.last_mtime
     {
         if !on_behalf_of.is_null() {
