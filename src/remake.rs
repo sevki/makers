@@ -1867,7 +1867,7 @@ pub unsafe fn f_mtime(
         } else {
             mtime = file_timestamp_cons(
                 ctx,
-                (*file).hname,
+                file.hname,
                 system_time_from_unix(member_date as i64, 0),
             );
         }
