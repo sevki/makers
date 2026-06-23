@@ -12,8 +12,8 @@ use libc::{__errno_location, free, printf, puts, strcmp, strlen};
 
 use crate::dir::{dir_file_exists_p, dir_name};
 use crate::expand::expand_variable_buf;
-use crate::ffi_types::{size_t, time_t, uintmax_t};
-use crate::file::{file_timestamp_cons, lookup_file};
+use crate::ffi_types::{size_t, uintmax_t};
+use crate::file::{file_timestamp_cons, lookup_file, system_time_from_unix};
 use crate::function::pattern_matches;
 use crate::make_main::stopchar_map;
 use crate::misc::xmalloc;
@@ -497,8 +497,7 @@ unsafe fn selective_vpath_search(
                     *slot = file_timestamp_cons(
                         ctx,
                         name,
-                        st.st_mtim.tv_sec as time_t,
-                        st.st_mtim.tv_nsec,
+                        system_time_from_unix(st.st_mtim.tv_sec as i64, st.st_mtim.tv_nsec as u32),
                     );
                     mtime_ptr = null_mut();
                 }

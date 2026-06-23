@@ -63,7 +63,7 @@ use crate::expand::{allocated_expand_variable, variable_buffer, variable_buffer_
 pub use crate::file::nameseq;
 use crate::file::{
     enter_file, expand_deps, file_timestamp_cons, file_timestamp_now, lookup_file, rehash_file,
-    rename_file, set_command_state,
+    rename_file, set_command_state, system_time_from_unix,
 };
 use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
@@ -1865,7 +1865,11 @@ pub unsafe fn f_mtime(
         {
             mtime = NONEXISTENT_MTIME as uintmax_t;
         } else {
-            mtime = file_timestamp_cons(ctx, (*file).hname, member_date, 0);
+            mtime = file_timestamp_cons(
+                ctx,
+                (*file).hname,
+                system_time_from_unix(member_date as i64, 0),
+            );
         }
     } else {
         mtime = name_mtime(ctx, (*file).name);
@@ -2064,8 +2068,7 @@ pub unsafe fn name_mtime(
         mtime = file_timestamp_cons(
             ctx,
             name,
-            st.st_mtim.tv_sec as time_t,
-            st.st_mtim.tv_nsec as ::core::ffi::c_long,
+            system_time_from_unix(st.st_mtim.tv_sec, st.st_mtim.tv_nsec as u32),
         );
     } else if *__errno_location() == ENOENT || *__errno_location() == ENOTDIR {
         mtime = NONEXISTENT_MTIME as uintmax_t;
@@ -2107,8 +2110,7 @@ pub unsafe fn name_mtime(
                 ltime = file_timestamp_cons(
                     ctx,
                     &raw mut lpath as *mut ::core::ffi::c_char,
-                    st.st_mtim.tv_sec as time_t,
-                    st.st_mtim.tv_nsec as ::core::ffi::c_long,
+                    system_time_from_unix(st.st_mtim.tv_sec, st.st_mtim.tv_nsec as u32),
                 );
                 if ltime > mtime {
                     mtime = ltime;
