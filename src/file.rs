@@ -1443,105 +1443,84 @@ pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+/// Pack a `(seconds, nanoseconds)` wall-clock reading into GNU make's
+/// `FILE_TIMESTAMP` encoding (whole seconds in the high bits, sub-second
+/// resolution units in the low `FILE_TIMESTAMP_HI_RES ? 30 : 0` bits, biased by
+/// `ORDINARY_MTIME_MIN`). Pure arithmetic — no I/O, no pointers.
+///
+/// Returns `Ok(ts)` for a stamp inside the encodable range, or `Err(clamp)`
+/// when it falls outside: `ORDINARY_MTIME_MIN` when the stamp is at or below
+/// `OLD_MTIME` (underflow), otherwise the maximum ordinary timestamp
+/// (overflow). The caller decides what to do with the out-of-range report.
+///
+/// All arithmetic is `wrapping_*` to reproduce the C macro's modular `uintmax_t`
+/// behavior byte-for-byte; this is differential-tested against the verbatim
+/// c2rust expression in the test module.
+fn pack_file_timestamp(stamp: time_t, ns: ::core::ffi::c_long) -> Result<uintmax_t, uintmax_t> {
+    let hi = if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 };
+    let res = (if FILE_TIMESTAMP_HI_RES != 0 { 1_000_000_000 } else { 1 }) as uintmax_t;
+    let min = ORDINARY_MTIME_MIN as uintmax_t;
+
+    let offset = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
+        + if FILE_TIMESTAMP_HI_RES != 0 { ns } else { 0 }) as i32;
+    let s = stamp as uintmax_t;
+    let product = s << hi;
+    let ts = product.wrapping_add(offset as uintmax_t);
+
+    // `base` is the largest multiple of the resolution that still fits a
+    // `uintmax_t` once biased off `min`. `ordinary_max` is the largest
+    // encodable packed timestamp; `s_max` is the largest whole-seconds value it
+    // admits (the same bound shifted back down by `hi`).
+    let base = uintmax_t::MAX.wrapping_sub(min) >> hi << hi;
+    let ordinary_max = base.wrapping_add(min).wrapping_add(res).wrapping_sub(1);
+    let s_max = (base.wrapping_add(res).wrapping_sub(1)) >> hi;
+
+    if s <= s_max && product <= ts && ts <= ordinary_max {
+        Ok(ts)
+    } else if s <= OLD_MTIME as uintmax_t {
+        Err(min)
+    } else {
+        Err(ordinary_max)
+    }
+}
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; `fname`, when non-null, must be a valid NUL-terminated C
+/// string. (`fname` and the variadic C `error` sink are deliberately retained
+/// so the out-of-range diagnostic stays byte-identical to GNU make's; the
+/// packing math itself is the safe [`pack_file_timestamp`].)
 pub unsafe fn file_timestamp_cons(
     ctx: &crate::execctx::ExecContext,
     fname: *const ::core::ffi::c_char,
     stamp: time_t,
     ns: ::core::ffi::c_long,
 ) -> uintmax_t {
-    let offset: i32 = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
-        + (if FILE_TIMESTAMP_HI_RES != 0 { ns } else { 0 })) as i32;
-    let s: uintmax_t = stamp as uintmax_t;
-    let product: uintmax_t = s << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 });
-    let mut ts: uintmax_t = product.wrapping_add(offset as uintmax_t);
-    if !(s
-        <= ((!(0_i32 as uintmax_t))
-            .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
-                0_i32 as uintmax_t
+    match pack_file_timestamp(stamp, ns) {
+        Ok(ts) => ts,
+        Err(substitute) => {
+            let f: *const ::core::ffi::c_char = if !fname.is_null() {
+                fname
             } else {
-                !(0_i32 as uintmax_t)
-                    << (::core::mem::size_of::<uintmax_t>() as usize)
-                        .wrapping_mul(8_usize)
-                        .wrapping_sub(1_usize)
-            })
-            .wrapping_sub((2 + 1) as uintmax_t)
-            >> (if 1 != 0 { 30 } else { 0 })
-            << (if 1 != 0 { 30 } else { 0 }))
-        .wrapping_add((2 + 1) as uintmax_t)
-        .wrapping_add((if 1 != 0 { 1000000000_i32 } else { 1 }) as uintmax_t)
-        .wrapping_sub(1 as uintmax_t)
-        .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-            >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
-        && product <= ts
-        && ts
-            <= ((!(0_i32 as uintmax_t))
-                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
-                    0_i32 as uintmax_t
-                } else {
-                    !(0_i32 as uintmax_t)
-                        << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(8_usize)
-                            .wrapping_sub(1_usize)
-                })
-                .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
-                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
-            .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
-            .wrapping_add(
-                (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000_i32
-                } else {
-                    1
-                }) as uintmax_t,
-            )
-            .wrapping_sub(1 as uintmax_t))
-    {
-        let f: *const ::core::ffi::c_char = if !fname.is_null() {
-            fname
-        } else {
-            b"Current time\0" as *const u8 as *const ::core::ffi::c_char
-        };
-        ts = if s <= OLD_MTIME as uintmax_t {
-            ORDINARY_MTIME_MIN as uintmax_t
-        } else {
-            ((!(0_i32 as uintmax_t))
-                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
-                    0_i32 as uintmax_t
-                } else {
-                    !(0_i32 as uintmax_t)
-                        << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(8_usize)
-                            .wrapping_sub(1_usize)
-                })
-                .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
-                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
-            .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
-            .wrapping_add(
-                (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000_i32
-                } else {
-                    1
-                }) as uintmax_t,
-            )
-            .wrapping_sub(1 as uintmax_t)
-        };
-        // Format the substituted timestamp in safe Rust, then hand the C
-        // `error` formatter a NUL-terminated copy as its `%s` argument (same
-        // output sink and bytes as before — only the raw stack buffer goes).
-        let stamp = CString::new(file_timestamp_string(ts))
-            .expect("formatted timestamp never contains an interior NUL");
-        error(
-            ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            (strlen(f) as size_t).wrapping_add(stamp.as_bytes().len() as size_t),
-            b"%s: timestamp out of range: substituting %s\0" as *const u8
-                as *const ::core::ffi::c_char,
-            f,
-            stamp.as_ptr(),
-        );
+                b"Current time\0" as *const u8 as *const ::core::ffi::c_char
+            };
+            // Format the substituted timestamp in safe Rust, then hand the C
+            // `error` formatter a NUL-terminated copy as its `%s` argument (same
+            // output sink and bytes as GNU make).
+            let stamp = CString::new(file_timestamp_string(substitute))
+                .expect("formatted timestamp never contains an interior NUL");
+            error(
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                (strlen(f) as size_t).wrapping_add(stamp.as_bytes().len() as size_t),
+                b"%s: timestamp out of range: substituting %s\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                f,
+                stamp.as_ptr(),
+            );
+            substitute
+        }
     }
-    ts
 }
 /// # Safety
 ///
@@ -2593,6 +2572,126 @@ mod tests {
                 ts > ORDINARY_MTIME_MIN as uintmax_t,
                 "an overflowing stamp clamps to the upper ordinary bound"
             );
+        }
+    }
+
+    /// Verbatim copy of the pre-extraction `file_timestamp_cons` packing and
+    /// range-check arithmetic (value only — the `error()` side effect is
+    /// dropped). Kept test-only as the differential oracle for the safe
+    /// `pack_file_timestamp` (AGENTS.md "preserve the original as a test
+    /// oracle"). Returns `Ok(ts)` in range, `Err(substitute)` out of range, so
+    /// it can be compared field-for-field with the new `Result`.
+    fn pack_file_timestamp_oracle(
+        stamp: time_t,
+        ns: ::core::ffi::c_long,
+    ) -> Result<uintmax_t, uintmax_t> {
+        let offset: i32 = (ORDINARY_MTIME_MIN as ::core::ffi::c_long
+            + (if FILE_TIMESTAMP_HI_RES != 0 { ns } else { 0 })) as i32;
+        let s: uintmax_t = stamp as uintmax_t;
+        let product: uintmax_t = s << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 });
+        let ts: uintmax_t = product.wrapping_add(offset as uintmax_t);
+        if !(s
+            <= ((!(0_i32 as uintmax_t))
+                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                    0_i32 as uintmax_t
+                } else {
+                    !(0_i32 as uintmax_t)
+                        << (::core::mem::size_of::<uintmax_t>() as usize)
+                            .wrapping_mul(8_usize)
+                            .wrapping_sub(1_usize)
+                })
+                .wrapping_sub((2 + 1) as uintmax_t)
+                >> (if 1 != 0 { 30 } else { 0 })
+                << (if 1 != 0 { 30 } else { 0 }))
+            .wrapping_add((2 + 1) as uintmax_t)
+            .wrapping_add((if 1 != 0 { 1000000000_i32 } else { 1 }) as uintmax_t)
+            .wrapping_sub(1 as uintmax_t)
+            .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+            && product <= ts
+            && ts
+                <= ((!(0_i32 as uintmax_t))
+                    .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                        0_i32 as uintmax_t
+                    } else {
+                        !(0_i32 as uintmax_t)
+                            << (::core::mem::size_of::<uintmax_t>() as usize)
+                                .wrapping_mul(8_usize)
+                                .wrapping_sub(1_usize)
+                    })
+                    .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+                    >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+                    << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
+                .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
+                .wrapping_add(
+                    (if FILE_TIMESTAMP_HI_RES != 0 {
+                        1000000000_i32
+                    } else {
+                        1
+                    }) as uintmax_t,
+                )
+                .wrapping_sub(1 as uintmax_t))
+        {
+            let substitute = if s <= OLD_MTIME as uintmax_t {
+                ORDINARY_MTIME_MIN as uintmax_t
+            } else {
+                ((!(0_i32 as uintmax_t))
+                    .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+                        0_i32 as uintmax_t
+                    } else {
+                        !(0_i32 as uintmax_t)
+                            << (::core::mem::size_of::<uintmax_t>() as usize)
+                                .wrapping_mul(8_usize)
+                                .wrapping_sub(1_usize)
+                    })
+                    .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
+                    >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
+                    << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
+                .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
+                .wrapping_add(
+                    (if FILE_TIMESTAMP_HI_RES != 0 {
+                        1000000000_i32
+                    } else {
+                        1
+                    }) as uintmax_t,
+                )
+                .wrapping_sub(1 as uintmax_t)
+            };
+            Err(substitute)
+        } else {
+            Ok(ts)
+        }
+    }
+
+    /// Differential test: the clean `pack_file_timestamp` must agree exactly
+    /// with the verbatim c2rust arithmetic across the whole-seconds boundaries
+    /// (underflow, ordinary range, the 30-bit shift overflow, and `time_t`
+    /// extremes) crossed with representative sub-second values.
+    #[test]
+    fn pack_file_timestamp_matches_verbatim_oracle() {
+        let stamps: [time_t; 12] = [
+            time_t::MIN,
+            -1_000_000,
+            -1,
+            0,
+            1,
+            2,
+            3,
+            1_700_000_000,
+            (1 << 33) - 1,
+            1 << 33,
+            ::core::ffi::c_long::MAX as time_t,
+            time_t::MAX,
+        ];
+        let nss: [::core::ffi::c_long; 5] = [0, 1, 500_000_000, 999_999_999, 1_000_000_000];
+        for &stamp in &stamps {
+            for &ns in &nss {
+                assert_eq!(
+                    pack_file_timestamp(stamp, ns),
+                    pack_file_timestamp_oracle(stamp, ns),
+                    "diverged at stamp={stamp}, ns={ns}"
+                );
+            }
         }
     }
 }
