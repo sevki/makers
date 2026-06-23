@@ -299,7 +299,7 @@ use crate::expand::{
 };
 pub use crate::file::nameseq;
 use crate::file::{
-    enter_file, file_timestamp_now, file_timestamp_sprintf, init_hash_files, lookup_file,
+    enter_file, file_timestamp_now, file_timestamp_string, init_hash_files, lookup_file,
     print_file_data_base, print_targets, remove_intermediates, snap_deps, verify_file_data_base,
 };
 use crate::function::hash_init_function_table;
@@ -4253,15 +4253,12 @@ pub unsafe fn print_version() {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     let mut resolution: i32 = 0;
-    let mut buf: [::core::ffi::c_char; 43] = [0; 43];
-    file_timestamp_sprintf(
-        &raw mut buf as *mut ::core::ffi::c_char,
-        file_timestamp_now(ctx, &raw mut resolution),
-    );
+    let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx, &raw mut resolution)))
+        .expect("formatted timestamp never contains an interior NUL");
     print_version();
     printf(
         b"\n# Make data base, printed on %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-        &raw mut buf as *mut ::core::ffi::c_char,
+        stamp.as_ptr(),
     );
     print_variable_data_base();
     print_dir_data_base();
@@ -4269,13 +4266,11 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     print_file_data_base();
     print_vpath_data_base();
     strcache_print_stats(b"#\0" as *const u8 as *const ::core::ffi::c_char);
-    file_timestamp_sprintf(
-        &raw mut buf as *mut ::core::ffi::c_char,
-        file_timestamp_now(ctx, &raw mut resolution),
-    );
+    let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx, &raw mut resolution)))
+        .expect("formatted timestamp never contains an interior NUL");
     printf(
         b"\n# Finished Make data base on %s\n\n\0" as *const u8 as *const ::core::ffi::c_char,
-        &raw mut buf as *mut ::core::ffi::c_char,
+        stamp.as_ptr(),
     );
 }
 /// # Safety

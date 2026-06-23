@@ -8,7 +8,7 @@ use crate::stdio::FILE;
 use crate::strcache::{strcache_add_len, strcache_iscached};
 use c2rust_bitfields;
 use libc::{__errno_location, abort, free, printf, putchar, puts, strchr, strcmp, strcpy, unlink};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1496,7 +1496,6 @@ pub unsafe fn file_timestamp_cons(
             )
             .wrapping_sub(1 as uintmax_t))
     {
-        let mut buf: [::core::ffi::c_char; 43] = [0; 43];
         let f: *const ::core::ffi::c_char = if !fname.is_null() {
             fname
         } else {
@@ -1527,16 +1526,19 @@ pub unsafe fn file_timestamp_cons(
             )
             .wrapping_sub(1 as uintmax_t)
         };
-        file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, ts);
+        // Format the substituted timestamp in safe Rust, then hand the C
+        // `error` formatter a NUL-terminated copy as its `%s` argument (same
+        // output sink and bytes as before — only the raw stack buffer goes).
+        let stamp = CString::new(file_timestamp_string(ts))
+            .expect("formatted timestamp never contains an interior NUL");
         error(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
-            (strlen(f) as size_t)
-                .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
+            (strlen(f) as size_t).wrapping_add(stamp.as_bytes().len() as size_t),
             b"%s: timestamp out of range: substituting %s\0" as *const u8
                 as *const ::core::ffi::c_char,
             f,
-            &raw mut buf as *mut ::core::ffi::c_char,
+            stamp.as_ptr(),
         );
     }
     ts
@@ -1630,19 +1632,6 @@ pub fn file_timestamp_string(ts: uintmax_t) -> String {
     }
     out.push_str(&frac_str);
     out
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; `p` must point to a buffer with room for the formatted
-/// timestamp plus its NUL terminator (callers use a 43-byte buffer, the
-/// `FILE_TIMESTAMP_PRINT_LEN_BOUND` GNU make guarantees). Thin shim over the
-/// safe [`file_timestamp_string`]; it only copies the bytes out.
-pub unsafe fn file_timestamp_sprintf(p: *mut ::core::ffi::c_char, ts: uintmax_t) {
-    let s = file_timestamp_string(ts);
-    let bytes = s.as_bytes();
-    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, bytes.len());
-    *p.add(bytes.len()) = 0;
 }
 /// # Safety
 ///
@@ -1838,11 +1827,11 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
     } else if (*f).last_mtime == OLD_MTIME as uintmax_t {
         puts(b"#  File is very old.\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
-        let mut buf: [::core::ffi::c_char; 43] = [0; 43];
-        file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, (*f).last_mtime);
+        let stamp = CString::new(file_timestamp_string((*f).last_mtime))
+            .expect("formatted timestamp never contains an interior NUL");
         printf(
             b"#  Last modified %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            &raw mut buf as *mut ::core::ffi::c_char,
+            stamp.as_ptr(),
         );
     }
     puts(if (*f).updated() as i32 != 0 {
