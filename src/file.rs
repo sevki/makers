@@ -1439,10 +1439,6 @@ pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
         d = (*d).next;
     }
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 /// Build a [`SystemTime`] from a Unix `(seconds, nanoseconds)` pair as reported
 /// by `stat(2)`. `secs` may be negative (pre-1970); `nsec` is the in-second
 /// remainder in `[0, 1_000_000_000)`. This is the `std::time` boundary for the

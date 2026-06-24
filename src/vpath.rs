@@ -284,10 +284,7 @@ pub unsafe fn construct_vpath_list(
 }
 
 /// Search the `GPATH` list for a pathname (`file` of length `len`, which is
-/// not null-terminated). Returns 1 if it is there, 0 if not.
-///
-/// # Safety
-/// `file` must point to at least `len` readable bytes.
+/// not null-terminated). Returns `true` if it is there, `false` if not.
 pub fn gpath_search(file: &[u8]) -> bool {
     // SAFETY: `gpaths` is the process-wide GPATH list built during startup and
     // only read here; the slices it hands out (`searchpath_entries`,

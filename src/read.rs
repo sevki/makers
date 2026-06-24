@@ -697,8 +697,6 @@ unsafe fn parse_var_assignment(
 /// the token slice `[p, p + len)`; the result holds its bytes up to the first
 /// NUL, followed by a trailing NUL terminator.
 ///
-/// # Safety
-///
 /// Calls [`out_of_memory`] on allocation failure, matching the original
 /// `xstrndup`.
 fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
