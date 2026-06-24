@@ -1323,16 +1323,15 @@ unsafe fn expand_command_line_file(
             name = expanded;
         }
     }
-    while *name.offset(0_i32 as isize) as i32 == '.' as i32
-        && *name.offset(1_i32 as isize) as i32 == '/' as i32
-    {
-        name = name.offset(2_i32 as isize);
-        while *name.offset(0_i32 as isize) as i32 == '/' as i32 {
-            name = name.offset(1_i32 as isize);
-        }
-    }
-    if *name.offset(0_i32 as isize) as i32 == 0 {
+    // Strip leading `./` prefixes via the shared safe parser core; an empty
+    // result becomes `./`. `name.add(off)` stays inside the NUL-terminated
+    // buffer, so the tail it points at is still a valid C string.
+    let bytes = ::std::ffi::CStr::from_ptr(name).to_bytes();
+    let off = crate::parser::strip_dot_slash_prefix(bytes);
+    if off == bytes.len() {
         name = b"./\0" as *const u8 as *const ::core::ffi::c_char;
+    } else {
+        name = name.add(off);
     }
     cp = strcache_add(name);
     free(expanded as *mut ::core::ffi::c_void);
