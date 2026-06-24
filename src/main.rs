@@ -1335,6 +1335,62 @@ unsafe fn expand_command_line_file(
     free(expanded as *mut ::core::ffi::c_void);
     cp
 }
+#[cfg(test)]
+mod expand_command_line_file_tests {
+    use crate::parser::strip_dot_slash_prefix;
+
+    /// Verbatim pre-refactor `./`-stripping from `expand_command_line_file`,
+    /// preserved as an oracle (AGENTS.md: keep the original logic as a test
+    /// oracle when replacing it). Models the NUL-terminated C string — reads
+    /// past the end yield 0 — and returns the resulting file-name bytes (`./`
+    /// when the name collapses to empty).
+    fn unsafe_oracle(name: &[u8]) -> Vec<u8> {
+        let g = |i: usize| -> u8 { if i < name.len() { name[i] } else { 0 } };
+        let mut i = 0usize;
+        while g(i) == b'.' && g(i + 1) == b'/' {
+            i += 2;
+            while g(i) == b'/' {
+                i += 1;
+            }
+        }
+        if g(i) == 0 {
+            b"./".to_vec()
+        } else {
+            name[i..].to_vec()
+        }
+    }
+
+    /// The decision the refactored wrapper now makes before interning: the
+    /// shared safe `strip_dot_slash_prefix` core plus the empty-result `./`
+    /// substitution.
+    fn refactored(name: &[u8]) -> Vec<u8> {
+        let off = strip_dot_slash_prefix(name);
+        if off == name.len() {
+            b"./".to_vec()
+        } else {
+            name[off..].to_vec()
+        }
+    }
+
+    #[test]
+    fn matches_unsafe_oracle_exhaustively() {
+        // Every byte string up to length 8 over {`.`, `/`, `x`} — the alphabet
+        // that exercises the `./`-prefix runs, the empty collapse, and the
+        // other-char stop.
+        fn rec(alpha: &[u8], buf: &mut Vec<u8>, depth: usize) {
+            assert_eq!(refactored(buf), unsafe_oracle(buf), "case {:?}", buf);
+            if depth == 0 {
+                return;
+            }
+            for &c in alpha {
+                buf.push(c);
+                rec(alpha, buf, depth - 1);
+                buf.pop();
+            }
+        }
+        rec(&[b'.', b'/', b'x'], &mut Vec::new(), 8);
+    }
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
