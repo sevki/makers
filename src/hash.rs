@@ -562,10 +562,7 @@ macro_rules! jhash_final {
     };
 }
 
-/// Hash `length` bytes at `k`.
-///
-/// # Safety
-/// `k` must be valid for reads of `length` bytes.
+/// Hash the `bytes` slice (the lookup3 `jhash` mix used by make's hash tables).
 pub fn jhash(bytes: &[u8]) -> c_uint {
     let mut c = JHASH_INITVAL.wrapping_add(bytes.len() as c_uint);
     let mut b = c;

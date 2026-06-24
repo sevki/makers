@@ -346,8 +346,6 @@ pub static JOBSERVER_TOKENS: AtomicU32 = AtomicU32::new(0);
 pub fn jobserver_tokens() -> ::core::ffi::c_uint {
     JOBSERVER_TOKENS.load(Ordering::Relaxed)
 }
-/// # Safety
-///
 /// Safe port of make's `is_bourne_compatible_shell`: is the program named by
 /// `path` one of the known Bourne-compatible shells, compared by its file stem
 /// (the basename with any extension stripped)? On this target `ISDIRSEP` is just
@@ -1885,10 +1883,6 @@ pub unsafe fn job_next_command(child: *mut child) -> i32 {
 }
 pub const LOAD_WEIGHT_A: ::core::ffi::c_double = 0.25f64;
 pub const LOAD_WEIGHT_B: ::core::ffi::c_double = 0.25f64;
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 /// Parse the number of currently-running jobs from `/proc/loadavg` contents:
 /// the integer before `/` in the 4th whitespace-separated field (e.g. `1` in
 /// `"0.00 0.01 0.05 1/234 5678"`). Returns `None` when that field is missing or
