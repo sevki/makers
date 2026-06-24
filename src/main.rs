@@ -1230,10 +1230,8 @@ pub unsafe fn initialize_global_hash_tables() {
     hash_init_directories();
     hash_init_function_table();
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// Build the global `stopchar_map` character-classification table the parser
+/// consults to recognize separators, blanks, and special characters.
 pub fn initialize_stopchar_map() {
     let mut map = [0 as ::core::ffi::c_ushort; 256];
     map[0] = MAP_NUL as ::core::ffi::c_ushort;
@@ -1424,10 +1422,6 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
         options.debug_flag.set(false);
     }
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 /// Map an `--output-sync` argument value to its `OUTPUT_SYNC_*` mode, or
 /// `None` if it names no known mode.
 fn classify_output_sync(value: &[u8]) -> Option<i32> {
