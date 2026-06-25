@@ -72,17 +72,22 @@ const IO_STDOUT_OK: c_uint = 0x0008;
 const IO_STDERR_OK: c_uint = 0x0010;
 
 pub static mut output_context: *mut output = ::core::ptr::null::<output>() as *mut output;
-/// Set once make has logged the working-directory "Entering directory" trace,
-/// so the matching "Leaving directory" is emitted and `MAKE_RESTARTS` is
-/// prefixed with `-`. It is a one-shot boolean, stored in an atomic so its
-/// reads are plain safe operations; all access is single-threaded, so
-/// `Relaxed` preserves the original program order. `pub` because writes also
-/// occur in `main.rs`.
-pub static STDIO_TRACED: AtomicBool = AtomicBool::new(false);
-
-/// Whether the working-directory enter trace has been emitted.
+/// Whether the working-directory "Entering directory" trace has been emitted.
+///
+/// This is a one-shot latch — set once make logs the trace, so the matching
+/// "Leaving directory" is emitted and `MAKE_RESTARTS` is prefixed with `-`. It
+/// lives on the owned per-run `Options` (the former `STDIO_TRACED` global
+/// atomic), reached through the `with_options`/`OPTIONS_PTR` channel: the
+/// `output_start` writer runs on the shared output path, reachable from the
+/// `gmk_eval` throwaway-context path, so both ends resolve to `main_0`'s real
+/// run state rather than a throwaway `ExecContext`.
 pub fn stdio_traced() -> bool {
-    STDIO_TRACED.load(Ordering::Relaxed)
+    crate::make_main::with_options(|o| o.stdio_traced.get())
+}
+
+/// Record whether the working-directory enter trace has been emitted.
+pub fn set_stdio_traced(value: bool) {
+    crate::make_main::with_options(|o| o.stdio_traced.set(value));
 }
 pub const OUTPUT_NONE: i32 = -1;
 unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
@@ -409,7 +414,7 @@ pub unsafe fn output_start(ctx: &ExecContext) {
         && !stdio_traced()
         && crate::make_main::should_print_dir_mirror(ctx) != 0
     {
-        STDIO_TRACED.store(log_working_directory(ctx, 1) != 0, Ordering::Relaxed);
+        set_stdio_traced(log_working_directory(ctx, 1) != 0);
     }
 }
 /// Write `msg` to stdout or stderr (or the sync temp file), starting
