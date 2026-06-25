@@ -146,7 +146,7 @@ use crate::hash::{
 };
 pub use crate::job::childbase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
-use crate::make_main::{command_count, db_level, starting_directory, stopchar_map};
+use crate::make_main::{db_level, starting_directory, stopchar_map};
 pub use crate::output::output;
 use crate::output::{error, fatal, out_of_memory, output_context, outputs};
 use crate::posixos::fd_noinherit;
@@ -2682,7 +2682,7 @@ unsafe fn func_file(
                 strerror(*__errno_location()),
             );
         }
-        command_count = command_count.wrapping_add(1);
+        crate::make_main::bump_command_count();
         if !(*argv.offset(1_i32 as isize)).is_null() {
             let l: size_t = strlen(*argv.offset(1_i32 as isize)) as size_t;
             let nl: i32 = (l == 0
@@ -2991,7 +2991,7 @@ unsafe fn expand_builtin_function(
         );
     }
     if (*entry_p).adds_command() != 0 {
-        command_count = command_count.wrapping_add(1);
+        crate::make_main::bump_command_count();
     }
     if (*entry_p).alloc_fn() == 0 {
         return (*entry_p).fptr.func_ptr.expect("non-null function pointer")(

@@ -11,7 +11,7 @@ use crate::hash::{
     hash_find_item, hash_find_slot, hash_free, hash_init, hash_insert, hash_insert_at, hash_table,
     is_real_item, jhash_string,
 };
-use crate::make_main::{command_count, db_level};
+use crate::make_main::db_level;
 use crate::misc::{xcalloc, xmalloc, xrealloc};
 use crate::output::fatal;
 use crate::stdio::FILE;
@@ -70,7 +70,7 @@ pub struct dirent {
 #[repr(C)]
 pub struct directory {
     pub name: *const c_char,
-    /// `command_count` when this name was last stat'd (used only when the
+    /// `Options::command_count` when this name was last stat'd (used only when the
     /// directory could not be stat'd, so there is no `contents`).
     pub counter: c_ulong,
     pub contents: *mut directory_contents,
@@ -84,7 +84,7 @@ pub struct directory_contents {
     pub ino: ino_t,
     /// Table of [`dirfile`] entries (files seen plus impossible names).
     pub dirfiles: hash_table,
-    /// `command_count` when the contents were last read.
+    /// `Options::command_count` when the contents were last read.
     pub counter: c_ulong,
     /// Open stream while the directory is still being read lazily.
     pub dirstream: *mut DIR,
@@ -267,7 +267,7 @@ pub unsafe fn find_directory(
             Some(dc) => dc.counter,
             None => dir_ref.counter,
         };
-        if ctr == command_count {
+        if ctr == crate::make_main::opt_command_count() {
             return dir;
         }
         if DB_VERBOSE & db_level != 0 {
@@ -275,7 +275,7 @@ pub unsafe fn find_directory(
                 c"Directory %s cache invalidated (count %lu != command %lu)\n".as_ptr(),
                 name,
                 ctr,
-                command_count,
+                crate::make_main::opt_command_count(),
             );
             fflush(stdout);
         }
@@ -297,7 +297,7 @@ pub unsafe fn find_directory(
     }
     let dir_ref = dir.as_mut().expect("directory entry just selected");
     dir_ref.contents = null_mut();
-    dir_ref.counter = command_count;
+    dir_ref.counter = crate::make_main::opt_command_count();
 
     let mut st: stat = ::core::mem::zeroed();
     let mut r;
@@ -337,11 +337,11 @@ pub unsafe fn find_directory(
     let dc = dc.as_mut().expect("directory_contents entry just selected");
     dir_ref.contents = dc;
 
-    if dc.counter != command_count {
+    if dc.counter != crate::make_main::opt_command_count() {
         if dc.counter != 0 {
             clear_directory_contents(dc);
         }
-        dc.counter = command_count;
+        dc.counter = crate::make_main::opt_command_count();
         loop {
             *__errno_location() = 0;
             dc.dirstream = opendir(name);

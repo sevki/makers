@@ -1014,6 +1014,16 @@ fn pattern_dep_length_oracle() {
 }
 
 #[test]
+fn command_count_dir_cache_oracle() {
+    // `COMMAND_COUNT` (the former `static mut command_count`) is bumped when a
+    // recipe command runs and read by the directory cache to invalidate stale
+    // entries. `gen`'s `touch made.tmp` bumps it, so `show`'s `$(wildcard *.tmp)`
+    // re-reads the directory and sees the just-created file rather than the empty
+    // listing `probe` cached a command earlier. Matched byte-for-byte against C.
+    check("command_count", "77_command_count.mk", "all", &[]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the

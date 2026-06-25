@@ -248,8 +248,7 @@ use crate::file::{lookup_file, set_command_state};
 use crate::findprog::find_in_given_path;
 use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
-    command_count, db_level, die, fatal_signal_set, not_parallel, one_shell,
-    posix_pedantic, stopchar_map,
+    db_level, die, fatal_signal_set, not_parallel, one_shell, posix_pedantic, stopchar_map,
 };
 use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
 use crate::posixos::{
@@ -692,7 +691,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     remote = 1;
                 }
             }
-            command_count = command_count.wrapping_add(1);
+            crate::make_main::bump_command_count();
             if remote == 0 && pid == shell_function_pid() {
                 shell_completed(ctx, exit_code, exit_sig);
                 break;
