@@ -967,6 +967,18 @@ fn recipeprefix_oracle() {
 }
 
 #[test]
+fn output_sync_oracle() {
+    // `--output-sync` resolves into `Options::output_sync` (the former
+    // `output_sync` global), feeding the `syncing` computation and the per-job
+    // `set_syncout` paths. Checked against the C oracle for the plain,
+    // `--output-sync=line`, and `--output-sync=target` invocations; for a
+    // non-parallel build all three stay byte-for-byte identical.
+    check("output_sync_plain", "73_output_sync.mk", "all", &[]);
+    check("output_sync_line", "73_output_sync.mk", "all", &["--output-sync=line"]);
+    check("output_sync_target", "73_output_sync.mk", "all", &["--output-sync=target"]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the

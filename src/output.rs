@@ -18,7 +18,7 @@ use libc::{
 use crate::execctx::ExecContext;
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
-use crate::make_main::{die, output_sync, program, starting_directory};
+use crate::make_main::{die, program, starting_directory};
 use crate::misc::{get_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
@@ -282,7 +282,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
         c"cannot open output-sync lock file: suppressing output-sync".as_ptr(),
     );
     output_close(ctx, out);
-    output_sync = OUTPUT_SYNC_NONE;
+    crate::make_main::with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
     osync_clear();
     IN_SETUP.store(false, Ordering::Relaxed);
 }
@@ -307,7 +307,8 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             );
             osync_clear();
         }
-        if output_sync != OUTPUT_SYNC_RECURSE && crate::make_main::should_print_dir_mirror(ctx) != 0
+        if crate::make_main::opt_output_sync() != OUTPUT_SYNC_RECURSE
+            && crate::make_main::should_print_dir_mirror(ctx) != 0
         {
             traced = log_working_directory(ctx, 1);
         }
@@ -358,7 +359,10 @@ pub unsafe fn output_init(out: *mut output) {
     if !out.is_null() {
         (*out).err = OUTPUT_NONE;
         (*out).out = (*out).err;
-        (*out).set_syncout((output_sync != 0) as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        (*out).set_syncout(
+            (crate::make_main::opt_output_sync() != 0) as i32 as ::core::ffi::c_uint
+                as ::core::ffi::c_uint,
+        );
         return;
     }
     STDOUT_FLAGS.store(fd_set_append(fileno(stdout)), Ordering::Relaxed);
@@ -400,7 +404,8 @@ pub unsafe fn output_start(ctx: &ExecContext) {
     {
         setup_tmpfile(ctx, output_context);
     }
-    if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE)
+    if (crate::make_main::opt_output_sync() == OUTPUT_SYNC_NONE
+        || crate::make_main::opt_output_sync() == OUTPUT_SYNC_RECURSE)
         && !stdio_traced()
         && crate::make_main::should_print_dir_mirror(ctx) != 0
     {
