@@ -249,7 +249,7 @@ use crate::findprog::find_in_given_path;
 use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
     command_count, db_level, die, fatal_signal_set, job_slots, not_parallel, one_shell,
-    output_sync, posix_pedantic, run_silent, stopchar_map,
+    output_sync, posix_pedantic, stopchar_map,
 };
 use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
 use crate::posixos::{
@@ -470,7 +470,7 @@ unsafe fn child_error(
         .fileinfo;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut l: size_t;
-    if ignored != 0 && run_silent != 0 {
+    if ignored != 0 && crate::make_main::opt_run_silent() {
         return;
     }
     if exit_sig != 0 && coredump != 0 {
@@ -1200,7 +1200,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             }
             if crate::make_main::opt_just_print()
                 || 0x10_i32 & db_level != 0
-                || !(flags & 2 != 0) && run_silent == 0
+                || !(flags & 2 != 0) && !crate::make_main::opt_run_silent()
             {
                 message(
                     ctx,

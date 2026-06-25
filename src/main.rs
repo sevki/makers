@@ -444,7 +444,6 @@ pub const optional_argument: i32 = 2;
 /// option table's `default_value`, never written. Immutable removes a mutable
 /// global.
 static default_silent_flag: i32 = 0;
-pub static mut run_silent: i32 = 0;
 pub static mut db_level: i32 = 0;
 pub static mut export_all_variables: i32 = 0;
 /// Read-only `--keep-going` default: only referenced via `&raw const` as the
@@ -549,6 +548,18 @@ pub struct Options {
     /// owned here in `main_0`'s `Options` and read through the `with_options`
     /// borrow channel by `enter_file` and `die`, which carry no `&Options`.
     pub verify: ::core::cell::Cell<bool>,
+    /// Effective recipe-echo suppression, the former `static mut run_silent`:
+    /// `options.silent` (the `-s`/`--silent` switch) OR'd with a bare `.SILENT`
+    /// target. Distinct from `silent`, which is the MAKEFLAGS-visible switch
+    /// state — `.SILENT` silences this run without propagating to sub-makes.
+    /// Set in `decode_switches` (from `silent`) and `snap_deps` (from
+    /// `.SILENT`); read by the recipe-echo / `touch` / `rm` paths in
+    /// `job`/`remake`/`file` through the `with_options` channel
+    /// ([`opt_run_silent`]), which carry no `&Options`. Lives on `Options` (not
+    /// `ExecContext`) because the `decode_switches` writer is reached on the
+    /// `reset_makeflags` MAKEFLAGS-reparse path, which `gmk_eval` runs under a
+    /// throwaway context.
+    pub run_silent: ::core::cell::Cell<bool>,
 }
 
 impl Options {
@@ -597,6 +608,7 @@ impl Options {
             always_make: ::core::cell::Cell::new(false),
             resolved_include_dirs: ::core::cell::RefCell::new(Vec::new()),
             verify: ::core::cell::Cell::new(false),
+            run_silent: ::core::cell::Cell::new(false),
         }
     }
 }
@@ -883,6 +895,12 @@ pub fn opt_touch() -> bool {
 }
 pub fn opt_just_print() -> bool {
     with_options(|o| o.just_print.get())
+}
+/// Effective recipe-echo suppression (the former `run_silent` global), read
+/// through the `with_options` borrow channel by the deep recipe-echo /
+/// `touch` / `rm` paths in `job`/`remake`/`file` that carry no `&Options`.
+pub fn opt_run_silent() -> bool {
+    with_options(|o| o.run_silent.get())
 }
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
@@ -3722,7 +3740,7 @@ unsafe fn decode_switches(
             crate::warning::decode_actions(ctx, arg, None);
         }
     }
-    run_silent = options.silent.get() as i32;
+    options.run_silent.set(options.silent.get());
     reset_env_override();
 }
 unsafe fn decode_env_switches(
@@ -5301,6 +5319,44 @@ mod verify_flag_tests {
 
         options.verify.set(true);
         assert!(options.verify.get(), "set once enabled");
+    }
+}
+
+#[cfg(test)]
+mod run_silent_tests {
+    use super::{install_default_options_for_test, opt_run_silent, with_options, Options};
+
+    /// `Options::run_silent` carries the former `run_silent` global: false by
+    /// default, true once `-s`/`.SILENT` sets it. Distinct storage from
+    /// `silent` (the MAKEFLAGS-visible switch), so setting one never disturbs
+    /// the other.
+    #[test]
+    fn run_silent_defaults_false_and_latches() {
+        let options = Options::new();
+        assert!(!options.run_silent.get(), "default is unset");
+        assert!(!options.silent.get(), "silent default is unset");
+
+        options.run_silent.set(true);
+        assert!(options.run_silent.get(), "set once enabled");
+        assert!(
+            !options.silent.get(),
+            "run_silent is independent of the MAKEFLAGS-visible silent switch"
+        );
+    }
+
+    /// `opt_run_silent()` reflects the installed `Options::run_silent` through
+    /// the `OPTIONS_PTR` borrow channel the recipe-echo readers use.
+    #[test]
+    fn opt_run_silent_reads_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.run_silent.set(false));
+        assert!(!opt_run_silent(), "channel reads the cleared flag");
+
+        with_options(|o| o.run_silent.set(true));
+        assert!(opt_run_silent(), "channel reads the set flag");
+
+        with_options(|o| o.run_silent.set(false));
     }
 }
 

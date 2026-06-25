@@ -226,8 +226,8 @@ use crate::hash::{
     table_slots,
 };
 use crate::make_main::{
-    cmd_prefix, db_level, export_all_variables, run_silent, second_expansion, stopchar_map,
-    with_options, MAP_DIRSEP,
+    cmd_prefix, db_level, export_all_variables, second_expansion, stopchar_map, with_options,
+    MAP_DIRSEP,
 };
 use crate::output::{error, fatal, perror_with_name};
 use crate::read::{find_percent, parse_file_seq};
@@ -761,7 +761,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                                 );
                                 fflush(stdout);
                             }
-                            if run_silent == 0 {
+                            if !crate::make_main::opt_run_silent() {
                                 if doneany == 0 {
                                     fputs(
                                         b"rm \0" as *const u8 as *const ::core::ffi::c_char,
@@ -1353,7 +1353,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     f = lookup_file(b".SILENT\0" as *const u8 as *const ::core::ffi::c_char);
     if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         if fr.deps.is_null() {
-            run_silent = 1;
+            with_options(|o| o.run_silent.set(true));
         } else {
             d = fr.deps;
             while let Some(dr) = d.as_ref() {
