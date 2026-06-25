@@ -226,7 +226,7 @@ use crate::hash::{
     table_slots,
 };
 use crate::make_main::{
-    cmd_prefix, db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP,
+    db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP,
 };
 use crate::output::{error, fatal, perror_with_name};
 use crate::read::{find_percent, parse_file_seq};
@@ -1698,19 +1698,20 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
     if (*f)
         .cmds
         .as_ref()
-        .is_some_and(|c| c.recipe_prefix as i32 != cmd_prefix as i32)
+        .is_some_and(|c| c.recipe_prefix as i32 != crate::make_main::opt_cmd_prefix() as i32)
     {
         fputs(
             b".RECIPEPREFIX = \0" as *const u8 as *const ::core::ffi::c_char,
             stdout,
         );
-        cmd_prefix = (*f)
+        let new_prefix = (*f)
             .cmds
             .as_ref()
             .expect("cmds is non-null when its recipe_prefix differs")
             .recipe_prefix;
-        if cmd_prefix as i32 != RECIPEPREFIX_DEFAULT {
-            putchar(cmd_prefix as i32);
+        with_options(|o| o.cmd_prefix.set(new_prefix));
+        if new_prefix as i32 != RECIPEPREFIX_DEFAULT {
+            putchar(new_prefix as i32);
         }
         putchar('\n' as i32);
     }

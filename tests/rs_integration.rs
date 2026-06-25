@@ -958,6 +958,15 @@ fn export_all_variables_oracle() {
 }
 
 #[test]
+fn recipeprefix_oracle() {
+    // `.RECIPEPREFIX = >` switches the recipe-introducing character from a tab
+    // to `>` (now `Options::cmd_prefix`, formerly the `static mut cmd_prefix`).
+    // The makefile reader must classify the `>`-prefixed lines as recipes;
+    // output is differential-checked byte-for-byte against the C oracle.
+    check("recipeprefix", "72_recipeprefix.mk", "all", &[]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the

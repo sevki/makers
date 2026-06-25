@@ -61,7 +61,7 @@ use crate::hash::{
     hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
 };
 use crate::job::default_shell;
-use crate::make_main::{cmd_prefix, shell_var, stopchar_map};
+use crate::make_main::{shell_var, stopchar_map};
 use crate::misc::concat;
 use crate::output::fatal;
 use crate::output::msg;
@@ -1626,11 +1626,12 @@ unsafe fn set_special_var(
                     .offset(1_i32 as isize),
             ) == 0)
     {
-        cmd_prefix = (if *varr.value.offset(0_i32 as isize) as i32 == 0 {
+        let new_prefix = (if *varr.value.offset(0_i32 as isize) as i32 == 0 {
             RECIPEPREFIX_DEFAULT
         } else {
             *varr.value.offset(0_i32 as isize) as i32
         }) as ::core::ffi::c_char;
+        crate::make_main::with_options(|o| o.cmd_prefix.set(new_prefix));
     } else if vn0 == *(b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(

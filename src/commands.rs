@@ -19,7 +19,7 @@ use crate::hash::{
 use crate::job::{child, children, job_slots_used, new_job, reap_children};
 use crate::load::unload_file;
 use crate::make_main::{
-    cmd_prefix, default_file, one_shell, stopchar_map, temp_stdin_unlink,
+    default_file, one_shell, stopchar_map, temp_stdin_unlink,
 };
 use crate::misc::{make_pid, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::output::{error, fatal, perror_with_name, INTSTR_LENGTH};
@@ -789,7 +789,7 @@ pub unsafe fn print_commands(cmds: *const commands) {
         }
         printf(
             c"%c%.*s\n".as_ptr(),
-            cmd_prefix as i32,
+            crate::make_main::opt_cmd_prefix() as i32,
             end.offset_from(s) as i32,
             s,
         );

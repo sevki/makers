@@ -570,6 +570,17 @@ pub struct Options {
     /// `Options` (not `ExecContext`) because those makefile-time writers are
     /// reachable on the `gmk_eval` path, which runs under a throwaway context.
     pub export_all_variables: ::core::cell::Cell<bool>,
+    /// The recipe-introducing prefix character, the former `static mut
+    /// cmd_prefix`: a tab (`\t`) by default, changed by assigning the
+    /// `.RECIPEPREFIX` special variable. The makefile parser uses it to tell a
+    /// recipe line from an ordinary one. Written in `set_special_var`
+    /// (`.RECIPEPREFIX`) and `print_file` (the `-p` database dump); read by the
+    /// reader (`read::eval`) and printers through the `with_options` channel
+    /// ([`opt_cmd_prefix`]). Lives on `Options` (not `ExecContext`) because the
+    /// `set_special_var` writer is reached on the `gmk_eval` makefile-eval path,
+    /// which runs under a throwaway context. Initialized to a tab, not the
+    /// `Default` `\0`, so `Options::new()` sets it explicitly.
+    pub cmd_prefix: ::core::cell::Cell<::core::ffi::c_char>,
 }
 
 impl Options {
@@ -620,6 +631,7 @@ impl Options {
             verify: ::core::cell::Cell::new(false),
             run_silent: ::core::cell::Cell::new(false),
             export_all_variables: ::core::cell::Cell::new(false),
+            cmd_prefix: ::core::cell::Cell::new('\t' as i32 as ::core::ffi::c_char),
         }
     }
 }
@@ -919,6 +931,12 @@ pub fn opt_run_silent() -> bool {
 pub fn opt_export_all_variables() -> bool {
     with_options(|o| o.export_all_variables.get())
 }
+/// The recipe-introducing prefix character (the former `cmd_prefix` global),
+/// read through the `with_options` borrow channel by the makefile reader and
+/// the database printers, which carry no `&Options`.
+pub fn opt_cmd_prefix() -> ::core::ffi::c_char {
+    with_options(|o| o.cmd_prefix.get())
+}
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
 }
@@ -979,7 +997,6 @@ pub static mut shell_var: variable = variable {
     length: 0,
     recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
 };
-pub static mut cmd_prefix: ::core::ffi::c_char = '\t' as i32 as ::core::ffi::c_char;
 pub static mut command_count: ::core::ffi::c_ulong = 1;
 static mut stdin_offset: i32 = -1_i32;
 /// Strcache'd name of the temporary file holding the makefile read from stdin
@@ -5409,6 +5426,37 @@ mod export_all_variables_tests {
         assert!(opt_export_all_variables(), "channel reads the set flag");
 
         with_options(|o| o.export_all_variables.set(false));
+    }
+}
+
+#[cfg(test)]
+mod cmd_prefix_tests {
+    use super::{install_default_options_for_test, opt_cmd_prefix, with_options, Options};
+
+    /// `Options::cmd_prefix` defaults to a tab (the recipe prefix), *not* the
+    /// `Cell`/`Default` `\0`, and is changed by `.RECIPEPREFIX`.
+    #[test]
+    fn cmd_prefix_defaults_to_tab_and_is_settable() {
+        let options = Options::new();
+        assert_eq!(options.cmd_prefix.get(), b'\t' as ::core::ffi::c_char);
+
+        options.cmd_prefix.set(b'>' as ::core::ffi::c_char);
+        assert_eq!(options.cmd_prefix.get(), b'>' as ::core::ffi::c_char);
+    }
+
+    /// `opt_cmd_prefix()` reflects the installed `Options::cmd_prefix` through
+    /// the `OPTIONS_PTR` borrow channel that the makefile reader uses.
+    #[test]
+    fn opt_cmd_prefix_reads_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.cmd_prefix.set(b'\t' as ::core::ffi::c_char));
+        assert_eq!(opt_cmd_prefix(), b'\t' as ::core::ffi::c_char);
+
+        with_options(|o| o.cmd_prefix.set(b'>' as ::core::ffi::c_char));
+        assert_eq!(opt_cmd_prefix(), b'>' as ::core::ffi::c_char);
+
+        with_options(|o| o.cmd_prefix.set(b'\t' as ::core::ffi::c_char));
     }
 }
 
