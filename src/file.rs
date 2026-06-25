@@ -1903,92 +1903,29 @@ pub unsafe fn file_timestamp_cons(
     match pack_file_timestamp(t) {
         Ok(ts) => ts,
         Err(substitute) => {
+            let mut buf: [::core::ffi::c_char; 43] = [0; 43];
             let f: *const ::core::ffi::c_char = if !fname.is_null() {
                 fname
             } else {
-                !(0_i32 as uintmax_t)
-                    << (::core::mem::size_of::<uintmax_t>() as usize)
-                        .wrapping_mul(8_usize)
-                        .wrapping_sub(1_usize)
-            })
-            .wrapping_sub((2 + 1) as uintmax_t)
-            >> (if 1 != 0 { 30 } else { 0 })
-            << (if 1 != 0 { 30 } else { 0 }))
-        .wrapping_add((2 + 1) as uintmax_t)
-        .wrapping_add((if 1 != 0 { 1000000000_i32 } else { 1 }) as uintmax_t)
-        .wrapping_sub(1 as uintmax_t)
-        .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-            >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
-        && product <= ts
-        && ts
-            <= ((!(0_i32 as uintmax_t))
-                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
-                    0_i32 as uintmax_t
-                } else {
-                    !(0_i32 as uintmax_t)
-                        << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(8_usize)
-                            .wrapping_sub(1_usize)
-                })
-                .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
-                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
-            .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
-            .wrapping_add(
-                (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000_i32
-                } else {
-                    1
-                }) as uintmax_t,
-            )
-            .wrapping_sub(1 as uintmax_t))
-    {
-        let mut buf: [::core::ffi::c_char; 43] = [0; 43];
-        let f: *const ::core::ffi::c_char = if !fname.is_null() {
-            fname
-        } else {
-            b"Current time\0" as *const u8 as *const ::core::ffi::c_char
-        };
-        ts = if s <= OLD_MTIME as uintmax_t {
-            ORDINARY_MTIME_MIN as uintmax_t
-        } else {
-            ((!(0_i32 as uintmax_t))
-                .wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
-                    0_i32 as uintmax_t
-                } else {
-                    !(0_i32 as uintmax_t)
-                        << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(8_usize)
-                            .wrapping_sub(1_usize)
-                })
-                .wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
-                << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
-            .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
-            .wrapping_add(
-                (if FILE_TIMESTAMP_HI_RES != 0 {
-                    1000000000_i32
-                } else {
-                    1
-                }) as uintmax_t,
-            )
-            .wrapping_sub(1 as uintmax_t)
-        };
-        file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, ts);
-        error(
-            ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            (strlen(f) as size_t)
-                .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
-            b"%s: timestamp out of range: substituting %s\0" as *const u8
-                as *const ::core::ffi::c_char,
-            &[
-                FmtArg::Str((f) as *const ::core::ffi::c_char),
-                FmtArg::Str(
-                    (&raw mut buf as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char,
-                ),
-            ],
-        );
+                b"Current time\0" as *const u8 as *const ::core::ffi::c_char
+            };
+            file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, substitute);
+            error(
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                (strlen(f) as size_t)
+                    .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
+                b"%s: timestamp out of range: substituting %s\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((f) as *const ::core::ffi::c_char),
+                    FmtArg::Str(
+                        (&raw mut buf as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char,
+                    ),
+                ],
+            );
+            substitute
+        }
     }
 }
 /// Sample the wall clock and pack it into a `FILE_TIMESTAMP`, returning the
