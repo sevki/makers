@@ -633,6 +633,18 @@ pub struct Options {
     /// `set_special_var` on the `gmk_eval` throwaway-context path, so the reader
     /// must see `main_0`'s real run state, not the throwaway.
     pub rebuilding_makefiles: ::core::cell::Cell<bool>,
+    /// The special-target feature latches, each set once when make sees the
+    /// matching `.`-target and read widely thereafter — the former
+    /// `POSIX_PEDANTIC` / `SECOND_EXPANSION` / `ONE_SHELL` / `NOT_PARALLEL`
+    /// global atomics. Reached through the `with_options`/`OPTIONS_PTR` channel
+    /// (via `posix_pedantic()` / `second_expansion()` / `one_shell()` /
+    /// `not_parallel()` and their `set_*` setters), because the setters in
+    /// `check_specials` / `snap_deps` are reachable from the `gmk_eval`
+    /// throwaway-context path and must reach `main_0`'s real run state.
+    pub posix_pedantic: ::core::cell::Cell<bool>,
+    pub second_expansion: ::core::cell::Cell<bool>,
+    pub one_shell: ::core::cell::Cell<bool>,
+    pub not_parallel: ::core::cell::Cell<bool>,
 }
 
 impl Options {
@@ -689,6 +701,10 @@ impl Options {
             command_count: ::core::cell::Cell::new(1),
             snapped_deps: ::core::cell::Cell::new(false),
             rebuilding_makefiles: ::core::cell::Cell::new(false),
+            posix_pedantic: ::core::cell::Cell::new(false),
+            second_expansion: ::core::cell::Cell::new(false),
+            one_shell: ::core::cell::Cell::new(false),
+            not_parallel: ::core::cell::Cell::new(false),
         }
     }
 }
@@ -1248,46 +1264,46 @@ pub static mut starting_directory: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
 pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut file;
-/// Set once the `.POSIX` special target has been seen, selecting POSIX-pedantic
-/// behavior (e.g. whitespace handling). Stored in an atomic so its reads are
-/// plain safe operations; all access is single-threaded, so `Relaxed`
-/// preserves the original program order. `pub` because the lone write is in
-/// `read.rs`'s special-target handler.
-pub static POSIX_PEDANTIC: AtomicBool = AtomicBool::new(false);
+// The four special-target feature latches — `.POSIX`, `.SECONDEXPANSION`,
+// `.ONESHELL`, `.NOTPARALLEL` — each set once when make sees the corresponding
+// special target and read widely thereafter. They live on the owned per-run
+// `Options` (the former `POSIX_PEDANTIC` / `SECOND_EXPANSION` / `ONE_SHELL` /
+// `NOT_PARALLEL` global atomics), reached through the `with_options`/`OPTIONS_PTR`
+// channel: the setters run in `check_specials` / `snap_deps`, which are reachable
+// from the `gmk_eval` throwaway-context path, so both ends resolve to `main_0`'s
+// real run state, not a throwaway.
 
 /// Whether `.POSIX` pedantic mode is in effect.
 pub fn posix_pedantic() -> bool {
-    POSIX_PEDANTIC.load(Ordering::Relaxed)
+    with_options(|o| o.posix_pedantic.get())
 }
-/// Set once the `.SECONDEXPANSION` special target has been seen, enabling a
-/// second expansion pass over prerequisite lists. Stored in an atomic so its
-/// reads are plain safe operations; all access is single-threaded, so
-/// `Relaxed` preserves the original program order.
-pub static SECOND_EXPANSION: AtomicBool = AtomicBool::new(false);
-
+/// Record that the `.POSIX` special target has been seen.
+pub fn set_posix_pedantic() {
+    with_options(|o| o.posix_pedantic.set(true));
+}
 /// Whether `.SECONDEXPANSION` is in effect.
 pub fn second_expansion() -> bool {
-    SECOND_EXPANSION.load(Ordering::Relaxed)
+    with_options(|o| o.second_expansion.get())
+}
+/// Record that the `.SECONDEXPANSION` special target has been seen.
+pub fn set_second_expansion() {
+    with_options(|o| o.second_expansion.set(true));
 }
 /// Whether `.ONESHELL` is in effect (each recipe runs in a single shell).
-/// Set once while parsing and read during job construction. Stored in an
-/// atomic so its reads/writes are plain safe operations; all access is
-/// single-threaded, so `Relaxed` preserves the original program order.
-pub static ONE_SHELL: AtomicBool = AtomicBool::new(false);
-
-/// Whether `.ONESHELL` is in effect.
 pub fn one_shell() -> bool {
-    ONE_SHELL.load(Ordering::Relaxed)
+    with_options(|o| o.one_shell.get())
 }
-/// Whether make is running non-parallel (one job at a time). Set while
-/// parsing and read during job scheduling/shuffling. Stored in an atomic so
-/// its reads/writes are plain safe operations; all access is single-threaded,
-/// so `Relaxed` preserves the original program order.
-pub static NOT_PARALLEL: AtomicBool = AtomicBool::new(false);
-
-/// Whether make is running non-parallel.
+/// Record that the `.ONESHELL` special target has been seen.
+pub fn set_one_shell() {
+    with_options(|o| o.one_shell.set(true));
+}
+/// Whether make is running non-parallel (one job at a time).
 pub fn not_parallel() -> bool {
-    NOT_PARALLEL.load(Ordering::Relaxed)
+    with_options(|o| o.not_parallel.get())
+}
+/// Record that the `.NOTPARALLEL` special target has been seen.
+pub fn set_not_parallel() {
+    with_options(|o| o.not_parallel.set(true));
 }
 /// Per-byte classification bitmap (`MAP_*` flags), computed once at startup by
 /// [`initialize_stopchar_map`]. Held behind a `OnceLock` so it is a safe
@@ -5447,24 +5463,56 @@ mod output_sync_tests {
 }
 
 #[cfg(test)]
-mod second_expansion_tests {
-    use super::{second_expansion, SECOND_EXPANSION};
-    use std::sync::atomic::Ordering;
+mod special_target_latches_tests {
+    use super::{
+        install_default_options_for_test, not_parallel, one_shell, posix_pedantic,
+        second_expansion, set_not_parallel, set_one_shell, set_posix_pedantic,
+        set_second_expansion, with_options, Options,
+    };
 
-    /// `second_expansion()` reflects the `SECOND_EXPANSION` flag set when the
-    /// `.SECONDEXPANSION` special target is seen. Restores the prior value so
-    /// it stays isolated from other tests.
+    /// The four special-target feature latches default to false on a fresh
+    /// `Options` (the former `POSIX_PEDANTIC` / `SECOND_EXPANSION` / `ONE_SHELL`
+    /// / `NOT_PARALLEL` globals).
     #[test]
-    fn second_expansion_tracks_atomic() {
-        let saved = SECOND_EXPANSION.load(Ordering::Relaxed);
+    fn latches_default_to_false() {
+        let options = Options::new();
+        assert!(!options.posix_pedantic.get());
+        assert!(!options.second_expansion.get());
+        assert!(!options.one_shell.get());
+        assert!(!options.not_parallel.get());
+    }
 
-        SECOND_EXPANSION.store(false, Ordering::Relaxed);
-        assert!(!second_expansion(), "not enabled");
+    /// Each `set_*` latches its flag true and each reader observes it through the
+    /// `OPTIONS_PTR` channel — the same channel `check_specials` / `snap_deps`
+    /// write and the job/expand/rule/... readers read, including on the
+    /// `gmk_eval` throwaway-context path. `OPTIONS_PTR` is thread-local, so this
+    /// stays isolated under the parallel test harness.
+    #[test]
+    fn set_and_read_each_latch_through_channel() {
+        install_default_options_for_test();
+        with_options(|o| {
+            o.posix_pedantic.set(false);
+            o.second_expansion.set(false);
+            o.one_shell.set(false);
+            o.not_parallel.set(false);
+        });
+        assert!(!posix_pedantic() && !second_expansion() && !one_shell() && !not_parallel());
 
-        SECOND_EXPANSION.store(true, Ordering::Relaxed);
+        set_posix_pedantic();
+        set_second_expansion();
+        set_one_shell();
+        set_not_parallel();
+        assert!(posix_pedantic(), "enabled by .POSIX");
         assert!(second_expansion(), "enabled by .SECONDEXPANSION");
+        assert!(one_shell(), "enabled by .ONESHELL");
+        assert!(not_parallel(), "enabled by .NOTPARALLEL");
 
-        SECOND_EXPANSION.store(saved, Ordering::Relaxed);
+        with_options(|o| {
+            o.posix_pedantic.set(false);
+            o.second_expansion.set(false);
+            o.one_shell.set(false);
+            o.not_parallel.set(false);
+        });
     }
 }
 
@@ -5586,28 +5634,6 @@ mod cmd_prefix_tests {
         assert_eq!(opt_cmd_prefix(), b'>' as ::core::ffi::c_char);
 
         with_options(|o| o.cmd_prefix.set(b'\t' as ::core::ffi::c_char));
-    }
-}
-
-#[cfg(test)]
-mod posix_pedantic_tests {
-    use super::{posix_pedantic, POSIX_PEDANTIC};
-    use std::sync::atomic::Ordering;
-
-    /// `posix_pedantic()` reflects the `POSIX_PEDANTIC` flag set when the
-    /// `.POSIX` special target is seen. Restores the prior value so it stays
-    /// isolated from other tests.
-    #[test]
-    fn posix_pedantic_tracks_atomic() {
-        let saved = POSIX_PEDANTIC.load(Ordering::Relaxed);
-
-        POSIX_PEDANTIC.store(false, Ordering::Relaxed);
-        assert!(!posix_pedantic(), "not pedantic");
-
-        POSIX_PEDANTIC.store(true, Ordering::Relaxed);
-        assert!(posix_pedantic(), "enabled by .POSIX");
-
-        POSIX_PEDANTIC.store(saved, Ordering::Relaxed);
     }
 }
 
@@ -5763,36 +5789,6 @@ mod rebuilding_makefiles_tests {
         assert!(opt_rebuilding_makefiles(), "true through the channel");
 
         with_options(|o| o.rebuilding_makefiles.set(false));
-    }
-}
-
-#[cfg(test)]
-mod not_parallel_tests {
-    use super::{not_parallel, NOT_PARALLEL};
-    use std::sync::atomic::Ordering;
-
-    /// `not_parallel()` is a plain load of `NOT_PARALLEL`, so it agrees with a
-    /// direct load. Read-only to avoid disturbing the shared production flag
-    /// (job scheduling reads it), keeping this safe under the parallel test
-    /// harness.
-    #[test]
-    fn not_parallel_reflects_the_flag() {
-        assert_eq!(not_parallel(), NOT_PARALLEL.load(Ordering::Relaxed));
-    }
-}
-
-#[cfg(test)]
-mod one_shell_tests {
-    use super::{one_shell, ONE_SHELL};
-    use std::sync::atomic::Ordering;
-
-    /// `one_shell()` is a plain load of `ONE_SHELL`, so it agrees with a
-    /// direct load. Read-only to avoid disturbing the shared production flag
-    /// (job construction reads it), keeping this safe under the parallel test
-    /// harness.
-    #[test]
-    fn one_shell_reflects_the_flag() {
-        assert_eq!(one_shell(), ONE_SHELL.load(Ordering::Relaxed));
     }
 }
 

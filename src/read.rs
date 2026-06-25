@@ -2429,7 +2429,7 @@ pub unsafe fn check_specials(
         let special =
             crate::parser::SpecialTarget::from_name(::std::ffi::CStr::from_ptr(nm).to_bytes());
         if !posix_pedantic() && special == Some(crate::parser::SpecialTarget::Posix) {
-            crate::make_main::POSIX_PEDANTIC.store(true, ::std::sync::atomic::Ordering::Relaxed);
+            crate::make_main::set_posix_pedantic();
             define_variable_in_set(
                 ctx,
                 b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2503,9 +2503,9 @@ pub unsafe fn check_specials(
         } else if !second_expansion()
             && special == Some(crate::parser::SpecialTarget::SecondExpansion)
         {
-            crate::make_main::SECOND_EXPANSION.store(true, ::std::sync::atomic::Ordering::Relaxed);
+            crate::make_main::set_second_expansion();
         } else if !one_shell() && special == Some(crate::parser::SpecialTarget::OneShell) {
-            crate::make_main::ONE_SHELL.store(true, ::std::sync::atomic::Ordering::Relaxed);
+            crate::make_main::set_one_shell();
         } else if set_default != 0 && *(*default_goal_var).value.offset(0) as i32 == 0 {
             let mut d: *mut dep;
             let mut reject: i32 = 0;
