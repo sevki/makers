@@ -26,7 +26,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
@@ -455,15 +455,13 @@ static default_keep_going_flag: i32 = 0;
 /// mutable global.
 static default_print_directory_flag: i32 = -1_i32;
 pub const INVALID_JOB_SLOTS: i32 = -1_i32;
-/// Number of job slots handed to the jobserver when this make is the master.
-/// Set once during jobserver setup and read while draining tokens at exit.
-/// Stored in an atomic so its reads/write are plain safe operations; all
-/// access is single-threaded, so `Relaxed` preserves the original order.
-static MASTER_JOB_SLOTS: AtomicU32 = AtomicU32::new(0);
-
-/// Jobserver master slot count (0 when this make is not the jobserver master).
+/// Jobserver master slot count (0 when this make is not the jobserver master):
+/// the number of job slots handed to the jobserver when this make is the
+/// master, set once during jobserver setup and read while draining tokens at
+/// exit. The former `MASTER_JOB_SLOTS` global atomic, now read through the
+/// `with_options`/`OPTIONS_PTR` channel off the owned per-run `Options`.
 fn master_job_slots() -> ::core::ffi::c_uint {
-    MASTER_JOB_SLOTS.load(Ordering::Relaxed)
+    with_options(|o| o.master_job_slots.get())
 }
 /// Read-only default for the `-j`/`--jobs` option: only ever referenced via
 /// `&raw const` as the option table's `default_value`, never written. Keeping
@@ -605,6 +603,15 @@ pub struct Options {
     /// `ExecContext`) next to `arg_job_slots`; all writers are in `main_0`, so it
     /// is never touched on the `gmk_eval` throwaway path.
     pub job_slots: ::core::cell::Cell<::core::ffi::c_uint>,
+    /// The master jobserver slot count. When this make is the jobserver master,
+    /// `job_slots` is saved here and then zeroed (the master holds its slots in
+    /// the jobserver rather than in `job_slots`); read once while draining
+    /// tokens at exit. The former `MASTER_JOB_SLOTS` global atomic, reached
+    /// through the `with_options`/`OPTIONS_PTR` channel via `master_job_slots()`.
+    /// Both the write (jobserver setup) and the read (exit drain) are on
+    /// `main_0`'s real path, so it lives on `Options` beside its `job_slots`
+    /// companion rather than on the `gmk_eval`-throwaway `ExecContext`.
+    pub master_job_slots: ::core::cell::Cell<::core::ffi::c_uint>,
     /// Monotonic command-generation counter for this run, the former `static
     /// mut command_count`. Bumped once per shell command run (`reap_children`,
     /// `$(shell)`, `$(file)`) via [`bump_command_count`], and read by the
@@ -709,6 +716,7 @@ impl Options {
             cmd_prefix: ::core::cell::Cell::new('\t' as i32 as ::core::ffi::c_char),
             output_sync: ::core::cell::Cell::new(OUTPUT_SYNC_NONE),
             job_slots: ::core::cell::Cell::new(0),
+            master_job_slots: ::core::cell::Cell::new(0),
             command_count: ::core::cell::Cell::new(1),
             snapped_deps: ::core::cell::Cell::new(false),
             rebuilding_makefiles: ::core::cell::Cell::new(false),
@@ -2594,7 +2602,7 @@ unsafe fn main_0(
                         .into_owned(),
                 );
                 free(auth as *mut ::core::ffi::c_void);
-                MASTER_JOB_SLOTS.store(options.job_slots.get(), Ordering::Relaxed);
+                options.master_job_slots.set(options.job_slots.get());
                 options.job_slots.set(0);
             }
         }
@@ -5694,15 +5702,28 @@ mod default_job_slots_tests {
 
 #[cfg(test)]
 mod master_job_slots_tests {
-    use super::{master_job_slots, MASTER_JOB_SLOTS};
-    use std::sync::atomic::Ordering;
+    use super::{install_default_options_for_test, master_job_slots, with_options, Options};
 
-    /// `master_job_slots()` is a plain load of `MASTER_JOB_SLOTS`, so it agrees
-    /// with a direct load. Read-only to avoid disturbing the shared production
-    /// counter, keeping this safe under the parallel test harness.
+    /// The master jobserver slot count defaults to 0 on a fresh `Options` (the
+    /// former `MASTER_JOB_SLOTS` global).
     #[test]
-    fn master_job_slots_reflects_the_counter() {
-        assert_eq!(master_job_slots(), MASTER_JOB_SLOTS.load(Ordering::Relaxed));
+    fn master_job_slots_defaults_to_zero() {
+        assert_eq!(Options::new().master_job_slots.get(), 0);
+    }
+
+    /// `master_job_slots()` reads the count through the `OPTIONS_PTR` channel —
+    /// the same channel `main_0` writes at jobserver setup. `OPTIONS_PTR` is
+    /// thread-local, so this stays isolated under the parallel test harness.
+    #[test]
+    fn master_job_slots_reads_through_channel() {
+        install_default_options_for_test();
+        with_options(|o| o.master_job_slots.set(0));
+        assert_eq!(master_job_slots(), 0, "channel reads the installed value");
+
+        with_options(|o| o.master_job_slots.set(4));
+        assert_eq!(master_job_slots(), 4, "count through the channel");
+
+        with_options(|o| o.master_job_slots.set(0));
     }
 }
 
