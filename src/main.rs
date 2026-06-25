@@ -441,7 +441,10 @@ pub const no_argument: i32 = 0;
 pub const required_argument: i32 = 1;
 pub const optional_argument: i32 = 2;
 pub static mut verify_flag: i32 = 0;
-static mut default_silent_flag: i32 = 0;
+/// Read-only `--silent`/`-s` default: only referenced via `&raw const` as the
+/// option table's `default_value`, never written. Immutable removes a mutable
+/// global.
+static default_silent_flag: i32 = 0;
 pub static mut run_silent: i32 = 0;
 pub static mut db_level: i32 = 0;
 pub static mut export_all_variables: i32 = 0;

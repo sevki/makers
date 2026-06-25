@@ -860,6 +860,16 @@ fn decode_switches_flags() {
 }
 
 #[test]
+fn silent_flag_in_makeflags() {
+    // `-s` flips `silent_flag` away from its immutable `default_silent_flag`
+    // default, so `define_makeflags` emits `s` into MAKEFLAGS (the flag is only
+    // included when its value differs from that read-only default). Echoing
+    // MAKEFLAGS under `-s` exercises that flag-vs-default comparison; compared
+    // byte-for-byte against the C oracle.
+    check("silent-makeflags", "64_silent_makeflags.mk", "all", &["-s"]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the
