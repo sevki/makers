@@ -69,6 +69,21 @@ pub struct ExecContext {
     /// always_make_flag`. Read by `set_file_variables` and `update_file_1` via
     /// the `&ExecContext` they already carry.
     pub always_make_flag: ::core::cell::Cell<bool>,
+
+    /// Pattern-rule database statistics, recomputed by `snap_implicit_rules`
+    /// after the makefiles are read and consumed by `pattern_search` to size its
+    /// scratch allocations — the former `static` atomics `NUM_PATTERN_RULES` /
+    /// `MAX_PATTERN_TARGETS` / `MAX_PATTERN_DEPS` / `MAX_PATTERN_DEP_LENGTH`.
+    /// `num_pattern_rules` counts the pattern rules; `max_pattern_targets` is the
+    /// most targets any one rule has; `max_pattern_deps` the most prerequisites
+    /// (also bumped by `pattern_search` itself when a rule expands to more deps
+    /// than any seen before); `max_pattern_dep_length` the longest prerequisite
+    /// name. Producers and consumers carry the same `&ExecContext`, so interior
+    /// mutability keeps readers on `&ExecContext`.
+    pub num_pattern_rules: ::core::cell::Cell<::core::ffi::c_uint>,
+    pub max_pattern_targets: ::core::cell::Cell<::core::ffi::c_uint>,
+    pub max_pattern_deps: ::core::cell::Cell<::core::ffi::c_uint>,
+    pub max_pattern_dep_length: ::core::cell::Cell<crate::ffi_types::size_t>,
 }
 
 impl ExecContext {
@@ -144,5 +159,32 @@ mod tests {
 
         // A fresh context does not inherit it (no cross-run leakage).
         assert!(!ExecContext::default().always_make_flag.get());
+    }
+
+    /// The pattern-rule database statistics (`num_pattern_rules` etc., the former
+    /// `static` atomics) start at 0, are per-run, and track the running maxima
+    /// `snap_implicit_rules`/`pattern_search` compute.
+    #[test]
+    fn pattern_rule_stats_start_zero_and_track_maxima() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        assert_eq!(ctx.num_pattern_rules.get(), 0);
+        assert_eq!(ctx.max_pattern_targets.get(), 0);
+        assert_eq!(ctx.max_pattern_deps.get(), 0);
+        assert_eq!(ctx.max_pattern_dep_length.get(), 0);
+
+        // The running-max idiom `snap_implicit_rules` / `pattern_search` use.
+        for len in [3usize, 9, 4, 9, 7] {
+            if len > ctx.max_pattern_dep_length.get() {
+                ctx.max_pattern_dep_length.set(len);
+            }
+        }
+        assert_eq!(ctx.max_pattern_dep_length.get(), 9);
+        ctx.num_pattern_rules
+            .set(ctx.num_pattern_rules.get().wrapping_add(1));
+        assert_eq!(ctx.num_pattern_rules.get(), 1);
+
+        // Per-run: a fresh context does not inherit the computed stats.
+        assert_eq!(ExecContext::default().max_pattern_dep_length.get(), 0);
+        assert_eq!(ExecContext::default().num_pattern_rules.get(), 0);
     }
 }
