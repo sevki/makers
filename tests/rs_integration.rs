@@ -193,6 +193,20 @@ fn verify_flag_database() {
 }
 
 #[test]
+fn notintermediate_keeps_intermediates() {
+    // A bare `.NOTINTERMEDIATE` sets the per-run `ExecContext::no_intermediates`
+    // latch (the twin of `ExecContext::all_secondary`), marking every file
+    // non-intermediate so make does not auto-delete the pattern-built
+    // intermediate `foo.mid` (no `rm` line). Byte-identical to the C oracle.
+    check(
+        "notintermediate_keeps_intermediates",
+        "66_notintermediate.mk",
+        "all",
+        &[],
+    );
+}
+
+#[test]
 fn eval_flags() {
     // Exercises the `--eval` command-line path (the eval-strings buffer that
     // now owns its scratch copy via RAII instead of xstrdup/free). Both

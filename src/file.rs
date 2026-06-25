@@ -226,8 +226,8 @@ use crate::hash::{
     table_slots,
 };
 use crate::make_main::{
-    cmd_prefix, db_level, export_all_variables, no_intermediates, run_silent, second_expansion,
-    stopchar_map, with_options, MAP_DIRSEP,
+    cmd_prefix, db_level, export_all_variables, run_silent, second_expansion, stopchar_map,
+    with_options, MAP_DIRSEP,
 };
 use crate::output::{error, fatal, perror_with_name};
 use crate::read::{find_percent, parse_file_seq};
@@ -391,16 +391,6 @@ struct RehashedFile {
 unsafe impl Send for RehashedFile {}
 
 static REHASHED_FILES: Mutex<Vec<RehashedFile>> = Mutex::new(Vec::new());
-/// Set once `.SECONDARY` is declared with no prerequisites, marking every
-/// target as secondary. Stored in an atomic so its reads are plain safe
-/// operations; all access is single-threaded, so `Relaxed` preserves the
-/// original program order.
-static ALL_SECONDARY: AtomicBool = AtomicBool::new(false);
-
-fn all_secondary() -> bool {
-    ALL_SECONDARY.load(Ordering::Relaxed)
-}
-
 fn stop_set_byte(c: u8, mask: i32) -> bool {
     stopchar_map()[c as usize] as i32 & mask != 0
 }
@@ -724,8 +714,8 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
     let mut doneany: i32 = 0;
     if crate::make_main::opt_question()
         || crate::make_main::opt_touch()
-        || all_secondary()
-        || no_intermediates != 0
+        || ctx.all_secondary.get()
+        || ctx.no_intermediates.get()
     {
         return;
     }
@@ -1130,10 +1120,10 @@ pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: *mut file, deps: *
     if !second_expansion() {
         fr.set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if all_secondary() && fr.notintermediate() == 0 {
+    if ctx.all_secondary.get() && fr.notintermediate() == 0 {
         fr.set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
-    if no_intermediates != 0 && fr.intermediate() == 0 && fr.secondary() == 0 {
+    if ctx.no_intermediates.get() && fr.intermediate() == 0 && fr.secondary() == 0 {
         fr.set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     if let Some(file_vars) = fr.variables.as_ref() {
@@ -1269,7 +1259,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
                 d = dr.next;
             }
         } else {
-            no_intermediates = 1;
+            ctx.no_intermediates.set(true);
         }
         f = fr.prev;
     }
@@ -1327,11 +1317,11 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
                 d = dr.next;
             }
         } else {
-            ALL_SECONDARY.store(true, Ordering::Relaxed);
+            ctx.all_secondary.set(true);
         }
         f = fr.prev;
     }
-    if no_intermediates != 0 && all_secondary() {
+    if ctx.no_intermediates.get() && ctx.all_secondary.get() {
         fatal(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
@@ -2318,22 +2308,6 @@ mod tests {
                 b"src/file"
             );
         }
-    }
-
-    /// `all_secondary()` reflects the `ALL_SECONDARY` flag: false while unset
-    /// (the default), true once stored. Restores the prior value so it stays
-    /// isolated from other tests.
-    #[test]
-    fn all_secondary_tracks_flag() {
-        let saved = ALL_SECONDARY.load(Ordering::Relaxed);
-
-        ALL_SECONDARY.store(false, Ordering::Relaxed);
-        assert!(!all_secondary(), "zero is unset");
-
-        ALL_SECONDARY.store(true, Ordering::Relaxed);
-        assert!(all_secondary(), "non-zero is set");
-
-        ALL_SECONDARY.store(saved, Ordering::Relaxed);
     }
 
     // Serialize the tests that touch the process-wide `files` hash table and

@@ -26,7 +26,7 @@ use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
 use crate::expand::expand_string_for_file;
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
-use crate::make_main::{db_level, no_intermediates, stopchar_map};
+use crate::make_main::{db_level, stopchar_map};
 use crate::read::parse_file_seq;
 pub use crate::rule::rule;
 use crate::rule::{
@@ -894,7 +894,7 @@ unsafe fn pattern_search(
                     );
                     f.set_notintermediate(
                         f.notintermediate()
-                            | (imf.notintermediate() != 0 || no_intermediates != 0)
+                            | (imf.notintermediate() != 0 || ctx.no_intermediates.get())
                                 as ::core::ffi::c_uint,
                     );
                     f.set_intermediate(
@@ -978,7 +978,7 @@ unsafe fn pattern_search(
                 if pf.precious() != 0 {
                     file_ref.set_precious(1);
                 }
-                if pf.notintermediate() != 0 || no_intermediates != 0 {
+                if pf.notintermediate() != 0 || ctx.no_intermediates.get() {
                     file_ref.set_notintermediate(1);
                 }
             }
@@ -1007,7 +1007,7 @@ unsafe fn pattern_search(
                         if other.precious() != 0 {
                             other_file.set_precious(1);
                         }
-                        if other.notintermediate() != 0 || no_intermediates != 0 {
+                        if other.notintermediate() != 0 || ctx.no_intermediates.get() {
                             other_file.set_notintermediate(1);
                         }
                     }
