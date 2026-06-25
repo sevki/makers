@@ -69,7 +69,7 @@ use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
 use crate::make_main::{
     clock_skew_detected, command_count, db_level, default_file,
-    rebuilding_makefiles, run_silent, second_expansion, CLOCK_SKEW_DETECTED,
+    rebuilding_makefiles, second_expansion, CLOCK_SKEW_DETECTED,
 };
 use crate::output::{error, fatal, message, perror_with_name};
 use crate::read::find_percent;
@@ -378,7 +378,7 @@ pub unsafe fn update_goal_chain(
                 if !rebuilding_makefiles()
                     && fref(file).update_status() as i32 == us_success as i32
                     && g_changed == 0
-                    && run_silent == 0
+                    && !crate::make_main::opt_run_silent()
                     && !crate::make_main::opt_question()
                 {
                     message(
@@ -1595,7 +1595,7 @@ unsafe extern "C" fn check_dep(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn touch_file(ctx: &crate::execctx::ExecContext, file: *mut file) -> update_status {
-    if run_silent == 0 {
+    if !crate::make_main::opt_run_silent() {
         message(
             ctx,
             0,

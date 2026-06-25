@@ -927,6 +927,25 @@ fn silent_flag_in_makeflags() {
 }
 
 #[test]
+fn run_silent_recipe_echo_oracle() {
+    // `run_silent` (now `Options::run_silent`) gates recipe echoing: a plain
+    // build prints each recipe line before running it; `-s` suppresses the
+    // echo. Checking both the flag-clear and `-s` flag-set builds confirms the
+    // `decode_switches` writer (`options.silent` -> `run_silent`) and the
+    // recipe-echo reader stay byte-identical to the C oracle.
+    check("run_silent_echo", "68_run_silent.mk", "all", &[]);
+    check("run_silent_dash_s", "68_run_silent.mk", "all", &["-s"]);
+}
+
+#[test]
+fn dot_silent_target_oracle() {
+    // A bare `.SILENT` target silences every recipe for the run, exercising the
+    // `snap_deps` writer of `run_silent` (former `run_silent = 1`) — a
+    // makefile-time write distinct from the `-s` switch path.
+    check("dot_silent_target", "69_dot_silent.mk", "all", &[]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the
