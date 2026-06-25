@@ -182,6 +182,17 @@ fn makelevel_recursive() {
 }
 
 #[test]
+fn verify_flag_database() {
+    // `verify_flag` is now owned on `main_0`'s `Options` (`Options::verify`) and
+    // read through the `with_options` borrow channel instead of a `static mut`.
+    // This maintainer build sets it unconditionally at startup, so building a
+    // small diamond graph drives both the always-on `enter_file` strcache
+    // assertion and the end-of-run `verify_file_data_base` walk. Output must stay
+    // byte-identical to the C oracle.
+    check("verify_flag_database", "65_verify_flag.mk", "all", &[]);
+}
+
+#[test]
 fn eval_flags() {
     // Exercises the `--eval` command-line path (the eval-strings buffer that
     // now owns its scratch copy via RAII instead of xstrdup/free). Both
