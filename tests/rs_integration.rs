@@ -946,6 +946,18 @@ fn dot_silent_target_oracle() {
 }
 
 #[test]
+fn export_all_variables_oracle() {
+    // `export` (no args) and `.EXPORT_ALL_VARIABLES` both set
+    // `export_all_variables` (now `Options::export_all_variables`), placing
+    // every exportable make variable into each recipe's environment. The recipe
+    // reads `$$FOO` from its shell env; output must match the C oracle byte for
+    // byte. Covers both writers: the `export` directive (`read::eval`) and the
+    // `.EXPORT_ALL_VARIABLES` target (`file::snap_deps`).
+    check("export_directive", "70_export_all.mk", "all", &[]);
+    check("export_all_target", "71_export_all_target.mk", "all", &[]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the

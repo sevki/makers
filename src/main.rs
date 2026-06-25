@@ -445,7 +445,6 @@ pub const optional_argument: i32 = 2;
 /// global.
 static default_silent_flag: i32 = 0;
 pub static mut db_level: i32 = 0;
-pub static mut export_all_variables: i32 = 0;
 /// Read-only `--keep-going` default: only referenced via `&raw const` as the
 /// option table's `default_value`, never written. Immutable removes a mutable
 /// global.
@@ -560,6 +559,17 @@ pub struct Options {
     /// `reset_makeflags` MAKEFLAGS-reparse path, which `gmk_eval` runs under a
     /// throwaway context.
     pub run_silent: ::core::cell::Cell<bool>,
+    /// Export-everything latch, the former `static mut export_all_variables`:
+    /// set by a bare `export` directive or the `.EXPORT_ALL_VARIABLES` special
+    /// target, cleared by a bare `unexport`. When set, every exportable
+    /// non-default/non-automatic variable is placed in each recipe's
+    /// environment (see [`crate::variable::should_export`]). Written in
+    /// `read::eval` (the `export`/`unexport` directive) and `file::snap_deps`
+    /// (`.EXPORT_ALL_VARIABLES`); read by `should_export` through the
+    /// `with_options` channel ([`opt_export_all_variables`]). Lives on
+    /// `Options` (not `ExecContext`) because those makefile-time writers are
+    /// reachable on the `gmk_eval` path, which runs under a throwaway context.
+    pub export_all_variables: ::core::cell::Cell<bool>,
 }
 
 impl Options {
@@ -609,6 +619,7 @@ impl Options {
             resolved_include_dirs: ::core::cell::RefCell::new(Vec::new()),
             verify: ::core::cell::Cell::new(false),
             run_silent: ::core::cell::Cell::new(false),
+            export_all_variables: ::core::cell::Cell::new(false),
         }
     }
 }
@@ -901,6 +912,12 @@ pub fn opt_just_print() -> bool {
 /// `touch` / `rm` paths in `job`/`remake`/`file` that carry no `&Options`.
 pub fn opt_run_silent() -> bool {
     with_options(|o| o.run_silent.get())
+}
+/// Export-everything latch (the former `export_all_variables` global), read
+/// through the `with_options` borrow channel by `should_export`, which carries
+/// no `&Options`.
+pub fn opt_export_all_variables() -> bool {
+    with_options(|o| o.export_all_variables.get())
 }
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
@@ -5357,6 +5374,41 @@ mod run_silent_tests {
         assert!(opt_run_silent(), "channel reads the set flag");
 
         with_options(|o| o.run_silent.set(false));
+    }
+}
+
+#[cfg(test)]
+mod export_all_variables_tests {
+    use super::{install_default_options_for_test, opt_export_all_variables, with_options, Options};
+
+    /// `Options::export_all_variables` carries the former
+    /// `export_all_variables` global: false by default, toggled by
+    /// `export`/`unexport`/`.EXPORT_ALL_VARIABLES`.
+    #[test]
+    fn export_all_variables_defaults_false_and_toggles() {
+        let options = Options::new();
+        assert!(!options.export_all_variables.get(), "default is unset");
+
+        options.export_all_variables.set(true);
+        assert!(options.export_all_variables.get(), "set by export-all");
+        options.export_all_variables.set(false);
+        assert!(!options.export_all_variables.get(), "cleared by unexport");
+    }
+
+    /// `opt_export_all_variables()` reflects the installed
+    /// `Options::export_all_variables` through the `OPTIONS_PTR` borrow channel
+    /// that `should_export` reads.
+    #[test]
+    fn opt_export_all_variables_reads_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.export_all_variables.set(false));
+        assert!(!opt_export_all_variables(), "channel reads the cleared flag");
+
+        with_options(|o| o.export_all_variables.set(true));
+        assert!(opt_export_all_variables(), "channel reads the set flag");
+
+        with_options(|o| o.export_all_variables.set(false));
     }
 }
 
