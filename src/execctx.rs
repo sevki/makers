@@ -106,6 +106,17 @@ pub struct ExecContext {
     /// `&ExecContext`, so interior mutability keeps readers on `&ExecContext`.
     pub commands_started: ::core::cell::Cell<::core::ffi::c_uint>,
     pub considered: ::core::cell::Cell<::core::ffi::c_uint>,
+
+    /// Whether the terminal's "good" stdin is currently held by a running job,
+    /// the former `static GOOD_STDIN_USED` atomic. Only one local job at a time
+    /// may inherit the real stdin; `start_job_command` sets this when it hands a
+    /// job the good stdin and clears it when a remote hand-off declines stdin,
+    /// and `reap_children` clears it when that job is reaped. Lives on
+    /// `ExecContext` (not `Options`): it is per-run job-execution state read and
+    /// written only on the build walk (`reap_children` / `start_job_command`),
+    /// never on the `gmk_eval` throwaway-context path, and every site already
+    /// carries the same `&ExecContext`.
+    pub good_stdin_used: ::core::cell::Cell<bool>,
 }
 
 impl ExecContext {
