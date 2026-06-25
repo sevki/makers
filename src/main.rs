@@ -453,7 +453,6 @@ static default_keep_going_flag: i32 = 0;
 /// the option table's `default_value`, never written. Immutable removes a
 /// mutable global.
 static default_print_directory_flag: i32 = -1_i32;
-pub static mut job_slots: ::core::ffi::c_uint = 0;
 pub const INVALID_JOB_SLOTS: i32 = -1_i32;
 /// Number of job slots handed to the jobserver when this make is the master.
 /// Set once during jobserver setup and read while draining tokens at exit.
@@ -595,6 +594,16 @@ pub struct Options {
     /// `decode_output_sync_flags` writer is reached on the `reset_makeflags`
     /// MAKEFLAGS-reparse path, which `gmk_eval` runs under a throwaway context.
     pub output_sync: ::core::cell::Cell<i32>,
+    /// Resolved parallel job-slot count for this run, the former `static mut
+    /// job_slots`: `0` means "unlimited / driven by an inherited jobserver", `1`
+    /// is serial, `N>1` is the `-j N` width. Derived in `main_0` from
+    /// [`Self::arg_job_slots`] (the raw `-j` argument) and the jobserver state,
+    /// then zeroed once this make becomes the jobserver master. Read by the job
+    /// scheduler (`start_waiting_jobs`, `load_too_high`) through the
+    /// `with_options` channel ([`opt_job_slots`]). Lives on `Options` (not
+    /// `ExecContext`) next to `arg_job_slots`; all writers are in `main_0`, so it
+    /// is never touched on the `gmk_eval` throwaway path.
+    pub job_slots: ::core::cell::Cell<::core::ffi::c_uint>,
 }
 
 impl Options {
@@ -647,6 +656,7 @@ impl Options {
             export_all_variables: ::core::cell::Cell::new(false),
             cmd_prefix: ::core::cell::Cell::new('\t' as i32 as ::core::ffi::c_char),
             output_sync: ::core::cell::Cell::new(OUTPUT_SYNC_NONE),
+            job_slots: ::core::cell::Cell::new(0),
         }
     }
 }
@@ -957,6 +967,12 @@ pub fn opt_cmd_prefix() -> ::core::ffi::c_char {
 /// `output`/`job` dump paths, which carry no `&Options`.
 pub fn opt_output_sync() -> i32 {
     with_options(|o| o.output_sync.get())
+}
+/// Resolved parallel job-slot count (the former `job_slots` global), read
+/// through the `with_options` borrow channel by the job scheduler, which
+/// carries no `&Options`.
+pub fn opt_job_slots() -> ::core::ffi::c_uint {
+    with_options(|o| o.job_slots.get())
 }
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
@@ -2480,14 +2496,14 @@ unsafe fn main_0(
         ::core::ptr::null_mut::<output>()
     };
     disable_builtins(&ctx, &options);
-    if options.jobserver_auth.borrow().is_some() {
-        job_slots = 0;
+    options.job_slots.set(if options.jobserver_auth.borrow().is_some() {
+        0
     } else if options.arg_job_slots.get().is_none() {
-        job_slots = 1;
+        1
     } else {
-        job_slots = options.arg_job_slots.get().unwrap();
-    }
-    if job_slots > 1 {
+        options.arg_job_slots.get().unwrap()
+    });
+    if options.job_slots.get() > 1 {
         let style_c = options
             .jobserver_style
             .borrow()
@@ -2497,7 +2513,7 @@ unsafe fn main_0(
             .as_ref()
             .map(|c| c.as_ptr())
             .unwrap_or(::core::ptr::null());
-        if jobserver_setup(&ctx, job_slots.wrapping_sub(1) as i32, style_ptr) != 0 {
+        if jobserver_setup(&ctx, options.job_slots.get().wrapping_sub(1) as i32, style_ptr) != 0 {
             let auth = jobserver_get_auth();
             if !auth.is_null() {
                 *options.jobserver_auth.borrow_mut() = Some(
@@ -2506,12 +2522,12 @@ unsafe fn main_0(
                         .into_owned(),
                 );
                 free(auth as *mut ::core::ffi::c_void);
-                MASTER_JOB_SLOTS.store(job_slots, Ordering::Relaxed);
-                job_slots = 0;
+                MASTER_JOB_SLOTS.store(options.job_slots.get(), Ordering::Relaxed);
+                options.job_slots.set(0);
             }
         }
     }
-    if syncing != 0 && job_slots == 1 {
+    if syncing != 0 && options.job_slots.get() == 1 {
         output_context = ::core::ptr::null_mut::<output>();
         crate::output::output_close(&ctx, &raw mut make_sync);
         syncing = 0;
@@ -5300,6 +5316,38 @@ mod default_load_average_tests {
     #[test]
     fn default_load_average_is_no_limit_sentinel() {
         assert_eq!(super::default_load_average, -1.0f64);
+    }
+}
+
+#[cfg(test)]
+mod job_slots_tests {
+    use super::{install_default_options_for_test, opt_job_slots, with_options, Options};
+
+    /// `Options::job_slots` (the resolved `-j` width, the former `job_slots`
+    /// global) defaults to 0 ("driven by an inherited jobserver / unlimited")
+    /// and round-trips.
+    #[test]
+    fn job_slots_defaults_to_zero_and_is_settable() {
+        let options = Options::new();
+        assert_eq!(options.job_slots.get(), 0);
+
+        options.job_slots.set(4);
+        assert_eq!(options.job_slots.get(), 4);
+    }
+
+    /// `opt_job_slots()` reflects the installed `Options::job_slots` through the
+    /// `OPTIONS_PTR` borrow channel the job scheduler reads.
+    #[test]
+    fn opt_job_slots_reads_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.job_slots.set(0));
+        assert_eq!(opt_job_slots(), 0);
+
+        with_options(|o| o.job_slots.set(8));
+        assert_eq!(opt_job_slots(), 8);
+
+        with_options(|o| o.job_slots.set(0));
     }
 }
 
