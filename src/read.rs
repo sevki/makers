@@ -139,8 +139,8 @@ use crate::file::{enter_file, enter_prereqs, lookup_file, snapped_deps, split_pr
 use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
 use crate::load::load_file;
 use crate::make_main::{
-    cmd_prefix, db_level, default_file, default_goal_var, one_shell, posix_pedantic,
-    second_expansion, stopchar_map,
+    db_level, default_file, default_goal_var, one_shell, posix_pedantic, second_expansion,
+    stopchar_map,
 };
 use crate::misc::concat;
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
@@ -732,7 +732,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
     let mut depstr: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut nlines: ::core::ffi::c_long = 0;
     let mut two_colon: i32 = 0;
-    let mut prefix: ::core::ffi::c_char = cmd_prefix;
+    let mut prefix: ::core::ffi::c_char = crate::make_main::opt_cmd_prefix();
     let mut pattern: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut pattern_percent: *const ::core::ffi::c_char;
     let fstart: *mut Floc;
@@ -799,8 +799,10 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
         // Classify the line by its first byte through the typed AST: empty
         // line, recipe line (begins with `cmd_prefix`), or a line to parse.
         let first_byte = *line.offset(0_i32 as isize) as ::core::ffi::c_uchar;
-        let line_kind =
-            crate::parser::LineKind::classify(first_byte, cmd_prefix as ::core::ffi::c_uchar);
+        let line_kind = crate::parser::LineKind::classify(
+            first_byte,
+            crate::make_main::opt_cmd_prefix() as ::core::ffi::c_uchar,
+        );
         if line_kind == crate::parser::LineKind::Blank {
             continue;
         }
@@ -1410,7 +1412,9 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                             }
                         }
                     } else {
-                        if *line.offset(0_i32 as isize) as i32 == cmd_prefix as i32 {
+                        if *line.offset(0_i32 as isize) as i32
+                            == crate::make_main::opt_cmd_prefix() as i32
+                        {
                             fatal(
                                 ctx,
                                 fstart,
@@ -1552,7 +1556,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     if *p2 as i32 == 0 {
                                         continue;
                                     }
-                                    if cmd_prefix as i32 == '\t' as i32
+                                    if crate::make_main::opt_cmd_prefix() as i32 == '\t' as i32
                                         && crate::parser::starts_with_eight_spaces(
                                             ::std::ffi::CStr::from_ptr(line).to_bytes(),
                                         )
@@ -1675,7 +1679,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             filenames = ::core::ptr::null_mut::<nameseq>();
                                         } else {
                                             find_char_unquote(lb_next, '=' as i32);
-                                            prefix = cmd_prefix;
+                                            prefix = crate::make_main::opt_cmd_prefix();
                                             no_targets = 0;
                                             if *lb_next as i32 != 0 {
                                                 let l_3: size_t = p2.offset_from(variable_buffer)
@@ -1984,7 +1988,7 @@ unsafe fn do_define(
             .wrapping_add(nlines as ::core::ffi::c_ulong);
         line = (*ebuf).buffer;
         collapse_continuations(line);
-        if *line.offset(0_i32 as isize) as i32 != cmd_prefix as i32 {
+        if *line.offset(0_i32 as isize) as i32 != crate::make_main::opt_cmd_prefix() as i32 {
             p = next_token(line);
             // Classify the leading `define`/`endef` keyword through the typed
             // AST layer (token delimited by a blank or NUL, matching make's
