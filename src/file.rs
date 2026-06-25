@@ -9,7 +9,6 @@ use crate::strcache::{strcache_add_len, strcache_iscached};
 use c2rust_bitfields;
 use libc::{__errno_location, abort, free, printf, putchar, puts, strchr, strcmp, strcpy, unlink};
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 extern "C" {
@@ -325,16 +324,6 @@ pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
 pub const OLD_MTIME: i32 = 2;
 pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
-/// Set once `snap_deps` has run, so the reader (`eval`) knows the global
-/// dependency snapshot is in place. Stored in an atomic so its reads are plain
-/// safe operations; all access is single-threaded, so `Relaxed` preserves the
-/// original program order.
-pub static SNAPPED_DEPS: AtomicBool = AtomicBool::new(false);
-
-/// Whether `snap_deps` has run.
-pub fn snapped_deps() -> bool {
-    SNAPPED_DEPS.load(Ordering::Relaxed)
-}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -1198,7 +1187,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     let mut f: *mut file;
     let mut f2: *mut file;
     let mut d: *mut dep;
-    SNAPPED_DEPS.store(true, Ordering::Relaxed);
+    crate::make_main::mark_snapped_deps();
     f = lookup_file(b".PRECIOUS\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         let Some(fr) = f.as_ref() else { break };
@@ -2047,22 +2036,6 @@ mod tests {
     use crate::implicit::alloc_dep;
     use crate::make_main::initialize_stopchar_map;
     use crate::strcache::strcache_add;
-
-    /// `snapped_deps()` reflects the `SNAPPED_DEPS` atomic: false before
-    /// `snap_deps` runs, true after. Restores the prior value so the global
-    /// stays isolated from other tests.
-    #[test]
-    fn snapped_deps_tracks_atomic() {
-        let saved = SNAPPED_DEPS.load(Ordering::Relaxed);
-
-        SNAPPED_DEPS.store(false, Ordering::Relaxed);
-        assert!(!snapped_deps(), "not yet snapped");
-
-        SNAPPED_DEPS.store(true, Ordering::Relaxed);
-        assert!(snapped_deps(), "snapped");
-
-        SNAPPED_DEPS.store(saved, Ordering::Relaxed);
-    }
 
     // FFI declarations and types the pre-std clock cascade depended on. They
     // were removed from production code when `file_timestamp_now` moved to

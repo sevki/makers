@@ -614,6 +614,15 @@ pub struct Options {
     /// `$(shell)`/`$(file)` writers run on the `gmk_eval` throwaway-context
     /// path, so they must reach `main_0`'s real run state, not the throwaway.
     pub command_count: ::core::cell::Cell<::core::ffi::c_ulong>,
+    /// `snap_deps`-complete latch for this run, the former `file::SNAPPED_DEPS`
+    /// global. Set once at the end of `snap_deps` via [`mark_snapped_deps`] and
+    /// read by `record_files` through [`opt_snapped_deps`] to reject
+    /// prerequisites defined from within a recipe (i.e. after the snapshot).
+    /// Lives on `Options`, reached through the `with_options`/`OPTIONS_PTR`
+    /// channel, rather than `ExecContext`: `record_files` is reached from the
+    /// `gmk_eval` throwaway-context path, so the reader must see `main_0`'s real
+    /// run state, not the throwaway.
+    pub snapped_deps: ::core::cell::Cell<bool>,
 }
 
 impl Options {
@@ -668,6 +677,7 @@ impl Options {
             output_sync: ::core::cell::Cell::new(OUTPUT_SYNC_NONE),
             job_slots: ::core::cell::Cell::new(0),
             command_count: ::core::cell::Cell::new(1),
+            snapped_deps: ::core::cell::Cell::new(false),
         }
     }
 }
@@ -998,6 +1008,19 @@ pub fn opt_command_count() -> ::core::ffi::c_ulong {
 /// `gmk_eval` throwaway-context path the `$(shell)`/`$(file)` writers take.
 pub fn bump_command_count() {
     with_options(|o| o.command_count.set(o.command_count.get().wrapping_add(1)));
+}
+/// Whether `snap_deps` has run for this make (the former `file::SNAPPED_DEPS`
+/// global), read through the `with_options` channel by `record_files` — which
+/// is reachable from the `gmk_eval` throwaway-context path and so cannot rely
+/// on its `&ExecContext` being `main_0`'s real run context.
+pub fn opt_snapped_deps() -> bool {
+    with_options(|o| o.snapped_deps.get())
+}
+/// Mark the dependency snapshot complete, once, at the end of `snap_deps`. Goes
+/// through the `with_options` channel so it always sets `main_0`'s real
+/// `Options`.
+pub fn mark_snapped_deps() {
+    with_options(|o| o.snapped_deps.set(true));
 }
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
@@ -5719,6 +5742,41 @@ mod command_count_tests {
         assert_eq!(opt_command_count(), 3, "two bumps through the channel");
 
         with_options(|o| o.command_count.set(1));
+    }
+}
+
+#[cfg(test)]
+mod snapped_deps_tests {
+    use super::{
+        install_default_options_for_test, mark_snapped_deps, opt_snapped_deps, with_options,
+        Options,
+    };
+
+    /// `Options::snapped_deps` carries the former `file::SNAPPED_DEPS` global: it
+    /// starts false and latches true when `snap_deps` completes, which is what
+    /// `record_files` checks to reject prerequisites defined inside a recipe.
+    #[test]
+    fn snapped_deps_defaults_to_false_and_latches() {
+        let options = Options::new();
+        assert!(!options.snapped_deps.get(), "default is false");
+        options.snapped_deps.set(true);
+        assert!(options.snapped_deps.get(), "latches true");
+    }
+
+    /// `opt_snapped_deps()` reads, and `mark_snapped_deps()` latches, the
+    /// installed `Options::snapped_deps` through the `OPTIONS_PTR` borrow channel
+    /// `record_files` uses — including on the `gmk_eval` throwaway-context path.
+    #[test]
+    fn mark_and_read_snapped_deps_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.snapped_deps.set(false));
+        assert!(!opt_snapped_deps(), "channel reads the installed value");
+
+        mark_snapped_deps();
+        assert!(opt_snapped_deps(), "marked through the channel");
+
+        with_options(|o| o.snapped_deps.set(false));
     }
 }
 
