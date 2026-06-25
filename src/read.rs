@@ -139,8 +139,8 @@ use crate::file::{enter_file, enter_prereqs, lookup_file, snapped_deps, split_pr
 use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
 use crate::load::load_file;
 use crate::make_main::{
-    cmd_prefix, db_level, default_file, default_goal_var, export_all_variables, one_shell,
-    posix_pedantic, second_expansion, stopchar_map,
+    cmd_prefix, db_level, default_file, default_goal_var, one_shell, posix_pedantic,
+    second_expansion, stopchar_map,
 };
 use crate::misc::concat;
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
@@ -1015,7 +1015,9 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
                         if *p2 as i32 == 0 {
-                            export_all_variables = exporting;
+                            crate::make_main::with_options(|o| {
+                                o.export_all_variables.set(exporting != 0)
+                            });
                         } else {
                             let mut l: size_t = 0;
                             let mut cp: *const ::core::ffi::c_char;

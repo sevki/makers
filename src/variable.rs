@@ -61,7 +61,7 @@ use crate::hash::{
     hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
 };
 use crate::job::default_shell;
-use crate::make_main::{cmd_prefix, export_all_variables, shell_var, stopchar_map};
+use crate::make_main::{cmd_prefix, shell_var, stopchar_map};
 use crate::misc::concat;
 use crate::output::fatal;
 use crate::output::msg;
@@ -1280,9 +1280,8 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
     );
 }
 /// Pure decision behind [`should_export`]: given a variable's export mode,
-/// origin, whether it is exportable, and the global `export_all_variables`
-/// flag, decide whether the variable belongs in a child process's
-/// environment.
+/// origin, whether it is exportable, and the `export_all_variables` flag,
+/// decide whether the variable belongs in a child process's environment.
 fn should_export_decision(
     export: variable_export,
     origin: variable_origin,
@@ -1314,13 +1313,12 @@ fn should_export_decision(
 /// Should variable `v` be placed in a child process's environment?
 ///
 /// Safe wrapper over [`should_export_decision`]: it borrows the variable and
-/// returns a plain `bool`. The only `unsafe` is the single integer load of the
-/// process-global `export_all_variables` flag (an existing `static mut` owned
-/// by `main`) — no pointer is dereferenced.
+/// returns a plain `bool`. The `export_all_variables` flag is read from the
+/// owned `Options` through the `with_options` borrow channel
+/// ([`crate::make_main::opt_export_all_variables`]), so this is fully safe —
+/// no `unsafe` and no global remain.
 pub fn should_export(v: &variable) -> bool {
-    // SAFETY: a plain integer read of the existing `export_all_variables`
-    // global; no pointer is dereferenced and no aliasing reference is formed.
-    let export_all = unsafe { export_all_variables != 0 };
+    let export_all = crate::make_main::opt_export_all_variables();
     should_export_decision(v.export(), v.origin(), v.exportable() != 0, export_all)
 }
 /// # Safety
@@ -2498,13 +2496,15 @@ mod should_export_tests {
 #[cfg(test)]
 mod should_export_unsafe_oracle {
     use super::{
-        export_all_variables, o_automatic, o_command, o_default, o_env, o_env_override, o_file,
-        o_invalid, o_override, should_export, should_export_decision, v_default, v_export, v_ifset,
-        v_noexport, variable, variable_export, variable_origin,
+        o_automatic, o_command, o_default, o_env, o_env_override, o_file, o_invalid, o_override,
+        should_export, should_export_decision, v_default, v_export, v_ifset, v_noexport, variable,
+        variable_export, variable_origin,
     };
+    use crate::make_main::{install_default_options_for_test, with_options};
 
-    /// Original c2rust implementation, preserved verbatim as the behavioral
-    /// oracle (raw `*const variable`, `i32` result, `static mut` read).
+    /// Original c2rust implementation, preserved as the behavioral oracle (raw
+    /// `*const variable`, `i32` result). The `export_all_variables` flag now
+    /// lives on the owned `Options`, read through the `with_options` channel.
     unsafe fn should_export_oracle(v: *const variable) -> i32 {
         let v = v
             .as_ref()
@@ -2513,7 +2513,7 @@ mod should_export_unsafe_oracle {
             v.export(),
             v.origin(),
             v.exportable() != 0,
-            export_all_variables != 0,
+            with_options(|o| o.export_all_variables.get()),
         ) as i32
     }
 
@@ -2543,13 +2543,12 @@ mod should_export_unsafe_oracle {
             o_automatic,
             o_invalid,
         ];
-        // Toggle the process-global flag both ways, restoring it afterwards so
-        // the test leaves no residue in shared state.
-        // SAFETY: single-threaded `cargo test --lib` access to the global.
-        let saved = unsafe { export_all_variables };
-        for &export_all in &[0, 1] {
-            // SAFETY: as above.
-            unsafe { export_all_variables = export_all };
+        // Toggle the owned `Options` flag both ways through the borrow channel,
+        // restoring it afterwards so the test leaves no residue in shared state.
+        install_default_options_for_test();
+        let saved = with_options(|o| o.export_all_variables.get());
+        for &export_all in &[false, true] {
+            with_options(|o| o.export_all_variables.set(export_all));
             for &export in &exports {
                 for &origin in &origins {
                     for &exportable in &[false, true] {
@@ -2566,8 +2565,8 @@ mod should_export_unsafe_oracle {
                 }
             }
         }
-        // SAFETY: restore the previous global value.
-        unsafe { export_all_variables = saved };
+        // Restore the previous value through the borrow channel.
+        with_options(|o| o.export_all_variables.set(saved));
     }
 }
 

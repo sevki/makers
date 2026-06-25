@@ -226,8 +226,7 @@ use crate::hash::{
     table_slots,
 };
 use crate::make_main::{
-    cmd_prefix, db_level, export_all_variables, second_expansion, stopchar_map, with_options,
-    MAP_DIRSEP,
+    cmd_prefix, db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP,
 };
 use crate::output::{error, fatal, perror_with_name};
 use crate::read::{find_percent, parse_file_seq};
@@ -1332,7 +1331,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     }
     f = lookup_file(b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
     if f.as_ref().is_some_and(|fr| fr.is_target() as i32 != 0) {
-        export_all_variables = 1;
+        with_options(|o| o.export_all_variables.set(true));
     }
     f = lookup_file(b".IGNORE\0" as *const u8 as *const ::core::ffi::c_char);
     if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
