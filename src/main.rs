@@ -473,7 +473,11 @@ static default_job_slots: i32 = INVALID_JOB_SLOTS;
 /// `&raw const` as the option table's `noarg_value`, never written. Immutable
 /// removes a mutable global.
 static inf_jobs: i32 = 0;
-pub static mut default_load_average: ::core::ffi::c_double = -1.0f64;
+/// Read-only `-l`/`--load-average` default and no-argument sentinel (`-1.0`,
+/// "no load limit"): only referenced via `&raw const` as the option table's
+/// `default_value`/`noarg_value`, never written. Immutable removes a mutable
+/// global.
+static default_load_average: ::core::ffi::c_double = -1.0f64;
 
 /// Option/flag values collected into a single owned instance, threaded through
 /// the call graph as `&Options`. Runtime-mutated fields use `Cell`/`RefCell`
@@ -4957,8 +4961,8 @@ unsafe extern "C" fn run_static_initializers() {
                 c: 'l' as i32,
                 type_0: floating,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
-                noarg_value: &raw mut default_load_average as *const ::core::ffi::c_void,
-                default_value: &raw mut default_load_average as *const ::core::ffi::c_void,
+                noarg_value: &raw const default_load_average as *const ::core::ffi::c_void,
+                default_value: &raw const default_load_average as *const ::core::ffi::c_void,
                 long_name: b"load-average\0" as *const u8 as *const ::core::ffi::c_char,
                 origin: ::core::ptr::null_mut::<variable_origin>(),
             };
@@ -5286,6 +5290,18 @@ unsafe extern "C" fn run_static_initializers() {
 #[cfg_attr(target_os = "windows", link_section = ".CRT$XIB")]
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
 static INIT_ARRAY: [unsafe extern "C" fn(); 1] = [run_static_initializers];
+
+#[cfg(test)]
+mod default_load_average_tests {
+    /// `default_load_average` is the read-only "no load limit" sentinel
+    /// (`-1.0`) the option table hands the `-l`/`--load-average` parser as its
+    /// `default_value` and no-argument `noarg_value`. It is now an immutable
+    /// `static` (was a `static mut`), so this is a plain safe read.
+    #[test]
+    fn default_load_average_is_no_limit_sentinel() {
+        assert_eq!(super::default_load_average, -1.0f64);
+    }
+}
 
 #[cfg(test)]
 mod output_sync_tests {
