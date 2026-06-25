@@ -68,8 +68,8 @@ use crate::file::{
 use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
 use crate::make_main::{
-    clock_skew_detected, command_count, db_level, default_file,
-    rebuilding_makefiles, second_expansion, CLOCK_SKEW_DETECTED,
+    clock_skew_detected, db_level, default_file, rebuilding_makefiles, second_expansion,
+    CLOCK_SKEW_DETECTED,
 };
 use crate::output::{error, fatal, message, perror_with_name};
 use crate::read::find_percent;
@@ -239,8 +239,8 @@ pub unsafe fn update_goal_chain(
         let mut running: i32 = 0;
         let mut wait: i32 = 0;
         start_waiting_jobs(ctx);
-        reap_children(ctx, (last_cmd_count == command_count) as i32, 0);
-        last_cmd_count = command_count;
+        reap_children(ctx, (last_cmd_count == crate::make_main::opt_command_count()) as i32, 0);
+        last_cmd_count = crate::make_main::opt_command_count();
         lastgoal = ::core::ptr::null_mut::<dep>();
         gu = goals;
         while let Some(gu_ref) = gu.as_ref() {

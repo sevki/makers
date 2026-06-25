@@ -604,6 +604,16 @@ pub struct Options {
     /// `ExecContext`) next to `arg_job_slots`; all writers are in `main_0`, so it
     /// is never touched on the `gmk_eval` throwaway path.
     pub job_slots: ::core::cell::Cell<::core::ffi::c_uint>,
+    /// Monotonic command-generation counter for this run, the former `static
+    /// mut command_count`. Bumped once per shell command run (`reap_children`,
+    /// `$(shell)`, `$(file)`) via [`bump_command_count`], and read by the
+    /// directory cache (`find_directory`) and the `update_goal_chain` loop
+    /// through [`opt_command_count`] to invalidate stat/contents entries
+    /// recorded before the latest command. Lives on `Options`, reached through
+    /// the `with_options`/`OPTIONS_PTR` channel, rather than `ExecContext`: the
+    /// `$(shell)`/`$(file)` writers run on the `gmk_eval` throwaway-context
+    /// path, so they must reach `main_0`'s real run state, not the throwaway.
+    pub command_count: ::core::cell::Cell<::core::ffi::c_ulong>,
 }
 
 impl Options {
@@ -657,6 +667,7 @@ impl Options {
             cmd_prefix: ::core::cell::Cell::new('\t' as i32 as ::core::ffi::c_char),
             output_sync: ::core::cell::Cell::new(OUTPUT_SYNC_NONE),
             job_slots: ::core::cell::Cell::new(0),
+            command_count: ::core::cell::Cell::new(1),
         }
     }
 }
@@ -974,6 +985,20 @@ pub fn opt_output_sync() -> i32 {
 pub fn opt_job_slots() -> ::core::ffi::c_uint {
     with_options(|o| o.job_slots.get())
 }
+/// Monotonic command-generation counter (the former `command_count` global),
+/// read through the `with_options` borrow channel by the directory cache
+/// (`find_directory`) and the `update_goal_chain` loop, which carry no
+/// `&Options`.
+pub fn opt_command_count() -> ::core::ffi::c_ulong {
+    with_options(|o| o.command_count.get())
+}
+/// Bump the command-generation counter, once per shell command run
+/// (`reap_children`, `$(shell)`, `$(file)`). Goes through the `with_options`
+/// channel so it always reaches `main_0`'s real `Options`, even on the
+/// `gmk_eval` throwaway-context path the `$(shell)`/`$(file)` writers take.
+pub fn bump_command_count() {
+    with_options(|o| o.command_count.set(o.command_count.get().wrapping_add(1)));
+}
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
 }
@@ -1034,7 +1059,6 @@ pub static mut shell_var: variable = variable {
     length: 0,
     recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
 };
-pub static mut command_count: ::core::ffi::c_ulong = 1;
 static mut stdin_offset: i32 = -1_i32;
 /// Strcache'd name of the temporary file holding the makefile read from stdin
 /// (or null). Mirrors `options.makefiles[stdin_offset]` so `temp_stdin_unlink`
@@ -5656,6 +5680,45 @@ mod master_job_slots_tests {
     #[test]
     fn master_job_slots_reflects_the_counter() {
         assert_eq!(master_job_slots(), MASTER_JOB_SLOTS.load(Ordering::Relaxed));
+    }
+}
+
+#[cfg(test)]
+mod command_count_tests {
+    use super::{
+        bump_command_count, install_default_options_for_test, opt_command_count, with_options,
+        Options,
+    };
+
+    /// `Options::command_count` carries the former `command_count` global: it
+    /// starts at 1 and is bumped once per shell command run, which is what the
+    /// directory cache compares against to invalidate entries recorded before
+    /// the latest command.
+    #[test]
+    fn command_count_defaults_to_one_and_bumps() {
+        let options = Options::new();
+        assert_eq!(options.command_count.get(), 1, "default is 1");
+        options
+            .command_count
+            .set(options.command_count.get().wrapping_add(1));
+        assert_eq!(options.command_count.get(), 2, "one bump");
+    }
+
+    /// `opt_command_count()` reads, and `bump_command_count()` increments, the
+    /// installed `Options::command_count` through the `OPTIONS_PTR` borrow
+    /// channel the dir-cache / job / function paths use.
+    #[test]
+    fn bump_and_read_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.command_count.set(1));
+        assert_eq!(opt_command_count(), 1, "channel reads the installed value");
+
+        bump_command_count();
+        bump_command_count();
+        assert_eq!(opt_command_count(), 3, "two bumps through the channel");
+
+        with_options(|o| o.command_count.set(1));
     }
 }
 
