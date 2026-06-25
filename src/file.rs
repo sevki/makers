@@ -1358,7 +1358,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         let mut d2: *mut dep;
         if fr.deps.is_null() {
-            crate::make_main::NOT_PARALLEL.store(true, ::std::sync::atomic::Ordering::Relaxed);
+            crate::make_main::set_not_parallel();
         } else {
             d = fr.deps;
             while let Some(dr) = d.as_ref() {
@@ -2294,6 +2294,7 @@ mod tests {
     fn snap_file_plain_target_clears_updating() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            crate::make_main::install_default_options_for_test();
             let ctx = crate::execctx::ExecContext::default();
             let mut f = File::default();
             f.set_updating(1);
@@ -2309,6 +2310,7 @@ mod tests {
     fn snap_file_target_copies_extra_prereqs() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
             let name = strcache_add(c"snapself".as_ptr());
