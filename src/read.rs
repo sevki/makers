@@ -135,12 +135,12 @@ use crate::expand::{
     variable_buffer, variable_buffer_output,
 };
 pub use crate::file::nameseq;
-use crate::file::{enter_file, enter_prereqs, lookup_file, snapped_deps, split_prereqs};
+use crate::file::{enter_file, enter_prereqs, lookup_file, split_prereqs};
 use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
 use crate::load::load_file;
 use crate::make_main::{
-    db_level, default_file, default_goal_var, one_shell, posix_pedantic, second_expansion,
-    stopchar_map,
+    db_level, default_file, default_goal_var, one_shell, opt_snapped_deps, posix_pedantic,
+    second_expansion, stopchar_map,
 };
 use crate::misc::concat;
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
@@ -2611,7 +2611,7 @@ unsafe fn record_files(
     let mut also_make: *mut dep = ::core::ptr::null_mut::<dep>();
     let mut implicit_percent: *const ::core::ffi::c_char;
     let mut name: *const ::core::ffi::c_char;
-    if snapped_deps() {
+    if opt_snapped_deps() {
         fatal(
             ctx,
             flocp,
