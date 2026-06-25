@@ -311,7 +311,8 @@ use crate::load::load_file;
 use crate::misc::concat;
 pub use crate::output::output;
 use crate::output::{
-    error, fatal, output_context, perror_with_name, pfatal_with_name, stdio_traced, STDIO_TRACED,
+    error, fatal, output_context, perror_with_name, pfatal_with_name, set_stdio_traced,
+    stdio_traced,
 };
 use crate::posixos::{
     check_io_state, jobserver_acquire_all, jobserver_clear, jobserver_enabled, jobserver_get_auth,
@@ -645,6 +646,16 @@ pub struct Options {
     pub second_expansion: ::core::cell::Cell<bool>,
     pub one_shell: ::core::cell::Cell<bool>,
     pub not_parallel: ::core::cell::Cell<bool>,
+    /// One-shot latch set once make has logged the working-directory "Entering
+    /// directory" trace (so the matching "Leaving directory" is emitted and
+    /// `MAKE_RESTARTS` is prefixed with `-`) — the former `STDIO_TRACED` global
+    /// atomic. Reached through the `with_options`/`OPTIONS_PTR` channel (via
+    /// `crate::output::stdio_traced()` / `set_stdio_traced()`): the writer in
+    /// `output_start` runs on the shared output path, reachable from the
+    /// `gmk_eval` throwaway-context path (a plugin-eval'd `$(shell)`/`$(info)`
+    /// flushes output), so both ends must resolve to `main_0`'s real run state,
+    /// not the throwaway.
+    pub stdio_traced: ::core::cell::Cell<bool>,
 }
 
 impl Options {
@@ -705,6 +716,7 @@ impl Options {
             second_expansion: ::core::cell::Cell::new(false),
             one_shell: ::core::cell::Cell::new(false),
             not_parallel: ::core::cell::Cell::new(false),
+            stdio_traced: ::core::cell::Cell::new(false),
         }
     }
 }
@@ -1930,7 +1942,7 @@ unsafe fn main_0(
                 ) == 0
             {
                 if *ep as i32 == '-' as i32 {
-                    STDIO_TRACED.store(true, Ordering::Relaxed);
+                    set_stdio_traced(true);
                     ep = ep.offset(1_i32 as isize);
                 }
                 restarts = make_toui(::core::ffi::CStr::from_ptr(ep)).unwrap_or(0);
@@ -5639,23 +5651,32 @@ mod cmd_prefix_tests {
 
 #[cfg(test)]
 mod stdio_traced_tests {
-    use crate::output::{stdio_traced, STDIO_TRACED};
-    use std::sync::atomic::Ordering;
+    use super::{install_default_options_for_test, with_options, Options};
+    use crate::output::{set_stdio_traced, stdio_traced};
 
-    /// `stdio_traced()` reflects the `STDIO_TRACED` one-shot flag set once the
-    /// working-directory enter trace has been logged. Restores the prior value
-    /// so it stays isolated from other tests.
+    /// The trace latch defaults to false on a fresh `Options` (the former
+    /// `STDIO_TRACED` global).
     #[test]
-    fn stdio_traced_tracks_atomic() {
-        let saved = STDIO_TRACED.load(Ordering::Relaxed);
+    fn stdio_traced_defaults_to_false() {
+        assert!(!Options::new().stdio_traced.get());
+    }
 
-        STDIO_TRACED.store(false, Ordering::Relaxed);
+    /// `set_stdio_traced` writes and `stdio_traced()` reads the one-shot latch
+    /// through the `OPTIONS_PTR` channel — the same channel `output_start` uses
+    /// when it logs the working-directory enter trace, including on the
+    /// `gmk_eval` throwaway-context path. `OPTIONS_PTR` is thread-local, so this
+    /// stays isolated under the parallel test harness.
+    #[test]
+    fn set_and_read_stdio_traced_through_channel() {
+        install_default_options_for_test();
+        with_options(|o| o.stdio_traced.set(false));
         assert!(!stdio_traced(), "not yet traced");
 
-        STDIO_TRACED.store(true, Ordering::Relaxed);
-        assert!(stdio_traced(), "trace emitted");
+        set_stdio_traced(true);
+        assert!(stdio_traced(), "trace emitted through the channel");
 
-        STDIO_TRACED.store(saved, Ordering::Relaxed);
+        set_stdio_traced(false);
+        assert!(!stdio_traced(), "false through the channel");
     }
 }
 
