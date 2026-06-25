@@ -50,6 +50,18 @@ pub struct ExecContext {
     /// when more than one second has elapsed. Added to the current second's
     /// weight to estimate system load between real `getloadavg` samples.
     pub load_prev_weight: ::core::cell::Cell<::core::ffi::c_double>,
+
+    /// `.NOTINTERMEDIATE` (no-argument) latch — set in `snap_deps` when a bare
+    /// `.NOTINTERMEDIATE` target is seen, marking every file non-intermediate
+    /// for this run. Per-run mutable state; the former `static mut
+    /// no_intermediates` global. Interior mutability keeps readers on
+    /// `&ExecContext`.
+    pub no_intermediates: ::core::cell::Cell<bool>,
+    /// `.SECONDARY` (no-argument) latch — set in `snap_deps` when a bare
+    /// `.SECONDARY` target is seen, marking every file secondary for this run.
+    /// Read alongside [`Self::no_intermediates`]; the former
+    /// `file::ALL_SECONDARY` global.
+    pub all_secondary: ::core::cell::Cell<bool>,
 }
 
 impl ExecContext {
@@ -92,5 +104,24 @@ mod tests {
         assert_eq!(ctx.load_prev_weight.get(), 0.0);
         // `..Self::default()` in `new` must not skip the cache fields.
         assert_eq!(ExecContext::default().load_sample_second.get(), 0);
+    }
+
+    /// The `.NOTINTERMEDIATE`/`.SECONDARY` latches start unset and are per-run
+    /// (a fresh context, e.g. a new make invocation, sees them `false` again),
+    /// replacing the former process-global `no_intermediates`/`ALL_SECONDARY`.
+    #[test]
+    fn intermediate_latches_start_unset_and_are_per_run() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        assert!(!ctx.no_intermediates.get());
+        assert!(!ctx.all_secondary.get());
+
+        ctx.no_intermediates.set(true);
+        ctx.all_secondary.set(true);
+        assert!(ctx.no_intermediates.get());
+        assert!(ctx.all_secondary.get());
+
+        // A fresh context does not inherit the latch (no cross-run leakage).
+        assert!(!ExecContext::default().no_intermediates.get());
+        assert!(!ExecContext::default().all_secondary.get());
     }
 }

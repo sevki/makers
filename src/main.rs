@@ -946,7 +946,6 @@ pub static mut shell_var: variable = variable {
     recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
 };
 pub static mut cmd_prefix: ::core::ffi::c_char = '\t' as i32 as ::core::ffi::c_char;
-pub static mut no_intermediates: ::core::ffi::c_uint = 0;
 pub static mut command_count: ::core::ffi::c_ulong = 1;
 static mut stdin_offset: i32 = -1_i32;
 /// Strcache'd name of the temporary file holding the makefile read from stdin

@@ -68,7 +68,7 @@ use crate::file::{
 use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
 use crate::make_main::{
-    always_make_flag, clock_skew_detected, command_count, db_level, default_file, no_intermediates,
+    always_make_flag, clock_skew_detected, command_count, db_level, default_file,
     rebuilding_makefiles, run_silent, second_expansion, CLOCK_SKEW_DETECTED,
 };
 use crate::output::{error, fatal, message, perror_with_name};
@@ -1226,7 +1226,7 @@ unsafe extern "C" fn update_file_1(
             puts(b".\0" as *const u8 as *const ::core::ffi::c_char);
             fflush(stdout);
         }
-        if (*file).notintermediate() == 0 && no_intermediates == 0 {
+        if (*file).notintermediate() == 0 && !ctx.no_intermediates.get() {
             (*file).set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
         notice_finished_file(ctx, file);
