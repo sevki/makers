@@ -3671,12 +3671,14 @@ unsafe fn decode_switches(
                                         b"the '%s%s' option requires a non-empty string argument\0"
                                             as *const u8
                                             as *const ::core::ffi::c_char,
-        &[FmtArg::Str((if (*cs).c <= CHAR_MAX {
-                                            b"-\0" as *const u8 as *const ::core::ffi::c_char
-                                        } else {
-                                            b"--\0" as *const u8 as *const ::core::ffi::c_char
-                                        },
-                                        op,
+                                        &[
+                                            FmtArg::Str(if (*cs).c <= CHAR_MAX {
+                                                b"-\0" as *const u8 as *const ::core::ffi::c_char
+                                            } else {
+                                                b"--\0" as *const u8 as *const ::core::ffi::c_char
+                                            }),
+                                            FmtArg::Str(op),
+                                        ],
                                     );
                                         bad = 1;
                                         false

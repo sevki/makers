@@ -1173,13 +1173,13 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 }) as size_t,
                                 b"warning: %s lines cannot start with TAB\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                if *p as i32 == 'i' as i32 {
+                                &[FmtArg::Str(if *p as i32 == 'i' as i32 {
                                     b"include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else if *p as i32 == '-' as i32 {
                                     b"-include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
-                                }) as *const ::core::ffi::c_char)],
+                                })],
     );
                         }
                         if !filenames.is_null() {
@@ -3561,7 +3561,7 @@ pub unsafe fn parse_file_seq(
                     strcache_add(__n)
                 } else {
                     xstrdup(__n) as *const ::core::ffi::c_char
-                });
+                };
                 if found_wait != 0 {
                     T::mark_wait(_ns);
                     found_wait = 0;
