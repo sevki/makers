@@ -506,6 +506,15 @@ pub struct Options {
     pub print_directory_origin: ::core::cell::Cell<variable_origin>,
     pub print_version: ::core::cell::Cell<bool>,
     pub makefiles: ::core::cell::RefCell<Vec<::std::ffi::CString>>,
+    /// Index into [`makefiles`](Self::makefiles) of the makefile read from
+    /// standard input (`-f -`), or `-1` when none — the former
+    /// `static mut stdin_offset`. It indexes the owned `makefiles` list, so it
+    /// belongs here on the run-owner `Options` rather than shadowing that list
+    /// in a global; readers without an `&Options` (e.g. `temp_stdin_unlink` on
+    /// the deep `die` path) reach it through the `with_options` channel
+    /// ([`opt_stdin_offset`]). Kept as the C `i32` with its `-1` sentinel so
+    /// every index/compare stays byte-identical.
+    pub stdin_offset: ::core::cell::Cell<i32>,
     /// Legacy `INVALID_JOB_SLOTS` (-1) == `None`; infinite jobs == `Some(0)`.
     pub arg_job_slots: ::core::cell::Cell<Option<u32>>,
     pub jobserver_auth: ::core::cell::RefCell<Option<String>>,
@@ -682,6 +691,7 @@ impl Options {
             print_directory_origin: ::core::cell::Cell::new(o_default),
             print_version: ::core::cell::Cell::new(false),
             makefiles: ::core::cell::RefCell::new(Vec::new()),
+            stdin_offset: ::core::cell::Cell::new(-1),
             arg_job_slots: ::core::cell::Cell::new(None),
             jobserver_auth: ::core::cell::RefCell::new(None),
             jobserver_style: ::core::cell::RefCell::new(None),
@@ -996,6 +1006,11 @@ pub fn opt_just_print() -> bool {
 pub fn opt_run_silent() -> bool {
     with_options(|o| o.run_silent.get())
 }
+/// `Options::stdin_offset` read through the `with_options` borrow channel by
+/// `temp_stdin_unlink`, which runs from the deep `die` path with no `&Options`.
+pub fn opt_stdin_offset() -> i32 {
+    with_options(|o| o.stdin_offset.get())
+}
 /// Export-everything latch (the former `export_all_variables` global), read
 /// through the `with_options` borrow channel by `should_export`, which carries
 /// no `&Options`.
@@ -1115,11 +1130,10 @@ pub static mut shell_var: variable = variable {
     length: 0,
     recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
 };
-static mut stdin_offset: i32 = -1_i32;
 /// Strcache'd name of the temporary file holding the makefile read from stdin
-/// (or null). Mirrors `options.makefiles[stdin_offset]` so `temp_stdin_unlink`
-/// can run from the deep `die` path without an `&Options` borrow. The pointer
-/// is into the strcache, which lives for the whole run.
+/// (or null), paired with `Options::stdin_offset`. Lets `temp_stdin_unlink`
+/// run from the deep `die` path without an `&Options` borrow; the pointer is
+/// into the strcache, which lives for the whole run.
 static mut temp_stdin_name: *const ::core::ffi::c_char = ::core::ptr::null();
 static mut usage: [*const ::core::ffi::c_char; 36] = [
     b"Options:\n\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1742,10 +1756,10 @@ pub unsafe fn reset_jobserver_mirror() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
-    if stdin_offset >= 0 && !temp_stdin_name.is_null() {
+    if opt_stdin_offset() >= 0 && !temp_stdin_name.is_null() {
         let nm: *const ::core::ffi::c_char = temp_stdin_name;
         let mut r: i32;
-        stdin_offset = -1_i32;
+        with_options(|o| o.stdin_offset.set(-1));
         loop {
             r = unlink(nm);
             if !(r == -1_i32 && *__errno_location() == EINTR) {
@@ -2314,7 +2328,7 @@ unsafe fn main_0(
                 let outfile: *mut FILE;
                 let mut newnm: *mut ::core::ffi::c_char =
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
-                if stdin_offset >= 0 {
+                if options.stdin_offset.get() >= 0 {
                     fatal(
                         &ctx,
                         ::core::ptr::null_mut::<Floc>(),
@@ -2372,16 +2386,16 @@ unsafe fn main_0(
                 let cached = strcache_add(newnm);
                 options.makefiles.borrow_mut()[i_1] =
                     ::core::ffi::CStr::from_ptr(cached).to_owned();
-                stdin_offset = i_1 as i32;
+                options.stdin_offset.set(i_1 as i32);
                 temp_stdin_name = cached;
                 free(newnm as *mut ::core::ffi::c_void);
             }
             i_1 = i_1.wrapping_add(1);
         }
     }
-    if stdin_offset >= 0 {
+    if options.stdin_offset.get() >= 0 {
         let f: *mut file = enter_file(strcache_add(
-            options.makefiles.borrow()[stdin_offset as usize].as_ptr(),
+            options.makefiles.borrow()[options.stdin_offset.get() as usize].as_ptr(),
         ));
         (*f).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         (*f).set_update_status(us_success as update_status);
@@ -2984,7 +2998,7 @@ unsafe fn main_0(
                                     ) == 0
                             };
                             if substitute {
-                                if mfidx == stdin_offset {
+                                if mfidx == options.stdin_offset.get() {
                                     alloca_allocations.push(::std::vec::from_elem(
                                         0,
                                         ::core::mem::size_of::<[::core::ffi::c_char; 14]>()
@@ -3025,7 +3039,7 @@ unsafe fn main_0(
                                 if *f_4.offset(1_i32 as isize) as i32 == 0 {
                                     av = av.offset(1_i32 as isize);
                                 }
-                                if mfidx == stdin_offset {
+                                if mfidx == options.stdin_offset.get() {
                                     let al: size_t =
                                         f_4.offset_from(a) as ::core::ffi::c_long as size_t;
                                     let mut na_1: *mut ::core::ffi::c_char;
@@ -3741,7 +3755,7 @@ unsafe fn decode_switches(
                                             {
                                                 ::core::ffi::CStr::from_ptr(coptarg).to_owned()
                                             } else if (*cs).c == TEMP_STDIN_OPT {
-                                                if stdin_offset > 0 {
+                                                if options.stdin_offset.get() > 0 {
                                                     fatal(ctx,
                                                                 NILF,
                                                                 0,
@@ -3749,7 +3763,7 @@ unsafe fn decode_switches(
                                                                     as *const u8 as *const ::core::ffi::c_char,
                                                             );
                                                 }
-                                                stdin_offset = list.len() as i32;
+                                                options.stdin_offset.set(list.len() as i32);
                                                 let cached = strcache_add(coptarg);
                                                 temp_stdin_name = cached;
                                                 ::core::ffi::CStr::from_ptr(cached).to_owned()
@@ -6055,7 +6069,10 @@ mod should_print_dir_diff_tests {
 
 #[cfg(test)]
 mod jobserver_and_stdin_cleanup_tests {
-    use super::{reset_jobserver, stdin_offset, temp_stdin_name, temp_stdin_unlink, Options};
+    use super::{
+        install_default_options_for_test, reset_jobserver, temp_stdin_name, temp_stdin_unlink,
+        with_options, Options,
+    };
 
     /// `reset_jobserver` clears the auth field and tears down the (absent)
     /// jobserver. With no jobserver configured, `jobserver_clear` is a no-op,
@@ -6073,10 +6090,13 @@ mod jobserver_and_stdin_cleanup_tests {
     /// also confirms the no-op guard when no temp stdin is registered.
     #[test]
     fn temp_stdin_unlink_removes_file_and_noops() {
+        // `temp_stdin_unlink` reads/clears `stdin_offset` through the
+        // `with_options` channel, so install an `Options` for this thread.
+        install_default_options_for_test();
         // No temp stdin registered (defaults): must be a harmless no-op.
         let ctx = crate::execctx::ExecContext::default();
         unsafe {
-            stdin_offset = -1;
+            with_options(|o| o.stdin_offset.set(-1));
             temp_stdin_name = ::core::ptr::null();
             temp_stdin_unlink(&ctx);
         }
@@ -6088,12 +6108,12 @@ mod jobserver_and_stdin_cleanup_tests {
         assert!(path.exists());
         let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
         unsafe {
-            stdin_offset = 0;
+            with_options(|o| o.stdin_offset.set(0));
             temp_stdin_name = cpath.as_ptr();
             temp_stdin_unlink(&ctx);
             // Restore globals before `cpath` is dropped to avoid a dangling ptr.
             temp_stdin_name = ::core::ptr::null();
-            stdin_offset = -1;
+            with_options(|o| o.stdin_offset.set(-1));
         }
         assert!(!path.exists(), "temp stdin file should have been unlinked");
         drop(cpath);

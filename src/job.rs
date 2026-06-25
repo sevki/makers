@@ -313,14 +313,6 @@ static JOB_SLOTS_USED: AtomicU32 = AtomicU32::new(0);
 pub fn job_slots_used() -> ::core::ffi::c_uint {
     JOB_SLOTS_USED.load(Ordering::Relaxed)
 }
-/// Set once a child has been handed the real stdin, so later children get a
-/// dummy one. Stored in an atomic to keep its reads plain safe operations;
-/// access is single-threaded, so `Relaxed` preserves the original order.
-static GOOD_STDIN_USED: AtomicBool = AtomicBool::new(false);
-
-fn good_stdin_used() -> bool {
-    GOOD_STDIN_USED.load(Ordering::Relaxed)
-}
 static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child;
 /// The shell is always "unixy" in this POSIX port: the only writers in the C
 /// original are W32/DOS-specific, so the value is fixed at 1 here. Keeping it
@@ -818,7 +810,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             (*c).sh_batch_file = ::core::ptr::null_mut::<::core::ffi::c_char>();
         }
         if (*c).good_stdin() != 0 {
-            GOOD_STDIN_USED.store(false, Ordering::Relaxed);
+            ctx.good_stdin_used.set(false);
         }
         dontcare = (*c).dontcare() as i32;
         if child_failed != 0 && (*c).noerror() == 0 && !crate::make_main::opt_ignore_errors() {
@@ -1233,10 +1225,10 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 fflush(stdout);
                 fflush(stderr);
                 (*child).set_good_stdin(
-                    !good_stdin_used() as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint
+                    !ctx.good_stdin_used.get() as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint
                 );
                 if (*child).good_stdin() != 0 {
-                    GOOD_STDIN_USED.store(true, Ordering::Relaxed);
+                    ctx.good_stdin_used.set(true);
                 }
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
@@ -1276,7 +1268,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                         if (*child).good_stdin() as i32 != 0 && used_stdin == 0 {
                             (*child)
                                 .set_good_stdin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            GOOD_STDIN_USED.store(false, Ordering::Relaxed);
+                            ctx.good_stdin_used.set(false);
                         }
                         (*child)
                             .set_remote(is_remote as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -3260,23 +3252,22 @@ mod is_bourne_compatible_shell_tests {
 
 #[cfg(test)]
 mod good_stdin_used_tests {
-    use super::{good_stdin_used, GOOD_STDIN_USED};
-    use std::sync::atomic::Ordering;
+    use crate::execctx::ExecContext;
 
-    /// `good_stdin_used()` reflects the `GOOD_STDIN_USED` flag: false while
-    /// unset (stdin still available), true once a child has claimed it.
-    /// Restores the prior value so it stays isolated from other tests.
+    /// `good_stdin_used` defaults to false on a fresh `ExecContext` (stdin
+    /// available) and round-trips through the owned `Cell` — the former
+    /// `GOOD_STDIN_USED` global. The context is owned by the test, so no shared
+    /// state leaks between tests.
     #[test]
     fn good_stdin_used_tracks_flag() {
-        let saved = GOOD_STDIN_USED.load(Ordering::Relaxed);
+        let ctx = ExecContext::default();
+        assert!(!ctx.good_stdin_used.get(), "false means stdin still available");
 
-        GOOD_STDIN_USED.store(false, Ordering::Relaxed);
-        assert!(!good_stdin_used(), "zero means stdin still available");
+        ctx.good_stdin_used.set(true);
+        assert!(ctx.good_stdin_used.get(), "true means stdin already claimed");
 
-        GOOD_STDIN_USED.store(true, Ordering::Relaxed);
-        assert!(good_stdin_used(), "non-zero means stdin already claimed");
-
-        GOOD_STDIN_USED.store(saved, Ordering::Relaxed);
+        ctx.good_stdin_used.set(false);
+        assert!(!ctx.good_stdin_used.get(), "cleared when the job is reaped");
     }
 }
 
