@@ -1027,9 +1027,20 @@ fn command_count_dir_cache_oracle() {
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the
-    // pattern-rule-limit counters (now atomics) computed by
-    // `count_implicit_rule_limits`. Compared byte-for-byte against the C oracle.
+    // pattern-rule-limit counters (now owned by `ExecContext`) computed by
+    // `snap_implicit_rules`. Compared byte-for-byte against the C oracle.
     check("pattern-rule", "59_pattern_rule.mk", "all", &[]);
+}
+
+#[test]
+fn pattern_stats_oracle() {
+    // The pattern-rule statistics (`num_pattern_rules` / `max_pattern_targets` /
+    // `max_pattern_deps` / `max_pattern_dep_length`) now live on `ExecContext`:
+    // `snap_implicit_rules` computes them from the rule set and `pattern_search`
+    // reads them to size its scratch buffers. The `%.out: %.a %.b %.c` rule's
+    // three prerequisites drive the deps/length/count bookkeeping while resolving
+    // `widget.out`. Compared byte-for-byte against the C oracle.
+    check("pattern_stats", "78_pattern_stats.mk", "widget.out", &[]);
 }
 
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's

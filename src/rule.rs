@@ -4,8 +4,6 @@
 //!
 //! Port of `rule.c`.
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, Dep, File};
 use crate::misc::free_ns_chain;
@@ -85,17 +83,6 @@ unsafe fn push_cstr(buf: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
 }
 pub static mut pattern_rules: *mut rule = ::core::ptr::null_mut();
 pub static mut last_pattern_rule: *mut rule = ::core::ptr::null_mut();
-/// Pattern-rule limits recomputed by `count_implicit_rule_limits` and read by
-/// `pattern_search` to size its scratch allocations. Atomic so the reads/writes
-/// are plain safe ops; the rule database is built and searched single-threaded,
-/// so `Relaxed` preserves the original program order.
-pub static NUM_PATTERN_RULES: AtomicU32 = AtomicU32::new(0);
-pub static MAX_PATTERN_TARGETS: AtomicU32 = AtomicU32::new(0);
-pub static MAX_PATTERN_DEPS: AtomicU32 = AtomicU32::new(0);
-/// Longest prerequisite name across every pattern rule (a `size_t`, hence
-/// `AtomicUsize` rather than the `AtomicU32` counters above); `pattern_search`
-/// adds it to the stem length to size its substituted-name scratch buffer.
-pub static MAX_PATTERN_DEP_LENGTH: AtomicUsize = AtomicUsize::new(0);
 pub static mut suffix_file: *mut File = ::core::ptr::null_mut();
 /// Return (computing and caching it on first use) the printable definition of
 /// rule `r`, e.g. `%.o: %.c`.
@@ -177,7 +164,7 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
         ),
     );
     let mut pre_deps: ::core::ffi::c_uint = 0;
-    MAX_PATTERN_DEP_LENGTH.store(0, Ordering::Relaxed);
+    ctx.max_pattern_dep_length.set(0);
     let mut d: *mut dep = prereqs;
     while let Some(dr) = d.as_mut() {
         let mut name: *const ::core::ffi::c_char = dep_name(d);
@@ -204,22 +191,22 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
                 name = name.add(1);
             }
         }
-        if len > MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed) {
-            MAX_PATTERN_DEP_LENGTH.store(len, Ordering::Relaxed);
+        if len > ctx.max_pattern_dep_length.get() {
+            ctx.max_pattern_dep_length.set(len);
         }
         pre_deps = pre_deps.wrapping_add(1);
         d = dr.next;
     }
-    NUM_PATTERN_RULES.store(0, Ordering::Relaxed);
-    MAX_PATTERN_TARGETS.store(0, Ordering::Relaxed);
-    MAX_PATTERN_DEPS.store(0, Ordering::Relaxed);
+    ctx.num_pattern_rules.set(0);
+    ctx.max_pattern_targets.set(0);
+    ctx.max_pattern_deps.set(0);
     let mut rule: *mut rule = pattern_rules;
     while let Some(rr) = rule.as_mut() {
         let mut ndeps: ::core::ffi::c_uint = pre_deps;
         let mut lastdep: *mut dep = ::core::ptr::null_mut();
-        NUM_PATTERN_RULES.fetch_add(1, Ordering::Relaxed);
-        if rr.num as ::core::ffi::c_uint > MAX_PATTERN_TARGETS.load(Ordering::Relaxed) {
-            MAX_PATTERN_TARGETS.store(rr.num as ::core::ffi::c_uint, Ordering::Relaxed);
+        ctx.num_pattern_rules.set(ctx.num_pattern_rules.get().wrapping_add(1));
+        if rr.num as ::core::ffi::c_uint > ctx.max_pattern_targets.get() {
+            ctx.max_pattern_targets.set(rr.num as ::core::ffi::c_uint);
         }
         d = rr.deps;
         while let Some(dr) = d.as_mut() {
@@ -232,8 +219,8 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
                 ::core::ptr::null()
             };
             ndeps = ndeps.wrapping_add(1);
-            if len > MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed) {
-                MAX_PATTERN_DEP_LENGTH.store(len, Ordering::Relaxed);
+            if len > ctx.max_pattern_dep_length.get() {
+                ctx.max_pattern_dep_length.set(len);
             }
             if dr.next.is_null() {
                 lastdep = d;
@@ -265,8 +252,8 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
                 rr.deps = copy_dep_chain(prereqs);
             }
         }
-        if ndeps > MAX_PATTERN_DEPS.load(Ordering::Relaxed) {
-            MAX_PATTERN_DEPS.store(ndeps, Ordering::Relaxed);
+        if ndeps > ctx.max_pattern_deps.get() {
+            ctx.max_pattern_deps.set(ndeps);
         }
         rule = rr.next;
     }
@@ -648,7 +635,7 @@ pub unsafe fn print_rule_data_base(ctx: &crate::execctx::ExecContext) {
             terminal as ::core::ffi::c_double / rules as ::core::ffi::c_double * 100.0f64,
         );
     }
-    let num_pattern_rules = NUM_PATTERN_RULES.load(Ordering::Relaxed);
+    let num_pattern_rules = ctx.num_pattern_rules.get();
     if num_pattern_rules != rules && num_pattern_rules != 0 {
         fatal(
             ctx,
@@ -678,33 +665,5 @@ mod streq_tests {
         assert!(!streq(c"abc", c"abcd"));
         // Differing first byte (the C macro's fast path).
         assert!(!streq(c"a", c"b"));
-    }
-}
-
-#[cfg(test)]
-mod max_pattern_dep_length_tests {
-    use super::MAX_PATTERN_DEP_LENGTH;
-    use std::sync::atomic::Ordering;
-
-    /// `snap_implicit_rules` keeps `MAX_PATTERN_DEP_LENGTH` (formerly the
-    /// `static mut max_pattern_dep_length`) at the longest pattern prerequisite
-    /// seen, by running the load/compare/store idiom that replaced the C
-    /// `if (l > max) max = l;`. Drive that idiom directly and confirm it tracks
-    /// the running maximum, and that the leading reset clears any prior bound.
-    #[test]
-    fn tracks_running_max_of_dep_lengths() {
-        // The reset `snap_implicit_rules` performs at the top of each pass.
-        MAX_PATTERN_DEP_LENGTH.store(0, Ordering::Relaxed);
-        for len in [3usize, 9, 4, 9, 7] {
-            if len > MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed) {
-                MAX_PATTERN_DEP_LENGTH.store(len, Ordering::Relaxed);
-            }
-        }
-        assert_eq!(MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed), 9);
-
-        // Re-running the reset means a shorter ruleset never inherits the stale
-        // larger bound — the buffer sizing in `pattern_search` starts fresh.
-        MAX_PATTERN_DEP_LENGTH.store(0, Ordering::Relaxed);
-        assert_eq!(MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed), 0);
     }
 }

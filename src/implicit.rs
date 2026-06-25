@@ -4,8 +4,6 @@
 //!
 //! Port of `implicit.c`.
 
-use std::sync::atomic::Ordering;
-
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Dep, File};
 use crate::misc::free_ns_chain;
@@ -29,10 +27,7 @@ use crate::file::{enter_file, lookup_file};
 use crate::make_main::{db_level, stopchar_map};
 use crate::read::parse_file_seq;
 pub use crate::rule::rule;
-use crate::rule::{
-    get_rule_defn, pattern_rules, MAX_PATTERN_DEPS, MAX_PATTERN_DEP_LENGTH, MAX_PATTERN_TARGETS,
-    NUM_PATTERN_RULES,
-};
+use crate::rule::{get_rule_defn, pattern_rules};
 use crate::variable::o_automatic;
 use crate::variable::{
     define_variable_in_set, free_variable_set, initialize_file_variables, merge_variable_set_lists,
@@ -266,13 +261,13 @@ unsafe fn pattern_search(
     // failed. Holding it in an `Option` (rather than a nullable raw pointer)
     // keeps the pointer always valid storage-backed, never a null sentinel.
     let mut int_file_reuse: Option<*mut file> = None;
-    let mut max_deps: ::core::ffi::c_uint = MAX_PATTERN_DEPS.load(Ordering::Relaxed);
+    let mut max_deps: ::core::ffi::c_uint = ctx.max_pattern_deps.get();
     // The viable prerequisites recorded while trying a rule.
     let mut deplist: Vec<patdeps> = Vec::with_capacity(max_deps as usize);
     // Scratch buffer for a prerequisite name with the stem substituted.
     let mut depname: Vec<u8> = Vec::with_capacity(
         namelen
-            .wrapping_add(MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed))
+            .wrapping_add(ctx.max_pattern_dep_length.get())
             .wrapping_add(4),
     );
     let mut stem_off: usize = 0;
@@ -280,9 +275,9 @@ unsafe fn pattern_search(
     let fullstemlen: size_t;
     // Candidate rules whose targets match the name.
     let mut tryrules: Vec<tryrule> = Vec::with_capacity(
-        NUM_PATTERN_RULES
-            .load(Ordering::Relaxed)
-            .wrapping_mul(MAX_PATTERN_TARGETS.load(Ordering::Relaxed)) as usize,
+        ctx.num_pattern_rules
+            .get()
+            .wrapping_mul(ctx.max_pattern_targets.get()) as usize,
     );
     let foundrule: usize;
     let mut file_vars_initialized: i32 = 0;
@@ -630,9 +625,8 @@ unsafe fn pattern_search(
                             // Track the most deps any rule has produced (the
                             // Vec grows on its own).
                             if deps_found > max_deps {
-                                let new_max =
-                                    MAX_PATTERN_DEPS.load(Ordering::Relaxed).max(deps_found);
-                                MAX_PATTERN_DEPS.store(new_max, Ordering::Relaxed);
+                                let new_max = ctx.max_pattern_deps.get().max(deps_found);
+                                ctx.max_pattern_deps.set(new_max);
                                 max_deps = new_max;
                             }
                             // Check each expanded prerequisite for viability.
