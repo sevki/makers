@@ -623,6 +623,16 @@ pub struct Options {
     /// `gmk_eval` throwaway-context path, so the reader must see `main_0`'s real
     /// run state, not the throwaway.
     pub snapped_deps: ::core::cell::Cell<bool>,
+    /// `true` only while `main_0` is remaking the makefiles themselves (the
+    /// makefile-remaking `update_goal_chain` pass), so the remake logic can
+    /// treat makefile targets specially. Toggled around that pass in `main_0`
+    /// and read across the update walk (`update_goal_chain` / `update_file_1` /
+    /// `remake_file`, via [`opt_rebuilding_makefiles`]) and by `reset_makeflags`.
+    /// Lives on `Options`, reached through the `with_options`/`OPTIONS_PTR`
+    /// channel, rather than `ExecContext`: `reset_makeflags` is reached from
+    /// `set_special_var` on the `gmk_eval` throwaway-context path, so the reader
+    /// must see `main_0`'s real run state, not the throwaway.
+    pub rebuilding_makefiles: ::core::cell::Cell<bool>,
 }
 
 impl Options {
@@ -678,6 +688,7 @@ impl Options {
             job_slots: ::core::cell::Cell::new(0),
             command_count: ::core::cell::Cell::new(1),
             snapped_deps: ::core::cell::Cell::new(false),
+            rebuilding_makefiles: ::core::cell::Cell::new(false),
         }
     }
 }
@@ -871,17 +882,6 @@ fn opt_get_str(options: &Options, c: i32) -> Option<::std::ffi::CString> {
         None
     }
 }
-/// Set while `update_goal_chain` is remaking the makefiles themselves (the
-/// first goal-chain pass), so the remake logic can treat makefile targets
-/// specially. Stored in an atomic so its reads are plain safe operations; all
-/// access is single-threaded, so `Relaxed` preserves the original program
-/// order.
-static REBUILDING_MAKEFILES: AtomicBool = AtomicBool::new(false);
-
-/// Whether make is currently remaking the makefiles themselves.
-pub fn rebuilding_makefiles() -> bool {
-    REBUILDING_MAKEFILES.load(Ordering::Relaxed)
-}
 
 thread_local! {
     /// Borrow channel to the `Options` owned as a local in `main_0`. This is a
@@ -1021,6 +1021,14 @@ pub fn opt_snapped_deps() -> bool {
 /// `Options`.
 pub fn mark_snapped_deps() {
     with_options(|o| o.snapped_deps.set(true));
+}
+/// Whether `main_0` is currently remaking the makefiles themselves (the former
+/// `REBUILDING_MAKEFILES` global), read through the `with_options` channel by
+/// the update walk and by `reset_makeflags` — the latter reached from
+/// `set_special_var` on the `gmk_eval` throwaway path, so it must resolve to
+/// `main_0`'s real run state rather than a throwaway context.
+pub fn opt_rebuilding_makefiles() -> bool {
+    with_options(|o| o.rebuilding_makefiles.get())
 }
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
@@ -2746,9 +2754,9 @@ unsafe fn main_0(
         if 0x100_i32 & db_level == 0 {
             db_level = DB_NONE;
         }
-        REBUILDING_MAKEFILES.store(true, Ordering::Relaxed);
+        options.rebuilding_makefiles.set(true);
         status = update_goal_chain(&ctx, read_files) as update_status;
-        REBUILDING_MAKEFILES.store(false, Ordering::Relaxed);
+        options.rebuilding_makefiles.set(false);
         db_level = orig_db_level;
         while !skipped_makefiles.is_null() {
             let d_1: *mut goaldep = skipped_makefiles;
@@ -3495,7 +3503,7 @@ pub unsafe fn reset_makeflags(
         construct_include_path(ctx, &inc_paths);
     }
     disable_builtins(ctx, options);
-    define_makeflags(ctx, options, rebuilding_makefiles() as i32);
+    define_makeflags(ctx, options, opt_rebuilding_makefiles() as i32);
 }
 unsafe fn decode_switches(
     ctx: &crate::execctx::ExecContext,
@@ -5439,28 +5447,6 @@ mod output_sync_tests {
 }
 
 #[cfg(test)]
-mod rebuilding_makefiles_tests {
-    use super::{rebuilding_makefiles, REBUILDING_MAKEFILES};
-    use std::sync::atomic::Ordering;
-
-    /// `rebuilding_makefiles()` reflects the `REBUILDING_MAKEFILES` flag set
-    /// around the makefile-remaking goal-chain pass. Restores the prior value
-    /// so it stays isolated from other tests.
-    #[test]
-    fn rebuilding_makefiles_tracks_atomic() {
-        let saved = REBUILDING_MAKEFILES.load(Ordering::Relaxed);
-
-        REBUILDING_MAKEFILES.store(false, Ordering::Relaxed);
-        assert!(!rebuilding_makefiles(), "not remaking FLAGS.makefiles");
-
-        REBUILDING_MAKEFILES.store(true, Ordering::Relaxed);
-        assert!(rebuilding_makefiles(), "remaking FLAGS.makefiles");
-
-        REBUILDING_MAKEFILES.store(saved, Ordering::Relaxed);
-    }
-}
-
-#[cfg(test)]
 mod second_expansion_tests {
     use super::{second_expansion, SECOND_EXPANSION};
     use std::sync::atomic::Ordering;
@@ -5744,6 +5730,39 @@ mod snapped_deps_tests {
         assert!(opt_snapped_deps(), "marked through the channel");
 
         with_options(|o| o.snapped_deps.set(false));
+    }
+}
+
+#[cfg(test)]
+mod rebuilding_makefiles_tests {
+    use super::{install_default_options_for_test, opt_rebuilding_makefiles, with_options, Options};
+
+    /// `Options::rebuilding_makefiles` carries the former `REBUILDING_MAKEFILES`
+    /// global: false outside the makefile-remake pass, true while `main_0`
+    /// remakes the makefiles themselves.
+    #[test]
+    fn rebuilding_makefiles_defaults_to_false() {
+        let options = Options::new();
+        assert!(!options.rebuilding_makefiles.get(), "default is false");
+        options.rebuilding_makefiles.set(true);
+        assert!(options.rebuilding_makefiles.get(), "set true");
+    }
+
+    /// `opt_rebuilding_makefiles()` reads the installed
+    /// `Options::rebuilding_makefiles` through the `OPTIONS_PTR` borrow channel
+    /// the update walk and `reset_makeflags` use — including on the `gmk_eval`
+    /// throwaway-context path.
+    #[test]
+    fn read_rebuilding_makefiles_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.rebuilding_makefiles.set(false));
+        assert!(!opt_rebuilding_makefiles(), "channel reads the installed value");
+
+        with_options(|o| o.rebuilding_makefiles.set(true));
+        assert!(opt_rebuilding_makefiles(), "true through the channel");
+
+        with_options(|o| o.rebuilding_makefiles.set(false));
     }
 }
 

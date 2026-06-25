@@ -66,7 +66,7 @@ use crate::file::{
 };
 use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
-use crate::make_main::{db_level, default_file, rebuilding_makefiles, second_expansion};
+use crate::make_main::{db_level, default_file, opt_rebuilding_makefiles, second_expansion};
 use crate::output::{error, fatal, message, perror_with_name};
 use crate::read::find_percent;
 pub use crate::read::goaldep;
@@ -202,10 +202,10 @@ pub unsafe fn update_goal_chain(
     let n: bool = crate::make_main::opt_just_print();
     let mut status: update_status = us_none;
     let depth: ::core::ffi::c_uint =
-        (if rebuilding_makefiles() { 1 } else { 0 }) as ::core::ffi::c_uint;
+        (if opt_rebuilding_makefiles() { 1 } else { 0 }) as ::core::ffi::c_uint;
     let goals_orig: *mut dep = copy_dep_chain(goaldeps as *mut dep);
     let mut goals: *mut dep = goals_orig;
-    goal_list = if rebuilding_makefiles() {
+    goal_list = if opt_rebuilding_makefiles() {
         goaldeps
     } else {
         ::core::ptr::null_mut::<goaldep>()
@@ -262,7 +262,7 @@ pub unsafe fn update_goal_chain(
                 while !fref(file).renamed.is_null() {
                     file = fref(file).renamed;
                 }
-                if rebuilding_makefiles() {
+                if opt_rebuilding_makefiles() {
                     if fref(file).cmd_target() != 0 {
                         crate::make_main::set_touch_mirror(t);
                         crate::make_main::set_question_mirror(q);
@@ -308,10 +308,10 @@ pub unsafe fn update_goal_chain(
                             status = fref(file).update_status() as update_status;
                             stop = (crate::make_main::opt_question()
                                 && !crate::make_main::opt_keep_going()
-                                && !rebuilding_makefiles())
+                                && !opt_rebuilding_makefiles())
                                 as i32;
                         } else {
-                            let mtime: uintmax_t = if rebuilding_makefiles() {
+                            let mtime: uintmax_t = if opt_rebuilding_makefiles() {
                                 if fref(file).last_mtime == UNKNOWN_MTIME as uintmax_t {
                                     f_mtime(ctx, file, 0)
                                 } else {
@@ -328,13 +328,13 @@ pub unsafe fn update_goal_chain(
                             if fref(file).updated() as i32 != 0
                                 && mtime != fref(file).mtime_before_update
                             {
-                                if !rebuilding_makefiles()
+                                if !opt_rebuilding_makefiles()
                                     || !crate::make_main::opt_just_print()
                                         && !crate::make_main::opt_question()
                                 {
                                     status = us_success;
                                 }
-                                if rebuilding_makefiles() && fref(file).dontcare() as i32 != 0 {
+                                if opt_rebuilding_makefiles() && fref(file).dontcare() as i32 != 0 {
                                     stop = 1;
                                 }
                             }
@@ -354,7 +354,7 @@ pub unsafe fn update_goal_chain(
             }
             let g_changed = g.as_ref().map_or(0, |gd| gd.changed());
             if stop != 0 || all_updated != 0 {
-                if !rebuilding_makefiles()
+                if !opt_rebuilding_makefiles()
                     && fref(file).update_status() as i32 == us_success as i32
                     && g_changed == 0
                     && !crate::make_main::opt_run_silent()
@@ -391,7 +391,7 @@ pub unsafe fn update_goal_chain(
         }
     }
     free_dep_chain(goals_orig);
-    if rebuilding_makefiles() {
+    if opt_rebuilding_makefiles() {
         crate::make_main::set_touch_mirror(t);
         crate::make_main::set_question_mirror(q);
         crate::make_main::set_just_print_mirror(n);
@@ -890,7 +890,7 @@ unsafe extern "C" fn update_file_1(
             } else {
                 (*(*d).file).parent = file;
                 maybe_make = must_make;
-                if rebuilding_makefiles() {
+                if opt_rebuilding_makefiles() {
                     dontcare = (*(*d).file).dontcare() as i32;
                     (*(*d).file).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
                 }
@@ -898,7 +898,7 @@ unsafe extern "C" fn update_file_1(
                 if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new;
                 }
-                if rebuilding_makefiles() {
+                if opt_rebuilding_makefiles() {
                     (*(*d).file)
                         .set_dontcare(dontcare as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 }
@@ -964,7 +964,7 @@ unsafe extern "C" fn update_file_1(
                     (*d).file = (*(*d).file).renamed;
                 }
                 (*(*d).file).parent = file;
-                if rebuilding_makefiles() {
+                if opt_rebuilding_makefiles() {
                     dontcare_0 = (*(*d).file).dontcare() as i32;
                     (*(*d).file).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
                 }
@@ -973,7 +973,7 @@ unsafe extern "C" fn update_file_1(
                 if new_0 as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new_0;
                 }
-                if rebuilding_makefiles() {
+                if opt_rebuilding_makefiles() {
                     (*(*d).file)
                         .set_dontcare(dontcare_0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 }
@@ -1726,7 +1726,7 @@ pub unsafe fn remake_file(ctx: &crate::execctx::ExecContext, file: *mut file) {
         } else if (*file).is_target() != 0 {
             (*file).set_update_status(us_success as update_status);
         } else {
-            if !rebuilding_makefiles() || (*file).dontcare() == 0 {
+            if !opt_rebuilding_makefiles() || (*file).dontcare() == 0 {
                 complain(ctx, file);
             }
             (*file).set_update_status(us_failed as update_status);
