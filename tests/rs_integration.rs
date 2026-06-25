@@ -1001,6 +1001,19 @@ fn job_slots_oracle() {
 }
 
 #[test]
+fn pattern_dep_length_oracle() {
+    // `max_pattern_dep_length` — the longest pattern prerequisite name, which
+    // `pattern_search` adds to the stem length to size its substituted-name
+    // scratch buffer — is now `rule::MAX_PATTERN_DEP_LENGTH` (an `AtomicUsize`,
+    // joining the sibling pattern-rule statistics that were already atomics).
+    // This pattern rule's prerequisite carries a deliberately long suffix, so
+    // `snap_implicit_rules` records a large value which `pattern_search` reads
+    // back when resolving `widget.out` through `%.out` (its prerequisite is
+    // produced by an explicit rule). Compared byte-for-byte against the C oracle.
+    check("pattern_dep_length", "76_pattern_dep_length.mk", "widget.out", &[]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the
