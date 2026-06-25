@@ -255,7 +255,7 @@ use crate::posixos::{
     fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
     jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
 };
-use crate::remake::{notice_finished_file, show_goal_error, COMMANDS_STARTED};
+use crate::remake::{notice_finished_file, show_goal_error};
 use crate::variable::{lookup_variable_for_file, target_environment};
 use crate::warning::{self, Action, Type};
 pub const __S_IFMT: i32 = 0o170000_i32;
@@ -1210,7 +1210,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     p,
                 );
             }
-            COMMANDS_STARTED.fetch_add(1, Ordering::Relaxed);
+            ctx.commands_started.set(ctx.commands_started.get().wrapping_add(1));
             if !(*argv.offset(0_i32 as isize)).is_null()
                 && is_bourne_compatible_shell(path_from_cstr(*argv.offset(0_i32 as isize)))
                 && (!(*argv.offset(1_i32 as isize)).is_null()

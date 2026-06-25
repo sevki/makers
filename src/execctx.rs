@@ -94,6 +94,18 @@ pub struct ExecContext {
     pub max_pattern_targets: ::core::cell::Cell<::core::ffi::c_uint>,
     pub max_pattern_deps: ::core::cell::Cell<::core::ffi::c_uint>,
     pub max_pattern_dep_length: ::core::cell::Cell<crate::ffi_types::size_t>,
+
+    /// The goal-chain walk's per-pass tracking counters, the former `static`
+    /// atomics `COMMANDS_STARTED` / `CONSIDERED`. `commands_started` counts
+    /// recipes launched so far — bumped by `start_job_command` and the
+    /// `notice_finished_file` touch path — and `update_goal_chain` snapshots it
+    /// around each goal to tell whether a pass made progress. `considered` is a
+    /// generation marker bumped once per `update_goal_chain` pass; each file
+    /// records the generation it was last considered in (`update_file`) so it is
+    /// not walked twice in one pass. Producers and consumers carry the same
+    /// `&ExecContext`, so interior mutability keeps readers on `&ExecContext`.
+    pub commands_started: ::core::cell::Cell<::core::ffi::c_uint>,
+    pub considered: ::core::cell::Cell<::core::ffi::c_uint>,
 }
 
 impl ExecContext {
@@ -211,5 +223,24 @@ mod tests {
 
         // A fresh context does not inherit the latch (no cross-run leakage).
         assert!(!ExecContext::default().clock_skew_detected.get());
+    }
+
+    /// The goal-chain pass counters (`commands_started` / `considered`, the
+    /// former `static` atomics) start at 0, bump monotonically, and are per-run.
+    #[test]
+    fn goal_chain_counters_start_zero_and_bump() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        assert_eq!(ctx.commands_started.get(), 0);
+        assert_eq!(ctx.considered.get(), 0);
+
+        // The bump idiom `update_goal_chain` / `start_job_command` use.
+        ctx.commands_started.set(ctx.commands_started.get().wrapping_add(1));
+        ctx.considered.set(ctx.considered.get().wrapping_add(1));
+        assert_eq!(ctx.commands_started.get(), 1);
+        assert_eq!(ctx.considered.get(), 1);
+
+        // Per-run: a fresh context does not inherit the counts.
+        assert_eq!(ExecContext::default().commands_started.get(), 0);
+        assert_eq!(ExecContext::default().considered.get(), 0);
     }
 }

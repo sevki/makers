@@ -11,7 +11,6 @@ use libc::{
     __errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror,
     strrchr,
 };
-use std::sync::atomic::{AtomicU32, Ordering};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn fstat(__fd: i32, __buf: *mut stat) -> i32;
@@ -102,25 +101,8 @@ pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
 pub const OLD_MTIME: i32 = 2;
 pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
-/// Running count of recipes make has started executing. Compared against a
-/// saved snapshot to decide whether a target's update actually ran any
-/// commands (driving the "Nothing to be done" / "is up to date" messages).
-/// A monotonic counter, stored in an atomic so its reads are plain safe
-/// operations; all access is single-threaded, so `Relaxed` preserves the
-/// original program order. `pub` because `job.rs` also bumps it.
-pub static COMMANDS_STARTED: AtomicU32 = AtomicU32::new(0);
-
-/// The number of recipes started so far.
-pub fn commands_started() -> ::core::ffi::c_uint {
-    COMMANDS_STARTED.load(Ordering::Relaxed)
-}
 static mut goal_list: *mut goaldep = ::core::ptr::null::<goaldep>() as *mut goaldep;
 static mut goal_dep: *mut dep = ::core::ptr::null::<dep>() as *mut dep;
-/// Generation counter that marks which files have already been considered in
-/// the current `update_goal_chain` pass. Atomic so its reads/writes are plain
-/// safe ops; goal updating is single-threaded, so `Relaxed` preserves the
-/// original program order.
-static CONSIDERED: AtomicU32 = AtomicU32::new(0);
 static mut dropped_list: *mut *mut dep = ::core::ptr::null::<*mut dep>() as *mut *mut dep;
 static mut dropped_list_len: size_t = 0;
 pub const DROPPED_LIST_INCR: i32 = 5;
@@ -228,7 +210,7 @@ pub unsafe fn update_goal_chain(
     } else {
         ::core::ptr::null_mut::<goaldep>()
     };
-    CONSIDERED.fetch_add(1, Ordering::Relaxed);
+    ctx.considered.set(ctx.considered.get().wrapping_add(1));
     while !goals.is_null() {
         let mut gu: *mut dep;
         let mut g: *mut dep;
@@ -291,7 +273,7 @@ pub unsafe fn update_goal_chain(
                         crate::make_main::set_touch_mirror(false);
                     }
                 }
-                let ocommands_started = commands_started();
+                let ocommands_started = ctx.commands_started.get();
                 stop = 0;
                 wait = (file == dchead && g_wait as i32 != 0 && running != 0) as i32;
                 if wait != 0 {
@@ -313,7 +295,7 @@ pub unsafe fn update_goal_chain(
                     running |= (fref(file).command_state() as i32 == cs_running as i32
                         || fref(file).command_state() as i32 == cs_deps_running as i32)
                         as i32;
-                    if commands_started() > ocommands_started {
+                    if ctx.commands_started.get() > ocommands_started {
                         if let Some(gm) = g.as_mut() {
                             gm.set_changed(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                         }
@@ -405,7 +387,7 @@ pub unsafe fn update_goal_chain(
             gu = gu_next;
         }
         if gu.is_null() || wait != 0 {
-            CONSIDERED.fetch_add(1, Ordering::Relaxed);
+            ctx.considered.set(ctx.considered.get().wrapping_add(1));
         }
     }
     free_dep_chain(goals_orig);
@@ -463,7 +445,7 @@ unsafe extern "C" fn update_file(
     };
     {
         let fr = f.as_ref().expect("update_file: null file chain");
-        if fr.considered == CONSIDERED.load(Ordering::Relaxed)
+        if fr.considered == ctx.considered.get()
             && !(fr.updated() as i32 != 0
                 && fr.update_status() as i32 > us_none as i32
                 && fr.dontcare() == 0
@@ -489,7 +471,7 @@ unsafe extern "C" fn update_file(
     }
     while !f.is_null() {
         let mut fr = f.as_mut().expect("update_file: null file chain");
-        fr.considered = CONSIDERED.load(Ordering::Relaxed);
+        fr.considered = ctx.considered.get();
         let new: update_status = update_file_1(ctx, &raw mut *fr, depth);
         while !fr.renamed.is_null() {
             fr = fr.renamed.as_mut().expect("update_file: null renamed file");
@@ -1342,7 +1324,7 @@ pub unsafe fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: *mut
                 (*file).set_update_status(us_success as update_status);
             } else if !(*file).cmds.is_null() {
                 (*file).set_update_status(touch_file(ctx, file) as update_status as update_status);
-                COMMANDS_STARTED.fetch_add(1, Ordering::Relaxed);
+                ctx.commands_started.set(ctx.commands_started.get().wrapping_add(1));
                 touched = 1;
             }
         }
@@ -2592,27 +2574,5 @@ mod f_mtime_tests {
             c_new = nn;
             c_ora = on;
         }
-    }
-}
-
-#[cfg(test)]
-mod commands_started_tests {
-    use super::{commands_started, COMMANDS_STARTED};
-    use std::sync::atomic::Ordering;
-
-    /// `commands_started()` reflects the `COMMANDS_STARTED` counter that is
-    /// bumped each time a recipe is started. Restores the prior value so it
-    /// stays isolated from other tests.
-    #[test]
-    fn commands_started_tracks_atomic() {
-        let saved = COMMANDS_STARTED.load(Ordering::Relaxed);
-
-        COMMANDS_STARTED.store(7, Ordering::Relaxed);
-        assert_eq!(commands_started(), 7);
-
-        COMMANDS_STARTED.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(commands_started(), 8);
-
-        COMMANDS_STARTED.store(saved, Ordering::Relaxed);
     }
 }
