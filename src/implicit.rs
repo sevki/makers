@@ -30,7 +30,7 @@ use crate::make_main::{db_level, stopchar_map};
 use crate::read::parse_file_seq;
 pub use crate::rule::rule;
 use crate::rule::{
-    get_rule_defn, max_pattern_dep_length, pattern_rules, MAX_PATTERN_DEPS, MAX_PATTERN_TARGETS,
+    get_rule_defn, pattern_rules, MAX_PATTERN_DEPS, MAX_PATTERN_DEP_LENGTH, MAX_PATTERN_TARGETS,
     NUM_PATTERN_RULES,
 };
 use crate::variable::o_automatic;
@@ -270,8 +270,11 @@ unsafe fn pattern_search(
     // The viable prerequisites recorded while trying a rule.
     let mut deplist: Vec<patdeps> = Vec::with_capacity(max_deps as usize);
     // Scratch buffer for a prerequisite name with the stem substituted.
-    let mut depname: Vec<u8> =
-        Vec::with_capacity(namelen.wrapping_add(max_pattern_dep_length).wrapping_add(4));
+    let mut depname: Vec<u8> = Vec::with_capacity(
+        namelen
+            .wrapping_add(MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed))
+            .wrapping_add(4),
+    );
     let mut stem_off: usize = 0;
     let mut stemlen: size_t = 0;
     let fullstemlen: size_t;

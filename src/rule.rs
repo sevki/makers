@@ -4,7 +4,7 @@
 //!
 //! Port of `rule.c`.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{Commands, Dep, File};
@@ -92,7 +92,10 @@ pub static mut last_pattern_rule: *mut rule = ::core::ptr::null_mut();
 pub static NUM_PATTERN_RULES: AtomicU32 = AtomicU32::new(0);
 pub static MAX_PATTERN_TARGETS: AtomicU32 = AtomicU32::new(0);
 pub static MAX_PATTERN_DEPS: AtomicU32 = AtomicU32::new(0);
-pub static mut max_pattern_dep_length: size_t = 0;
+/// Longest prerequisite name across every pattern rule (a `size_t`, hence
+/// `AtomicUsize` rather than the `AtomicU32` counters above); `pattern_search`
+/// adds it to the stem length to size its substituted-name scratch buffer.
+pub static MAX_PATTERN_DEP_LENGTH: AtomicUsize = AtomicUsize::new(0);
 pub static mut suffix_file: *mut File = ::core::ptr::null_mut();
 /// Return (computing and caching it on first use) the printable definition of
 /// rule `r`, e.g. `%.o: %.c`.
@@ -174,7 +177,7 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
         ),
     );
     let mut pre_deps: ::core::ffi::c_uint = 0;
-    max_pattern_dep_length = 0;
+    MAX_PATTERN_DEP_LENGTH.store(0, Ordering::Relaxed);
     let mut d: *mut dep = prereqs;
     while let Some(dr) = d.as_mut() {
         let mut name: *const ::core::ffi::c_char = dep_name(d);
@@ -201,8 +204,8 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
                 name = name.add(1);
             }
         }
-        if len > max_pattern_dep_length {
-            max_pattern_dep_length = len;
+        if len > MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed) {
+            MAX_PATTERN_DEP_LENGTH.store(len, Ordering::Relaxed);
         }
         pre_deps = pre_deps.wrapping_add(1);
         d = dr.next;
@@ -229,8 +232,8 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
                 ::core::ptr::null()
             };
             ndeps = ndeps.wrapping_add(1);
-            if len > max_pattern_dep_length {
-                max_pattern_dep_length = len;
+            if len > MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed) {
+                MAX_PATTERN_DEP_LENGTH.store(len, Ordering::Relaxed);
             }
             if dr.next.is_null() {
                 lastdep = d;
@@ -675,5 +678,33 @@ mod streq_tests {
         assert!(!streq(c"abc", c"abcd"));
         // Differing first byte (the C macro's fast path).
         assert!(!streq(c"a", c"b"));
+    }
+}
+
+#[cfg(test)]
+mod max_pattern_dep_length_tests {
+    use super::MAX_PATTERN_DEP_LENGTH;
+    use std::sync::atomic::Ordering;
+
+    /// `snap_implicit_rules` keeps `MAX_PATTERN_DEP_LENGTH` (formerly the
+    /// `static mut max_pattern_dep_length`) at the longest pattern prerequisite
+    /// seen, by running the load/compare/store idiom that replaced the C
+    /// `if (l > max) max = l;`. Drive that idiom directly and confirm it tracks
+    /// the running maximum, and that the leading reset clears any prior bound.
+    #[test]
+    fn tracks_running_max_of_dep_lengths() {
+        // The reset `snap_implicit_rules` performs at the top of each pass.
+        MAX_PATTERN_DEP_LENGTH.store(0, Ordering::Relaxed);
+        for len in [3usize, 9, 4, 9, 7] {
+            if len > MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed) {
+                MAX_PATTERN_DEP_LENGTH.store(len, Ordering::Relaxed);
+            }
+        }
+        assert_eq!(MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed), 9);
+
+        // Re-running the reset means a shorter ruleset never inherits the stale
+        // larger bound — the buffer sizing in `pattern_search` starts fresh.
+        MAX_PATTERN_DEP_LENGTH.store(0, Ordering::Relaxed);
+        assert_eq!(MAX_PATTERN_DEP_LENGTH.load(Ordering::Relaxed), 0);
     }
 }
