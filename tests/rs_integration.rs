@@ -979,6 +979,16 @@ fn output_sync_oracle() {
 }
 
 #[test]
+fn load_average_default_oracle() {
+    // `default_load_average` (now an immutable `static`) is the option table's
+    // `default_value`/`noarg_value` for `-l`/`--load-average`. A plain build
+    // reads `default_value`; a no-argument `-l` reads `noarg_value`. Both must
+    // match the C oracle (a non-parallel build applies no load limit either way).
+    check("load_avg_default", "74_load_average.mk", "all", &[]);
+    check("load_avg_noarg", "74_load_average.mk", "all", &["-l"]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the
