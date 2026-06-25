@@ -249,7 +249,7 @@ use crate::findprog::find_in_given_path;
 use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
     command_count, db_level, die, fatal_signal_set, job_slots, not_parallel, one_shell,
-    output_sync, posix_pedantic, stopchar_map,
+    posix_pedantic, stopchar_map,
 };
 use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
 use crate::posixos::{
@@ -869,7 +869,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         .expect("a child always has a file")
                         .set_update_status(us_failed as update_status);
                 } else {
-                    if output_sync == OUTPUT_SYNC_LINE {
+                    if crate::make_main::opt_output_sync() == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(ctx, &raw mut (*c).output);
                     }
                     (*c).set_remote(
@@ -1186,8 +1186,9 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             argv = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
         }
         if !argv.is_null() {
+            let os = crate::make_main::opt_output_sync();
             (*child).output.set_syncout(
-                (output_sync != 0 && (output_sync == OUTPUT_SYNC_RECURSE || !(flags & 1 != 0)))
+                (os != 0 && (os == OUTPUT_SYNC_RECURSE || !(flags & 1 != 0)))
                     as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint,
             );
             output_context = if (*child).output.syncout() as i32 != 0 {

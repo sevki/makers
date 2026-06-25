@@ -581,6 +581,16 @@ pub struct Options {
     /// which runs under a throwaway context. Initialized to a tab, not the
     /// `Default` `\0`, so `Options::new()` sets it explicitly.
     pub cmd_prefix: ::core::cell::Cell<::core::ffi::c_char>,
+    /// Resolved output-sync mode (`OUTPUT_SYNC_*`), the former `static mut
+    /// output_sync`: derived from [`Self::output_sync_option`] (the raw
+    /// `-O`/`--output-sync` argument) in `decode_output_sync_flags`, then gated
+    /// down to `OUTPUT_SYNC_NONE` when the run turns out to be non-parallel.
+    /// Read by the build loop's `syncing` computation and the `output`/`job`
+    /// dump paths through the `with_options` channel ([`opt_output_sync`]).
+    /// Lives on `Options` (not `ExecContext`) because the
+    /// `decode_output_sync_flags` writer is reached on the `reset_makeflags`
+    /// MAKEFLAGS-reparse path, which `gmk_eval` runs under a throwaway context.
+    pub output_sync: ::core::cell::Cell<i32>,
 }
 
 impl Options {
@@ -632,6 +642,7 @@ impl Options {
             run_silent: ::core::cell::Cell::new(false),
             export_all_variables: ::core::cell::Cell::new(false),
             cmd_prefix: ::core::cell::Cell::new('\t' as i32 as ::core::ffi::c_char),
+            output_sync: ::core::cell::Cell::new(OUTPUT_SYNC_NONE),
         }
     }
 }
@@ -937,6 +948,12 @@ pub fn opt_export_all_variables() -> bool {
 pub fn opt_cmd_prefix() -> ::core::ffi::c_char {
     with_options(|o| o.cmd_prefix.get())
 }
+/// Resolved output-sync mode (the former `output_sync` global), read through
+/// the `with_options` borrow channel by the `syncing` computation and the
+/// `output`/`job` dump paths, which carry no `&Options`.
+pub fn opt_output_sync() -> i32 {
+    with_options(|o| o.output_sync.get())
+}
 pub fn opt_ignore_errors() -> bool {
     with_options(|o| o.ignore_errors.get())
 }
@@ -1187,7 +1204,6 @@ pub static ONE_SHELL: AtomicBool = AtomicBool::new(false);
 pub fn one_shell() -> bool {
     ONE_SHELL.load(Ordering::Relaxed)
 }
-pub static mut output_sync: i32 = OUTPUT_SYNC_NONE;
 /// Whether make is running non-parallel (one job at a time). Set while
 /// parsing and read during job scheduling/shuffling. Stored in an atomic so
 /// its reads/writes are plain safe operations; all access is single-threaded,
@@ -1556,7 +1572,7 @@ fn classify_output_sync(value: &[u8]) -> Option<i32> {
 pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, options: &Options) {
     if let Some(opt) = options.output_sync_option.borrow().as_ref() {
         match classify_output_sync(opt.as_bytes()) {
-            Some(mode) => output_sync = mode,
+            Some(mode) => options.output_sync.set(mode),
             None => {
                 let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
                 fatal(
@@ -1900,7 +1916,7 @@ unsafe fn main_0(
         o_command,
     );
     set_make_sync_syncout(
-        (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET) as i32
+        (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET) as i32
             as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     output_context = if make_sync_syncout() as i32 != 0 {
@@ -1991,8 +2007,8 @@ unsafe fn main_0(
         ));
         (*fresh40).set_export(v_export as variable_export);
     }
-    syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET) as i32
-        as ::core::ffi::c_uint;
+    syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
+        as i32 as ::core::ffi::c_uint;
     if make_sync_syncout() as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, &raw mut make_sync);
     }
@@ -2448,8 +2464,8 @@ unsafe fn main_0(
         }
         reset_jobserver(&options);
     }
-    syncing = (output_sync == OUTPUT_SYNC_LINE || output_sync == OUTPUT_SYNC_TARGET) as i32
-        as ::core::ffi::c_uint;
+    syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
+        as i32 as ::core::ffi::c_uint;
     if make_sync_syncout() as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, &raw mut make_sync);
     }
@@ -2495,7 +2511,7 @@ unsafe fn main_0(
         output_context = ::core::ptr::null_mut::<output>();
         crate::output::output_close(&ctx, &raw mut make_sync);
         syncing = 0;
-        output_sync = OUTPUT_SYNC_NONE;
+        options.output_sync.set(OUTPUT_SYNC_NONE);
     }
     if syncing != 0 {
         let has_mutex = options.sync_mutex.borrow().is_some();
@@ -5274,8 +5290,8 @@ static INIT_ARRAY: [unsafe extern "C" fn(); 1] = [run_static_initializers];
 #[cfg(test)]
 mod output_sync_tests {
     use super::{
-        classify_output_sync, OUTPUT_SYNC_LINE, OUTPUT_SYNC_NONE, OUTPUT_SYNC_RECURSE,
-        OUTPUT_SYNC_TARGET,
+        classify_output_sync, install_default_options_for_test, opt_output_sync, with_options,
+        Options, OUTPUT_SYNC_LINE, OUTPUT_SYNC_NONE, OUTPUT_SYNC_RECURSE, OUTPUT_SYNC_TARGET,
     };
 
     #[test]
@@ -5292,6 +5308,33 @@ mod output_sync_tests {
         assert_eq!(classify_output_sync(b"nonsense"), None);
         assert_eq!(classify_output_sync(b"NONE"), None); // case-sensitive, like make
         assert_eq!(classify_output_sync(b"none "), None); // exact match only
+    }
+
+    /// `Options::output_sync` (the resolved mode, the former `output_sync`
+    /// global) defaults to `OUTPUT_SYNC_NONE` and holds whatever
+    /// `decode_output_sync_flags` resolves into it.
+    #[test]
+    fn resolved_mode_defaults_to_none_and_is_settable() {
+        let options = Options::new();
+        assert_eq!(options.output_sync.get(), OUTPUT_SYNC_NONE);
+
+        options.output_sync.set(OUTPUT_SYNC_TARGET);
+        assert_eq!(options.output_sync.get(), OUTPUT_SYNC_TARGET);
+    }
+
+    /// `opt_output_sync()` reflects the installed `Options::output_sync` through
+    /// the `OPTIONS_PTR` borrow channel the `syncing` / dump readers use.
+    #[test]
+    fn opt_output_sync_reads_through_channel() {
+        install_default_options_for_test();
+
+        with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
+        assert_eq!(opt_output_sync(), OUTPUT_SYNC_NONE);
+
+        with_options(|o| o.output_sync.set(OUTPUT_SYNC_LINE));
+        assert_eq!(opt_output_sync(), OUTPUT_SYNC_LINE);
+
+        with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
     }
 }
 
