@@ -248,7 +248,7 @@ use crate::file::{lookup_file, set_command_state};
 use crate::findprog::find_in_given_path;
 use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
-    command_count, db_level, die, fatal_signal_set, job_slots, not_parallel, one_shell,
+    command_count, db_level, die, fatal_signal_set, not_parallel, one_shell,
     posix_pedantic, stopchar_map,
 };
 use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
@@ -1580,8 +1580,11 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
     (*cmds).fileinfo.offset = 0;
     (*c).command_lines = lines;
     job_next_command(c);
-    if job_slots != 0 {
-        while job_slots_used() == job_slots {
+    // `job_slots` is fixed for the run (set only during `main_0` job setup), so
+    // snapshot it once rather than reading the borrow channel each spin.
+    let slots = crate::make_main::opt_job_slots();
+    if slots != 0 {
+        while job_slots_used() == slots {
             reap_children(ctx, 1, 0);
         }
     } else if jobserver_enabled() != 0 {
@@ -1831,7 +1834,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
         drop(nmbuf_buf);
     }
     start_waiting_job(ctx, c);
-    if job_slots == 1 || not_parallel() {
+    if crate::make_main::opt_job_slots() == 1 || not_parallel() {
         while (*file).command_state() as i32 == cs_running as i32 {
             reap_children(ctx, 1, 0);
         }

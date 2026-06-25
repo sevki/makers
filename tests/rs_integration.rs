@@ -989,6 +989,18 @@ fn load_average_default_oracle() {
 }
 
 #[test]
+fn job_slots_oracle() {
+    // `-j` resolves into `Options::job_slots` (the former `job_slots` global),
+    // feeding the jobserver setup and the scheduler's slot checks. A strict
+    // dependency chain serializes the build, so the default, `-j1`, and `-j2`
+    // (the jobserver-master path) all produce identical output, matched
+    // byte-for-byte against the C oracle.
+    check("jobs_default", "75_jobs.mk", "all", &[]);
+    check("jobs_serial", "75_jobs.mk", "all", &["-j1"]);
+    check("jobs_parallel", "75_jobs.mk", "all", &["-j2"]);
+}
+
+#[test]
 fn pattern_rule_search() {
     // Building `foo.out` via the `%.out: %.in` pattern rule drives
     // `pattern_search`, which sizes its scratch allocations from the
