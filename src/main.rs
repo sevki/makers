@@ -440,7 +440,6 @@ pub const OLD_MTIME: i32 = 2;
 pub const no_argument: i32 = 0;
 pub const required_argument: i32 = 1;
 pub const optional_argument: i32 = 2;
-pub static mut verify_flag: i32 = 0;
 /// Read-only `--silent`/`-s` default: only referenced via `&raw const` as the
 /// option table's `default_value`, never written. Immutable removes a mutable
 /// global.
@@ -544,6 +543,13 @@ pub struct Options {
     /// `main_0`'s `Options` and reached through the `with_options` borrow
     /// channel, replacing the former `static mut include_directories`.
     pub resolved_include_dirs: ::core::cell::RefCell<Vec<::std::path::PathBuf>>,
+    /// Maintainer-mode file-database verification, the former
+    /// `static mut verify_flag`: enables the `enter_file` strcache assertion and
+    /// the end-of-run `verify_file_data_base` pass. Set when debugging is
+    /// requested and unconditionally during startup in this maintainer build;
+    /// owned here in `main_0`'s `Options` and read through the `with_options`
+    /// borrow channel by `enter_file` and `die`, which carry no `&Options`.
+    pub verify: ::core::cell::Cell<bool>,
 }
 
 impl Options {
@@ -591,6 +597,7 @@ impl Options {
             trace: ::core::cell::Cell::new(false),
             always_make: ::core::cell::Cell::new(false),
             resolved_include_dirs: ::core::cell::RefCell::new(Vec::new()),
+            verify: ::core::cell::Cell::new(false),
         }
     }
 }
@@ -1474,7 +1481,7 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
         }
     }
     if db_level != 0 {
-        verify_flag = 1;
+        options.verify.set(true);
     }
     if db_level == 0 {
         options.debug_flag.set(false);
@@ -1631,7 +1638,7 @@ unsafe fn main_0(
     crate::output::output_init(&raw mut make_sync);
     initialize_stopchar_map();
     crate::warning::init();
-    verify_flag = 1;
+    options.verify.set(true);
     setlocale(LC_ALL, b"\0" as *const u8 as *const ::core::ffi::c_char);
     sigemptyset(&raw mut fatal_signal_set);
     install_fatal_signal(1);
@@ -4388,7 +4395,7 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
         if opt_print_data_base() {
             print_data_base(ctx);
         }
-        if verify_flag != 0 {
+        if with_options(|o| o.verify.get()) {
             verify_file_data_base(ctx);
         }
         unload_all();
@@ -5279,6 +5286,23 @@ mod second_expansion_tests {
         assert!(second_expansion(), "enabled by .SECONDEXPANSION");
 
         SECOND_EXPANSION.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod verify_flag_tests {
+    use super::Options;
+
+    /// `Options::verify` carries the former `verify_flag` global: false by
+    /// default, true once set. `enter_file`/`die` read it through the
+    /// `with_options` borrow channel during a run.
+    #[test]
+    fn verify_defaults_false_and_latches() {
+        let options = Options::new();
+        assert!(!options.verify.get(), "default is unset");
+
+        options.verify.set(true);
+        assert!(options.verify.get(), "set once enabled");
     }
 }
 

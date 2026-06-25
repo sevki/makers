@@ -227,7 +227,7 @@ use crate::hash::{
 };
 use crate::make_main::{
     cmd_prefix, db_level, export_all_variables, no_intermediates, run_silent, second_expansion,
-    stopchar_map, verify_flag, MAP_DIRSEP,
+    stopchar_map, with_options, MAP_DIRSEP,
 };
 use crate::output::{error, fatal, perror_with_name};
 use crate::read::{find_percent, parse_file_seq};
@@ -451,7 +451,7 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     } else {
         panic!("assertion failed: *name != '\'");
     };
-    if verify_flag == 0 || strcache_iscached(name) != 0 {
+    if !with_options(|o| o.verify.get()) || strcache_iscached(name) != 0 {
     } else {
         panic!("assertion failed: ! verify_flag || strcache_iscached (name)");
     };
@@ -2388,6 +2388,7 @@ mod tests {
     fn enter_prereqs_resolves_files_for_plain_deps() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             init_hash_files();
 
@@ -2425,6 +2426,7 @@ mod tests {
     fn enter_prereqs_static_pattern_without_percent() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             init_hash_files();
 
@@ -2460,6 +2462,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         unsafe {
+            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             init_hash_files();
             crate::expand::initialize_variable_output();
