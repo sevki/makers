@@ -476,7 +476,6 @@ static default_job_slots: i32 = INVALID_JOB_SLOTS;
 /// removes a mutable global.
 static inf_jobs: i32 = 0;
 pub static mut default_load_average: ::core::ffi::c_double = -1.0f64;
-pub static mut always_make_flag: i32 = 0;
 
 /// Option/flag values collected into a single owned instance, threaded through
 /// the call graph as `&Options`. Runtime-mutated fields use `Cell`/`RefCell`
@@ -1967,7 +1966,7 @@ unsafe fn main_0(
     ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
         makelevel: parsed_makelevel,
     });
-    always_make_flag = (options.always_make.get() && restarts == 0) as i32;
+    ctx.always_make_flag.set(options.always_make.get() && restarts == 0);
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
@@ -3051,7 +3050,7 @@ unsafe fn main_0(
         }
     }
     define_makeflags(&ctx, &options, 0);
-    always_make_flag = options.always_make.get() as i32;
+    ctx.always_make_flag.set(options.always_make.get());
     if restarts != 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
             let f_5: *mut file = enter_file(strcache_add(nf.as_ptr()));

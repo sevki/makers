@@ -62,6 +62,13 @@ pub struct ExecContext {
     /// Read alongside [`Self::no_intermediates`]; the former
     /// `file::ALL_SECONDARY` global.
     pub all_secondary: ::core::cell::Cell<bool>,
+
+    /// Resolved `-B`/`--always-make` for this run: `Options::always_make` gated
+    /// by the restart count — a restarting sub-make (`restarts != 0`) does not
+    /// force-remake on the first pass. Set in `main_0`; the former `static mut
+    /// always_make_flag`. Read by `set_file_variables` and `update_file_1` via
+    /// the `&ExecContext` they already carry.
+    pub always_make_flag: ::core::cell::Cell<bool>,
 }
 
 impl ExecContext {
@@ -123,5 +130,19 @@ mod tests {
         // A fresh context does not inherit the latch (no cross-run leakage).
         assert!(!ExecContext::default().no_intermediates.get());
         assert!(!ExecContext::default().all_secondary.get());
+    }
+
+    /// `always_make_flag` (resolved `-B`/`--always-make`) is per-run and starts
+    /// unset, replacing the former process-global `always_make_flag`.
+    #[test]
+    fn always_make_flag_starts_unset_and_is_per_run() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        assert!(!ctx.always_make_flag.get());
+
+        ctx.always_make_flag.set(true);
+        assert!(ctx.always_make_flag.get());
+
+        // A fresh context does not inherit it (no cross-run leakage).
+        assert!(!ExecContext::default().always_make_flag.get());
     }
 }

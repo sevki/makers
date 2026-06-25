@@ -207,6 +207,38 @@ fn notintermediate_keeps_intermediates() {
 }
 
 #[test]
+fn always_make_flag_oracle() {
+    // `-B`/`--always-make` is now resolved into `ExecContext::always_make_flag`
+    // (read by `update_file_1`/`set_file_variables`) instead of the former
+    // `static mut always_make_flag`. Both the flag-set (`-B`) and flag-clear
+    // paths must stay byte-identical to the C oracle.
+    check("always_make_plain", "67_always_make.mk", "all", &[]);
+    check("always_make_forced", "67_always_make.mk", "all", &["-B"]);
+}
+
+#[test]
+fn always_make_rebuilds_up_to_date_target() {
+    // The distinguishing effect of `-B` (now `ctx.always_make_flag`): it forces
+    // remaking even an up-to-date target. `out` is written after `in`, so it is
+    // up to date; plain make leaves it alone, while `-B` reruns the recipe.
+    // Rust-only (the C oracle harness can't pre-stage mtimes), complementing the
+    // differential `always_make_flag_oracle` above.
+    let mk = "out: in\n\t@echo rebuilt-out\n";
+    let (plain, plain_code) = run_make(mk, &[("in", "x"), ("out", "y")], &["out"]);
+    assert!(
+        !plain.contains("rebuilt-out"),
+        "up-to-date target should not rebuild without -B: {plain:?}"
+    );
+    let (forced, forced_code) = run_make(mk, &[("in", "x"), ("out", "y")], &["-B", "out"]);
+    assert!(
+        forced.contains("rebuilt-out"),
+        "-B must force the recipe to rerun: {forced:?}"
+    );
+    assert_eq!(plain_code, Some(0), "plain make exits 0");
+    assert_eq!(forced_code, Some(0), "-B make exits 0");
+}
+
+#[test]
 fn eval_flags() {
     // Exercises the `--eval` command-line path (the eval-strings buffer that
     // now owns its scratch copy via RAII instead of xstrdup/free). Both

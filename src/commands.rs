@@ -19,7 +19,7 @@ use crate::hash::{
 use crate::job::{child, children, job_slots_used, new_job, reap_children};
 use crate::load::unload_file;
 use crate::make_main::{
-    always_make_flag, cmd_prefix, default_file, one_shell, stopchar_map, temp_stdin_unlink,
+    cmd_prefix, default_file, one_shell, stopchar_map, temp_stdin_unlink,
 };
 use crate::misc::{make_pid, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::output::{error, fatal, perror_with_name, INTSTR_LENGTH};
@@ -297,7 +297,7 @@ pub unsafe fn set_file_variables(
             cp = mempcpy(cp as *mut c_void, c as *const c_void, len) as *mut c_char;
             *cp = FILE_LIST_SEPARATOR;
             cp = cp.add(1);
-            if !((*d).changed() != 0 || always_make_flag != 0) {
+            if !((*d).changed() != 0 || ctx.always_make_flag.get()) {
                 qmark_len -= len + 1;
             }
         }
@@ -379,7 +379,7 @@ pub unsafe fn set_file_variables(
                 cp = mempcpy(cp as *mut c_void, c as *const c_void, len) as *mut c_char;
                 *cp = FILE_LIST_SEPARATOR;
                 cp = cp.add(1);
-                if (*d).changed() != 0 || always_make_flag != 0 {
+                if (*d).changed() != 0 || ctx.always_make_flag.get() {
                     qp = mempcpy(qp as *mut c_void, c as *const c_void, len) as *mut c_char;
                     *qp = FILE_LIST_SEPARATOR;
                     qp = qp.add(1);

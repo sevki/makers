@@ -68,7 +68,7 @@ use crate::file::{
 use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
 use crate::make_main::{
-    always_make_flag, clock_skew_detected, command_count, db_level, default_file,
+    clock_skew_detected, command_count, db_level, default_file,
     rebuilding_makefiles, run_silent, second_expansion, CLOCK_SKEW_DETECTED,
 };
 use crate::output::{error, fatal, message, perror_with_name};
@@ -962,7 +962,7 @@ unsafe extern "C" fn update_file_1(
             }
         }
     }
-    if must_make != 0 || always_make_flag != 0 {
+    if must_make != 0 || ctx.always_make_flag.get() {
         du = (*file).deps;
         while !du.is_null() {
             d = if !(*du).shuf.is_null() {
@@ -1180,7 +1180,7 @@ unsafe extern "C" fn update_file_1(
         && (*file).is_target() as i32 != 0
         && deps_changed == 0
         && (*file).cmds.is_null()
-        && always_make_flag == 0
+        && !ctx.always_make_flag.get()
     {
         must_make = 0;
         if 0x2_i32 & db_level != 0 {
@@ -1192,7 +1192,7 @@ unsafe extern "C" fn update_file_1(
             );
             fflush(stdout);
         }
-    } else if must_make == 0 && !(*file).cmds.is_null() && always_make_flag != 0 {
+    } else if must_make == 0 && !file.cmds.is_null() && ctx.always_make_flag.get() {
         must_make = 1;
         if 0x2_i32 & db_level != 0 {
             print_spaces(depth);
