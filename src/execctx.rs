@@ -38,6 +38,16 @@ pub struct ExecContext {
     /// re-samples the clock when a file's mtime is past the cache. Per-run
     /// mutable state — interior mutability keeps readers on `&ExecContext`.
     pub mtime_adjusted_now: ::core::cell::Cell<crate::ffi_types::uintmax_t>,
+
+    /// `f_mtime`'s clock-skew latch: set once when a file's modification time is
+    /// found to lie in the future (right after the "in the future" warning is
+    /// emitted), and read at the end of `main_0` to print the "Clock skew
+    /// detected" notice. Per-run mutable state, set and read on the same
+    /// build-phase `&ExecContext` as [`Self::mtime_adjusted_now`]; the former
+    /// `static` atomic `CLOCK_SKEW_DETECTED`. Interior mutability keeps readers
+    /// on `&ExecContext`.
+    pub clock_skew_detected: ::core::cell::Cell<bool>,
+
     /// `load_too_high`'s per-second job-weighting cache: the wall-clock second
     /// of the previous load sample. When a new second begins, the running-job
     /// estimate folds in the jobs counted during the second just elapsed (see
@@ -186,5 +196,20 @@ mod tests {
         // Per-run: a fresh context does not inherit the computed stats.
         assert_eq!(ExecContext::default().max_pattern_dep_length.get(), 0);
         assert_eq!(ExecContext::default().num_pattern_rules.get(), 0);
+    }
+
+    /// `clock_skew_detected` starts false, latches true the way `f_mtime` sets
+    /// it on a future-dated file, and is per-run, replacing the former
+    /// process-global `CLOCK_SKEW_DETECTED`.
+    #[test]
+    fn clock_skew_detected_starts_unset_and_is_per_run() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        assert!(!ctx.clock_skew_detected.get(), "no skew yet");
+
+        ctx.clock_skew_detected.set(true);
+        assert!(ctx.clock_skew_detected.get(), "skew detected");
+
+        // A fresh context does not inherit the latch (no cross-run leakage).
+        assert!(!ExecContext::default().clock_skew_detected.get());
     }
 }

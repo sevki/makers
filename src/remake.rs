@@ -67,10 +67,7 @@ use crate::file::{
 };
 use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
-use crate::make_main::{
-    clock_skew_detected, db_level, default_file, rebuilding_makefiles, second_expansion,
-    CLOCK_SKEW_DETECTED,
-};
+use crate::make_main::{db_level, default_file, rebuilding_makefiles, second_expansion};
 use crate::output::{error, fatal, message, perror_with_name};
 use crate::read::find_percent;
 pub use crate::read::goaldep;
@@ -1934,7 +1931,7 @@ pub unsafe fn f_mtime(
             }
         }
     }
-    if !clock_skew_detected()
+    if !ctx.clock_skew_detected.get()
         && mtime != NONEXISTENT_MTIME as uintmax_t
         && mtime
             != (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
@@ -1993,7 +1990,7 @@ pub unsafe fn f_mtime(
                     (*file).name,
                     &raw mut from_now_string as *mut ::core::ffi::c_char,
                 );
-                CLOCK_SKEW_DETECTED.store(true, Ordering::Relaxed);
+                ctx.clock_skew_detected.set(true);
             }
         }
     }
@@ -2420,8 +2417,6 @@ mod f_mtime_tests {
     fn f_mtime_past_file_skips_skew_warning() {
         let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::make_main::install_default_options_for_test();
-        let saved_skew = crate::make_main::CLOCK_SKEW_DETECTED.load(Ordering::Relaxed);
-        crate::make_main::CLOCK_SKEW_DETECTED.store(false, Ordering::Relaxed);
         let (path, name) = make_temp_file();
         unsafe {
             let mut file = File::default();
@@ -2436,26 +2431,23 @@ mod f_mtime_tests {
                 "an existing past-dated file resolves to an ordinary mtime"
             );
             assert!(
-                !crate::make_main::clock_skew_detected(),
+                !ctx.clock_skew_detected.get(),
                 "a past-dated file triggers no clock-skew warning"
             );
         }
-        crate::make_main::CLOCK_SKEW_DETECTED.store(saved_skew, Ordering::Relaxed);
         let _ = std::fs::remove_file(&path);
     }
 
     /// `f_mtime` on a plain file whose mtime lies far in the future drives the
     /// clock-skew `error()` warning branch ("file '%s' has modification time
-    /// %s s in the future"), which formats the offset and sets
-    /// `CLOCK_SKEW_DETECTED`. This is the exact previously-uncovered branch:
+    /// %s s in the future"), which formats the offset and sets the context's
+    /// `clock_skew_detected` latch. This is the exact previously-uncovered branch:
     /// covering it requires a valid `program` name so `error()` runs its real
     /// path instead of dereferencing the null `program` pointer (a segfault).
     #[test]
     fn f_mtime_future_file_warns_and_sets_skew() {
         let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::make_main::install_default_options_for_test();
-        let saved_skew = crate::make_main::CLOCK_SKEW_DETECTED.load(Ordering::Relaxed);
-        crate::make_main::CLOCK_SKEW_DETECTED.store(false, Ordering::Relaxed);
         let (path, name) = make_temp_file();
         // Push the file's mtime far enough into the future to beat any value
         // the process-shared `adjusted_now` accumulator already holds.
@@ -2495,11 +2487,10 @@ mod f_mtime_tests {
                 "the future-dated file still resolves to an ordinary mtime"
             );
             assert!(
-                crate::make_main::clock_skew_detected(),
+                ctx.clock_skew_detected.get(),
                 "a future-dated file triggers the clock-skew warning"
             );
         }
-        crate::make_main::CLOCK_SKEW_DETECTED.store(saved_skew, Ordering::Relaxed);
         let _ = std::fs::remove_file(&path);
     }
 
