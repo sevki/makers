@@ -1796,12 +1796,12 @@ pub unsafe fn f_mtime(
                 rehash_file(ctx, file, strcache_add(name));
             }
             while !file.renamed.is_null() {
-                file = &mut *file.renamed;
+                file = fref_mut(file.renamed);
             }
         }
         free(arname as *mut ::core::ffi::c_void);
         while !file.renamed.is_null() {
-            file = &mut *file.renamed;
+            file = fref_mut(file.renamed);
         }
         file.low_resolution_time = true;
         if mtime == NONEXISTENT_MTIME as uintmax_t {
@@ -1950,7 +1950,7 @@ pub unsafe fn f_mtime(
         }
     }
     if !file.double_colon.is_null() {
-        file = &mut *file.double_colon;
+        file = fref_mut(file.double_colon);
     }
     propagate_timestamp = (*file).updated();
     loop {
