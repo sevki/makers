@@ -3,7 +3,11 @@ pub use crate::ffi_types::{
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
     ssize_t, time_t, uintmax_t,
 };
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{dep, file, Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{
+    cs_finished, cs_not_started, cs_running, us_failed, us_question, us_success, CommandState,
+    UpdateStatus,
+};
 use crate::misc::{xcalloc, xmalloc, xstrdup};
 use crate::stdio::FILE;
 use ::c2rust_bitfields;
@@ -247,7 +251,9 @@ use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
     db_level, die, fatal_signal_set, not_parallel, one_shell, posix_pedantic, stopchar_map,
 };
-use crate::output::{error, fatal, message, output_context, perror_with_name, pfatal_with_name};
+use crate::output::{
+    error, fatal, message, output_context, perror_with_name, pfatal_with_name, FmtArg,
+};
 use crate::posixos::{
     fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
     jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
@@ -457,7 +463,8 @@ unsafe fn child_error(
         .expect("a child being reported has a recipe")
         .fileinfo;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    if ignored != 0 && run_silent != 0 {
+    let mut l: size_t;
+    if ignored != 0 && crate::make_main::opt_run_silent() {
         return;
     }
     if exit_sig != 0 && coredump != 0 {

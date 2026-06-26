@@ -600,7 +600,7 @@ unsafe fn push_cstr(out: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
     }
 }
 
-unsafe fn push_program_prefix(out: &mut Vec<u8>, fatal_marker: bool) {
+unsafe fn push_program_prefix(out: &mut Vec<u8>, makelevel: u32, fatal_marker: bool) {
     push_cstr(out, program);
     if makelevel == 0 {
         out.extend_from_slice(b": ");
@@ -614,7 +614,12 @@ unsafe fn push_program_prefix(out: &mut Vec<u8>, fatal_marker: bool) {
     }
 }
 
-unsafe fn push_error_prefix(out: &mut Vec<u8>, flocp: *const Floc, fatal_marker: bool) {
+unsafe fn push_error_prefix(
+    out: &mut Vec<u8>,
+    flocp: *const Floc,
+    makelevel: u32,
+    fatal_marker: bool,
+) {
     if !flocp.is_null() && !(*flocp).filenm.is_null() {
         push_cstr(out, (*flocp).filenm);
         out.push(b':');
@@ -630,16 +635,8 @@ unsafe fn push_error_prefix(out: &mut Vec<u8>, flocp: *const Floc, fatal_marker:
             out.extend_from_slice(b"*** ");
         }
     } else {
-        push_program_prefix(out, fatal_marker);
+        push_program_prefix(out, makelevel, fatal_marker);
     }
-}
-
-unsafe fn write_formatted(is_err: bool, mut out: Vec<u8>) {
-    out.push(0);
-    outputs(
-        if is_err { 1 } else { 0 },
-        out.as_ptr() as *const ::core::ffi::c_char,
-    );
 }
 
 /// printf-subset message to stdout, optionally prefixed with the program name.
@@ -651,31 +648,20 @@ unsafe fn write_formatted(is_err: bool, mut out: Vec<u8>) {
 pub unsafe extern "C" fn message(
     ctx: &ExecContext,
     prefix: i32,
-    mut len: size_t,
+    _len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: &[FmtArg],
 ) {
     let makelevel = ctx.makelevel();
-    len = (len as ::core::ffi::c_ulong).wrapping_add(
-        strlen(fmt)
-            .wrapping_add(strlen(program))
-            .wrapping_add(INTSTR_LENGTH)
-            .wrapping_add(4)
-            .wrapping_add(1)
-            .wrapping_add(1) as ::core::ffi::c_ulong,
-    ) as size_t as size_t;
-    let start: *mut ::core::ffi::c_char = get_buffer(len);
-    let mut p = start;
+    let mut out: Vec<u8> = Vec::new();
     if prefix != 0 {
-        push_program_prefix(&mut out, false);
+        push_program_prefix(&mut out, makelevel, false);
     }
-    let args_0 = args.clone();
-    vsprintf(p, fmt, args_0);
-    strcat(p, c"\n".as_ptr());
-    assert!(
-        *start.add(len - 1) == 0,
-        "formatted message overran its buffer"
-    );
+    vformat_into(&mut out, fmt, args);
+    out.push(b'\n');
+    out.push(0);
+    let start: *mut ::core::ffi::c_char = get_buffer(out.len() as size_t);
+    ::core::ptr::copy_nonoverlapping(out.as_ptr(), start as *mut u8, out.len());
     outputs(ctx, 0, start);
 }
 
@@ -688,46 +674,18 @@ pub unsafe extern "C" fn message(
 pub unsafe extern "C" fn error(
     ctx: &ExecContext,
     flocp: *const Floc,
+    _len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: &[FmtArg],
 ) {
     let makelevel = ctx.makelevel();
-    len = (len as ::core::ffi::c_ulong).wrapping_add(
-        strlen(fmt)
-            .wrapping_add(strlen(program))
-            .wrapping_add(if !flocp.is_null() && !(*flocp).filenm.is_null() {
-                strlen((*flocp).filenm)
-            } else {
-                0
-            })
-            .wrapping_add(INTSTR_LENGTH)
-            .wrapping_add(4)
-            .wrapping_add(1)
-            .wrapping_add(1) as ::core::ffi::c_ulong,
-    ) as size_t as size_t;
-    let start: *mut ::core::ffi::c_char = get_buffer(len);
-    let mut p = start;
-    p = p.offset(
-        (if !flocp.is_null() && !(*flocp).filenm.is_null() {
-            sprintf(
-                p,
-                c"%s:%lu: ".as_ptr(),
-                (*flocp).filenm,
-                (*flocp).lineno.wrapping_add((*flocp).offset),
-            )
-        } else if makelevel == 0 {
-            sprintf(p, c"%s: ".as_ptr(), program)
-        } else {
-            sprintf(p, c"%s[%u]: ".as_ptr(), program, makelevel)
-        }) as isize,
-    );
-    let args_0 = args.clone();
-    vsprintf(p, fmt, args_0);
-    strcat(p, c"\n".as_ptr());
-    assert!(
-        *start.add(len - 1) == 0,
-        "formatted message overran its buffer"
-    );
+    let mut out: Vec<u8> = Vec::new();
+    push_error_prefix(&mut out, flocp, makelevel, false);
+    vformat_into(&mut out, fmt, args);
+    out.push(b'\n');
+    out.push(0);
+    let start: *mut ::core::ffi::c_char = get_buffer(out.len() as size_t);
+    ::core::ptr::copy_nonoverlapping(out.as_ptr(), start as *mut u8, out.len());
     outputs(ctx, 1, start);
 }
 
@@ -739,47 +697,18 @@ pub unsafe extern "C" fn error(
 pub unsafe extern "C" fn fatal(
     ctx: &ExecContext,
     flocp: *const Floc,
+    _len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: &[FmtArg],
 ) -> ! {
     let makelevel = ctx.makelevel();
-    let stop: *const ::core::ffi::c_char = c".  Stop.\n".as_ptr();
-    len = (len as ::core::ffi::c_ulong).wrapping_add(
-        strlen(fmt)
-            .wrapping_add(strlen(program))
-            .wrapping_add(if !flocp.is_null() && !(*flocp).filenm.is_null() {
-                strlen((*flocp).filenm)
-            } else {
-                0
-            })
-            .wrapping_add(INTSTR_LENGTH)
-            .wrapping_add(8)
-            .wrapping_add(strlen(stop))
-            .wrapping_add(1) as ::core::ffi::c_ulong,
-    ) as size_t as size_t;
-    let start: *mut ::core::ffi::c_char = get_buffer(len);
-    let mut p = start;
-    p = p.offset(
-        (if !flocp.is_null() && !(*flocp).filenm.is_null() {
-            sprintf(
-                p,
-                c"%s:%lu: *** ".as_ptr(),
-                (*flocp).filenm,
-                (*flocp).lineno.wrapping_add((*flocp).offset),
-            )
-        } else if makelevel == 0 {
-            sprintf(p, c"%s: *** ".as_ptr(), program)
-        } else {
-            sprintf(p, c"%s[%u]: *** ".as_ptr(), program, makelevel)
-        }) as isize,
-    );
-    let args_0 = args.clone();
-    vsprintf(p, fmt, args_0);
-    strcat(p, stop);
-    assert!(
-        *start.add(len - 1) == 0,
-        "formatted message overran its buffer"
-    );
+    let mut out: Vec<u8> = Vec::new();
+    push_error_prefix(&mut out, flocp, makelevel, true);
+    vformat_into(&mut out, fmt, args);
+    out.extend_from_slice(b".  Stop.\n");
+    out.push(0);
+    let start: *mut ::core::ffi::c_char = get_buffer(out.len() as size_t);
+    ::core::ptr::copy_nonoverlapping(out.as_ptr(), start as *mut u8, out.len());
     outputs(ctx, 1, start);
     die(ctx, MAKE_FAILURE);
 }

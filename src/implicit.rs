@@ -27,7 +27,7 @@ use crate::file::{enter_file, lookup_file};
 use crate::make_main::{db_level, stopchar_map};
 use crate::read::parse_file_seq;
 pub use crate::rule::rule;
-use crate::rule::{get_rule_defn, pattern_rules};
+use crate::rule::{get_rule_defn, pattern_rules, Rule};
 use crate::variable::o_automatic;
 use crate::variable::{
     define_variable_in_set, free_variable_set, initialize_file_variables, merge_variable_set_lists,
@@ -474,7 +474,7 @@ unsafe fn pattern_search(
                                 }
                                 depname.push(0);
                                 let mut p: *mut ::core::ffi::c_char = depname.as_mut_ptr().cast();
-                                dl = parse_file_seq(
+                                dl = parse_file_seq::<dep>(
                                     ctx,
                                     &raw mut p,
                                     ::core::mem::size_of::<dep>() as size_t,
@@ -582,7 +582,7 @@ unsafe fn pattern_search(
                                     expand_string_for_file(ctx, depname.as_mut_ptr().cast(), file);
                                 let mut dptr: *mut *mut dep = &raw mut dl;
                                 loop {
-                                    let dp: *mut dep = parse_file_seq(
+                                    let dp: *mut dep = parse_file_seq::<dep>(
                                         ctx,
                                         &raw mut p,
                                         ::core::mem::size_of::<dep>() as size_t,

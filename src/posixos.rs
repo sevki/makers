@@ -220,6 +220,7 @@ pub unsafe fn jobserver_setup(
                 fatal(
                     ctx,
                     null::<Floc>(),
+                    0,
                     c"cannot open jobserver %s: %s".as_ptr(),
                     &[
                         FmtArg::Str(fifo_name),
@@ -237,6 +238,7 @@ pub unsafe fn jobserver_setup(
                 fatal(
                     ctx,
                     null::<Floc>(),
+                    0,
                     c"cannot open jobserver %s: %s".as_ptr(),
                     &[
                         FmtArg::Str(fifo_name),
@@ -253,6 +255,7 @@ pub unsafe fn jobserver_setup(
             fatal(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"unknown jobserver auth style '%s'".as_ptr(),
                 &[FmtArg::Str(style)],
             );
@@ -292,6 +295,7 @@ pub unsafe fn jobserver_setup(
             fatal(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"requested job count (%d) is larger than system limit (%d)".as_ptr(),
                 &[FmtArg::Int((slots + 1) as i64), FmtArg::Int(k as i64)],
             );
@@ -329,6 +333,7 @@ pub unsafe fn jobserver_parse_auth(
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"cannot open jobserver %s: %s".as_ptr(),
                 &[
                     FmtArg::Str(fifo_name),
@@ -347,6 +352,7 @@ pub unsafe fn jobserver_parse_auth(
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"cannot open jobserver %s: %s".as_ptr(),
                 &[
                     FmtArg::Str(fifo_name),
@@ -371,6 +377,7 @@ pub unsafe fn jobserver_parse_auth(
         error(
             ctx,
             null::<Floc>(),
+            0,
             c"invalid --jobserver-auth string '%s'".as_ptr(),
             &[FmtArg::Str(auth)],
         );
@@ -682,6 +689,7 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
         error(
             ctx,
             null::<Floc>(),
+            0,
             c"invalid --sync-mutex string '%s'".as_ptr(),
             &[FmtArg::Str(mutex)],
         );
@@ -702,6 +710,7 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
         fatal(
             ctx,
             null::<Floc>(),
+            0,
             c"cannot open output sync mutex %s: %s".as_ptr(),
             &[
                 FmtArg::Str(osync_tmpfile),
@@ -904,6 +913,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"tmpfile: %s".as_ptr(),
                 &[FmtArg::Str(strerror(*__errno_location()))],
             );
@@ -920,6 +930,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"dup: %s".as_ptr(),
                 &[FmtArg::Str(strerror(*__errno_location()))],
             );

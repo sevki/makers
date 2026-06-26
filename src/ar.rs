@@ -344,7 +344,7 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
 }
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
-unsafe fn ar_glob_match(
+unsafe fn ar_glob_match<T: SeqNode>(
     mut _desc: i32,
     mem: *const ::core::ffi::c_char,
     mut _truncated: i32,
@@ -430,7 +430,7 @@ mod ar_glob_pattern_p_tests {
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_glob(
+pub unsafe fn ar_glob<T: SeqNode>(
     ctx: &crate::execctx::ExecContext,
     arname: *const ::core::ffi::c_char,
     member_pattern: *const ::core::ffi::c_char,
@@ -446,7 +446,7 @@ pub unsafe fn ar_glob(
     let names: *mut *const ::core::ffi::c_char;
     let mut i: ::core::ffi::c_uint;
     if !ar_glob_pattern_p(::core::ffi::CStr::from_ptr(member_pattern).to_bytes(), true) {
-        return ::core::ptr::null_mut::<nameseq>();
+        return ::core::ptr::null_mut::<T>();
     }
     state.arname = arname;
     state.pattern = member_pattern;
@@ -455,7 +455,7 @@ pub unsafe fn ar_glob(
     ar_scan(
         ctx,
         arname,
-        Some(ar_glob_match),
+        Some(ar_glob_match::<T>),
         &raw mut state as *const ::core::ffi::c_void,
     );
     if state.chain.is_null() {

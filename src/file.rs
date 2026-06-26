@@ -5,7 +5,7 @@ pub use crate::ffi_types::{
     intmax_t, size_t, time_t, uintmax_t,
 };
 use crate::misc::free_ns_chain;
-use crate::misc::{copy_dep_chain, end_of_token, xmalloc, xrealloc, xstrdup};
+use crate::misc::{copy_dep_chain, end_of_token, xcalloc, xmalloc, xrealloc, xstrdup};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add_len, strcache_iscached};
 use c2rust_bitfields;
@@ -86,8 +86,8 @@ pub struct File {
     pub mtime_before_update: uintmax_t,
     pub considered: ::core::ffi::c_uint,
     pub command_flags: i32,
-    #[bitfield(name = "update_status", ty = "update_status", bits = "0..=1")]
-    #[bitfield(name = "command_state", ty = "cmd_state", bits = "2..=3")]
+    pub update_status: UpdateStatus,
+    pub command_state: CommandState,
     #[bitfield(name = "builtin", ty = "::core::ffi::c_uint", bits = "4..=4")]
     #[bitfield(name = "precious", ty = "::core::ffi::c_uint", bits = "5..=5")]
     #[bitfield(name = "loaded", ty = "::core::ffi::c_uint", bits = "6..=6")]
@@ -140,23 +140,14 @@ impl Default for File {
             mtime_before_update: 0,
             considered: 0,
             command_flags: 0,
+            update_status: UpdateStatus::Success,
+            command_state: CommandState::NotStarted,
             update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix:
                 [0; 4],
             c2rust_padding: [0; 4],
         }
     }
 }
-pub type cmd_state = ::core::ffi::c_uint;
-pub const cs_finished: cmd_state = 3;
-pub const cs_running: cmd_state = 2;
-pub const cs_deps_running: cmd_state = 1;
-pub const cs_not_started: cmd_state = 0;
-pub type update_status = ::core::ffi::c_uint;
-pub type update_status_0 = u32;
-pub const us_failed: update_status_0 = 3;
-pub const us_question: update_status_0 = 2;
-pub const us_none: update_status_0 = 1;
-pub const us_success: update_status_0 = 0;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct VariableSetList {
@@ -491,6 +482,56 @@ pub type dep = Dep;
 pub type nameseq = NameSeq;
 #[allow(non_camel_case_types)]
 pub type commands = Commands;
+
+/// A file's recipe state — the former `cs_*` integer constants. Discriminants
+/// match the original `cmd_state` values (0..=3) so the 2-bit `command_state`
+/// bitfield round-trips bit-for-bit.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum CommandState {
+    NotStarted = 0,
+    DepsRunning = 1,
+    Running = 2,
+    Finished = 3,
+}
+
+impl CommandState {
+    /// Decode from the raw 2-bit field value (any out-of-range value, which the
+    /// 2-bit field can never hold, maps to `Finished`).
+    pub fn from_bits(bits: ::core::ffi::c_uint) -> Self {
+        match bits {
+            0 => CommandState::NotStarted,
+            1 => CommandState::DepsRunning,
+            2 => CommandState::Running,
+            _ => CommandState::Finished,
+        }
+    }
+}
+
+/// A file's update result — the former `us_*` integer constants. Discriminants
+/// match the original `update_status` values (0..=3) so the 2-bit
+/// `update_status` bitfield round-trips bit-for-bit.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum UpdateStatus {
+    Success = 0,
+    None = 1,
+    Question = 2,
+    Failed = 3,
+}
+
+impl UpdateStatus {
+    /// Decode from the raw 2-bit field value.
+    pub fn from_bits(bits: ::core::ffi::c_uint) -> Self {
+        match bits {
+            0 => UpdateStatus::Success,
+            1 => UpdateStatus::None,
+            2 => UpdateStatus::Question,
+            _ => UpdateStatus::Failed,
+        }
+    }
+}
+
 #[allow(non_camel_case_types)]
 pub type cmd_state = CommandState;
 #[allow(non_camel_case_types)]
@@ -1198,7 +1239,7 @@ pub unsafe fn split_prereqs(
     ctx: &crate::execctx::ExecContext,
     mut p: *mut ::core::ffi::c_char,
 ) -> *mut dep {
-    let mut new: *mut dep = parse_file_seq(
+    let mut new: *mut dep = parse_file_seq::<dep>(
         ctx,
         &raw mut p,
         ::core::mem::size_of::<dep>() as size_t,
@@ -1209,7 +1250,7 @@ pub unsafe fn split_prereqs(
     if p.as_ref().is_some_and(|c| *c != 0) {
         let mut ood: *mut dep;
         p = p.offset(1_i32 as isize);
-        ood = parse_file_seq(
+        ood = parse_file_seq::<dep>(
             ctx,
             &raw mut p,
             ::core::mem::size_of::<dep>() as size_t,
@@ -1240,7 +1281,7 @@ pub unsafe fn split_prereqs(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char) -> *mut dep {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let _d1: *mut Dep;
+    let mut d1: *mut Dep;
     if deps.is_null() {
         return ::core::ptr::null_mut::<Dep>();
     }
@@ -1808,7 +1849,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
     let mut d: *mut dep;
-    (*file).set_command_state(state as cmd_state as cmd_state);
+    (*file).set_command_state(state);
     d = (*file).also_make;
     while !d.is_null() {
         let dfile = (*d)
@@ -1816,8 +1857,9 @@ pub unsafe fn set_command_state(file: *mut file, state: cmd_state) {
             .as_mut()
             .expect("an also_make dep always has a file");
         if state as ::core::ffi::c_uint > dfile.command_state() as ::core::ffi::c_uint {
-            dfile.set_command_state(state as cmd_state as cmd_state);
+            dfile.set_command_state(state);
         }
+        d = (*d).next;
     }
 }
 /// Build a [`SystemTime`] from a Unix `(seconds, nanoseconds)` pair as reported
@@ -1903,26 +1945,21 @@ pub unsafe fn file_timestamp_cons(
     match pack_file_timestamp(t) {
         Ok(ts) => ts,
         Err(substitute) => {
-            let mut buf: [::core::ffi::c_char; 43] = [0; 43];
             let f: *const ::core::ffi::c_char = if !fname.is_null() {
                 fname
             } else {
                 b"Current time\0" as *const u8 as *const ::core::ffi::c_char
             };
-            file_timestamp_sprintf(&raw mut buf as *mut ::core::ffi::c_char, substitute);
+            let stamp = CString::new(file_timestamp_string(substitute))
+                .expect("formatted timestamp never contains an interior NUL");
+            let buf = stamp.as_ptr();
             error(
                 ctx,
                 ::core::ptr::null_mut::<Floc>(),
-                (strlen(f) as size_t)
-                    .wrapping_add(strlen(&raw mut buf as *mut ::core::ffi::c_char) as size_t),
+                (strlen(f) as size_t).wrapping_add(strlen(buf) as size_t),
                 b"%s: timestamp out of range: substituting %s\0" as *const u8
                     as *const ::core::ffi::c_char,
-                &[
-                    FmtArg::Str((f) as *const ::core::ffi::c_char),
-                    FmtArg::Str(
-                        (&raw mut buf as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char,
-                    ),
-                ],
+                &[FmtArg::Str(f), FmtArg::Str(buf)],
             );
             substitute
         }

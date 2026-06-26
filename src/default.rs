@@ -269,7 +269,7 @@ pub unsafe fn set_default_suffixes(
     } else {
         let mut p = &raw mut default_suffixes as *mut c_char;
         (*suffix_file).deps = enter_prereqs(
-            parse_file_seq(
+            parse_file_seq::<crate::file::Dep>(
                 ctx,
                 &mut p,
                 ::core::mem::size_of::<crate::file::Dep>(),
