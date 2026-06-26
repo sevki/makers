@@ -1951,22 +1951,25 @@ fn wall_clock_seconds() -> time_t {
 }
 
 pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
-    static mut proc_fd: i32 = -2_i32;
+    // Lazily-probed `/proc/loadavg` descriptor cache, the former function-local
+    // `static mut proc_fd`: `-2` before the first probe, `-1` once probing
+    // failed, otherwise the open fd. Per-run state on the build-phase context.
+    let proc_fd = &ctx.load_proc_fd.0;
     let mut load: ::core::ffi::c_double = 0.;
     if crate::make_main::opt_max_load_average() < 0_i32 as ::core::ffi::c_double {
         return 0;
     }
-    if proc_fd == -2_i32 {
+    if proc_fd.get() == -2_i32 {
         loop {
-            proc_fd = open(
+            proc_fd.set(open(
                 b"/proc/loadavg\0" as *const u8 as *const ::core::ffi::c_char,
                 0,
-            );
-            if !(proc_fd == -1_i32 && *__errno_location() == EINTR) {
+            ));
+            if !(proc_fd.get() == -1_i32 && *__errno_location() == EINTR) {
                 break;
             }
         }
-        if proc_fd < 0 {
+        if proc_fd.get() < 0 {
             if 0x4_i32 & db_level != 0 {
                 printf(
                     b"Using system load detection method.\n\0" as *const u8
@@ -1982,13 +1985,13 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                 );
                 fflush(stdout);
             }
-            fd_noinherit(proc_fd);
+            fd_noinherit(proc_fd.get());
         }
     }
-    if proc_fd >= 0 {
+    if proc_fd.get() >= 0 {
         let mut r: i32;
         loop {
-            r = lseek(proc_fd, 0 as __off_t, 0) as i32;
+            r = lseek(proc_fd.get(), 0 as __off_t, 0) as i32;
             if !(r == -1_i32 && *__errno_location() == EINTR) {
                 break;
             }
@@ -1997,7 +2000,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
             let mut avg: [::core::ffi::c_char; 65] = [0; 65];
             loop {
                 r = read(
-                    proc_fd,
+                    proc_fd.get(),
                     &raw mut avg as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
                     64,
                 ) as i32;
@@ -2041,13 +2044,15 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
             );
             fflush(stdout);
         }
-        close(proc_fd);
-        proc_fd = -1_i32;
+        close(proc_fd.get());
+        proc_fd.set(-1_i32);
     }
     *__errno_location() = 0;
     if getloadavg(&raw mut load, 1) != 1 {
-        static mut lossage: i32 = -1_i32;
-        if lossage == -1_i32 || *__errno_location() != lossage {
+        // Last-reported `getloadavg` failure errno (the former function-local
+        // `static mut lossage`), used to suppress repeating the same warning.
+        let lossage = &ctx.load_lossage.0;
+        if lossage.get() == -1_i32 || *__errno_location() != lossage.get() {
             if *__errno_location() == 0 {
                 error(
                     ctx,
@@ -2065,7 +2070,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                 );
             }
         }
-        lossage = *__errno_location();
+        lossage.set(*__errno_location());
         load = 0_i32 as ::core::ffi::c_double;
     }
     let now: time_t = wall_clock_seconds();
