@@ -423,6 +423,7 @@ unsafe fn dir_contents_file_exists_p(
                 fatal(
                     ctx,
                     null::<Floc>(),
+                    0,
                     c"readdir %s: %s".as_ptr(),
                     &[
                         FmtArg::Str(dir.name),

@@ -3,7 +3,10 @@ pub use crate::ffi_types::{
     __size_t, __syscall_slong_t, __time_t, __uid_t, size_t, uintmax_t,
 };
 use crate::file::{dep, file, NameSeq, SeqNode};
-use crate::file::{Commands, Dep, File, GoalDep, VariableSet, VariableSetList};
+use crate::file::{
+    commands, CommandState, Commands, Dep, File, GoalDep, UpdateStatus, VariableSet,
+    VariableSetList,
+};
 use crate::misc::{
     collapse_continuations, copy_dep, copy_dep_chain, find_next_token, next_token, xcalloc,
     xmalloc, xrealloc, xstrdup, xstrndup,
@@ -1214,7 +1217,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
-                            files = parse_file_seq(
+                            files = parse_file_seq::<nameseq>(
                                 ctx,
                                 &raw mut p2,
                                 ::core::mem::size_of::<nameseq>() as size_t,
@@ -1329,7 +1332,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
-                            files_0 = parse_file_seq(
+                            files_0 = parse_file_seq::<nameseq>(
                                 ctx,
                                 &raw mut p2,
                                 ::core::mem::size_of::<nameseq>() as size_t,
@@ -1625,7 +1628,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         also_make_targets = 1;
                                     }
                                     crate::expand::set_variable_buffer_byte(colon_off, 0);
-                                    filenames = parse_file_seq(
+                                    filenames = parse_file_seq::<nameseq>(
                                         ctx,
                                         &raw mut p2,
                                         ::core::mem::size_of::<NameSeq>() as size_t,
@@ -1765,7 +1768,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             }
                                             if !p.is_null() {
                                                 let target: *mut NameSeq;
-                                                target = parse_file_seq(
+                                                target = parse_file_seq::<nameseq>(
                                                     ctx,
                                                     &raw mut p2,
                                                     ::core::mem::size_of::<nameseq>() as size_t,
@@ -3388,19 +3391,19 @@ pub unsafe fn tilde_expand(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn parse_file_seq(
+pub unsafe fn parse_file_seq<T: SeqNode>(
     ctx: &crate::execctx::ExecContext,
     stringp: *mut *mut ::core::ffi::c_char,
     mut size: size_t,
     mut stopmap: i32,
     prefix: *const ::core::ffi::c_char,
     flags: i32,
-) -> *mut ::core::ffi::c_void {
+) -> *mut T {
     static mut tmpbuf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     let cachep: i32 = !(flags & 0x10_i32 != 0) as i32;
-    let mut new: *mut nameseq = ::core::ptr::null_mut::<nameseq>();
-    let mut newp: *mut *mut nameseq = &raw mut new;
+    let mut new: *mut T = ::core::ptr::null_mut::<T>();
+    let mut newp: *mut *mut T = &raw mut new;
     let mut p: *mut ::core::ffi::c_char;
     let mut gl: glob_t = glob_t {
         gl_pathc: 0,
@@ -3552,7 +3555,7 @@ pub unsafe fn parse_file_seq(
                 }
             }
             if flags & 0x4_i32 != 0 {
-                let mut _ns: *mut nameseq = xcalloc(size) as *mut nameseq;
+                let mut _ns: *mut T = T::alloc();
                 let mut __n: *const ::core::ffi::c_char = concat(2, prefix, tmpbuf);
                 let ns = _ns
                     .as_mut()
@@ -3617,8 +3620,8 @@ pub unsafe fn parse_file_seq(
                 i = 0;
                 while i < tot {
                     if !memname.is_null() {
-                        let mut found: *mut nameseq =
-                            ar_glob(ctx, *nlist.offset(i as isize), memname, size);
+                        let mut found: *mut T =
+                            ar_glob::<T>(ctx, *nlist.offset(i as isize), memname);
                         if found.is_null() {
                             let _ns_0: *mut T = T::alloc();
                             let __n_0: *const ::core::ffi::c_char = concat(&[
@@ -3646,7 +3649,7 @@ pub unsafe fn parse_file_seq(
                             if let Some(node) = newp.as_mut().and_then(|s| s.as_mut()) {
                                 node.next = found;
                             } else {
-                                *new_slot = found;
+                                *newp = found;
                             }
                             loop {
                                 if cachep == 0 {

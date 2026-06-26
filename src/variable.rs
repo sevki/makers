@@ -1,5 +1,5 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{file, Commands, Dep, File, VariableSet, VariableSetList};
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
 use c2rust_bitfields;

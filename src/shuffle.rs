@@ -1,4 +1,4 @@
-use crate::file::{Dep, File, GoalDep, NextLinked};
+use crate::file::{Dep, File};
 use std::sync::{Mutex, OnceLock};
 
 use crate::fatal;
@@ -99,15 +99,15 @@ fn identity_shuffle<T>(_: &mut [*mut T]) {}
 
 /// Walk the deps linked list, shuffle the order, and write the new order back
 /// via the `shuf` field on each node.
-unsafe fn shuffle_deps<T: ShuffleNode>(deps: *mut T) {
+unsafe fn shuffle_deps(deps: *mut Dep) {
     let mut ndeps: usize = 0;
     let mut d = deps;
     while !d.is_null() {
-        if T::wait_here(d) {
+        if (*d).wait_here {
             return;
         }
         ndeps += 1;
-        d = T::next(d);
+        d = (*d).next;
     }
     if ndeps == 0 {
         return;
@@ -118,7 +118,7 @@ unsafe fn shuffle_deps<T: ShuffleNode>(deps: *mut T) {
     d = deps;
     for _ in 0..ndeps {
         deps_order.push(d);
-        d = T::next(d);
+        d = (*d).next;
     }
 
     match config().mode {
@@ -130,8 +130,8 @@ unsafe fn shuffle_deps<T: ShuffleNode>(deps: *mut T) {
 
     d = deps;
     for dep in deps_order {
-        T::set_shuf(d, dep);
-        d = T::next(d);
+        (*d).shuf = dep;
+        d = (*d).next;
     }
 }
 
@@ -154,7 +154,7 @@ unsafe fn shuffle_file_deps_recursive(f: *mut File) {
 /// # Safety
 /// `deps` must be a valid (possibly null) head of a properly-linked `Dep`
 /// chain, and the chain's `File` pointers must be valid.
-pub unsafe fn shuffle_deps_recursive<T: ShuffleNode>(deps: *mut T) {
+pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
     let (mode, seed) = {
         let cfg = config();
         (cfg.mode, cfg.seed)
@@ -168,8 +168,8 @@ pub unsafe fn shuffle_deps_recursive<T: ShuffleNode>(deps: *mut T) {
     shuffle_deps(deps);
     let mut d = deps;
     while !d.is_null() {
-        shuffle_file_deps_recursive(T::file(d));
-        d = T::next(d);
+        shuffle_file_deps_recursive((*d).file);
+        d = (*d).next;
     }
 }
 

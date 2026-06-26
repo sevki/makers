@@ -792,6 +792,7 @@ pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"using default temporary directory '%s'".as_ptr(),
                 &[FmtArg::Str(tmpdir)],
             );
@@ -851,6 +852,7 @@ pub unsafe fn get_tmpfd(ctx: &crate::execctx::ExecContext, name: *mut *mut c_cha
         error(
             ctx,
             null::<Floc>(),
+            0,
             c"cannot create temporary file %s: %s".as_ptr(),
             &[
                 FmtArg::Str(tmpnm),
@@ -875,6 +877,7 @@ pub unsafe fn get_tmpfd(ctx: &crate::execctx::ExecContext, name: *mut *mut c_cha
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"cannot unlink temporary file %s: %s".as_ptr(),
                 &[
                     FmtArg::Str(tmpnm),
@@ -928,6 +931,7 @@ pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_c
         error(
             ctx,
             null::<Floc>(),
+            0,
             c"fdopen: temporary file %s: %s".as_ptr(),
             &[
                 FmtArg::Str(tmp_name_for_err),

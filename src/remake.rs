@@ -2,12 +2,13 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
-use crate::file::free_seq_chain;
+use crate::file::{free_dep_chain, free_seq_chain};
 use crate::file::{
-    cs_deps_running, cs_finished, cs_running, dep, file, update_status, us_none, us_success,
-    CommandState, Dep, File, GoalDep, UpdateStatus, VariableSet, VariableSetList,
+    cmd_state, cs_deps_running, cs_finished, cs_not_started, cs_running, dep, file, update_status,
+    us_failed, us_none, us_question, us_success, CommandState, Dep, File, GoalDep, UpdateStatus,
+    VariableSet, VariableSetList,
 };
-use crate::misc::{copy_goal_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::misc::{copy_dep_chain, copy_goal_chain, find_next_token, print_spaces, xmalloc, xrealloc};
 use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
@@ -133,6 +134,7 @@ pub unsafe fn check_also_make(ctx: &crate::execctx::ExecContext, file: *const fi
                     } else {
                         ::core::ptr::null_mut::<Floc>()
                     },
+                    0,
                     b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
                         as *const ::core::ffi::c_char,
                     &[FmtArg::Str(
@@ -201,8 +203,8 @@ pub unsafe fn update_goal_chain(
         let mut running: i32 = 0;
         let mut wait: i32 = 0;
         start_waiting_jobs(ctx);
-        reap_children(ctx, (last_cmd_count == command_count) as i32, 0);
-        last_cmd_count = command_count;
+        reap_children(ctx, (last_cmd_count == ctx.command_count.get()) as i32, 0);
+        last_cmd_count = ctx.command_count.get();
         lastgoal = ::core::ptr::null_mut::<GoalDep>();
         gu = goals;
         while let Some(gu_ref) = gu.as_ref() {
@@ -1191,7 +1193,7 @@ unsafe extern "C" fn update_file_1(
             puts(b".\0" as *const u8 as *const ::core::ffi::c_char);
             fflush(stdout);
         }
-        if !(*file).notintermediate && no_intermediates == 0 {
+        if (*file).notintermediate() == 0 && !ctx.no_intermediates.get() {
             (*file).secondary = true;
         }
         notice_finished_file(ctx, file);
@@ -1493,6 +1495,7 @@ unsafe extern "C" fn check_dep(
                     error(
                         ctx,
                         ::core::ptr::null_mut::<Floc>(),
+                        0,
                         b"circular %s <- %s dependency dropped\0" as *const u8
                             as *const ::core::ffi::c_char,
                         &[FmtArg::Str((*file).name), FmtArg::Str(dep_name)],

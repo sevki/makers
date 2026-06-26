@@ -512,9 +512,10 @@ pub unsafe fn install_pattern_rule(
     // Point past the '%' itself.
     *suffix_slot = suffix_slot.add(1);
     let mut ptr: *const ::core::ffi::c_char = spec.dep;
-    rr.deps = parse_file_seq(
+    rr.deps = parse_file_seq::<dep>(
         ctx,
         &raw mut ptr as *mut *mut ::core::ffi::c_char,
+        ::core::mem::size_of::<dep>() as size_t,
         MAP_NUL,
         ::core::ptr::null(),
         PARSEFS_NONE,

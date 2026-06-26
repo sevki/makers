@@ -8,8 +8,8 @@ pub use crate::ffi_types::{
     uintmax_t,
 };
 use crate::file::{
-    dep, file, CommandState, Dep, File, GoalDep, NameSeq, UpdateStatus, VariableSet,
-    VariableSetList,
+    cmd_state, cs_finished, dep, file, us_success, CommandState, Dep, File, GoalDep, NameSeq,
+    UpdateStatus, VariableSet, VariableSetList,
 };
 use crate::floc::Floc;
 use crate::load::unload_all;
@@ -301,7 +301,7 @@ use crate::misc::concat;
 pub use crate::output::output;
 use crate::output::{
     error, fatal, output_context, perror_with_name, pfatal_with_name, set_stdio_traced,
-    stdio_traced,
+    stdio_traced, FmtArg,
 };
 use crate::posixos::{
     check_io_state, jobserver_acquire_all, jobserver_clear, jobserver_enabled, jobserver_get_auth,
@@ -2759,7 +2759,7 @@ unsafe fn main_0(
             if skip == 0 {
                 let fresh48 = mm_idx;
                 mm_idx = mm_idx.wrapping_add(1);
-                let file_ref = d_0_ref
+                let file_ref = d0r
                     .file
                     .as_ref()
                     .expect("read makefile goal has a null file pointer");
@@ -3128,6 +3128,7 @@ unsafe fn main_0(
                     fatal(
                         &ctx,
                         ::core::ptr::null_mut::<Floc>(),
+                        0,
                         b"couldn't change back to original directory\0" as *const u8
                             as *const ::core::ffi::c_char,
                         &[],
@@ -3270,7 +3271,7 @@ unsafe fn main_0(
             let mut f_6: *mut file = lookup_file(p_6);
             if f_6.is_null() {
                 let ns: *mut NameSeq;
-                ns = parse_file_seq(
+                ns = parse_file_seq::<NameSeq>(
                     &ctx,
                     &raw mut p_6,
                     ::core::mem::size_of::<NameSeq>() as size_t,

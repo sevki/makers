@@ -585,7 +585,7 @@ pub unsafe fn string_glob(
     static mut length: size_t = 0;
     let mut chain: *mut NameSeq;
     let mut idx: size_t;
-    chain = parse_file_seq(
+    chain = parse_file_seq::<nameseq>(
         ctx,
         &raw mut line,
         ::core::mem::size_of::<nameseq>() as size_t,

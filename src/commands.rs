@@ -22,7 +22,7 @@ use crate::make_main::{
     default_file, one_shell, stopchar_map, temp_stdin_unlink,
 };
 use crate::misc::{make_pid, xmalloc, xrealloc, xstrdup, xstrndup};
-use crate::output::{error, fatal, perror_with_name, INTSTR_LENGTH};
+use crate::output::{error, fatal, perror_with_name, FmtArg, INTSTR_LENGTH};
 use crate::posixos::{jobserver_clear, osync_clear};
 use crate::remake::notice_finished_file;
 use crate::stdio::FILE;
@@ -469,6 +469,7 @@ pub unsafe fn chop_commands(ctx: &crate::execctx::ExecContext, cmds: *mut comman
                 fatal(
                     ctx,
                     &raw mut cmds.fileinfo,
+                    0,
                     c"recipe has too many lines (limit %hu)".as_ptr(),
                     nlines as i32,
                 );
@@ -673,6 +674,7 @@ unsafe fn delete_target(
                 error(
                     ctx,
                     null::<Floc>(),
+                    0,
                     c"*** [%s] archive member '%s' may be bogus; not deleted".as_ptr(),
                     &[FmtArg::Str(on_behalf_of), FmtArg::Str(file.name)],
                 );
@@ -680,6 +682,7 @@ unsafe fn delete_target(
                 error(
                     ctx,
                     null::<Floc>(),
+                    0,
                     c"*** archive member '%s' may be bogus; not deleted".as_ptr(),
                     &[FmtArg::Str(file.name)],
                 );
@@ -708,6 +711,7 @@ unsafe fn delete_target(
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"*** [%s] deleting file '%s'".as_ptr(),
                 &[FmtArg::Str(on_behalf_of), FmtArg::Str(file.name)],
             );
@@ -715,6 +719,7 @@ unsafe fn delete_target(
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"*** deleting file '%s'".as_ptr(),
                 &[FmtArg::Str(file.name)],
             );
