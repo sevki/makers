@@ -130,6 +130,38 @@ pub struct ExecContext {
     /// callback cannot carry the build context (C-ABI) and already runs against
     /// a throwaway default context, as it does for the `make[N]:` prefix.
     pub open_directories: ::core::cell::Cell<u32>,
+
+    /// `load_too_high`'s lazily-probed `/proc/loadavg` descriptor cache, the
+    /// former function-local `static mut proc_fd`. Only touched on the
+    /// build-phase context (job scheduling), so the startup context
+    /// re-initialization never discards an open fd.
+    pub load_proc_fd: LoadProcFd,
+    /// `load_too_high`'s last-reported `getloadavg` failure errno (the former
+    /// function-local `static mut lossage`), used to suppress repeating the
+    /// same "cannot enforce load limit" warning.
+    pub load_lossage: LoadLossage,
+}
+
+/// Wrapper giving [`ExecContext::load_proc_fd`] its `-2` ("not yet probed")
+/// initial value while `ExecContext` keeps deriving `Default`.
+#[derive(Debug, Clone)]
+pub struct LoadProcFd(pub ::core::cell::Cell<i32>);
+
+impl Default for LoadProcFd {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(-2))
+    }
+}
+
+/// Wrapper giving [`ExecContext::load_lossage`] its `-1` ("no failure reported
+/// yet") initial value while `ExecContext` keeps deriving `Default`.
+#[derive(Debug, Clone)]
+pub struct LoadLossage(pub ::core::cell::Cell<i32>);
+
+impl Default for LoadLossage {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(-1))
+    }
 }
 
 impl ExecContext {
@@ -172,6 +204,28 @@ mod tests {
         assert_eq!(ctx.load_prev_weight.get(), 0.0);
         // `..Self::default()` in `new` must not skip the cache fields.
         assert_eq!(ExecContext::default().load_sample_second.get(), 0);
+    }
+
+    /// `load_too_high`'s probe caches start at their non-zero sentinels
+    /// (`proc_fd = -2` "not yet probed", `lossage = -1` "no failure reported"),
+    /// matching the former function-local `static mut` initializers, and are
+    /// per-run mutable state. The custom `Default` impls must survive
+    /// `..Self::default()` in `new`.
+    #[test]
+    fn load_probe_caches_start_at_sentinels() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        assert_eq!(ctx.load_proc_fd.0.get(), -2);
+        assert_eq!(ctx.load_lossage.0.get(), -1);
+        assert_eq!(ExecContext::default().load_proc_fd.0.get(), -2);
+        assert_eq!(ExecContext::default().load_lossage.0.get(), -1);
+
+        // Per-run mutation is observable through the shared `&ExecContext`.
+        ctx.load_proc_fd.0.set(7);
+        ctx.load_lossage.0.set(0);
+        assert_eq!(ctx.load_proc_fd.0.get(), 7);
+        assert_eq!(ctx.load_lossage.0.get(), 0);
+        // A fresh context is back at the sentinels (per-run, not global).
+        assert_eq!(ExecContext::default().load_proc_fd.0.get(), -2);
     }
 
     /// The `.NOTINTERMEDIATE`/`.SECONDARY` latches start unset and are per-run

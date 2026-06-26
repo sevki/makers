@@ -999,6 +999,16 @@ fn load_average_default_oracle() {
 }
 
 #[test]
+fn load_limit_high_cap_never_throttles() {
+    // A parallel build with a load cap real system load never reaches drives
+    // `load_too_high`'s `/proc/loadavg` probe (the former function-local
+    // `static mut proc_fd`/`lossage`, now on `ExecContext`) without ever
+    // throttling, so output is byte-identical to the C oracle. The `b: a`
+    // dependency keeps stdout order-stable under `-j2`.
+    check("load_limit", "83_load_limit.mk", "all", &["-j2", "-l", "1000"]);
+}
+
+#[test]
 fn job_slots_oracle() {
     // `-j` resolves into `Options::job_slots` (the former `job_slots` global),
     // feeding the jobserver setup and the scheduler's slot checks. A strict
