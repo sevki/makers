@@ -263,7 +263,7 @@ pub unsafe fn set_file_variables(
     // `$|` every order-only dep.
     let mut plus_len: size_t = 0;
     let mut bar_len: size_t = 0;
-    let d = file.deps;
+    let mut d = file.deps;
     while !d.is_null() {
         if dep_uses_auto_vars(&*d) {
             let len = strlen(dep_name(d)) + 1;
@@ -273,6 +273,7 @@ pub unsafe fn set_file_variables(
                 plus_len += len;
             }
         }
+        d = (*d).next;
     }
     if bar_len == 0 {
         bar_len = 1;
@@ -289,7 +290,7 @@ pub unsafe fn set_file_variables(
     // Fill `$+`, remembering how much of it can possibly appear in `$?`.
     let mut cp = plus_value;
     let mut qmark_len = plus_len + 1;
-    let d = file.deps;
+    let mut d = file.deps;
     while !d.is_null() {
         if (*d).ignore_mtime() == 0 && dep_uses_auto_vars(&*d) {
             let (c, len) = autovar_dep_name(ctx, dep_name(d));
@@ -300,6 +301,7 @@ pub unsafe fn set_file_variables(
                 qmark_len -= len + 1;
             }
         }
+        d = (*d).next;
     }
     // Bridge the pointer-walked write cursor back to a bounded slice: `len` is
     // the address span the loop filled, and the buffer always holds one more
@@ -331,7 +333,7 @@ pub unsafe fn set_file_variables(
         Some(dep_hash_cmp),
     );
 
-    let d = file.deps;
+    let mut d = file.deps;
     while !d.is_null() {
         if dep_uses_auto_vars(&*d) {
             let slot = hash_find_slot(&raw mut dep_hash, d as *const c_void)
@@ -355,13 +357,14 @@ pub unsafe fn set_file_variables(
                 }
             }
         }
+        d = (*d).next;
     }
 
     let caret_value = plus_value;
     let mut cp = caret_value;
     let mut qp = qmark_value;
     let mut bp = bar_value;
-    let d = file.deps;
+    let mut d = file.deps;
     while !d.is_null() {
         // Take only each name's canonical (first-inserted) dep node.
         if dep_uses_auto_vars(&*d)
@@ -383,6 +386,7 @@ pub unsafe fn set_file_variables(
                 }
             }
         }
+        d = (*d).next;
     }
     hash_free(&raw mut dep_hash, 0);
 
