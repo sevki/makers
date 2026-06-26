@@ -1,0 +1,92 @@
+name: PR comments resolved
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  unresolved-review-threads:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if PR has unresolved review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PR_NUMBER}" ] || [ "${{ github.event.issue.pull_request != null || github.event.pull_request != null }}" != "true" ]; then
+            echo "Not a PR event"
+            exit 0
+          fi
+
+          query='
+          query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+            repository(owner: $owner, name: $repo) {
+              pullRequest(number: $number) {
+                reviewThreads(first: 100, after: $cursor) {
+                  pageInfo {
+                    hasNextPage
+                    endCursor
+                  }
+                  nodes {
+                    isResolved
+                    path
+                    line
+                    comments(first: 1) {
+                      nodes {
+                        author { login }
+                        bodyText
+                        url
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }'
+
+          unresolved=0
+          cursor=null
+
+          while :; do
+            result="$(gh api graphql \
+              -f query="$query" \
+              -f owner="$OWNER" \
+              -f repo="$REPO" \
+              -F number="$PR_NUMBER" \
+              -f cursor="$cursor")"
+
+            echo "$result" | jq -r '
+              .data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved == false)
+              | "- \(.path):\(.line // "?") — @\(.comments.nodes[0].author.login): \(.comments.nodes[0].url)"
+            '
+
+            count="$(echo "$result" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')"
+            unresolved=$((unresolved + count))
+
+            has_next="$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')"
+            cursor="$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')"
+
+            [ "$has_next" = "true" ] || break
+          done
+
+          if [ "$unresolved" -gt 0 ]; then
+            echo "::error::$unresolved unresolved PR review thread(s)"
+            exit 1
+          fi
+
+          echo "All PR review threads are resolved."
