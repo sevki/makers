@@ -680,17 +680,26 @@ pub unsafe fn spin(type_0: *const c_char) {
 ///
 /// # Safety
 /// `msg` must be null or a valid NUL-terminated string.
+/// Coalesce a possibly-null debug string to a printable `(null)` sentinel.
+fn or_null_sentinel(msg: *const c_char) -> *const c_char {
+    if msg.is_null() {
+        c"(null)".as_ptr()
+    } else {
+        msg
+    }
+}
+
 pub unsafe fn dbg(msg: *const c_char) {
     let fp: *mut FILE = fopen(c"/tmp/gmkdebug.log".as_ptr(), c"a+".as_ptr());
     if fp.is_null() {
         return;
     }
-    let msg = if msg.is_null() {
-        c"(null)".as_ptr()
-    } else {
-        msg
-    };
-    fprintf(fp, c"%u: %s\n".as_ptr(), make_pid() as c_uint, msg);
+    fprintf(
+        fp,
+        c"%u: %s\n".as_ptr(),
+        make_pid() as c_uint,
+        or_null_sentinel(msg),
+    );
     fflush(fp);
     fclose(fp);
 }
@@ -740,25 +749,29 @@ unsafe fn eval_tmpdir_var(
     let r = stat_retrying_eintr(val, &mut st);
     if r < 0 {
         error(
-        ctx,
-        null::<Floc>(),
-        var.count_bytes() + strlen(val) + strlen(strerror(*__errno_location())),
-        c"%s value %s: %s".as_ptr(),
-        &[FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
-            FmtArg::Str((val) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+            ctx,
+            null::<Floc>(),
+            var.count_bytes() + strlen(val) + strlen(strerror(*__errno_location())),
+            c"%s value %s: %s".as_ptr(),
+            &[
+                FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
+                FmtArg::Str((val) as *const ::core::ffi::c_char),
+                FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+            ],
+        );
         return TmpdirCandidate::Invalid;
     }
     if st.st_mode & S_IFMT != S_IFDIR {
         error(
-        ctx,
-        null::<Floc>(),
-        var.count_bytes() + strlen(val),
-        c"%s value %s: not a directory".as_ptr(),
-        &[FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
-            FmtArg::Str((val) as *const ::core::ffi::c_char)],
-    );
+            ctx,
+            null::<Floc>(),
+            var.count_bytes() + strlen(val),
+            c"%s value %s: not a directory".as_ptr(),
+            &[
+                FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
+                FmtArg::Str((val) as *const ::core::ffi::c_char),
+            ],
+        );
         return TmpdirCandidate::Invalid;
     }
     TmpdirCandidate::Usable(val)
@@ -973,7 +986,11 @@ mod tmpfile_tests {
             assert_eq!(&buf[..data.len()], data);
 
             libc::fclose(fp.cast());
-            assert_eq!(libc::unlink(name), 0, "temp file should still exist to unlink");
+            assert_eq!(
+                libc::unlink(name),
+                0,
+                "temp file should still exist to unlink"
+            );
             libc::free(name.cast());
         }
     }
@@ -1005,7 +1022,10 @@ mod tmpfile_tests {
             log.contains("dbg_unit_probe_marker"),
             "dbg did not write the marker line"
         );
-        assert!(log.contains("(null)"), "dbg did not write the null-message line");
+        assert!(
+            log.contains("(null)"),
+            "dbg did not write the null-message line"
+        );
     }
 }
 
