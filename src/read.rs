@@ -3474,7 +3474,7 @@ pub unsafe fn parse_file_seq<T: SeqNode>(
                     T::mark_wait(_ns);
                     found_wait = 0;
                 }
-                *newp = _ns;
+                *newp.as_mut().expect("parse_file_seq: null output slot") = _ns;
                 newp = T::next_slot(_ns);
             } else {
                 name = tmpbuf;
@@ -3548,13 +3548,17 @@ pub unsafe fn parse_file_seq<T: SeqNode>(
                                 T::mark_wait(_ns_0);
                                 found_wait = 0;
                             }
-                            *newp = _ns_0;
+                            *newp.as_mut().expect("parse_file_seq: null output slot") = _ns_0;
                             newp = T::next_slot(_ns_0);
                         } else {
-                            if !(*newp).is_null() {
-                                T::set_next(*newp, found);
+                            if !newp
+                                .as_ref()
+                                .expect("parse_file_seq: null output slot")
+                                .is_null()
+                            {
+                                T::set_next(*newp.as_ref().expect("parse_file_seq: null output slot"), found);
                             } else {
-                                *newp = found;
+                                *newp.as_mut().expect("parse_file_seq: null output slot") = found;
                             }
                             loop {
                                 if cachep == 0 {
@@ -3585,7 +3589,7 @@ pub unsafe fn parse_file_seq<T: SeqNode>(
                             T::mark_wait(_ns_1);
                             found_wait = 0;
                         }
-                        *newp = _ns_1;
+                        *newp.as_mut().expect("parse_file_seq: null output slot") = _ns_1;
                         newp = T::next_slot(_ns_1);
                     }
                     i += 1;
