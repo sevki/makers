@@ -116,19 +116,17 @@ pub const DIRECTORY_BUCKETS: i32 = 199;
 pub const DIRFILE_BUCKETS: i32 = 107;
 
 /// Forget everything cached about `dc`, closing its stream if open.
-unsafe fn clear_directory_contents(
-    ctx: &crate::execctx::ExecContext,
-    dc: *mut directory_contents,
-) {
-    let dc = dc.as_mut().expect("clear_directory_contents: null entry");
+fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut directory_contents) {
     dc.counter = 0;
     if !dc.dirstream.is_null() {
         ctx.open_directories.set(ctx.open_directories.get() - 1);
-        closedir(dc.dirstream);
+        // SAFETY: `dirstream` is non-null here and was returned by `opendir`.
+        unsafe { closedir(dc.dirstream) };
         dc.dirstream = null_mut();
     }
     if !dc.dirfiles.ht_vec.is_null() {
-        hash_free(&raw mut dc.dirfiles, 1);
+        // SAFETY: `dirfiles` is an initialized hash table owned by `dc`.
+        unsafe { hash_free(&raw mut dc.dirfiles, 1) };
     }
 }
 
@@ -280,8 +278,8 @@ pub unsafe fn find_directory(
             );
             fflush(stdout);
         }
-        if !dir_ref.contents.is_null() {
-            clear_directory_contents(ctx, dir_ref.contents);
+        if let Some(contents) = dir_ref.contents.as_mut() {
+            clear_directory_contents(ctx, contents);
         }
     } else {
         let len = strlen(name);
