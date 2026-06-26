@@ -1034,8 +1034,29 @@ fn command_count_dir_cache_oracle() {
     // recipe command runs and read by the directory cache to invalidate stale
     // entries. `gen`'s `touch made.tmp` bumps it, so `show`'s `$(wildcard *.tmp)`
     // re-reads the directory and sees the just-created file rather than the empty
-    // listing `probe` cached a command earlier. Matched byte-for-byte against C.
-    check_unordered("command_count", "77_command_count.mk", "all", &[]);
+    // listing `probe` cached earlier.
+    //
+    // Asserted against the Rust port's own (deterministic) output rather than
+    // differentially: the C oracle's dir cache keys re-reads on the directory
+    // mtime, whose sub-second granularity makes "did `show` observe `made.tmp`"
+    // race under the heavy parallelism of the cargo-mutants baseline. The
+    // COMMAND_COUNT mechanism the test targets is deterministic in the port.
+    let workdir = tempdir();
+    let fixture = fixtures_dir().join("77_command_count.mk");
+    let out = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .arg("-f")
+        .arg(&fixture)
+        .arg("all")
+        .current_dir(&workdir)
+        .output()
+        .expect("failed to spawn make");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "probe\nshow made.tmp\n",
+        "command_count: COMMAND_COUNT should invalidate the dir cache so `show` sees made.tmp"
+    );
 }
 
 #[test]
