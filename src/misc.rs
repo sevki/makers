@@ -1444,3 +1444,28 @@ mod eval_tmpdir_var_tests {
         std::env::remove_var("MAKE_PROBE_TMPDIR_DIR");
     }
 }
+
+#[cfg(test)]
+mod concat_tests {
+    use super::concat;
+    use ::core::ptr::null;
+
+    #[test]
+    fn skips_null_and_empty_and_grows() {
+        // Exercises concat's null-arg, empty-arg (l==0 continue), and the
+        // realloc growth path, plus the trailing-terminator top-up.
+        unsafe {
+            let hello = c"hello".as_ptr();
+            let empty = c"".as_ptr();
+            // A long arg forces growth past the initial 60-byte reservation.
+            let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234".as_ptr();
+            let long_len = ::core::ffi::CStr::from_ptr(long).to_bytes().len();
+            assert!(long_len > 60, "long arg must force the growth path");
+            let out = concat(&[hello, null(), empty, long]);
+            let bytes = ::core::ffi::CStr::from_ptr(out).to_bytes();
+            assert!(bytes.starts_with(b"hello"));
+            // null/empty args contribute nothing; total is "hello" + the long arg.
+            assert_eq!(bytes.len(), 5 + long_len);
+        }
+    }
+}

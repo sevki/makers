@@ -1,9 +1,8 @@
-# `$(wildcard)` drives dir_contents_file_exists_p. The makefile's own path
-# (from MAKEFILE_LIST) is scanned out of its directory (found case); a bogus
-# sibling name exercises the not-found case. Output is deterministic (basename
-# only) and compared against the C oracle.
-MK := $(firstword $(MAKEFILE_LIST))
-DIR := $(dir $(MK))
-FOUND := $(notdir $(wildcard $(MK)))
-MISS := $(wildcard $(DIR)no_such_sibling_zzz.mk)
-all: ; @echo found=$(FOUND) miss=$(MISS)
+# `$(wildcard)` drives dir_contents_file_exists_p's directory scan. Two files
+# are created at parse time (before any wildcard), so both make binaries scan
+# the same populated cwd and the glob match path runs deterministically. The
+# count (not the names) is compared, so it is order- and load-independent.
+$(shell : >a1.tmp; : >a2.tmp)
+COUNT := $(words $(wildcard *.tmp))
+MISS := $(wildcard no_such_sibling_zzz.tmp)
+all: ; @echo count=$(COUNT) miss=$(MISS)
