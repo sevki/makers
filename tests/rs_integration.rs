@@ -1041,14 +1041,25 @@ fn command_count_dir_cache_oracle() {
     // mtime, whose sub-second granularity makes "did `show` observe `made.tmp`"
     // race under the heavy parallelism of the cargo-mutants baseline. The
     // COMMAND_COUNT mechanism the test targets is deterministic in the port.
+    //
+    // The mechanism is only deterministic for a *serial* build: with a jobserver
+    // the three prerequisites of `all` run concurrently, so `show` can sample the
+    // directory before `gen`'s `touch` lands. The cargo-mutants baseline runs the
+    // suite under a parent jobserver, which leaks in via `MAKEFLAGS`/`MFLAGS`, so
+    // scrub those (and the recursion vars) and force `-j1` to pin serial order.
     let workdir = tempdir();
     let fixture = fixtures_dir().join("77_command_count.mk");
     let out = Command::new(RUST_MAKE)
         .arg("--no-print-directory")
+        .arg("-j1")
         .arg("-f")
         .arg(&fixture)
         .arg("all")
         .current_dir(&workdir)
+        .env_remove("MAKEFLAGS")
+        .env_remove("MFLAGS")
+        .env_remove("GNUMAKEFLAGS")
+        .env_remove("MAKELEVEL")
         .output()
         .expect("failed to spawn make");
     assert_eq!(out.status.code(), Some(0));
