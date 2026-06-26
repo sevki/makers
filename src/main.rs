@@ -1487,7 +1487,7 @@ unsafe fn expand_command_line_file(
     let cp: *const ::core::ffi::c_char;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0_i32 as isize) as i32 == 0 {
-        fatal(ctx, ::core::ptr::null_mut::<Floc>(), 0, 0, b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char);
+        fatal(ctx, ::core::ptr::null_mut::<Floc>(), 0, b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     }
     if *name.offset(0_i32 as isize) as i32 == '~' as i32 {
         expanded = tilde_expand(ctx, name);
@@ -2204,8 +2204,8 @@ unsafe fn main_0(
             if jobserver_parse_auth(&ctx, auth_c.as_ptr()) != 0 {
                 do_reset = false;
             } else {
-                error(&ctx, ::core::ptr::null_mut::<Floc>(), 0, 0, b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
-                        as *const u8 as *const ::core::ffi::c_char);
+                error(&ctx, ::core::ptr::null_mut::<Floc>(), 0, b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
+                        as *const u8 as *const ::core::ffi::c_char, &[]);
                 options.arg_job_slots.set(Some(1));
             }
         } else if restarts == 0 && argv_slots != Some(1) {
@@ -3298,7 +3298,7 @@ unsafe fn main_0(
             && !(*v_2).value.is_null()
             && *(*v_2).value.offset(0_i32 as isize) as i32 != 0
         {
-            fatal(&ctx, ::core::ptr::null_mut::<Floc>(), 0, 0, b"No targets\0" as *const u8 as *const ::core::ffi::c_char);
+            fatal(&ctx, ::core::ptr::null_mut::<Floc>(), 0, b"No targets\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         fatal(
             &ctx,
@@ -3739,8 +3739,8 @@ unsafe fn decode_switches(
                                                 ::core::ffi::CStr::from_ptr(coptarg).to_owned()
                                             } else if (*cs).c == TEMP_STDIN_OPT {
                                                 if options.stdin_offset.get() > 0 {
-                                                    fatal(ctx, NILF, 0, 0, b"INTERNAL: multiple --temp-stdin options provided!\0"
-                                                                    as *const u8 as *const ::core::ffi::c_char);
+                                                    fatal(ctx, NILF, 0, b"INTERNAL: multiple --temp-stdin options provided!\0"
+                                                                    as *const u8 as *const ::core::ffi::c_char, &[]);
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
                                                 let cached = strcache_add(coptarg);

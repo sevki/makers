@@ -18,7 +18,6 @@ use libc::{
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 extern "C" {
-    pub type __spawn_action;
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
@@ -832,13 +831,11 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             (*c).file
                 .as_mut()
                 .expect("a child always has a file")
-                .set_update_status(
-                    (if child_failed == MAKE_FAILURE {
-                        us_failed as i32
-                    } else {
-                        us_question as i32
-                    }),
-                );
+                .set_update_status(if child_failed == MAKE_FAILURE {
+                    us_failed
+                } else {
+                    us_question
+                });
             if DELETE_ON_ERROR.load(Ordering::Relaxed) == -1_i32 {
                 let f: *mut file =
                     lookup_file(b".DELETE_ON_ERROR\0" as *const u8 as *const ::core::ffi::c_char);
