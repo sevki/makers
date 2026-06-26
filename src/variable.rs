@@ -1548,12 +1548,7 @@ pub unsafe fn target_environment(
                 }
                 let fresh10 = result;
                 result = result.offset(1_i32 as isize);
-                *fresh10 = xstrdup(concat(
-                    3,
-                    (*v_0).name,
-                    b"=\0" as *const u8 as *const ::core::ffi::c_char,
-                    value,
-                ));
+                *fresh10 = xstrdup(concat(&[(*v_0).name, b"=\0" as *const u8 as *const ::core::ffi::c_char, value]));
                 free(cp as *mut ::core::ffi::c_void);
             }
         }
@@ -1562,12 +1557,7 @@ pub unsafe fn target_environment(
     if added_shell == 0 {
         let fresh11 = result;
         result = result.offset(1_i32 as isize);
-        *fresh11 = xstrdup(concat(
-            3,
-            shell_var.name,
-            b"=\0" as *const u8 as *const ::core::ffi::c_char,
-            shell_var.value,
-        ));
+        *fresh11 = xstrdup(concat(&[shell_var.name, b"=\0" as *const u8 as *const ::core::ffi::c_char, shell_var.value]));
     }
     if found_makelevel == 0 {
         let mut val_0: [::core::ffi::c_char; 33] = [0; 33];

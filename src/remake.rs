@@ -203,8 +203,12 @@ pub unsafe fn update_goal_chain(
         let mut running: i32 = 0;
         let mut wait: i32 = 0;
         start_waiting_jobs(ctx);
-        reap_children(ctx, (last_cmd_count == ctx.command_count.get()) as i32, 0);
-        last_cmd_count = ctx.command_count.get();
+        reap_children(
+            ctx,
+            (last_cmd_count == crate::make_main::opt_command_count()) as i32,
+            0,
+        );
+        last_cmd_count = crate::make_main::opt_command_count();
         lastgoal = ::core::ptr::null_mut::<GoalDep>();
         gu = goals;
         while let Some(gu_ref) = gu.as_ref() {
@@ -381,7 +385,7 @@ pub unsafe fn update_goal_chain(
         crate::make_main::set_question_mirror(q);
         crate::make_main::set_just_print_mirror(n);
     }
-    status as UpdateStatus
+    status
 }
 /// # Safety
 ///
@@ -583,7 +587,7 @@ unsafe extern "C" fn update_file_1(
             if (*file).no_diag() as i32 != 0 && (*file).dontcare() == 0 {
                 complain(ctx, file);
             }
-            return (*file).update_status as UpdateStatus;
+            return (*file).update_status;
         }
         if 0x2_i32 & db_level != 0 {
             print_spaces(depth);
@@ -617,7 +621,7 @@ unsafe extern "C" fn update_file_1(
                 );
                 fflush(stdout);
             }
-            return (*file).update_status as UpdateStatus;
+            return (*file).update_status;
         }
         _ => {
             abort();
@@ -1259,7 +1263,7 @@ unsafe extern "C" fn update_file_1(
         1 | _ => {}
     }
     (*file).updated = true;
-    (*file).update_status as UpdateStatus
+    (*file).update_status
 }
 /// # Safety
 ///

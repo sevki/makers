@@ -144,37 +144,7 @@ use crate::variable::{
 };
 use crate::vpath::construct_vpath_list;
 use ::core::ffi::CStr;
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct goaldep {
-    pub next: *mut goaldep,
-    pub name: *const ::core::ffi::c_char,
-    pub file: *mut file,
-    pub shuf: *mut goaldep,
-    pub stem: *const ::core::ffi::c_char,
-    #[bitfield(name = "flags", ty = "::core::ffi::c_uint", bits = "0..=7")]
-    #[bitfield(name = "changed", ty = "::core::ffi::c_uint", bits = "8..=8")]
-    #[bitfield(name = "ignore_mtime", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "staticpattern", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(
-        name = "need_2nd_expansion",
-        ty = "::core::ffi::c_uint",
-        bits = "11..=11"
-    )]
-    #[bitfield(
-        name = "ignore_automatic_vars",
-        ty = "::core::ffi::c_uint",
-        bits = "12..=12"
-    )]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "wait_here", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    pub flags_changed_ignore_mtime_staticpattern_need_2nd_expansion_ignore_automatic_vars_is_explicit_wait_here:
-        [u8; 2],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 2],
-    pub error: i32,
-    pub floc: Floc,
-}
+pub type goaldep = crate::file::GoalDep;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ebuffer {
@@ -1344,8 +1314,6 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 let r: i32;
                                 let mut file: file = {
                                     let mut init = File {
-                                        update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix: [0; 4],
-                                        c2rust_padding: [0; 4],
                                         name: ::core::ptr::null::<::core::ffi::c_char>(),
                                         hname: ::core::ptr::null::<::core::ffi::c_char>(),
                                         vpath: ::core::ptr::null::<::core::ffi::c_char>(),
@@ -1364,8 +1332,9 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         mtime_before_update: 0,
                                         considered: 0,
                                         command_flags: 0,
+                                        ..Default::default()
                                     };
-                                    init.UpdateStatus = UpdateStatus :: Success;
+                                    init.update_status = UpdateStatus::Success;
                                     init.command_state = CommandState :: NotStarted;
                                     init.builtin = false;
                                     init.precious = false;
@@ -3294,7 +3263,7 @@ pub unsafe fn tilde_expand(
         }
         if !home_dir.is_null() {
             let new: *mut ::core::ffi::c_char =
-                xstrdup(concat(2, home_dir, name.offset(1_i32 as isize)));
+                xstrdup(concat(&[home_dir, name.offset(1_i32 as isize)]));
             if is_variable != 0 {
                 free(home_dir as *mut ::core::ffi::c_void);
             }
@@ -3320,12 +3289,7 @@ pub unsafe fn tilde_expand(
                 // `~user/suffix` — home + the `/suffix` tail (the byte at `i` is
                 // the `/`, so the tail after it starts at `1 + i + 1`).
                 Some(i) => {
-                    return xstrdup(concat(
-                        3,
-                        (*pwent).pw_dir,
-                        b"/\0" as *const u8 as *const ::core::ffi::c_char,
-                        name.add(1 + i + 1),
-                    ));
+                    return xstrdup(concat(&[(*pwent).pw_dir, b"/\0" as *const u8 as *const ::core::ffi::c_char, name.add(1 + i + 1)]));
                 }
             }
         }
@@ -3501,7 +3465,7 @@ pub unsafe fn parse_file_seq<T: SeqNode>(
             }
             if flags & 0x4_i32 != 0 {
                 let mut _ns: *mut T = T::alloc();
-                let mut __n: *const ::core::ffi::c_char = concat(2, prefix, tmpbuf);
+                let mut __n: *const ::core::ffi::c_char = concat(&[prefix, tmpbuf]);
                 let ns = _ns
                     .as_mut()
                     .expect("parse_file_seq: xcalloc returned null nameseq");
