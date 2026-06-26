@@ -19,6 +19,7 @@ use crate::strcache::strcache_add_len;
 
 use ::core::ffi::{c_char, c_long, c_short, c_uchar, c_uint, c_ulong, c_ushort, c_void};
 use ::core::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use libc::{
     __errno_location, closedir, free, memcpy, opendir, printf, puts, readdir, strcmp, strerror,
@@ -115,14 +116,22 @@ pub const MAX_OPEN_DIRECTORIES: i32 = 10;
 pub const DIRECTORY_BUCKETS: i32 = 199;
 pub const DIRFILE_BUCKETS: i32 = 107;
 
-static mut open_directories: c_uint = 0;
+/// Count of `DIR*` streams the directory cache currently holds open, capped
+/// at `MAX_OPEN_DIRECTORIES`. Single-threaded; `Relaxed` preserves the
+/// original `static mut` access order.
+static OPEN_DIRECTORIES: AtomicU32 = AtomicU32::new(0);
+
+/// Number of directory streams currently held open by the cache.
+fn open_directories() -> u32 {
+    OPEN_DIRECTORIES.load(Ordering::Relaxed)
+}
 
 /// Forget everything cached about `dc`, closing its stream if open.
 unsafe fn clear_directory_contents(dc: *mut directory_contents) {
     let dc = dc.as_mut().expect("clear_directory_contents: null entry");
     dc.counter = 0;
     if !dc.dirstream.is_null() {
-        open_directories -= 1;
+        OPEN_DIRECTORIES.fetch_sub(1, Ordering::Relaxed);
         closedir(dc.dirstream);
         dc.dirstream = null_mut();
     }
@@ -360,8 +369,8 @@ pub unsafe fn find_directory(
                 Some(dirfile_hash_2),
                 Some(dirfile_hash_cmp),
             );
-            open_directories += 1;
-            if open_directories == MAX_OPEN_DIRECTORIES as c_uint {
+            OPEN_DIRECTORIES.fetch_add(1, Ordering::Relaxed);
+            if open_directories() == MAX_OPEN_DIRECTORIES as u32 {
                 // Too many streams open: read this one to completion now.
                 dir_contents_file_exists_p(ctx, dir, null());
             }
@@ -469,7 +478,7 @@ unsafe fn dir_contents_file_exists_p(
 
     // Reached the end of the directory: the stream is exhausted.
     if d.is_null() {
-        open_directories -= 1;
+        OPEN_DIRECTORIES.fetch_sub(1, Ordering::Relaxed);
         closedir(dc.dirstream);
         dc.dirstream = null_mut();
     }
@@ -854,5 +863,30 @@ mod split_dir_tests {
     fn absolute_nested_keeps_leading_slash_in_dirname() {
         // "/usr/bin": final slash at index 4, dirname "/usr", base offset 5.
         assert_eq!(split_dir_parts(b"/usr/bin"), Some((b"/usr\0".to_vec(), 5)));
+    }
+}
+
+#[cfg(test)]
+mod open_directories_tests {
+    use super::{open_directories, OPEN_DIRECTORIES};
+    use std::sync::atomic::Ordering;
+
+    /// The `open_directories()` accessor reflects the underlying atomic, and
+    /// `fetch_add`/`fetch_sub` track stream open/close exactly as the original
+    /// `static mut open_directories += 1 / -= 1` did. Restores the counter so
+    /// the shared cache state is untouched for other tests.
+    #[test]
+    fn accessor_tracks_add_and_sub() {
+        let saved = OPEN_DIRECTORIES.load(Ordering::Relaxed);
+        OPEN_DIRECTORIES.store(0, Ordering::Relaxed);
+
+        assert_eq!(open_directories(), 0);
+        OPEN_DIRECTORIES.fetch_add(1, Ordering::Relaxed);
+        OPEN_DIRECTORIES.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(open_directories(), 2);
+        OPEN_DIRECTORIES.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(open_directories(), 1);
+
+        OPEN_DIRECTORIES.store(saved, Ordering::Relaxed);
     }
 }

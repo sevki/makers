@@ -1112,6 +1112,14 @@ fn wildcard_dir_scan() {
     check("wildcard-probe", "81_wildcard_probe.mk", "all", &[]);
 }
 
+#[test]
+fn wildcard_multi_dir_scan() {
+    // `$(wildcard)` across several sibling subdirectories opens and closes a
+    // `DIR*` stream per directory, exercising the open_directories counter's
+    // increment/decrement. Match count is byte-identical to the C oracle.
+    check("wildcard-dirs", "82_wildcard_dirs.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With
