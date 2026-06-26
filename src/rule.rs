@@ -48,7 +48,7 @@ use crate::dir::dir_file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{expand_extra_prereqs, lookup_file};
 use crate::make_main::{posix_pedantic, second_expansion};
-use crate::output::fatal;
+use crate::output::{fatal, FmtArg};
 use crate::read::{find_percent_cached, parse_file_seq};
 use crate::variable::lookup_variable;
 pub const MAP_NUL: i32 = 0x1;

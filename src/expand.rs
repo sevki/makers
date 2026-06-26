@@ -236,12 +236,12 @@ pub unsafe fn recursively_expand_for_file(
     if (*v).expanding() != 0 {
         if (*v).exp_count() == 0 {
             fatal(
-                ctx,
-                *expanding_var,
-                strlen((*v).name),
-                c"recursive variable '%s' references itself (eventually)".as_ptr(),
-                (*v).name,
-            );
+        ctx,
+        *expanding_var,
+        strlen((*v).name),
+        c"recursive variable '%s' references itself (eventually)".as_ptr(),
+        &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
+    );
         }
         (*v).set_exp_count((*v).exp_count() - 1);
     }

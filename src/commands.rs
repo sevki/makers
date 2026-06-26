@@ -467,12 +467,12 @@ pub unsafe fn chop_commands(ctx: &crate::execctx::ExecContext, cmds: *mut comman
 
             if nlines as i32 == c_ushort::MAX as i32 {
                 fatal(
-                    ctx,
-                    &raw mut cmds.fileinfo,
-                    0,
-                    c"recipe has too many lines (limit %hu)".as_ptr(),
-                    nlines as i32,
-                );
+        ctx,
+        &raw mut cmds.fileinfo,
+        0,
+        c"recipe has too many lines (limit %hu)".as_ptr(),
+        &[FmtArg::Uint((nlines as i32) as u16 as u64)],
+    );
             }
             if nlines as size_t == max {
                 max += 2;
@@ -548,7 +548,7 @@ pub unsafe fn execute_file_commands(ctx: &crate::execctx::ExecContext, file: *mu
     }
     if *p == 0 {
         set_command_state(file, cs_running);
-        (*file).set_update_status(us_success as update_status);
+        (*file).set_update_status(us_success);
         notice_finished_file(ctx, file);
         return;
     }

@@ -746,8 +746,23 @@ impl Dep {
         self.wait_here as ::core::ffi::c_uint
     }
 
-    pub fn set_wait_here(&mut self, value: ::core::ffi::c_uint) {
-        self.wait_here = value != 0;
+    pub fn is_explicit(&self) -> ::core::ffi::c_uint {
+        self.is_explicit as ::core::ffi::c_uint
+    }
+    pub fn set_is_explicit(&mut self, value: ::core::ffi::c_uint) {
+        self.is_explicit = value != 0;
+    }
+    pub fn staticpattern(&self) -> ::core::ffi::c_uint {
+        self.staticpattern as ::core::ffi::c_uint
+    }
+    pub fn set_staticpattern(&mut self, value: ::core::ffi::c_uint) {
+        self.staticpattern = value != 0;
+    }
+    pub fn flags(&self) -> ::core::ffi::c_uint {
+        self.flags
+    }
+    pub fn set_flags(&mut self, value: ::core::ffi::c_uint) {
+        self.flags = value;
     }
 }
 
@@ -834,7 +849,7 @@ impl File {
             hname: name,
             ..Self::default()
         };
-        file.set_update_status(us_none as update_status);
+        file.set_update_status(us_none);
         file
     }
 }
@@ -1116,13 +1131,13 @@ pub unsafe fn rehash_file(
     );
             } else {
                 error(
-                    ctx,
-                    from_floc,
-                    l,
-                    b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
+        ctx,
+        from_floc,
+        l,
+        b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    fr2.name,
-                );
+        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char)],
+    );
             }
             error(
         ctx,
@@ -1798,13 +1813,13 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             while let Some(f2r) = f2.as_mut() {
                 if f2r.notintermediate() != 0 {
                     fatal(
-                        ctx,
-                        ::core::ptr::null_mut::<Floc>(),
-                        strlen(f2r.name) as size_t,
-                        b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        strlen(f2r.name) as size_t,
+        b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        f2r.name,
-                    );
+        &[FmtArg::Str((f2r.name) as *const ::core::ffi::c_char)],
+    );
                 } else {
                     f2r.set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 }
@@ -1824,13 +1839,13 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
                 while let Some(f2r) = f2.as_mut() {
                     if f2r.notintermediate() != 0 {
                         fatal(
-                            ctx,
-                            ::core::ptr::null_mut::<Floc>(),
-                            strlen(f2r.name) as size_t,
-                            b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        strlen(f2r.name) as size_t,
+        b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            f2r.name,
-                        );
+        &[FmtArg::Str((f2r.name) as *const ::core::ffi::c_char)],
+    );
                     } else {
                         let rhs = {
                             f2r.set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);

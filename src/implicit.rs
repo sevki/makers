@@ -89,7 +89,7 @@ fn streq(a: &::core::ffi::CStr, b: &::core::ffi::CStr) -> bool {
 
 /// A prerequisite discovered while trying a pattern rule, together with the
 /// intermediate file that would build it (if any).
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct patdeps {
     pub name: *const ::core::ffi::c_char,
@@ -99,6 +99,17 @@ pub struct patdeps {
     pub ignore_automatic_vars: bool,
     pub is_explicit: bool,
     pub wait_here: bool,
+}
+
+impl patdeps {
+    pub fn ignore_mtime(&self) -> ::core::ffi::c_uint { self.ignore_mtime as ::core::ffi::c_uint }
+    pub fn set_ignore_mtime(&mut self, value: ::core::ffi::c_uint) { self.ignore_mtime = value != 0; }
+    pub fn ignore_automatic_vars(&self) -> ::core::ffi::c_uint { self.ignore_automatic_vars as ::core::ffi::c_uint }
+    pub fn set_ignore_automatic_vars(&mut self, value: ::core::ffi::c_uint) { self.ignore_automatic_vars = value != 0; }
+    pub fn is_explicit(&self) -> ::core::ffi::c_uint { self.is_explicit as ::core::ffi::c_uint }
+    pub fn set_is_explicit(&mut self, value: ::core::ffi::c_uint) { self.is_explicit = value != 0; }
+    pub fn wait_here(&self) -> ::core::ffi::c_uint { self.wait_here as ::core::ffi::c_uint }
+    pub fn set_wait_here(&mut self, value: ::core::ffi::c_uint) { self.wait_here = value != 0; }
 }
 /// A candidate pattern rule recorded during the first matching pass.
 #[derive(Copy, Clone)]

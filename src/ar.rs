@@ -107,13 +107,13 @@ pub fn ar_name(ctx: &crate::execctx::ExecContext, name: &::core::ffi::CStr) -> b
         ArName::Member => true,
         ArName::Unsupported => unsafe {
             fatal(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                name.to_bytes().len() as size_t,
-                b"attempt to use unsupported feature: '%s'\0" as *const u8
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        name.to_bytes().len() as size_t,
+        b"attempt to use unsupported feature: '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                name.as_ptr(),
-            )
+        &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
+    )
         },
     }
 }
@@ -132,12 +132,12 @@ pub unsafe fn ar_parse_name(
     p = strchr(*arname_p, '(' as i32);
     if p.is_null() {
         fatal(
-            ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            strlen(*arname_p) as size_t,
-            b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            *arname_p,
-        );
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        strlen(*arname_p) as size_t,
+        b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*arname_p) as *const ::core::ffi::c_char)],
+    );
     }
     let fresh0 = p;
     p = p.offset(1_i32 as isize);
@@ -289,21 +289,21 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
     match ar_member_touch(ctx, arname, memname) {
         -1 => {
             error(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                strlen(arname) as size_t,
-                b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
-                arname,
-            );
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        strlen(arname) as size_t,
+        b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+    );
         }
         -2 => {
             error(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                strlen(arname) as size_t,
-                b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
-                arname,
-            );
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        strlen(arname) as size_t,
+        b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+    );
         }
         -3 => {
             perror_with_name(
@@ -470,12 +470,12 @@ pub unsafe fn ar_glob<T: SeqNode>(
     names = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *const ::core::ffi::c_char;
     i = 0;
     n = state.chain;
-    while let Some(nref) = n.as_mut() {
+    while !n.is_null() {
         let fresh1 = i;
         i = i.wrapping_add(1);
         let fresh2 = &mut (*names.offset(fresh1 as isize));
-        *fresh2 = nref.name;
-        n = nref.next;
+        *fresh2 = T::name(n);
+        n = T::next(n);
     }
     qsort(
         names as *mut ::core::ffi::c_void,
@@ -485,11 +485,11 @@ pub unsafe fn ar_glob<T: SeqNode>(
     );
     i = 0;
     n = state.chain;
-    while let Some(nref) = n.as_mut() {
+    while !n.is_null() {
         let fresh3 = i;
         i = i.wrapping_add(1);
-        nref.name = *names.offset(fresh3 as isize);
-        n = nref.next;
+        T::set_name(n, *names.offset(fresh3 as isize));
+        n = T::next(n);
     }
     state.chain
 }
