@@ -437,12 +437,7 @@ pub unsafe fn expand_string_buf(
                 if handle_function(ctx, &raw mut o, &raw mut p) == 0 {
                     end = strchr(beg, closeparen as i32);
                     if end.is_null() {
-                        fatal(
-                            ctx,
-                            *expanding_var,
-                            0,
-                            c"unterminated variable reference".as_ptr(),
-                        );
+                        fatal(ctx, *expanding_var, 0, 0, c"unterminated variable reference".as_ptr());
                     }
                     // Bridge the safe `lindex(&[u8], u8) -> Option<usize>` to
                     // the pointer-walking code below: view `[b, e)` as a byte

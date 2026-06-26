@@ -1487,12 +1487,7 @@ unsafe fn expand_command_line_file(
     let cp: *const ::core::ffi::c_char;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0_i32 as isize) as i32 == 0 {
-        fatal(
-            ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            0,
-            b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        fatal(ctx, ::core::ptr::null_mut::<Floc>(), 0, 0, b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char);
     }
     if *name.offset(0_i32 as isize) as i32 == '~' as i32 {
         expanded = tilde_expand(ctx, name);
@@ -2214,13 +2209,8 @@ unsafe fn main_0(
             if jobserver_parse_auth(&ctx, auth_c.as_ptr()) != 0 {
                 do_reset = false;
             } else {
-                error(
-                    &ctx,
-                    ::core::ptr::null_mut::<Floc>(),
-                    0,
-                    b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
-                        as *const u8 as *const ::core::ffi::c_char,
-                );
+                error(&ctx, ::core::ptr::null_mut::<Floc>(), 0, 0, b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
+                        as *const u8 as *const ::core::ffi::c_char);
                 options.arg_job_slots.set(Some(1));
             }
         } else if restarts == 0 && argv_slots != Some(1) {
@@ -2817,13 +2807,13 @@ unsafe fn main_0(
                 d_1r.file.as_ref().map_or(::core::ptr::null(), |fr| fr.name)
             };
             error(
-                &ctx,
-                &raw mut d_1r.floc,
-                (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                d1_name,
-                err,
-            );
+        &ctx,
+        &raw mut d_1r.floc,
+        (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((d1_name) as *const ::core::ffi::c_char),
+            FmtArg::Str((err) as *const ::core::ffi::c_char)],
+    );
             skipped_makefiles = d_1r.next;
             free_goaldep(d_1);
         }
@@ -3313,12 +3303,7 @@ unsafe fn main_0(
             && !(*v_2).value.is_null()
             && *(*v_2).value.offset(0_i32 as isize) as i32 != 0
         {
-            fatal(
-                &ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                0,
-                b"No targets\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            fatal(&ctx, ::core::ptr::null_mut::<Floc>(), 0, 0, b"No targets\0" as *const u8 as *const ::core::ffi::c_char);
         }
         fatal(
             &ctx,
@@ -3759,12 +3744,8 @@ unsafe fn decode_switches(
                                                 ::core::ffi::CStr::from_ptr(coptarg).to_owned()
                                             } else if (*cs).c == TEMP_STDIN_OPT {
                                                 if options.stdin_offset.get() > 0 {
-                                                    fatal(ctx,
-                                                                NILF,
-                                                                0,
-                                                                b"INTERNAL: multiple --temp-stdin options provided!\0"
-                                                                    as *const u8 as *const ::core::ffi::c_char,
-                                                            );
+                                                    fatal(ctx, NILF, 0, 0, b"INTERNAL: multiple --temp-stdin options provided!\0"
+                                                                    as *const u8 as *const ::core::ffi::c_char);
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
                                                 let cached = strcache_add(coptarg);
@@ -4547,14 +4528,14 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
             (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all(ctx));
         if tokens != master_slots {
             error(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                INTSTR_LENGTH.wrapping_mul(2),
-                b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        INTSTR_LENGTH.wrapping_mul(2),
+        b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
                     as *const u8 as *const ::core::ffi::c_char,
-                tokens,
-                master_slots,
-            );
+        &[FmtArg::Uint((tokens) as u32 as u64),
+            FmtArg::Uint((master_slots) as u32 as u64)],
+    );
         }
     }
     reset_jobserver_mirror();

@@ -641,13 +641,13 @@ pub unsafe fn print_rule_data_base(ctx: &crate::execctx::ExecContext) {
     let num_pattern_rules = ctx.num_pattern_rules.get();
     if num_pattern_rules != rules && num_pattern_rules != 0 {
         fatal(
-            ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            INTSTR_LENGTH.wrapping_mul(2) as size_t,
-            c"INTERNAL: num_pattern_rules is wrong!  %u != %u".as_ptr(),
-            num_pattern_rules,
-            rules,
-        );
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        INTSTR_LENGTH.wrapping_mul(2) as size_t,
+        c"INTERNAL: num_pattern_rules is wrong!  %u != %u".as_ptr(),
+        &[FmtArg::Uint((num_pattern_rules) as u32 as u64),
+            FmtArg::Uint((rules) as u32 as u64)],
+    );
     }
 }
 

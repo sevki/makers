@@ -1180,8 +1180,10 @@ unsafe fn parse_numeric(
                 *expanding_var,
                 (msg.to_bytes().len() + s.to_bytes().len()) as size_t,
                 fmt.as_ptr(),
-                msg.as_ptr(),
-                s.as_ptr(),
+                &[
+                    FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char),
+                    FmtArg::Str((s.as_ptr()) as *const ::core::ffi::c_char),
+                ],
             )
         }
     }
@@ -1198,12 +1200,7 @@ unsafe fn func_word(
         c"invalid first argument to 'word' function",
     );
     if i < 1 {
-        fatal(
-            ctx,
-            *expanding_var,
-            0,
-            c"first argument to 'word' function must be greater than 0".as_ptr(),
-        );
+        fatal(ctx, *expanding_var, 0, 0, c"first argument to 'word' function must be greater than 0".as_ptr());
     }
     let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
     // `i >= 1` here; an index too large for `usize` (only reachable on 32-bit
@@ -1236,16 +1233,16 @@ unsafe fn func_wordlist(
     );
     if start < 1 {
         fatal(
-            ctx,
-            *expanding_var,
-            (badfirst.to_bytes().len() as size_t)
+        ctx,
+        *expanding_var,
+        (badfirst.to_bytes().len() as size_t)
                 .wrapping_add(
                     strlen(make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
-            c"%s: '%s'".as_ptr(),
-            badfirst.as_ptr(),
-            make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char),
-        );
+        c"%s: '%s'".as_ptr(),
+        &[FmtArg::Str((badfirst.as_ptr()) as *const ::core::ffi::c_char),
+            FmtArg::Str((make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as *const ::core::ffi::c_char)],
+    );
     }
     let stop = parse_numeric(
         ctx,
@@ -1254,16 +1251,16 @@ unsafe fn func_wordlist(
     );
     if stop < 0 {
         fatal(
-            ctx,
-            *expanding_var,
-            (badsecond.to_bytes().len() as size_t)
+        ctx,
+        *expanding_var,
+        (badsecond.to_bytes().len() as size_t)
                 .wrapping_add(
                     strlen(make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
-            c"%s: '%s'".as_ptr(),
-            badsecond.as_ptr(),
-            make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char),
-        );
+        c"%s: '%s'".as_ptr(),
+        &[FmtArg::Str((badsecond.as_ptr()) as *const ::core::ffi::c_char),
+            FmtArg::Str((make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as *const ::core::ffi::c_char)],
+    );
     }
     let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(2_i32 as isize)).to_bytes();
     // `start >= 1` and `stop >= 0` here. An index beyond `usize` (only
@@ -1871,13 +1868,13 @@ unsafe fn parse_textint(
             msg,
         ),
         TextInt::NotNumeric => fatal(
-            ctx,
-            *expanding_var,
-            (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
-            b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
-            number,
-        ),
+        ctx,
+        *expanding_var,
+        (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
+        b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((msg) as *const ::core::ffi::c_char),
+            FmtArg::Str((number) as *const ::core::ffi::c_char)],
+    ),
         TextInt::Parsed {
             sign: s,
             num_start,
@@ -2642,12 +2639,7 @@ unsafe fn func_file(
         }
         start = next_token(fn_0);
         if *start.offset(0_i32 as isize) as i32 == 0 {
-            fatal(
-                ctx,
-                *expanding_var,
-                0,
-                b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            fatal(ctx, *expanding_var, 0, 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char);
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start, NUL)` is exactly the token length.
@@ -2672,14 +2664,14 @@ unsafe fn func_file(
         }
         if fp.is_null() {
             fatal(
-                ctx,
-                reading_file,
-                (strlen(nm) as size_t)
+        ctx,
+        reading_file,
+        (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                nm,
-                strerror(*__errno_location()),
-            );
+        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         }
         crate::make_main::bump_command_count();
         if !(*argv.offset(1_i32 as isize)).is_null() {
@@ -2691,26 +2683,26 @@ unsafe fn func_file(
                 || nl != 0 && fputc('\n' as i32, fp) == EOF
             {
                 fatal(
-                    ctx,
-                    reading_file,
-                    (strlen(nm) as size_t)
+        ctx,
+        reading_file,
+        (strlen(nm) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                    b"write: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    nm,
-                    strerror(*__errno_location()),
-                );
+        b"write: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
             }
         }
         if fclose(fp) != 0 {
             fatal(
-                ctx,
-                reading_file,
-                (strlen(nm) as size_t)
+        ctx,
+        reading_file,
+        (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                nm,
-                strerror(*__errno_location()),
-            );
+        b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         }
     } else if *fn_0.offset(0_i32 as isize) as i32 == '<' as i32 {
         let mut n: size_t = 0;
@@ -2719,20 +2711,10 @@ unsafe fn func_file(
         let mut fp_0: *mut FILE;
         start_0 = next_token(fn_0.offset(1_i32 as isize));
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
-            fatal(
-                ctx,
-                *expanding_var,
-                0,
-                b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            fatal(ctx, *expanding_var, 0, 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char);
         }
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            fatal(
-                ctx,
-                *expanding_var,
-                0,
-                b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            fatal(ctx, *expanding_var, 0, 0, b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char);
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start_0, NUL)` is exactly the token length.
@@ -2769,14 +2751,14 @@ unsafe fn func_file(
                 return o;
             }
             fatal(
-                ctx,
-                reading_file,
-                (strlen(nm_0) as size_t)
+        ctx,
+        reading_file,
+        (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                nm_0,
-                strerror(*__errno_location()),
-            );
+        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         }
         loop {
             let mut buf: [::core::ffi::c_char; 1024] = [0; 1024];
@@ -2792,14 +2774,14 @@ unsafe fn func_file(
             }
             if ferror(fp_0) != 0 && *__errno_location() != EINTR {
                 fatal(
-                    ctx,
-                    reading_file,
-                    (strlen(nm_0) as size_t)
+        ctx,
+        reading_file,
+        (strlen(nm_0) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                    b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    nm_0,
-                    strerror(*__errno_location()),
-                );
+        b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
             }
             if feof(fp_0) != 0 {
                 break;
@@ -2807,14 +2789,14 @@ unsafe fn func_file(
         }
         if fclose(fp_0) != 0 {
             fatal(
-                ctx,
-                reading_file,
-                (strlen(nm_0) as size_t)
+        ctx,
+        reading_file,
+        (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                nm_0,
-                strerror(*__errno_location()),
-            );
+        b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         }
         if n != 0 && *o.offset(-1_i32 as isize) as i32 == '\n' as i32 {
             o = o.offset(
@@ -3097,14 +3079,14 @@ pub unsafe fn handle_function(
     }
     if count >= 0 {
         fatal(
-            ctx,
-            *expanding_var,
-            strlen((*entry_p).name) as size_t,
-            b"unterminated call to function '%s': missing '%c'\0" as *const u8
+        ctx,
+        *expanding_var,
+        strlen((*entry_p).name) as size_t,
+        b"unterminated call to function '%s': missing '%c'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            (*entry_p).name,
-            closeparen as i32,
-        );
+        &[FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char),
+            FmtArg::Int((closeparen as i32) as i64)],
+    );
     }
     *stringp = end;
     alloca_allocations.push(::std::vec::from_elem(
@@ -3299,12 +3281,7 @@ pub unsafe fn define_new_function(
     }
     len = e.offset_from(name) as ::core::ffi::c_long as size_t;
     if len == 0 {
-        fatal(
-            ctx,
-            flocp,
-            0,
-            b"empty function name\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        fatal(ctx, flocp, 0, 0, b"empty function name\0" as *const u8 as *const ::core::ffi::c_char);
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
         fatal(

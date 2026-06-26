@@ -1010,16 +1010,16 @@ pub unsafe fn rehash_file(
             let from_floc = &raw mut from_cmds.fileinfo;
             if !to_cmds.fileinfo.filenm.is_null() {
                 error(
-                    ctx,
-                    from_floc,
-                    l.wrapping_add(strlen(to_cmds.fileinfo.filenm) as size_t)
+        ctx,
+        from_floc,
+        l.wrapping_add(strlen(to_cmds.fileinfo.filenm) as size_t)
                         .wrapping_add(INTSTR_LENGTH),
-                    b"recipe was specified for file '%s' at %s:%lu,\0" as *const u8
+        b"recipe was specified for file '%s' at %s:%lu,\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    fr2.name,
-                    from_cmds.fileinfo.filenm,
-                    from_cmds.fileinfo.lineno,
-                );
+        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
+            FmtArg::Str((from_cmds.fileinfo.filenm) as *const ::core::ffi::c_char),
+            FmtArg::Uint((from_cmds.fileinfo.lineno) as u64)],
+    );
             } else {
                 error(
                     ctx,
@@ -1031,23 +1031,23 @@ pub unsafe fn rehash_file(
                 );
             }
             error(
-                ctx,
-                from_floc,
-                l,
-                b"but '%s' is now considered the same file as '%s'\0" as *const u8
+        ctx,
+        from_floc,
+        l,
+        b"but '%s' is now considered the same file as '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                fr2.name,
-                to_hname,
-            );
+        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
             error(
-                ctx,
-                from_floc,
-                l,
-                b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
+        ctx,
+        from_floc,
+        l,
+        b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                fr2.name,
-                to_hname,
-            );
+        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
         }
     }
     if (*to_file).deps.is_null() {
@@ -1065,26 +1065,26 @@ pub unsafe fn rehash_file(
         && fr2.double_colon.is_null()
     {
         fatal(
-            ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
-            b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
+        b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            fr2.name,
-            to_hname,
-        );
+        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
     }
     if (*to_file).double_colon.is_null() && !fr2.double_colon.is_null() {
         if (*to_file).is_target() != 0 {
             fatal(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
-                b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
+        b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                fr2.name,
-                to_hname,
-            );
+        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
+            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
+    );
         } else {
             (*to_file).double_colon = fr2.double_colon;
         }
@@ -2360,9 +2360,9 @@ unsafe fn verify_field_cached(
             .wrapping_add(field.count_bytes() as size_t)
             .wrapping_add(strlen(value) as size_t),
         b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        owner,
-        field.as_ptr(),
-        value,
+        &[FmtArg::Str((owner) as *const ::core::ffi::c_char),
+            FmtArg::Str((field.as_ptr()) as *const ::core::ffi::c_char),
+            FmtArg::Str((value) as *const ::core::ffi::c_char)],
     );
 }
 

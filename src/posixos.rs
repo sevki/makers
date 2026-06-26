@@ -610,7 +610,7 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
                 EINTR => return 0,
                 EBADF => {
                     // The read side was closed by jobserver_signal().
-                    fatal(ctx, null::<Floc>(), 0, c"job server shut down".as_ptr());
+                    fatal(ctx, null::<Floc>(), 0, 0, c"job server shut down".as_ptr());
                 }
                 _ => pfatal_with_name(ctx, c"pselect jobs pipe".as_ptr()),
             }
