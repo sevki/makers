@@ -117,6 +117,19 @@ pub struct ExecContext {
     /// never on the `gmk_eval` throwaway-context path, and every site already
     /// carries the same `&ExecContext`.
     pub good_stdin_used: ::core::cell::Cell<bool>,
+
+    /// Count of `DIR*` streams the directory cache currently holds open, the
+    /// former file-scoped `static mut dir::open_directories`. `find_directory`
+    /// bumps it when it opens a new stream and, on reaching
+    /// `MAX_OPEN_DIRECTORIES`, drains that directory immediately to bound open
+    /// file descriptors; `dir_contents_file_exists_p` and
+    /// `clear_directory_contents` decrement it when a stream is exhausted or
+    /// discarded. It only governs *when* a directory is read to completion
+    /// (eagerly vs lazily), never which files are found, so threading it on the
+    /// per-run `&ExecContext` is behavior-preserving. The glob `open_dirstream`
+    /// callback cannot carry the build context (C-ABI) and already runs against
+    /// a throwaway default context, as it does for the `make[N]:` prefix.
+    pub open_directories: ::core::cell::Cell<u32>,
 }
 
 impl ExecContext {

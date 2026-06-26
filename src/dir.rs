@@ -19,7 +19,6 @@ use crate::strcache::strcache_add_len;
 
 use ::core::ffi::{c_char, c_long, c_short, c_uchar, c_uint, c_ulong, c_ushort, c_void};
 use ::core::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use libc::{
     __errno_location, closedir, free, memcpy, opendir, printf, puts, readdir, strcmp, strerror,
@@ -116,22 +115,15 @@ pub const MAX_OPEN_DIRECTORIES: i32 = 10;
 pub const DIRECTORY_BUCKETS: i32 = 199;
 pub const DIRFILE_BUCKETS: i32 = 107;
 
-/// Count of `DIR*` streams the directory cache currently holds open, capped
-/// at `MAX_OPEN_DIRECTORIES`. Single-threaded; `Relaxed` preserves the
-/// original `static mut` access order.
-static OPEN_DIRECTORIES: AtomicU32 = AtomicU32::new(0);
-
-/// Number of directory streams currently held open by the cache.
-fn open_directories() -> u32 {
-    OPEN_DIRECTORIES.load(Ordering::Relaxed)
-}
-
 /// Forget everything cached about `dc`, closing its stream if open.
-unsafe fn clear_directory_contents(dc: *mut directory_contents) {
+unsafe fn clear_directory_contents(
+    ctx: &crate::execctx::ExecContext,
+    dc: *mut directory_contents,
+) {
     let dc = dc.as_mut().expect("clear_directory_contents: null entry");
     dc.counter = 0;
     if !dc.dirstream.is_null() {
-        OPEN_DIRECTORIES.fetch_sub(1, Ordering::Relaxed);
+        ctx.open_directories.set(ctx.open_directories.get() - 1);
         closedir(dc.dirstream);
         dc.dirstream = null_mut();
     }
@@ -289,7 +281,7 @@ pub unsafe fn find_directory(
             fflush(stdout);
         }
         if !dir_ref.contents.is_null() {
-            clear_directory_contents(dir_ref.contents);
+            clear_directory_contents(ctx, dir_ref.contents);
         }
     } else {
         let len = strlen(name);
@@ -348,7 +340,7 @@ pub unsafe fn find_directory(
 
     if dc.counter != crate::make_main::opt_command_count() {
         if dc.counter != 0 {
-            clear_directory_contents(dc);
+            clear_directory_contents(ctx, dc);
         }
         dc.counter = crate::make_main::opt_command_count();
         loop {
@@ -369,8 +361,8 @@ pub unsafe fn find_directory(
                 Some(dirfile_hash_2),
                 Some(dirfile_hash_cmp),
             );
-            OPEN_DIRECTORIES.fetch_add(1, Ordering::Relaxed);
-            if open_directories() == MAX_OPEN_DIRECTORIES as u32 {
+            ctx.open_directories.set(ctx.open_directories.get() + 1);
+            if ctx.open_directories.get() == MAX_OPEN_DIRECTORIES as u32 {
                 // Too many streams open: read this one to completion now.
                 dir_contents_file_exists_p(ctx, dir, null());
             }
@@ -478,7 +470,7 @@ unsafe fn dir_contents_file_exists_p(
 
     // Reached the end of the directory: the stream is exhausted.
     if d.is_null() {
-        OPEN_DIRECTORIES.fetch_sub(1, Ordering::Relaxed);
+        ctx.open_directories.set(ctx.open_directories.get() - 1);
         closedir(dc.dirstream);
         dc.dirstream = null_mut();
     }
@@ -868,25 +860,26 @@ mod split_dir_tests {
 
 #[cfg(test)]
 mod open_directories_tests {
-    use super::{open_directories, OPEN_DIRECTORIES};
-    use std::sync::atomic::Ordering;
+    use crate::execctx::ExecContext;
 
-    /// The `open_directories()` accessor reflects the underlying atomic, and
-    /// `fetch_add`/`fetch_sub` track stream open/close exactly as the original
-    /// `static mut open_directories += 1 / -= 1` did. Restores the counter so
-    /// the shared cache state is untouched for other tests.
+    /// The open-stream counter now lives on `ExecContext` as a `Cell<u32>`
+    /// (no global). A fresh context starts at zero, and the `+= 1`/`-= 1`
+    /// stream open/close bookkeeping that `find_directory` /
+    /// `dir_contents_file_exists_p` / `clear_directory_contents` perform maps
+    /// onto `get()`/`set()` exactly as the former `static mut` did.
     #[test]
-    fn accessor_tracks_add_and_sub() {
-        let saved = OPEN_DIRECTORIES.load(Ordering::Relaxed);
-        OPEN_DIRECTORIES.store(0, Ordering::Relaxed);
+    fn counter_tracks_open_and_close() {
+        let ctx = ExecContext::default();
+        assert_eq!(ctx.open_directories.get(), 0);
 
-        assert_eq!(open_directories(), 0);
-        OPEN_DIRECTORIES.fetch_add(1, Ordering::Relaxed);
-        OPEN_DIRECTORIES.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(open_directories(), 2);
-        OPEN_DIRECTORIES.fetch_sub(1, Ordering::Relaxed);
-        assert_eq!(open_directories(), 1);
+        ctx.open_directories.set(ctx.open_directories.get() + 1);
+        ctx.open_directories.set(ctx.open_directories.get() + 1);
+        assert_eq!(ctx.open_directories.get(), 2);
 
-        OPEN_DIRECTORIES.store(saved, Ordering::Relaxed);
+        ctx.open_directories.set(ctx.open_directories.get() - 1);
+        assert_eq!(ctx.open_directories.get(), 1);
+
+        // A second, independent context keeps its own count.
+        assert_eq!(ExecContext::default().open_directories.get(), 0);
     }
 }
