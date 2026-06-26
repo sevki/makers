@@ -2,7 +2,7 @@ pub use crate::file::{CommandState, UpdateStatus};
 use libc::free;
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{commands, file, Dep, File, VariableSet, VariableSetList};
+use crate::file::{file, VariableSet, VariableSetList};
 use crate::misc::xmalloc;
 #[derive(Copy, Clone)]
 #[repr(C)]

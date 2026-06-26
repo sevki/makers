@@ -2,13 +2,13 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
 };
-use crate::file::{free_dep_chain, free_seq_chain};
+use crate::file::free_dep_chain;
 use crate::file::{
-    cmd_state, cs_deps_running, cs_finished, cs_not_started, cs_running, dep, file, update_status,
+    cs_deps_running, cs_finished, cs_not_started, cs_running, dep, file, update_status,
     us_failed, us_none, us_question, us_success, CommandState, Dep, File, GoalDep, UpdateStatus,
     VariableSet, VariableSetList,
 };
-use crate::misc::{copy_dep_chain, copy_goal_chain, find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::misc::{copy_dep_chain, find_next_token, print_spaces, xmalloc, xrealloc};
 use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
@@ -197,9 +197,9 @@ pub unsafe fn update_goal_chain(
     };
     ctx.considered.set(ctx.considered.get().wrapping_add(1));
     while !goals.is_null() {
-        let mut gu: *mut GoalDep;
-        let mut g: *mut GoalDep;
-        let mut lastgoal: *mut GoalDep;
+        let mut gu: *mut dep;
+        let mut g: *mut dep;
+        let mut lastgoal: *mut dep;
         let mut running: i32 = 0;
         let mut wait: i32 = 0;
         start_waiting_jobs(ctx);
@@ -209,7 +209,7 @@ pub unsafe fn update_goal_chain(
             0,
         );
         last_cmd_count = crate::make_main::opt_command_count();
-        lastgoal = ::core::ptr::null_mut::<GoalDep>();
+        lastgoal = ::core::ptr::null_mut::<dep>();
         gu = goals;
         while let Some(gu_ref) = gu.as_ref() {
             let mut file: *mut file;
@@ -451,11 +451,11 @@ unsafe extern "C" fn update_file(
                 );
                 fflush(stdout);
             }
-            return (if fr.command_state() as i32 == cs_finished as i32 {
+            return if fr.command_state() as i32 == cs_finished as i32 {
                 fr.update_status()
             } else {
                 us_success
-            });
+            };
         }
     }
     while !f.is_null() {
@@ -1557,11 +1557,11 @@ pub unsafe fn touch_file(ctx: &crate::execctx::ExecContext, file: *mut file) -> 
         return us_success;
     }
     if ar_name(ctx, ::core::ffi::CStr::from_ptr((*file).name)) {
-        return (if ar_touch(ctx, (*file).name) != 0 {
+        return if ar_touch(ctx, (*file).name) != 0 {
             us_failed
         } else {
             us_success
-        });
+        };
     } else {
         let mut fd: i32;
         loop {

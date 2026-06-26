@@ -8,7 +8,7 @@ pub use crate::ffi_types::{
     uintmax_t,
 };
 use crate::file::{
-    cmd_state, cs_finished, dep, file, us_success, CommandState, Dep, File, GoalDep, NameSeq,
+    cs_finished, dep, file, us_success, Dep, File, GoalDep, NameSeq,
     UpdateStatus, VariableSet, VariableSetList,
 };
 use crate::floc::Floc;
@@ -2744,7 +2744,7 @@ unsafe fn main_0(
             if skip == 0 {
                 let fresh48 = mm_idx;
                 mm_idx = mm_idx.wrapping_add(1);
-                let file_ref = d0r
+                let _file_ref = d0r
                     .file
                     .as_ref()
                     .expect("read makefile goal has a null file pointer");
