@@ -66,7 +66,7 @@ pub struct tm {
     pub tm_zone: *const ::core::ffi::c_char,
 }
 /// A node in make's dependency graph: one target (or prerequisite) file.
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 pub struct File {
     pub name: *const ::core::ffi::c_char,
     pub hname: *const ::core::ffi::c_char,
@@ -88,36 +88,28 @@ pub struct File {
     pub command_flags: i32,
     pub update_status: UpdateStatus,
     pub command_state: CommandState,
-    #[bitfield(name = "builtin", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "precious", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "loaded", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "unloaded", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(
-        name = "low_resolution_time",
-        ty = "::core::ffi::c_uint",
-        bits = "8..=8"
-    )]
-    #[bitfield(name = "tried_implicit", ty = "::core::ffi::c_uint", bits = "9..=9")]
-    #[bitfield(name = "updating", ty = "::core::ffi::c_uint", bits = "10..=10")]
-    #[bitfield(name = "updated", ty = "::core::ffi::c_uint", bits = "11..=11")]
-    #[bitfield(name = "is_target", ty = "::core::ffi::c_uint", bits = "12..=12")]
-    #[bitfield(name = "cmd_target", ty = "::core::ffi::c_uint", bits = "13..=13")]
-    #[bitfield(name = "phony", ty = "::core::ffi::c_uint", bits = "14..=14")]
-    #[bitfield(name = "intermediate", ty = "::core::ffi::c_uint", bits = "15..=15")]
-    #[bitfield(name = "is_explicit", ty = "::core::ffi::c_uint", bits = "16..=16")]
-    #[bitfield(name = "secondary", ty = "::core::ffi::c_uint", bits = "17..=17")]
-    #[bitfield(name = "notintermediate", ty = "::core::ffi::c_uint", bits = "18..=18")]
-    #[bitfield(name = "dontcare", ty = "::core::ffi::c_uint", bits = "19..=19")]
-    #[bitfield(name = "ignore_vpath", ty = "::core::ffi::c_uint", bits = "20..=20")]
-    #[bitfield(name = "pat_searched", ty = "::core::ffi::c_uint", bits = "21..=21")]
-    #[bitfield(name = "no_diag", ty = "::core::ffi::c_uint", bits = "22..=22")]
-    #[bitfield(name = "was_shuffled", ty = "::core::ffi::c_uint", bits = "23..=23")]
-    #[bitfield(name = "snapped", ty = "::core::ffi::c_uint", bits = "24..=24")]
-    #[bitfield(name = "suffix", ty = "::core::ffi::c_uint", bits = "25..=25")]
-    pub update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix:
-        [u8; 4],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 4],
+    pub builtin: bool,
+    pub precious: bool,
+    pub loaded: bool,
+    pub unloaded: bool,
+    pub low_resolution_time: bool,
+    pub tried_implicit: bool,
+    pub updating: bool,
+    pub updated: bool,
+    pub is_target: bool,
+    pub cmd_target: bool,
+    pub phony: bool,
+    pub intermediate: bool,
+    pub is_explicit: bool,
+    pub secondary: bool,
+    pub notintermediate: bool,
+    pub dontcare: bool,
+    pub ignore_vpath: bool,
+    pub pat_searched: bool,
+    pub no_diag: bool,
+    pub was_shuffled: bool,
+    pub snapped: bool,
+    pub suffix: bool,
 }
 impl Default for File {
     fn default() -> Self {
@@ -142,9 +134,28 @@ impl Default for File {
             command_flags: 0,
             update_status: UpdateStatus::Success,
             command_state: CommandState::NotStarted,
-            update_status_command_state_builtin_precious_loaded_unloaded_low_resolution_time_tried_implicit_updating_updated_is_target_cmd_target_phony_intermediate_is_explicit_secondary_notintermediate_dontcare_ignore_vpath_pat_searched_no_diag_was_shuffled_snapped_suffix:
-                [0; 4],
-            c2rust_padding: [0; 4],
+            builtin: false,
+            precious: false,
+            loaded: false,
+            unloaded: false,
+            low_resolution_time: false,
+            tried_implicit: false,
+            updating: false,
+            updated: false,
+            is_target: false,
+            cmd_target: false,
+            phony: false,
+            intermediate: false,
+            is_explicit: false,
+            secondary: false,
+            notintermediate: false,
+            dontcare: false,
+            ignore_vpath: false,
+            pat_searched: false,
+            no_diag: false,
+            was_shuffled: false,
+            snapped: false,
+            suffix: false,
         }
     }
 }
@@ -548,10 +559,6 @@ pub const us_question: UpdateStatus = UpdateStatus::Question;
 pub const us_failed: UpdateStatus = UpdateStatus::Failed;
 
 impl File {
-    fn bool_value(value: bool) -> ::core::ffi::c_uint {
-        value as ::core::ffi::c_uint
-    }
-
     pub fn command_state(&self) -> CommandState {
         self.command_state
     }
@@ -571,77 +578,134 @@ impl File {
     pub fn builtin(&self) -> ::core::ffi::c_uint {
         self.builtin as ::core::ffi::c_uint
     }
-
     pub fn set_builtin(&mut self, value: ::core::ffi::c_uint) {
         self.builtin = value != 0;
     }
-
-    pub fn is_target(&self) -> ::core::ffi::c_uint {
-        self.is_target as ::core::ffi::c_uint
-    }
-
-    pub fn set_is_target(&mut self, value: ::core::ffi::c_uint) {
-        self.is_target = value != 0;
-    }
-
-    pub fn suffix(&self) -> ::core::ffi::c_uint {
-        self.suffix as ::core::ffi::c_uint
-    }
-
-    pub fn set_suffix(&mut self, value: ::core::ffi::c_uint) {
-        self.suffix = value != 0;
-    }
-
     pub fn precious(&self) -> ::core::ffi::c_uint {
-        Self::bool_value(self.precious)
+        self.precious as ::core::ffi::c_uint
     }
-
+    pub fn set_precious(&mut self, value: ::core::ffi::c_uint) {
+        self.precious = value != 0;
+    }
     pub fn loaded(&self) -> ::core::ffi::c_uint {
-        Self::bool_value(self.loaded)
+        self.loaded as ::core::ffi::c_uint
     }
-
     pub fn set_loaded(&mut self, value: ::core::ffi::c_uint) {
         self.loaded = value != 0;
     }
-
+    pub fn unloaded(&self) -> ::core::ffi::c_uint {
+        self.unloaded as ::core::ffi::c_uint
+    }
     pub fn set_unloaded(&mut self, value: ::core::ffi::c_uint) {
         self.unloaded = value != 0;
     }
-
-    pub fn updating(&self) -> ::core::ffi::c_uint {
-        Self::bool_value(self.updating)
+    pub fn low_resolution_time(&self) -> ::core::ffi::c_uint {
+        self.low_resolution_time as ::core::ffi::c_uint
     }
-
+    pub fn set_low_resolution_time(&mut self, value: ::core::ffi::c_uint) {
+        self.low_resolution_time = value != 0;
+    }
+    pub fn tried_implicit(&self) -> ::core::ffi::c_uint {
+        self.tried_implicit as ::core::ffi::c_uint
+    }
+    pub fn set_tried_implicit(&mut self, value: ::core::ffi::c_uint) {
+        self.tried_implicit = value != 0;
+    }
+    pub fn updating(&self) -> ::core::ffi::c_uint {
+        self.updating as ::core::ffi::c_uint
+    }
     pub fn set_updating(&mut self, value: ::core::ffi::c_uint) {
         self.updating = value != 0;
     }
-
     pub fn updated(&self) -> ::core::ffi::c_uint {
-        Self::bool_value(self.updated)
+        self.updated as ::core::ffi::c_uint
     }
-
     pub fn set_updated(&mut self, value: ::core::ffi::c_uint) {
         self.updated = value != 0;
     }
-
+    pub fn is_target(&self) -> ::core::ffi::c_uint {
+        self.is_target as ::core::ffi::c_uint
+    }
+    pub fn set_is_target(&mut self, value: ::core::ffi::c_uint) {
+        self.is_target = value != 0;
+    }
+    pub fn cmd_target(&self) -> ::core::ffi::c_uint {
+        self.cmd_target as ::core::ffi::c_uint
+    }
+    pub fn set_cmd_target(&mut self, value: ::core::ffi::c_uint) {
+        self.cmd_target = value != 0;
+    }
     pub fn phony(&self) -> ::core::ffi::c_uint {
-        Self::bool_value(self.phony)
+        self.phony as ::core::ffi::c_uint
     }
-
+    pub fn set_phony(&mut self, value: ::core::ffi::c_uint) {
+        self.phony = value != 0;
+    }
+    pub fn intermediate(&self) -> ::core::ffi::c_uint {
+        self.intermediate as ::core::ffi::c_uint
+    }
+    pub fn set_intermediate(&mut self, value: ::core::ffi::c_uint) {
+        self.intermediate = value != 0;
+    }
+    pub fn is_explicit(&self) -> ::core::ffi::c_uint {
+        self.is_explicit as ::core::ffi::c_uint
+    }
+    pub fn set_is_explicit(&mut self, value: ::core::ffi::c_uint) {
+        self.is_explicit = value != 0;
+    }
+    pub fn secondary(&self) -> ::core::ffi::c_uint {
+        self.secondary as ::core::ffi::c_uint
+    }
+    pub fn set_secondary(&mut self, value: ::core::ffi::c_uint) {
+        self.secondary = value != 0;
+    }
+    pub fn notintermediate(&self) -> ::core::ffi::c_uint {
+        self.notintermediate as ::core::ffi::c_uint
+    }
+    pub fn set_notintermediate(&mut self, value: ::core::ffi::c_uint) {
+        self.notintermediate = value != 0;
+    }
     pub fn dontcare(&self) -> ::core::ffi::c_uint {
-        Self::bool_value(self.dontcare)
+        self.dontcare as ::core::ffi::c_uint
     }
-
     pub fn set_dontcare(&mut self, value: ::core::ffi::c_uint) {
         self.dontcare = value != 0;
     }
-
-    pub fn no_diag(&self) -> ::core::ffi::c_uint {
-        Self::bool_value(self.no_diag)
+    pub fn ignore_vpath(&self) -> ::core::ffi::c_uint {
+        self.ignore_vpath as ::core::ffi::c_uint
     }
-
+    pub fn set_ignore_vpath(&mut self, value: ::core::ffi::c_uint) {
+        self.ignore_vpath = value != 0;
+    }
+    pub fn pat_searched(&self) -> ::core::ffi::c_uint {
+        self.pat_searched as ::core::ffi::c_uint
+    }
+    pub fn set_pat_searched(&mut self, value: ::core::ffi::c_uint) {
+        self.pat_searched = value != 0;
+    }
+    pub fn no_diag(&self) -> ::core::ffi::c_uint {
+        self.no_diag as ::core::ffi::c_uint
+    }
     pub fn set_no_diag(&mut self, value: ::core::ffi::c_uint) {
         self.no_diag = value != 0;
+    }
+    pub fn was_shuffled(&self) -> ::core::ffi::c_uint {
+        self.was_shuffled as ::core::ffi::c_uint
+    }
+    pub fn set_was_shuffled(&mut self, value: ::core::ffi::c_uint) {
+        self.was_shuffled = value != 0;
+    }
+    pub fn snapped(&self) -> ::core::ffi::c_uint {
+        self.snapped as ::core::ffi::c_uint
+    }
+    pub fn set_snapped(&mut self, value: ::core::ffi::c_uint) {
+        self.snapped = value != 0;
+    }
+    pub fn suffix(&self) -> ::core::ffi::c_uint {
+        self.suffix as ::core::ffi::c_uint
+    }
+    pub fn set_suffix(&mut self, value: ::core::ffi::c_uint) {
+        self.suffix = value != 0;
     }
 }
 
@@ -710,6 +774,36 @@ impl GoalDep {
 
     pub fn set_wait_here(&mut self, value: ::core::ffi::c_uint) {
         self.wait_here = value != 0;
+    }
+    pub fn ignore_mtime(&self) -> ::core::ffi::c_uint {
+        self.ignore_mtime as ::core::ffi::c_uint
+    }
+    pub fn set_ignore_mtime(&mut self, value: ::core::ffi::c_uint) {
+        self.ignore_mtime = value != 0;
+    }
+    pub fn staticpattern(&self) -> ::core::ffi::c_uint {
+        self.staticpattern as ::core::ffi::c_uint
+    }
+    pub fn set_staticpattern(&mut self, value: ::core::ffi::c_uint) {
+        self.staticpattern = value != 0;
+    }
+    pub fn need_2nd_expansion(&self) -> ::core::ffi::c_uint {
+        self.need_2nd_expansion as ::core::ffi::c_uint
+    }
+    pub fn set_need_2nd_expansion(&mut self, value: ::core::ffi::c_uint) {
+        self.need_2nd_expansion = value != 0;
+    }
+    pub fn ignore_automatic_vars(&self) -> ::core::ffi::c_uint {
+        self.ignore_automatic_vars as ::core::ffi::c_uint
+    }
+    pub fn set_ignore_automatic_vars(&mut self, value: ::core::ffi::c_uint) {
+        self.ignore_automatic_vars = value != 0;
+    }
+    pub fn is_explicit(&self) -> ::core::ffi::c_uint {
+        self.is_explicit as ::core::ffi::c_uint
+    }
+    pub fn set_is_explicit(&mut self, value: ::core::ffi::c_uint) {
+        self.is_explicit = value != 0;
     }
 }
 
