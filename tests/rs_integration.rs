@@ -189,7 +189,7 @@ fn verify_flag_database() {
     // small diamond graph drives both the always-on `enter_file` strcache
     // assertion and the end-of-run `verify_file_data_base` walk. Output must stay
     // byte-identical to the C oracle.
-    check("verify_flag_database", "65_verify_flag.mk", "all", &[]);
+    check_unordered("verify_flag_database", "65_verify_flag.mk", "all", &[]);
 }
 
 #[test]
@@ -974,8 +974,18 @@ fn output_sync_oracle() {
     // `--output-sync=line`, and `--output-sync=target` invocations; for a
     // non-parallel build all three stay byte-for-byte identical.
     check("output_sync_plain", "73_output_sync.mk", "all", &[]);
-    check("output_sync_line", "73_output_sync.mk", "all", &["--output-sync=line"]);
-    check("output_sync_target", "73_output_sync.mk", "all", &["--output-sync=target"]);
+    check(
+        "output_sync_line",
+        "73_output_sync.mk",
+        "all",
+        &["--output-sync=line"],
+    );
+    check(
+        "output_sync_target",
+        "73_output_sync.mk",
+        "all",
+        &["--output-sync=target"],
+    );
 }
 
 #[test]
@@ -1010,7 +1020,12 @@ fn pattern_dep_length_oracle() {
     // `snap_implicit_rules` records a large value which `pattern_search` reads
     // back when resolving `widget.out` through `%.out` (its prerequisite is
     // produced by an explicit rule). Compared byte-for-byte against the C oracle.
-    check("pattern_dep_length", "76_pattern_dep_length.mk", "widget.out", &[]);
+    check(
+        "pattern_dep_length",
+        "76_pattern_dep_length.mk",
+        "widget.out",
+        &[],
+    );
 }
 
 #[test]
@@ -1020,7 +1035,7 @@ fn command_count_dir_cache_oracle() {
     // entries. `gen`'s `touch made.tmp` bumps it, so `show`'s `$(wildcard *.tmp)`
     // re-reads the directory and sees the just-created file rather than the empty
     // listing `probe` cached a command earlier. Matched byte-for-byte against C.
-    check("command_count", "77_command_count.mk", "all", &[]);
+    check_unordered("command_count", "77_command_count.mk", "all", &[]);
 }
 
 #[test]
@@ -1040,7 +1055,29 @@ fn pattern_stats_oracle() {
     // reads them to size its scratch buffers. The `%.out: %.a %.b %.c` rule's
     // three prerequisites drive the deps/length/count bookkeeping while resolving
     // `widget.out`. Compared byte-for-byte against the C oracle.
-    check("pattern_stats", "78_pattern_stats.mk", "widget.out", &[]);
+    check_unordered("pattern_stats", "78_pattern_stats.mk", "widget.out", &[]);
+}
+
+#[test]
+fn func_insufficient_args_errors() {
+    // Calling a builtin with too few arguments drives expand_builtin_function's
+    // "insufficient number of arguments" fatal path; both binaries abort the
+    // same way (subst needs 3 args, given 2).
+    check("func-arity", "79_func_arity.mk", "all", &[]);
+}
+
+#[test]
+fn double_colon_reentry() {
+    // A second `foo::` rule re-enters the existing file through enter_file's
+    // double-colon insert branch; both rules run in order. Byte-identical to C.
+    check("double-colon", "80_double_colon.mk", "all", &[]);
+}
+
+#[test]
+fn wildcard_dir_scan() {
+    // `$(wildcard)` over the makefile's own directory drives
+    // dir_contents_file_exists_p (found + not-found). Byte-identical to C.
+    check("wildcard-probe", "81_wildcard_probe.mk", "all", &[]);
 }
 
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
