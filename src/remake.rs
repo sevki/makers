@@ -197,9 +197,9 @@ pub unsafe fn update_goal_chain(
     };
     ctx.considered.set(ctx.considered.get().wrapping_add(1));
     while !goals.is_null() {
-        let mut gu: *mut dep;
-        let mut g: *mut dep;
-        let mut lastgoal: *mut dep;
+        let mut gu: *mut GoalDep;
+        let mut g: *mut GoalDep;
+        let mut lastgoal: *mut GoalDep;
         let mut running: i32 = 0;
         let mut wait: i32 = 0;
         start_waiting_jobs(ctx);
@@ -345,7 +345,7 @@ pub unsafe fn update_goal_chain(
             if stop != 0 || all_updated != 0 {
                 if !opt_rebuilding_makefiles()
                     && fref(file).update_status() as i32 == us_success as i32
-                    && g_changed == 0
+                    && !g_changed
                     && !crate::make_main::opt_run_silent()
                     && !crate::make_main::opt_question()
                 {
@@ -1949,8 +1949,8 @@ pub unsafe fn f_mtime(
             }
         }
     }
-    if !(*file).double_colon.is_null() {
-        file = (*file).double_colon;
+    if !file.double_colon.is_null() {
+        file = &mut *file.double_colon;
     }
     propagate_timestamp = (*file).updated();
     loop {
@@ -1964,8 +1964,8 @@ pub unsafe fn f_mtime(
         if (*file).updated() == propagate_timestamp {
             (*file).last_mtime = mtime;
         }
-        match (*file).prev.as_mut() {
-            Some(prev) => file = prev as *mut File,
+        match file.prev.as_mut() {
+            Some(prev) => file = prev,
             None => break,
         }
     }
