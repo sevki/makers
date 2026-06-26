@@ -231,12 +231,12 @@ pub struct DepNode {
     pub wait_here: bool,
 }
 
-/// Stable identity for a dep edge: content-hash of the full (immutable) `DepNode`.
+// Stable identity for a dep edge: content-hash of the full (immutable) `DepNode`.
 crate::id_wireformat!(DepId[HASH_SIZE] <- DepNode);
 
-/// Stable identity for a file: derived from its canonical name only.
-/// Mutable runtime state (timestamps, flags, command state) does not
-/// contribute to the key, so a file's identity survives updates.
+// Stable identity for a file: derived from its canonical name only.
+// Mutable runtime state (timestamps, flags, command state) does not
+// contribute to the key, so a file's identity survives updates.
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
 
 bitflags::bitflags! {
@@ -984,8 +984,6 @@ pub unsafe fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
-    let f: *mut file;
-    let file_slot: *mut *mut file;
     let mut file_key = File::default();
     if name.as_ref().is_some_and(|c| *c as i32 != 0) {
     } else {
@@ -1036,9 +1034,7 @@ pub unsafe fn rehash_file(
     to_hname: *const ::core::ffi::c_char,
 ) {
     let mut file_key = File::default();
-    let file_slot: *mut *mut file;
     let to_file: *mut file;
-    let deleted_file: *mut file;
     let mut f: *mut file;
     // Callers always pass a live file here; bind a checked reference so the
     // initial field accesses are null-safe without adding a branch.
@@ -1110,7 +1106,7 @@ pub unsafe fn rehash_file(
         if (*to_file).cmds.is_null() {
             (*to_file).cmds = fr2.cmds;
         } else if fr2.cmds != (*to_file).cmds {
-            let mut l: size_t = strlen(fr2.name) as size_t;
+            let l: size_t = strlen(fr2.name) as size_t;
             let from_cmds = fr2
                 .cmds
                 .as_mut()

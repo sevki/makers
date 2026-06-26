@@ -5,7 +5,7 @@ pub use crate::ffi_types::{
 };
 use crate::file::{dep, file, Commands, Dep, File, VariableSet, VariableSetList};
 use crate::file::{
-    cs_finished, cs_not_started, cs_running, us_failed, us_question, us_success, CommandState,
+    cs_finished, cs_running, us_failed, us_question, us_success, CommandState,
     UpdateStatus,
 };
 use crate::misc::{xcalloc, xmalloc, xstrdup};
@@ -462,7 +462,7 @@ unsafe fn child_error(
         .expect("a child being reported has a recipe")
         .fileinfo;
     let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut l: size_t;
+    let l: size_t;
     if ignored != 0 && crate::make_main::opt_run_silent() {
         return;
     }

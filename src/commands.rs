@@ -8,7 +8,7 @@ use crate::ar::{ar_member_date, ar_name};
 pub use crate::ffi_types::{pid_t, sig_atomic_t, size_t, time_t, uintmax_t};
 use crate::file::{
     cs_running, enter_file, file_timestamp_cons, remove_intermediates, set_command_state,
-    system_time_from_unix, update_status, us_success, Commands, Dep, File, NONEXISTENT_MTIME,
+    system_time_from_unix, us_success, Commands, Dep, File, NONEXISTENT_MTIME,
     ORDINARY_MTIME_MIN,
 };
 use crate::floc::Floc;
@@ -22,7 +22,7 @@ use crate::make_main::{
     default_file, one_shell, stopchar_map, temp_stdin_unlink,
 };
 use crate::misc::{make_pid, xmalloc, xrealloc, xstrdup, xstrndup};
-use crate::output::{error, fatal, perror_with_name, FmtArg, INTSTR_LENGTH};
+use crate::output::{error, fatal, perror_with_name, FmtArg};
 use crate::posixos::{jobserver_clear, osync_clear};
 use crate::remake::notice_finished_file;
 use crate::stdio::FILE;
@@ -263,7 +263,7 @@ pub unsafe fn set_file_variables(
     // `$|` every order-only dep.
     let mut plus_len: size_t = 0;
     let mut bar_len: size_t = 0;
-    let mut d = file.deps;
+    let d = file.deps;
     while !d.is_null() {
         if dep_uses_auto_vars(&*d) {
             let len = strlen(dep_name(d)) + 1;
@@ -289,7 +289,7 @@ pub unsafe fn set_file_variables(
     // Fill `$+`, remembering how much of it can possibly appear in `$?`.
     let mut cp = plus_value;
     let mut qmark_len = plus_len + 1;
-    let mut d = file.deps;
+    let d = file.deps;
     while !d.is_null() {
         if (*d).ignore_mtime() == 0 && dep_uses_auto_vars(&*d) {
             let (c, len) = autovar_dep_name(ctx, dep_name(d));
@@ -331,7 +331,7 @@ pub unsafe fn set_file_variables(
         Some(dep_hash_cmp),
     );
 
-    let mut d = file.deps;
+    let d = file.deps;
     while !d.is_null() {
         if dep_uses_auto_vars(&*d) {
             let slot = hash_find_slot(&raw mut dep_hash, d as *const c_void)
@@ -361,7 +361,7 @@ pub unsafe fn set_file_variables(
     let mut cp = caret_value;
     let mut qp = qmark_value;
     let mut bp = bar_value;
-    let mut d = file.deps;
+    let d = file.deps;
     while !d.is_null() {
         // Take only each name's canonical (first-inserted) dep node.
         if dep_uses_auto_vars(&*d)
@@ -592,7 +592,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
 
     if sig == SIGTERM {
         // Pass SIGTERM on to children right away so they die with us.
-        let mut c = children;
+        let c = children;
         while !c.is_null() {
             if (*c).remote() == 0 && (*c).pid > 0 {
                 kill((*c).pid, SIGTERM);

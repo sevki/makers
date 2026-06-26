@@ -11,7 +11,7 @@ use ::core::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libc::{
-    __errno_location, close, ftruncate, lseek, perror, read, sprintf, strcat, strerror, strlen,
+    __errno_location, close, ftruncate, lseek, perror, read, sprintf, strerror, strlen,
     EINTR, SEEK_END, SEEK_SET,
 };
 

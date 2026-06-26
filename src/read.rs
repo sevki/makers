@@ -2797,7 +2797,7 @@ unsafe fn record_files(
                 }
             }
         }
-        let f_ref = f
+        let _f_ref = f
             .as_mut()
             .expect("record_files target lookup returned a null file");
         if !this.is_null() {
@@ -3302,7 +3302,7 @@ pub unsafe fn tilde_expand(
 pub unsafe fn parse_file_seq<T: SeqNode>(
     ctx: &crate::execctx::ExecContext,
     stringp: *mut *mut ::core::ffi::c_char,
-    mut size: size_t,
+    _size: size_t,
     mut stopmap: i32,
     prefix: *const ::core::ffi::c_char,
     flags: i32,
@@ -3331,9 +3331,6 @@ pub unsafe fn parse_file_seq<T: SeqNode>(
         findmap |= MAP_BLANK;
     }
     stopmap |= MAP_NUL;
-    if size < ::core::mem::size_of::<NameSeq>() as usize {
-        size = ::core::mem::size_of::<NameSeq>() as usize as size_t;
-    }
     if !(flags & 0x4_i32 != 0) {
         // read.rs carries its own layout-identical glob_t; reconcile the
         // nominal types until the duplicate struct is unified.

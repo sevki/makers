@@ -3,7 +3,7 @@ use libc::{fnmatch, free, strchr};
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
 use crate::file::{Dep, File, SeqNode};
-use crate::misc::{xcalloc, xstrdup};
+use crate::misc::xstrdup;
 use crate::strcache::strcache_add;
 extern "C" {
     fn qsort(

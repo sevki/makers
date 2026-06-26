@@ -10,7 +10,6 @@ use crate::misc::free_ns_chain;
 use crate::misc::{print_spaces, skip_reference, xcalloc};
 use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
-use c2rust_bitfields;
 use libc::{printf, strchr, strlen};
 extern "C" {
     static mut stdout: *mut FILE;
