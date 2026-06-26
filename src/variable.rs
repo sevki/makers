@@ -415,7 +415,9 @@ pub unsafe fn define_variable_in_set(
     } else {
         set
     };
-    let set: &mut variable_set = &mut *set;
+    let set: &mut variable_set = set
+        .as_mut()
+        .expect("variable set pointer is non-null after the null-to-global fallback");
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     var_slot = hash_find_slot(
@@ -545,7 +547,9 @@ pub unsafe fn undefine_variable_in_set(
     } else {
         set
     };
-    let set: &mut variable_set = &mut *set;
+    let set: &mut variable_set = set
+        .as_mut()
+        .expect("variable set pointer is non-null after the null-to-global fallback");
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     var_slot = hash_find_slot(
