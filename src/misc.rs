@@ -943,6 +943,73 @@ pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_c
 }
 
 #[cfg(test)]
+mod tmpfile_tests {
+    use super::{dbg, get_tmpfd, get_tmpfile};
+    use ::core::ffi::c_char;
+    use ::core::ptr::null_mut;
+
+    // `get_tmpfile` drives the whole temp-file chain (`get_tmpfd` ->
+    // `get_tmptemplate` -> `get_tmpdir`): it must hand back a writable
+    // `FILE *` and an owned, non-null name. Round-trip a write through it to
+    // prove the descriptor is real, then clean up.
+    #[test]
+    fn get_tmpfile_round_trips_and_names_the_file() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut name: *mut c_char = null_mut();
+        unsafe {
+            let fp = get_tmpfile(&ctx, &mut name);
+            assert!(!fp.is_null(), "get_tmpfile returned null");
+            assert!(!name.is_null(), "get_tmpfile left the name unset");
+
+            let data = b"crap-coverage-probe\n";
+            let wrote = libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp.cast());
+            assert_eq!(wrote, data.len());
+            libc::fflush(fp.cast());
+            libc::rewind(fp.cast());
+
+            let mut buf = [0u8; 32];
+            let read = libc::fread(buf.as_mut_ptr().cast(), 1, data.len(), fp.cast());
+            assert_eq!(read, data.len());
+            assert_eq!(&buf[..data.len()], data);
+
+            libc::fclose(fp.cast());
+            assert_eq!(libc::unlink(name), 0, "temp file should still exist to unlink");
+            libc::free(name.cast());
+        }
+    }
+
+    // The anonymous branch (`name` is null) takes the `os_anontmp` /
+    // unlink-immediately path and just returns a bare descriptor.
+    #[test]
+    fn get_tmpfd_anonymous_returns_open_descriptor() {
+        let ctx = crate::execctx::ExecContext::default();
+        unsafe {
+            let fd = get_tmpfd(&ctx, null_mut());
+            assert!(fd >= 0, "anonymous get_tmpfd failed: {fd}");
+            libc::close(fd);
+        }
+    }
+
+    // `dbg` appends a PID-tagged line to /tmp/gmkdebug.log; exercise both the
+    // real-message and null-message branches and confirm the line lands.
+    #[test]
+    fn dbg_appends_tagged_line() {
+        const MARKER: &::core::ffi::CStr = c"dbg_unit_probe_marker";
+        unsafe {
+            dbg(MARKER.as_ptr());
+            dbg(null_mut());
+        }
+        let log = std::fs::read_to_string("/tmp/gmkdebug.log")
+            .expect("dbg should have created /tmp/gmkdebug.log");
+        assert!(
+            log.contains("dbg_unit_probe_marker"),
+            "dbg did not write the marker line"
+        );
+        assert!(log.contains("(null)"), "dbg did not write the null-message line");
+    }
+}
+
+#[cfg(test)]
 mod make_toui_tests {
     use super::{make_toui, MakeToUiError};
 
