@@ -7,6 +7,8 @@ on:
     types: [submitted]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
   issue_comment:
     types: [created, edited, deleted]
 
@@ -67,7 +69,7 @@ jobs:
               -f owner="$OWNER" \
               -f repo="$REPO" \
               -F number="$PR_NUMBER" \
-              -f cursor="$cursor")"
+              -F cursor="$cursor")"
 
             echo "$result" | jq -r '
               .data.repository.pullRequest.reviewThreads.nodes[]
