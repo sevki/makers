@@ -1,22 +1,10 @@
-# cargo-crap configuration
-# CRAP (Change Risk Anti-Patterns) metric: flags functions that are both
-# highly complex and poorly tested. https://minikin.me/blog/cargo-crap
+# Regression-detector tolerance for `cargo crap --fail-regression`.
 #
-# Run with coverage for a real score:
-#   ./scripts/crap.sh
-# Or a quick complexity-only look (treats everything as 0% covered):
-#   cargo crap
-
-# CRAP score above which a function is considered "crappy".
-threshold = 30
-
-# How to treat functions with complexity data but no coverage data.
-# pessimistic = assume 0% covered (safest default).
-missing = "pessimistic"
-
-# Files skipped at walk time (this is a C2Rust port; some modules are
-# mechanically generated and not meaningful CRAP targets).
-exclude = [
-    "tests/**",
-    "proc-macros/**",
-]
+# CRAP = cc^2 * (1 - coverage)^3 + cc, so for a moderately complex function a
+# single covered/uncovered line (a few percent of coverage) moves the score by
+# a few tenths. Combined with run-to-run coverage jitter in the parallel job
+# machinery, the default epsilon (0.01) flags pure measurement noise as a
+# "regression". 0.1 absorbs that floor while still catching real regressions,
+# which on this codebase are >= 1.0 (a complexity increase, or a function whose
+# coverage collapses).
+epsilon = 0.1

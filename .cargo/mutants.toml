@@ -18,3 +18,9 @@ examine_globs = [
 # baseline time.
 timeout_multiplier = 3.0
 minimum_test_timeout = 120
+
+# Run the test harness single-threaded. The differential oracle tests compare
+# byte-for-byte against the C `make`, whose recipe-echo vs child-output flush
+# ordering jitters under heavy parallel load (the baseline runs the whole suite
+# at once), causing spurious baseline failures. Serial execution is stable.
+additional_cargo_test_args = ["--", "--test-threads=1"]
