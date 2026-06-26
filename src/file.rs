@@ -66,7 +66,7 @@ pub struct tm {
     pub tm_zone: *const ::core::ffi::c_char,
 }
 /// A node in make's dependency graph: one target (or prerequisite) file.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, BitfieldStruct)]
 pub struct File {
     pub name: *const ::core::ffi::c_char,
     pub hname: *const ::core::ffi::c_char,
