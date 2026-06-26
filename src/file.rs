@@ -176,6 +176,7 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct Dep {
     pub next: *mut Dep,
     pub name: *const ::core::ffi::c_char,
@@ -277,6 +278,7 @@ impl Default for GoalDep {
 /// tracking. Mirrors `Dep` (a goal is an edge from "the command line" to a
 /// target) plus bookkeeping.
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct GoalDep {
     pub next: *mut GoalDep,
     pub name: *const ::core::ffi::c_char,
