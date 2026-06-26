@@ -283,6 +283,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     error(
         ctx,
         null::<Floc>(),
+        0,
         c"cannot open output-sync lock file: suppressing output-sync".as_ptr(),
         &[],
     );
@@ -307,6 +308,7 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             error(
                 ctx,
                 null::<Floc>(),
+                0,
                 c"warning: cannot acquire output lock: disabling output sync".as_ptr(),
                 &[],
             );
@@ -757,6 +759,7 @@ pub unsafe fn perror_with_name(
     error(
         ctx,
         null::<Floc>(),
+        0,
         c"%s%s: %s".as_ptr(),
         &[FmtArg::Str(str), FmtArg::Str(name), FmtArg::Str(err)],
     );
@@ -770,6 +773,7 @@ pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_ch
     fatal(
         ctx,
         null::<Floc>(),
+        0,
         c"%s: %s".as_ptr(),
         &[FmtArg::Str(name), FmtArg::Str(err)],
     );
