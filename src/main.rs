@@ -1674,12 +1674,12 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
             None => {
                 let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
                 fatal(
-                    ctx,
-                    ::core::ptr::null_mut::<Floc>(),
-                    opt.len() as size_t,
-                    b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                    c.as_ptr(),
-                );
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        opt.len() as size_t,
+        b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((c.as_ptr()) as *const ::core::ffi::c_char)],
+    );
             }
         }
     }
@@ -2210,13 +2210,13 @@ unsafe fn main_0(
             }
         } else if restarts == 0 && argv_slots != Some(1) {
             error(
-                &ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                INTSTR_LENGTH,
-                b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
+        &ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        INTSTR_LENGTH,
+        b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-                argv_slots.unwrap_or(0),
-            );
+        &[FmtArg::Int((argv_slots.unwrap_or(0)) as i32 as i64)],
+    );
         }
         if do_reset {
             reset_jobserver(&options);
@@ -2383,8 +2383,8 @@ unsafe fn main_0(
             options.makefiles.borrow()[options.stdin_offset.get() as usize].as_ptr(),
         ));
         (*f).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        (*f).set_update_status(us_success as update_status);
-        (*f).set_command_state(cs_finished as cmd_state);
+        (*f).set_update_status(us_success);
+        (*f).set_command_state(cs_finished);
         (*f).set_intermediate(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         (*f).set_dontcare(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         (*f).mtime_before_update = f_mtime(&ctx, f, 0);
@@ -2548,13 +2548,13 @@ unsafe fn main_0(
     {
         if restarts == 0 {
             error(
-                &ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                INTSTR_LENGTH,
-                b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
+        &ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        INTSTR_LENGTH,
+        b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-                options.arg_job_slots.get().unwrap_or(0),
-            );
+        &[FmtArg::Int((options.arg_job_slots.get().unwrap_or(0)) as i32 as i64)],
+    );
         }
         reset_jobserver(&options);
     }
@@ -2660,8 +2660,8 @@ unsafe fn main_0(
             (*f_0).mtime_before_update = OLD_MTIME as uintmax_t;
             (*f_0).last_mtime = (*f_0).mtime_before_update;
             (*f_0).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            (*f_0).set_update_status(us_success as update_status);
-            (*f_0).set_command_state(cs_finished as cmd_state);
+            (*f_0).set_update_status(us_success);
+            (*f_0).set_command_state(cs_finished);
         }
     }
     if options.print_targets.get() {
@@ -2700,7 +2700,7 @@ unsafe fn main_0(
         let mut skipped_makefiles: *mut GoalDep = ::core::ptr::null_mut::<GoalDep>();
         let mut nargv: *mut *const ::core::ffi::c_char = argv as *mut *const ::core::ffi::c_char;
         let mut any_failed: i32 = 0;
-        let mut status: update_status;
+        let mut status: UpdateStatus;
         if 0x1_i32 & db_level != 0 {
             printf(b"Updating makefiles....\n\0" as *const u8 as *const ::core::ffi::c_char);
             fflush(stdout);
@@ -2789,7 +2789,7 @@ unsafe fn main_0(
             db_level = DB_NONE;
         }
         options.rebuilding_makefiles.set(true);
-        status = update_goal_chain(&ctx, read_files) as update_status;
+        status = update_goal_chain(&ctx, read_files);
         options.rebuilding_makefiles.set(false);
         db_level = orig_db_level;
         while !skipped_makefiles.is_null() {
@@ -2827,13 +2827,13 @@ unsafe fn main_0(
                         if f3r.unloaded() != 0 {
                             if load_file(&ctx, &raw mut d_2r.floc, f_3, 0) == 0 {
                                 fatal(
-                                    &ctx,
-                                    &raw mut d_2r.floc,
-                                    strlen(f3r.name) as size_t,
-                                    b"%s: failed to load\0" as *const u8
+        &ctx,
+        &raw mut d_2r.floc,
+        strlen(f3r.name) as size_t,
+        b"%s: failed to load\0" as *const u8
                                         as *const ::core::ffi::c_char,
-                                    f3r.name,
-                                );
+        &[FmtArg::Str((f3r.name) as *const ::core::ffi::c_char)],
+    );
                             }
                             f3r.set_unloaded(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                             f3r.set_loaded(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2862,13 +2862,13 @@ unsafe fn main_0(
                                 as i32;
                         } else if d_4r.flags() as i32 & RM_DONTCARE == 0 {
                             error(
-                                &ctx,
-                                &raw mut d_4r.floc,
-                                strlen(f4r.name) as size_t,
-                                b"failed to remake makefile '%s'\0" as *const u8
+        &ctx,
+        &raw mut d_4r.floc,
+        strlen(f4r.name) as size_t,
+        b"failed to remake makefile '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                f4r.name,
-                            );
+        &[FmtArg::Str((f4r.name) as *const ::core::ffi::c_char)],
+    );
                             let mtime: uintmax_t = if f4r.last_mtime == UNKNOWN_MTIME as uintmax_t {
                                 f_mtime(&ctx, f_4, 0)
                             } else {
@@ -4500,13 +4500,13 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
     if jobserver_enabled() != 0 && jobserver_tokens() != 0 {
         if status != 2 {
             error(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                INTSTR_LENGTH,
-                b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        INTSTR_LENGTH,
+        b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
                     as *const ::core::ffi::c_char,
-                jobserver_tokens(),
-            );
+        &[FmtArg::Uint((jobserver_tokens()) as u32 as u64)],
+    );
         } else {
             loop {
                 JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);

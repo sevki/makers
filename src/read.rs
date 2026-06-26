@@ -454,12 +454,12 @@ unsafe fn eval_makefile(
         EMFILE | ENFILE | ENOMEM => {
             let err: *const ::core::ffi::c_char = strerror((*deps).error);
             fatal(
-                ctx,
-                reading_file,
-                strlen(err) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                err,
-            );
+        ctx,
+        reading_file,
+        strlen(err) as size_t,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((err) as *const ::core::ffi::c_char)],
+    );
         }
         _ => {}
     }
@@ -2093,24 +2093,24 @@ unsafe fn conditional_line(
         }
         if (*conditionals).if_cmds == 0 {
             fatal(
-                ctx,
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                cmdname,
-            );
+        ctx,
+        flocp,
+        strlen(cmdname) as size_t,
+        b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
         }
         (*conditionals).if_cmds = (*conditionals).if_cmds.wrapping_sub(1);
     } else if cmdtype as ::core::ffi::c_uint == c_else as i32 as ::core::ffi::c_uint {
         let mut p: *const ::core::ffi::c_char;
         if (*conditionals).if_cmds == 0 {
             fatal(
-                ctx,
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                cmdname,
-            );
+        ctx,
+        flocp,
+        strlen(cmdname) as size_t,
+        b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
         }
         o = (*conditionals).if_cmds.wrapping_sub(1);
         if *(*conditionals).seen_else.offset(o as isize) != 0 {
@@ -2252,13 +2252,13 @@ unsafe fn conditional_line(
                 } => {
                     if trailing_text {
                         error(
-                            ctx,
-                            flocp,
-                            strlen(cmdname) as size_t,
-                            b"extraneous text after '%s' directive\0" as *const u8
+        ctx,
+        flocp,
+        strlen(cmdname) as size_t,
+        b"extraneous text after '%s' directive\0" as *const u8
                                 as *const ::core::ffi::c_char,
-                            cmdname,
-                        );
+        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+    );
                     }
                     // Expand the first argument to an owned string before
                     // expanding the second (they share one scratch buffer).
@@ -2707,13 +2707,13 @@ unsafe fn record_files(
             }
             if !cmds.is_null() && cmds == (*f).cmds {
                 error(
-                    ctx,
-                    flocp,
-                    strlen((*f).name) as size_t,
-                    b"target '%s' given more than once in the same rule\0" as *const u8
+        ctx,
+        flocp,
+        strlen((*f).name) as size_t,
+        b"target '%s' given more than once in the same rule\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*f).name,
-                );
+        &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
+    );
             } else if !cmds.is_null() && !(*f).cmds.is_null() && (*f).is_target() as i32 != 0 {
                 let l: size_t = strlen((*f).name) as size_t;
                 error(
@@ -2750,13 +2750,13 @@ unsafe fn record_files(
                 .filter(|x| x.is_target() as i32 != 0 && x.double_colon.is_null())
             {
                 fatal(
-                    ctx,
-                    flocp,
-                    strlen(fref.name) as size_t,
-                    b"target file '%s' has both : and :: entries\0" as *const u8
+        ctx,
+        flocp,
+        strlen(fref.name) as size_t,
+        b"target file '%s' has both : and :: entries\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    fref.name,
-                );
+        &[FmtArg::Str((fref.name) as *const ::core::ffi::c_char)],
+    );
             }
             f = enter_file(strcache_add(name));
             if (*f).double_colon.is_null() {
@@ -3555,8 +3555,8 @@ pub unsafe fn parse_file_seq<T: SeqNode>(
                             *newp = _ns_0;
                             newp = T::next_slot(_ns_0);
                         } else {
-                            if let Some(node) = newp.as_mut().and_then(|s| s.as_mut()) {
-                                node.next = found;
+                            if !(*newp).is_null() {
+                                T::set_next(*newp, found);
                             } else {
                                 *newp = found;
                             }

@@ -294,7 +294,7 @@ pub unsafe fn update_goal_chain(
                             < us_question as i32 as ::core::ffi::c_uint
                     {
                         if fref(file).update_status() as u64 != 0 {
-                            status = fref(file).update_status() as update_status;
+                            status = fref(file).update_status();
                             stop = (crate::make_main::opt_question()
                                 && !crate::make_main::opt_keep_going()
                                 && !opt_rebuilding_makefiles())
@@ -455,7 +455,7 @@ unsafe extern "C" fn update_file(
                 fr.update_status() as i32
             } else {
                 us_success as i32
-            }) as update_status;
+            });
         }
     }
     while !f.is_null() {
@@ -561,8 +561,7 @@ unsafe extern "C" fn update_file_1(
         file: ::core::ptr::null_mut::<File>(),
         shuf: ::core::ptr::null_mut::<Dep>(),
         stem: ::core::ptr::null::<::core::ffi::c_char>(),
-        flags_changed_ignore_mtime_staticpattern_need_2nd_expansion_ignore_automatic_vars_is_explicit_wait_here: [0; 2],
-        c2rust_padding: [0; 6],
+        ..Default::default()
     };
     let mut running: i32 = 0;
     if 0x2_i32 & db_level != 0 {
@@ -1024,7 +1023,7 @@ unsafe extern "C" fn update_file_1(
                 us_failed as i32 as ::core::ffi::c_uint
             } else {
                 dep_status as ::core::ffi::c_uint
-            }) as update_status as update_status,
+            }),
         );
         notice_finished_file(ctx, file);
         if 0x2_i32 & db_level != 0 {
@@ -1273,7 +1272,7 @@ pub unsafe fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: *mut
     let mut d: *mut dep;
     let ran: i32 = ((*file).command_state() as i32 == cs_running as i32) as i32;
     let mut touched: i32 = 0;
-    (*file).set_command_state(cs_finished as cmd_state);
+    (*file).set_command_state(cs_finished);
     (*file).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if crate::make_main::opt_touch() && (*file).update_status() as i32 == us_success as i32 {
         // Touch the file unless every command line is recursive (flagged
@@ -1295,7 +1294,7 @@ pub unsafe fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: *mut
             if (*file).phony {
                 (*file).update_status = UpdateStatus::Success;
             } else if !(*file).cmds.is_null() {
-                (*file).set_update_status(touch_file(ctx, file) as update_status as update_status);
+                (*file).set_update_status(touch_file(ctx, file));
                 ctx.commands_started.set(ctx.commands_started.get().wrapping_add(1));
                 touched = 1;
             }
@@ -1357,9 +1356,9 @@ pub unsafe fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: *mut
     if ran != 0 && (*file).update_status() as i32 != us_none as i32 {
         d = (*file).also_make;
         while !d.is_null() {
-            (*(*d).file).set_command_state(cs_finished as cmd_state);
+            (*(*d).file).set_command_state(cs_finished);
             (*(*d).file).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            (*(*d).file).set_update_status((*file).update_status() as update_status);
+            (*(*d).file).set_update_status((*file).update_status());
             if ran != 0 && (*(*d).file).phony() == 0 {
                 f_mtime(ctx, (*d).file, 0);
                 if crate::make_main::opt_just_print() {
@@ -1381,7 +1380,7 @@ pub unsafe fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: *mut
             check_also_make(ctx, file);
         }
     } else if (*file).update_status() as i32 == us_none as i32 {
-        (*file).set_update_status(us_success as update_status);
+        (*file).set_update_status(us_success);
     }
 }
 unsafe extern "C" fn check_dep(
@@ -1547,12 +1546,12 @@ unsafe extern "C" fn check_dep(
 pub unsafe fn touch_file(ctx: &crate::execctx::ExecContext, file: *mut file) -> update_status {
     if !crate::make_main::opt_run_silent() {
         message(
-            ctx,
-            0,
-            strlen((*file).name) as size_t,
-            b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
-            (*file).name,
-        );
+        ctx,
+        0,
+        strlen((*file).name) as size_t,
+        b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char)],
+    );
     }
     if crate::make_main::opt_just_print() {
         return us_success;
@@ -1562,7 +1561,7 @@ pub unsafe fn touch_file(ctx: &crate::execctx::ExecContext, file: *mut file) -> 
             us_failed as i32
         } else {
             us_success as i32
-        }) as update_status;
+        });
     } else {
         let mut fd: i32;
         loop {
@@ -1959,7 +1958,7 @@ pub unsafe fn f_mtime(
     if !(*file).double_colon.is_null() {
         file = (*file).double_colon;
     }
-    propagate_timestamp = (*file).updated;
+    propagate_timestamp = (*file).updated();
     loop {
         if mtime != NONEXISTENT_MTIME as uintmax_t
             && (*file).command_state() as i32 == cs_not_started as i32
@@ -1968,7 +1967,7 @@ pub unsafe fn f_mtime(
         {
             (*file).set_intermediate(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
-        if (*file).updated == propagate_timestamp {
+        if (*file).updated() == propagate_timestamp {
             (*file).last_mtime = mtime;
         }
         match (*file).prev.as_mut() {

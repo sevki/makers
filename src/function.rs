@@ -1163,12 +1163,12 @@ unsafe fn parse_numeric(
         NumParse::Ok(n) => n,
         // `fatal` diverges (`-> !`), so these arms never produce an `i64`.
         NumParse::Empty => fatal(
-            ctx,
-            *expanding_var,
-            msg.to_bytes().len() as size_t,
-            c"%s: empty value".as_ptr(),
-            msg.as_ptr(),
-        ),
+        ctx,
+        *expanding_var,
+        msg.to_bytes().len() as size_t,
+        c"%s: empty value".as_ptr(),
+        &[FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char)],
+    ),
         other => {
             let fmt = if other == NumParse::OutOfRange {
                 c"%s: '%s' out of range"
@@ -1705,21 +1705,21 @@ unsafe fn func_error(
     match logfn {
         Some(crate::parser::LogFunction::Error) => {
             fatal(
-                ctx,
-                reading_file,
-                strlen(*argv.offset(0_i32 as isize)) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                *argv.offset(0_i32 as isize),
-            );
+        ctx,
+        reading_file,
+        strlen(*argv.offset(0_i32 as isize)) as size_t,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char)],
+    );
         }
         Some(crate::parser::LogFunction::Warning) => {
             error(
-                ctx,
-                reading_file,
-                strlen(*argv.offset(0_i32 as isize)) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                *argv.offset(0_i32 as isize),
-            );
+        ctx,
+        reading_file,
+        strlen(*argv.offset(0_i32 as isize)) as size_t,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char)],
+    );
         }
         Some(crate::parser::LogFunction::Info) => {
             // $(info ...): build "<arg>\n\0" in an owned buffer instead of a
@@ -1734,12 +1734,12 @@ unsafe fn func_error(
         }
         _ => {
             fatal(
-                ctx,
-                *expanding_var,
-                strlen(funcname) as size_t,
-                b"INTERNAL: func_error: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                funcname,
-            );
+        ctx,
+        *expanding_var,
+        strlen(funcname) as size_t,
+        b"INTERNAL: func_error: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((funcname) as *const ::core::ffi::c_char)],
+    );
         }
     }
     o
@@ -1861,12 +1861,12 @@ unsafe fn parse_textint(
     let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
     match classify_textint(t) {
         TextInt::Empty => fatal(
-            ctx,
-            *expanding_var,
-            strlen(msg) as size_t,
-            b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
-            msg,
-        ),
+        ctx,
+        *expanding_var,
+        strlen(msg) as size_t,
+        b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
+    ),
         TextInt::NotNumeric => fatal(
         ctx,
         *expanding_var,
@@ -2399,12 +2399,12 @@ pub unsafe fn func_shell_base(
     child.environment = target_environment(ctx, ::core::ptr::null_mut::<file>(), 0);
     if pipe(&raw mut pipedes as *mut i32) < 0 {
         error(
-            ctx,
-            reading_file,
-            strlen(strerror(*__errno_location())) as size_t,
-            b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            strerror(*__errno_location()),
-        );
+        ctx,
+        reading_file,
+        strlen(strerror(*__errno_location())) as size_t,
+        b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
     } else {
         fd_noinherit(pipedes[1_i32 as usize]);
         fd_noinherit(pipedes[0_i32 as usize]);
@@ -2806,12 +2806,12 @@ unsafe fn func_file(
         }
     } else {
         fatal(
-            ctx,
-            *expanding_var,
-            strlen(fn_0) as size_t,
-            b"file: invalid file operation: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            fn_0,
-        );
+        ctx,
+        *expanding_var,
+        strlen(fn_0) as size_t,
+        b"file: invalid file operation: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((fn_0) as *const ::core::ffi::c_char)],
+    );
     }
     o
 }
@@ -3285,21 +3285,21 @@ pub unsafe fn define_new_function(
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
         fatal(
-            ctx,
-            flocp,
-            strlen(name) as size_t,
-            b"invalid function name: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            name,
-        );
+        ctx,
+        flocp,
+        strlen(name) as size_t,
+        b"invalid function name: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
     }
     if len > 255 {
         fatal(
-            ctx,
-            flocp,
-            strlen(name) as size_t,
-            b"function name too long: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            name,
-        );
+        ctx,
+        flocp,
+        strlen(name) as size_t,
+        b"function name too long: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+    );
     }
     if min > 255 {
         fatal(

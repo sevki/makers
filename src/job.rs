@@ -837,7 +837,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         us_failed as i32
                     } else {
                         us_question as i32
-                    }) as update_status as update_status,
+                    }),
                 );
             if DELETE_ON_ERROR.load(Ordering::Relaxed) == -1_i32 {
                 let f: *mut file =
@@ -860,7 +860,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     (*c).file
                         .as_mut()
                         .expect("a child always has a file")
-                        .set_update_status(us_failed as update_status);
+                        .set_update_status(us_failed);
                 } else {
                     if crate::make_main::opt_output_sync() == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(ctx, &raw mut (*c).output);
@@ -894,7 +894,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 (*c).file
                     .as_mut()
                     .expect("a child always has a file")
-                    .set_update_status(us_success as update_status);
+                    .set_update_status(us_success);
             }
         }
         crate::output::output_dump(ctx, &raw mut (*c).output);
@@ -1167,7 +1167,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 .file
                 .as_mut()
                 .expect("a child always has a file")
-                .set_update_status(us_question as update_status);
+                .set_update_status(us_question);
             notice_finished_file(ctx, (*child).file);
             return;
         }
@@ -1197,12 +1197,12 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 || !(flags & 2 != 0) && !crate::make_main::opt_run_silent()
             {
                 message(
-                    ctx,
-                    0,
-                    strlen(p) as size_t,
-                    b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    p,
-                );
+        ctx,
+        0,
+        strlen(p) as size_t,
+        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+    );
             }
             ctx.commands_started.set(ctx.commands_started.get().wrapping_add(1));
             if !(*argv.offset(0_i32 as isize)).is_null()
@@ -1316,7 +1316,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             .file
             .as_mut()
             .expect("a child always has a file")
-            .set_update_status(us_success as update_status);
+            .set_update_status(us_success);
         notice_finished_file(ctx, (*child).file);
     }
     output_context = ::core::ptr::null_mut::<output>();
