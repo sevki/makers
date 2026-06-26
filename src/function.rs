@@ -1200,7 +1200,7 @@ unsafe fn func_word(
         c"invalid first argument to 'word' function",
     );
     if i < 1 {
-        fatal(ctx, *expanding_var, 0, 0, c"first argument to 'word' function must be greater than 0".as_ptr());
+        fatal(ctx, *expanding_var, 0, c"first argument to 'word' function must be greater than 0".as_ptr(), &[]);
     }
     let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
     // `i >= 1` here; an index too large for `usize` (only reachable on 32-bit
@@ -2639,7 +2639,7 @@ unsafe fn func_file(
         }
         start = next_token(fn_0);
         if *start.offset(0_i32 as isize) as i32 == 0 {
-            fatal(ctx, *expanding_var, 0, 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char);
+            fatal(ctx, *expanding_var, 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start, NUL)` is exactly the token length.
@@ -2711,10 +2711,10 @@ unsafe fn func_file(
         let mut fp_0: *mut FILE;
         start_0 = next_token(fn_0.offset(1_i32 as isize));
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
-            fatal(ctx, *expanding_var, 0, 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char);
+            fatal(ctx, *expanding_var, 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            fatal(ctx, *expanding_var, 0, 0, b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char);
+            fatal(ctx, *expanding_var, 0, b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char, &[]);
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start_0, NUL)` is exactly the token length.
@@ -3281,7 +3281,7 @@ pub unsafe fn define_new_function(
     }
     len = e.offset_from(name) as ::core::ffi::c_long as size_t;
     if len == 0 {
-        fatal(ctx, flocp, 0, 0, b"empty function name\0" as *const u8 as *const ::core::ffi::c_char);
+        fatal(ctx, flocp, 0, b"empty function name\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
         fatal(

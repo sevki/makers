@@ -452,9 +452,9 @@ unsafe extern "C" fn update_file(
                 fflush(stdout);
             }
             return (if fr.command_state() as i32 == cs_finished as i32 {
-                fr.update_status() as i32
+                fr.update_status()
             } else {
-                us_success as i32
+                us_success
             });
         }
     }
@@ -1018,13 +1018,13 @@ unsafe extern "C" fn update_file_1(
         fflush(stdout);
     }
     if dep_status as u64 != 0 {
-        (*file).set_update_status(
-            (if dep_status as ::core::ffi::c_uint == us_none as i32 as ::core::ffi::c_uint {
+        (*file).set_update_status(UpdateStatus::from_bits(
+            if dep_status as ::core::ffi::c_uint == us_none as i32 as ::core::ffi::c_uint {
                 us_failed as i32 as ::core::ffi::c_uint
             } else {
                 dep_status as ::core::ffi::c_uint
-            }),
-        );
+            },
+        ));
         notice_finished_file(ctx, file);
         if 0x2_i32 & db_level != 0 {
             print_spaces(depth);
@@ -1558,9 +1558,9 @@ pub unsafe fn touch_file(ctx: &crate::execctx::ExecContext, file: *mut file) -> 
     }
     if ar_name(ctx, ::core::ffi::CStr::from_ptr((*file).name)) {
         return (if ar_touch(ctx, (*file).name) != 0 {
-            us_failed as i32
+            us_failed
         } else {
-            us_success as i32
+            us_success
         });
     } else {
         let mut fd: i32;
@@ -1795,21 +1795,15 @@ pub unsafe fn f_mtime(
             } else {
                 rehash_file(ctx, file, strcache_add(name));
             }
-            while !(*file).renamed.is_null() {
-                file = (*file).renamed;
+            while !file.renamed.is_null() {
+                file = &mut *file.renamed;
             }
         }
         free(arname as *mut ::core::ffi::c_void);
-        while let Some(file_ref_mut) = file.as_ref() {
-            if file_ref_mut.renamed.is_null() {
-                break;
-            }
-            file = file_ref_mut.renamed;
+        while !file.renamed.is_null() {
+            file = &mut *file.renamed;
         }
-        let file_mut = file
-            .as_mut()
-            .expect("f_mtime archive member requires a non-null file");
-        file_mut.low_resolution_time = true;
+        file.low_resolution_time = true;
         if mtime == NONEXISTENT_MTIME as uintmax_t {
             return NONEXISTENT_MTIME as uintmax_t;
         }

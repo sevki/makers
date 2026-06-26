@@ -65,7 +65,7 @@ macro_rules! id_wireformat {
     // From<Thing> by hashing the whole value                              //
     // ------------------------------------------------------------------ //
     ($ident:ident[$size:expr] <- $thing:path) => {
-        id_wireformat!($ident[$size]);
+        $crate::id_wireformat!($ident[$size]);
 
         impl From<&$thing> for $ident {
             fn from(value: &$thing) -> Self {
@@ -87,7 +87,7 @@ macro_rules! id_wireformat {
     // From<Thing> via a custom key-extraction expression                  //
     // ------------------------------------------------------------------ //
     ($ident:ident[$size:expr] | $param:ident : $thing:path | $expr:expr) => {
-        id_wireformat!($ident[$size]);
+        $crate::id_wireformat!($ident[$size]);
 
         impl From<&$thing> for $ident {
             fn from($param: &$thing) -> Self {

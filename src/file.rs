@@ -232,12 +232,12 @@ pub struct DepNode {
 }
 
 /// Stable identity for a dep edge: content-hash of the full (immutable) `DepNode`.
-id_wireformat!(DepId[HASH_SIZE] <- DepNode);
+crate::id_wireformat!(DepId[HASH_SIZE] <- DepNode);
 
 /// Stable identity for a file: derived from its canonical name only.
 /// Mutable runtime state (timestamps, flags, command state) does not
 /// contribute to the key, so a file's identity survives updates.
-id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
+crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -763,6 +763,9 @@ impl Dep {
     }
     pub fn set_flags(&mut self, value: ::core::ffi::c_uint) {
         self.flags = value;
+    }
+    pub fn set_wait_here(&mut self, value: ::core::ffi::c_uint) {
+        self.wait_here = value != 0;
     }
 }
 

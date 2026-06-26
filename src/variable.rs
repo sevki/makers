@@ -1923,7 +1923,7 @@ pub unsafe fn assign_variable_definition(
 /// string, and `ctx` must be valid for diagnostic reporting.
 unsafe fn fatal_on_empty_variable_name(ctx: &crate::execctx::ExecContext, v: *mut variable) {
     if *(*v).name.offset(0_i32 as isize) as i32 == 0 {
-        fatal(ctx, &raw mut (*v).fileinfo, 0, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char);
+        fatal(ctx, &raw mut (*v).fileinfo, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char, &[]);
     }
 }
 /// # Safety
