@@ -740,25 +740,25 @@ unsafe fn eval_tmpdir_var(
     let r = stat_retrying_eintr(val, &mut st);
     if r < 0 {
         error(
-            ctx,
-            null::<Floc>(),
-            var.count_bytes() + strlen(val) + strlen(strerror(*__errno_location())),
-            c"%s value %s: %s".as_ptr(),
-            var.as_ptr(),
-            val,
-            strerror(*__errno_location()),
-        );
+        ctx,
+        null::<Floc>(),
+        var.count_bytes() + strlen(val) + strlen(strerror(*__errno_location())),
+        c"%s value %s: %s".as_ptr(),
+        &[FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
+            FmtArg::Str((val) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
+    );
         return TmpdirCandidate::Invalid;
     }
     if st.st_mode & S_IFMT != S_IFDIR {
         error(
-            ctx,
-            null::<Floc>(),
-            var.count_bytes() + strlen(val),
-            c"%s value %s: not a directory".as_ptr(),
-            var.as_ptr(),
-            val,
-        );
+        ctx,
+        null::<Floc>(),
+        var.count_bytes() + strlen(val),
+        c"%s value %s: not a directory".as_ptr(),
+        &[FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
+            FmtArg::Str((val) as *const ::core::ffi::c_char)],
+    );
         return TmpdirCandidate::Invalid;
     }
     TmpdirCandidate::Usable(val)

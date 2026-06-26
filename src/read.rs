@@ -680,13 +680,8 @@ unsafe fn parse_var_assignment(
     (*vmod).set_define_v(scan.mods.define.into());
     (*vmod).set_undefine_v(scan.mods.undefine.into());
     if scan.had_modifier && !flocp.is_null() {
-        error(
-            ctx,
-            flocp,
-            0,
-            b"warning: directive lines cannot start with TAB\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        error(ctx, flocp, 0, 0, b"warning: directive lines cannot start with TAB\0" as *const u8
+                as *const ::core::ffi::c_char);
     }
     if scan.assign {
         (*vmod).set_assign_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -1867,12 +1862,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
         }
     }
     if (*conditionals).if_cmds != 0 {
-        fatal(
-            ctx,
-            fstart,
-            0,
-            b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        fatal(ctx, fstart, 0, 0, b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char);
     }
     if !filenames.is_null() {
         fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1918,12 +1908,7 @@ unsafe fn do_undefine(
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
         Some(s) => s,
-        None => fatal(
-            ctx,
-            &raw mut (*ebuf).floc,
-            0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        ),
+        None => fatal(ctx, &raw mut (*ebuf).floc, 0, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char),
     };
     name = var.add(span.start);
     *var.add(span.end) = 0;
@@ -1990,12 +1975,7 @@ unsafe fn do_define(
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(n).to_bytes()) {
         Some(s) => s,
-        None => fatal(
-            ctx,
-            &raw mut defstart,
-            0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-        ),
+        None => fatal(ctx, &raw mut defstart, 0, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char),
     };
     name = n.add(span.start);
     *n.add(span.end) = 0;
@@ -2033,13 +2013,8 @@ unsafe fn do_define(
                     p = p.add(word_end);
                     remove_comments(p);
                     if !crate::parser::rest_is_blank(::std::ffi::CStr::from_ptr(p).to_bytes()) {
-                        error(
-                            ctx,
-                            &raw mut (*ebuf).floc,
-                            0,
-                            b"extraneous text after 'endef' directive\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                        );
+                        error(ctx, &raw mut (*ebuf).floc, 0, 0, b"extraneous text after 'endef' directive\0" as *const u8
+                                as *const ::core::ffi::c_char);
                     }
                     nlevels -= 1;
                     if nlevels == 0 {
@@ -2170,12 +2145,7 @@ unsafe fn conditional_line(
         }
         o = (*conditionals).if_cmds.wrapping_sub(1);
         if *(*conditionals).seen_else.offset(o as isize) != 0 {
-            fatal(
-                ctx,
-                flocp,
-                0,
-                b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            fatal(ctx, flocp, 0, 0, b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char);
         }
         match *(*conditionals).ignoring.offset(o as isize) as i32 {
             0 => {
@@ -2604,21 +2574,11 @@ pub unsafe fn check_special_file(
         static WPRE: AtomicBool = AtomicBool::new(false);
         static WCMD: AtomicBool = AtomicBool::new(false);
         if !WPRE.load(Ordering::Relaxed) && !(*file).deps.is_null() {
-            error(
-                ctx,
-                flocp,
-                0,
-                b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            error(ctx, flocp, 0, 0, b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char);
             WPRE.store(true, Ordering::Relaxed);
         }
         if !WCMD.load(Ordering::Relaxed) && !(*file).cmds.is_null() {
-            error(
-                ctx,
-                flocp,
-                0,
-                b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
-            );
+            error(ctx, flocp, 0, 0, b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char);
             WCMD.store(true, Ordering::Relaxed);
         }
     }
@@ -2668,12 +2628,7 @@ unsafe fn record_files(
         cmdsref.command_lines = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
         cmdsref.recipe_prefix = prefix;
     } else if are_also_makes != 0 {
-        fatal(
-            ctx,
-            flocp,
-            0,
-            b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        fatal(ctx, flocp, 0, 0, b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
         cmds = ::core::ptr::null_mut::<Commands>();
     }
@@ -2736,12 +2691,7 @@ unsafe fn record_files(
             name = target.name;
             implicit_percent = find_percent_cached(&raw mut name);
             if implicit_percent.is_null() {
-                fatal(
-                    ctx,
-                    flocp,
-                    0,
-                    b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
-                );
+                fatal(ctx, flocp, 0, 0, b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char);
             }
             let fresh19 = &mut (*targets.offset(c as isize));
             *fresh19 = name;
@@ -3123,13 +3073,8 @@ pub unsafe fn readline(
         let mut backslash: i32;
         len = strlen(p) as size_t;
         if len == 0 {
-            error(
-                ctx,
-                &raw mut (*ebuf).floc,
-                0,
-                b"warning: NUL character seen; rest of line ignored\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            error(ctx, &raw mut (*ebuf).floc, 0, 0, b"warning: NUL character seen; rest of line ignored\0" as *const u8
+                    as *const ::core::ffi::c_char);
             *p.offset(0_i32 as isize) = '\n' as i32 as ::core::ffi::c_char;
             len = 1;
         }

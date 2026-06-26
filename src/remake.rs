@@ -397,14 +397,14 @@ pub unsafe fn show_goal_error(ctx: &crate::execctx::ExecContext) {
         if (*goal_dep).file == (*goal).file {
             if (*goal).error != 0 {
                 error(
-                    ctx,
-                    &raw mut (*goal).floc,
-                    (strlen((*(*goal).file).name) as size_t)
+        ctx,
+        &raw mut (*goal).floc,
+        (strlen((*(*goal).file).name) as size_t)
                         .wrapping_add(strlen(strerror((*goal).error)) as size_t),
-                    b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    (*(*goal).file).name,
-                    strerror((*goal).error),
-                );
+        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+        &[FmtArg::Str(((*(*goal).file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((strerror((*goal).error)) as *const ::core::ffi::c_char)],
+    );
                 (*goal).error = 0;
             }
             return;
@@ -504,54 +504,34 @@ pub unsafe fn complain(ctx: &crate::execctx::ExecContext, file: *mut file) {
                 as *const u8
                 as *const ::core::ffi::c_char;
             if !crate::make_main::opt_keep_going() {
-                fatal(
-                    ctx,
-                    NILF,
-                    m,
-                    &[
+                fatal(ctx, NILF, 0, m, &[
                         FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
                         FmtArg::Str((*file).name),
                         FmtArg::Str((*(*file).parent).name),
                         FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
-                    ],
-                );
+                    ]);
             }
-            error(
-                ctx,
-                NILF,
-                m,
-                &[
+            error(ctx, NILF, 0, m, &[
                     FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
                     FmtArg::Str((*file).name),
                     FmtArg::Str((*(*file).parent).name),
                     FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
-                ],
-            );
+                ]);
         } else {
             let m_0: *const ::core::ffi::c_char =
                 b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
             if !crate::make_main::opt_keep_going() {
-                fatal(
-                    ctx,
-                    NILF,
-                    m_0,
-                    &[
+                fatal(ctx, NILF, 0, m_0, &[
                         FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
                         FmtArg::Str((*file).name),
                         FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
-                    ],
-                );
+                    ]);
             }
-            error(
-                ctx,
-                NILF,
-                m_0,
-                &[
+            error(ctx, NILF, 0, m_0, &[
                     FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
                     FmtArg::Str((*file).name),
                     FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
-                ],
-            );
+                ]);
         }
         (*file).no_diag = false;
     }
@@ -1958,16 +1938,16 @@ pub unsafe fn f_mtime(
                     );
                 }
                 error(
-                    ctx,
-                    ::core::ptr::null_mut::<Floc>(),
-                    (strlen((*file).name) as size_t).wrapping_add(strlen(
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        (strlen((*file).name) as size_t).wrapping_add(strlen(
                         &raw mut from_now_string as *mut ::core::ffi::c_char,
                     ) as size_t),
-                    b"warning: file '%s' has modification time %s s in the future\0" as *const u8
+        b"warning: file '%s' has modification time %s s in the future\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    (*file).name,
-                    &raw mut from_now_string as *mut ::core::ffi::c_char,
-                );
+        &[FmtArg::Str(((*file).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((&raw mut from_now_string as *mut ::core::ffi::c_char) as *const ::core::ffi::c_char)],
+    );
                 ctx.clock_skew_detected.set(true);
             }
         }
