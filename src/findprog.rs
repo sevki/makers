@@ -12,7 +12,7 @@
 //! and `optimize_for_exec` code paths are implemented for completeness so the
 //! function remains a faithful drop-in for the C ABI symbol.
 
-use ::core::ffi::c_char;
+use ::core::ffi::{c_char, CStr};
 
 /// True if `path` is executable (`X_OK`) and is not a directory, matching the
 /// gnulib check that skips directories whose search bit happens to be set.
@@ -39,40 +39,40 @@ unsafe fn dup_cstr(s: *const c_char) -> *mut c_char {
 }
 
 /// Build `"[base/]dir/progname"` in a freshly `malloc`ed, NUL-terminated
-/// buffer. `base` is prepended (with a separating `/`) only when non-null,
-/// matching gnulib's resolution of relative path elements against `directory`.
-unsafe fn join_path(
-    base: *const c_char,
-    dir: *const c_char,
-    dir_len: usize,
-    progname: *const c_char,
-) -> *mut c_char {
-    let base_len = if base.is_null() {
-        0
-    } else {
-        libc::strlen(base)
-    };
-    let prog_len = libc::strlen(progname);
-    // optional (base + '/') + dir + '/' + prog + '\0'
-    let total = if base.is_null() { 0 } else { base_len + 1 } + dir_len + 1 + prog_len + 1;
-    let buf = libc::malloc(total) as *mut c_char;
-    if buf.is_null() {
-        return buf;
+/// buffer the caller releases with `free`. `base` is prepended (with a
+/// separating `/`) only when `Some`, matching gnulib's resolution of relative
+/// path elements against `directory`. Returns NULL on allocation failure.
+fn join_path(base: Option<&CStr>, dir: &[u8], progname: &CStr) -> *mut c_char {
+    const SEP: &[u8] = b"/";
+    const NUL: &[u8] = b"\0";
+    // The path pieces in order: optional `base` + `/`, then `dir` + `/` +
+    // `progname` + NUL. Reserve and append each piece *fallibly* so OOM yields
+    // NULL exactly as the C `malloc` path did, rather than aborting through
+    // Rust's infallible allocator. Reserving per piece (rather than a single
+    // precomputed total) keeps the size logic free of standalone arithmetic.
+    let mut buf: Vec<u8> = Vec::new();
+    let pieces = base
+        .map(CStr::to_bytes)
+        .into_iter()
+        .flat_map(|b| [b, SEP])
+        .chain([dir, SEP, progname.to_bytes(), NUL]);
+    for piece in pieces {
+        if buf.try_reserve(piece.len()).is_err() {
+            return ::core::ptr::null_mut();
+        }
+        buf.extend_from_slice(piece);
     }
-    let mut off = 0usize;
-    if !base.is_null() {
-        libc::memcpy(buf.add(off) as *mut _, base as *const _, base_len);
-        off += base_len;
-        *buf.add(off) = b'/' as c_char;
-        off += 1;
+
+    // Hand the assembled bytes to the C caller in a `malloc`ed buffer it frees.
+    // SAFETY: `out`, when non-null, is `buf.len()` bytes; the copy stays in
+    // bounds of both buffers. NULL is returned on OOM, as the C code did.
+    unsafe {
+        let out = libc::malloc(buf.len()) as *mut c_char;
+        if !out.is_null() {
+            libc::memcpy(out.cast(), buf.as_ptr().cast(), buf.len());
+        }
+        out
     }
-    libc::memcpy(buf.add(off) as *mut _, dir as *const _, dir_len);
-    off += dir_len;
-    *buf.add(off) = b'/' as c_char;
-    off += 1;
-    // Copy the trailing NUL along with the program name.
-    libc::memcpy(buf.add(off) as *mut _, progname as *const _, prog_len + 1);
-    buf
 }
 
 /// Split a `:`-separated search `path` into its directory elements, mapping
@@ -115,10 +115,9 @@ pub unsafe fn find_in_given_path(
         if !directory.is_null() && *progname != b'/' as c_char {
             // Relative name resolved against `directory`: "directory/progname".
             return join_path(
-                ::core::ptr::null(),
-                directory,
-                libc::strlen(directory),
-                progname,
+                None,
+                CStr::from_ptr(directory).to_bytes(),
+                CStr::from_ptr(progname),
             ) as *const c_char;
         }
         return dup_cstr(progname) as *const c_char;
@@ -133,17 +132,14 @@ pub unsafe fn find_in_given_path(
     let mut failure_errno = libc::ENOENT;
     let path_bytes = ::core::ffi::CStr::from_ptr(path).to_bytes();
     for elem in path_dir_elements(path_bytes) {
-        // `elem` is never empty (empty PATH entries map to "."), so the byte
-        // pointer and length are a valid `(dir, dir_len)` pair for join_path.
-        let dir = elem.as_ptr() as *const c_char;
-        let dir_len = elem.len();
-
+        // `elem` is never empty (empty PATH entries map to "."), so it is a
+        // valid `dir` slice for join_path.
         let base = if !directory.is_null() && elem[0] != b'/' {
-            directory
+            Some(CStr::from_ptr(directory))
         } else {
-            ::core::ptr::null()
+            None
         };
-        let candidate = join_path(base, dir, dir_len, progname);
+        let candidate = join_path(base, elem, CStr::from_ptr(progname));
         if !candidate.is_null() {
             if is_executable_file(candidate) {
                 return candidate as *const c_char;
@@ -157,6 +153,89 @@ pub unsafe fn find_in_given_path(
 
     *libc::__errno_location() = failure_errno;
     ::core::ptr::null()
+}
+
+#[cfg(test)]
+mod join_path_unsafe_oracle {
+    //! `join_path` now assembles its path in a `Vec<u8>` with bounds-checked
+    //! appends and takes safe `Option<&CStr>`/`&[u8]`/`&CStr` inputs. This keeps
+    //! the verbatim c2rust pointer-walked implementation as a differential
+    //! oracle and asserts both produce identical NUL-terminated buffers
+    //! (AGENTS rule 3).
+    use super::join_path;
+    use ::core::ffi::{c_char, CStr};
+
+    /// Verbatim c2rust-era implementation: `malloc` plus offset-walked copies.
+    unsafe fn oracle(
+        base: *const c_char,
+        dir: *const c_char,
+        dir_len: usize,
+        progname: *const c_char,
+    ) -> *mut c_char {
+        let base_len = if base.is_null() {
+            0
+        } else {
+            libc::strlen(base)
+        };
+        let prog_len = libc::strlen(progname);
+        let total = if base.is_null() { 0 } else { base_len + 1 } + dir_len + 1 + prog_len + 1;
+        let buf = libc::malloc(total) as *mut c_char;
+        if buf.is_null() {
+            return buf;
+        }
+        let mut off = 0usize;
+        if !base.is_null() {
+            libc::memcpy(buf.add(off) as *mut _, base as *const _, base_len);
+            off += base_len;
+            *buf.add(off) = b'/' as c_char;
+            off += 1;
+        }
+        libc::memcpy(buf.add(off) as *mut _, dir as *const _, dir_len);
+        off += dir_len;
+        *buf.add(off) = b'/' as c_char;
+        off += 1;
+        libc::memcpy(buf.add(off) as *mut _, progname as *const _, prog_len + 1);
+        buf
+    }
+
+    /// Drive both implementations and assert identical built paths.
+    fn check(base: Option<&CStr>, dir: &[u8], progname: &CStr) {
+        let safe = join_path(base, dir, progname);
+        // SAFETY: the oracle returns a `malloc`ed NUL-terminated buffer.
+        let oracle_buf = unsafe {
+            oracle(
+                base.map_or(::core::ptr::null(), CStr::as_ptr),
+                dir.as_ptr() as *const c_char,
+                dir.len(),
+                progname.as_ptr(),
+            )
+        };
+        assert!(!safe.is_null() && !oracle_buf.is_null());
+        // SAFETY: both are NUL-terminated; copy the bytes out before freeing.
+        let (s, o) = unsafe {
+            (
+                CStr::from_ptr(safe).to_bytes().to_vec(),
+                CStr::from_ptr(oracle_buf).to_bytes().to_vec(),
+            )
+        };
+        assert_eq!(s, o, "dir={dir:?}");
+        // SAFETY: both buffers came from `malloc`.
+        unsafe {
+            libc::free(safe.cast());
+            libc::free(oracle_buf.cast());
+        }
+    }
+
+    #[test]
+    fn differential() {
+        // No base: "dir/prog".
+        check(None, b"bin", c"ls");
+        check(None, b".", c"make");
+        check(None, b"/usr/local/bin", c"gcc");
+        // With base: "base/dir/prog".
+        check(Some(c"/work"), b"src", c"cc");
+        check(Some(c"/a/b"), b"rel", c"prog");
+    }
 }
 
 #[cfg(test)]
