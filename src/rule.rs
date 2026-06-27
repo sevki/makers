@@ -81,8 +81,8 @@ fn streq(a: &::core::ffi::CStr, b: &::core::ffi::CStr) -> bool {
     a == b
 }
 /// Append the NUL-terminated string `s` to `buf` (without the NUL).
-unsafe fn push_cstr(buf: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
-    buf.extend_from_slice(::core::slice::from_raw_parts(s.cast::<u8>(), strlen(s)));
+fn push_cstr(buf: &mut Vec<u8>, s: &::core::ffi::CStr) {
+    buf.extend_from_slice(s.to_bytes());
 }
 pub static mut pattern_rules: *mut rule = ::core::ptr::null_mut();
 pub static mut last_pattern_rule: *mut rule = ::core::ptr::null_mut();
@@ -122,7 +122,7 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
                     buf.extend_from_slice(b" .WAIT");
                 }
                 buf.push(b' ');
-                push_cstr(&mut buf, dep_name(d));
+                push_cstr(&mut buf, ::core::ffi::CStr::from_ptr(dep_name(d)));
             } else if ood.is_null() {
                 ood = d;
             }
@@ -135,7 +135,7 @@ pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
                 if dep.wait_here() != 0 {
                     buf.extend_from_slice(b".WAIT ");
                 }
-                push_cstr(&mut buf, dep_name(ood));
+                push_cstr(&mut buf, ::core::ffi::CStr::from_ptr(dep_name(ood)));
             }
             ood = dep.next;
             sep = b" ";
@@ -706,6 +706,38 @@ mod percent_prefixed_unsafe_oracle {
             // The result is `%` + the original bytes + NUL.
             assert_eq!(safe.first(), Some(&b'%'));
             assert_eq!(safe.last(), Some(&0));
+        }
+    }
+}
+
+#[cfg(test)]
+mod push_cstr_unsafe_oracle {
+    //! `push_cstr` now takes a safe `&CStr` and appends its bytes (without the
+    //! NUL). This keeps the verbatim c2rust pointer-based implementation as a
+    //! differential oracle and asserts both append identical bytes onto a
+    //! non-empty buffer (AGENTS rule 3).
+
+    /// Original c2rust pointer-based implementation, preserved verbatim.
+    unsafe fn push_cstr(buf: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
+        buf.extend_from_slice(::core::slice::from_raw_parts(s.cast::<u8>(), libc::strlen(s)));
+    }
+
+    #[test]
+    fn matches_oracle() {
+        let cases: &[&::core::ffi::CStr] = &[c"", c"a", c"foo.o", c"%.c", c".WAIT", c"a b c"];
+        for &s in cases {
+            // Seed both buffers so the test also catches a mutant that replaces
+            // (rather than appends to) the buffer.
+            let mut safe = vec![b'<'];
+            super::push_cstr(&mut safe, s);
+
+            let mut oracle = vec![b'<'];
+            // SAFETY: `s` is a valid NUL-terminated C string.
+            unsafe { push_cstr(&mut oracle, s.as_ptr()) };
+
+            assert_eq!(safe, oracle, "mismatch for input {s:?}");
+            // The NUL terminator is never appended.
+            assert_eq!(&safe[1..], s.to_bytes());
         }
     }
 }
