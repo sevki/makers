@@ -2183,14 +2183,21 @@ unsafe fn main_0(
     // Rebuild the context now that `MAKELEVEL` is known, but hand the directory
     // cache across: it was populated during makefile parsing ($(wildcard),
     // vpath, includes) and must persist through the build, exactly as the former
-    // process-global tables did. Everything else is per-build state that resets.
-    // `CTX_PTR` keeps pointing at this same `ctx` slot, so the glob callback sees
-    // the carried cache.
+    // process-global tables did. The glob `read_dirstream` scratch buffer rides
+    // along for the same reason — a single heap block served the whole run as
+    // the former `static mut buf` did (its contents are scratch, but carrying it
+    // avoids re-allocating a second block mid-run). Everything else is per-build
+    // state that resets. `CTX_PTR` keeps pointing at this same `ctx` slot, so the
+    // glob callbacks see the carried state.
     let carried_directories = ::core::mem::take(&mut ctx.directories);
     let carried_directory_contents = ::core::mem::take(&mut ctx.directory_contents);
+    let carried_read_dirstream_buf = ::core::mem::take(&mut ctx.read_dirstream_buf);
+    let carried_read_dirstream_bufsz = ::core::mem::take(&mut ctx.read_dirstream_bufsz);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
+        read_dirstream_buf: carried_read_dirstream_buf,
+        read_dirstream_bufsz: carried_read_dirstream_bufsz,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })

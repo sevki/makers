@@ -739,47 +739,55 @@ unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
 ///
 /// # Safety
 ///
-/// `stream` must come from `open_dirstream`. The returned dirent lives in
-/// a static buffer that the next call overwrites.
+/// `stream` must come from `open_dirstream`. The returned dirent lives in the
+/// per-run context's reused scratch buffer that the next call overwrites.
 pub unsafe extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
-    static mut buf: *mut c_char = null_mut();
-    static mut bufsz: size_t = 0;
+    // The reused dirent scratch buffer (the former process-global `static mut
+    // buf`/`bufsz`) lives on the per-run `ExecContext`. This glob `gl_readdir`
+    // callback's C-ABI signature cannot carry an `&ExecContext`, so it reaches
+    // the live context through the `CTX_PTR` borrow channel, exactly as the
+    // sibling `gl_opendir` callback `open_dirstream` does.
+    crate::make_main::with_exec_context(|ctx| {
+        let ds = (stream as *mut dirstream)
+            .as_mut()
+            .expect("read_dirstream: null stream");
+        let dc = ds.contents.as_ref().expect("dirstream always has contents");
+        let dirfile_end =
+            (dc.dirfiles.ht_vec as *mut *mut dirfile).add(dc.dirfiles.ht_size as usize);
 
-    let ds = (stream as *mut dirstream)
-        .as_mut()
-        .expect("read_dirstream: null stream");
-    let dc = ds.contents.as_ref().expect("dirstream always has contents");
-    let dirfile_end = (dc.dirfiles.ht_vec as *mut *mut dirfile).add(dc.dirfiles.ht_size as usize);
-
-    while ds.dirfile_slot < dirfile_end {
-        let slot = ds.dirfile_slot;
-        ds.dirfile_slot = slot.add(1);
-        let df = *slot;
-        if !is_real_item(df as *const c_void) {
-            continue;
-        }
-        let df = df.as_ref().expect("slot holds a real entry");
-        if df.impossible == 0 {
-            // Grow the dirent buffer to hold the name (the d_name field's
-            // declared 256 bytes are replaced by the real length).
-            let len = df.length + 1;
-            let sz = ::core::mem::size_of::<dirent>() as size_t
-                - ::core::mem::size_of::<[c_char; 256]>() as size_t
-                + len;
-            if sz > bufsz {
-                bufsz = (bufsz * 2).max(sz);
-                buf = xrealloc(buf as *mut c_void, bufsz) as *mut c_char;
+        while ds.dirfile_slot < dirfile_end {
+            let slot = ds.dirfile_slot;
+            ds.dirfile_slot = slot.add(1);
+            let df = *slot;
+            if !is_real_item(df as *const c_void) {
+                continue;
             }
-            let d = (buf as *mut dirent)
-                .as_mut()
-                .expect("xrealloc never returns null");
-            d.d_ino = 1;
-            d.d_type = df.type_0;
-            memcpy(d.d_name.as_mut_ptr().cast(), df.name as *const c_void, len);
-            return &raw mut *d;
+            let df = df.as_ref().expect("slot holds a real entry");
+            if df.impossible == 0 {
+                // Grow the dirent buffer to hold the name (the d_name field's
+                // declared 256 bytes are replaced by the real length).
+                let len = df.length + 1;
+                let sz = ::core::mem::size_of::<dirent>() as size_t
+                    - ::core::mem::size_of::<[c_char; 256]>() as size_t
+                    + len;
+                if sz > ctx.read_dirstream_bufsz.get() {
+                    let bufsz = (ctx.read_dirstream_bufsz.get() * 2).max(sz);
+                    ctx.read_dirstream_bufsz.set(bufsz);
+                    ctx.read_dirstream_buf
+                        .set(xrealloc(ctx.read_dirstream_buf.get() as *mut c_void, bufsz)
+                            as *mut c_char);
+                }
+                let d = (ctx.read_dirstream_buf.get() as *mut dirent)
+                    .as_mut()
+                    .expect("xrealloc never returns null");
+                d.d_ino = 1;
+                d.d_type = df.type_0;
+                memcpy(d.d_name.as_mut_ptr().cast(), df.name as *const c_void, len);
+                return &raw mut *d;
+            }
         }
-    }
-    null_mut()
+        null_mut()
+    })
 }
 
 /// Point `gl` at the directory cache so glob() reads from it instead of

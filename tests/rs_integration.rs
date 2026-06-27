@@ -1140,6 +1140,18 @@ fn wildcard_across_makelevel_rebuild() {
     check("wildcard-phases", "84_wildcard_phases.mk", "all", &[]);
 }
 
+#[test]
+fn wildcard_long_names_grow_dirent_buffer() {
+    // `$(wildcard)` over a directory of widely varying name lengths drives the
+    // glob `read_dirstream` callback's reused dirent scratch buffer — the former
+    // process-global `static mut buf`/`bufsz`, now per-run on `ExecContext` and
+    // reached through the `CTX_PTR` borrow channel. A longer name following a
+    // shorter one forces the buffer to grow, exercising the realloc path. The
+    // enumerated names ($(sort)ed for order-independence) must match the C oracle
+    // (whose buffer was a function-local static) byte-for-byte.
+    check("wildcard-long-names", "85_wildcard_long_names.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With

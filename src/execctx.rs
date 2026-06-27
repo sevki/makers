@@ -156,6 +156,19 @@ pub struct ExecContext {
     /// dir::directory_contents`. Shares [`Self::directories`]' lifetime and
     /// hand-off.
     pub directory_contents: DirCacheTable,
+
+    /// `read_dirstream`'s reused dirent scratch buffer — the heap block (and its
+    /// size) that the glob `gl_readdir` callback rewrites for each enumerated
+    /// file and returns a pointer into. These were the function-local process
+    /// globals `static mut buf`/`bufsz`; like the directory cache they now live
+    /// on the owned per-run context. The C-ABI callback can't carry an
+    /// `&ExecContext`, so it reaches these through the same `CTX_PTR` borrow
+    /// channel as `open_dirstream`. The buffer only grows (never shrinks); its
+    /// contents are scratch (overwritten every call), but `main_0` hands it
+    /// across the build-phase context rebuild alongside the directory cache so a
+    /// single block serves the whole run, exactly as the former static did.
+    pub read_dirstream_buf: ::core::cell::Cell<*mut ::core::ffi::c_char>,
+    pub read_dirstream_bufsz: ::core::cell::Cell<crate::ffi_types::size_t>,
 }
 
 /// One of the directory cache's two FFI [`hash_table`](crate::hash::hash_table)s
@@ -307,6 +320,47 @@ mod tests {
         assert!(populated.directories.0.get().ht_vec.is_null());
         // Unrelated per-run state on the rebuilt context is fresh.
         assert_eq!(rebuilt.makelevel(), 1);
+    }
+
+    /// `read_dirstream`'s reused dirent scratch buffer (the former process-global
+    /// `static mut buf`/`bufsz`) starts empty, is per-run, and is handed across
+    /// the `main_0` build-phase context rebuild the same way the directory cache
+    /// is — a single heap block must serve the whole run, as the former static
+    /// did.
+    #[test]
+    fn read_dirstream_buffer_starts_empty_and_survives_carry_over() {
+        let ctx = ExecContext::default();
+        assert!(ctx.read_dirstream_buf.get().is_null());
+        assert_eq!(ctx.read_dirstream_bufsz.get(), 0);
+
+        // Simulate a buffer allocated during makefile parsing (non-null pointer
+        // + size marks it live), then the `main_0` rebuild that hands it across.
+        let mut populated = ExecContext::default();
+        populated
+            .read_dirstream_buf
+            .set(0x1 as *mut ::core::ffi::c_char);
+        populated.read_dirstream_bufsz.set(128);
+
+        let carried_buf = ::core::mem::take(&mut populated.read_dirstream_buf);
+        let carried_bufsz = ::core::mem::take(&mut populated.read_dirstream_bufsz);
+        let rebuilt = ExecContext {
+            read_dirstream_buf: carried_buf,
+            read_dirstream_bufsz: carried_bufsz,
+            ..ExecContext::new(Config { makelevel: 1 })
+        };
+        // The carried buffer survived; the source fields reset to empty.
+        assert_eq!(
+            rebuilt.read_dirstream_buf.get(),
+            0x1 as *mut ::core::ffi::c_char
+        );
+        assert_eq!(rebuilt.read_dirstream_bufsz.get(), 128);
+        assert!(populated.read_dirstream_buf.get().is_null());
+        assert_eq!(populated.read_dirstream_bufsz.get(), 0);
+        assert_eq!(rebuilt.makelevel(), 1);
+
+        // Per-run: a fresh context does not inherit the buffer.
+        assert!(ExecContext::default().read_dirstream_buf.get().is_null());
+        assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
     }
 
     /// The `.NOTINTERMEDIATE`/`.SECONDARY` latches start unset and are per-run
