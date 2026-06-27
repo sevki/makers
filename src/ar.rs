@@ -160,7 +160,11 @@ unsafe fn ar_member_date_1(
     mut _mode: ::core::ffi::c_uint,
     name: *const ::core::ffi::c_void,
 ) -> intmax_t {
-    if ar_name_equal(name as *const ::core::ffi::c_char, mem, truncated) != 0 {
+    if ar_name_equal(
+        ::core::ffi::CStr::from_ptr(name as *const ::core::ffi::c_char),
+        ::core::ffi::CStr::from_ptr(mem),
+        truncated != 0,
+    ) {
         date
     } else {
         0 as intmax_t

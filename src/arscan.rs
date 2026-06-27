@@ -367,18 +367,14 @@ pub unsafe fn ar_scan(
     close(desc);
     -2_i32 as intmax_t
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers; all pointer arguments must be
-/// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_name_equal(
-    name: *const ::core::ffi::c_char,
-    mem: *const ::core::ffi::c_char,
-    truncated: i32,
-) -> i32 {
-    let name = ::core::ffi::CStr::from_ptr(name).to_bytes();
-    let mem = ::core::ffi::CStr::from_ptr(mem).to_bytes();
-    ar_name_equal_bytes(name, mem, truncated != 0) as i32
+/// Does archive member `name` refer to header member `mem`? Thin `&CStr`
+/// wrapper over [`ar_name_equal_bytes`] (which holds the actual comparison).
+pub fn ar_name_equal(
+    name: &::core::ffi::CStr,
+    mem: &::core::ffi::CStr,
+    truncated: bool,
+) -> bool {
+    ar_name_equal_bytes(name.to_bytes(), mem.to_bytes(), truncated)
 }
 
 /// Number of significant `ar_name` bytes a truncated (System V/GNU short)
@@ -435,7 +431,11 @@ unsafe fn ar_member_pos(
     mut _mode: ::core::ffi::c_uint,
     name: *const ::core::ffi::c_void,
 ) -> intmax_t {
-    if ar_name_equal(name as *const ::core::ffi::c_char, mem, truncated) == 0 {
+    if !ar_name_equal(
+        ::core::ffi::CStr::from_ptr(name as *const ::core::ffi::c_char),
+        ::core::ffi::CStr::from_ptr(mem),
+        truncated != 0,
+    ) {
         return 0 as intmax_t;
     }
     hdrpos as intmax_t
@@ -620,5 +620,43 @@ mod ar_name_equal_tests {
         // Shorter-but-equal names match under truncation too.
         assert!(ar_name_equal_bytes(b"short.o", b"short.o", true));
         assert!(!ar_name_equal_bytes(b"short.o", b"shorter.o", true));
+    }
+}
+
+#[cfg(test)]
+mod ar_name_equal_unsafe_oracle {
+    //! `ar_name_equal` was a `pub unsafe fn` over `*const c_char`/`i32`; this
+    //! keeps the verbatim pre-conversion implementation as a differential
+    //! oracle and asserts the safe `&CStr`/`bool` version agrees (AGENTS
+    //! rule 3).
+    use super::{ar_name_equal, ar_name_equal_bytes};
+    use ::core::ffi::{c_char, CStr};
+
+    /// Verbatim pre-conversion implementation.
+    unsafe fn oracle(name: *const c_char, mem: *const c_char, truncated: i32) -> i32 {
+        let name = CStr::from_ptr(name).to_bytes();
+        let mem = CStr::from_ptr(mem).to_bytes();
+        ar_name_equal_bytes(name, mem, truncated != 0) as i32
+    }
+
+    /// Drive both implementations and assert identical verdicts.
+    fn check(name: &CStr, mem: &CStr, truncated: bool) {
+        let safe = ar_name_equal(name, mem, truncated);
+        // SAFETY: both are valid NUL-terminated C strings.
+        let oracle_res = unsafe { oracle(name.as_ptr(), mem.as_ptr(), truncated as i32) };
+        assert_eq!(
+            safe as i32, oracle_res,
+            "name={name:?} mem={mem:?} truncated={truncated}"
+        );
+    }
+
+    #[test]
+    fn differential() {
+        check(c"foo.o", c"foo.o", false);
+        check(c"dir/foo.o", c"foo.o", false);
+        check(c"foo.o", c"bar.o", false);
+        check(c"abcdefghijklmno1", c"abcdefghijklmno2", true);
+        check(c"abcdefghijklmno1", c"abcdefghijklmno2", false);
+        check(c"short.o", c"shorter.o", true);
     }
 }
