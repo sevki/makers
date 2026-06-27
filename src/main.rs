@@ -2195,6 +2195,12 @@ unsafe fn main_0(
             makelevel: parsed_makelevel,
         })
     };
+    // Re-derive the glob borrow channel from the rebuilt `ctx`. The `&mut ctx`
+    // above (`mem::take` + reassignment) invalidates the pointer installed at
+    // startup under Rust's aliasing model — even though the stack slot address
+    // is unchanged — so post-rebuild glob callbacks must read a fresh
+    // provenance pointing at the new context.
+    CTX_PTR.with(|p| p.set(&ctx as *const crate::execctx::ExecContext));
     ctx.always_make_flag.set(options.always_make.get() && restarts == 0);
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
