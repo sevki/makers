@@ -501,12 +501,17 @@ fn split_dir_parts(name: &[u8]) -> Option<(Vec<u8>, usize)> {
     Some((dirname, slash + 1))
 }
 
-/// Split `name` at its final slash, returning `(dirname, basename)` plus
-/// the owned buffer keeping `dirname` alive.
-unsafe fn split_dir(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *const c_char)> {
-    let (buf, base_off) = split_dir_parts(::core::ffi::CStr::from_ptr(name).to_bytes())?;
-    let dirname = buf.as_ptr() as *const c_char;
-    Some((buf, dirname, name.add(base_off)))
+/// Split `name` at its final slash, returning the owned NUL-terminated
+/// `dirname` buffer and the basename as a `&CStr` borrowed from `name`.
+/// `None` when `name` has no slash.
+fn split_dir(name: &::core::ffi::CStr) -> Option<(Vec<u8>, &::core::ffi::CStr)> {
+    let (dirname, base_off) = split_dir_parts(name.to_bytes())?;
+    // The basename runs from `base_off` to `name`'s own terminator, so the tail
+    // of `to_bytes_with_nul` is itself a valid NUL-terminated C string (a `&CStr`
+    // borrowing `name`) — no pointer arithmetic needed.
+    let base = ::core::ffi::CStr::from_bytes_with_nul(&name.to_bytes_with_nul()[base_off..])
+        .expect("base_off indexes within name, whose only NUL is its terminator");
+    Some((dirname, base))
 }
 
 /// Does file `name` (with optional directory part) exist?
@@ -519,9 +524,9 @@ pub unsafe fn file_exists_p(ctx: &crate::execctx::ExecContext, name: *const c_ch
     if crate::ar::ar_name(ctx, ::core::ffi::CStr::from_ptr(name)) {
         return (crate::ar::ar_member_date(ctx, name) != -1) as i32;
     }
-    match split_dir(name) {
+    match split_dir(::core::ffi::CStr::from_ptr(name)) {
         None => dir_file_exists_p(ctx, c".".as_ptr(), name),
-        Some((_buf, dirname, base)) => dir_file_exists_p(ctx, dirname, base),
+        Some((dirname, base)) => dir_file_exists_p(ctx, dirname.as_ptr().cast(), base.as_ptr()),
     }
 }
 
@@ -533,9 +538,9 @@ pub unsafe fn file_exists_p(ctx: &crate::execctx::ExecContext, name: *const c_ch
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
 pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *const c_char) {
-    let (dir, filename) = match split_dir(filename) {
+    let (dir, filename) = match split_dir(::core::ffi::CStr::from_ptr(filename)) {
         None => (find_directory(ctx, c".".as_ptr()), filename),
-        Some((_buf, dirname, base)) => (find_directory(ctx, dirname), base),
+        Some((dirname, base)) => (find_directory(ctx, dirname.as_ptr().cast()), base.as_ptr()),
     };
     let dir = dir.as_mut().expect("find_directory never returns null");
 
@@ -572,7 +577,7 @@ pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *cons
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
 pub unsafe fn file_impossible_p(ctx: &crate::execctx::ExecContext, filename: *const c_char) -> i32 {
-    let (dir, filename) = match split_dir(filename) {
+    let (dir, filename) = match split_dir(::core::ffi::CStr::from_ptr(filename)) {
         None => {
             let dir_ptr = find_directory(ctx, c".".as_ptr());
             let contents = dir_ptr
@@ -580,12 +585,12 @@ pub unsafe fn file_impossible_p(ctx: &crate::execctx::ExecContext, filename: *co
                 .map_or(::core::ptr::null_mut(), |d| d.contents);
             (contents, filename)
         }
-        Some((_buf, dirname, base)) => {
-            let dir_ptr = find_directory(ctx, dirname);
+        Some((dirname, base)) => {
+            let dir_ptr = find_directory(ctx, dirname.as_ptr().cast());
             let contents = dir_ptr
                 .as_ref()
                 .map_or(::core::ptr::null_mut(), |d| d.contents);
-            (contents, base)
+            (contents, base.as_ptr())
         }
     };
     let Some(dir) = dir.as_mut() else { return 0 };
@@ -863,6 +868,28 @@ mod split_dir_tests {
     fn absolute_nested_keeps_leading_slash_in_dirname() {
         // "/usr/bin": final slash at index 4, dirname "/usr", base offset 5.
         assert_eq!(split_dir_parts(b"/usr/bin"), Some((b"/usr\0".to_vec(), 5)));
+    }
+
+    /// The safe `split_dir` wrapper returns the owned NUL-terminated `dirname`
+    /// buffer and the basename as a `&CStr` borrowed from `name` (the former
+    /// `name.add(base_off)` pointer), `None` when there is no slash.
+    #[test]
+    fn split_dir_yields_dirname_buffer_and_borrowed_basename() {
+        use super::split_dir;
+        assert!(split_dir(c"foo.c").is_none());
+
+        let (dir, base) = split_dir(c"a/b/c").unwrap();
+        assert_eq!(dir, b"a/b\0");
+        assert_eq!(base.to_bytes(), b"c");
+
+        let (dir, base) = split_dir(c"/foo").unwrap();
+        assert_eq!(dir, b"/\0");
+        assert_eq!(base.to_bytes(), b"foo");
+
+        // Trailing slash: the basename is the empty string at the terminator.
+        let (dir, base) = split_dir(c"dir/").unwrap();
+        assert_eq!(dir, b"dir\0");
+        assert_eq!(base.to_bytes(), b"");
     }
 }
 
