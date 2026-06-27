@@ -1141,6 +1141,15 @@ fn wildcard_across_makelevel_rebuild() {
 }
 
 #[test]
+fn autovar_dep_name_lists() {
+    // `autovar_dep_name` (now a safe `&[u8]` slice of each prereq name instead
+    // of the c2rust `(*const c_char, len)`) feeds `$^`/`$+`/`$|`. The fixture
+    // drives it once per prereq across all three lists; byte-for-byte vs. the C
+    // oracle confirms the call-site rewiring preserves behavior.
+    check("autovar-lists", "86_autovar_lists.mk", "all", &[]);
+}
+
+#[test]
 fn wildcard_long_names_grow_dirent_buffer() {
     // `$(wildcard)` over a directory of widely varying name lengths drives the
     // glob `read_dirstream` callback's reused dirent scratch buffer — the former

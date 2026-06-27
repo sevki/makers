@@ -151,20 +151,18 @@ fn dep_uses_auto_vars(d: &dep) -> bool {
 
 /// The bytes naming a dependency as they appear in `$+`/`$^`/`$|`: for an
 /// archive ref `lib(member)` only `member` (sans the trailing `)`), otherwise
-/// the whole name. Returns a `(ptr, len)` borrowing `c`'s own storage.
-///
-/// # Safety
-///
-/// `c` must be a NUL-terminated string valid for the duration of the call.
-unsafe fn autovar_dep_name(
-    ctx: &crate::execctx::ExecContext,
-    c: *const c_char,
-) -> (*const c_char, size_t) {
-    if ar_name(ctx, ::core::ffi::CStr::from_ptr(c)) {
-        let inner = strchr(c, '(' as i32).add(1);
-        (inner, strlen(inner) - 1)
+/// the whole name. The returned slice borrows `c`'s own storage.
+fn autovar_dep_name<'a>(ctx: &crate::execctx::ExecContext, c: &'a CStr) -> &'a [u8] {
+    let bytes = c.to_bytes();
+    if ar_name(ctx, c) {
+        // `lib(member)` -> just `member` without the trailing `)`: the same
+        // slice `split_archive_ref` hands `$%` (and the c2rust code reached via
+        // `strchr(c, '(')+1` with `strlen()-1`).
+        split_archive_ref(bytes)
+            .expect("ar_name guarantees a lib(member) reference")
+            .1
     } else {
-        (c, strlen(c))
+        bytes
     }
 }
 
@@ -205,7 +203,9 @@ pub unsafe fn set_file_variables(
 
     // If we don't have a stem, derive one by stripping a known suffix.
     if stem.is_null() {
-        let (name, len) = autovar_dep_name(ctx, file.name);
+        let nm = autovar_dep_name(ctx, CStr::from_ptr(file.name));
+        let name = nm.as_ptr() as *const c_char;
+        let len = nm.len() as size_t;
 
         let mut d = (*enter_file(strcache_add(c".SUFFIXES".as_ptr()))).deps;
         while !d.is_null() {
@@ -293,8 +293,9 @@ pub unsafe fn set_file_variables(
     let mut d = file.deps;
     while !d.is_null() {
         if (*d).ignore_mtime() == 0 && dep_uses_auto_vars(&*d) {
-            let (c, len) = autovar_dep_name(ctx, dep_name(d));
-            cp = mempcpy(cp as *mut c_void, c as *const c_void, len) as *mut c_char;
+            let nm = autovar_dep_name(ctx, CStr::from_ptr(dep_name(d)));
+            let len = nm.len() as size_t;
+            cp = mempcpy(cp as *mut c_void, nm.as_ptr() as *const c_void, len) as *mut c_char;
             *cp = FILE_LIST_SEPARATOR;
             cp = cp.add(1);
             if !((*d).changed() != 0 || ctx.always_make_flag.get()) {
@@ -370,7 +371,9 @@ pub unsafe fn set_file_variables(
         if dep_uses_auto_vars(&*d)
             && hash_find_item(&raw mut dep_hash, d as *const c_void) == d as *mut c_void
         {
-            let (c, len) = autovar_dep_name(ctx, dep_name(d));
+            let nm = autovar_dep_name(ctx, CStr::from_ptr(dep_name(d)));
+            let c = nm.as_ptr() as *const c_char;
+            let len = nm.len() as size_t;
             if (*d).ignore_mtime() != 0 {
                 bp = mempcpy(bp as *mut c_void, c as *const c_void, len) as *mut c_char;
                 *bp = FILE_LIST_SEPARATOR;
@@ -880,6 +883,59 @@ mod split_archive_ref_tests {
     #[test]
     fn no_paren_returns_none() {
         assert_eq!(split_archive_ref(b"plainfile.o"), None);
+    }
+}
+
+#[cfg(test)]
+mod autovar_dep_name_unsafe_oracle {
+    //! `autovar_dep_name` is now a safe `fn` returning a `&[u8]` slice that
+    //! reuses `split_archive_ref`. This keeps the verbatim c2rust-era pointer
+    //! implementation as a differential oracle and asserts both yield identical
+    //! bytes on plain names and `lib(member)` archive refs (AGENTS rule 3).
+    use super::autovar_dep_name;
+    use crate::ar::ar_name;
+    use crate::execctx::ExecContext;
+    use crate::ffi_types::size_t;
+    use ::core::ffi::{c_char, CStr};
+    use libc::{strchr, strlen};
+
+    /// Verbatim c2rust-era implementation: returns a `(ptr, len)` borrowing
+    /// `c`'s storage, reaching the archive member via `strchr(c, '(')+1`.
+    unsafe fn oracle(ctx: &ExecContext, c: *const c_char) -> (*const c_char, size_t) {
+        if ar_name(ctx, CStr::from_ptr(c)) {
+            let inner = strchr(c, '(' as i32).add(1);
+            (inner, strlen(inner) - 1)
+        } else {
+            (c, strlen(c))
+        }
+    }
+
+    /// Drive both implementations over `input` and assert identical bytes.
+    fn check(input: &CStr) {
+        let ctx = ExecContext::default();
+        let safe = autovar_dep_name(&ctx, input);
+        // SAFETY: the oracle returns a pointer/len into `input`'s live storage.
+        let from_oracle = unsafe {
+            let (p, len) = oracle(&ctx, input.as_ptr());
+            ::core::slice::from_raw_parts(p.cast::<u8>(), len as usize)
+        };
+        assert_eq!(safe, from_oracle, "input={input:?}");
+    }
+
+    #[test]
+    fn differential() {
+        // Plain names: the whole name is used verbatim.
+        check(c"foo.o");
+        check(c"a");
+        check(c"path/to/file.c");
+        // `lib(member)` archive refs: only `member`, sans the trailing ')'.
+        check(c"libfoo.a(bar.o)");
+        check(c"a(b)");
+        check(c"x.a(m.o)");
+        // Forms that *look* like archive refs but classify as Plain (paren at
+        // index 0, or an empty member), so the whole name is returned.
+        check(c"(bar.o)");
+        check(c"lib()");
     }
 }
 
