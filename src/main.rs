@@ -952,6 +952,53 @@ pub fn with_options<R>(f: impl FnOnce(&Options) -> R) -> R {
     f(unsafe { installed_options() })
 }
 
+thread_local! {
+    /// Borrow channel to the `ExecContext` owned as a local in `main_0`, mirroring
+    /// [`OPTIONS_PTR`]. It exists solely so the glob `gl_opendir` callback
+    /// (`dir::open_dirstream`), which is invoked through C-ABI glob machinery and
+    /// cannot take an `&ExecContext`, can reach the per-run directory cache that
+    /// now lives on the context. A *pointer*, not the data: the `ExecContext`
+    /// still lives in `main_0`'s `let mut ctx` slot (a stable address even across
+    /// the build-phase rebuild), and is installed for the dynamic extent of
+    /// `main_0`.
+    static CTX_PTR: ::core::cell::Cell<*const crate::execctx::ExecContext> =
+        const { ::core::cell::Cell::new(::core::ptr::null()) };
+}
+
+/// Borrow the installed `main_0` `ExecContext`. Only valid while `main_0` is on
+/// the stack (its referent outlives every makefile-time / build-time callback).
+unsafe fn installed_exec_context<'a>() -> &'a crate::execctx::ExecContext {
+    let p = CTX_PTR.with(|c| c.get());
+    debug_assert!(
+        !p.is_null(),
+        "installed_exec_context called with no ExecContext on the stack"
+    );
+    &*p
+}
+
+/// Run `f` with a borrow of `main_0`'s owned `ExecContext`, reached through the
+/// `CTX_PTR` borrow channel. Used by the glob `gl_opendir` callback, which the C
+/// glob machinery invokes without an `&ExecContext` parameter. `CTX_PTR` is
+/// installed at the start of `main_0`, before any code that could glob runs.
+pub fn with_exec_context<R>(f: impl FnOnce(&crate::execctx::ExecContext) -> R) -> R {
+    f(unsafe { installed_exec_context() })
+}
+
+/// Test-only: install a leaked default `ExecContext` on the current thread's
+/// `CTX_PTR` borrow channel so the glob callback path can run inside
+/// `#[cfg(test)]` unit tests below `main_0`. The context is leaked so the
+/// pointer stays valid for the thread's lifetime; test builds only.
+#[cfg(test)]
+pub fn install_default_exec_context_for_test() {
+    CTX_PTR.with(|p| {
+        if p.get().is_null() {
+            let leaked: &'static crate::execctx::ExecContext =
+                Box::leak(Box::new(crate::execctx::ExecContext::default()));
+            p.set(leaked as *const crate::execctx::ExecContext);
+        }
+    });
+}
+
 /// Test-only: install a default `Options` on the current thread's
 /// `OPTIONS_PTR` borrow channel so option readers
 /// (`opt_check_symlink`, etc.) can run inside `#[cfg(test)]` unit tests
@@ -1402,11 +1449,11 @@ unsafe fn install_fatal_signal(sig: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_global_hash_tables() {
+pub unsafe fn initialize_global_hash_tables(ctx: &crate::execctx::ExecContext) {
     init_hash_global_variable_set();
     strcache_init();
     init_hash_files();
-    hash_init_directories();
+    hash_init_directories(ctx);
     hash_init_function_table();
 }
 /// Build the global `stopchar_map` character-classification table the parser
@@ -1794,6 +1841,10 @@ unsafe fn main_0(
     // callback (`set_special_var` -> `reset_makeflags`) that cannot receive an
     // `&Options` parameter. `options` itself remains the owner.
     OPTIONS_PTR.with(|p| p.set(&options as *const Options));
+    // Borrow channel to `ctx` for the glob `gl_opendir` callback, which reaches
+    // the per-run directory cache held on the context. `ctx`'s stack slot is
+    // stable across the build-phase rebuild below, so this install stays valid.
+    CTX_PTR.with(|p| p.set(&ctx as *const crate::execctx::ExecContext));
     initialize_variable_output();
     spin(b"main-entry\0" as *const u8 as *const ::core::ffi::c_char);
     if check_io_state() & 0x8 as ::core::ffi::c_uint != 0 {
@@ -1828,7 +1879,7 @@ unsafe fn main_0(
             program = program.offset(1_i32 as isize);
         }
     }
-    initialize_global_hash_tables();
+    initialize_global_hash_tables(&ctx);
     get_tmpdir(&ctx);
     if getcwd(
         &raw mut current_directory as *mut ::core::ffi::c_char,
@@ -2129,9 +2180,21 @@ unsafe fn main_0(
     } else {
         0
     };
-    ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
-        makelevel: parsed_makelevel,
-    });
+    // Rebuild the context now that `MAKELEVEL` is known, but hand the directory
+    // cache across: it was populated during makefile parsing ($(wildcard),
+    // vpath, includes) and must persist through the build, exactly as the former
+    // process-global tables did. Everything else is per-build state that resets.
+    // `CTX_PTR` keeps pointing at this same `ctx` slot, so the glob callback sees
+    // the carried cache.
+    let carried_directories = ::core::mem::take(&mut ctx.directories);
+    let carried_directory_contents = ::core::mem::take(&mut ctx.directory_contents);
+    ctx = crate::execctx::ExecContext {
+        directories: carried_directories,
+        directory_contents: carried_directory_contents,
+        ..crate::execctx::ExecContext::new(crate::execctx::Config {
+            makelevel: parsed_makelevel,
+        })
+    };
     ctx.always_make_flag.set(options.always_make.get() && restarts == 0);
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
@@ -4480,7 +4543,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
         stamp.as_ptr(),
     );
     print_variable_data_base();
-    print_dir_data_base();
+    print_dir_data_base(ctx);
     print_rule_data_base(ctx);
     print_file_data_base();
     print_vpath_data_base();
