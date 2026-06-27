@@ -894,6 +894,62 @@ mod split_dir_tests {
 }
 
 #[cfg(test)]
+mod split_dir_unsafe_oracle {
+    //! `split_dir` was an `unsafe fn` over `*const c_char`; this keeps the
+    //! verbatim c2rust-era pointer implementation as a differential oracle and
+    //! asserts the safe `&CStr` version produces the identical dirname buffer
+    //! and basename bytes (AGENTS rule 3).
+    use super::{split_dir, split_dir_parts};
+    use ::core::ffi::{c_char, CStr};
+
+    /// Verbatim pre-conversion implementation: returns the owned dirname buffer,
+    /// a pointer into it, and the basename via `name.add(base_off)`.
+    unsafe fn oracle(name: *const c_char) -> Option<(Vec<u8>, *const c_char, *const c_char)> {
+        let (buf, base_off) = split_dir_parts(CStr::from_ptr(name).to_bytes())?;
+        let dirname = buf.as_ptr() as *const c_char;
+        Some((buf, dirname, name.add(base_off)))
+    }
+
+    /// Drive both implementations over `name` and assert identical results.
+    fn check(name: &CStr) {
+        let safe = split_dir(name);
+        // SAFETY: `name` is a valid NUL-terminated C string.
+        let oracle_res = unsafe { oracle(name.as_ptr()) };
+        match (safe, oracle_res) {
+            (None, None) => {}
+            (Some((safe_dir, safe_base)), Some((oracle_dir, _dirp, basep))) => {
+                assert_eq!(safe_dir, oracle_dir, "dirname for {name:?}");
+                // SAFETY: `basep` points into `name`, a valid NUL-terminated string.
+                let oracle_base = unsafe { CStr::from_ptr(basep) };
+                assert_eq!(
+                    safe_base.to_bytes(),
+                    oracle_base.to_bytes(),
+                    "basename for {name:?}"
+                );
+            }
+            (s, o) => panic!(
+                "split_dir disagreed on {name:?}: safe.is_some()={}, oracle.is_some()={}",
+                s.is_some(),
+                o.is_some()
+            ),
+        }
+    }
+
+    #[test]
+    fn differential() {
+        // No slash (None), nested, root, absolute-nested, and trailing-slash
+        // (empty basename at the terminator).
+        check(c"foo.c");
+        check(c"a/b/c");
+        check(c"/foo");
+        check(c"/usr/bin");
+        check(c"dir/");
+        check(c"/");
+        check(c"a/b/");
+    }
+}
+
+#[cfg(test)]
 mod open_directories_tests {
     use crate::execctx::ExecContext;
 
