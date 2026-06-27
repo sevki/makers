@@ -21,6 +21,7 @@ name = "make"
 bitflags = "2.13.0"
 blake3 = "1.8.5"
 c2rust-bitfields = "0.22.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 digest = "0.10"
 itertools = "0.12"
 jj-lib-proc-macros = { path = "proc-macros" }

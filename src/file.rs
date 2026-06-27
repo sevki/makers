@@ -50,21 +50,6 @@ pub const _ISdigit: C2RustUnnamed = 2048;
 pub const _ISalpha: C2RustUnnamed = 1024;
 pub const _ISlower: C2RustUnnamed = 512;
 pub const _ISupper: C2RustUnnamed = 256;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct tm {
-    pub tm_sec: i32,
-    pub tm_min: i32,
-    pub tm_hour: i32,
-    pub tm_mday: i32,
-    pub tm_mon: i32,
-    pub tm_year: i32,
-    pub tm_wday: i32,
-    pub tm_yday: i32,
-    pub tm_isdst: i32,
-    pub tm_gmtoff: ::core::ffi::c_long,
-    pub tm_zone: *const ::core::ffi::c_char,
-}
 /// A node in make's dependency graph: one target (or prerequisite) file.
 #[derive(Copy, Clone)]
 pub struct File {
@@ -2102,50 +2087,41 @@ pub fn file_timestamp_now(ctx: &crate::execctx::ExecContext) -> (uintmax_t, i32)
 /// `file_timestamp_sprintf`: `YYYY-MM-DD HH:MM:SS` in **local** time, followed
 /// by the sub-second fraction with trailing zeros trimmed (and the `.` dropped
 /// entirely when the fraction is zero). When the broken-down local time can't
-/// be computed (`localtime_r` failure, e.g. an out-of-range year) it falls
-/// back to the raw seconds count — signed if negative, unsigned otherwise —
-/// matching the C `%ld`/`%lu` branches.
+/// be computed (the year overflows the calendar range) it falls back to the
+/// raw seconds count — signed if negative, unsigned otherwise — matching the
+/// C `%ld`/`%lu` branches.
 ///
-/// Local broken-down time comes from a single reentrant `localtime_r` call
-/// (no `localtime` static buffer, no global state); all formatting, fraction
-/// trimming, and the fallback are safe Rust. Output is byte-for-byte identical
-/// to the C oracle.
+/// Local broken-down time comes from `chrono::Local` — a pure-Rust,
+/// timezone-aware instant->local-calendar conversion (no libc `localtime`
+/// global, no `tm` FFI struct). All formatting, fraction trimming, and the
+/// fallback are safe Rust. Output is byte-for-byte identical to the C oracle.
 pub fn file_timestamp_string(ts: uintmax_t) -> String {
+    use chrono::{Datelike, Local, TimeZone, Timelike};
+
     let shift = if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 };
     let units = ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t);
     let t = (units >> shift) as time_t;
     // Sub-second units; the `& (2^shift - 1)` mask yields 0 when HI_RES is off.
     let frac = (units & (((1u64 << shift) - 1) as uintmax_t)) as i32;
 
-    // Broken-down LOCAL time via the reentrant `localtime_r`: it writes into a
-    // caller-owned `tm` (no shared static) and returns NULL on failure. The
-    // single `unsafe` block is the only FFI here; the pointers are a valid
-    // stack `time_t` and a valid stack `tm`, so the call is sound.
-    let mut tmv: libc::tm = unsafe { std::mem::zeroed() };
-    let ok = !unsafe {
-        libc::localtime_r(
-            &t as *const time_t as *const libc::time_t,
-            &mut tmv as *mut libc::tm,
-        )
-    }
-    .is_null();
-
-    let mut out = if ok {
+    // Broken-down LOCAL time via `chrono::Local`: `timestamp_opt` maps the UTC
+    // instant `t` to the single local calendar time, or `None` when the year
+    // overflows the representable range — the same condition under which C's
+    // `localtime` returned NULL and make fell back to the raw seconds count.
+    let mut out = match Local.timestamp_opt(t as i64, 0).single() {
         // `%04ld` of `tm_year + 1900`; for every realistic file timestamp this
         // is a >= 4-digit non-negative year, so `{:04}` matches `%04ld`.
-        format!(
+        Some(dt) => format!(
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-            tmv.tm_year as i64 + 1900,
-            tmv.tm_mon + 1,
-            tmv.tm_mday,
-            tmv.tm_hour,
-            tmv.tm_min,
-            tmv.tm_sec,
-        )
-    } else if t < 0 {
-        format!("{}", t as i64) // C `%ld`
-    } else {
-        format!("{}", t as u64) // C `%lu`
+            dt.year(),
+            dt.month(),
+            dt.day(),
+            dt.hour(),
+            dt.minute(),
+            dt.second(),
+        ),
+        None if t < 0 => format!("{}", t as i64), // C `%ld`
+        None => format!("{}", t as u64),          // C `%lu`
     };
 
     // C prints `.%09d` then walks back over trailing '0's, dropping the '.'
@@ -2690,12 +2666,13 @@ mod tests {
 
     // FFI the verbatim `file_timestamp_sprintf` oracle depends on. Production
     // dropped the `localtime` global and the `sprintf` formatting when the
-    // function moved to safe Rust over `localtime_r`, so we re-declare them
+    // function moved to safe Rust over `localtime_r`, so we re-declare `sprintf`
     // here (test-only) to keep the original compilable as the differential
-    // oracle (AGENTS.md "preserve the original as a test oracle").
+    // oracle (AGENTS.md "preserve the original as a test oracle"). `localtime`
+    // and its broken-down-time struct come from `libc` rather than the old
+    // c2rust-generated `struct tm` redefinition (issue #197).
     use crate::ffi_types::intmax_t;
     extern "C" {
-        fn localtime(__timer: *const time_t) -> *mut tm;
         fn sprintf(__s: *mut ::core::ffi::c_char, __format: *const ::core::ffi::c_char, ...)
             -> i32;
     }
@@ -2708,7 +2685,7 @@ mod tests {
         let mut t: time_t = (ts.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
             >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
             as time_t;
-        let tm: *mut tm = localtime(&raw mut t);
+        let tm: *mut libc::tm = libc::localtime(&raw mut t);
         if !tm.is_null() {
             let year: intmax_t = (*tm).tm_year as intmax_t;
             p = p.offset(sprintf(
