@@ -740,11 +740,12 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
 /// glob `readdir` callback: synthesize a `dirent` for the next cached
 /// (non-impossible) file.
 ///
-/// Safe to call: the C glob machinery invokes it through a function pointer with
-/// a `stream` it obtained from `open_dirstream`, and the pointer work is
-/// confined to the inner `unsafe` block. The returned dirent lives in the
-/// per-run context's reused scratch buffer that the next call overwrites.
-pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
+/// Module-private (like the C `static`) and only ever reached through the glob
+/// `gl_readdir` function pointer installed by [`dir_setup_glob`], with a
+/// `stream` the matching `open_dirstream` produced; the pointer work is confined
+/// to the inner `unsafe` block. The returned dirent lives in the per-run
+/// context's reused scratch buffer that the next call overwrites.
+extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
     // The reused dirent scratch buffer (the former process-global `static mut
     // buf`/`bufsz`) lives on the per-run `ExecContext`. This glob `gl_readdir`
     // callback's C-ABI signature cannot carry an `&ExecContext`, so it reaches
