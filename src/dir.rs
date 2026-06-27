@@ -704,13 +704,16 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
 
 /// glob `opendir` callback: position a cursor over the cached contents of
 /// `directory`, reading it to completion first.
-unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
+///
+/// Safe to call: the C glob machinery invokes it through a function pointer, and
+/// the directory-cache FFI it drives is confined to the inner `unsafe` block.
+extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
     // This is a glob `gl_opendir` callback invoked by the C glob machinery; its
     // C-ABI signature cannot carry the owned `ExecContext`. The directory cache
     // it populates lives on that context, so we reach the live per-run context
     // through the `CTX_PTR` borrow channel (installed for the extent of
     // `main_0`), exactly as `with_options` does for `Options`.
-    crate::make_main::with_exec_context(|ctx| {
+    crate::make_main::with_exec_context(|ctx| unsafe {
         let dir = find_directory(ctx, directory)
             .as_mut()
             .expect("find_directory never returns null");
@@ -737,17 +740,17 @@ unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
 /// glob `readdir` callback: synthesize a `dirent` for the next cached
 /// (non-impossible) file.
 ///
-/// # Safety
-///
-/// `stream` must come from `open_dirstream`. The returned dirent lives in the
+/// Safe to call: the C glob machinery invokes it through a function pointer with
+/// a `stream` it obtained from `open_dirstream`, and the pointer work is
+/// confined to the inner `unsafe` block. The returned dirent lives in the
 /// per-run context's reused scratch buffer that the next call overwrites.
-pub unsafe extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
+pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
     // The reused dirent scratch buffer (the former process-global `static mut
     // buf`/`bufsz`) lives on the per-run `ExecContext`. This glob `gl_readdir`
     // callback's C-ABI signature cannot carry an `&ExecContext`, so it reaches
     // the live context through the `CTX_PTR` borrow channel, exactly as the
     // sibling `gl_opendir` callback `open_dirstream` does.
-    crate::make_main::with_exec_context(|ctx| {
+    crate::make_main::with_exec_context(|ctx| unsafe {
         let ds = (stream as *mut dirstream)
             .as_mut()
             .expect("read_dirstream: null stream");
