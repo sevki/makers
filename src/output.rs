@@ -596,14 +596,16 @@ pub unsafe fn vformat_into(out: &mut Vec<u8>, fmt: *const ::core::ffi::c_char, a
     }
 }
 
-unsafe fn push_cstr(out: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
-    if !s.is_null() {
-        out.extend_from_slice(::core::ffi::CStr::from_ptr(s).to_bytes());
+/// Append `s`'s bytes to `out`, doing nothing when `s` is `None` (the old
+/// NULL-pointer sentinel).
+fn push_cstr(out: &mut Vec<u8>, s: Option<&::core::ffi::CStr>) {
+    if let Some(s) = s {
+        out.extend_from_slice(s.to_bytes());
     }
 }
 
 unsafe fn push_program_prefix(out: &mut Vec<u8>, makelevel: u32, fatal_marker: bool) {
-    push_cstr(out, program);
+    push_cstr(out, (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)));
     if makelevel == 0 {
         out.extend_from_slice(b": ");
     } else {
@@ -623,7 +625,8 @@ unsafe fn push_error_prefix(
     fatal_marker: bool,
 ) {
     if !flocp.is_null() && !(*flocp).filenm.is_null() {
-        push_cstr(out, (*flocp).filenm);
+        // `filenm` is non-null in this arm, so it is always `Some`.
+        push_cstr(out, Some(::core::ffi::CStr::from_ptr((*flocp).filenm)));
         out.push(b':');
         out.extend_from_slice(
             (*flocp)
@@ -727,7 +730,7 @@ pub unsafe extern "C" fn format(
     args: &[FmtArg],
 ) -> *mut ::core::ffi::c_char {
     let mut out = Vec::new();
-    push_cstr(&mut out, prefix);
+    push_cstr(&mut out, (!prefix.is_null()).then(|| ::core::ffi::CStr::from_ptr(prefix)));
     vformat_into(&mut out, fmt, args);
     out.push(0);
     let buf = get_buffer(out.len() as size_t);
@@ -993,6 +996,39 @@ mod outputs_tests {
     fn null_output_uses_stdio() {
         unsafe {
             _outputs(::core::ptr::null_mut(), 0, c"".as_ptr());
+        }
+    }
+}
+
+#[cfg(test)]
+mod push_cstr_unsafe_oracle {
+    //! `push_cstr` now takes `Option<&CStr>` — the NULL-pointer sentinel became
+    //! `None`. This keeps the verbatim c2rust pointer-based implementation as a
+    //! differential oracle and asserts both append identical bytes onto a
+    //! seeded, non-empty buffer (AGENTS rule 3).
+
+    /// Original c2rust pointer-based implementation, preserved verbatim.
+    unsafe fn push_cstr(out: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
+        if !s.is_null() {
+            out.extend_from_slice(::core::ffi::CStr::from_ptr(s).to_bytes());
+        }
+    }
+
+    #[test]
+    fn matches_oracle() {
+        let cases: &[Option<&::core::ffi::CStr>] =
+            &[None, Some(c""), Some(c"make"), Some(c"foo.mk:12: "), Some(c"x")];
+        for &s in cases {
+            // Seed both buffers so a replace-instead-of-append mutant is caught.
+            let mut safe = vec![b'<'];
+            super::push_cstr(&mut safe, s);
+
+            let mut oracle = vec![b'<'];
+            let p = s.map_or(::core::ptr::null(), |c| c.as_ptr());
+            // SAFETY: `p` is null or a valid NUL-terminated C string.
+            unsafe { push_cstr(&mut oracle, p) };
+
+            assert_eq!(safe, oracle, "mismatch for input {s:?}");
         }
     }
 }
