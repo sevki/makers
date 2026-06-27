@@ -264,12 +264,10 @@ pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
 }
 /// Build a NUL-terminated `%`-prefixed copy of the NUL-terminated string `s`
 /// (e.g. `.c` becomes `%.c`).
-unsafe fn percent_prefixed(s: *const ::core::ffi::c_char) -> Vec<u8> {
-    let len = strlen(s);
-    let mut buf = Vec::with_capacity(len + 2);
-    buf.push(b'%');
-    // Copy the NUL along with the bytes.
-    buf.extend_from_slice(::core::slice::from_raw_parts(s.cast::<u8>(), len + 1));
+fn percent_prefixed(s: &::core::ffi::CStr) -> Vec<u8> {
+    let mut buf = vec![b'%'];
+    // Copy the bytes and the terminating NUL.
+    buf.extend_from_slice(s.to_bytes_with_nul());
     buf
 }
 unsafe fn convert_suffix_rule(
@@ -290,14 +288,14 @@ unsafe fn convert_suffix_rule(
         *name_slot = strcache_add_len(c"(%.o)".as_ptr(), 5);
         *percent_slot = (*name_slot).add(1);
     } else {
-        let pattern = percent_prefixed(target);
+        let pattern = percent_prefixed(::core::ffi::CStr::from_ptr(target));
         *name_slot = strcache_add_len(pattern.as_ptr().cast(), (pattern.len() - 1) as size_t);
         *percent_slot = *name_slot;
     }
     let deps: *mut dep = if source.is_null() {
         ::core::ptr::null_mut()
     } else {
-        let pattern = percent_prefixed(source);
+        let pattern = percent_prefixed(::core::ffi::CStr::from_ptr(source));
         let d = alloc_dep();
         d.as_mut().expect("xcalloc returned null").name =
             strcache_add_len(pattern.as_ptr().cast(), (pattern.len() - 1) as size_t);
@@ -668,5 +666,46 @@ mod streq_tests {
         assert!(!streq(c"abc", c"abcd"));
         // Differing first byte (the C macro's fast path).
         assert!(!streq(c"a", c"b"));
+    }
+}
+
+#[cfg(test)]
+mod percent_prefixed_unsafe_oracle {
+    //! `percent_prefixed` now takes a safe `&CStr` and copies its bytes (plus
+    //! the terminating NUL) after a leading `%`. This keeps the verbatim
+    //! c2rust pointer-based implementation as a differential oracle and asserts
+    //! both produce identical buffers (AGENTS rule 3).
+
+    /// Original c2rust pointer-based implementation, preserved verbatim.
+    unsafe fn percent_prefixed(s: *const ::core::ffi::c_char) -> Vec<u8> {
+        let len = libc::strlen(s);
+        let mut buf = Vec::with_capacity(len + 2);
+        buf.push(b'%');
+        // Copy the NUL along with the bytes.
+        buf.extend_from_slice(::core::slice::from_raw_parts(s.cast::<u8>(), len + 1));
+        buf
+    }
+
+    #[test]
+    fn matches_oracle() {
+        let cases: &[&::core::ffi::CStr] = &[
+            c"",
+            c"a",
+            c".c",
+            c".o",
+            c"foo.o",
+            c"(%.o)",
+            c"%already",
+            c"with space",
+        ];
+        for &s in cases {
+            let safe = super::percent_prefixed(s);
+            // SAFETY: `s` is a valid NUL-terminated C string.
+            let oracle = unsafe { percent_prefixed(s.as_ptr()) };
+            assert_eq!(safe, oracle, "mismatch for input {s:?}");
+            // The result is `%` + the original bytes + NUL.
+            assert_eq!(safe.first(), Some(&b'%'));
+            assert_eq!(safe.last(), Some(&0));
+        }
     }
 }
