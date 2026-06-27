@@ -87,3 +87,6 @@ checkcfg.*.log
 
 # Claude Code session/worktree artifacts
 .claude/
+
+# cargo-mutants output
+mutants.out/
