@@ -140,6 +140,54 @@ pub struct ExecContext {
     /// function-local `static mut lossage`), used to suppress repeating the
     /// same "cannot enforce load limit" warning.
     pub load_lossage: LoadLossage,
+
+    /// The directory cache's name-keyed table (`struct directory` entries), the
+    /// former file-scoped `static mut dir::directories`. Owned per-run so there
+    /// is no process-global hash table; `find_directory` and
+    /// `print_dir_data_base` reach it through the `&ExecContext` they carry. The
+    /// glob `open_dirstream` callback (C-ABI, no `ctx` parameter) reaches it
+    /// through the `CTX_PTR` borrow channel, mirroring `with_options`. Populated
+    /// during makefile parsing (`$(wildcard)`, vpath, includes) and reused
+    /// through the build, so `main_0` hands it across the build-phase context
+    /// rebuild rather than letting the cache reset (see its use site).
+    pub directories: DirCacheTable,
+    /// The directory cache's dev/inode-keyed contents table (`struct
+    /// directory_contents`), the former file-scoped `static mut
+    /// dir::directory_contents`. Shares [`Self::directories`]' lifetime and
+    /// hand-off.
+    pub directory_contents: DirCacheTable,
+}
+
+/// One of the directory cache's two FFI [`hash_table`](crate::hash::hash_table)s
+/// held on the owned [`ExecContext`] instead of a process-global `static mut`.
+/// The `gnulib`-style hash routines mutate the table in place through a
+/// `*mut hash_table`, so the cell hands one out via [`Cell::as_ptr`]; the table
+/// is single-threaded build state. Wrapping it keeps `ExecContext`'s derived
+/// `Default`/`Debug`/`Clone` working without those bounds on the raw FFI type.
+pub struct DirCacheTable(pub ::core::cell::Cell<crate::hash::hash_table>);
+
+impl Default for DirCacheTable {
+    fn default() -> Self {
+        // Matches the former `static mut … = unsafe { zeroed() }`: an all-zero
+        // table is the "not yet initialized" state `hash_init` overwrites.
+        // SAFETY: `hash_table` is a `repr(C)` POD whose all-zero bit pattern is
+        // the valid empty/uninitialized state the C code also starts from.
+        Self(::core::cell::Cell::new(unsafe { ::core::mem::zeroed() }))
+    }
+}
+
+impl Clone for DirCacheTable {
+    fn clone(&self) -> Self {
+        // `hash_table` is `Copy`; clone the current value into a fresh cell.
+        Self(::core::cell::Cell::new(self.0.get()))
+    }
+}
+
+impl ::core::fmt::Debug for DirCacheTable {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        // The FFI `hash_table` is not `Debug`; show it opaquely.
+        f.debug_tuple("DirCacheTable").finish_non_exhaustive()
+    }
 }
 
 /// Wrapper giving [`ExecContext::load_proc_fd`] its `-2` ("not yet probed")
@@ -226,6 +274,39 @@ mod tests {
         assert_eq!(ctx.load_lossage.0.get(), 0);
         // A fresh context is back at the sentinels (per-run, not global).
         assert_eq!(ExecContext::default().load_proc_fd.0.get(), -2);
+    }
+
+    /// The directory cache's two `hash_table`s start as the all-zero
+    /// ("not yet initialized") value `hash_init` overwrites — matching the
+    /// former `static mut … = zeroed()` — and the carry-over in `main_0` (a
+    /// struct update that moves these two fields onto a freshly built context)
+    /// preserves the populated table while resetting the rest. `Clone` snapshots
+    /// the current value into an independent cell.
+    #[test]
+    fn dir_cache_tables_start_zeroed_and_survive_carry_over() {
+        let ctx = ExecContext::default();
+        assert!(ctx.directories.0.get().ht_vec.is_null());
+        assert_eq!(ctx.directories.0.get().ht_size, 0);
+        assert!(ctx.directory_contents.0.get().ht_vec.is_null());
+
+        // Simulate a populated table (a non-null vec marks it initialized), then
+        // the `main_0` build-phase rebuild that hands the cache across.
+        let mut populated = ExecContext::default();
+        let mut table = populated.directories.0.get();
+        table.ht_size = 199;
+        table.ht_vec = 0x1 as *mut *mut ::core::ffi::c_void;
+        populated.directories.0.set(table);
+
+        let carried = ::core::mem::take(&mut populated.directories);
+        let rebuilt = ExecContext {
+            directories: carried,
+            ..ExecContext::new(Config { makelevel: 1 })
+        };
+        // The carried table survived; the source field reset to the zero value.
+        assert_eq!(rebuilt.directories.0.get().ht_size, 199);
+        assert!(populated.directories.0.get().ht_vec.is_null());
+        // Unrelated per-run state on the rebuilt context is fresh.
+        assert_eq!(rebuilt.makelevel(), 1);
     }
 
     /// The `.NOTINTERMEDIATE`/`.SECONDARY` latches start unset and are per-run

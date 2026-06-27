@@ -1130,6 +1130,16 @@ fn wildcard_multi_dir_scan() {
     check("wildcard-dirs", "82_wildcard_dirs.mk", "all", &[]);
 }
 
+#[test]
+fn wildcard_across_makelevel_rebuild() {
+    // `$(wildcard)` at parse time and again in the recipe drives the directory
+    // cache before and after `main_0`'s build-phase context rebuild. The cache
+    // now lives on `ExecContext` and is reached from the glob `open_dirstream`
+    // callback through the `CTX_PTR` borrow channel; the rebuild hands it across.
+    // Byte-identical to the C oracle (whose cache was a process global).
+    check("wildcard-phases", "84_wildcard_phases.mk", "all", &[]);
+}
+
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
 /// *first* target becomes the default goal, exactly like any other explicit
 /// rule (pattern rules, by contrast, never set the default goal). With

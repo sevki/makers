@@ -162,8 +162,6 @@ unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> i
     }
 }
 
-static mut directory_contents: hash_table = unsafe { ::core::mem::zeroed() };
-
 /// Hash a [`directory`] key by name.
 ///
 /// # Safety
@@ -198,8 +196,6 @@ unsafe fn directory_hash_cmp(x: *const c_void, y: *const c_void) -> i32 {
         strcmp(xn, yn)
     }
 }
-
-static mut directories: hash_table = unsafe { ::core::mem::zeroed() };
 
 /// Hash a [`dirfile`] key by name.
 ///
@@ -251,7 +247,7 @@ pub unsafe fn find_directory(
 ) -> *mut directory {
     let mut dir_key: directory = ::core::mem::zeroed();
     dir_key.name = name;
-    let dir_slot = (hash_find_slot(&raw mut directories, (&raw const dir_key).cast())
+    let dir_slot = (hash_find_slot(ctx.directories.0.as_ptr(), (&raw const dir_key).cast())
         as *mut *mut directory)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -289,7 +285,7 @@ pub unsafe fn find_directory(
         new.name = strcache_add_len(name, len);
         dir = &raw mut *new;
         hash_insert_at(
-            &raw mut directories,
+            ctx.directories.0.as_ptr(),
             dir as *const c_void,
             (&raw mut *dir_slot).cast(),
         );
@@ -315,7 +311,7 @@ pub unsafe fn find_directory(
     let mut dc_key: directory_contents = ::core::mem::zeroed();
     dc_key.dev = st.st_dev as dev_t;
     dc_key.ino = st.st_ino as ino_t;
-    let dc_slot = (hash_find_slot(&raw mut directory_contents, (&raw const dc_key).cast())
+    let dc_slot = (hash_find_slot(ctx.directory_contents.0.as_ptr(), (&raw const dc_key).cast())
         as *mut *mut directory_contents)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -328,7 +324,7 @@ pub unsafe fn find_directory(
         *new = dc_key;
         dc = &raw mut *new;
         hash_insert_at(
-            &raw mut directory_contents,
+            ctx.directory_contents.0.as_ptr(),
             dc as *const c_void,
             (&raw mut *dc_slot).cast(),
         );
@@ -636,13 +632,15 @@ unsafe fn print_count(n: c_uint, zero_word: *const c_char) {
 /// # Safety
 ///
 /// The directory tables must be initialized and stdout valid.
-pub unsafe fn print_dir_data_base() {
+pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
     puts(c"\n# Directories\n".as_ptr());
 
     let mut files: c_uint = 0;
     let mut impossible: c_uint = 0;
-    for i in 0..directories.ht_size as usize {
-        let dir = *directories.ht_vec.add(i) as *mut directory;
+    // Snapshot the name-keyed table; it is not mutated while printing.
+    let dirs = ctx.directories.0.get();
+    for i in 0..dirs.ht_size as usize {
+        let dir = *dirs.ht_vec.add(i) as *mut directory;
         if !is_real_item(dir as *const c_void) {
             continue;
         }
@@ -700,7 +698,7 @@ pub unsafe fn print_dir_data_base() {
     print_count(impossible, c"no".as_ptr());
     printf(
         c" impossibilities in %lu directories.\n".as_ptr(),
-        directories.ht_fill,
+        ctx.directories.0.get().ht_fill,
     );
 }
 
@@ -708,31 +706,32 @@ pub unsafe fn print_dir_data_base() {
 /// `directory`, reading it to completion first.
 unsafe extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
     // This is a glob `gl_opendir` callback invoked by the C glob machinery; its
-    // C-ABI signature cannot carry the owned `ExecContext`, and there is
-    // deliberately no global to read it from. The only use of `ctx` in the
-    // callees below is the `make[N]:` prefix on a rare readdir-failure `fatal`,
-    // which is cosmetic here, so we hand them a default (top-level) context.
-    let ctx = crate::execctx::ExecContext::default();
-    let dir = find_directory(&ctx, directory)
-        .as_mut()
-        .expect("find_directory never returns null");
-    let Some(dc) = dir.contents.as_mut() else {
-        // The directory could not be stat'd.
-        return null_mut();
-    };
-    if dc.dirfiles.ht_vec.is_null() {
-        // The directory could not be opened.
-        return null_mut();
-    }
-    // Read it all in now so the cache is complete.
-    dir_contents_file_exists_p(&ctx, &raw mut *dir, null());
+    // C-ABI signature cannot carry the owned `ExecContext`. The directory cache
+    // it populates lives on that context, so we reach the live per-run context
+    // through the `CTX_PTR` borrow channel (installed for the extent of
+    // `main_0`), exactly as `with_options` does for `Options`.
+    crate::make_main::with_exec_context(|ctx| {
+        let dir = find_directory(ctx, directory)
+            .as_mut()
+            .expect("find_directory never returns null");
+        let Some(dc) = dir.contents.as_mut() else {
+            // The directory could not be stat'd.
+            return null_mut();
+        };
+        if dc.dirfiles.ht_vec.is_null() {
+            // The directory could not be opened.
+            return null_mut();
+        }
+        // Read it all in now so the cache is complete.
+        dir_contents_file_exists_p(ctx, &raw mut *dir, null());
 
-    let new = (xmalloc(::core::mem::size_of::<dirstream>() as size_t) as *mut dirstream)
-        .as_mut()
-        .expect("xmalloc never returns null");
-    new.contents = &raw mut *dc;
-    new.dirfile_slot = dc.dirfiles.ht_vec as *mut *mut dirfile;
-    (&raw mut *new).cast()
+        let new = (xmalloc(::core::mem::size_of::<dirstream>() as size_t) as *mut dirstream)
+            .as_mut()
+            .expect("xmalloc never returns null");
+        new.contents = &raw mut *dc;
+        new.dirfile_slot = dc.dirfiles.ht_vec as *mut *mut dirfile;
+        (&raw mut *new).cast()
+    })
 }
 
 /// glob `readdir` callback: synthesize a `dirent` for the next cached
@@ -804,16 +803,16 @@ pub unsafe fn dir_setup_glob(gl: *mut glob_t) {
 /// # Safety
 ///
 /// Must run once, before any other function in this module.
-pub unsafe fn hash_init_directories() {
+pub unsafe fn hash_init_directories(ctx: &crate::execctx::ExecContext) {
     hash_init(
-        &raw mut directories,
+        ctx.directories.0.as_ptr(),
         DIRECTORY_BUCKETS as c_ulong,
         Some(directory_hash_1),
         Some(directory_hash_2),
         Some(directory_hash_cmp),
     );
     hash_init(
-        &raw mut directory_contents,
+        ctx.directory_contents.0.as_ptr(),
         DIRECTORY_BUCKETS as c_ulong,
         Some(directory_contents_hash_1),
         Some(directory_contents_hash_2),
