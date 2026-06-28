@@ -5,7 +5,7 @@
 //! cache) because they are shared with `read.rs`, `remake.rs`, and
 //! `implicit.rs` through `extern "C"` boundaries.
 
-use ::core::ffi::{c_char, c_uint, c_void};
+use ::core::ffi::{c_char, c_uint, c_void, CStr};
 use ::core::ptr::{null, null_mut};
 
 use libc::{__errno_location, free, printf, puts, strcmp, strlen};
@@ -90,14 +90,12 @@ unsafe fn searchpath_entries<'a>(path: *const Vpath) -> &'a [*const c_char] {
 }
 
 /// The byte offset of the `%` within a pattern, or `None` when there is none.
-/// Address subtraction (not pointer arithmetic) is used only to compare the
-/// `%` positions of two patterns during de-duplication.
-fn percent_off(pattern: *const c_char, percent: *const c_char) -> Option<usize> {
-    if percent.is_null() {
-        None
-    } else {
-        Some(percent as usize - pattern as usize)
-    }
+/// The `%`, when present, points into `pattern`, so its position is the
+/// difference of the two byte lengths — recovered here with safe slice
+/// arithmetic rather than raw address subtraction. Used to compare the `%`
+/// positions of two patterns during de-duplication.
+fn percent_off(pattern: &CStr, percent: Option<&CStr>) -> Option<usize> {
+    percent.map(|p| pattern.to_bytes().len() - p.to_bytes().len())
 }
 
 /// Reverse the chain of vpath directives and build the `VPATH`/`GPATH`
@@ -193,8 +191,13 @@ pub unsafe fn construct_vpath_list(
         while !path.is_null() {
             let next = (*path).next;
             let matches = pattern.is_null()
-                || (percent_off(pattern, percent) == percent_off((*path).pattern, (*path).percent)
-                    && strcmp(pattern, (*path).pattern) == 0);
+                || (percent_off(
+                    CStr::from_ptr(pattern),
+                    (!percent.is_null()).then(|| CStr::from_ptr(percent)),
+                ) == percent_off(
+                    CStr::from_ptr((*path).pattern),
+                    (!(*path).percent.is_null()).then(|| CStr::from_ptr((*path).percent)),
+                ) && strcmp(pattern, (*path).pattern) == 0);
             if matches {
                 // Unlink and free this entry.
                 if let Some(lp) = lastpath.as_mut() {
@@ -301,6 +304,61 @@ pub fn gpath_search(file: &[u8]) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod percent_off_unsafe_oracle {
+    use super::*;
+    use std::ffi::CString;
+
+    /// Verbatim pre-conversion implementation, preserved as a differential
+    /// oracle: recovers the `%` offset by raw address subtraction.
+    fn percent_off_oracle(pattern: *const c_char, percent: *const c_char) -> Option<usize> {
+        if percent.is_null() {
+            None
+        } else {
+            Some(percent as usize - pattern as usize)
+        }
+    }
+
+    /// The safe slice-length form recovers the same offset as the original
+    /// raw-pointer subtraction, for a `%` at varying positions and for the
+    /// no-`%` (null) case.
+    #[test]
+    fn safe_matches_oracle() {
+        for pat in [
+            &b"%.o"[..],
+            &b"src/%.o"[..],
+            &b"a/very/long/path/%/tail"[..],
+            &b"no-percent-here"[..],
+            &b"%"[..],
+        ] {
+            let c = CString::new(pat).unwrap();
+            let base = c.as_ptr();
+            // Mirror find_percent: the first unquoted '%', or null.
+            let pct_ptr = match pat.iter().position(|&b| b == b'%') {
+                Some(i) => unsafe { base.add(i) },
+                None => ::core::ptr::null(),
+            };
+
+            let oracle = percent_off_oracle(base, pct_ptr);
+            let safe = percent_off(
+                c.as_c_str(),
+                (!pct_ptr.is_null()).then(|| unsafe { CStr::from_ptr(pct_ptr) }),
+            );
+            assert_eq!(safe, oracle, "pattern {:?}", String::from_utf8_lossy(pat));
+        }
+    }
+
+    /// Spot-check the absolute offsets the safe form yields.
+    #[test]
+    fn offsets_are_correct() {
+        let c = CString::new("src/%.o").unwrap();
+        let pct = c.as_bytes().iter().position(|&b| b == b'%').unwrap();
+        let percent = unsafe { CStr::from_ptr(c.as_ptr().add(pct)) };
+        assert_eq!(percent_off(c.as_c_str(), Some(percent)), Some(4));
+        assert_eq!(percent_off(c.as_c_str(), None), None);
+    }
 }
 
 #[cfg(test)]
