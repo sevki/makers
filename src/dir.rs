@@ -982,6 +982,42 @@ mod open_directories_tests {
 #[cfg(test)]
 mod directory_contents_cmp_tests {
     use super::directory_contents_cmp;
+    use crate::ffi_types::{dev_t, ino_t};
+
+    /// The original nested comparator from `directory_contents_hash_cmp`,
+    /// preserved verbatim (operating on the extracted `(ino, dev)` keys) as a
+    /// differential oracle for [`super::directory_contents_cmp`].
+    fn directory_contents_cmp_oracle(x_ino: ino_t, x_dev: dev_t, y_ino: ino_t, y_dev: dev_t) -> i32 {
+        match x_ino.cmp(&y_ino) {
+            ::core::cmp::Ordering::Less => -1,
+            ::core::cmp::Ordering::Greater => 1,
+            ::core::cmp::Ordering::Equal => match x_dev.cmp(&y_dev) {
+                ::core::cmp::Ordering::Less => -1,
+                ::core::cmp::Ordering::Greater => 1,
+                ::core::cmp::Ordering::Equal => 0,
+            },
+        }
+    }
+
+    /// The extracted `then`-based form yields the exact same `-1`/`0`/`1`
+    /// result as the original nested-match comparator across every ordering of
+    /// both keys.
+    #[test]
+    fn matches_oracle() {
+        for x_ino in 0..3 {
+            for x_dev in 0..3 {
+                for y_ino in 0..3 {
+                    for y_dev in 0..3 {
+                        assert_eq!(
+                            directory_contents_cmp(x_ino, x_dev, y_ino, y_dev),
+                            directory_contents_cmp_oracle(x_ino, x_dev, y_ino, y_dev),
+                            "({x_ino},{x_dev}) vs ({y_ino},{y_dev})"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     /// `ino` is the primary key, `dev` the tiebreaker; the result follows the C
     /// callback's -1/0/1 convention.
