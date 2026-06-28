@@ -154,8 +154,9 @@ pub struct ExecContext {
     /// The directory cache's dev/inode-keyed contents table (`struct
     /// directory_contents`), the former file-scoped `static mut
     /// dir::directory_contents`. Shares [`Self::directories`]' lifetime and
-    /// hand-off.
-    pub directory_contents: DirCacheTable,
+    /// hand-off. Idiomatic Rust [`rustc_hash::FxHashMap`] keyed by `(dev, ino)`,
+    /// replacing the c2rust FFI `hash_table` and its hash/compare callbacks.
+    pub directory_contents: DirContentsTable,
 
     /// `read_dirstream`'s reused dirent scratch buffer — the heap block (and its
     /// size) that the glob `gl_readdir` callback rewrites for each enumerated
@@ -200,6 +201,50 @@ impl ::core::fmt::Debug for DirCacheTable {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         // The FFI `hash_table` is not `Debug`; show it opaquely.
         f.debug_tuple("DirCacheTable").finish_non_exhaustive()
+    }
+}
+
+/// The directory cache's dev/inode-keyed contents table: an idiomatic Rust
+/// [`rustc_hash::FxHashMap`] from `(dev, ino)` to an owned, heap-stable
+/// [`directory_contents`](crate::dir::directory_contents), replacing the
+/// c2rust FFI `hash_table` (and its `directory_contents_hash_*` callbacks).
+///
+/// Entries are `Box`ed so a `*mut directory_contents` taken for a
+/// [`directory`](crate::dir::directory)'s `contents` (and for the glob
+/// dirstream) stays valid across later inserts/rehashes — the map may move the
+/// `Box`, never the heap block it owns. `RefCell` gives the interior mutability
+/// the former `Cell<hash_table>` provided on the shared `&ExecContext`.
+pub struct DirContentsTable(
+    pub  ::core::cell::RefCell<
+        rustc_hash::FxHashMap<
+            (crate::ffi_types::dev_t, crate::ffi_types::ino_t),
+            Box<crate::dir::directory_contents>,
+        >,
+    >,
+);
+
+impl Default for DirContentsTable {
+    fn default() -> Self {
+        Self(::core::cell::RefCell::new(rustc_hash::FxHashMap::default()))
+    }
+}
+
+impl Clone for DirContentsTable {
+    fn clone(&self) -> Self {
+        // The directory cache is per-run build state handed across the
+        // build-phase rebuild by move (`mem::take`), never by clone; the
+        // `Clone` impl exists only to keep `ExecContext`'s derive working, so a
+        // fresh empty table is the right (and only sound) snapshot — the entries
+        // hold raw back-pointers that must not be duplicated.
+        Self::default()
+    }
+}
+
+impl ::core::fmt::Debug for DirContentsTable {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_tuple("DirContentsTable")
+            .field(&self.0.borrow().len())
+            .finish()
     }
 }
 
@@ -300,7 +345,7 @@ mod tests {
         let ctx = ExecContext::default();
         assert!(ctx.directories.0.get().ht_vec.is_null());
         assert_eq!(ctx.directories.0.get().ht_size, 0);
-        assert!(ctx.directory_contents.0.get().ht_vec.is_null());
+        assert!(ctx.directory_contents.0.borrow().is_empty());
 
         // Simulate a populated table (a non-null vec marks it initialized), then
         // the `main_0` build-phase rebuild that hands the cache across.

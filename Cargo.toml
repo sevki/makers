@@ -26,6 +26,7 @@ digest = "0.10"
 itertools = "0.15"
 jj-lib-proc-macros = { path = "proc-macros" }
 libc = "0.2"
+rustc-hash = "2"
 salsa = "0.27"
 
 [dev-dependencies]

@@ -430,6 +430,7 @@ dependencies = [
  "itertools",
  "jj-lib-proc-macros",
  "libc",
+ "rustc-hash",
  "salsa",
 ]
 
