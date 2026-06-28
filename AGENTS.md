@@ -78,12 +78,41 @@ the conversion also closes a coverage gap.
 3. Everything in **Required Refactors** below (RAII, `Result`, enums,
    newtypes, iterator/loop simplification).
 
-### Constraints when changing types
-- Do **not** alter `#[repr(C)]` struct layouts or real `extern "C"` ABI
-  boundaries (e.g. the hash table's `void *`, c2rust-shared structs)
-  without explicit ABI analysis.
-- Integer width or signedness changes require overflow/range analysis;
-  runtime behavior must remain identical.
+### c2rust FFI artifacts are bad — remove them
+
+`core::ffi::c_*` types, global singletons, and `#[repr(C)]` are c2rust
+hold-overs, **not** requirements. The in-tree C sources are a differential-test
+oracle, not a library this crate links against or shares structs/ABI with at
+runtime — so none of these need to survive. Treat each as a defect to remove:
+
+- **FFI scalar types are bad.** Replace `c_int` / `c_uint` / `c_long` /
+  `c_ulong` / `c_short` / `c_char` / `size_t` / `ssize_t` and other
+  `core::ffi`/libc scalars with the right native Rust type:
+  `i8`/`i16`/`i32`/`i64`/`isize`, `u8`/`u16`/`u32`/`u64`/`usize`, `bool` for
+  semantic flags, `char`/`u8` for bytes. Pick width and signedness from the
+  actual value range, not the C type.
+- **FFI string / pointer types are bad.** Replace `*const c_char` (+ length)
+  with `String` / `&str` / `&[u8]` / `&CStr` / `Vec<u8>`; null-pointer
+  sentinels with `Option<T>`; raw `*const` / `*mut` parameters with
+  `&` / `&mut` references whenever every caller is Rust.
+- **`#[repr(C)]` is bad.** Drop it; let structs use the default Rust layout.
+  Keep it only for a type genuinely passed across a real FFI call you are
+  keeping (e.g. a libc syscall struct).
+- **`extern "C"` / `unsafe extern "C" fn` / `#[no_mangle]` are bad** on
+  anything that is not a real FFI entry point. Remove them and give the
+  function an idiomatic Rust signature.
+- **Global singletons are bad** (see rule 2): no `static mut`, no global
+  mutable state, no mirror statics. Thread ownership explicitly.
+
+**Always work toward removing `unsafe`.** Every pass should *shrink* the unsafe
+surface — turn raw derefs into borrows, FFI types into native types, and delete
+the `unsafe` blocks / `unsafe fn` markers that are then no longer needed. Never
+widen `unsafe`.
+
+The only things that still gate a type change:
+- **Behavior must stay identical** (differential-tested against the C oracle).
+- **Integer width or signedness changes require overflow/range analysis** —
+  runtime values must be unchanged.
 
 ## Forbidden Patterns
 - libc malloc/free ownership in Rust-facing APIs
