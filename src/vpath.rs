@@ -85,8 +85,13 @@ static mut general_vpath: *mut Vpath = null_mut();
 static mut gpaths: *mut Vpath = null_mut();
 
 /// The `searchpath` directory entries of a `Vpath` as a slice.
-unsafe fn searchpath_entries<'a>(path: *const Vpath) -> &'a [*const c_char] {
-    ::core::slice::from_raw_parts((*path).searchpath as *const *const c_char, (*path).npaths)
+fn searchpath_entries(path: &Vpath) -> &[*const c_char] {
+    // SAFETY: a live `Vpath` owns `npaths` consecutive `*const c_char` entries
+    // at `searchpath`; the returned slice borrows that array for as long as the
+    // `Vpath` reference is held.
+    unsafe {
+        ::core::slice::from_raw_parts(path.searchpath as *const *const c_char, path.npaths)
+    }
 }
 
 /// The byte offset of the `%` within a pattern, or `None` when there is none.
@@ -295,7 +300,7 @@ pub fn gpath_search(file: &[u8]) -> bool {
     // comparison.
     unsafe {
         if !gpaths.is_null() && file.len() <= (*gpaths).maxlen {
-            for &entry in searchpath_entries(gpaths) {
+            for &entry in searchpath_entries(&*gpaths) {
                 // The GPATH entry must equal exactly the first `len` bytes.
                 if cstr_bytes(entry) == file {
                     return true;
@@ -370,7 +375,7 @@ mod gpath_search_unsafe_oracle {
     unsafe fn gpath_search_oracle(file: *const c_char, len: size_t) -> i32 {
         if !gpaths.is_null() && len <= (*gpaths).maxlen {
             let needle = ::core::slice::from_raw_parts(file as *const u8, len);
-            for &entry in searchpath_entries(gpaths) {
+            for &entry in searchpath_entries(&*gpaths) {
                 // The GPATH entry must equal exactly the first `len` bytes.
                 if cstr_bytes(entry) == needle {
                     return 1;
@@ -437,6 +442,66 @@ mod gpath_search_unsafe_oracle {
     }
 }
 
+#[cfg(test)]
+mod searchpath_entries_tests {
+    use super::*;
+
+    /// Original c2rust raw-pointer form, preserved verbatim as a differential
+    /// oracle for the safe `searchpath_entries`.
+    unsafe fn searchpath_entries_oracle<'a>(path: *const Vpath) -> &'a [*const c_char] {
+        ::core::slice::from_raw_parts((*path).searchpath as *const *const c_char, (*path).npaths)
+    }
+
+    /// Build a `Vpath` whose `searchpath` holds the given NUL-terminated
+    /// entries. Backing storage is leaked so it outlives the borrow.
+    fn make_vpath(entries: &[&[u8]]) -> Vpath {
+        let mut ptrs: Vec<*const c_char> = entries
+            .iter()
+            .map(|e| {
+                let mut buf = e.to_vec();
+                buf.push(0);
+                Box::leak(buf.into_boxed_slice()).as_ptr() as *const c_char
+            })
+            .collect();
+        let npaths = ptrs.len();
+        let searchpath = ptrs.as_mut_ptr();
+        Box::leak(ptrs.into_boxed_slice());
+        Vpath {
+            next: null_mut(),
+            pattern: null(),
+            percent: null(),
+            patlen: 0,
+            searchpath,
+            npaths,
+            maxlen: 0,
+        }
+    }
+
+    /// The safe `&Vpath` form hands back exactly the same entry pointers as the
+    /// original raw-pointer version, each still borrowing its NUL-terminated
+    /// entry bytes.
+    #[test]
+    fn returns_all_entries_matching_oracle() {
+        let entries: &[&[u8]] = &[b"src", b"include", b"a/b/c"];
+        let vp = make_vpath(entries);
+        let safe = searchpath_entries(&vp);
+        let oracle = unsafe { searchpath_entries_oracle(&vp) };
+        assert_eq!(safe, oracle);
+        assert_eq!(safe.len(), 3);
+        for (&p, e) in safe.iter().zip(entries) {
+            assert_eq!(unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes(), *e);
+        }
+    }
+
+    /// An empty `searchpath` yields an empty slice (not a dangling read).
+    #[test]
+    fn empty_searchpath_is_empty_slice() {
+        let vp = make_vpath(&[]);
+        assert!(searchpath_entries(&vp).is_empty());
+        assert_eq!(searchpath_entries(&vp), unsafe { searchpath_entries_oracle(&vp) });
+    }
+}
+
 /// Search the given `Vpath` list for a directory where `file` exists. If it
 /// is found, return the cached full pathname, storing the file's modtime
 /// into `*mtime_ptr` (when non-null) and the index of the matching search
@@ -475,7 +540,7 @@ unsafe fn selective_vpath_search(
     let mut name_buf = vec![0u8; maxvpath + 1 + name_dplen + 1 + flen + 1];
 
     // Try each VPATH entry.
-    for (i, &entry) in searchpath_entries(path).iter().enumerate() {
+    for (i, &entry) in searchpath_entries(&*path).iter().enumerate() {
         let entry_b = cstr_bytes(entry);
 
         // Lay down "<entry>[/<dirprefix>]" and remember P: the index of the
@@ -670,7 +735,7 @@ pub unsafe fn print_vpath_data_base() {
 /// Print a `Vpath`'s directory entries separated by the path separator,
 /// ending with a newline.
 unsafe fn print_search_path(path: *const Vpath) {
-    let entries = searchpath_entries(path);
+    let entries = searchpath_entries(&*path);
     for (idx, &entry) in entries.iter().enumerate() {
         let sep = if idx + 1 == entries.len() {
             '\n' as i32
