@@ -264,21 +264,33 @@ pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
+/// Order two variable names the way the variable hash table expects: shorter
+/// names sort first, and names of equal length sort by their raw bytes.
+///
+/// This is the safe, pointer-free core of [`variable_hash_cmp`]. The C original
+/// compared `length` first and only fell back to a `memcmp` of `length` bytes
+/// when the lengths matched; that is exactly `len`-then-bytes ordering, since a
+/// `memcmp` over equal-length buffers ranks them by their first differing byte.
+fn variable_cmp(x_name: &[u8], y_name: &[u8]) -> ::core::cmp::Ordering {
+    x_name
+        .len()
+        .cmp(&y_name.len())
+        .then_with(|| x_name.cmp(y_name))
+}
+
 unsafe fn variable_hash_cmp(xv: *const ::core::ffi::c_void, yv: *const ::core::ffi::c_void) -> i32 {
-    let x: *const variable = xv as *const variable;
-    let y: *const variable = yv as *const variable;
-    let result: i32 = (*x).length.wrapping_sub((*y).length) as i32;
-    if result != 0 {
-        return result;
-    }
-    if (*x).name == (*y).name {
-        0
-    } else {
-        memcmp(
-            (*x).name as *const ::core::ffi::c_void,
-            (*y).name as *const ::core::ffi::c_void,
-            (*x).length as size_t,
-        )
+    let x = (xv as *const variable)
+        .as_ref()
+        .expect("variable hash callback got a null key");
+    let y = (yv as *const variable)
+        .as_ref()
+        .expect("variable hash callback got a null key");
+    let x_name = ::core::slice::from_raw_parts(x.name as *const u8, x.length as usize);
+    let y_name = ::core::slice::from_raw_parts(y.name as *const u8, y.length as usize);
+    match variable_cmp(x_name, y_name) {
+        ::core::cmp::Ordering::Less => -1,
+        ::core::cmp::Ordering::Greater => 1,
+        ::core::cmp::Ordering::Equal => 0,
     }
 }
 pub const VARIABLE_BUCKETS: i32 = 523;
@@ -2753,6 +2765,143 @@ mod assign_variable_definition_tests {
             let r = assign_variable_definition(&ctx, &raw mut v, not_def.as_ptr());
             assert!(r.is_null(), "a non-definition line yields null");
             assert!(v.name.is_null(), "no name is allocated on the reject path");
+        }
+    }
+}
+
+#[cfg(test)]
+mod variable_cmp_tests {
+    use super::*;
+    use ::core::cmp::Ordering;
+
+    /// Verbatim preservation of the original raw-pointer `variable_hash_cmp`
+    /// callback, retained as a differential oracle per the project rule for
+    /// swapping an unsafe implementation for a safe one.
+    ///
+    /// SAFETY: callers pass pointers to live `variable` values whose `name`
+    /// fields address `length` readable bytes — the same contract the hash
+    /// table handed the original callback.
+    unsafe fn variable_hash_cmp_unsafe_oracle(
+        xv: *const ::core::ffi::c_void,
+        yv: *const ::core::ffi::c_void,
+    ) -> i32 {
+        let x: *const variable = xv as *const variable;
+        let y: *const variable = yv as *const variable;
+        let result: i32 = (*x).length.wrapping_sub((*y).length) as i32;
+        if result != 0 {
+            return result;
+        }
+        if (*x).name == (*y).name {
+            0
+        } else {
+            memcmp(
+                (*x).name as *const ::core::ffi::c_void,
+                (*y).name as *const ::core::ffi::c_void,
+                (*x).length as size_t,
+            )
+        }
+    }
+
+    /// Build a throwaway `variable` whose `name`/`length` denote `bytes`.
+    fn var_for(bytes: &[u8]) -> variable {
+        // SAFETY: a zeroed `variable` is a valid (inert) value; the tests only
+        // read its `name`/`length` fields.
+        let mut v: variable = unsafe { ::core::mem::zeroed() };
+        v.name = bytes.as_ptr() as *mut ::core::ffi::c_char;
+        v.length = bytes.len() as ::core::ffi::c_uint;
+        v
+    }
+
+    /// Drive the production callback with two name slices.
+    fn callback(x: &[u8], y: &[u8]) -> i32 {
+        let vx = var_for(x);
+        let vy = var_for(y);
+        // SAFETY: both variables address live byte slices of the stated length.
+        unsafe {
+            variable_hash_cmp(
+                &raw const vx as *const ::core::ffi::c_void,
+                &raw const vy as *const ::core::ffi::c_void,
+            )
+        }
+    }
+
+    /// Drive the verbatim oracle with two name slices.
+    fn oracle(x: &[u8], y: &[u8]) -> i32 {
+        let vx = var_for(x);
+        let vy = var_for(y);
+        // SAFETY: both variables address live byte slices of the stated length.
+        unsafe {
+            variable_hash_cmp_unsafe_oracle(
+                &raw const vx as *const ::core::ffi::c_void,
+                &raw const vy as *const ::core::ffi::c_void,
+            )
+        }
+    }
+
+    const SAMPLES: &[&[u8]] = &[
+        b"",
+        b"a",
+        b"b",
+        b"A",
+        b"ab",
+        b"ba",
+        b"abc",
+        b"abd",
+        b"CC",
+        b"CXX",
+        b"foo",
+        b"foobar",
+        b"\xff",
+        b"\x00",
+    ];
+
+    #[test]
+    fn callback_matches_oracle_in_sign() {
+        for &x in SAMPLES {
+            for &y in SAMPLES {
+                assert_eq!(
+                    callback(x, y).signum(),
+                    oracle(x, y).signum(),
+                    "sign mismatch for {x:?} vs {y:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pure_core_matches_callback_sign() {
+        for &x in SAMPLES {
+            for &y in SAMPLES {
+                let expected = match variable_cmp(x, y) {
+                    Ordering::Less => -1,
+                    Ordering::Greater => 1,
+                    Ordering::Equal => 0,
+                };
+                assert_eq!(callback(x, y).signum(), expected, "{x:?} vs {y:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn orders_by_length_then_bytes() {
+        // Shorter names sort first, whatever their bytes.
+        assert_eq!(variable_cmp(b"zzz", b"aaaa"), Ordering::Less);
+        // Equal length falls back to lexicographic byte order.
+        assert_eq!(variable_cmp(b"abc", b"abd"), Ordering::Less);
+        assert_eq!(variable_cmp(b"abd", b"abc"), Ordering::Greater);
+        assert_eq!(variable_cmp(b"abc", b"abc"), Ordering::Equal);
+    }
+
+    #[test]
+    fn is_antisymmetric() {
+        for &x in SAMPLES {
+            for &y in SAMPLES {
+                assert_eq!(
+                    variable_cmp(x, y),
+                    variable_cmp(y, x).reverse(),
+                    "{x:?} vs {y:?}",
+                );
+            }
         }
     }
 }
