@@ -144,16 +144,17 @@ unsafe fn directory_contents_hash_2(key: *const c_void) -> c_ulong {
     ((key.dev as c_uint) << 4 ^ !key.ino as c_uint) as c_ulong
 }
 
-/// Total ordering of two directory identities by `(ino, dev)`, returned in the
-/// C callback's `-1`/`0`/`1` convention. Pure and free of raw pointers so it
-/// can be unit-tested directly; the unsafe callback below only derefs the keys
-/// and delegates here.
-fn directory_contents_cmp(x_ino: ino_t, x_dev: dev_t, y_ino: ino_t, y_dev: dev_t) -> i32 {
-    match x_ino.cmp(&y_ino).then(x_dev.cmp(&y_dev)) {
-        ::core::cmp::Ordering::Less => -1,
-        ::core::cmp::Ordering::Greater => 1,
-        ::core::cmp::Ordering::Equal => 0,
-    }
+/// Total ordering of two directory identities by `(ino, dev)`. Pure and free
+/// of raw pointers so it can be unit-tested directly; the unsafe callback below
+/// only derefs the keys, delegates here, and maps the result onto the C
+/// callback's `-1`/`0`/`1` convention.
+fn directory_contents_cmp(
+    x_ino: ino_t,
+    x_dev: dev_t,
+    y_ino: ino_t,
+    y_dev: dev_t,
+) -> ::core::cmp::Ordering {
+    x_ino.cmp(&y_ino).then(x_dev.cmp(&y_dev))
 }
 
 unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
@@ -163,7 +164,11 @@ unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> i
     let y = (yv as *const directory_contents)
         .as_ref()
         .expect("hash callback got a null key");
-    directory_contents_cmp(x.ino, x.dev, y.ino, y.dev)
+    match directory_contents_cmp(x.ino, x.dev, y.ino, y.dev) {
+        ::core::cmp::Ordering::Less => -1,
+        ::core::cmp::Ordering::Greater => 1,
+        ::core::cmp::Ordering::Equal => 0,
+    }
 }
 
 /// Hash a [`directory`] key by name.
@@ -999,9 +1004,19 @@ mod directory_contents_cmp_tests {
         }
     }
 
-    /// The extracted `then`-based form yields the exact same `-1`/`0`/`1`
-    /// result as the original nested-match comparator across every ordering of
-    /// both keys.
+    /// Map an [`Ordering`] to the C callback's `-1`/`0`/`1` convention, so the
+    /// idiomatic-Rust return value can be checked against the verbatim oracle.
+    fn to_c(o: ::core::cmp::Ordering) -> i32 {
+        match o {
+            ::core::cmp::Ordering::Less => -1,
+            ::core::cmp::Ordering::Greater => 1,
+            ::core::cmp::Ordering::Equal => 0,
+        }
+    }
+
+    /// The extracted `Ordering`-returning form, mapped to the C convention,
+    /// yields the exact same `-1`/`0`/`1` result as the original nested-match
+    /// comparator across every ordering of both keys.
     #[test]
     fn matches_oracle() {
         for x_ino in 0..3 {
@@ -1009,7 +1024,7 @@ mod directory_contents_cmp_tests {
                 for y_ino in 0..3 {
                     for y_dev in 0..3 {
                         assert_eq!(
-                            directory_contents_cmp(x_ino, x_dev, y_ino, y_dev),
+                            to_c(directory_contents_cmp(x_ino, x_dev, y_ino, y_dev)),
                             directory_contents_cmp_oracle(x_ino, x_dev, y_ino, y_dev),
                             "({x_ino},{x_dev}) vs ({y_ino},{y_dev})"
                         );
@@ -1019,30 +1034,31 @@ mod directory_contents_cmp_tests {
         }
     }
 
-    /// `ino` is the primary key, `dev` the tiebreaker; the result follows the C
-    /// callback's -1/0/1 convention.
+    /// `ino` is the primary key, `dev` the tiebreaker.
     #[test]
     fn orders_by_ino_then_dev() {
+        use ::core::cmp::Ordering::{Equal, Greater, Less};
         // Equal identity.
-        assert_eq!(directory_contents_cmp(5, 9, 5, 9), 0);
+        assert_eq!(directory_contents_cmp(5, 9, 5, 9), Equal);
         // Lower/higher inode dominates regardless of dev.
-        assert_eq!(directory_contents_cmp(4, 100, 5, 0), -1);
-        assert_eq!(directory_contents_cmp(6, 0, 5, 100), 1);
+        assert_eq!(directory_contents_cmp(4, 100, 5, 0), Less);
+        assert_eq!(directory_contents_cmp(6, 0, 5, 100), Greater);
         // Equal inode falls back to dev.
-        assert_eq!(directory_contents_cmp(5, 1, 5, 2), -1);
-        assert_eq!(directory_contents_cmp(5, 3, 5, 2), 1);
-        assert_eq!(directory_contents_cmp(5, 2, 5, 2), 0);
+        assert_eq!(directory_contents_cmp(5, 1, 5, 2), Less);
+        assert_eq!(directory_contents_cmp(5, 3, 5, 2), Greater);
+        assert_eq!(directory_contents_cmp(5, 2, 5, 2), Equal);
     }
 
-    /// The comparison is antisymmetric: swapping the operands negates the sign
-    /// (and preserves equality), which pins the -1/1 arms against each other.
+    /// The comparison is antisymmetric: swapping the operands reverses the
+    /// ordering (and preserves equality), which pins the Less/Greater arms
+    /// against each other.
     #[test]
     fn is_antisymmetric() {
         let cases = [(1u64, 1u64, 2u64, 2u64), (7, 4, 7, 3), (9, 0, 9, 0)];
         for (xi, xd, yi, yd) in cases {
             let forward = directory_contents_cmp(xi, xd, yi, yd);
             let backward = directory_contents_cmp(yi, yd, xi, xd);
-            assert_eq!(forward, -backward, "({xi},{xd}) vs ({yi},{yd})");
+            assert_eq!(forward, backward.reverse(), "({xi},{xd}) vs ({yi},{yd})");
         }
     }
 }
