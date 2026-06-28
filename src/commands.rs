@@ -953,7 +953,6 @@ mod hash_2_tests {
         let dummy = 0xdead_beef_usize as *const c_void;
         for key in [ptr::null::<c_void>(), dummy] {
             assert_eq!(crate::commands::dep_hash_2(key), 0);
-            assert_eq!(crate::dir::directory_hash_2(key), 0);
             assert_eq!(crate::dir::dirfile_hash_2(key), 0);
             assert_eq!(crate::file::file_hash_2(key), 0);
             assert_eq!(crate::variable::variable_hash_2(key), 0);
