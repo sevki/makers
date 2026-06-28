@@ -283,11 +283,9 @@ unsafe fn variable_hash_cmp(xv: *const ::core::ffi::c_void, yv: *const ::core::f
     let y: &variable = &*(yv as *const variable);
     let x_name = ::core::slice::from_raw_parts(x.name as *const u8, x.length as usize);
     let y_name = ::core::slice::from_raw_parts(y.name as *const u8, y.length as usize);
-    match variable_cmp(x_name, y_name) {
-        ::core::cmp::Ordering::Less => -1,
-        ::core::cmp::Ordering::Greater => 1,
-        ::core::cmp::Ordering::Equal => 0,
-    }
+    // `Ordering` is `#[repr(i8)]` with `Less = -1`, `Equal = 0`, `Greater = 1`,
+    // so the cast reproduces the C callback's tri-state result without a branch.
+    variable_cmp(x_name, y_name) as i32
 }
 pub const VARIABLE_BUCKETS: i32 = 523;
 pub const PERFILE_VARIABLE_BUCKETS: i32 = 23;
