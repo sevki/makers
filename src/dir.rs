@@ -130,47 +130,6 @@ fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut director
     }
 }
 
-unsafe fn directory_contents_hash_1(key: *const c_void) -> c_ulong {
-    let key = (key as *const directory_contents)
-        .as_ref()
-        .expect("hash callback got a null key");
-    ((key.dev as c_uint) << 4 ^ key.ino as c_uint) as c_ulong
-}
-
-unsafe fn directory_contents_hash_2(key: *const c_void) -> c_ulong {
-    let key = (key as *const directory_contents)
-        .as_ref()
-        .expect("hash callback got a null key");
-    ((key.dev as c_uint) << 4 ^ !key.ino as c_uint) as c_ulong
-}
-
-/// Total ordering of two directory identities by `(ino, dev)`. Pure and free
-/// of raw pointers so it can be unit-tested directly; the unsafe callback below
-/// only derefs the keys, delegates here, and maps the result onto the C
-/// callback's `-1`/`0`/`1` convention.
-fn directory_contents_cmp(
-    x_ino: ino_t,
-    x_dev: dev_t,
-    y_ino: ino_t,
-    y_dev: dev_t,
-) -> ::core::cmp::Ordering {
-    x_ino.cmp(&y_ino).then(x_dev.cmp(&y_dev))
-}
-
-unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
-    let x = (xv as *const directory_contents)
-        .as_ref()
-        .expect("hash callback got a null key");
-    let y = (yv as *const directory_contents)
-        .as_ref()
-        .expect("hash callback got a null key");
-    match directory_contents_cmp(x.ino, x.dev, y.ino, y.dev) {
-        ::core::cmp::Ordering::Less => -1,
-        ::core::cmp::Ordering::Greater => 1,
-        ::core::cmp::Ordering::Equal => 0,
-    }
-}
-
 /// Hash a [`directory`] key by name.
 ///
 /// # Safety
@@ -322,28 +281,28 @@ pub unsafe fn find_directory(
         return dir;
     }
 
-    // Directory contents are shared across names via the dev/ino key.
-    let mut dc_key: directory_contents = ::core::mem::zeroed();
-    dc_key.dev = st.st_dev as dev_t;
-    dc_key.ino = st.st_ino as ino_t;
-    let dc_slot = (hash_find_slot(ctx.directory_contents.0.as_ptr(), (&raw const dc_key).cast())
-        as *mut *mut directory_contents)
-        .as_mut()
-        .expect("hash_find_slot always returns a slot");
-    let mut dc = *dc_slot;
-    if !is_real_item(dc as *const c_void) {
-        let new = (xcalloc(::core::mem::size_of::<directory_contents>() as size_t)
-            as *mut directory_contents)
-            .as_mut()
-            .expect("xcalloc never returns null");
-        *new = dc_key;
-        dc = &raw mut *new;
-        hash_insert_at(
-            ctx.directory_contents.0.as_ptr(),
-            dc as *const c_void,
-            (&raw mut *dc_slot).cast(),
-        );
-    }
+    // Directory contents are shared across names via the dev/ino key, held in
+    // the idiomatic `FxHashMap` cache on the context.
+    let dev = st.st_dev as dev_t;
+    let ino = st.st_ino as ino_t;
+    let dc: *mut directory_contents = {
+        let mut table = ctx.directory_contents.0.borrow_mut();
+        let entry = table.entry((dev, ino)).or_insert_with(|| {
+            // An all-zero `directory_contents` is the valid "freshly created"
+            // state the former `xcalloc` produced: null `dirfiles` vec, null
+            // `dirstream`, zero `counter`.
+            // SAFETY: `directory_contents` is a `repr(C)` POD whose all-zero bit
+            // pattern is a valid value (matching the C `xcalloc`).
+            let mut dc: Box<directory_contents> = Box::new(::core::mem::zeroed());
+            dc.dev = dev;
+            dc.ino = ino;
+            dc
+        });
+        // The `Box` keeps the contents at a stable heap address across later
+        // map inserts/rehashes, so this raw pointer (stored in `directory.contents`
+        // and handed to the glob dirstream) stays valid for the run.
+        (&mut **entry) as *mut directory_contents
+    };
     let dc = dc.as_mut().expect("directory_contents entry just selected");
     dir_ref.contents = dc;
 
@@ -842,13 +801,8 @@ pub unsafe fn hash_init_directories(ctx: &crate::execctx::ExecContext) {
         Some(directory_hash_2),
         Some(directory_hash_cmp),
     );
-    hash_init(
-        ctx.directory_contents.0.as_ptr(),
-        DIRECTORY_BUCKETS as c_ulong,
-        Some(directory_contents_hash_1),
-        Some(directory_contents_hash_2),
-        Some(directory_contents_hash_cmp),
-    );
+    // `directory_contents` is now an idiomatic `FxHashMap` keyed by `(dev, ino)`
+    // (see `ExecContext::directory_contents`); it needs no FFI-table init.
 }
 
 #[cfg(test)]
@@ -987,85 +941,6 @@ mod open_directories_tests {
 
         // A second, independent context keeps its own count.
         assert_eq!(ExecContext::default().open_directories.get(), 0);
-    }
-}
-
-#[cfg(test)]
-mod directory_contents_cmp_tests {
-    use super::directory_contents_cmp;
-    use crate::ffi_types::{dev_t, ino_t};
-
-    /// The original nested comparator from `directory_contents_hash_cmp`,
-    /// preserved verbatim (operating on the extracted `(ino, dev)` keys) as a
-    /// differential oracle for [`super::directory_contents_cmp`].
-    fn directory_contents_cmp_oracle(x_ino: ino_t, x_dev: dev_t, y_ino: ino_t, y_dev: dev_t) -> i32 {
-        match x_ino.cmp(&y_ino) {
-            ::core::cmp::Ordering::Less => -1,
-            ::core::cmp::Ordering::Greater => 1,
-            ::core::cmp::Ordering::Equal => match x_dev.cmp(&y_dev) {
-                ::core::cmp::Ordering::Less => -1,
-                ::core::cmp::Ordering::Greater => 1,
-                ::core::cmp::Ordering::Equal => 0,
-            },
-        }
-    }
-
-    /// Map an [`Ordering`] to the C callback's `-1`/`0`/`1` convention, so the
-    /// idiomatic-Rust return value can be checked against the verbatim oracle.
-    fn to_c(o: ::core::cmp::Ordering) -> i32 {
-        match o {
-            ::core::cmp::Ordering::Less => -1,
-            ::core::cmp::Ordering::Greater => 1,
-            ::core::cmp::Ordering::Equal => 0,
-        }
-    }
-
-    /// The extracted `Ordering`-returning form, mapped to the C convention,
-    /// yields the exact same `-1`/`0`/`1` result as the original nested-match
-    /// comparator across every ordering of both keys.
-    #[test]
-    fn matches_oracle() {
-        for x_ino in 0..3 {
-            for x_dev in 0..3 {
-                for y_ino in 0..3 {
-                    for y_dev in 0..3 {
-                        assert_eq!(
-                            to_c(directory_contents_cmp(x_ino, x_dev, y_ino, y_dev)),
-                            directory_contents_cmp_oracle(x_ino, x_dev, y_ino, y_dev),
-                            "({x_ino},{x_dev}) vs ({y_ino},{y_dev})"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    /// `ino` is the primary key, `dev` the tiebreaker.
-    #[test]
-    fn orders_by_ino_then_dev() {
-        use ::core::cmp::Ordering::{Equal, Greater, Less};
-        // Equal identity.
-        assert_eq!(directory_contents_cmp(5, 9, 5, 9), Equal);
-        // Lower/higher inode dominates regardless of dev.
-        assert_eq!(directory_contents_cmp(4, 100, 5, 0), Less);
-        assert_eq!(directory_contents_cmp(6, 0, 5, 100), Greater);
-        // Equal inode falls back to dev.
-        assert_eq!(directory_contents_cmp(5, 1, 5, 2), Less);
-        assert_eq!(directory_contents_cmp(5, 3, 5, 2), Greater);
-        assert_eq!(directory_contents_cmp(5, 2, 5, 2), Equal);
-    }
-
-    /// The comparison is antisymmetric: swapping the operands reverses the
-    /// ordering (and preserves equality), which pins the Less/Greater arms
-    /// against each other.
-    #[test]
-    fn is_antisymmetric() {
-        let cases = [(1u64, 1u64, 2u64, 2u64), (7, 4, 7, 3), (9, 0, 9, 0)];
-        for (xi, xd, yi, yd) in cases {
-            let forward = directory_contents_cmp(xi, xd, yi, yd);
-            let backward = directory_contents_cmp(yi, yd, xi, xd);
-            assert_eq!(forward, backward.reverse(), "({xi},{xd}) vs ({yi},{yd})");
-        }
     }
 }
 
