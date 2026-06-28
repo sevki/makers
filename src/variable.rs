@@ -279,12 +279,8 @@ fn variable_cmp(x_name: &[u8], y_name: &[u8]) -> ::core::cmp::Ordering {
 }
 
 unsafe fn variable_hash_cmp(xv: *const ::core::ffi::c_void, yv: *const ::core::ffi::c_void) -> i32 {
-    let x = (xv as *const variable)
-        .as_ref()
-        .expect("variable hash callback got a null key");
-    let y = (yv as *const variable)
-        .as_ref()
-        .expect("variable hash callback got a null key");
+    let x: &variable = &*(xv as *const variable);
+    let y: &variable = &*(yv as *const variable);
     let x_name = ::core::slice::from_raw_parts(x.name as *const u8, x.length as usize);
     let y_name = ::core::slice::from_raw_parts(y.name as *const u8, y.length as usize);
     match variable_cmp(x_name, y_name) {
