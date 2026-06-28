@@ -544,33 +544,27 @@ pub unsafe fn pattern_matches(
     let suffix = &pattern_bytes[percent_idx + 1..];
     pattern_matches_parts(prefix, suffix, s) as i32
 }
-unsafe extern "C" fn find_next_argument(
-    startparen: ::core::ffi::c_char,
-    endparen: ::core::ffi::c_char,
-    ptr: *const ::core::ffi::c_char,
-    end: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+/// The byte offset of the next top-level `,` argument separator within
+/// `bytes`, or `None` if there is none. `startparen`/`endparen` track nesting
+/// so commas inside a balanced paren group are skipped; an unbalanced closing
+/// paren ends the scan with `None`, matching the original argument splitter.
+fn find_next_argument(startparen: u8, endparen: u8, bytes: &[u8]) -> Option<usize> {
     let mut count: i32 = 0;
-    // Scan the [ptr, end) range by index instead of walking raw pointers.
-    // Address subtraction (not pointer arithmetic) gives the span length.
-    let span = end as usize - ptr as usize;
-    let bytes = ::core::slice::from_raw_parts(ptr as *const u8, span);
     for (i, &c) in bytes.iter().enumerate() {
-        // MAP_VARSEP|MAP_COMMA pre-filters to the structural characters.
-        if stop_set(c, MAP_VARSEP | MAP_COMMA) {
-            if c as i32 == startparen as i32 {
-                count += 1;
-            } else if c as i32 == endparen as i32 {
-                count -= 1;
-                if count < 0 {
-                    return ::core::ptr::null_mut::<::core::ffi::c_char>();
-                }
-            } else if c as i32 == ',' as i32 && count == 0 {
-                return bytes[i..].as_ptr() as *mut ::core::ffi::c_char;
+        // The explicit char checks are exact, so no `stop_set` structural
+        // pre-filter is needed: a non-structural byte simply matches no arm.
+        if c == startparen {
+            count += 1;
+        } else if c == endparen {
+            count -= 1;
+            if count < 0 {
+                return None;
             }
+        } else if c == b',' && count == 0 {
+            return Some(i);
         }
     }
-    ::core::ptr::null_mut::<::core::ffi::c_char>()
+    None
 }
 /// # Safety
 ///
@@ -3104,7 +3098,12 @@ pub unsafe fn handle_function(
             let mut next: *const ::core::ffi::c_char;
             nargs = nargs.wrapping_add(1);
             if nargs == (*entry_p).maximum_args as ::core::ffi::c_uint || {
-                next = find_next_argument(openparen, closeparen, p, end);
+                let span = end as usize - p as usize;
+                let bytes = ::core::slice::from_raw_parts(p as *const u8, span);
+                next = match find_next_argument(openparen as u8, closeparen as u8, bytes) {
+                    Some(i) => p.add(i),
+                    None => ::core::ptr::null(),
+                };
                 next.is_null()
             } {
                 next = end;
@@ -3138,7 +3137,12 @@ pub unsafe fn handle_function(
             let mut next_0: *mut ::core::ffi::c_char;
             nargs = nargs.wrapping_add(1);
             if nargs == (*entry_p).maximum_args as ::core::ffi::c_uint || {
-                next_0 = find_next_argument(openparen, closeparen, p_0, aend);
+                let span = aend as usize - p_0 as usize;
+                let bytes = ::core::slice::from_raw_parts(p_0 as *const u8, span);
+                next_0 = match find_next_argument(openparen as u8, closeparen as u8, bytes) {
+                    Some(i) => p_0.add(i),
+                    None => ::core::ptr::null_mut(),
+                };
                 next_0.is_null()
             } {
                 next_0 = aend;
@@ -4089,5 +4093,91 @@ mod handle_function_abeg_unsafe_oracle {
         // A full sweep spanning every byte value.
         let big: Vec<u8> = (0u16..=255).map(|b| b as u8).collect();
         assert_copy(&big);
+    }
+}
+
+#[cfg(test)]
+mod find_next_argument_tests {
+    use super::{find_next_argument, stop_set, MAP_COMMA, MAP_VARSEP};
+    use ::core::ffi::c_char;
+
+    /// Original c2rust raw-pointer implementation, preserved verbatim as a
+    /// differential oracle (returns a pointer into `[ptr, end)` or null).
+    unsafe fn find_next_argument_unsafe_oracle(
+        startparen: c_char,
+        endparen: c_char,
+        ptr: *const c_char,
+        end: *const c_char,
+    ) -> *mut c_char {
+        let mut count: i32 = 0;
+        let span = end as usize - ptr as usize;
+        let bytes = ::core::slice::from_raw_parts(ptr as *const u8, span);
+        for (i, &c) in bytes.iter().enumerate() {
+            if stop_set(c, MAP_VARSEP | MAP_COMMA) {
+                if c as i32 == startparen as i32 {
+                    count += 1;
+                } else if c as i32 == endparen as i32 {
+                    count -= 1;
+                    if count < 0 {
+                        return ::core::ptr::null_mut::<c_char>();
+                    }
+                } else if c as i32 == ',' as i32 && count == 0 {
+                    return bytes[i..].as_ptr() as *mut c_char;
+                }
+            }
+        }
+        ::core::ptr::null_mut::<c_char>()
+    }
+
+    /// The safe offset-returning form yields exactly the same split point as the
+    /// original raw-pointer oracle across nesting, unbalanced parens and the
+    /// no-comma case.
+    #[test]
+    fn matches_unsafe_oracle() {
+        crate::make_main::initialize_stopchar_map();
+        let cases: &[&[u8]] = &[
+            b"a,b",
+            b"abc",
+            b"(a,b),c",
+            b"a(,)b,c",
+            b"))",
+            b"(((",
+            b",",
+            b"",
+            b"{a,b},c",
+            b"a,b,c,d",
+        ];
+        for &(sp, ep) in &[(b'(', b')'), (b'{', b'}')] {
+            for &bytes in cases {
+                let safe = find_next_argument(sp, ep, bytes);
+                let ptr = bytes.as_ptr() as *const c_char;
+                let end = unsafe { ptr.add(bytes.len()) };
+                let oracle =
+                    unsafe { find_next_argument_unsafe_oracle(sp as c_char, ep as c_char, ptr, end) };
+                let oracle_off = if oracle.is_null() {
+                    None
+                } else {
+                    Some(oracle as usize - ptr as usize)
+                };
+                assert_eq!(safe, oracle_off, "input {:?}", String::from_utf8_lossy(bytes));
+            }
+        }
+    }
+
+    /// Spot-check the absolute offsets and nesting behaviour.
+    #[test]
+    fn splits_at_top_level_comma() {
+        crate::make_main::initialize_stopchar_map();
+        assert_eq!(find_next_argument(b'(', b')', b"a,b"), Some(1));
+        // comma nested inside parens is skipped; the top-level one is at 5.
+        assert_eq!(find_next_argument(b'(', b')', b"(a,b),c"), Some(5));
+        // no top-level comma.
+        assert_eq!(find_next_argument(b'(', b')', b"(a,b)"), None);
+        // an unbalanced close paren ends the scan with no split.
+        assert_eq!(find_next_argument(b'(', b')', b")a,b"), None);
+        // closing an inner paren leaves nesting depth > 0; the top-level comma
+        // after the outer close is still found (depth must reach 0, not just
+        // decrease, before a comma counts).
+        assert_eq!(find_next_argument(b'(', b')', b"((a)),b"), Some(5));
     }
 }
