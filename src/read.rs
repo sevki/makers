@@ -232,10 +232,15 @@ struct NameSeqNode {
     name: *const ::core::ffi::c_char,
     next: *mut NameSeq,
 }
-unsafe fn name_seq_len(mut n: *mut NameSeq) -> ::core::ffi::c_ushort {
-    let mut len: ::core::ffi::c_ushort = 0;
+/// Count the nodes in a `NameSeq` chain.
+///
+/// # Safety
+/// `n` must be null or the head of a valid, NUL-terminated `NameSeq` chain
+/// reachable through `next`.
+unsafe fn name_seq_len(mut n: *mut NameSeq) -> usize {
+    let mut len: usize = 0;
     while let Some(node) = n.as_ref() {
-        len = len.wrapping_add(1);
+        len += 1;
         n = node.next;
     }
     len
@@ -2640,7 +2645,7 @@ unsafe fn record_files(
         }
         let first_target = pop_name_seq(filenames, "record_files target list is null");
         filenames = first_target.next;
-        c = name_seq_len(filenames).wrapping_add(1);
+        c = (name_seq_len(filenames) as ::core::ffi::c_ushort).wrapping_add(1);
         targets = xmalloc(
             (c as size_t)
                 .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
@@ -3604,6 +3609,55 @@ pub unsafe fn parse_file_seq<T: SeqNode>(
     }
     *stringp = p;
     new
+}
+
+#[cfg(test)]
+mod name_seq_len_tests {
+    use super::{name_seq_len, NameSeq};
+
+    /// Original c2rust implementation, preserved verbatim as a differential
+    /// oracle: counted with a `c_ushort` accumulator that wraps at 65536.
+    unsafe fn name_seq_len_unsafe_oracle(mut n: *mut NameSeq) -> ::core::ffi::c_ushort {
+        let mut len: ::core::ffi::c_ushort = 0;
+        while let Some(node) = n.as_ref() {
+            len = len.wrapping_add(1);
+            n = node.next;
+        }
+        len
+    }
+
+    /// Build a `NameSeq` chain of `count` nodes (names are irrelevant to the
+    /// length), leaking the nodes so the chain outlives the call.
+    fn make_chain(count: usize) -> *mut NameSeq {
+        let mut head: *mut NameSeq = ::core::ptr::null_mut();
+        for _ in 0..count {
+            let node = Box::new(NameSeq {
+                next: head,
+                name: ::core::ptr::null(),
+            });
+            head = Box::leak(node);
+        }
+        head
+    }
+
+    #[test]
+    fn counts_chain_length() {
+        for count in [0usize, 1, 2, 5, 64] {
+            let chain = make_chain(count);
+            assert_eq!(unsafe { name_seq_len(chain) }, count);
+        }
+    }
+
+    #[test]
+    fn matches_unsafe_oracle_low_16_bits() {
+        for count in [0usize, 1, 3, 100, 1000] {
+            let chain = make_chain(count);
+            let safe = unsafe { name_seq_len(chain) };
+            let oracle = unsafe { name_seq_len_unsafe_oracle(chain) };
+            assert_eq!(safe as ::core::ffi::c_ushort, oracle);
+            assert_eq!(safe, count);
+        }
+    }
 }
 
 #[cfg(test)]
