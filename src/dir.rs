@@ -224,23 +224,29 @@ pub fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
     0
 }
 
+/// Order two directory-entry names the way the dirfile hash table expects:
+/// shorter names sort first, and names of equal length sort by their raw bytes.
+///
+/// This is the safe, pointer-free core of [`dirfile_hash_cmp`]. The C original
+/// compared `length` first and only fell back to a `strcmp` when the lengths
+/// matched; for two equal-length, NUL-terminated names that is exactly
+/// `len`-then-bytes ordering, since the `strcmp` ranks them by their first
+/// differing byte.
+fn dirfile_cmp(x_name: &[u8], y_name: &[u8]) -> ::core::cmp::Ordering {
+    x_name
+        .len()
+        .cmp(&y_name.len())
+        .then_with(|| x_name.cmp(y_name))
+}
+
 unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
-    let x = (xv as *const dirfile)
-        .as_ref()
-        .expect("hash callback got a null key");
-    let y = (yv as *const dirfile)
-        .as_ref()
-        .expect("hash callback got a null key");
-    // Compare lengths first (cheap), then interned pointers, then bytes.
-    let result = x.length.wrapping_sub(y.length) as i32;
-    if result != 0 {
-        return result;
-    }
-    if ::core::ptr::eq(x.name, y.name) {
-        0
-    } else {
-        strcmp(x.name, y.name)
-    }
+    let x: &dirfile = &*(xv as *const dirfile);
+    let y: &dirfile = &*(yv as *const dirfile);
+    let x_name = ::core::slice::from_raw_parts(x.name as *const u8, x.length);
+    let y_name = ::core::slice::from_raw_parts(y.name as *const u8, y.length);
+    // `Ordering` is `#[repr(i8)]` with `Less = -1`, `Equal = 0`, `Greater = 1`,
+    // so the cast reproduces the C callback's tri-state result without a branch.
+    dirfile_cmp(x_name, y_name) as i32
 }
 
 /// Look up (or create) the cache entry for directory `name`, refreshing
@@ -1059,6 +1065,146 @@ mod directory_contents_cmp_tests {
             let forward = directory_contents_cmp(xi, xd, yi, yd);
             let backward = directory_contents_cmp(yi, yd, xi, xd);
             assert_eq!(forward, backward.reverse(), "({xi},{xd}) vs ({yi},{yd})");
+        }
+    }
+}
+
+#[cfg(test)]
+mod dirfile_cmp_tests {
+    use super::{dirfile, dirfile_cmp, dirfile_hash_cmp};
+    use ::core::cmp::Ordering;
+    use ::core::ffi::{c_char, c_void};
+
+    /// Verbatim preservation of the original raw-pointer `dirfile_hash_cmp`
+    /// callback (length, then interned-pointer identity, then `strcmp`),
+    /// retained as a differential oracle per the project rule for swapping an
+    /// unsafe implementation for a safe one.
+    ///
+    /// SAFETY: callers pass pointers to live `dirfile` values whose `name`
+    /// fields address NUL-terminated buffers — the contract the hash table
+    /// handed the original callback.
+    unsafe fn dirfile_hash_cmp_unsafe_oracle(xv: *const c_void, yv: *const c_void) -> i32 {
+        let x = (xv as *const dirfile)
+            .as_ref()
+            .expect("hash callback got a null key");
+        let y = (yv as *const dirfile)
+            .as_ref()
+            .expect("hash callback got a null key");
+        // Compare lengths first (cheap), then interned pointers, then bytes.
+        let result = x.length.wrapping_sub(y.length) as i32;
+        if result != 0 {
+            return result;
+        }
+        if ::core::ptr::eq(x.name, y.name) {
+            0
+        } else {
+            libc::strcmp(x.name, y.name)
+        }
+    }
+
+    /// Build a `dirfile` whose `name`/`length` denote `buf`. `buf` must be
+    /// NUL-terminated (so the oracle's `strcmp` has a terminator); `length`
+    /// excludes the NUL, matching how the cache stores interned names.
+    fn dirfile_for(buf: &[u8]) -> dirfile {
+        // SAFETY: a zeroed `dirfile` is a valid (inert) value; the tests only
+        // read its `name`/`length` fields.
+        let mut d: dirfile = unsafe { ::core::mem::zeroed() };
+        d.name = buf.as_ptr() as *const c_char;
+        d.length = (buf.len() - 1) as crate::ffi_types::size_t;
+        d
+    }
+
+    /// Drive the production callback with two NUL-terminated name buffers.
+    fn callback(x: &[u8], y: &[u8]) -> i32 {
+        let dx = dirfile_for(x);
+        let dy = dirfile_for(y);
+        // SAFETY: both dirfiles address live, NUL-terminated buffers.
+        unsafe {
+            dirfile_hash_cmp(
+                &raw const dx as *const c_void,
+                &raw const dy as *const c_void,
+            )
+        }
+    }
+
+    /// Drive the verbatim oracle with two NUL-terminated name buffers.
+    fn oracle(x: &[u8], y: &[u8]) -> i32 {
+        let dx = dirfile_for(x);
+        let dy = dirfile_for(y);
+        // SAFETY: both dirfiles address live, NUL-terminated buffers.
+        unsafe {
+            dirfile_hash_cmp_unsafe_oracle(
+                &raw const dx as *const c_void,
+                &raw const dy as *const c_void,
+            )
+        }
+    }
+
+    // Each sample is NUL-terminated; the stored `length` is taken as `len - 1`.
+    const SAMPLES: &[&[u8]] = &[
+        b"\0",
+        b"a\0",
+        b"b\0",
+        b"A\0",
+        b"ab\0",
+        b"ba\0",
+        b"abc\0",
+        b"abd\0",
+        b"src\0",
+        b"build\0",
+        b"Makefile\0",
+        b"makefile\0",
+    ];
+
+    #[test]
+    fn callback_matches_oracle_in_sign() {
+        for &x in SAMPLES {
+            for &y in SAMPLES {
+                assert_eq!(
+                    callback(x, y).signum(),
+                    oracle(x, y).signum(),
+                    "sign mismatch for {x:?} vs {y:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pure_core_matches_callback_sign() {
+        for &x in SAMPLES {
+            for &y in SAMPLES {
+                let expected = match dirfile_cmp(&x[..x.len() - 1], &y[..y.len() - 1]) {
+                    Ordering::Less => -1,
+                    Ordering::Greater => 1,
+                    Ordering::Equal => 0,
+                };
+                assert_eq!(callback(x, y).signum(), expected, "{x:?} vs {y:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn orders_by_length_then_bytes() {
+        // Shorter names sort first, whatever their bytes.
+        assert_eq!(dirfile_cmp(b"zzz", b"aaaa"), Ordering::Less);
+        // Equal length falls back to lexicographic byte order.
+        assert_eq!(dirfile_cmp(b"abc", b"abd"), Ordering::Less);
+        assert_eq!(dirfile_cmp(b"abd", b"abc"), Ordering::Greater);
+        assert_eq!(dirfile_cmp(b"abc", b"abc"), Ordering::Equal);
+    }
+
+    #[test]
+    fn is_antisymmetric() {
+        for &x in SAMPLES {
+            for &y in SAMPLES {
+                let xn = &x[..x.len() - 1];
+                let yn = &y[..y.len() - 1];
+                assert_eq!(
+                    dirfile_cmp(xn, yn),
+                    dirfile_cmp(yn, xn).reverse(),
+                    "{x:?} vs {y:?}",
+                );
+            }
         }
     }
 }
