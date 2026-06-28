@@ -150,7 +150,10 @@ pub struct ExecContext {
     /// during makefile parsing (`$(wildcard)`, vpath, includes) and reused
     /// through the build, so `main_0` hands it across the build-phase context
     /// rebuild rather than letting the cache reset (see its use site).
-    pub directories: DirCacheTable,
+    /// Idiomatic Rust [`rustc_hash::FxHashMap`] keyed by the directory name
+    /// bytes, replacing the c2rust FFI `hash_table` and its `directory_hash_*`
+    /// callbacks.
+    pub directories: DirNameTable,
     /// The directory cache's dev/inode-keyed contents table (`struct
     /// directory_contents`), the former file-scoped `static mut
     /// dir::directory_contents`. Shares [`Self::directories`]' lifetime and
@@ -172,35 +175,43 @@ pub struct ExecContext {
     pub read_dirstream_bufsz: ::core::cell::Cell<crate::ffi_types::size_t>,
 }
 
-/// One of the directory cache's two FFI [`hash_table`](crate::hash::hash_table)s
-/// held on the owned [`ExecContext`] instead of a process-global `static mut`.
-/// The `gnulib`-style hash routines mutate the table in place through a
-/// `*mut hash_table`, so the cell hands one out via [`Cell::as_ptr`]; the table
-/// is single-threaded build state. Wrapping it keeps `ExecContext`'s derived
-/// `Default`/`Debug`/`Clone` working without those bounds on the raw FFI type.
-pub struct DirCacheTable(pub ::core::cell::Cell<crate::hash::hash_table>);
+/// The directory cache's name-keyed table: an idiomatic Rust
+/// [`rustc_hash::FxHashMap`] from the directory name bytes (the interned name,
+/// less its NUL) to an owned, heap-stable [`directory`](crate::dir::directory),
+/// replacing the c2rust FFI `hash_table` (and its `directory_hash_*` callbacks).
+///
+/// Entries are `Box`ed so a `*mut directory` returned by `find_directory` stays
+/// valid across later inserts/rehashes — the map may move the `Box`, never the
+/// heap block it owns. `RefCell` gives the interior mutability the former
+/// `Cell<hash_table>` provided on the shared `&ExecContext`.
+pub struct DirNameTable(
+    pub  ::core::cell::RefCell<
+        rustc_hash::FxHashMap<Box<[u8]>, Box<crate::dir::directory>>,
+    >,
+);
 
-impl Default for DirCacheTable {
+impl Default for DirNameTable {
     fn default() -> Self {
-        // Matches the former `static mut … = unsafe { zeroed() }`: an all-zero
-        // table is the "not yet initialized" state `hash_init` overwrites.
-        // SAFETY: `hash_table` is a `repr(C)` POD whose all-zero bit pattern is
-        // the valid empty/uninitialized state the C code also starts from.
-        Self(::core::cell::Cell::new(unsafe { ::core::mem::zeroed() }))
+        Self(::core::cell::RefCell::new(rustc_hash::FxHashMap::default()))
     }
 }
 
-impl Clone for DirCacheTable {
+impl Clone for DirNameTable {
     fn clone(&self) -> Self {
-        // `hash_table` is `Copy`; clone the current value into a fresh cell.
-        Self(::core::cell::Cell::new(self.0.get()))
+        // Per-run build state handed across the build-phase rebuild by move
+        // (`mem::take`), never by clone; the `Clone` impl exists only to keep
+        // `ExecContext`'s derive working, and the entries hold raw
+        // back-pointers that must not be duplicated, so a fresh empty table is
+        // the right (and only sound) snapshot.
+        Self::default()
     }
 }
 
-impl ::core::fmt::Debug for DirCacheTable {
+impl ::core::fmt::Debug for DirNameTable {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        // The FFI `hash_table` is not `Debug`; show it opaquely.
-        f.debug_tuple("DirCacheTable").finish_non_exhaustive()
+        f.debug_tuple("DirNameTable")
+            .field(&self.0.borrow().len())
+            .finish()
     }
 }
 
@@ -334,35 +345,39 @@ mod tests {
         assert_eq!(ExecContext::default().load_proc_fd.0.get(), -2);
     }
 
-    /// The directory cache's two `hash_table`s start as the all-zero
-    /// ("not yet initialized") value `hash_init` overwrites — matching the
-    /// former `static mut … = zeroed()` — and the carry-over in `main_0` (a
-    /// struct update that moves these two fields onto a freshly built context)
-    /// preserves the populated table while resetting the rest. `Clone` snapshots
-    /// the current value into an independent cell.
+    /// The directory cache's two `FxHashMap`s start empty, and the carry-over in
+    /// `main_0` (a struct update that moves these two fields onto a freshly built
+    /// context) preserves the populated table while resetting the rest.
     #[test]
     fn dir_cache_tables_start_zeroed_and_survive_carry_over() {
         let ctx = ExecContext::default();
-        assert!(ctx.directories.0.get().ht_vec.is_null());
-        assert_eq!(ctx.directories.0.get().ht_size, 0);
+        assert!(ctx.directories.0.borrow().is_empty());
         assert!(ctx.directory_contents.0.borrow().is_empty());
 
-        // Simulate a populated table (a non-null vec marks it initialized), then
-        // the `main_0` build-phase rebuild that hands the cache across.
-        let mut populated = ExecContext::default();
-        let mut table = populated.directories.0.get();
-        table.ht_size = 199;
-        table.ht_vec = 0x1 as *mut *mut ::core::ffi::c_void;
-        populated.directories.0.set(table);
+        // Simulate a populated table, then the `main_0` build-phase rebuild that
+        // hands the cache across.
+        let populated = ExecContext::default();
+        {
+            // SAFETY: a zeroed `directory` is a valid (inert) entry; the test
+            // only checks the map's size, never dereferences the name pointer.
+            let dir: Box<crate::dir::directory> = Box::new(unsafe { ::core::mem::zeroed() });
+            populated
+                .directories
+                .0
+                .borrow_mut()
+                .insert(Box::from(&b"d"[..]), dir);
+        }
+        assert_eq!(populated.directories.0.borrow().len(), 1);
 
+        let mut populated = populated;
         let carried = ::core::mem::take(&mut populated.directories);
         let rebuilt = ExecContext {
             directories: carried,
             ..ExecContext::new(Config { makelevel: 1 })
         };
-        // The carried table survived; the source field reset to the zero value.
-        assert_eq!(rebuilt.directories.0.get().ht_size, 199);
-        assert!(populated.directories.0.get().ht_vec.is_null());
+        // The carried table survived; the source field reset to empty.
+        assert_eq!(rebuilt.directories.0.borrow().len(), 1);
+        assert!(populated.directories.0.borrow().is_empty());
         // Unrelated per-run state on the rebuilt context is fresh.
         assert_eq!(rebuilt.makelevel(), 1);
     }

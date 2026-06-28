@@ -2,7 +2,7 @@ use crate::default::{
     define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
     set_default_suffixes, undefine_default_variables,
 };
-use crate::dir::{hash_init_directories, print_dir_data_base};
+use crate::dir::print_dir_data_base;
 pub use crate::ffi_types::{
     __clock_t, __off64_t, __off_t, __pid_t, __sig_atomic_t, __uid_t, pid_t, sig_atomic_t, size_t,
     uintmax_t,
@@ -1449,11 +1449,10 @@ unsafe fn install_fatal_signal(sig: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_global_hash_tables(ctx: &crate::execctx::ExecContext) {
+pub unsafe fn initialize_global_hash_tables(_ctx: &crate::execctx::ExecContext) {
     init_hash_global_variable_set();
     strcache_init();
     init_hash_files();
-    hash_init_directories(ctx);
     hash_init_function_table();
 }
 /// Build the global `stopchar_map` character-classification table the parser

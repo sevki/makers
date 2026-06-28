@@ -112,7 +112,6 @@ pub struct dirstream {
 const DB_VERBOSE: i32 = 0x2;
 
 pub const MAX_OPEN_DIRECTORIES: i32 = 10;
-pub const DIRECTORY_BUCKETS: i32 = 199;
 pub const DIRFILE_BUCKETS: i32 = 107;
 
 /// Forget everything cached about `dc`, closing its stream if open.
@@ -127,41 +126,6 @@ fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut director
     if !dc.dirfiles.ht_vec.is_null() {
         // SAFETY: `dirfiles` is an initialized hash table owned by `dc`.
         unsafe { hash_free(&raw mut dc.dirfiles, 1) };
-    }
-}
-
-/// Hash a [`directory`] key by name.
-///
-/// # Safety
-///
-/// `key` must point to a `directory` whose name is NUL-terminated.
-pub unsafe fn directory_hash_1(key: *const c_void) -> c_ulong {
-    let key = (key as *const directory)
-        .as_ref()
-        .expect("hash callback got a null key");
-    jhash_string(::core::ffi::CStr::from_ptr(key.name).to_bytes()) as c_ulong
-}
-
-/// Secondary hash for [`directory`] keys; always zero, kept for the
-/// callback ABI. Never dereferences `key`; any pointer value is acceptable.
-pub fn directory_hash_2(_key: *const c_void) -> c_ulong {
-    0
-}
-
-unsafe fn directory_hash_cmp(x: *const c_void, y: *const c_void) -> i32 {
-    let xn = (x as *const directory)
-        .as_ref()
-        .expect("hash callback got a null key")
-        .name;
-    let yn = (y as *const directory)
-        .as_ref()
-        .expect("hash callback got a null key")
-        .name;
-    // Names are interned, so pointer equality short-circuits the strcmp.
-    if ::core::ptr::eq(xn, yn) {
-        0
-    } else {
-        strcmp(xn, yn)
     }
 }
 
@@ -213,57 +177,52 @@ unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
 ///
 /// # Safety
 ///
-/// `name` must be a NUL-terminated path; the directory tables must be
-/// initialized (see [`hash_init_directories`]).
+/// `name` must be a NUL-terminated path.
 pub unsafe fn find_directory(
     ctx: &crate::execctx::ExecContext,
     name: *const c_char,
 ) -> *mut directory {
-    let mut dir_key: directory = ::core::mem::zeroed();
-    dir_key.name = name;
-    let dir_slot = (hash_find_slot(ctx.directories.0.as_ptr(), (&raw const dir_key).cast())
-        as *mut *mut directory)
-        .as_mut()
-        .expect("hash_find_slot always returns a slot");
-
-    let mut dir = *dir_slot;
-    if is_real_item(dir as *const c_void) {
-        let dir_ref = dir.as_mut().expect("directory slot holds a real entry");
-        // Cache hit: still valid unless a command has run since.
-        // Prefer the shared contents counter: another name for the same
-        // directory may have refreshed it already this command.
-        let ctr = match dir_ref.contents.as_ref() {
-            Some(dc) => dc.counter,
-            None => dir_ref.counter,
-        };
-        if ctr == crate::make_main::opt_command_count() {
-            return dir;
+    // Look the directory up by its name bytes in the idiomatic `FxHashMap`
+    // cache on the context.
+    let key: Box<[u8]> = ::core::ffi::CStr::from_ptr(name).to_bytes().into();
+    let dir: *mut directory = {
+        let mut table = ctx.directories.0.borrow_mut();
+        if let Some(boxed) = table.get_mut(&key) {
+            // Cache hit: still valid unless a command has run since. Prefer the
+            // shared contents counter: another name for the same directory may
+            // have refreshed it already this command.
+            let ctr = match boxed.contents.as_ref() {
+                Some(dc) => dc.counter,
+                None => boxed.counter,
+            };
+            if ctr == crate::make_main::opt_command_count() {
+                // Valid hit. The `Box` keeps the entry at a stable heap address,
+                // so this raw pointer outlives the released map borrow.
+                return (&mut **boxed) as *mut directory;
+            }
+            if DB_VERBOSE & db_level != 0 {
+                printf(
+                    c"Directory %s cache invalidated (count %lu != command %lu)\n".as_ptr(),
+                    name,
+                    ctr,
+                    crate::make_main::opt_command_count(),
+                );
+                fflush(stdout);
+            }
+            if let Some(contents) = boxed.contents.as_mut() {
+                clear_directory_contents(ctx, contents);
+            }
+            (&mut **boxed) as *mut directory
+        } else {
+            let len = strlen(name);
+            // SAFETY: a zeroed `directory` is a valid (inert) entry — null
+            // `contents`, zero `counter`; we set its interned name immediately.
+            let mut new: Box<directory> = Box::new(::core::mem::zeroed());
+            new.name = strcache_add_len(name, len);
+            let boxed = table.entry(key).or_insert(new);
+            (&mut **boxed) as *mut directory
         }
-        if DB_VERBOSE & db_level != 0 {
-            printf(
-                c"Directory %s cache invalidated (count %lu != command %lu)\n".as_ptr(),
-                name,
-                ctr,
-                crate::make_main::opt_command_count(),
-            );
-            fflush(stdout);
-        }
-        if let Some(contents) = dir_ref.contents.as_mut() {
-            clear_directory_contents(ctx, contents);
-        }
-    } else {
-        let len = strlen(name);
-        let new = (xmalloc(::core::mem::size_of::<directory>() as size_t) as *mut directory)
-            .as_mut()
-            .expect("xmalloc never returns null");
-        new.name = strcache_add_len(name, len);
-        dir = &raw mut *new;
-        hash_insert_at(
-            ctx.directories.0.as_ptr(),
-            dir as *const c_void,
-            (&raw mut *dir_slot).cast(),
-        );
-    }
+    };
     let dir_ref = dir.as_mut().expect("directory entry just selected");
     dir_ref.contents = null_mut();
     dir_ref.counter = crate::make_main::opt_command_count();
@@ -616,14 +575,10 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
 
     let mut files: c_uint = 0;
     let mut impossible: c_uint = 0;
-    // Snapshot the name-keyed table; it is not mutated while printing.
-    let dirs = ctx.directories.0.get();
-    for i in 0..dirs.ht_size as usize {
-        let dir = *dirs.ht_vec.add(i) as *mut directory;
-        if !is_real_item(dir as *const c_void) {
-            continue;
-        }
-        let dir = dir.as_ref().expect("slot holds a real entry");
+    // Borrow the name-keyed table; it is not mutated while printing.
+    let table = ctx.directories.0.borrow();
+    for boxed in table.values() {
+        let dir: &directory = boxed;
         if dir.contents.is_null() {
             printf(c"# %s: could not be stat'd.\n".as_ptr(), dir.name);
             continue;
@@ -677,7 +632,7 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
     print_count(impossible, c"no".as_ptr());
     printf(
         c" impossibilities in %lu directories.\n".as_ptr(),
-        ctx.directories.0.get().ht_fill,
+        table.len() as c_ulong,
     );
 }
 
@@ -786,23 +741,6 @@ pub unsafe fn dir_setup_glob(gl: *mut glob_t) {
     gl.gl_closedir = Some(free);
     gl.gl_lstat = Some(lstat);
     gl.gl_stat = Some(stat);
-}
-
-/// Initialize the two directory hash tables.
-///
-/// # Safety
-///
-/// Must run once, before any other function in this module.
-pub unsafe fn hash_init_directories(ctx: &crate::execctx::ExecContext) {
-    hash_init(
-        ctx.directories.0.as_ptr(),
-        DIRECTORY_BUCKETS as c_ulong,
-        Some(directory_hash_1),
-        Some(directory_hash_2),
-        Some(directory_hash_cmp),
-    );
-    // `directory_contents` is now an idiomatic `FxHashMap` keyed by `(dev, ino)`
-    // (see `ExecContext::directory_contents`); it needs no FFI-table init.
 }
 
 #[cfg(test)]
