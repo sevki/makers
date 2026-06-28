@@ -432,13 +432,9 @@ fn child_error_label(floc: &Floc, allocations: &mut Vec<Vec<u8>>) -> *const ::co
 }
 
 /// The trailing shuffle-mode field for a child error: `smode` when shuffle mode
-/// is active, otherwise an empty string (`smode` null).
-fn smode_or_empty(smode: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char {
-    if smode.is_null() {
-        b"\0" as *const u8 as *const ::core::ffi::c_char
-    } else {
-        smode
-    }
+/// is active, otherwise the empty string (`smode` absent).
+fn smode_or_empty(smode: Option<&::core::ffi::CStr>) -> &::core::ffi::CStr {
+    smode.unwrap_or(c"")
 }
 
 unsafe fn child_error(
@@ -461,7 +457,7 @@ unsafe fn child_error(
         .as_ref()
         .expect("a child being reported has a recipe")
         .fileinfo;
-    let mut smode: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+    let mut smode: Option<&::core::ffi::CStr> = None;
     let l: size_t;
     if ignored != 0 && crate::make_main::opt_run_silent() {
         return;
@@ -482,7 +478,10 @@ unsafe fn child_error(
         let mut buf = format!(" shuffle={}", label).into_bytes();
         buf.push(0);
         alloca_allocations.push(buf);
-        smode = alloca_allocations.last().unwrap().as_ptr() as *const ::core::ffi::c_char;
+        smode = Some(
+            ::core::ffi::CStr::from_bytes_with_nul(alloca_allocations.last().unwrap())
+                .expect("shuffle label is NUL-terminated with no interior NUL"),
+        );
     }
     output_context = if (*child).output.syncout() as i32 != 0 {
         &raw mut (*child).output
@@ -501,7 +500,7 @@ unsafe fn child_error(
             FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
             FmtArg::Int((exit_code) as i32 as i64),
             FmtArg::Str((post) as *const ::core::ffi::c_char),
-            FmtArg::Str((smode_or_empty(smode)) as *const ::core::ffi::c_char)],
+            FmtArg::Str(smode_or_empty(smode).as_ptr())],
     );
     } else {
         let s: *const ::core::ffi::c_char = strsignal(exit_sig);
@@ -517,7 +516,7 @@ unsafe fn child_error(
             FmtArg::Str((s) as *const ::core::ffi::c_char),
             FmtArg::Str((dump) as *const ::core::ffi::c_char),
             FmtArg::Str((post) as *const ::core::ffi::c_char),
-            FmtArg::Str((smode_or_empty(smode)) as *const ::core::ffi::c_char)],
+            FmtArg::Str(smode_or_empty(smode).as_ptr())],
     );
     }
     output_context = ::core::ptr::null_mut::<output>();
@@ -3433,17 +3432,46 @@ mod child_error_helper_tests {
     use super::{child_error_label, smode_or_empty, Floc};
     use std::ffi::{CStr, CString};
 
-    /// `smode_or_empty` passes a non-null shuffle string through and maps null
-    /// to the empty string.
-    #[test]
-    fn smode_or_empty_maps_null_to_empty() {
-        let s = CString::new("shuffle=3").unwrap();
-        assert_eq!(smode_or_empty(s.as_ptr()), s.as_ptr());
-
-        let empty = smode_or_empty(::core::ptr::null());
-        unsafe {
-            assert_eq!(*empty, 0, "null shuffle mode -> empty string");
+    /// Original c2rust raw-pointer implementation, preserved verbatim as a
+    /// differential oracle: passes a non-null `smode` through, maps null to a
+    /// static empty C string.
+    fn smode_or_empty_unsafe_oracle(
+        smode: *const ::core::ffi::c_char,
+    ) -> *const ::core::ffi::c_char {
+        if smode.is_null() {
+            b"\0" as *const u8 as *const ::core::ffi::c_char
+        } else {
+            smode
         }
+    }
+
+    /// `smode_or_empty` passes a present shuffle string through and maps the
+    /// absent case to the empty string.
+    #[test]
+    fn smode_or_empty_maps_absent_to_empty() {
+        let s = CString::new("shuffle=3").unwrap();
+        assert_eq!(smode_or_empty(Some(s.as_c_str())), s.as_c_str());
+
+        assert_eq!(smode_or_empty(None).to_bytes(), b"");
+    }
+
+    /// The safe `Option<&CStr>` form yields byte-for-byte the same string as the
+    /// original raw-pointer implementation, for both the present and absent
+    /// cases.
+    #[test]
+    fn smode_or_empty_matches_unsafe_oracle() {
+        for label in ["shuffle=3", "shuffle=reverse", ""] {
+            let s = CString::new(label).unwrap();
+            let safe = smode_or_empty(Some(s.as_c_str()));
+            let oracle = unsafe { CStr::from_ptr(smode_or_empty_unsafe_oracle(s.as_ptr())) };
+            assert_eq!(safe.to_bytes(), oracle.to_bytes());
+        }
+
+        let safe_none = smode_or_empty(None);
+        let oracle_null =
+            unsafe { CStr::from_ptr(smode_or_empty_unsafe_oracle(::core::ptr::null())) };
+        assert_eq!(safe_none.to_bytes(), oracle_null.to_bytes());
+        assert_eq!(safe_none.to_bytes(), b"");
     }
 
     /// With no source file, the label is the static `<builtin>`.
