@@ -232,16 +232,17 @@ struct NameSeqNode {
     name: *const ::core::ffi::c_char,
     next: *mut NameSeq,
 }
-/// Count the nodes in a `NameSeq` chain.
-///
-/// # Safety
-/// `n` must be null or the head of a valid, NUL-terminated `NameSeq` chain
-/// reachable through `next`.
-unsafe fn name_seq_len(mut n: *mut NameSeq) -> usize {
+/// Count the nodes in a `NameSeq` chain, starting from its head node (or
+/// `None` for an empty chain).
+fn name_seq_len(head: Option<&NameSeq>) -> usize {
     let mut len: usize = 0;
-    while let Some(node) = n.as_ref() {
+    let mut cur = head;
+    while let Some(node) = cur {
         len += 1;
-        n = node.next;
+        // SAFETY: every `next` in a well-formed chain is null or points to a
+        // live `NameSeq` that outlives this borrow; `as_ref` turns null into
+        // `None`, ending the walk.
+        cur = unsafe { node.next.as_ref() };
     }
     len
 }
@@ -2645,7 +2646,7 @@ unsafe fn record_files(
         }
         let first_target = pop_name_seq(filenames, "record_files target list is null");
         filenames = first_target.next;
-        c = (name_seq_len(filenames) as ::core::ffi::c_ushort).wrapping_add(1);
+        c = (name_seq_len(filenames.as_ref()) as ::core::ffi::c_ushort).wrapping_add(1);
         targets = xmalloc(
             (c as size_t)
                 .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t),
@@ -3644,7 +3645,7 @@ mod name_seq_len_tests {
     fn counts_chain_length() {
         for count in [0usize, 1, 2, 5, 64] {
             let chain = make_chain(count);
-            assert_eq!(unsafe { name_seq_len(chain) }, count);
+            assert_eq!(name_seq_len(unsafe { chain.as_ref() }), count);
         }
     }
 
@@ -3652,7 +3653,7 @@ mod name_seq_len_tests {
     fn matches_unsafe_oracle_low_16_bits() {
         for count in [0usize, 1, 3, 100, 1000] {
             let chain = make_chain(count);
-            let safe = unsafe { name_seq_len(chain) };
+            let safe = name_seq_len(unsafe { chain.as_ref() });
             let oracle = unsafe { name_seq_len_unsafe_oracle(chain) };
             assert_eq!(safe as ::core::ffi::c_ushort, oracle);
             assert_eq!(safe, count);
