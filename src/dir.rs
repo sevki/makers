@@ -144,6 +144,18 @@ unsafe fn directory_contents_hash_2(key: *const c_void) -> c_ulong {
     ((key.dev as c_uint) << 4 ^ !key.ino as c_uint) as c_ulong
 }
 
+/// Total ordering of two directory identities by `(ino, dev)`, returned in the
+/// C callback's `-1`/`0`/`1` convention. Pure and free of raw pointers so it
+/// can be unit-tested directly; the unsafe callback below only derefs the keys
+/// and delegates here.
+fn directory_contents_cmp(x_ino: ino_t, x_dev: dev_t, y_ino: ino_t, y_dev: dev_t) -> i32 {
+    match x_ino.cmp(&y_ino).then(x_dev.cmp(&y_dev)) {
+        ::core::cmp::Ordering::Less => -1,
+        ::core::cmp::Ordering::Greater => 1,
+        ::core::cmp::Ordering::Equal => 0,
+    }
+}
+
 unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
     let x = (xv as *const directory_contents)
         .as_ref()
@@ -151,15 +163,7 @@ unsafe fn directory_contents_hash_cmp(xv: *const c_void, yv: *const c_void) -> i
     let y = (yv as *const directory_contents)
         .as_ref()
         .expect("hash callback got a null key");
-    match x.ino.cmp(&y.ino) {
-        ::core::cmp::Ordering::Less => -1,
-        ::core::cmp::Ordering::Greater => 1,
-        ::core::cmp::Ordering::Equal => match x.dev.cmp(&y.dev) {
-            ::core::cmp::Ordering::Less => -1,
-            ::core::cmp::Ordering::Greater => 1,
-            ::core::cmp::Ordering::Equal => 0,
-        },
-    }
+    directory_contents_cmp(x.ino, x.dev, y.ino, y.dev)
 }
 
 /// Hash a [`directory`] key by name.
@@ -972,5 +976,37 @@ mod open_directories_tests {
 
         // A second, independent context keeps its own count.
         assert_eq!(ExecContext::default().open_directories.get(), 0);
+    }
+}
+
+#[cfg(test)]
+mod directory_contents_cmp_tests {
+    use super::directory_contents_cmp;
+
+    /// `ino` is the primary key, `dev` the tiebreaker; the result follows the C
+    /// callback's -1/0/1 convention.
+    #[test]
+    fn orders_by_ino_then_dev() {
+        // Equal identity.
+        assert_eq!(directory_contents_cmp(5, 9, 5, 9), 0);
+        // Lower/higher inode dominates regardless of dev.
+        assert_eq!(directory_contents_cmp(4, 100, 5, 0), -1);
+        assert_eq!(directory_contents_cmp(6, 0, 5, 100), 1);
+        // Equal inode falls back to dev.
+        assert_eq!(directory_contents_cmp(5, 1, 5, 2), -1);
+        assert_eq!(directory_contents_cmp(5, 3, 5, 2), 1);
+        assert_eq!(directory_contents_cmp(5, 2, 5, 2), 0);
+    }
+
+    /// The comparison is antisymmetric: swapping the operands negates the sign
+    /// (and preserves equality), which pins the -1/1 arms against each other.
+    #[test]
+    fn is_antisymmetric() {
+        let cases = [(1u64, 1u64, 2u64, 2u64), (7, 4, 7, 3), (9, 0, 9, 0)];
+        for (xi, xd, yi, yd) in cases {
+            let forward = directory_contents_cmp(xi, xd, yi, yd);
+            let backward = directory_contents_cmp(yi, yd, xi, xd);
+            assert_eq!(forward, -backward, "({xi},{xd}) vs ({yi},{yd})");
+        }
     }
 }
