@@ -226,11 +226,20 @@ crate::id_wireformat!(DepId[HASH_SIZE] <- DepNode);
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
 
 bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    /// Goal-dep resolution flags — the idiomatic form of the c2rust
+    /// `Dep`/`GoalDep` `flags: c_uint` field. Bit values match the `RM_*`
+    /// constants (`main.rs`/`read.rs`) so the two representations round-trip:
+    /// the field only ever carries these makefile-reading goal flags.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct DepFlags: u32 {
-        const NONE = 0;
-        // fill these from GNU make’s DEP_* flags
-        // const SOME_FLAG = 1 << 0;
+        /// `RM_NO_DEFAULT_GOAL` — this goal must not become the default goal.
+        const NO_DEFAULT_GOAL = 1 << 0;
+        /// `RM_INCLUDED` — the goal came from an `include`d makefile.
+        const INCLUDED = 1 << 1;
+        /// `RM_DONTCARE` — a failure to remake this goal is not fatal.
+        const DONTCARE = 1 << 2;
+        /// `RM_NO_TILDE` — do not expand a leading `~` in the goal name.
+        const NO_TILDE = 1 << 3;
     }
 }
 
