@@ -401,6 +401,25 @@ impl FileArena {
         id
     }
 
+    /// Get the node under `id`, inserting `f()` if absent. Returns the (cloned)
+    /// `Arc` either way. The node is interned under the caller-supplied `id`
+    /// (not recomputed from the created node), so callers that derived `id`
+    /// from the byte-exact hash name stay consistent even for names that do not
+    /// round-trip through `String`.
+    pub fn get_or_insert_with(
+        &self,
+        id: crate::file::FileId,
+        f: impl FnOnce() -> crate::file::FileNode,
+    ) -> ::std::sync::Arc<::std::sync::Mutex<crate::file::FileNode>> {
+        ::std::sync::Arc::clone(
+            self.0
+                .lock()
+                .expect("file arena lock poisoned")
+                .entry(id)
+                .or_insert_with(|| ::std::sync::Arc::new(::std::sync::Mutex::new(f()))),
+        )
+    }
+
     /// Number of interned files.
     pub fn len(&self) -> usize {
         self.0.lock().expect("file arena lock poisoned").len()
