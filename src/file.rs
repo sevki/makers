@@ -5,6 +5,9 @@ pub use crate::dep::{Dep, DepFlags, DepId, DepNode, GoalDep};
 // The recipe types (idiomatic replacement for the c2rust `Commands`) live in
 // `crate::recipe`; re-export so `crate::file::Recipe` paths keep resolving.
 pub use crate::recipe::{Recipe, RecipeLine, RecipeLineFlags};
+// Per-target variable types live in `crate::target_var`; re-export so
+// `crate::file::TargetVariable` / `VarFlavor` paths keep resolving.
+pub use crate::target_var::{TargetVariable, VarExport, VarFlavor, VarOrigin};
 
 pub use crate::ffi_types::{
     __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
@@ -172,88 +175,6 @@ pub(crate) const HASH_SIZE: usize = 32;
 // Mutable runtime state (timestamps, flags, command state) does not
 // contribute to the key, so a file's identity survives updates.
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
-
-/// How a variable's value is expanded — the idiomatic form of the c2rust
-/// `variable_flavor`. Discriminants match the `f_*` constants so the two
-/// representations round-trip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum VarFlavor {
-    /// `f_bogus` — undefined/placeholder.
-    #[default]
-    Bogus = 0,
-    /// `f_simple` — `:=` / `::=` (expanded once at definition).
-    Simple = 1,
-    /// `f_recursive` — `=` (expanded on each use).
-    Recursive = 2,
-    /// `f_expand` — `:::=` (expand-then-escape).
-    Expand = 3,
-    /// `f_append` — `+=`.
-    Append = 4,
-    /// `f_shell` — `!=`.
-    Shell = 5,
-    /// `f_append_value`.
-    AppendValue = 6,
-}
-
-/// Where a variable came from — the idiomatic form of `variable_origin`.
-/// Discriminants match the `o_*` constants and order by precedence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum VarOrigin {
-    /// `o_default` — make's built-in default.
-    #[default]
-    Default = 0,
-    /// `o_env` — the environment.
-    Environment = 1,
-    /// `o_file` — a makefile.
-    File = 2,
-    /// `o_env_override` — environment, with `-e`.
-    EnvOverride = 3,
-    /// `o_command` — the command line.
-    Command = 4,
-    /// `o_override` — an `override` directive.
-    Override = 5,
-    /// `o_automatic` — an automatic variable (`$@`, `$<`, …).
-    Automatic = 6,
-    /// `o_invalid`.
-    Invalid = 7,
-}
-
-/// A variable's export disposition — the idiomatic form of `variable_export`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum VarExport {
-    /// `v_default` — follow the global export rules.
-    #[default]
-    Default = 0,
-    /// `v_export` — always export.
-    Export = 1,
-    /// `v_noexport` — never export.
-    NoExport = 2,
-    /// `v_ifset` — export only if set.
-    IfSet = 3,
-}
-
-/// A per-target (or pattern) variable definition — the idiomatic replacement
-/// for the c2rust `variable` record held in a target's `VariableSetList`. Name
-/// and value are raw bytes (no `c_char`); the c2rust bitfield is split into
-/// plain enums/bools.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TargetVariable {
-    pub name: Vec<u8>,
-    pub value: Vec<u8>,
-    /// Where the variable was defined (raw bytes; `None` if synthetic).
-    pub defined_in: Option<Vec<u8>>,
-    pub defined_lineno: u64,
-    pub flavor: VarFlavor,
-    pub origin: VarOrigin,
-    pub export: VarExport,
-    pub recursive: bool,
-    pub append: bool,
-    pub conditional: bool,
-    pub per_target: bool,
-    pub special: bool,
-    pub exportable: bool,
-    pub private_var: bool,
-}
 
 /// Idiomatic Rust file node for the new dependency graph layer — the file-side
 /// counterpart of [`DepNode`]. Replaces the c2rust [`File`] once all FFI bodies
