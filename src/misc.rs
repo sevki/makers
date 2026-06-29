@@ -17,7 +17,7 @@ use libc::{
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t, time_t};
-use crate::file::{nameseq, Dep, GoalDep};
+use crate::file::nameseq;
 use crate::floc::Floc;
 use crate::make_main::{posix_pedantic, stopchar_map};
 use crate::output::{error, out_of_memory, FmtArg};
@@ -561,86 +561,29 @@ pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, mut len: size_t) -> ssize_t 
     msg.offset_from(buffer as *mut c_char) as ssize_t
 }
 
-/// Copy a single `Dep` node (not following `next`), duplicating its name if
-/// it still needs second expansion (otherwise the cached name is shared).
-/// # Safety
-/// `d` must be null or point to a valid `Dep` with a cached or owned name.
-pub unsafe fn copy_dep(d: *const Dep) -> *mut Dep {
-    if d.is_null() {
-        return null_mut();
-    }
-    let new = xmalloc(::core::mem::size_of::<Dep>()) as *mut Dep;
-    memcpy(
-        new as *mut c_void,
-        d as *const c_void,
-        ::core::mem::size_of::<Dep>(),
-    );
-    if (*new).need_2nd_expansion() != 0 {
-        (*new).name = xstrdup((*new).name);
-    }
-    (*new).next = null_mut();
-    new
+/// Copy a single dependency edge. The idiomatic [`DepNode`] owns its fields
+/// (the `name: String` is cloned, the linked-target `file: Option<FileId>` is a
+/// `Copy` handle), so a value clone is the whole copy — there is no `next` link
+/// to clear and no second-expansion name aliasing to break.
+pub fn copy_dep(d: &crate::dep::DepNode) -> crate::dep::DepNode {
+    d.clone()
 }
 
-/// Copy an entire `Dep` chain.
-/// # Safety
-/// `d` must be null or the head of a valid `Dep` chain.
-pub unsafe fn copy_dep_chain(mut d: *const Dep) -> *mut Dep {
-    let mut firstnew: *mut Dep = null_mut();
-    let mut lastnew: *mut Dep = null_mut();
-    while let Some(dn) = d.as_ref() {
-        let c = copy_dep(d);
-        if let Some(ln) = lastnew.as_mut() {
-            ln.next = c;
-            lastnew = c;
-        } else {
-            lastnew = c;
-            firstnew = lastnew;
-        }
-        d = dn.next;
-    }
-    firstnew
+/// Copy a whole prerequisite list as an owned `Vec<DepNode>` clone — the
+/// pointer-free replacement for following and duplicating a `*mut Dep` chain.
+pub fn copy_dep_chain(d: &[crate::dep::DepNode]) -> Vec<crate::dep::DepNode> {
+    d.to_vec()
 }
 
-/// Copy a single `GoalDep` node (not following `next`), duplicating its name
-/// if it still needs second expansion.
-/// # Safety
-/// `d` must be null or point to a valid `GoalDep`.
-pub unsafe fn copy_goaldep(d: *const GoalDep) -> *mut GoalDep {
-    if d.is_null() {
-        return null_mut();
-    }
-    let new = xmalloc(::core::mem::size_of::<GoalDep>()) as *mut GoalDep;
-    memcpy(
-        new as *mut c_void,
-        d as *const c_void,
-        ::core::mem::size_of::<GoalDep>(),
-    );
-    if (*new).need_2nd_expansion {
-        (*new).name = xstrdup((*new).name);
-    }
-    (*new).next = null_mut();
-    new
+/// Copy a single goal edge as an owned [`GoalDepNode`] value clone.
+pub fn copy_goaldep(d: &crate::dep::GoalDepNode) -> crate::dep::GoalDepNode {
+    d.clone()
 }
 
-/// Copy an entire `GoalDep` chain.
-/// # Safety
-/// `d` must be null or the head of a valid `GoalDep` chain.
-pub unsafe fn copy_goal_chain(mut d: *const GoalDep) -> *mut GoalDep {
-    let mut firstnew: *mut GoalDep = null_mut();
-    let mut lastnew: *mut GoalDep = null_mut();
-    while let Some(dn) = d.as_ref() {
-        let c = copy_goaldep(d);
-        if let Some(ln) = lastnew.as_mut() {
-            ln.next = c;
-            lastnew = c;
-        } else {
-            lastnew = c;
-            firstnew = lastnew;
-        }
-        d = dn.next;
-    }
-    firstnew
+/// Copy a whole goal list as an owned `Vec<GoalDepNode>` clone — the
+/// pointer-free replacement for duplicating a `*mut GoalDep` chain.
+pub fn copy_goal_chain(d: &[crate::dep::GoalDepNode]) -> Vec<crate::dep::GoalDepNode> {
+    d.to_vec()
 }
 
 /// Free a chain of `nameseq` structures (the names themselves are cached and
