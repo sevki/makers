@@ -7,22 +7,19 @@
 
 pub use crate::ffi_types::{__ino_t, __off_t, __size_t, dev_t, ino_t, size_t, time_t};
 use crate::floc::Floc;
-use crate::hash::{
-    hash_find_item, hash_find_slot, hash_free, hash_init, hash_insert, hash_insert_at, hash_table,
-    is_real_item, jhash_string,
-};
 use crate::make_main::db_level;
-use crate::misc::{xcalloc, xmalloc, xrealloc};
+use crate::misc::{xmalloc, xrealloc};
 use crate::output::{fatal, FmtArg};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add_len;
 
-use ::core::ffi::{c_char, c_long, c_short, c_uchar, c_uint, c_ulong, c_ushort, c_void};
+use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void};
 use ::core::ptr::{null, null_mut};
+use rustc_hash::FxHashMap;
 
 use libc::{
-    __errno_location, closedir, free, memcpy, opendir, printf, puts, readdir, strcmp, strerror,
-    strlen, DIR, EINTR,
+    __errno_location, closedir, free, memcpy, opendir, printf, puts, readdir, strerror, strlen,
+    DIR, EINTR,
 };
 
 pub use crate::sys_stat::{stat, timespec};
@@ -76,43 +73,45 @@ pub struct directory {
     pub contents: *mut directory_contents,
 }
 
+/// One cached directory entry: the file's `d_type` plus whether it is an
+/// "impossible" target (make tried and failed to build it). The name is the
+/// [`directory_contents::dirfiles`] map key, so it is not stored here.
+#[derive(Copy, Clone, Debug)]
+pub struct DirFileEntry {
+    pub type_0: c_uchar,
+    pub impossible: bool,
+}
+
 /// The actual cached contents of a directory, keyed by device and inode.
-#[derive(Copy, Clone)]
-#[repr(C)]
+///
+/// `dirfiles` is an idiomatic [`FxHashMap`] from a directory entry's name bytes
+/// (no NUL) to its [`DirFileEntry`], replacing the c2rust FFI `hash_table` and
+/// its `dirfile_hash_*` callbacks. `None` means the directory could not be
+/// opened (the former null `ht_vec`); `Some` (even empty) means it was.
 pub struct directory_contents {
     pub dev: dev_t,
     pub ino: ino_t,
-    /// Table of [`dirfile`] entries (files seen plus impossible names).
-    pub dirfiles: hash_table,
+    pub dirfiles: Option<FxHashMap<Box<[u8]>, DirFileEntry>>,
     /// `Options::command_count` when the contents were last read.
     pub counter: c_ulong,
     /// Open stream while the directory is still being read lazily.
     pub dirstream: *mut DIR,
 }
 
-/// One cached directory entry (or impossible target name).
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct dirfile {
-    pub name: *const c_char,
-    pub length: size_t,
-    pub impossible: c_short,
-    pub type_0: c_uchar,
-}
-
-/// Glob cursor handed out by `open_dirstream`.
+/// Glob cursor handed out by `open_dirstream`: a borrowed pointer to the cached
+/// contents plus the index of the next `dirfiles` entry to yield. POD so the C
+/// glob machinery can `free` it (`gl_closedir`) without running a destructor.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct dirstream {
     pub contents: *mut directory_contents,
-    pub dirfile_slot: *mut *mut dirfile,
+    pub index: usize,
 }
 
 /// `DB_VERBOSE`: `-d`-style debug output enabled in `db_level`.
 const DB_VERBOSE: i32 = 0x2;
 
 pub const MAX_OPEN_DIRECTORIES: i32 = 10;
-pub const DIRFILE_BUCKETS: i32 = 107;
 
 /// Forget everything cached about `dc`, closing its stream if open.
 fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut directory_contents) {
@@ -123,53 +122,9 @@ fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut director
         unsafe { closedir(dc.dirstream) };
         dc.dirstream = null_mut();
     }
-    if !dc.dirfiles.ht_vec.is_null() {
-        // SAFETY: `dirfiles` is an initialized hash table owned by `dc`.
-        unsafe { hash_free(&raw mut dc.dirfiles, 1) };
-    }
-}
-
-/// Hash a [`dirfile`] key by name.
-///
-/// # Safety
-///
-/// `key` must point to a `dirfile` whose name is NUL-terminated.
-pub unsafe fn dirfile_hash_1(key: *const c_void) -> c_ulong {
-    let key = (key as *const dirfile)
-        .as_ref()
-        .expect("hash callback got a null key");
-    jhash_string(::core::ffi::CStr::from_ptr(key.name).to_bytes()) as c_ulong
-}
-
-/// Secondary hash for [`dirfile`] keys; always zero, kept for the
-/// callback ABI. Never dereferences `key`; any pointer value is acceptable.
-pub fn dirfile_hash_2(_key: *const c_void) -> c_ulong {
-    0
-}
-
-/// Order two directory-entry names the way the dirfile hash table expects:
-/// shorter names sort first, and names of equal length sort by their raw bytes.
-///
-/// This is the safe, pointer-free core of [`dirfile_hash_cmp`]. The C original
-/// compared `length` first and only fell back to a `strcmp` when the lengths
-/// matched; for two equal-length, NUL-terminated names that is exactly
-/// `len`-then-bytes ordering, since the `strcmp` ranks them by their first
-/// differing byte.
-fn dirfile_cmp(x_name: &[u8], y_name: &[u8]) -> ::core::cmp::Ordering {
-    x_name
-        .len()
-        .cmp(&y_name.len())
-        .then_with(|| x_name.cmp(y_name))
-}
-
-unsafe fn dirfile_hash_cmp(xv: *const c_void, yv: *const c_void) -> i32 {
-    let x: &dirfile = &*(xv as *const dirfile);
-    let y: &dirfile = &*(yv as *const dirfile);
-    let x_name = ::core::slice::from_raw_parts(x.name as *const u8, x.length);
-    let y_name = ::core::slice::from_raw_parts(y.name as *const u8, y.length);
-    // `Ordering` is `#[repr(i8)]` with `Less = -1`, `Equal = 0`, `Greater = 1`,
-    // so the cast reproduces the C callback's tri-state result without a branch.
-    dirfile_cmp(x_name, y_name) as i32
+    // Drop any cached entries; the next `find_directory` reopens the stream
+    // and installs a fresh map.
+    dc.dirfiles = None;
 }
 
 /// Look up (or create) the cache entry for directory `name`, refreshing
@@ -247,15 +202,15 @@ pub unsafe fn find_directory(
     let dc: *mut directory_contents = {
         let mut table = ctx.directory_contents.0.borrow_mut();
         let entry = table.entry((dev, ino)).or_insert_with(|| {
-            // An all-zero `directory_contents` is the valid "freshly created"
-            // state the former `xcalloc` produced: null `dirfiles` vec, null
-            // `dirstream`, zero `counter`.
-            // SAFETY: `directory_contents` is a `repr(C)` POD whose all-zero bit
-            // pattern is a valid value (matching the C `xcalloc`).
-            let mut dc: Box<directory_contents> = Box::new(::core::mem::zeroed());
-            dc.dev = dev;
-            dc.ino = ino;
-            dc
+            // Freshly created, matching the former `xcalloc`: no file map yet
+            // (`None`), no open stream, zero `counter`.
+            Box::new(directory_contents {
+                dev,
+                ino,
+                dirfiles: None,
+                counter: 0,
+                dirstream: null_mut(),
+            })
         });
         // The `Box` keeps the contents at a stable heap address across later
         // map inserts/rehashes, so this raw pointer (stored in `directory.contents`
@@ -278,16 +233,10 @@ pub unsafe fn find_directory(
             }
         }
         if dc.dirstream.is_null() {
-            // Unreadable: cache that fact with a null file table.
-            dc.dirfiles.ht_vec = null_mut();
+            // Unreadable: cache that fact with no file map.
+            dc.dirfiles = None;
         } else {
-            hash_init(
-                &raw mut dc.dirfiles,
-                DIRFILE_BUCKETS as c_ulong,
-                Some(dirfile_hash_1),
-                Some(dirfile_hash_2),
-                Some(dirfile_hash_cmp),
-            );
+            dc.dirfiles = Some(FxHashMap::default());
             ctx.open_directories.set(ctx.open_directories.get() + 1);
             if ctx.open_directories.get() == MAX_OPEN_DIRECTORIES as u32 {
                 // Too many streams open: read this one to completion now.
@@ -310,7 +259,7 @@ unsafe fn dir_contents_file_exists_p(
         // The directory could not be stat'd.
         return 0;
     };
-    if dc.dirfiles.ht_vec.is_null() {
+    if dc.dirfiles.is_none() {
         // The directory could not be opened.
         return 0;
     }
@@ -320,13 +269,9 @@ unsafe fn dir_contents_file_exists_p(
             // Checking for the directory itself; it exists.
             return 1;
         }
-        let mut dirfile_key: dirfile = ::core::mem::zeroed();
-        dirfile_key.name = filename;
-        dirfile_key.length = strlen(filename);
-        let df =
-            hash_find_item(&raw mut dc.dirfiles, (&raw const dirfile_key).cast()) as *const dirfile;
-        if let Some(df) = df.as_ref() {
-            return (df.impossible == 0) as i32;
+        let key = ::core::ffi::CStr::from_ptr(filename).to_bytes();
+        if let Some(entry) = dc.dirfiles.as_ref().and_then(|m| m.get(key)) {
+            return (!entry.impossible) as i32;
         }
     }
 
@@ -366,31 +311,18 @@ unsafe fn dir_contents_file_exists_p(
         }
 
         let d_name = entry.d_name.as_mut_ptr();
-        let len = strlen(d_name);
-        let mut dirfile_key: dirfile = ::core::mem::zeroed();
-        dirfile_key.name = d_name;
-        dirfile_key.length = len;
-        let dirfile_slot = (hash_find_slot(&raw mut dc.dirfiles, (&raw const dirfile_key).cast())
-            as *mut *mut dirfile)
+        let name = ::core::ffi::CStr::from_ptr(d_name).to_bytes();
+        // First occurrence wins (matching the FFI table's no-replace insert).
+        dc.dirfiles
             .as_mut()
-            .expect("hash_find_slot always returns a slot");
-        let df = (xmalloc(::core::mem::size_of::<dirfile>() as size_t) as *mut dirfile)
-            .as_mut()
-            .expect("xmalloc never returns null");
-        df.name = strcache_add_len(d_name, len);
-        df.type_0 = entry.d_type;
-        df.length = len;
-        df.impossible = 0;
-        hash_insert_at(
-            &raw mut dc.dirfiles,
-            (&raw const *df).cast(),
-            (&raw mut *dirfile_slot).cast(),
-        );
-        // streq-style early exit: first bytes match, then the rest.
-        if !filename.is_null()
-            && *d_name == *filename
-            && (*d_name == 0 || strcmp(d_name.add(1), filename.add(1)) == 0)
-        {
+            .expect("dirfiles is Some when reading")
+            .entry(Box::from(name))
+            .or_insert(DirFileEntry {
+                type_0: entry.d_type,
+                impossible: false,
+            });
+        // Early exit once we have cached the name we were asked about.
+        if !filename.is_null() && name == ::core::ffi::CStr::from_ptr(filename).to_bytes() {
             return 1;
         }
     }
@@ -478,29 +410,29 @@ pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *cons
     let dir = dir.as_mut().expect("find_directory never returns null");
 
     if dir.contents.is_null() {
-        // The directory was never stat'd or couldn't be; create a
-        // contents entry just to hold impossible names.
-        dir.contents = xcalloc(::core::mem::size_of::<directory_contents>() as size_t)
-            as *mut directory_contents;
+        // The directory was never stat'd or couldn't be; create a standalone
+        // contents entry just to hold impossible names. It is not in the dev/ino
+        // table (there is no stat to key it by), so leak it like the former
+        // `xcalloc` did — the cache lives for the whole run.
+        dir.contents = Box::into_raw(Box::new(directory_contents {
+            dev: 0,
+            ino: 0,
+            dirfiles: None,
+            counter: 0,
+            dirstream: null_mut(),
+        }));
     }
     let dc = dir.contents.as_mut().expect("just ensured non-null");
-    if dc.dirfiles.ht_vec.is_null() {
-        hash_init(
-            &raw mut dc.dirfiles,
-            DIRFILE_BUCKETS as c_ulong,
-            Some(dirfile_hash_1),
-            Some(dirfile_hash_2),
-            Some(dirfile_hash_cmp),
-        );
-    }
-
-    let new = (xmalloc(::core::mem::size_of::<dirfile>() as size_t) as *mut dirfile)
-        .as_mut()
-        .expect("xmalloc never returns null");
-    new.length = strlen(filename);
-    new.name = strcache_add_len(filename, new.length);
-    new.impossible = 1;
-    hash_insert(&raw mut dc.dirfiles, (&raw const *new).cast());
+    let key = ::core::ffi::CStr::from_ptr(filename).to_bytes();
+    // First record wins, matching the FFI table's no-replace insert: an
+    // existing (real) entry for this name is left untouched.
+    dc.dirfiles
+        .get_or_insert_with(FxHashMap::default)
+        .entry(Box::from(key))
+        .or_insert(DirFileEntry {
+            type_0: 0,
+            impossible: true,
+        });
 }
 
 /// Has `filename` been recorded as impossible?
@@ -527,17 +459,9 @@ pub unsafe fn file_impossible_p(ctx: &crate::execctx::ExecContext, filename: *co
         }
     };
     let Some(dir) = dir.as_mut() else { return 0 };
-    if dir.dirfiles.ht_vec.is_null() {
-        return 0;
-    }
-
-    let mut dirfile_key: dirfile = ::core::mem::zeroed();
-    dirfile_key.name = filename;
-    dirfile_key.length = strlen(filename);
-    let df =
-        hash_find_item(&raw mut dir.dirfiles, (&raw const dirfile_key).cast()) as *const dirfile;
-    match df.as_ref() {
-        Some(df) => df.impossible as i32,
+    let key = ::core::ffi::CStr::from_ptr(filename).to_bytes();
+    match dir.dirfiles.as_ref().and_then(|m| m.get(key)) {
+        Some(entry) => entry.impossible as i32,
         None => 0,
     }
 }
@@ -584,7 +508,7 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
             continue;
         }
         let dc = dir.contents.as_ref().expect("checked non-null above");
-        if dc.dirfiles.ht_vec.is_null() {
+        let Some(dirfiles) = dc.dirfiles.as_ref() else {
             printf(
                 c"# %s (device %ld, inode %ld): could not be opened.\n".as_ptr(),
                 dir.name,
@@ -592,19 +516,15 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
                 dc.ino as c_long,
             );
             continue;
-        }
+        };
 
         let mut f: c_uint = 0;
         let mut im: c_uint = 0;
-        for j in 0..dc.dirfiles.ht_size as usize {
-            let df = *dc.dirfiles.ht_vec.add(j) as *const dirfile;
-            if is_real_item(df as *const c_void) {
-                let df = df.as_ref().expect("slot holds a real entry");
-                if df.impossible != 0 {
-                    im += 1;
-                } else {
-                    f += 1;
-                }
+        for entry in dirfiles.values() {
+            if entry.impossible {
+                im += 1;
+            } else {
+                f += 1;
             }
         }
         printf(
@@ -655,7 +575,7 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
             // The directory could not be stat'd.
             return null_mut();
         };
-        if dc.dirfiles.ht_vec.is_null() {
+        if dc.dirfiles.is_none() {
             // The directory could not be opened.
             return null_mut();
         }
@@ -666,7 +586,7 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
             .as_mut()
             .expect("xmalloc never returns null");
         new.contents = &raw mut *dc;
-        new.dirfile_slot = dc.dirfiles.ht_vec as *mut *mut dirfile;
+        new.index = 0;
         (&raw mut *new).cast()
     })
 }
@@ -689,39 +609,46 @@ pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
             .as_mut()
             .expect("read_dirstream: null stream");
         let dc = ds.contents.as_ref().expect("dirstream always has contents");
-        let dirfile_end =
-            (dc.dirfiles.ht_vec as *mut *mut dirfile).add(dc.dirfiles.ht_size as usize);
+        let Some(dirfiles) = dc.dirfiles.as_ref() else {
+            return null_mut();
+        };
 
-        while ds.dirfile_slot < dirfile_end {
-            let slot = ds.dirfile_slot;
-            ds.dirfile_slot = slot.add(1);
-            let df = *slot;
-            if !is_real_item(df as *const c_void) {
+        // The cache is fully read and not mutated during globbing, so the map's
+        // iteration order is stable across calls; `index` records how many
+        // entries we have already walked past. (Linear re-scan per call, like
+        // the former `ht_vec` cursor walked slots.)
+        for (name, entry) in dirfiles.iter().skip(ds.index) {
+            ds.index += 1;
+            if entry.impossible {
                 continue;
             }
-            let df = df.as_ref().expect("slot holds a real entry");
-            if df.impossible == 0 {
-                // Grow the dirent buffer to hold the name (the d_name field's
-                // declared 256 bytes are replaced by the real length).
-                let len = df.length + 1;
-                let sz = ::core::mem::size_of::<dirent>() as size_t
-                    - ::core::mem::size_of::<[c_char; 256]>() as size_t
-                    + len;
-                if sz > ctx.read_dirstream_bufsz.get() {
-                    let bufsz = (ctx.read_dirstream_bufsz.get() * 2).max(sz);
-                    ctx.read_dirstream_bufsz.set(bufsz);
-                    ctx.read_dirstream_buf
-                        .set(xrealloc(ctx.read_dirstream_buf.get() as *mut c_void, bufsz)
-                            as *mut c_char);
-                }
-                let d = (ctx.read_dirstream_buf.get() as *mut dirent)
-                    .as_mut()
-                    .expect("xrealloc never returns null");
-                d.d_ino = 1;
-                d.d_type = df.type_0;
-                memcpy(d.d_name.as_mut_ptr().cast(), df.name as *const c_void, len);
-                return &raw mut *d;
+            // Grow the dirent buffer to hold the name plus its NUL (the
+            // d_name field's declared 256 bytes are replaced by the real
+            // length).
+            let len = name.len() + 1;
+            let sz = ::core::mem::size_of::<dirent>() as size_t
+                - ::core::mem::size_of::<[c_char; 256]>() as size_t
+                + len;
+            if sz > ctx.read_dirstream_bufsz.get() {
+                let bufsz = (ctx.read_dirstream_bufsz.get() * 2).max(sz);
+                ctx.read_dirstream_bufsz.set(bufsz);
+                ctx.read_dirstream_buf.set(
+                    xrealloc(ctx.read_dirstream_buf.get() as *mut c_void, bufsz) as *mut c_char,
+                );
             }
+            let d = (ctx.read_dirstream_buf.get() as *mut dirent)
+                .as_mut()
+                .expect("xrealloc never returns null");
+            d.d_ino = 1;
+            d.d_type = entry.type_0;
+            memcpy(
+                d.d_name.as_mut_ptr().cast(),
+                name.as_ptr() as *const c_void,
+                name.len(),
+            );
+            // NUL-terminate (the map key has no terminator).
+            *d.d_name.as_mut_ptr().add(name.len()) = 0;
+            return &raw mut *d;
         }
         null_mut()
     })
@@ -879,145 +806,5 @@ mod open_directories_tests {
 
         // A second, independent context keeps its own count.
         assert_eq!(ExecContext::default().open_directories.get(), 0);
-    }
-}
-
-#[cfg(test)]
-mod dirfile_cmp_tests {
-    use super::{dirfile, dirfile_cmp, dirfile_hash_cmp};
-    use ::core::cmp::Ordering;
-    use ::core::ffi::{c_char, c_void};
-
-    /// Verbatim preservation of the original raw-pointer `dirfile_hash_cmp`
-    /// callback (length, then interned-pointer identity, then `strcmp`),
-    /// retained as a differential oracle per the project rule for swapping an
-    /// unsafe implementation for a safe one.
-    ///
-    /// SAFETY: callers pass pointers to live `dirfile` values whose `name`
-    /// fields address NUL-terminated buffers — the contract the hash table
-    /// handed the original callback.
-    unsafe fn dirfile_hash_cmp_unsafe_oracle(xv: *const c_void, yv: *const c_void) -> i32 {
-        let x = (xv as *const dirfile)
-            .as_ref()
-            .expect("hash callback got a null key");
-        let y = (yv as *const dirfile)
-            .as_ref()
-            .expect("hash callback got a null key");
-        // Compare lengths first (cheap), then interned pointers, then bytes.
-        let result = x.length.wrapping_sub(y.length) as i32;
-        if result != 0 {
-            return result;
-        }
-        if ::core::ptr::eq(x.name, y.name) {
-            0
-        } else {
-            libc::strcmp(x.name, y.name)
-        }
-    }
-
-    /// Build a `dirfile` whose `name`/`length` denote `buf`. `buf` must be
-    /// NUL-terminated (so the oracle's `strcmp` has a terminator); `length`
-    /// excludes the NUL, matching how the cache stores interned names.
-    fn dirfile_for(buf: &[u8]) -> dirfile {
-        // SAFETY: a zeroed `dirfile` is a valid (inert) value; the tests only
-        // read its `name`/`length` fields.
-        let mut d: dirfile = unsafe { ::core::mem::zeroed() };
-        d.name = buf.as_ptr() as *const c_char;
-        d.length = (buf.len() - 1) as crate::ffi_types::size_t;
-        d
-    }
-
-    /// Drive the production callback with two NUL-terminated name buffers.
-    fn callback(x: &[u8], y: &[u8]) -> i32 {
-        let dx = dirfile_for(x);
-        let dy = dirfile_for(y);
-        // SAFETY: both dirfiles address live, NUL-terminated buffers.
-        unsafe {
-            dirfile_hash_cmp(
-                &raw const dx as *const c_void,
-                &raw const dy as *const c_void,
-            )
-        }
-    }
-
-    /// Drive the verbatim oracle with two NUL-terminated name buffers.
-    fn oracle(x: &[u8], y: &[u8]) -> i32 {
-        let dx = dirfile_for(x);
-        let dy = dirfile_for(y);
-        // SAFETY: both dirfiles address live, NUL-terminated buffers.
-        unsafe {
-            dirfile_hash_cmp_unsafe_oracle(
-                &raw const dx as *const c_void,
-                &raw const dy as *const c_void,
-            )
-        }
-    }
-
-    // Each sample is NUL-terminated; the stored `length` is taken as `len - 1`.
-    const SAMPLES: &[&[u8]] = &[
-        b"\0",
-        b"a\0",
-        b"b\0",
-        b"A\0",
-        b"ab\0",
-        b"ba\0",
-        b"abc\0",
-        b"abd\0",
-        b"src\0",
-        b"build\0",
-        b"Makefile\0",
-        b"makefile\0",
-    ];
-
-    #[test]
-    fn callback_matches_oracle_in_sign() {
-        for &x in SAMPLES {
-            for &y in SAMPLES {
-                assert_eq!(
-                    callback(x, y).signum(),
-                    oracle(x, y).signum(),
-                    "sign mismatch for {x:?} vs {y:?}",
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn pure_core_matches_callback_sign() {
-        for &x in SAMPLES {
-            for &y in SAMPLES {
-                let expected = match dirfile_cmp(&x[..x.len() - 1], &y[..y.len() - 1]) {
-                    Ordering::Less => -1,
-                    Ordering::Greater => 1,
-                    Ordering::Equal => 0,
-                };
-                assert_eq!(callback(x, y).signum(), expected, "{x:?} vs {y:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn orders_by_length_then_bytes() {
-        // Shorter names sort first, whatever their bytes.
-        assert_eq!(dirfile_cmp(b"zzz", b"aaaa"), Ordering::Less);
-        // Equal length falls back to lexicographic byte order.
-        assert_eq!(dirfile_cmp(b"abc", b"abd"), Ordering::Less);
-        assert_eq!(dirfile_cmp(b"abd", b"abc"), Ordering::Greater);
-        assert_eq!(dirfile_cmp(b"abc", b"abc"), Ordering::Equal);
-    }
-
-    #[test]
-    fn is_antisymmetric() {
-        for &x in SAMPLES {
-            for &y in SAMPLES {
-                let xn = &x[..x.len() - 1];
-                let yn = &y[..y.len() - 1];
-                assert_eq!(
-                    dirfile_cmp(xn, yn),
-                    dirfile_cmp(yn, xn).reverse(),
-                    "{x:?} vs {y:?}",
-                );
-            }
-        }
     }
 }
