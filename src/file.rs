@@ -379,7 +379,13 @@ impl FileNode {
             mtime_before_update: 0,
             considered: 0,
             command_flags: 0,
-            update_status: UpdateStatus::Success,
+            // A freshly-interned node has not been remade yet: start in
+            // `us_none` (UpdateStatus::None), matching the legacy
+            // `File::new_named`. `remove_intermediates` keys unlinking off
+            // `update_status != us_none`, so defaulting to `Success` here would
+            // let cleanup unlink an intermediate that was only entered/discovered
+            // and never actually updated.
+            update_status: UpdateStatus::None,
             command_state: CommandState::NotStarted,
             builtin: false,
             precious: false,
