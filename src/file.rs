@@ -234,6 +234,65 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    /// Per-line recipe modifiers — the idiomatic form of the c2rust
+    /// `lines_flags` byte. Values match `COMMANDS_RECURSE`/`COMMANDS_SILENT`/
+    /// `COMMANDS_NOERROR` so the two representations round-trip bit-for-bit.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct RecipeLineFlags: u8 {
+        /// Line recurses into a sub-make (`+`, or it mentions `$(MAKE)`).
+        const RECURSE = 1;
+        /// Line is silent (`@`): not echoed before running.
+        const SILENT = 2;
+        /// Errors on this line are ignored (`-`).
+        const NOERROR = 4;
+    }
+}
+
+/// One logical recipe line: its (still-unexpanded) command text with the
+/// leading `@`/`-`/`+` modifiers parsed off into [`RecipeLineFlags`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecipeLine {
+    pub text: Vec<u8>,
+    pub flags: RecipeLineFlags,
+}
+
+/// A target's recipe — the idiomatic replacement for the c2rust `Commands`
+/// (`*mut Commands` on `File`). Holds the recipe text as written plus, once
+/// `chop_commands` has run, the per-line view that unifies `command_lines`,
+/// `lines_flags`, and `ncommand_lines`. No raw pointers, no `c_char`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recipe {
+    /// Source file the recipe was defined in (raw bytes; `None` if synthetic,
+    /// the former null `fileinfo.filenm`).
+    pub defined_in: Option<Vec<u8>>,
+    /// 1-based line number of the recipe's definition (`fileinfo.lineno`).
+    pub defined_lineno: u64,
+    /// Recipe text as written — logical lines joined by `\n`, before variable
+    /// expansion (the former `commands` C string).
+    pub text: Vec<u8>,
+    /// The chopped per-line view; empty until `chop_commands` populates it.
+    pub lines: Vec<RecipeLine>,
+    /// The recipe-line introducer in effect (`.RECIPEPREFIX`, default TAB).
+    pub recipe_prefix: u8,
+    /// Whether any line recurses into a sub-make — the `any_recurse` bit.
+    pub any_recurse: bool,
+}
+
+impl Default for Recipe {
+    fn default() -> Self {
+        Recipe {
+            defined_in: None,
+            defined_lineno: 0,
+            text: Vec::new(),
+            lines: Vec::new(),
+            // The default introducer is a literal TAB, as in GNU make.
+            recipe_prefix: b'\t',
+            any_recurse: false,
+        }
+    }
+}
+
 /// Idiomatic Rust file node for the new dependency graph layer — the file-side
 /// counterpart of [`DepNode`]. Replaces the c2rust [`File`] once all FFI bodies
 /// have been migrated: it lives in the [`FileId`]-keyed arena
@@ -241,12 +300,12 @@ bitflags::bitflags! {
 /// `*mut file`, so the build graph shares nodes by handle ([`FileId`], `Copy`)
 /// rather than by raw pointer.
 ///
-/// Inter-file links (`prev`/`last`/`renamed`/`parent`/`double_colon`) are
-/// `Option<FileId>` into the same arena; prerequisites are owned [`DepNode`]s.
-/// The recipe (`Commands`) and per-target variables (`VariableSetList`) are
-/// deliberately *not* here yet — those subsystems are still c2rust and join
-/// `FileNode` when they are migrated, keeping this struct free of raw pointers
-/// and `c_char`.
+/// Inter-file links (`renamed`/`parent`/`double_colon`) are `Option<FileId>`
+/// into the same arena; prerequisites are owned [`DepNode`]s and the recipe is
+/// an owned [`Recipe`]. Per-target variables (`VariableSetList`) are the one
+/// piece deliberately *not* here yet — that subsystem is still c2rust and joins
+/// `FileNode` when it is migrated, keeping this struct free of raw pointers and
+/// `c_char`.
 #[derive(Debug, Clone)]
 pub struct FileNode {
     /// Name as written in the makefile. Raw bytes, not `String`: file names are
@@ -265,6 +324,9 @@ pub struct FileNode {
     pub deps: Vec<DepNode>,
     /// Sibling targets built by the same recipe (`also_make`).
     pub also_make: Vec<DepNode>,
+    /// The target's recipe, if any — the idiomatic replacement for the c2rust
+    /// `*mut Commands`. `None` is the former null `cmds`.
+    pub recipe: Option<Recipe>,
     /// Whether this is a double-colon (`::`) target. The c2rust graph marked
     /// this by a non-null `double_colon` self-link; here it is an explicit flag
     /// so that a single arena node (keyed by name) represents the whole target.
@@ -328,6 +390,7 @@ impl FileNode {
             stem: None,
             deps: Vec::new(),
             also_make: Vec::new(),
+            recipe: None,
             is_double_colon: false,
             double_colon: Vec::new(),
             renamed: None,
@@ -3464,6 +3527,35 @@ mod tests {
         assert!(n.is_double_colon);
         assert_eq!(n.double_colon.len(), 2);
         assert!(n.double_colon.iter().all(|e| e.name == b"all"));
+    }
+
+    /// The idiomatic `Recipe` defaults to a TAB introducer and an empty recipe,
+    /// its line flags match the c2rust `COMMANDS_*` byte values, and a fresh
+    /// `FileNode` carries no recipe.
+    #[test]
+    fn recipe_defaults_and_line_flags_match_c_constants() {
+        let r = Recipe::default();
+        assert_eq!(r.recipe_prefix, b'\t');
+        assert!(r.text.is_empty() && r.lines.is_empty() && !r.any_recurse);
+        assert_eq!(r.defined_in, None);
+
+        // Flag values round-trip with the c2rust lines_flags byte.
+        assert_eq!(
+            RecipeLineFlags::RECURSE.bits() as i32,
+            crate::commands::COMMANDS_RECURSE
+        );
+        assert_eq!(RecipeLineFlags::SILENT.bits() as i32, COMMANDS_SILENT);
+        assert_eq!(RecipeLineFlags::NOERROR.bits() as i32, COMMANDS_NOERROR);
+
+        let line = RecipeLine {
+            text: b"echo hi".to_vec(),
+            flags: RecipeLineFlags::SILENT | RecipeLineFlags::NOERROR,
+        };
+        assert!(line.flags.contains(RecipeLineFlags::SILENT));
+        assert!(!line.flags.contains(RecipeLineFlags::RECURSE));
+
+        // A fresh file has no recipe (the former null `cmds`).
+        assert_eq!(FileNode::new(b"x".to_vec()).recipe, None);
     }
 
     /// `FileId` is byte-exact: names that differ only outside valid UTF-8 stay
