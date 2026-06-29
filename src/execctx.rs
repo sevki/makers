@@ -331,23 +331,25 @@ impl FileTable {
 }
 
 /// make's central file table, idiomatic edition: a
-/// [`FileId`](crate::file::FileId)-keyed [`rustc_hash::FxHashMap`] of
+/// [`FileId`](crate::file::FileId)-keyed [`DashMap`](dashmap::DashMap) of
 /// `Arc<Mutex<FileNode>>`. This is the "arc mutex map" that replaces the
 /// raw-pointer [`FileTable`] — nodes are owned by the arena (reference-counted,
 /// shared safely) and referenced elsewhere by the `Copy` [`FileId`] handle, so
-/// there is no `*mut file`. The outer [`Mutex`](std::sync::Mutex) gives the
-/// interior mutability `&ExecContext` needs and makes the table shareable
-/// across threads (and reachable from the signal handler by lock rather than
-/// the `try_borrow` dance).
+/// there is no `*mut file`. `DashMap` is a concurrent map (sharded internally),
+/// giving the interior mutability `&ExecContext` needs without an outer lock
+/// and making the table shareable across threads (and reachable from the
+/// signal handler) lock-free at the map level.
 pub struct FileArena(
-    pub  ::std::sync::Mutex<
-        rustc_hash::FxHashMap<crate::file::FileId, ::std::sync::Arc<::std::sync::Mutex<crate::file::FileNode>>>,
+    pub  dashmap::DashMap<
+        crate::file::FileId,
+        ::std::sync::Arc<::std::sync::Mutex<crate::file::FileNode>>,
+        rustc_hash::FxBuildHasher,
     >,
 );
 
 impl Default for FileArena {
     fn default() -> Self {
-        Self(::std::sync::Mutex::new(rustc_hash::FxHashMap::default()))
+        Self(dashmap::DashMap::with_hasher(rustc_hash::FxBuildHasher))
     }
 }
 
@@ -357,35 +359,24 @@ impl Clone for FileArena {
         // return empty): the entries are `Arc<Mutex<FileNode>>`, so cloning the
         // map clones the `Arc` handles and the cloned arena shares the very same
         // nodes — sound and meaningful.
-        Self(::std::sync::Mutex::new(
-            self.0
-                .lock()
-                .expect("file arena lock poisoned")
-                .clone(),
-        ))
+        Self(self.0.clone())
     }
 }
 
 impl ::core::fmt::Debug for FileArena {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_tuple("FileArena")
-            .field(&self.0.lock().map(|m| m.len()).unwrap_or(0))
-            .finish()
+        f.debug_tuple("FileArena").field(&self.0.len()).finish()
     }
 }
 
 impl FileArena {
     /// Look up a node by its [`FileId`](crate::file::FileId) handle, returning a
-    /// cloned `Arc` so the caller can lock it without holding the arena lock.
+    /// cloned `Arc` so the caller can lock it without holding any map guard.
     pub fn get(
         &self,
         id: crate::file::FileId,
     ) -> Option<::std::sync::Arc<::std::sync::Mutex<crate::file::FileNode>>> {
-        self.0
-            .lock()
-            .expect("file arena lock poisoned")
-            .get(&id)
-            .cloned()
+        self.0.get(&id).map(|r| ::std::sync::Arc::clone(r.value()))
     }
 
     /// Intern `node`, returning its [`FileId`](crate::file::FileId) handle. An
@@ -394,8 +385,6 @@ impl FileArena {
     pub fn intern(&self, node: crate::file::FileNode) -> crate::file::FileId {
         let id = node.id();
         self.0
-            .lock()
-            .expect("file arena lock poisoned")
             .entry(id)
             .or_insert_with(|| ::std::sync::Arc::new(::std::sync::Mutex::new(node)));
         id
@@ -413,21 +402,20 @@ impl FileArena {
     ) -> ::std::sync::Arc<::std::sync::Mutex<crate::file::FileNode>> {
         ::std::sync::Arc::clone(
             self.0
-                .lock()
-                .expect("file arena lock poisoned")
                 .entry(id)
-                .or_insert_with(|| ::std::sync::Arc::new(::std::sync::Mutex::new(f()))),
+                .or_insert_with(|| ::std::sync::Arc::new(::std::sync::Mutex::new(f())))
+                .value(),
         )
     }
 
     /// Number of interned files.
     pub fn len(&self) -> usize {
-        self.0.lock().expect("file arena lock poisoned").len()
+        self.0.len()
     }
 
     /// Whether the arena holds no files.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.0.is_empty()
     }
 }
 
@@ -467,6 +455,7 @@ impl ExecContext {
     pub fn makelevel(&self) -> u32 {
         self.config.makelevel
     }
+
 }
 
 #[cfg(test)]
