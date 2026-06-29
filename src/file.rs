@@ -977,8 +977,6 @@ pub unsafe fn rehash_file(
     mut from_file: *mut file,
     to_hname: *const ::core::ffi::c_char,
 ) {
-    let to_file: *mut file;
-    let mut f: *mut file;
     // Callers always pass a live file here; bind a checked reference so the
     // initial field accesses are null-safe without adding a branch.
     let from_ref = from_file
@@ -1004,7 +1002,13 @@ pub unsafe fn rehash_file(
             .expect("rehash_file: null in renamed walk")
             .renamed;
     }
-    if CStr::from_ptr((*from_file).hname).to_bytes() != CStr::from_ptr(from_hname).to_bytes() {
+    // Re-read the (possibly renamed) file's hash-name through a checked
+    // reference so the deref stays null-safe.
+    let walked_hname = from_file
+        .as_ref()
+        .expect("rehash_file: from_file became null")
+        .hname;
+    if CStr::from_ptr(walked_hname).to_bytes() != CStr::from_ptr(from_hname).to_bytes() {
         abort();
     }
     // Remove `from_file` from the table by its current hash-name; it must be the
@@ -1013,12 +1017,12 @@ pub unsafe fn rehash_file(
         .files
         .0
         .borrow_mut()
-        .remove(CStr::from_ptr((*from_file).hname).to_bytes());
+        .remove(CStr::from_ptr(walked_hname).to_bytes());
     if removed != Some(from_file) {
         abort();
     }
     let to_key = CStr::from_ptr(to_hname).to_bytes();
-    to_file = ctx
+    let to_file = ctx
         .files
         .0
         .borrow()
@@ -1031,7 +1035,7 @@ pub unsafe fn rehash_file(
         .as_mut()
         .expect("rehash_file: from_file became null");
     fr2.hname = to_hname;
-    f = fr2.double_colon;
+    let mut f = fr2.double_colon;
     while let Some(fr) = f.as_mut() {
         fr.hname = to_hname;
         f = fr.prev;
@@ -1203,7 +1207,15 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
     if sig != 0 && crate::make_main::opt_just_print() {
         return;
     }
-    let intermediates: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
+    // `try_borrow`: this runs from the async `fatal_error_signal` path, which may
+    // have interrupted a `borrow_mut` of the table. Best-effort — skip cleanup
+    // rather than panic if the table is momentarily borrowed (the former global
+    // raw table just raced here).
+    let Ok(table) = ctx.files.0.try_borrow() else {
+        return;
+    };
+    let intermediates: Vec<*mut file> = table.values().copied().collect();
+    drop(table);
     for f in intermediates {
         {
             if (*f).intermediate() as i32 != 0
@@ -2347,12 +2359,10 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_file_data_base(ctx: &crate::execctx::ExecContext) {
     puts(b"\n# Files\0" as *const u8 as *const ::core::ffi::c_char);
-    // Snapshot the heads so `print_file` (which walks each name's
-    // prev/double-colon chain) runs without holding the table borrow.
-    let heads: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
-    for f in &heads {
-        print_file(*f as *const ::core::ffi::c_void);
-    }
+    // `print_file` walks each name's prev/double-colon chain; `for_each`
+    // snapshots so the table borrow is not held across it.
+    ctx.files
+        .for_each(|f| unsafe { print_file(f as *const ::core::ffi::c_void) });
     printf(
         b"\n# %lu files in the file table.\n\0" as *const u8 as *const ::core::ffi::c_char,
         ctx.files.0.borrow().len() as ::core::ffi::c_ulong,
@@ -2380,10 +2390,8 @@ pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_targets(ctx: &crate::execctx::ExecContext) {
-    let heads: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
-    for f in &heads {
-        print_target(*f as *const ::core::ffi::c_void);
-    }
+    ctx.files
+        .for_each(|f| unsafe { print_target(f as *const ::core::ffi::c_void) });
 }
 /// Report (via `error`) when a single file/dep field is set but not interned
 /// in the strcache. A null/empty field, or one already cached, is silent.
@@ -2440,10 +2448,8 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void, arg: *mut ::core::ff
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn verify_file_data_base(ctx: &crate::execctx::ExecContext) {
     let ctx_arg = ctx as *const crate::execctx::ExecContext as *mut ::core::ffi::c_void;
-    let heads: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
-    for f in &heads {
-        verify_file(*f as *const ::core::ffi::c_void, ctx_arg);
-    }
+    ctx.files
+        .for_each(|f| unsafe { verify_file(f as *const ::core::ffi::c_void, ctx_arg) });
 }
 /// # Safety
 ///

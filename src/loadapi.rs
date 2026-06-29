@@ -72,17 +72,18 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
     let mut eval_input = ::std::ffi::CStr::from_ptr(buffer)
         .to_bytes_with_nul()
         .to_vec();
-    // This is a `gmk_*` plugin-ABI entry point invoked from loaded C objects;
-    // its C-ABI signature cannot carry the owned `ExecContext`, and there is
-    // deliberately no global to read it from. The only use of `ctx` in the
-    // callees is the `make[N]:` message prefix, which is cosmetic here, so we
-    // hand them a default (top-level) context.
-    let ctx = crate::execctx::ExecContext::default();
-    eval_buffer(
-        &ctx,
-        eval_input.as_mut_ptr() as *mut ::core::ffi::c_char,
-        flp,
-    );
+    // `gmk_eval` defines targets/rules that must land in the live build's file
+    // table — not a throwaway context. This C-ABI entry point can't carry the
+    // owned `ExecContext`, so reach `main_0`'s through the `CTX_PTR` borrow
+    // channel (installed for all of `main_0`, which is on the stack whenever a
+    // loaded plugin runs).
+    crate::make_main::with_exec_context(|ctx| unsafe {
+        eval_buffer(
+            ctx,
+            eval_input.as_mut_ptr() as *mut ::core::ffi::c_char,
+            flp,
+        );
+    });
     restore_variable_buffer(pbuf, plen);
 }
 /// # Safety

@@ -310,6 +310,19 @@ impl ::core::fmt::Debug for FileTable {
     }
 }
 
+impl FileTable {
+    /// Invoke `f` on each file record (every name's chain head). The records are
+    /// snapshotted first so the table borrow is not held across `f` (which may
+    /// re-enter the table). Keeping the iteration here lets the `make -p` /
+    /// `print_targets` / `verify` walkers stay a single call.
+    pub fn for_each(&self, mut f: impl FnMut(*mut crate::file::File)) {
+        let snapshot: Vec<*mut crate::file::File> = self.0.borrow().values().copied().collect();
+        for p in snapshot {
+            f(p);
+        }
+    }
+}
+
 /// Wrapper giving [`ExecContext::load_proc_fd`] its `-2` ("not yet probed")
 /// initial value while `ExecContext` keeps deriving `Default`.
 #[derive(Debug, Clone)]

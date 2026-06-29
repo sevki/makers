@@ -11,11 +11,11 @@ use ::core::{
     ptr::null_mut,
 };
 
-use libc::{exit, free, qsort};
+use libc::{exit, free};
 
 use crate::{
     ffi_types::size_t,
-    misc::{xcalloc, xmalloc},
+    misc::xcalloc,
     stdio::FILE,
 };
 
@@ -459,43 +459,6 @@ pub unsafe fn hash_print_stats(ht: *mut hash_table, out_file: *mut FILE) {
             0.0f64
         },
     );
-}
-
-/// Dump the items into `vector_0` (allocated when null) as a
-/// null-terminated array, optionally qsorted with `compare`. Returns the
-/// vector.
-///
-/// # Safety
-/// `vector_0` must be null or have room for `ht_fill + 1` pointers.
-pub unsafe fn hash_dump(
-    ht: *mut hash_table,
-    mut vector_0: *mut *mut c_void,
-    compare: qsort_cmp_t,
-) -> *mut *mut c_void {
-    if vector_0.is_null() {
-        vector_0 = xmalloc(::core::mem::size_of::<*mut c_void>() * ((*ht).ht_fill as size_t + 1))
-            as *mut *mut c_void;
-    }
-
-    let vector = ::core::slice::from_raw_parts_mut(vector_0, (*ht).ht_fill as usize + 1);
-    let mut count = 0usize;
-    for &item in table_slots(ht) {
-        if is_real_item(item) {
-            vector[count] = item;
-            count += 1;
-        }
-    }
-    vector[count] = null_mut();
-
-    if compare.is_some() {
-        qsort(
-            vector_0 as *mut c_void,
-            (*ht).ht_fill as size_t,
-            ::core::mem::size_of::<*mut c_void>(),
-            compare,
-        );
-    }
-    vector_0
 }
 
 /// Round up to the next power of two by bit-smearing. Note this is NOT
