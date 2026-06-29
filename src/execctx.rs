@@ -172,6 +172,13 @@ pub struct ExecContext {
     /// the c2rust FFI `hash_table` and its `file_hash_*` callbacks.
     pub files: FileTable,
 
+    /// The idiomatic file arena that supersedes [`FileTable`]: a
+    /// [`FileId`](crate::file::FileId)-keyed map of `Arc<Mutex<FileNode>>`,
+    /// where build-graph nodes are shared by `Copy` handle instead of raw
+    /// `*mut file`. The c2rust [`File`](crate::file::File)/[`FileTable`] pair is
+    /// being migrated onto this; both coexist until every consumer is ported.
+    pub filenodes: FileArena,
+
     /// `read_dirstream`'s reused dirent scratch buffer — the heap block (and its
     /// size) that the glob `gl_readdir` callback rewrites for each enumerated
     /// file and returns a pointer into. These were the function-local process
@@ -323,6 +330,88 @@ impl FileTable {
     }
 }
 
+/// make's central file table, idiomatic edition: a
+/// [`FileId`](crate::file::FileId)-keyed [`rustc_hash::FxHashMap`] of
+/// `Arc<Mutex<FileNode>>`. This is the "arc mutex map" that replaces the
+/// raw-pointer [`FileTable`] — nodes are owned by the arena (reference-counted,
+/// shared safely) and referenced elsewhere by the `Copy` [`FileId`] handle, so
+/// there is no `*mut file`. The outer [`Mutex`](std::sync::Mutex) gives the
+/// interior mutability `&ExecContext` needs and makes the table shareable
+/// across threads (and reachable from the signal handler by lock rather than
+/// the `try_borrow` dance).
+pub struct FileArena(
+    pub  ::std::sync::Mutex<
+        rustc_hash::FxHashMap<crate::file::FileId, ::std::sync::Arc<::std::sync::Mutex<crate::file::FileNode>>>,
+    >,
+);
+
+impl Default for FileArena {
+    fn default() -> Self {
+        Self(::std::sync::Mutex::new(rustc_hash::FxHashMap::default()))
+    }
+}
+
+impl Clone for FileArena {
+    fn clone(&self) -> Self {
+        // A real clone (unlike the raw-pointer `FileTable`, whose clone had to
+        // return empty): the entries are `Arc<Mutex<FileNode>>`, so cloning the
+        // map clones the `Arc` handles and the cloned arena shares the very same
+        // nodes — sound and meaningful.
+        Self(::std::sync::Mutex::new(
+            self.0
+                .lock()
+                .expect("file arena lock poisoned")
+                .clone(),
+        ))
+    }
+}
+
+impl ::core::fmt::Debug for FileArena {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_tuple("FileArena")
+            .field(&self.0.lock().map(|m| m.len()).unwrap_or(0))
+            .finish()
+    }
+}
+
+impl FileArena {
+    /// Look up a node by its [`FileId`](crate::file::FileId) handle, returning a
+    /// cloned `Arc` so the caller can lock it without holding the arena lock.
+    pub fn get(
+        &self,
+        id: crate::file::FileId,
+    ) -> Option<::std::sync::Arc<::std::sync::Mutex<crate::file::FileNode>>> {
+        self.0
+            .lock()
+            .expect("file arena lock poisoned")
+            .get(&id)
+            .cloned()
+    }
+
+    /// Intern `node`, returning its [`FileId`](crate::file::FileId) handle. An
+    /// existing entry under the same id is left untouched (interning is
+    /// idempotent on identity).
+    pub fn intern(&self, node: crate::file::FileNode) -> crate::file::FileId {
+        let id = node.id();
+        self.0
+            .lock()
+            .expect("file arena lock poisoned")
+            .entry(id)
+            .or_insert_with(|| ::std::sync::Arc::new(::std::sync::Mutex::new(node)));
+        id
+    }
+
+    /// Number of interned files.
+    pub fn len(&self) -> usize {
+        self.0.lock().expect("file arena lock poisoned").len()
+    }
+
+    /// Whether the arena holds no files.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Wrapper giving [`ExecContext::load_proc_fd`] its `-2` ("not yet probed")
 /// initial value while `ExecContext` keeps deriving `Default`.
 #[derive(Debug, Clone)]
@@ -363,7 +452,7 @@ impl ExecContext {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ExecContext};
+    use super::{Config, ExecContext, FileArena};
 
     #[test]
     fn context_exposes_makelevel() {
@@ -579,5 +668,41 @@ mod tests {
         // Per-run: a fresh context does not inherit the counts.
         assert_eq!(ExecContext::default().commands_started.get(), 0);
         assert_eq!(ExecContext::default().considered.get(), 0);
+    }
+
+    /// The idiomatic file arena interns a [`FileNode`](crate::file::FileNode)
+    /// and hands back a `FileId` handle that round-trips through `get`. Unlike
+    /// the raw-pointer `FileTable` (whose `Clone` had to return empty), the
+    /// arena's `Clone` is real and meaningful: the clone shares the very same
+    /// `Arc<Mutex<FileNode>>` nodes, so a mutation through one arena is visible
+    /// through the other.
+    #[test]
+    fn file_arena_interns_and_clone_shares_nodes() {
+        use crate::file::FileNode;
+
+        let arena = FileArena::default();
+        assert!(arena.is_empty());
+
+        let id = arena.intern(FileNode::new("foo.o".to_string()));
+        assert_eq!(arena.len(), 1);
+        assert_eq!(id, FileNode::new("foo.o".to_string()).id());
+        assert_eq!(
+            arena.get(id).expect("interned node present").lock().unwrap().name,
+            "foo.o"
+        );
+
+        // A real clone: same underlying node, shared by `Arc`.
+        let clone = arena.clone();
+        assert_eq!(clone.len(), 1);
+        clone
+            .get(id)
+            .expect("clone shares the node")
+            .lock()
+            .unwrap()
+            .phony = true;
+        assert!(
+            arena.get(id).unwrap().lock().unwrap().phony,
+            "mutation through the clone is visible through the original — a genuine shared clone"
+        );
     }
 }

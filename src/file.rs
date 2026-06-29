@@ -233,6 +233,133 @@ bitflags::bitflags! {
         // const SOME_FLAG = 1 << 0;
     }
 }
+
+/// Idiomatic Rust file node for the new dependency graph layer — the file-side
+/// counterpart of [`DepNode`]. Replaces the c2rust [`File`] once all FFI bodies
+/// have been migrated: it lives in the [`FileId`]-keyed arena
+/// (`ExecContext::filenodes`) as an `Arc<Mutex<FileNode>>` instead of a raw
+/// `*mut file`, so the build graph shares nodes by handle ([`FileId`], `Copy`)
+/// rather than by raw pointer.
+///
+/// Inter-file links (`prev`/`last`/`renamed`/`parent`/`double_colon`) are
+/// `Option<FileId>` into the same arena; prerequisites are owned [`DepNode`]s.
+/// The recipe (`Commands`) and per-target variables (`VariableSetList`) are
+/// deliberately *not* here yet — those subsystems are still c2rust and join
+/// `FileNode` when they are migrated, keeping this struct free of raw pointers
+/// and `c_char`.
+#[derive(Debug, Clone)]
+pub struct FileNode {
+    /// Name as written in the makefile.
+    pub name: String,
+    /// Hash name: the canonical key this file is interned under.
+    pub hname: String,
+    /// Resolved VPATH location, once found.
+    pub vpath: Option<String>,
+    /// Stem from an implicit-rule match (`%`).
+    pub stem: Option<String>,
+    /// Prerequisites of this target.
+    pub deps: Vec<DepNode>,
+    /// Sibling targets built by the same recipe (`also_make`).
+    pub also_make: Vec<DepNode>,
+    /// Previous entry in a double-colon chain.
+    pub prev: Option<FileId>,
+    /// Last entry in a double-colon chain.
+    pub last: Option<FileId>,
+    /// The file this one was renamed to (`rehash_file`).
+    pub renamed: Option<FileId>,
+    /// Parent for an intermediate file produced by a chain of implicit rules.
+    pub parent: Option<FileId>,
+    /// Head of this file's double-colon chain.
+    pub double_colon: Option<FileId>,
+    /// Last-known modification time (packed make timestamp).
+    pub last_mtime: u64,
+    /// Modification time captured before an update began.
+    pub mtime_before_update: u64,
+    /// Recursion guard / "considered" generation counter.
+    pub considered: u32,
+    /// Command-line flags affecting this target's recipe.
+    pub command_flags: i32,
+    /// Result of the last update attempt.
+    pub update_status: UpdateStatus,
+    /// Where this target is in the build state machine.
+    pub command_state: CommandState,
+    pub builtin: bool,
+    pub precious: bool,
+    pub loaded: bool,
+    pub unloaded: bool,
+    pub low_resolution_time: bool,
+    pub tried_implicit: bool,
+    pub updating: bool,
+    pub updated: bool,
+    pub is_target: bool,
+    pub cmd_target: bool,
+    pub phony: bool,
+    pub intermediate: bool,
+    pub is_explicit: bool,
+    pub secondary: bool,
+    pub notintermediate: bool,
+    pub dontcare: bool,
+    pub ignore_vpath: bool,
+    pub pat_searched: bool,
+    pub no_diag: bool,
+    pub was_shuffled: bool,
+    pub snapped: bool,
+    pub suffix: bool,
+}
+
+impl FileNode {
+    /// Create a fresh node interned under `name` (its hash name starts equal to
+    /// its name; `rehash_file` may later rekey it). All build state starts in
+    /// the same "not yet looked at" position as `File::default`.
+    pub fn new(name: String) -> Self {
+        FileNode {
+            hname: name.clone(),
+            name,
+            vpath: None,
+            stem: None,
+            deps: Vec::new(),
+            also_make: Vec::new(),
+            prev: None,
+            last: None,
+            renamed: None,
+            parent: None,
+            double_colon: None,
+            last_mtime: 0,
+            mtime_before_update: 0,
+            considered: 0,
+            command_flags: 0,
+            update_status: UpdateStatus::Success,
+            command_state: CommandState::NotStarted,
+            builtin: false,
+            precious: false,
+            loaded: false,
+            unloaded: false,
+            low_resolution_time: false,
+            tried_implicit: false,
+            updating: false,
+            updated: false,
+            is_target: false,
+            cmd_target: false,
+            phony: false,
+            intermediate: false,
+            is_explicit: false,
+            secondary: false,
+            notintermediate: false,
+            dontcare: false,
+            ignore_vpath: false,
+            pat_searched: false,
+            no_diag: false,
+            was_shuffled: false,
+            snapped: false,
+            suffix: false,
+        }
+    }
+
+    /// This file's stable arena identity, derived from its canonical name.
+    pub fn id(&self) -> FileId {
+        FileId::from(&self.name)
+    }
+}
 impl Default for GoalDep {
     fn default() -> Self {
         GoalDep {
