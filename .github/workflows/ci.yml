@@ -6,11 +6,15 @@ name: CI
 # change-risk.yml and mutants.yml — four times per PR. Here it runs ONCE in the
 # `build` job, which publishes the rust make and C make binaries as artifacts;
 # every downstream job (kernel diff, coverage, CRAP gate, mutants) consumes
-# those artifacts via `needs:` instead of rebuilding. cargo-geiger and clippy
-# fold in as independent source-scan jobs in the same graph.
+# those artifacts via `needs:` instead of rebuilding. cargo-geiger folds in as
+# an independent source-scan job in the same graph.
 #
-# Scheduled security scans that run on their own cadence (fuzz nightly, CodeQL
-# weekly) and the event-driven PR-comments check stay in their own files.
+# rust-clippy stays in its own file: it uploads a code-scanning SARIF whose
+# configuration identity is the workflow path + job id, so moving it here would
+# orphan the `.github/workflows/rust-clippy.yml:rust-clippy-analyze` config that
+# main tracks. Scheduled security scans on their own cadence (fuzz nightly,
+# CodeQL weekly) and the event-driven PR-comments check also stay in their own
+# files.
 
 on:
     push:
@@ -20,8 +24,6 @@ on:
     schedule:
         # Mon 06:00 UTC — full cargo-mutants run (build + mutants only).
         - cron: "0 6 * * 1"
-        # Fri 03:29 UTC — clippy SARIF refresh (clippy only).
-        - cron: "29 3 * * 5"
 
 concurrency:
     group: ci-${{ github.ref }}
@@ -50,7 +52,7 @@ jobs:
     build:
         name: rust make builds C make
         # Runs for PR/push/dispatch, and for the Monday mutants cron (which
-        # needs the C make oracle). Skipped on the Friday clippy-only cron.
+        # needs the C make oracle).
         if: github.event_name != 'schedule' || github.event.schedule == '0 6 * * 1'
         runs-on: ubuntu-latest
         steps:
@@ -754,53 +756,3 @@ jobs:
                       echo "Note: unsafe count decreased; the baseline can be lowered." >> "$GITHUB_STEP_SUMMARY"
                   fi
                   echo "OK: make-sys unsafe count did not increase ($HEAD_N <= $BASE_N)."
-
-    # ─────────────────────────────────────────────────────────────────────
-    # rust-clippy: lint + SARIF upload. Independent source scan. Runs on
-    # PR/push/dispatch and the Friday SARIF-refresh cron.
-    # ─────────────────────────────────────────────────────────────────────
-    rust-clippy:
-        name: Run rust-clippy analyzing
-        if: github.event_name != 'schedule' || github.event.schedule == '29 3 * * 5'
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            security-events: write
-            actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-
-            - name: Install Rust toolchain
-              uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
-              with:
-                  profile: minimal
-                  toolchain: nightly-2026-05-04
-                  components: clippy
-                  override: true
-
-            - name: Cache cargo registry
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cargo/registry
-                      ~/.cargo/git
-                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-                  restore-keys: cargo-${{ runner.os }}-
-
-            - name: Install required cargo
-              run: cargo install clippy-sarif sarif-fmt
-
-            - name: Run rust-clippy
-              run: |
-                  set -o pipefail
-                  cargo clippy \
-                  --all-features \
-                  --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
-              continue-on-error: true
-
-            - name: Upload analysis results to GitHub
-              uses: github/codeql-action/upload-sarif@v3
-              with:
-                  sarif_file: rust-clippy-results.sarif
-                  wait-for-processing: true
