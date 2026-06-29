@@ -349,8 +349,12 @@ jobs:
     # Renders the PR-comment report and gates on CRAP-score REGRESSION vs the
     # trusted main-branch baseline.
     # ─────────────────────────────────────────────────────────────────────
+    # Job name kept as `CRAP` (matching the old change-risk.yml job id) so the
+    # branch-protection required status check of that name keeps reporting after
+    # the consolidation. Renaming it would leave that required check forever
+    # pending and block every PR.
     crap-gate:
-        name: CRAP gate (cargo-crap)
+        name: CRAP
         needs: coverage
         if: github.event_name != 'schedule'
         runs-on: ubuntu-latest
