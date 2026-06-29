@@ -293,6 +293,91 @@ impl Default for Recipe {
     }
 }
 
+/// How a variable's value is expanded — the idiomatic form of the c2rust
+/// `variable_flavor`. Discriminants match the `f_*` constants so the two
+/// representations round-trip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum VarFlavor {
+    /// `f_bogus` — undefined/placeholder.
+    #[default]
+    Bogus = 0,
+    /// `f_simple` — `:=` / `::=` (expanded once at definition).
+    Simple = 1,
+    /// `f_recursive` — `=` (expanded on each use).
+    Recursive = 2,
+    /// `f_expand` — `:::=` (expand-then-escape).
+    Expand = 3,
+    /// `f_append` — `+=`.
+    Append = 4,
+    /// `f_shell` — `!=`.
+    Shell = 5,
+    /// `f_append_value`.
+    AppendValue = 6,
+}
+
+/// Where a variable came from — the idiomatic form of `variable_origin`.
+/// Discriminants match the `o_*` constants and order by precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum VarOrigin {
+    /// `o_default` — make's built-in default.
+    #[default]
+    Default = 0,
+    /// `o_env` — the environment.
+    Environment = 1,
+    /// `o_file` — a makefile.
+    File = 2,
+    /// `o_env_override` — environment, with `-e`.
+    EnvOverride = 3,
+    /// `o_command` — the command line.
+    Command = 4,
+    /// `o_override` — an `override` directive.
+    Override = 5,
+    /// `o_automatic` — an automatic variable (`$@`, `$<`, …).
+    Automatic = 6,
+    /// `o_invalid`.
+    Invalid = 7,
+}
+
+/// A variable's export disposition — the idiomatic form of `variable_export`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum VarExport {
+    /// `v_default` — follow the global export rules.
+    #[default]
+    Default = 0,
+    /// `v_export` — always export.
+    Export = 1,
+    /// `v_noexport` — never export.
+    NoExport = 2,
+    /// `v_ifset` — export only if set.
+    IfSet = 3,
+}
+
+/// A per-target (or pattern) variable definition — the idiomatic replacement
+/// for the c2rust `variable` record held in a target's `VariableSetList`. Name
+/// and value are raw bytes (no `c_char`); the c2rust bitfield is split into
+/// plain enums/bools.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetVariable {
+    pub name: Vec<u8>,
+    pub value: Vec<u8>,
+    /// Where the variable was defined (raw bytes; `None` if synthetic).
+    pub defined_in: Option<Vec<u8>>,
+    pub defined_lineno: u64,
+    pub flavor: VarFlavor,
+    pub origin: VarOrigin,
+    pub export: VarExport,
+    pub recursive: bool,
+    pub append: bool,
+    pub conditional: bool,
+    pub per_target: bool,
+    pub special: bool,
+    pub exportable: bool,
+    pub private_var: bool,
+}
+
 /// Idiomatic Rust file node for the new dependency graph layer — the file-side
 /// counterpart of [`DepNode`]. Replaces the c2rust [`File`] once all FFI bodies
 /// have been migrated: it lives in the [`FileId`]-keyed arena
@@ -301,11 +386,9 @@ impl Default for Recipe {
 /// rather than by raw pointer.
 ///
 /// Inter-file links (`renamed`/`parent`/`double_colon`) are `Option<FileId>`
-/// into the same arena; prerequisites are owned [`DepNode`]s and the recipe is
-/// an owned [`Recipe`]. Per-target variables (`VariableSetList`) are the one
-/// piece deliberately *not* here yet — that subsystem is still c2rust and joins
-/// `FileNode` when it is migrated, keeping this struct free of raw pointers and
-/// `c_char`.
+/// into the same arena; prerequisites are owned [`DepNode`]s, the recipe is an
+/// owned [`Recipe`], and per-target/pattern variables are owned
+/// [`TargetVariable`]s. The struct is free of raw pointers and `c_char`.
 #[derive(Debug, Clone)]
 pub struct FileNode {
     /// Name as written in the makefile. Raw bytes, not `String`: file names are
@@ -327,6 +410,13 @@ pub struct FileNode {
     /// The target's recipe, if any — the idiomatic replacement for the c2rust
     /// `*mut Commands`. `None` is the former null `cmds`.
     pub recipe: Option<Recipe>,
+    /// This target's own per-target variable definitions (the head set of the
+    /// former `*mut VariableSetList variables`), keyed-by-name lookup left to
+    /// the variable layer. Empty when the target defines none.
+    pub variables: Vec<TargetVariable>,
+    /// Pattern-specific variables applying to this target (the former
+    /// `*mut VariableSetList pat_variables`).
+    pub pat_variables: Vec<TargetVariable>,
     /// Whether this is a double-colon (`::`) target. The c2rust graph marked
     /// this by a non-null `double_colon` self-link; here it is an explicit flag
     /// so that a single arena node (keyed by name) represents the whole target.
@@ -391,6 +481,8 @@ impl FileNode {
             deps: Vec::new(),
             also_make: Vec::new(),
             recipe: None,
+            variables: Vec::new(),
+            pat_variables: Vec::new(),
             is_double_colon: false,
             double_colon: Vec::new(),
             renamed: None,
@@ -3556,6 +3648,46 @@ mod tests {
 
         // A fresh file has no recipe (the former null `cmds`).
         assert_eq!(FileNode::new(b"x".to_vec()).recipe, None);
+    }
+
+    /// The idiomatic variable enums' discriminants match the c2rust
+    /// flavor/origin/export constants, and a fresh `FileNode` has no per-target
+    /// or pattern variables.
+    #[test]
+    fn target_variable_enums_match_c_constants() {
+        use crate::variable::{
+            f_append, f_append_value, f_bogus, f_expand, f_recursive, f_shell, f_simple,
+            o_automatic, o_command, o_default, o_env, o_env_override, o_file, o_invalid,
+            o_override, v_default, v_export, v_ifset, v_noexport,
+        };
+
+        assert_eq!(VarFlavor::Bogus as u32, f_bogus);
+        assert_eq!(VarFlavor::Simple as u32, f_simple);
+        assert_eq!(VarFlavor::Recursive as u32, f_recursive);
+        assert_eq!(VarFlavor::Expand as u32, f_expand);
+        assert_eq!(VarFlavor::Append as u32, f_append);
+        assert_eq!(VarFlavor::Shell as u32, f_shell);
+        assert_eq!(VarFlavor::AppendValue as u32, f_append_value);
+
+        assert_eq!(VarOrigin::Default as u32, o_default);
+        assert_eq!(VarOrigin::Environment as u32, o_env);
+        assert_eq!(VarOrigin::File as u32, o_file);
+        assert_eq!(VarOrigin::EnvOverride as u32, o_env_override);
+        assert_eq!(VarOrigin::Command as u32, o_command);
+        assert_eq!(VarOrigin::Override as u32, o_override);
+        assert_eq!(VarOrigin::Automatic as u32, o_automatic);
+        assert_eq!(VarOrigin::Invalid as u32, o_invalid);
+
+        assert_eq!(VarExport::Default as u32, v_default);
+        assert_eq!(VarExport::Export as u32, v_export);
+        assert_eq!(VarExport::NoExport as u32, v_noexport);
+        assert_eq!(VarExport::IfSet as u32, v_ifset);
+
+        // Defaults and a fresh file's (empty) variable sets.
+        assert_eq!(VarFlavor::default(), VarFlavor::Bogus);
+        assert_eq!(VarOrigin::default(), VarOrigin::Default);
+        let f = FileNode::new(b"t".to_vec());
+        assert!(f.variables.is_empty() && f.pat_variables.is_empty());
     }
 
     /// `FileId` is byte-exact: names that differ only outside valid UTF-8 stay
