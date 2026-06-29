@@ -1,7 +1,8 @@
-// Dependency-graph edge types now live in `crate::dep`; re-export them so the
-// many `crate::file::Dep` / `DepNode` / `GoalDep` paths keep resolving while the
-// `*mut`-to-handle migration is in flight.
-pub use crate::dep::{Dep, DepFlags, DepId, DepNode, GoalDep};
+// The idiomatic dependency-graph types live in `crate::dep` (pointer-free);
+// re-export so `crate::file::DepNode` paths keep resolving. The legacy C-ABI
+// `Dep`/`GoalDep` records stay below with the other c2rust FFI structs until
+// the `*mut`-to-handle swap deletes them.
+pub use crate::dep::{DepFlags, DepId, DepNode};
 // The recipe types (idiomatic replacement for the c2rust `Commands`) live in
 // `crate::recipe`; re-export so `crate::file::Recipe` paths keep resolving.
 pub use crate::recipe::{Recipe, RecipeLine, RecipeLineFlags};
@@ -175,6 +176,95 @@ pub(crate) const HASH_SIZE: usize = 32;
 // Mutable runtime state (timestamps, flags, command state) does not
 // contribute to the key, so a file's identity survives updates.
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
+
+/// Legacy c2rust dependency-edge record: a raw-pointer linked list. The
+/// idiomatic, pointer-free replacement is [`DepNode`](crate::dep::DepNode);
+/// this `#[repr(C)]` struct stays only until the `*mut`-to-handle swap removes
+/// the last `*mut Dep` site.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct Dep {
+    pub next: *mut Dep,
+    pub name: *const ::core::ffi::c_char,
+    pub file: *mut File,
+    pub shuf: *mut Dep,
+    pub stem: *const ::core::ffi::c_char,
+    pub flags: ::core::ffi::c_uint,
+    pub changed: bool,
+    pub ignore_mtime: bool,
+    pub staticpattern: bool,
+    pub need_2nd_expansion: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
+}
+impl Default for Dep {
+    fn default() -> Self {
+        Dep {
+            next: ::core::ptr::null_mut(),
+            name: ::core::ptr::null(),
+            file: ::core::ptr::null_mut(),
+            shuf: ::core::ptr::null_mut(),
+            stem: ::core::ptr::null(),
+            flags: 0,
+            changed: false,
+            ignore_mtime: false,
+            staticpattern: false,
+            need_2nd_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+        }
+    }
+}
+
+/// A goal: a top-level target make was asked to build, with error/location
+/// tracking. Legacy c2rust C-ABI record (mirrors `Dep` plus bookkeeping); kept
+/// until the `*mut`-to-handle swap removes the last `*mut GoalDep` site.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct GoalDep {
+    pub next: *mut GoalDep,
+    pub name: *const ::core::ffi::c_char,
+    pub file: *mut File,
+    pub shuf: *mut GoalDep,
+    pub stem: *const ::core::ffi::c_char,
+    pub flags: ::core::ffi::c_uint,
+    pub changed: bool,
+    pub ignore_mtime: bool,
+    pub staticpattern: bool,
+    pub need_2nd_expansion: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
+    pub error: ::core::ffi::c_int,
+    pub floc: Floc,
+}
+impl Default for GoalDep {
+    fn default() -> Self {
+        GoalDep {
+            next: ::core::ptr::null_mut(),
+            name: ::core::ptr::null(),
+            file: ::core::ptr::null_mut(),
+            shuf: ::core::ptr::null_mut(),
+            stem: ::core::ptr::null(),
+            flags: 0,
+            changed: false,
+            ignore_mtime: false,
+            staticpattern: false,
+            need_2nd_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+            error: 0,
+            floc: Floc {
+                filenm: ::core::ptr::null(),
+                lineno: 0,
+                offset: 0,
+            },
+        }
+    }
+}
 
 /// Idiomatic Rust file node for the new dependency graph layer — the file-side
 /// counterpart of [`DepNode`]. Replaces the c2rust [`File`] once all FFI bodies
