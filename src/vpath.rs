@@ -452,9 +452,13 @@ unsafe fn selective_vpath_search(
 
     // If and only if *FILE is NOT a target, accept prospective files that
     // don't exist but are mentioned in a makefile.
-    let not_target = {
-        let f = lookup_file(ctx, file);
-        f.is_null() || (*f).is_target() == 0
+    let not_target = match lookup_file(ctx, cstr_bytes(file)) {
+        Some(id) => {
+            let node = ctx.filenodes.get(id).expect("looked-up file is interned");
+            let g = node.lock().expect("file node lock poisoned");
+            !g.is_target
+        }
+        None => true,
     };
 
     // Split *FILE into a directory prefix and a name-within-directory:
@@ -505,13 +509,14 @@ unsafe fn selective_vpath_search(
         // If *FILE is a target, the file must also be mentioned as a target
         // to be chosen.
         let mut exists = false;
-        let f = lookup_file(ctx, name);
-        if !f.is_null() {
-            exists = not_target || (*f).is_target() != 0;
+        if let Some(id) = lookup_file(ctx, cstr_bytes(name)) {
+            let node = ctx.filenodes.get(id).expect("looked-up file is interned");
+            let g = node.lock().expect("file node lock poisoned");
+            exists = not_target || g.is_target;
             // Preserve the special -W / -o timestamps.
-            if exists && ((*f).last_mtime == OLD_MTIME || (*f).last_mtime == NEW_MTIME) {
+            if exists && (g.last_mtime == OLD_MTIME || g.last_mtime == NEW_MTIME) {
                 if let Some(slot) = mtime_ptr.as_mut() {
-                    *slot = (*f).last_mtime;
+                    *slot = g.last_mtime;
                     mtime_ptr = null_mut();
                 }
             }
