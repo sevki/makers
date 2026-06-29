@@ -1150,6 +1150,17 @@ fn autovar_dep_name_lists() {
 }
 
 #[test]
+fn autovar_dedup_promotes_order_only() {
+    // The `$^`/`$?` dedup map in `set_file_variables` (now an `FxHashMap`
+    // keyed by name, replacing the c2rust `hash_table`) must reproduce make's
+    // promotion rule: when a name appears as both a normal and an order-only
+    // prereq, the order-only duplicate is promoted to normal (its `ignore_mtime`
+    // cleared on both nodes), so it lands in `$^` rather than `$|`. Byte-for-byte
+    // vs. the C oracle pins the dedup + promotion branch.
+    check("autovar-dedup-promote", "87_autovar_dedup_promote.mk", "all", &[]);
+}
+
+#[test]
 fn wildcard_long_names_grow_dirent_buffer() {
     // `$(wildcard)` over a directory of widely varying name lengths drives the
     // glob `read_dirstream` callback's reused dirent scratch buffer — the former

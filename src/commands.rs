@@ -12,10 +12,6 @@ use crate::file::{
     ORDINARY_MTIME_MIN,
 };
 use crate::floc::Floc;
-use crate::hash::{
-    hash_find_item, hash_find_slot, hash_free, hash_init, hash_insert_at, hash_table, is_real_item,
-    jhash_string,
-};
 use crate::job::{child, children, job_slots_used, new_job, reap_children};
 use crate::load::unload_file;
 use crate::make_main::{
@@ -29,12 +25,15 @@ use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use crate::variable::{define_variable_in_set, initialize_file_variables, o_automatic};
 
-use ::core::ffi::{c_char, c_uchar, c_uint, c_ulong, c_ushort, c_void, CStr};
+use ::core::ffi::{c_char, c_uchar, c_uint, c_ushort, c_void, CStr};
 use ::core::ptr::{null, null_mut};
+use ::std::collections::hash_map::Entry;
+
+use rustc_hash::FxHashMap;
 
 use libc::{
-    __errno_location, exit, kill, memcmp, printf, puts, signal, strchr, strcmp, strlen, strstr,
-    unlink, EINTR, ENOENT, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIG_DFL, S_IFMT, S_IFREG,
+    __errno_location, exit, kill, memcmp, printf, puts, signal, strchr, strlen, strstr, unlink,
+    EINTR, ENOENT, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIG_DFL, S_IFMT, S_IFREG,
 };
 
 extern "C" {
@@ -74,26 +73,6 @@ unsafe fn dep_name(d: *const Dep) -> *const c_char {
     } else {
         (*d).file.as_ref().expect("a nameless dep has a file").name
     }
-}
-
-/// Hash a dependency by its name (primary hash for the `$^` dedupe table).
-///
-/// # Safety
-///
-/// `key` must point to a valid `dep` whose name (or file name) is a
-/// NUL-terminated string.
-pub unsafe fn dep_hash_1(key: *const c_void) -> c_ulong {
-    jhash_string(::core::ffi::CStr::from_ptr(dep_name(key as *const dep)).to_bytes()) as c_ulong
-}
-
-/// Secondary hash for [`dep`] keys; always zero, kept for the callback ABI.
-/// The raw key pointer is accepted to match the signature but never inspected.
-pub fn dep_hash_2(_key: *const c_void) -> c_ulong {
-    0
-}
-
-unsafe fn dep_hash_cmp(x: *const c_void, y: *const c_void) -> i32 {
-    strcmp(dep_name(x as *const dep), dep_name(y as *const dep))
 }
 
 /// NUL-terminate a name list that was built into `buf` by writing `len` bytes
@@ -323,38 +302,28 @@ pub unsafe fn set_file_variables(
         bar_value = xrealloc(bar_value as *mut c_void, bar_max) as *mut c_char;
     }
 
-    // `$^` and `$?` must not repeat names, so dedupe deps through a hash
-    // table keyed by name.
-    let mut dep_hash: hash_table = ::core::mem::zeroed();
-    hash_init(
-        &raw mut dep_hash,
-        500,
-        Some(dep_hash_1),
-        Some(dep_hash_2),
-        Some(dep_hash_cmp),
-    );
+    // `$^` and `$?` must not repeat names, so dedupe deps through a map keyed
+    // by name; the stored value is each name's canonical (first-seen) dep.
+    let mut dep_hash: FxHashMap<Box<[u8]>, *mut dep> = FxHashMap::default();
 
     let mut d = file.deps;
     while !d.is_null() {
         if dep_uses_auto_vars(&*d) {
-            let slot = hash_find_slot(&raw mut dep_hash, d as *const c_void)
-                .as_mut()
-                .expect("hash_find_slot always returns a slot");
-            if !is_real_item(*slot) {
-                hash_insert_at(
-                    &raw mut dep_hash,
-                    d as *const c_void,
-                    (&raw mut *slot).cast(),
-                );
-            } else {
-                // Already seen: an order-only duplicate of a normal dep
-                // is promoted to normal, on both nodes.
-                let hd = (*slot as *mut dep)
-                    .as_mut()
-                    .expect("dedupe table stored a null dep");
-                if (*d).ignore_mtime() != hd.ignore_mtime() {
-                    hd.set_ignore_mtime(0);
-                    (*d).set_ignore_mtime(0);
+            let key: Box<[u8]> = CStr::from_ptr(dep_name(d)).to_bytes().into();
+            match dep_hash.entry(key) {
+                Entry::Vacant(slot) => {
+                    slot.insert(d);
+                }
+                Entry::Occupied(slot) => {
+                    // Already seen: an order-only duplicate of a normal dep
+                    // is promoted to normal, on both nodes.
+                    let hd = (*slot.get())
+                        .as_mut()
+                        .expect("dedupe table stored a null dep");
+                    if (*d).ignore_mtime() != hd.ignore_mtime() {
+                        hd.set_ignore_mtime(0);
+                        (*d).set_ignore_mtime(0);
+                    }
                 }
             }
         }
@@ -369,7 +338,10 @@ pub unsafe fn set_file_variables(
     while !d.is_null() {
         // Take only each name's canonical (first-inserted) dep node.
         if dep_uses_auto_vars(&*d)
-            && hash_find_item(&raw mut dep_hash, d as *const c_void) == d as *mut c_void
+            && dep_hash
+                .get(CStr::from_ptr(dep_name(d)).to_bytes())
+                .copied()
+                == Some(d)
         {
             let nm = autovar_dep_name(ctx, CStr::from_ptr(dep_name(d)));
             let c = nm.as_ptr() as *const c_char;
@@ -391,7 +363,6 @@ pub unsafe fn set_file_variables(
         }
         d = (*d).next;
     }
-    hash_free(&raw mut dep_hash, 0);
 
     // Same bridge as for `$+`: each buffer carries a spare terminator byte.
     let caret_filled = cp as usize - caret_value as usize;
@@ -952,7 +923,6 @@ mod hash_2_tests {
     fn secondary_hashes_are_zero_and_ignore_key() {
         let dummy = 0xdead_beef_usize as *const c_void;
         for key in [ptr::null::<c_void>(), dummy] {
-            assert_eq!(crate::commands::dep_hash_2(key), 0);
             assert_eq!(crate::file::file_hash_2(key), 0);
             assert_eq!(crate::variable::variable_hash_2(key), 0);
             assert_eq!(crate::function::a_word_hash_2(key), 0);
