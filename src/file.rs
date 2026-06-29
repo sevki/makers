@@ -2,6 +2,9 @@
 // many `crate::file::Dep` / `DepNode` / `GoalDep` paths keep resolving while the
 // `*mut`-to-handle migration is in flight.
 pub use crate::dep::{Dep, DepFlags, DepId, DepNode, GoalDep};
+// The recipe types (idiomatic replacement for the c2rust `Commands`) live in
+// `crate::recipe`; re-export so `crate::file::Recipe` paths keep resolving.
+pub use crate::recipe::{Recipe, RecipeLine, RecipeLineFlags};
 
 pub use crate::ffi_types::{
     __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
@@ -169,65 +172,6 @@ pub(crate) const HASH_SIZE: usize = 32;
 // Mutable runtime state (timestamps, flags, command state) does not
 // contribute to the key, so a file's identity survives updates.
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
-
-bitflags::bitflags! {
-    /// Per-line recipe modifiers — the idiomatic form of the c2rust
-    /// `lines_flags` byte. Values match `COMMANDS_RECURSE`/`COMMANDS_SILENT`/
-    /// `COMMANDS_NOERROR` so the two representations round-trip bit-for-bit.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub struct RecipeLineFlags: u8 {
-        /// Line recurses into a sub-make (`+`, or it mentions `$(MAKE)`).
-        const RECURSE = 1;
-        /// Line is silent (`@`): not echoed before running.
-        const SILENT = 2;
-        /// Errors on this line are ignored (`-`).
-        const NOERROR = 4;
-    }
-}
-
-/// One logical recipe line: its (still-unexpanded) command text with the
-/// leading `@`/`-`/`+` modifiers parsed off into [`RecipeLineFlags`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecipeLine {
-    pub text: Vec<u8>,
-    pub flags: RecipeLineFlags,
-}
-
-/// A target's recipe — the idiomatic replacement for the c2rust `Commands`
-/// (`*mut Commands` on `File`). Holds the recipe text as written plus, once
-/// `chop_commands` has run, the per-line view that unifies `command_lines`,
-/// `lines_flags`, and `ncommand_lines`. No raw pointers, no `c_char`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recipe {
-    /// Source file the recipe was defined in (raw bytes; `None` if synthetic,
-    /// the former null `fileinfo.filenm`).
-    pub defined_in: Option<Vec<u8>>,
-    /// 1-based line number of the recipe's definition (`fileinfo.lineno`).
-    pub defined_lineno: u64,
-    /// Recipe text as written — logical lines joined by `\n`, before variable
-    /// expansion (the former `commands` C string).
-    pub text: Vec<u8>,
-    /// The chopped per-line view; empty until `chop_commands` populates it.
-    pub lines: Vec<RecipeLine>,
-    /// The recipe-line introducer in effect (`.RECIPEPREFIX`, default TAB).
-    pub recipe_prefix: u8,
-    /// Whether any line recurses into a sub-make — the `any_recurse` bit.
-    pub any_recurse: bool,
-}
-
-impl Default for Recipe {
-    fn default() -> Self {
-        Recipe {
-            defined_in: None,
-            defined_lineno: 0,
-            text: Vec::new(),
-            lines: Vec::new(),
-            // The default introducer is a literal TAB, as in GNU make.
-            recipe_prefix: b'\t',
-            any_recurse: false,
-        }
-    }
-}
 
 /// How a variable's value is expanded — the idiomatic form of the c2rust
 /// `variable_flavor`. Discriminants match the `f_*` constants so the two
