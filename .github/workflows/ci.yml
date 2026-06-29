@@ -102,8 +102,11 @@ jobs:
                   key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
                   restore-keys: cargo-${{ runner.os }}-
 
+            # ORACLE_OUT preserves the pristine sh+cc C make from stage 0 (built
+            # WITHOUT the rust make) as an independent differential-test oracle,
+            # before stage 3 overwrites ./make with one the rust make builds.
             - name: Run ci-test.sh (rust make + C make)
-              run: ./scripts/ci-test.sh --skip-kernel
+              run: ORACLE_OUT="$PWD/c-make-oracle" ./scripts/ci-test.sh --skip-kernel
 
             - name: Upload rust make binary
               uses: actions/upload-artifact@v4
@@ -113,14 +116,25 @@ jobs:
                   if-no-files-found: error
                   retention-days: 7
 
-            # The C make built by ci-test.sh stage 3 (the in-tree ./make) is the
-            # oracle for the differential kernel build and for the coverage /
-            # mutants jobs below — they all download THIS artifact.
+            # Stage-3 C make: built by the rust make. Used by kernel-build-c as
+            # the build driver for the differential kernel build.
             - name: Upload C make binary
               uses: actions/upload-artifact@v4
               with:
                   name: c-make-${{ github.sha }}
                   path: make
+                  if-no-files-found: error
+                  retention-days: 7
+
+            # Independent C make oracle: built by build.sh (sh+cc) BEFORE the
+            # rust make exists. The coverage and mutants jobs install THIS as
+            # ./make so the differential suite scores rust make against an oracle
+            # the candidate did not build — matching the old per-workflow setup.
+            - name: Upload independent C make oracle
+              uses: actions/upload-artifact@v4
+              with:
+                  name: c-make-oracle-${{ github.sha }}
+                  path: c-make-oracle
                   if-no-files-found: error
                   retention-days: 7
 
@@ -276,17 +290,18 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            # Reuse the C make oracle built once in `build` instead of
-            # re-bootstrapping it (no apt deps / autoconf / build.sh needed here).
-            - name: Download C make oracle
+            # Reuse the INDEPENDENT C make oracle built once in `build` (sh+cc,
+            # not by the rust make) instead of re-bootstrapping it — no apt deps
+            # / autoconf / build.sh needed here.
+            - name: Download independent C make oracle
               uses: actions/download-artifact@v4
               with:
-                  name: c-make-${{ github.sha }}
+                  name: c-make-oracle-${{ github.sha }}
                   path: make-bin
             - name: Install C make oracle as ./make
               run: |
-                  chmod +x make-bin/make
-                  cp make-bin/make ./make
+                  chmod +x make-bin/c-make-oracle
+                  cp make-bin/c-make-oracle ./make
 
             - name: Cache cargo registry
               uses: actions/cache@v4
@@ -472,15 +487,17 @@ jobs:
                   # (for --in-diff) can find the merge base.
                   fetch-depth: 0
 
-            - name: Download C make oracle
+            # Independent oracle (sh+cc, not built by the rust make), same as the
+            # coverage job — so mutation runs score against a trustworthy oracle.
+            - name: Download independent C make oracle
               uses: actions/download-artifact@v4
               with:
-                  name: c-make-${{ github.sha }}
+                  name: c-make-oracle-${{ github.sha }}
                   path: make-bin
             - name: Install C make oracle as ./make
               run: |
-                  chmod +x make-bin/make
-                  cp make-bin/make ./make
+                  chmod +x make-bin/c-make-oracle
+                  cp make-bin/c-make-oracle ./make
 
             - name: Cache cargo registry
               uses: actions/cache@v4

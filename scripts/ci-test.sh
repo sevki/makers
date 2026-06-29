@@ -52,6 +52,16 @@ fi
 ./build.sh
 test -f lib/libgnu.a || { echo "build.sh did not produce lib/libgnu.a" >&2; exit 1; }
 
+# Optionally preserve the pristine, sh+cc-built C make as an INDEPENDENT oracle
+# before stage 3 overwrites ./make with one built by the candidate rust make.
+# The differential tests (tests/rs_integration.rs) compare rust make against
+# this oracle, so it must not be produced by the implementation under test.
+# Opt-in via ORACLE_OUT; unset (the local-dev default) is a no-op.
+if [ -n "${ORACLE_OUT:-}" ]; then
+  cp make "$ORACLE_OUT"
+  echo "Saved independent C make oracle to $ORACLE_OUT"
+fi
+
 # ---------------------------------------------------------------------------
 # Stage 1: Build & install the Rust port of make via `cargo install`.
 # ---------------------------------------------------------------------------
