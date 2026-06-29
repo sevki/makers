@@ -225,6 +225,19 @@ crate::id_wireformat!(DepId[HASH_SIZE] <- DepNode);
 // contribute to the key, so a file's identity survives updates.
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
 
+impl FileId {
+    /// Derive the stable identity from a file's raw hash-name bytes. File names
+    /// are arbitrary OS bytes — not necessarily UTF-8 — so identity hashes the
+    /// bytes directly; the `String`-based `From` above (kept for ergonomic
+    /// call sites with a known-UTF-8 name) agrees with this on UTF-8 input.
+    pub fn from_name_bytes(name: &[u8]) -> FileId {
+        let hash = crate::content_hash::blake3_hash(name);
+        let mut bytes = [0u8; HASH_SIZE];
+        bytes.copy_from_slice(&hash.as_bytes()[..HASH_SIZE]);
+        FileId(bytes)
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct DepFlags: u32 {
@@ -261,16 +274,21 @@ pub struct FileNode {
     pub deps: Vec<DepNode>,
     /// Sibling targets built by the same recipe (`also_make`).
     pub also_make: Vec<DepNode>,
-    /// Previous entry in a double-colon chain.
-    pub prev: Option<FileId>,
-    /// Last entry in a double-colon chain.
-    pub last: Option<FileId>,
+    /// Whether this is a double-colon (`::`) target. The c2rust graph marked
+    /// this by a non-null `double_colon` self-link; here it is an explicit flag
+    /// so that a single arena node (keyed by name) represents the whole target.
+    pub is_double_colon: bool,
+    /// The additional double-colon (`::`) entries beyond this head, in order.
+    /// The c2rust graph threaded these as a separate `prev`/`last`/`double_colon`
+    /// linked list of `*mut file`; since every entry shares this file's name (so
+    /// they cannot each be a distinct name-derived [`FileId`]), they live inline
+    /// on the head instead. Each entry carries its own deps/recipe/state; entries
+    /// never nest (their own `double_colon` stays empty).
+    pub double_colon: Vec<FileNode>,
     /// The file this one was renamed to (`rehash_file`).
     pub renamed: Option<FileId>,
     /// Parent for an intermediate file produced by a chain of implicit rules.
     pub parent: Option<FileId>,
-    /// Head of this file's double-colon chain.
-    pub double_colon: Option<FileId>,
     /// Last-known modification time (packed make timestamp).
     pub last_mtime: u64,
     /// Modification time captured before an update began.
@@ -319,11 +337,10 @@ impl FileNode {
             stem: None,
             deps: Vec::new(),
             also_make: Vec::new(),
-            prev: None,
-            last: None,
+            is_double_colon: false,
+            double_colon: Vec::new(),
             renamed: None,
             parent: None,
-            double_colon: None,
             last_mtime: 0,
             mtime_before_update: 0,
             considered: 0,
@@ -355,9 +372,11 @@ impl FileNode {
         }
     }
 
-    /// This file's stable arena identity, derived from its canonical name.
+    /// This file's stable arena identity, derived from its current hash name
+    /// (the key it is interned under — equal to `name` until `rehash` rekeys
+    /// it). Byte-exact, so non-UTF-8 names stay distinct.
     pub fn id(&self) -> FileId {
-        FileId::from(&self.name)
+        FileId::from_name_bytes(self.hname.as_bytes())
     }
 }
 impl Default for GoalDep {
@@ -1094,6 +1113,68 @@ pub unsafe fn enter_file(
     (*new).last = new;
     ctx.files.0.borrow_mut().insert(Box::from(key), new);
     new
+}
+
+/// Byte-exact, allocation-light port of [`normalize_lookup_name`]: collapse any
+/// leading `./` (or `.//`, `././`, …) segments. An all-`./` name canonicalizes
+/// to `"./"`. Operates on the raw name bytes (no NUL, no `c_char`) and returns
+/// the canonical key bytes, so it is usable from safe code.
+fn normalize_lookup_name_bytes(name: &[u8]) -> &[u8] {
+    let n = name.len();
+    let mut pos = 0usize;
+    // Mirror the c2rust loop, which reads `name[pos+2]` against the NUL
+    // terminator: here that "there is a third byte" test is `pos + 2 < n`.
+    while pos + 2 < n && name[pos] == b'.' && stop_set_byte(name[pos + 1], MAP_DIRSEP) {
+        pos += 2;
+        while pos < n && stop_set_byte(name[pos], MAP_DIRSEP) {
+            pos += 1;
+        }
+    }
+    if pos >= n {
+        b"./"
+    } else {
+        &name[pos..]
+    }
+}
+
+/// Idiomatic, fully-safe counterpart of [`lookup_file`] on the [`FileId`] arena
+/// (`ctx.filenodes`): normalize `name` and report the head's `FileId` if it is
+/// interned. No `unsafe`, no raw pointers, no `c_char`.
+pub fn lookup_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<FileId> {
+    let key = normalize_lookup_name_bytes(name);
+    let id = FileId::from_name_bytes(key);
+    ctx.filenodes.get(id).map(|_| id)
+}
+
+/// Idiomatic, fully-safe counterpart of [`enter_file`] on the [`FileId`] arena:
+/// return the head `FileId` for `name`, interning a fresh [`FileNode`] if it is
+/// new. Like `enter_file`'s single-colon path, an existing head is reused and
+/// its `builtin` mark cleared. A brand-new double-colon (`::`) *entry* is added
+/// by [`push_double_colon_entry`] (the rule-recording consumer decides when a
+/// target is double-colon); this mirrors how the c2rust `enter_file` only
+/// appended once the head was already marked double-colon.
+pub fn enter_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> FileId {
+    let key = normalize_lookup_name_bytes(name);
+    let id = FileId::from_name_bytes(key);
+    let name_str = String::from_utf8_lossy(key).into_owned();
+    let node = ctx
+        .filenodes
+        .get_or_insert_with(id, || FileNode::new(name_str));
+    node.lock().expect("file node lock poisoned").builtin = false;
+    id
+}
+
+/// Append a new double-colon (`::`) entry to the target `head`, marking it a
+/// double-colon target. The entry shares `head`'s name and carries its own
+/// deps/recipe/state (see [`FileNode::double_colon`]). No-op if `head` is not
+/// interned.
+pub fn push_double_colon_entry(ctx: &crate::execctx::ExecContext, head: FileId) {
+    if let Some(node) = ctx.filenodes.get(head) {
+        let mut n = node.lock().expect("file node lock poisoned");
+        n.is_double_colon = true;
+        let entry = FileNode::new(n.name.clone());
+        n.double_colon.push(entry);
+    }
 }
 /// # Safety
 ///
@@ -3321,5 +3402,80 @@ mod tests {
                 "SystemTime path diverged at secs={secs}, nsec={nsec}"
             );
         }
+    }
+
+    /// The byte-level name normalizer matches `normalize_lookup_name`'s leading
+    /// `./` collapse on the cases that function's own test exercises.
+    #[test]
+    fn normalize_lookup_name_bytes_collapses_leading_dot_dirs() {
+        initialize_stopchar_map();
+        assert_eq!(normalize_lookup_name_bytes(b"foo.o"), b"foo.o");
+        assert_eq!(normalize_lookup_name_bytes(b"./foo.o"), b"foo.o");
+        assert_eq!(normalize_lookup_name_bytes(b".///foo.o"), b"foo.o");
+        assert_eq!(normalize_lookup_name_bytes(b"././foo.o"), b"foo.o");
+        // An all-"./" name canonicalizes to "./", and "." / "./" are preserved.
+        assert_eq!(normalize_lookup_name_bytes(b"././"), b"./");
+        assert_eq!(normalize_lookup_name_bytes(b"./"), b"./");
+        assert_eq!(normalize_lookup_name_bytes(b"."), b".");
+        // A bare directory separator run is not a leading "./" and is left alone.
+        assert_eq!(normalize_lookup_name_bytes(b"sub/foo.o"), b"sub/foo.o");
+    }
+
+    /// `enter_filenode` interns a fresh node and is idempotent on the name;
+    /// `lookup_filenode` finds it (after normalization) and misses otherwise.
+    #[test]
+    fn enter_and_lookup_filenode_round_trip_on_the_arena() {
+        initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+
+        assert!(lookup_filenode(&ctx, b"foo.o").is_none());
+
+        let id = enter_filenode(&ctx, b"foo.o");
+        assert_eq!(ctx.filenodes.len(), 1);
+        // Re-entering the same (and the "./"-prefixed) name reuses the head.
+        assert_eq!(enter_filenode(&ctx, b"foo.o"), id);
+        assert_eq!(enter_filenode(&ctx, b"./foo.o"), id);
+        assert_eq!(ctx.filenodes.len(), 1);
+
+        assert_eq!(lookup_filenode(&ctx, b"foo.o"), Some(id));
+        assert_eq!(lookup_filenode(&ctx, b"./foo.o"), Some(id));
+        assert!(lookup_filenode(&ctx, b"bar.o").is_none());
+
+        let node = ctx.filenodes.get(id).expect("interned");
+        assert_eq!(node.lock().unwrap().name, "foo.o");
+    }
+
+    /// Double-colon entries live inline on the head (they share its name, so
+    /// they cannot be distinct name-derived `FileId`s) and the head is marked.
+    #[test]
+    fn double_colon_entries_are_inline_on_the_head() {
+        initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+
+        let id = enter_filenode(&ctx, b"all");
+        push_double_colon_entry(&ctx, id);
+        push_double_colon_entry(&ctx, id);
+
+        // Still one arena entry (the head); the chain lives inside it.
+        assert_eq!(ctx.filenodes.len(), 1);
+        let node = ctx.filenodes.get(id).expect("interned");
+        let n = node.lock().unwrap();
+        assert!(n.is_double_colon);
+        assert_eq!(n.double_colon.len(), 2);
+        assert!(n.double_colon.iter().all(|e| e.name == "all"));
+    }
+
+    /// `FileId` is byte-exact: names that differ only outside valid UTF-8 stay
+    /// distinct (the raw-pointer table keyed by bytes; the arena must too).
+    #[test]
+    fn file_id_from_name_bytes_is_byte_exact() {
+        assert_ne!(
+            FileId::from_name_bytes(&[0xff, 0x01]),
+            FileId::from_name_bytes(&[0xff, 0x02])
+        );
+        assert_eq!(
+            FileId::from_name_bytes(b"foo.o"),
+            FileId::from_name_bytes(b"foo.o")
+        );
     }
 }
