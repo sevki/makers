@@ -127,6 +127,9 @@ The only things that still gate a type change:
 - null-check guards / `assert!` / extra branches added solely to silence a
   linter or security scanner around a raw deref (de-pointer it instead)
 - any conversion that *adds* `unsafe` or changes observable behavior
+- monolithic modules: single `.rs` files that have grown to many thousands of
+  lines mixing several unrelated concerns. A 6,000-line module is a code smell,
+  not a constraint to preserve — split it (see **File & Module Size** below)
 
 ## Required Refactors
 - Convert char* + len -> &[u8] or &str
@@ -139,6 +142,40 @@ The only things that still gate a type change:
 - Replace manual allocators with Vec/Box/slab/arena crates
 - Move functions into impl blocks
 - Introduce newtypes for identifiers and units
+- Split oversized modules (see below)
+
+## File & Module Size
+
+c2rust emits one giant `.rs` file per C translation unit, so several modules
+have ballooned to thousands of lines (`main.rs`, `function.rs`, `read.rs`,
+`job.rs`, `file.rs`, …). That is a c2rust artifact, **not** an architecture to
+keep. Oversized files are hard to read, slow to compile, and bury the
+boundaries between concerns — split them as you go.
+
+**Guideline, not a hard gate:**
+- Treat **~1,500 lines** as the point to start looking for a seam, and **~2,500
+  lines** as "this should already have been split." Anything past **~5,000
+  lines is unacceptable** and should be broken up proactively.
+- Size is a smell, not the rule: a cohesive module that is naturally long is
+  fine; a file mixing parsing, evaluation, and I/O is not, at any size. Split
+  by **concern/responsibility**, never by an arbitrary line count.
+
+**How to split (behavior-preserving):**
+- Turn the file into a directory module: `foo.rs` → `foo/mod.rs` (or keep
+  `foo.rs` plus a `foo/` dir on the 2018+ path style already used here) with
+  focused submodules (`foo::parse`, `foo::eval`, `foo::print`, …). Move whole
+  functions/types; do not rewrite them in the same pass.
+- Keep the public API identical: re-export moved items with `pub use` so every
+  caller and the `make` C-ABI surface compiles unchanged. A pure file split must
+  not alter behavior, signatures, or the differential-test results.
+- One module per pass. A split is its own change — do **not** combine it with a
+  c2rust→idiomatic conversion in the same PR, so the diff stays reviewable and
+  the "no behavior change" claim is easy to verify.
+- Carry tests with the code they exercise, and keep the coverage delta `>= 0`.
+
+When a conversion pass lands in a file that is already over the threshold,
+prefer either splitting first (separate PR) or keeping the conversion small so
+the giant file at least stops growing.
 
 ## Migration Strategy
 Phase 1:
