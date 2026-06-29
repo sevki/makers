@@ -286,8 +286,7 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut val: i32;
     ar_parse_name(ctx, name, &raw mut arname, &raw mut memname);
-    let arfile: *mut file;
-    arfile = enter_file(ctx, strcache_add(arname));
+    let arfile: *mut file = enter_file(ctx, strcache_add(arname));
     f_mtime(ctx, arfile, 0);
     val = 1;
     match ar_member_touch(ctx, arname, memname) {

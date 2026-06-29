@@ -601,7 +601,11 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         }
     }
 
-    remove_intermediates(&ctx, 1);
+    // Intermediate cleanup must consult the *live* file table, not this default
+    // context. Reach `main_0`'s `ExecContext` through the `CTX_PTR` borrow
+    // channel; `remove_intermediates` `try_borrow`s the table so an async signal
+    // that interrupted a `borrow_mut` skips cleanup rather than panicking.
+    crate::make_main::with_exec_context(|live_ctx| remove_intermediates(live_ctx, 1));
 
     if sig == SIGQUIT {
         exit(MAKE_TROUBLE);

@@ -3519,11 +3519,10 @@ unsafe fn handle_non_switch_argument(
     } else if *arg.offset(0_i32 as isize) as i32 != 0
         && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint
     {
-        let f: *mut File;
         if strcmp(arg, b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
             return 1;
         }
-        f = enter_file(ctx, strcache_add(expand_command_line_file(ctx, arg)));
+        let f: *mut File = enter_file(ctx, strcache_add(expand_command_line_file(ctx, arg)));
         (*f).set_cmd_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         if goals.is_null() {
             goals = alloc_goaldep();
