@@ -1150,6 +1150,17 @@ fn autovar_dep_name_lists() {
 }
 
 #[test]
+fn filter_literal_hashing_path() {
+    // `$(filter)`/`$(filter-out)` with many literal patterns engages
+    // func_filter_filterout's hashing fast path (literals > 1 and
+    // literals * word_count >= 10), now backed by an FxHashMap keyed by word
+    // content instead of the c2rust gnulib hash_table. Repeated words build the
+    // same-content `chain` that a matched literal walks. Byte-for-byte vs the C
+    // oracle pins the dedupe-chain semantics.
+    check("filter-hashing", "88_filter_hashing.mk", "all", &[]);
+}
+
+#[test]
 fn autovar_dedup_promotes_order_only() {
     // The `$^`/`$?` dedup map in `set_file_variables` (now an `FxHashMap`
     // keyed by name, replacing the c2rust `hash_table`) must reproduce make's

@@ -140,9 +140,8 @@ use crate::expand::{
     expanding_var, install_variable_buffer, restore_variable_buffer, variable_buffer_output,
 };
 pub use crate::file::nameseq;
-use crate::hash::{
-    hash_find_item, hash_free, hash_init, hash_insert, hash_load, jhash, jhash_string,
-};
+use crate::hash::{hash_find_item, hash_init, hash_insert, hash_load, jhash};
+use rustc_hash::FxHashMap;
 pub use crate::job::childbase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
 use crate::make_main::{db_level, starting_directory, stopchar_map};
@@ -1426,42 +1425,6 @@ unsafe fn func_let(
     pop_variable_scope();
     o.offset(strlen(o) as isize)
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn a_word_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut _result_: ::core::ffi::c_ulong = 0;
-    let _key_ = ::core::ffi::CStr::from_ptr((*(key as *const a_word)).str_0);
-    _result_ = _result_.wrapping_add(jhash_string(_key_.to_bytes()) as ::core::ffi::c_ulong);
-    _result_
-}
-/// Secondary hash for the word table; always zero, kept for the callback ABI.
-/// The raw key pointer is accepted to match the signature but never inspected.
-pub fn a_word_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut _result_: ::core::ffi::c_ulong = 0;
-    _result_
-}
-unsafe fn a_word_hash_cmp(x: *const ::core::ffi::c_void, y: *const ::core::ffi::c_void) -> i32 {
-    let ax: *const a_word = x as *const a_word;
-    let ay: *const a_word = y as *const a_word;
-    if (*ax).length != (*ay).length {
-        return if (*ax).length > (*ay).length {
-            1
-        } else {
-            -1_i32
-        };
-    }
-    if (*ax).str_0 == (*ay).str_0 {
-        0
-    } else {
-        memcmp(
-            (*ax).str_0 as *const ::core::ffi::c_void,
-            (*ay).str_0 as *const ::core::ffi::c_void,
-            (*ax).length as size_t,
-        )
-    }
-}
 unsafe fn func_filter_filterout(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
@@ -1476,21 +1439,12 @@ unsafe fn func_filter_filterout(
     let mut pp: *mut a_pattern;
     let mut pat_count: ::core::ffi::c_ulong = 0;
     let mut word_count: ::core::ffi::c_ulong = 0;
-    let mut a_word_table: hash_table = hash_table {
-        ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
-        ht_hash_1: None,
-        ht_hash_2: None,
-        ht_compare: None,
-        ht_size: 0,
-        ht_capacity: 0,
-        ht_fill: 0,
-        ht_empty_slots: 0,
-        ht_collisions: 0,
-        ht_lookups: 0,
-        ht_rehashes: 0,
-        ht_in_map: [0; 1],
-        c2rust_padding: [0; 3],
-    };
+    // Word lookup table for the literal-pattern fast path, built only when
+    // `hashing` (see below). Keyed by word content bytes; the value is the head
+    // of a `chain` linking every word with identical content, so a matched
+    // literal pattern can mark them all. Replaces the c2rust gnulib `hash_table`
+    // plus the `a_word_hash_1/2/cmp` callbacks.
+    let mut a_word_table: FxHashMap<Box<[u8]>, *mut a_word> = FxHashMap::default();
     let is_filter: i32 = (*funcname.offset(
         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize).wrapping_sub(1_usize)
             as isize,
@@ -1569,18 +1523,15 @@ unsafe fn func_filter_filterout(
     hashing =
         (literals > 1 && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10) as i32;
     if hashing != 0 {
-        hash_init(
-            &raw mut a_word_table,
-            word_count,
-            Some(a_word_hash_1),
-            Some(a_word_hash_2),
-            Some(a_word_hash_cmp),
-        );
+        a_word_table.reserve(word_count as usize);
         wp = words;
         while wp < word_end {
-            let owp: *mut a_word =
-                hash_insert(&raw mut a_word_table, wp as *const ::core::ffi::c_void) as *mut a_word;
-            if !owp.is_null() {
+            let key: Box<[u8]> =
+                ::core::slice::from_raw_parts((*wp).str_0 as *const u8, (*wp).length).into();
+            // Insert replaces any equal-content word and returns the previous
+            // head, which the new word then chains to (matching the C
+            // `hash_insert`: stored slot holds the latest, `chain` links back).
+            if let Some(owp) = a_word_table.insert(key, wp) {
                 (*wp).chain = owp;
             }
             wp = wp.offset(1_i32 as isize);
@@ -1595,21 +1546,15 @@ unsafe fn func_filter_filterout(
                 wp = wp.offset(1_i32 as isize);
             }
         } else if hashing != 0 {
-            let mut a_word_key: a_word = a_word {
-                chain: ::core::ptr::null_mut::<a_word>(),
-                str_0: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                length: 0,
-                matched: 0,
-            };
-            a_word_key.str_0 = (*pp).str_0;
-            a_word_key.length = (*pp).length;
-            wp = hash_find_item(
-                &raw mut a_word_table,
-                &raw mut a_word_key as *const ::core::ffi::c_void,
-            ) as *mut a_word;
-            while let Some(wpref) = wp.as_mut() {
-                wpref.matched |= 1;
-                wp = wpref.chain;
+            // Mark every word whose content equals this literal pattern: look up
+            // the chain head by the pattern's bytes and walk the `chain`.
+            let key = ::core::slice::from_raw_parts((*pp).str_0 as *const u8, (*pp).length);
+            if let Some(&head) = a_word_table.get(key) {
+                wp = head;
+                while let Some(wpref) = wp.as_mut() {
+                    wpref.matched |= 1;
+                    wp = wpref.chain;
+                }
             }
         } else {
             wp = words;
@@ -1641,9 +1586,6 @@ unsafe fn func_filter_filterout(
     }
     if doneany != 0 {
         o = o.offset(-1_i32 as isize);
-    }
-    if hashing != 0 {
-        hash_free(&raw mut a_word_table, 0);
     }
     o
 }
