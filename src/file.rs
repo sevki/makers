@@ -297,7 +297,6 @@ impl Default for Recipe {
 /// `variable_flavor`. Discriminants match the `f_*` constants so the two
 /// representations round-trip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u32)]
 pub enum VarFlavor {
     /// `f_bogus` — undefined/placeholder.
     #[default]
@@ -319,7 +318,6 @@ pub enum VarFlavor {
 /// Where a variable came from — the idiomatic form of `variable_origin`.
 /// Discriminants match the `o_*` constants and order by precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u32)]
 pub enum VarOrigin {
     /// `o_default` — make's built-in default.
     #[default]
@@ -342,7 +340,6 @@ pub enum VarOrigin {
 
 /// A variable's export disposition — the idiomatic form of `variable_export`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u32)]
 pub enum VarExport {
     /// `v_default` — follow the global export rules.
     #[default]
