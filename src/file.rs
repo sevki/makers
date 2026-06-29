@@ -1324,79 +1324,98 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
     if sig != 0 && crate::make_main::opt_just_print() {
         return;
     }
-    // `try_borrow`: this runs from the async `fatal_error_signal` path, which may
-    // have interrupted a `borrow_mut` of the table. Best-effort — skip cleanup
-    // rather than panic if the table is momentarily borrowed (the former global
-    // raw table just raced here).
-    let Ok(table) = ctx.files.0.try_borrow() else {
-        return;
+    // Snapshot the intermediate candidates from the arena: lock the map, grab the
+    // `Arc` handles, release the map lock, then read each node's flags/name under
+    // its own lock and drop the guard before acting. The former global raw table
+    // is gone, so the async-signal race the c2rust `try_borrow` guarded against no
+    // longer applies; the arena's own `Mutex` serialises access.
+    let nodes: Vec<::std::sync::Arc<::std::sync::Mutex<FileNode>>> = {
+        let Ok(map) = ctx.filenodes.0.lock() else {
+            return;
+        };
+        map.values().map(::std::sync::Arc::clone).collect()
     };
-    let intermediates: Vec<*mut file> = table.values().copied().collect();
-    drop(table);
-    for f in intermediates {
+    for node in nodes {
+        // Copy out the flags and name under the node lock, then drop the guard so
+        // the FFI calls below never run while holding it.
+        let (intermediate, dontcare, precious, secondary, notintermediate, cmd_target, status_none, name) = {
+            let n = node.lock().expect("file node lock poisoned");
+            (
+                n.intermediate,
+                n.dontcare,
+                n.precious,
+                n.secondary,
+                n.notintermediate,
+                n.cmd_target,
+                n.update_status != us_none,
+                n.name.clone(),
+            )
+        };
+        if intermediate
+            && (dontcare || !precious)
+            && !secondary
+            && !notintermediate
+            && !cmd_target
         {
-            if (*f).intermediate() as i32 != 0
-                && ((*f).dontcare() as i32 != 0 || (*f).precious() == 0)
-                && (*f).secondary() == 0
-                && (*f).notintermediate() == 0
-                && (*f).cmd_target() == 0
-            {
-                let status: i32;
-                if (*f).update_status() as i32 != us_none as i32 {
-                    // ENOENT from unlink means the file was already gone: skip the
-                    // diagnostic/bookkeeping below (the C code `continue`d here).
-                    let skip: bool;
-                    if crate::make_main::opt_just_print() {
-                        status = 0;
-                        skip = false;
+            let status: i32;
+            if status_none {
+                // NUL-terminate the name for the C FFI calls below.
+                let mut cname = name.clone();
+                cname.push(0);
+                let cname_ptr = cname.as_ptr() as *const ::core::ffi::c_char;
+                // ENOENT from unlink means the file was already gone: skip the
+                // diagnostic/bookkeeping below (the C code `continue`d here).
+                let skip: bool;
+                if crate::make_main::opt_just_print() {
+                    status = 0;
+                    skip = false;
+                } else {
+                    status = unlink(cname_ptr);
+                    skip = status < 0 && *__errno_location() == ENOENT;
+                }
+                if !skip && !dontcare {
+                    if sig != 0 {
+                        error(
+                            ctx,
+                            ::core::ptr::null_mut::<Floc>(),
+                            name.len() as size_t,
+                            b"*** deleting intermediate file '%s'\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[FmtArg::Str(cname_ptr)],
+                        );
                     } else {
-                        status = unlink((*f).name);
-                        skip = status < 0 && *__errno_location() == ENOENT;
-                    }
-                    if !skip && !(*f).dontcare {
-                        if sig != 0 {
-                            error(
-                                ctx,
-                                ::core::ptr::null_mut::<Floc>(),
-                                strlen((*f).name) as size_t,
-                                b"*** deleting intermediate file '%s'\0" as *const u8
+                        if doneany == 0 && 0x1_i32 & db_level != 0 {
+                            printf(
+                                b"Removing intermediate files...\n\0" as *const u8
                                     as *const ::core::ffi::c_char,
-                                &[FmtArg::Str(((*f).name) as *const ::core::ffi::c_char)],
                             );
-                        } else {
-                            if doneany == 0 && 0x1_i32 & db_level != 0 {
-                                printf(
-                                    b"Removing intermediate files...\n\0" as *const u8
-                                        as *const ::core::ffi::c_char,
-                                );
-                                fflush(stdout);
-                            }
-                            if !crate::make_main::opt_run_silent() {
-                                if doneany == 0 {
-                                    fputs(
-                                        b"rm \0" as *const u8 as *const ::core::ffi::c_char,
-                                        stdout,
-                                    );
-                                    doneany = 1;
-                                } else {
-                                    putchar(' ' as i32);
-                                }
-                                fputs((*f).name, stdout);
-                                fflush(stdout);
-                            }
-                        }
-                        if status < 0 {
-                            if doneany != 0 {
-                                fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
-                            }
                             fflush(stdout);
-                            perror_with_name(
-                                ctx,
-                                b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
-                                (*f).name,
-                            );
-                            doneany = 0;
                         }
+                        if !crate::make_main::opt_run_silent() {
+                            if doneany == 0 {
+                                fputs(
+                                    b"rm \0" as *const u8 as *const ::core::ffi::c_char,
+                                    stdout,
+                                );
+                                doneany = 1;
+                            } else {
+                                putchar(' ' as i32);
+                            }
+                            fputs(cname_ptr, stdout);
+                            fflush(stdout);
+                        }
+                    }
+                    if status < 0 {
+                        if doneany != 0 {
+                            fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
+                        }
+                        fflush(stdout);
+                        perror_with_name(
+                            ctx,
+                            b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
+                            cname_ptr,
+                        );
+                        doneany = 0;
                     }
                 }
             }
@@ -2507,8 +2526,35 @@ pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_targets(ctx: &crate::execctx::ExecContext) {
-    ctx.files
-        .for_each(|f| unsafe { print_target(f as *const ::core::ffi::c_void) });
+    // Snapshot the nodes from the arena, then print each over its `FileNode`
+    // fields (the c2rust `print_target` walker is dead once the store is the
+    // arena). Lock the map, grab the `Arc` handles, release the map lock, then
+    // read `is_target`/`suffix`/`name` under each node's own lock.
+    let nodes: Vec<::std::sync::Arc<::std::sync::Mutex<FileNode>>> = ctx
+        .filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .values()
+        .map(::std::sync::Arc::clone)
+        .collect();
+    for node in nodes {
+        let name = {
+            let n = node.lock().expect("file node lock poisoned");
+            if !n.is_target || n.suffix {
+                continue;
+            }
+            n.name.clone()
+        };
+        // Skip built-in special targets, whose names are a dot followed by one
+        // or more all-uppercase letters (e.g. `.SUFFIXES`, `.PHONY`).
+        if name.len() >= 2 && name[0] == b'.' && name[1..].iter().all(u8::is_ascii_uppercase) {
+            continue;
+        }
+        let mut cname = name;
+        cname.push(0);
+        puts(cname.as_ptr() as *const ::core::ffi::c_char);
+    }
 }
 /// Report (via `error`) when a single file/dep field is set but not interned
 /// in the strcache. A null/empty field, or one already cached, is silent.
@@ -2577,8 +2623,30 @@ pub unsafe fn build_target_list(
     mut value: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     static mut last_targ_count: ::core::ffi::c_ulong = 0;
-    let fill = ctx.files.0.borrow().len() as ::core::ffi::c_ulong;
+    // Snapshot the targets from the arena: lock the map, grab `Arc` handles,
+    // release the map lock, then read each node's `is_target`/`name` under its
+    // own lock and drop the guard.
+    let nodes: Vec<::std::sync::Arc<::std::sync::Mutex<FileNode>>> = ctx
+        .filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .values()
+        .map(::std::sync::Arc::clone)
+        .collect();
+    let fill = nodes.len() as ::core::ffi::c_ulong;
     if fill != last_targ_count {
+        let target_names: Vec<Vec<u8>> = nodes
+            .iter()
+            .filter_map(|node| {
+                let n = node.lock().expect("file node lock poisoned");
+                if n.is_target {
+                    Some(n.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
         let mut max: size_t = (strlen(value) as size_t)
             .wrapping_div(500)
             .wrapping_add(1)
@@ -2588,35 +2656,29 @@ pub unsafe fn build_target_list(
         value = xrealloc(value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
         p = value;
         len = 0;
-        let targets: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
-        for f in targets {
-            {
-                if (*f).is_target() == 0 {
-                    continue;
-                }
-                let l: size_t = strlen((*f).name) as size_t;
-                len = len.wrapping_add(l.wrapping_add(1));
-                if len > max {
-                    let off: size_t = p.offset_from(value) as ::core::ffi::c_long as size_t;
-                    max = max.wrapping_add(
-                        l.wrapping_add(1)
-                            .wrapping_div(500)
-                            .wrapping_add(1)
-                            .wrapping_mul(500),
-                    );
-                    value = xrealloc(value as *mut ::core::ffi::c_void, max)
-                        as *mut ::core::ffi::c_char;
-                    p = value.offset(off as isize) as *mut ::core::ffi::c_char;
-                }
-                p = mempcpy(
-                    p as *mut ::core::ffi::c_void,
-                    (*f).name as *const ::core::ffi::c_void,
-                    l as size_t,
-                ) as *mut ::core::ffi::c_char;
-                let fresh4 = p;
-                p = p.offset(1_i32 as isize);
-                *fresh4 = ' ' as i32 as ::core::ffi::c_char;
+        for name in &target_names {
+            let l: size_t = name.len() as size_t;
+            len = len.wrapping_add(l.wrapping_add(1));
+            if len > max {
+                let off: size_t = p.offset_from(value) as ::core::ffi::c_long as size_t;
+                max = max.wrapping_add(
+                    l.wrapping_add(1)
+                        .wrapping_div(500)
+                        .wrapping_add(1)
+                        .wrapping_mul(500),
+                );
+                value =
+                    xrealloc(value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
+                p = value.offset(off as isize) as *mut ::core::ffi::c_char;
             }
+            p = mempcpy(
+                p as *mut ::core::ffi::c_void,
+                name.as_ptr() as *const ::core::ffi::c_void,
+                l as size_t,
+            ) as *mut ::core::ffi::c_char;
+            let fresh4 = p;
+            p = p.offset(1_i32 as isize);
+            *fresh4 = ' ' as i32 as ::core::ffi::c_char;
         }
         *p.offset(-(1_i32 as isize)) = 0;
         last_targ_count = fill;

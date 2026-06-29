@@ -2195,13 +2195,13 @@ unsafe fn main_0(
     // The file table is populated during parsing and consulted throughout the
     // build, so carry it across the rebuild just like the directory cache;
     // otherwise every file entered while reading makefiles would be lost.
-    let carried_files = ::core::mem::take(&mut ctx.files);
+    let carried_files = ::core::mem::take(&mut ctx.filenodes);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
         read_dirstream_buf: carried_read_dirstream_buf,
         read_dirstream_bufsz: carried_read_dirstream_bufsz,
-        files: carried_files,
+        filenodes: carried_files,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
