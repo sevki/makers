@@ -59,6 +59,21 @@ macro_rules! id_wireformat {
                 state.update(&self.0);
             }
         }
+
+        impl $ident {
+            #[doc = concat!(
+                "Derive a `", stringify!($ident),
+                "` from raw bytes: the first ", stringify!($size),
+                " bytes of their BLAKE3 hash. Byte-exact, so inputs that are \
+                 not valid UTF-8 stay distinct."
+            )]
+            pub fn from_bytes(bytes: &[u8]) -> Self {
+                let hash = $crate::content_hash::blake3_hash(bytes);
+                let mut out = [0u8; $size];
+                out.copy_from_slice(&hash.as_bytes()[..$size]);
+                $ident(out)
+            }
+        }
     };
 
     // ------------------------------------------------------------------ //

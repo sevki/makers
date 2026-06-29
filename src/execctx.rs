@@ -702,12 +702,12 @@ mod tests {
         let arena = FileArena::default();
         assert!(arena.is_empty());
 
-        let id = arena.intern(FileNode::new("foo.o".to_string()));
+        let id = arena.intern(FileNode::new(b"foo.o".to_vec()));
         assert_eq!(arena.len(), 1);
-        assert_eq!(id, FileNode::new("foo.o".to_string()).id());
+        assert_eq!(id, FileNode::new(b"foo.o".to_vec()).id());
         assert_eq!(
             arena.get(id).expect("interned node present").lock().unwrap().name,
-            "foo.o"
+            b"foo.o"
         );
 
         // A real clone: same underlying node, shared by `Arc`.
