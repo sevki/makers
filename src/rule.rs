@@ -364,7 +364,7 @@ pub unsafe fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
         }
         let slen = strlen(dep_name(d));
         memcpy(rulename.cast(), dep_name(d).cast(), slen + 1);
-        if let Some(f) = lookup_file(rulename).as_mut() {
+        if let Some(f) = lookup_file(ctx, rulename).as_mut() {
             let has_prereqs = !f.deps.is_null();
             if let Some(cmds) = f.cmds.as_mut() {
                 if suffix_rule_applies(ctx, &cmds.fileinfo, has_prereqs) {
@@ -383,7 +383,7 @@ pub unsafe fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
                 ))
             {
                 memcpy(rulename.add(slen).cast(), dep_name(d2).cast(), s2len + 1);
-                if let Some(f) = lookup_file(rulename).as_mut() {
+                if let Some(f) = lookup_file(ctx, rulename).as_mut() {
                     let has_prereqs = !f.deps.is_null();
                     if let Some(cmds) = f.cmds.as_mut() {
                         // Under --posix, prerequisites on a suffix rule are silently

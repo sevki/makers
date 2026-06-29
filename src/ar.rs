@@ -245,9 +245,9 @@ pub unsafe fn ar_member_date(
     let memname = parsed.memname();
     let val: intmax_t;
     let mut arfile: *mut file;
-    arfile = lookup_file(arname);
+    arfile = lookup_file(ctx, arname);
     if arfile.is_null() && file_exists_p(ctx, arname) != 0 {
-        arfile = enter_file(strcache_add(arname));
+        arfile = enter_file(ctx, strcache_add(arname));
     }
     if !arfile.is_null() {
         f_mtime(ctx, arfile, 0);
@@ -287,7 +287,7 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
     let mut val: i32;
     ar_parse_name(ctx, name, &raw mut arname, &raw mut memname);
     let arfile: *mut file;
-    arfile = enter_file(strcache_add(arname));
+    arfile = enter_file(ctx, strcache_add(arname));
     f_mtime(ctx, arfile, 0);
     val = 1;
     match ar_member_touch(ctx, arname, memname) {

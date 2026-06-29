@@ -453,7 +453,7 @@ unsafe fn selective_vpath_search(
     // If and only if *FILE is NOT a target, accept prospective files that
     // don't exist but are mentioned in a makefile.
     let not_target = {
-        let f = lookup_file(file);
+        let f = lookup_file(ctx, file);
         f.is_null() || (*f).is_target() == 0
     };
 
@@ -505,7 +505,7 @@ unsafe fn selective_vpath_search(
         // If *FILE is a target, the file must also be mentioned as a target
         // to be chosen.
         let mut exists = false;
-        let f = lookup_file(name);
+        let f = lookup_file(ctx, name);
         if !f.is_null() {
             exists = not_target || (*f).is_target() != 0;
             // Preserve the special -W / -o timestamps.

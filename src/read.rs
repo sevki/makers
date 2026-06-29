@@ -362,7 +362,7 @@ pub unsafe fn read_all_makefiles(
             p_0 = &raw const default_makefiles as *const *const ::core::ffi::c_char;
             while !(*p_0).is_null() {
                 let d_0: *mut GoalDep = alloc_goaldep();
-                (*d_0).file = enter_file(strcache_add(*p_0));
+                (*d_0).file = enter_file(ctx, strcache_add(*p_0));
                 (*d_0).flags = RM_DONTCARE as ::core::ffi::c_uint as ::core::ffi::c_uint;
                 (*d_0).next = read_files;
                 read_files = d_0;
@@ -526,9 +526,9 @@ unsafe fn eval_makefile(
         }
     }
     filename = strcache_add(filename);
-    (*deps).file = lookup_file(filename);
+    (*deps).file = lookup_file(ctx, filename);
     if (*deps).file.is_null() {
-        (*deps).file = enter_file(filename);
+        (*deps).file = enter_file(ctx, filename);
     }
     filename = (*(*deps).file).name;
     (*deps).flags = flags as ::core::ffi::c_uint as ::core::ffi::c_uint;
@@ -1378,9 +1378,9 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     );
                                 }
                                 name = file.name;
-                                f = lookup_file(name);
+                                f = lookup_file(ctx, name);
                                 if f.is_null() {
-                                    f = enter_file(name);
+                                    f = enter_file(ctx, name);
                                 }
                                 f.as_mut()
                                     .expect("eval: null loaded file")
@@ -2323,9 +2323,9 @@ unsafe fn record_target_var(
             }
         } else {
             let mut f: *mut File;
-            f = lookup_file(name);
+            f = lookup_file(ctx, name);
             if f.is_null() {
-                f = enter_file(strcache_add(name));
+                f = enter_file(ctx, strcache_add(name));
             } else if let Some(fref) = f.as_ref().filter(|x| !x.double_colon.is_null()) {
                 f = fref.double_colon;
             }
@@ -2626,7 +2626,7 @@ unsafe fn record_files(
             deps = split_prereqs(ctx, depstr);
             free(depstr as *mut ::core::ffi::c_void);
             if pattern.is_null() && implicit_percent.is_null() {
-                deps = enter_prereqs(deps, ::core::ptr::null::<::core::ffi::c_char>());
+                deps = enter_prereqs(ctx, deps, ::core::ptr::null::<::core::ffi::c_char>());
             }
         }
     }
@@ -2699,7 +2699,7 @@ unsafe fn record_files(
             };
         }
         if two_colon == 0 {
-            f = enter_file(strcache_add(name));
+            f = enter_file(ctx, strcache_add(name));
             if !(*f).double_colon.is_null() {
                 fatal(
                     ctx,
@@ -2749,7 +2749,7 @@ unsafe fn record_files(
                 (*f).deps = ::core::ptr::null_mut::<Dep>();
             }
         } else {
-            f = lookup_file(name);
+            f = lookup_file(ctx, name);
             if let Some(fref) = f
                 .as_ref()
                 .filter(|x| x.is_target() as i32 != 0 && x.double_colon.is_null())
@@ -2763,7 +2763,7 @@ unsafe fn record_files(
         &[FmtArg::Str((fref.name) as *const ::core::ffi::c_char)],
     );
             }
-            f = enter_file(strcache_add(name));
+            f = enter_file(ctx, strcache_add(name));
             if (*f).double_colon.is_null() {
                 (*f).double_colon = f;
             }
@@ -2797,7 +2797,7 @@ unsafe fn record_files(
             );
             if let Some(thisr) = this.as_mut() {
                 if thisr.need_2nd_expansion() == 0 {
-                    this = enter_prereqs(this, fr.stem);
+                    this = enter_prereqs(ctx, this, fr.stem);
                 } else {
                     thisr.stem = fr.stem;
                 }

@@ -1746,9 +1746,9 @@ pub unsafe fn f_mtime(
         let member_date: time_t;
         ar_parse_name(ctx, (*file).name, &raw mut arname, &raw mut memname);
         memmtime = name_mtime(ctx, memname);
-        arfile = lookup_file(arname);
+        arfile = lookup_file(ctx, arname);
         if arfile.is_null() {
-            arfile = enter_file(strcache_add(arname));
+            arfile = enter_file(ctx, strcache_add(arname));
         }
         mtime = f_mtime(ctx, arfile, search);
         // `arfile` is non-null here; follow the (non-null) renamed links via a

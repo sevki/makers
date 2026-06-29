@@ -302,11 +302,6 @@ use crate::expand::{
 };
 use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
-use crate::hash::{
-    hash_delete, hash_deleted_item, hash_dump, hash_find_item, hash_find_slot, hash_init,
-    hash_insert_at, hash_map, hash_map_arg, hash_print_stats, is_real_item, jhash_string,
-    table_slots,
-};
 use crate::make_main::{
     db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP,
 };
@@ -873,50 +868,10 @@ pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
 pub const OLD_MTIME: i32 = 2;
 pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn file_hash_1(key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut _result_: ::core::ffi::c_ulong = 0;
-    let _key_ = ::core::ffi::CStr::from_ptr((*(key as *const file)).hname);
-    _result_ = _result_.wrapping_add(jhash_string(_key_.to_bytes()) as ::core::ffi::c_ulong);
-    _result_
-}
-/// Secondary hash for file keys; always zero, kept for the callback ABI.
-/// The raw key pointer is accepted to match the signature but never inspected.
-pub fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut _result_: ::core::ffi::c_ulong = 0;
-    _result_
-}
-unsafe fn file_hash_cmp(x: *const ::core::ffi::c_void, y: *const ::core::ffi::c_void) -> i32 {
-    let xh = (x as *const file)
-        .as_ref()
-        .map_or(::core::ptr::null(), |xf| xf.hname);
-    let yh = (y as *const file)
-        .as_ref()
-        .map_or(::core::ptr::null(), |yf| yf.hname);
-    if xh == yh {
-        0
-    } else {
-        strcmp(xh, yh)
-    }
-}
-static mut files: hash_table = hash_table {
-    ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
-    ht_hash_1: None,
-    ht_hash_2: None,
-    ht_compare: None,
-    ht_size: 0,
-    ht_capacity: 0,
-    ht_fill: 0,
-    ht_empty_slots: 0,
-    ht_collisions: 0,
-    ht_lookups: 0,
-    ht_rehashes: 0,
-    ht_in_map: [0; 1],
-    c2rust_padding: [0; 3],
-};
+// The file table lives on `ExecContext` (`ctx.files`, an idiomatic
+// `FxHashMap` keyed by hash-name bytes); the former `static mut files`
+// gnulib `hash_table` and its `file_hash_1`/`file_hash_2`/`file_hash_cmp`
+// callbacks are gone.
 
 #[derive(Copy, Clone)]
 struct RehashedFile {
@@ -955,23 +910,29 @@ unsafe fn normalize_lookup_name(name: *const ::core::ffi::c_char) -> *const ::co
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn lookup_file(name: *const ::core::ffi::c_char) -> *mut file {
-    let f: *mut file;
+pub unsafe fn lookup_file(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+) -> *mut file {
     let name = normalize_lookup_name(name);
-    let mut file_key = File::default();
-    file_key.hname = name;
-    f = hash_find_item(
-        &raw mut files,
-        &raw mut file_key as *const ::core::ffi::c_void,
-    ) as *mut File;
-    f
+    // The file table is keyed by the hash-name bytes; an absent key is the
+    // former "no real item in the slot" (null) result.
+    let key = CStr::from_ptr(name).to_bytes();
+    ctx.files
+        .0
+        .borrow()
+        .get(key)
+        .copied()
+        .unwrap_or(::core::ptr::null_mut())
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
-    let mut file_key = File::default();
+pub unsafe fn enter_file(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+) -> *mut file {
     if name.as_ref().is_some_and(|c| *c as i32 != 0) {
     } else {
         panic!("assertion failed: *name != '\'");
@@ -980,35 +941,31 @@ pub unsafe fn enter_file(name: *const ::core::ffi::c_char) -> *mut file {
     } else {
         panic!("assertion failed: ! verify_flag || strcache_iscached (name)");
     };
-    file_key.hname = name;
-    let file_slot: *mut *mut File = hash_find_slot(
-        &raw mut files,
-        &raw mut file_key as *const ::core::ffi::c_void,
-    ) as *mut *mut File;
-    let f: *mut File = *file_slot;
-    if !(f.is_null() || std::ptr::eq(f as *mut ::core::ffi::c_void, hash_deleted_item))
-        && (*f).double_colon.is_null()
-    {
-        (*f).builtin = false;
-        return f;
-    }
-    let new = boxed_file(name);
-    if f.is_null() || f as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void
-    {
-        (*new).last = new;
-        hash_insert_at(
-            &raw mut files,
-            new as *const ::core::ffi::c_void,
-            file_slot as *const ::core::ffi::c_void,
-        );
-    } else {
+    // The table stores each name's chain *head* (the first-entered `file`),
+    // keyed by the hash-name bytes; double-colon entries link off that head via
+    // `double_colon`/`last`/`prev` and never get their own table slot.
+    let key = CStr::from_ptr(name).to_bytes();
+    let head = ctx.files.0.borrow().get(key).copied();
+    if let Some(f) = head {
+        if (*f).double_colon.is_null() {
+            // Existing single-colon file: reuse it.
+            (*f).builtin = false;
+            return f;
+        }
+        // Existing double-colon head: append a new entry to its chain.
+        let new = boxed_file(name);
         (*new).double_colon = f;
         (*f).last
             .as_mut()
             .expect("a double-colon chain head has a last entry")
             .prev = new;
         (*f).last = new;
+        return new;
     }
+    // Brand-new name: this file becomes the chain head in the table.
+    let new = boxed_file(name);
+    (*new).last = new;
+    ctx.files.0.borrow_mut().insert(Box::from(key), new);
     new
 }
 /// # Safety
@@ -1020,7 +977,6 @@ pub unsafe fn rehash_file(
     mut from_file: *mut file,
     to_hname: *const ::core::ffi::c_char,
 ) {
-    let mut file_key = File::default();
     let to_file: *mut file;
     let mut f: *mut file;
     // Callers always pass a live file here; bind a checked reference so the
@@ -1029,15 +985,11 @@ pub unsafe fn rehash_file(
         .as_mut()
         .expect("rehash_file called with null from_file");
     from_ref.set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    file_key.hname = to_hname;
-    if file_hash_cmp(
-        from_file as *const ::core::ffi::c_void,
-        &raw mut file_key as *const ::core::ffi::c_void,
-    ) == 0
-    {
+    // Already keyed under `to_hname`? Nothing to rehash.
+    if CStr::from_ptr(from_ref.hname).to_bytes() == CStr::from_ptr(to_hname).to_bytes() {
         return;
     }
-    file_key.hname = from_ref.hname;
+    let from_hname = from_ref.hname;
     // `from_file` is non-null here and each followed `renamed` link is itself
     // non-null, so it stays non-null; read the link through a checked
     // reference, keeping the walk a single branch.
@@ -1052,24 +1004,27 @@ pub unsafe fn rehash_file(
             .expect("rehash_file: null in renamed walk")
             .renamed;
     }
-    if file_hash_cmp(
-        from_file as *const ::core::ffi::c_void,
-        &raw mut file_key as *const ::core::ffi::c_void,
-    ) != 0
-    {
+    if CStr::from_ptr((*from_file).hname).to_bytes() != CStr::from_ptr(from_hname).to_bytes() {
         abort();
     }
-    let deleted_file: *mut File =
-        hash_delete(&raw mut files, from_file as *const ::core::ffi::c_void) as *mut File;
-    if deleted_file != from_file {
+    // Remove `from_file` from the table by its current hash-name; it must be the
+    // head stored under that key.
+    let removed = ctx
+        .files
+        .0
+        .borrow_mut()
+        .remove(CStr::from_ptr((*from_file).hname).to_bytes());
+    if removed != Some(from_file) {
         abort();
     }
-    file_key.hname = to_hname;
-    let file_slot: *mut *mut File = hash_find_slot(
-        &raw mut files,
-        &raw mut file_key as *const ::core::ffi::c_void,
-    ) as *mut *mut File;
-    to_file = *file_slot;
+    let to_key = CStr::from_ptr(to_hname).to_bytes();
+    to_file = ctx
+        .files
+        .0
+        .borrow()
+        .get(to_key)
+        .copied()
+        .unwrap_or(::core::ptr::null_mut());
     // `from_file` walked only non-null `renamed` links above, so it is still
     // live here; bind a checked reference without adding a branch.
     let fr2 = from_file
@@ -1081,12 +1036,9 @@ pub unsafe fn rehash_file(
         fr.hname = to_hname;
         f = fr.prev;
     }
-    if to_file.is_null() || std::ptr::eq(to_file as *mut ::core::ffi::c_void, hash_deleted_item) {
-        hash_insert_at(
-            &raw mut files,
-            from_file as *const ::core::ffi::c_void,
-            file_slot as *const ::core::ffi::c_void,
-        );
+    if to_file.is_null() {
+        // Destination name was free: `from_file` takes that key.
+        ctx.files.0.borrow_mut().insert(Box::from(to_key), from_file);
         return;
     }
     if !fr2.cmds.is_null() {
@@ -1251,9 +1203,9 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
     if sig != 0 && crate::make_main::opt_just_print() {
         return;
     }
-    for slot in table_slots(&raw const files) {
-        if is_real_item(*slot) {
-            let f = *slot as *mut file;
+    let intermediates: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
+    for f in intermediates {
+        {
             if (*f).intermediate() as i32 != 0
                 && ((*f).dontcare() as i32 != 0 || (*f).precious() == 0)
                 && (*f).secondary() == 0
@@ -1374,7 +1326,11 @@ pub unsafe fn split_prereqs(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char) -> *mut dep {
+pub unsafe fn enter_prereqs(
+    ctx: &crate::execctx::ExecContext,
+    mut deps: *mut dep,
+    stem: *const ::core::ffi::c_char,
+) -> *mut dep {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut d1: *mut Dep;
     if deps.is_null() {
@@ -1452,9 +1408,9 @@ pub unsafe fn enter_prereqs(mut deps: *mut dep, stem: *const ::core::ffi::c_char
     d1 = deps;
     while let Some(d1r) = d1.as_mut() {
         if !(d1r.need_2nd_expansion() != 0) {
-            d1r.file = lookup_file(d1r.name);
+            d1r.file = lookup_file(ctx, d1r.name);
             if d1r.file.is_null() {
-                d1r.file = enter_file(d1r.name);
+                d1r.file = enter_file(ctx, d1r.name);
             }
             d1r.set_staticpattern(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             d1r.name = ::core::ptr::null::<::core::ffi::c_char>();
@@ -1576,9 +1532,9 @@ pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: *mut file) {
                 *dp = new;
                 dp = &raw mut new;
                 for d in seq_iter(new) {
-                    (*d).file = lookup_file((*d).name);
+                    (*d).file = lookup_file(ctx, (*d).name);
                     if (*d).file.is_null() {
-                        (*d).file = enter_file((*d).name);
+                        (*d).file = enter_file(ctx, (*d).name);
                     }
                     (*d).name = ::core::ptr::null::<::core::ffi::c_char>();
                     (*d).stem = fstem;
@@ -1623,9 +1579,9 @@ pub unsafe fn expand_extra_prereqs(
     };
     d = prereqs;
     while let Some(dr) = d.as_mut() {
-        dr.file = lookup_file(dr.name);
+        dr.file = lookup_file(ctx, dr.name);
         if dr.file.is_null() {
-            dr.file = enter_file(dr.name);
+            dr.file = enter_file(ctx, dr.name);
         }
         dr.name = ::core::ptr::null::<::core::ffi::c_char>();
         dr.set_ignore_automatic_vars(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -1727,7 +1683,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     let mut f2: *mut file;
     let mut d: *mut dep;
     crate::make_main::mark_snapped_deps();
-    f = lookup_file(b".PRECIOUS\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".PRECIOUS\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         let Some(fr) = f.as_ref() else { break };
         d = fr.deps;
@@ -1741,7 +1697,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
         }
         f = fr.prev;
     }
-    f = lookup_file(b".LOW_RESOLUTION_TIME\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".LOW_RESOLUTION_TIME\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         let Some(fr) = f.as_ref() else { break };
         d = fr.deps;
@@ -1755,7 +1711,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
         }
         f = fr.prev;
     }
-    f = lookup_file(b".PHONY\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".PHONY\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         let Some(fr) = f.as_ref() else { break };
         d = fr.deps;
@@ -1772,7 +1728,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
         }
         f = fr.prev;
     }
-    f = lookup_file(b".NOTINTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".NOTINTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         let Some(fr) = f.as_ref() else { break };
         if !fr.deps.is_null() {
@@ -1790,7 +1746,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
         }
         f = fr.prev;
     }
-    f = lookup_file(b".INTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".INTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         let Some(fr) = f.as_ref() else { break };
         d = fr.deps;
@@ -1815,7 +1771,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
         }
         f = fr.prev;
     }
-    f = lookup_file(b".SECONDARY\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".SECONDARY\0" as *const u8 as *const ::core::ffi::c_char);
     while !f.is_null() {
         let Some(fr) = f.as_ref() else { break };
         if !fr.deps.is_null() {
@@ -1858,11 +1814,11 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             &[],
         );
     }
-    f = lookup_file(b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
     if f.as_ref().is_some_and(|fr| fr.is_target() as i32 != 0) {
         with_options(|o| o.export_all_variables.set(true));
     }
-    f = lookup_file(b".IGNORE\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".IGNORE\0" as *const u8 as *const ::core::ffi::c_char);
     if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         if fr.deps.is_null() {
             crate::make_main::set_ignore_errors_mirror(true);
@@ -1878,7 +1834,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             }
         }
     }
-    f = lookup_file(b".SILENT\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".SILENT\0" as *const u8 as *const ::core::ffi::c_char);
     if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         if fr.deps.is_null() {
             with_options(|o| o.run_silent.set(true));
@@ -1894,7 +1850,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             }
         }
     }
-    f = lookup_file(b".NOTPARALLEL\0" as *const u8 as *const ::core::ffi::c_char);
+    f = lookup_file(ctx, b".NOTPARALLEL\0" as *const u8 as *const ::core::ffi::c_char);
     if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
         let mut d2: *mut dep;
         if fr.deps.is_null() {
@@ -1925,17 +1881,12 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
         ),
     );
-    let filedump: *mut *mut ::core::ffi::c_void = hash_dump(
-        &raw mut files,
-        ::core::ptr::null_mut::<*mut ::core::ffi::c_void>(),
-        None,
-    );
-    let mut filep: *mut *mut ::core::ffi::c_void = filedump;
-    while let Some(&fp) = filep.as_ref().filter(|p| !p.is_null()) {
-        snap_file(ctx, fp as *mut file, prereqs);
-        filep = filep.offset(1_i32 as isize);
+    // Snapshot the table's files, then snap each. Matching the C `hash_dump`,
+    // any files entered while snapping are not themselves re-processed here.
+    let filedump: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
+    for fp in filedump {
+        snap_file(ctx, fp, prereqs);
     }
-    free(filedump as *mut ::core::ffi::c_void);
     free_dep_chain(prereqs);
 }
 /// # Safety
@@ -2394,14 +2345,18 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_file_data_base() {
+pub unsafe fn print_file_data_base(ctx: &crate::execctx::ExecContext) {
     puts(b"\n# Files\0" as *const u8 as *const ::core::ffi::c_char);
-    hash_map(&raw mut files, Some(print_file));
-    fputs(
-        b"\n# files hash-table stats:\n# \0" as *const u8 as *const ::core::ffi::c_char,
-        stdout,
+    // Snapshot the heads so `print_file` (which walks each name's
+    // prev/double-colon chain) runs without holding the table borrow.
+    let heads: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
+    for f in &heads {
+        print_file(*f as *const ::core::ffi::c_void);
+    }
+    printf(
+        b"\n# %lu files in the file table.\n\0" as *const u8 as *const ::core::ffi::c_char,
+        ctx.files.0.borrow().len() as ::core::ffi::c_ulong,
     );
-    hash_print_stats(&raw mut files, stdout);
 }
 /// # Safety
 ///
@@ -2424,8 +2379,11 @@ pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_targets() {
-    hash_map(&raw mut files, Some(print_target));
+pub unsafe fn print_targets(ctx: &crate::execctx::ExecContext) {
+    let heads: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
+    for f in &heads {
+        print_target(*f as *const ::core::ffi::c_void);
+    }
 }
 /// Report (via `error`) when a single file/dep field is set but not interned
 /// in the strcache. A null/empty field, or one already cached, is silent.
@@ -2481,19 +2439,23 @@ pub unsafe fn verify_file(item: *const ::core::ffi::c_void, arg: *mut ::core::ff
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn verify_file_data_base(ctx: &crate::execctx::ExecContext) {
-    hash_map_arg(
-        &raw mut files,
-        Some(verify_file),
-        ctx as *const crate::execctx::ExecContext as *mut ::core::ffi::c_void,
-    );
+    let ctx_arg = ctx as *const crate::execctx::ExecContext as *mut ::core::ffi::c_void;
+    let heads: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
+    for f in &heads {
+        verify_file(*f as *const ::core::ffi::c_void, ctx_arg);
+    }
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
+pub unsafe fn build_target_list(
+    ctx: &crate::execctx::ExecContext,
+    mut value: *mut ::core::ffi::c_char,
+) -> *mut ::core::ffi::c_char {
     static mut last_targ_count: ::core::ffi::c_ulong = 0;
-    if files.ht_fill != last_targ_count {
+    let fill = ctx.files.0.borrow().len() as ::core::ffi::c_ulong;
+    if fill != last_targ_count {
         let mut max: size_t = (strlen(value) as size_t)
             .wrapping_div(500)
             .wrapping_add(1)
@@ -2503,9 +2465,9 @@ pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::c
         value = xrealloc(value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
         p = value;
         len = 0;
-        for slot in table_slots(&raw const files) {
-            if is_real_item(*slot) {
-                let f = *slot as *mut file;
+        let targets: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
+        for f in targets {
+            {
                 if (*f).is_target() == 0 {
                     continue;
                 }
@@ -2534,22 +2496,9 @@ pub unsafe fn build_target_list(mut value: *mut ::core::ffi::c_char) -> *mut ::c
             }
         }
         *p.offset(-(1_i32 as isize)) = 0;
-        last_targ_count = files.ht_fill;
+        last_targ_count = fill;
     }
     value
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn init_hash_files() {
-    hash_init(
-        &raw mut files,
-        1000 as ::core::ffi::c_ulong,
-        Some(file_hash_1),
-        Some(file_hash_2),
-        Some(file_hash_cmp),
-    );
 }
 pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 
@@ -2863,20 +2812,20 @@ mod tests {
         unsafe {
             crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
-            init_hash_files();
+            let ctx = crate::execctx::ExecContext::default();
 
             let nm = strcache_add(c"enter_prereqs_probe_target".as_ptr());
             let d = alloc_dep();
             (*d).name = nm;
             (*d).next = ::core::ptr::null_mut();
 
-            let head = enter_prereqs(d, ::core::ptr::null());
+            let head = enter_prereqs(&ctx, d, ::core::ptr::null());
             assert_eq!(head, d, "the chain head is returned unchanged");
             // Name is consumed (replaced by the resolved file) and a file exists.
             assert!((*head).name.is_null(), "resolved dep name is cleared");
             assert!(!(*head).file.is_null(), "prereq resolved to a file");
             assert!(
-                !lookup_file(nm).is_null(),
+                !lookup_file(&ctx, nm).is_null(),
                 "the prerequisite file is now in the table"
             );
         }
@@ -2887,7 +2836,31 @@ mod tests {
     fn enter_prereqs_null_is_noop() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            assert!(enter_prereqs(::core::ptr::null_mut(), ::core::ptr::null()).is_null());
+            let ctx = crate::execctx::ExecContext::default();
+            assert!(enter_prereqs(&ctx, ::core::ptr::null_mut(), ::core::ptr::null()).is_null());
+        }
+    }
+
+    /// The file table is owned per-`ExecContext`, not a process global: a file
+    /// entered in one context is found there but is invisible to an independent
+    /// context. Guards against the table regressing to a `static mut`.
+    #[test]
+    fn file_table_is_per_context_not_global() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            crate::make_main::install_default_options_for_test();
+            initialize_stopchar_map();
+            let a = crate::execctx::ExecContext::default();
+            let b = crate::execctx::ExecContext::default();
+            let nm = strcache_add(c"per_ctx_probe_target".as_ptr());
+
+            let f = enter_file(&a, nm);
+            assert!(!f.is_null(), "file is entered into context a");
+            assert_eq!(lookup_file(&a, nm), f, "and found again in context a");
+            assert!(
+                lookup_file(&b, nm).is_null(),
+                "an independent context shares no global file table"
+            );
         }
     }
 
@@ -2901,7 +2874,7 @@ mod tests {
         unsafe {
             crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
-            init_hash_files();
+            let ctx = crate::execctx::ExecContext::default();
 
             let nm = strcache_add(c"enter_prereqs_static_probe".as_ptr());
             let stem = strcache_add(c"thestem".as_ptr());
@@ -2909,7 +2882,7 @@ mod tests {
             (*d).name = nm;
             (*d).next = ::core::ptr::null_mut();
 
-            let head = enter_prereqs(d, stem);
+            let head = enter_prereqs(&ctx, d, stem);
             assert_eq!(head, d);
             // The dep was tagged with the stem (staticpattern path ran) and then
             // resolved: name cleared, file entered, staticpattern reset to 0.
@@ -2937,7 +2910,7 @@ mod tests {
         unsafe {
             crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
-            init_hash_files();
+            let ctx = crate::execctx::ExecContext::default();
             crate::expand::initialize_variable_output();
 
             let nm = strcache_add(c"%.o".as_ptr());
@@ -2946,13 +2919,13 @@ mod tests {
             (*d).name = nm;
             (*d).next = ::core::ptr::null_mut();
 
-            let head = enter_prereqs(d, stem);
+            let head = enter_prereqs(&ctx, d, stem);
             assert_eq!(head, d);
             // `%` expanded to the stem and the dep resolved to a file named
             // "epp_stem.o"; the dep name itself is cleared after resolution.
             assert!((*head).name.is_null(), "resolved dep name is cleared");
             assert!(
-                !lookup_file(strcache_add(c"epp_stem.o".as_ptr())).is_null(),
+                !lookup_file(&ctx, strcache_add(c"epp_stem.o".as_ptr())).is_null(),
                 "the expanded prerequisite file was entered"
             );
         }
@@ -2970,7 +2943,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         unsafe {
             initialize_stopchar_map();
-            init_hash_files();
+            let ctx = crate::execctx::ExecContext::default();
             crate::expand::initialize_variable_output();
 
             let nm = strcache_add(c"%".as_ptr());
@@ -2981,7 +2954,7 @@ mod tests {
 
             // The bare `%` with an empty stem expands to "", so the dep is
             // dropped and freed; the returned chain is empty.
-            let head = enter_prereqs(d, stem);
+            let head = enter_prereqs(&ctx, d, stem);
             assert!(head.is_null(), "the empty-expanding prereq is removed");
         }
     }
