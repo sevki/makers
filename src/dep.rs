@@ -47,3 +47,25 @@ bitflags::bitflags! {
         const NO_TILDE = 1 << 3;
     }
 }
+
+/// A goal: a top-level target make was asked to build — the idiomatic,
+/// pointer-free replacement for the c2rust `GoalDep`. A goal is a [`DepNode`]
+/// edge from "the command line" (or an `include` directive) to a target, plus
+/// error/location bookkeeping. The former `*mut File`/`*const c_char` fields are
+/// gone: the target is `dep.file: Option<FileId>` and the name is owned, and the
+/// source location is carried inline (the former `floc`, sans `c_char`).
+#[derive(Debug, Clone)]
+pub struct GoalDepNode {
+    /// The dependency edge itself (name, target `FileId`, flags, …).
+    pub dep: DepNode,
+    /// `errno` captured when the goal's makefile could not be read (the former
+    /// `GoalDep::error`); `0` when there was no error.
+    pub error: i32,
+    /// Source makefile the goal was read from (raw bytes; `None` if synthetic —
+    /// the former null `floc.filenm`).
+    pub defined_in: Option<Vec<u8>>,
+    /// 1-based line number of the goal's definition (`floc.lineno`).
+    pub lineno: u64,
+    /// Byte offset within the line (`floc.offset`).
+    pub offset: u64,
+}
