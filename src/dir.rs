@@ -8,7 +8,7 @@
 pub use crate::ffi_types::{__ino_t, __off_t, __size_t, dev_t, ino_t, size_t, time_t};
 use crate::floc::Floc;
 use crate::make_main::db_level;
-use crate::misc::{xmalloc, xrealloc};
+use crate::misc::xrealloc;
 use crate::output::{fatal, FmtArg};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add_len;
@@ -18,8 +18,8 @@ use ::core::ptr::{null, null_mut};
 use rustc_hash::FxHashMap;
 
 use libc::{
-    __errno_location, closedir, free, memcpy, opendir, printf, puts, readdir, strerror, strlen,
-    DIR, EINTR,
+    __errno_location, closedir, memcpy, opendir, printf, puts, readdir, strerror, strlen, DIR,
+    EINTR,
 };
 
 pub use crate::sys_stat::{stat, timespec};
@@ -98,13 +98,15 @@ pub struct directory_contents {
     pub dirstream: *mut DIR,
 }
 
-/// Glob cursor handed out by `open_dirstream`: a borrowed pointer to the cached
-/// contents plus the index of the next `dirfiles` entry to yield. POD so the C
-/// glob machinery can `free` it (`gl_closedir`) without running a destructor.
-#[derive(Copy, Clone)]
-#[repr(C)]
+/// Glob cursor handed out by `open_dirstream`: an owned snapshot of the
+/// directory's non-impossible entries (name + `d_type`) taken once when the
+/// stream opens, plus the index of the next one to yield. Snapshotting keeps
+/// `read_dirstream` O(1) per call (O(N) total) instead of re-walking the cache
+/// map every call, and decouples the cursor from the cache's lifetime. It is
+/// `Box`-allocated and freed by [`close_dirstream`] (not libc `free`), so it
+/// can own heap data.
 pub struct dirstream {
-    pub contents: *mut directory_contents,
+    pub entries: Vec<(Box<[u8]>, c_uchar)>,
     pub index: usize,
 }
 
@@ -312,15 +314,19 @@ unsafe fn dir_contents_file_exists_p(
 
         let d_name = entry.d_name.as_mut_ptr();
         let name = ::core::ffi::CStr::from_ptr(d_name).to_bytes();
-        // First occurrence wins (matching the FFI table's no-replace insert).
+        // Insert (overwriting), matching the C `hash_insert_at`: actually seeing
+        // the file during a scan clears any stale `impossible` marker a prior
+        // `file_impossible` recorded for the same name.
         dc.dirfiles
             .as_mut()
             .expect("dirfiles is Some when reading")
-            .entry(Box::from(name))
-            .or_insert(DirFileEntry {
-                type_0: entry.d_type,
-                impossible: false,
-            });
+            .insert(
+                Box::from(name),
+                DirFileEntry {
+                    type_0: entry.d_type,
+                    impossible: false,
+                },
+            );
         // Early exit once we have cached the name we were asked about.
         if !filename.is_null() && name == ::core::ffi::CStr::from_ptr(filename).to_bytes() {
             return 1;
@@ -582,12 +588,19 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
         // Read it all in now so the cache is complete.
         dir_contents_file_exists_p(ctx, &raw mut *dir, null());
 
-        let new = (xmalloc(::core::mem::size_of::<dirstream>() as size_t) as *mut dirstream)
-            .as_mut()
-            .expect("xmalloc never returns null");
-        new.contents = &raw mut *dc;
-        new.index = 0;
-        (&raw mut *new).cast()
+        // Snapshot the non-impossible entries once. The cache is fully read and
+        // is not mutated during the glob, so a flat `Vec` lets `read_dirstream`
+        // advance in O(1) per call (O(N) total) and frees it from the cache's
+        // lifetime.
+        let entries: Vec<(Box<[u8]>, c_uchar)> = dc
+            .dirfiles
+            .as_ref()
+            .expect("dirfiles is Some (checked above)")
+            .iter()
+            .filter(|(_, e)| !e.impossible)
+            .map(|(name, e)| (name.clone(), e.type_0))
+            .collect();
+        Box::into_raw(Box::new(dirstream { entries, index: 0 })).cast()
     })
 }
 
@@ -608,50 +621,52 @@ pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
         let ds = (stream as *mut dirstream)
             .as_mut()
             .expect("read_dirstream: null stream");
-        let dc = ds.contents.as_ref().expect("dirstream always has contents");
-        let Some(dirfiles) = dc.dirfiles.as_ref() else {
+
+        // O(1): index straight into the snapshot taken by `open_dirstream`.
+        let Some((name, type_0)) = ds.entries.get(ds.index) else {
             return null_mut();
         };
+        ds.index += 1;
 
-        // The cache is fully read and not mutated during globbing, so the map's
-        // iteration order is stable across calls; `index` records how many
-        // entries we have already walked past. (Linear re-scan per call, like
-        // the former `ht_vec` cursor walked slots.)
-        for (name, entry) in dirfiles.iter().skip(ds.index) {
-            ds.index += 1;
-            if entry.impossible {
-                continue;
-            }
-            // Grow the dirent buffer to hold the name plus its NUL (the
-            // d_name field's declared 256 bytes are replaced by the real
-            // length).
-            let len = name.len() + 1;
-            let sz = ::core::mem::size_of::<dirent>() as size_t
-                - ::core::mem::size_of::<[c_char; 256]>() as size_t
-                + len;
-            if sz > ctx.read_dirstream_bufsz.get() {
-                let bufsz = (ctx.read_dirstream_bufsz.get() * 2).max(sz);
-                ctx.read_dirstream_bufsz.set(bufsz);
-                ctx.read_dirstream_buf.set(
-                    xrealloc(ctx.read_dirstream_buf.get() as *mut c_void, bufsz) as *mut c_char,
-                );
-            }
-            let d = (ctx.read_dirstream_buf.get() as *mut dirent)
-                .as_mut()
-                .expect("xrealloc never returns null");
-            d.d_ino = 1;
-            d.d_type = entry.type_0;
-            memcpy(
-                d.d_name.as_mut_ptr().cast(),
-                name.as_ptr() as *const c_void,
-                name.len(),
-            );
-            // NUL-terminate (the map key has no terminator).
-            *d.d_name.as_mut_ptr().add(name.len()) = 0;
-            return &raw mut *d;
+        // Grow the dirent buffer to hold the name plus its NUL (the d_name
+        // field's declared 256 bytes are replaced by the real length).
+        let len = name.len() + 1;
+        let sz = ::core::mem::size_of::<dirent>() as size_t
+            - ::core::mem::size_of::<[c_char; 256]>() as size_t
+            + len;
+        if sz > ctx.read_dirstream_bufsz.get() {
+            let bufsz = (ctx.read_dirstream_bufsz.get() * 2).max(sz);
+            ctx.read_dirstream_bufsz.set(bufsz);
+            ctx.read_dirstream_buf
+                .set(xrealloc(ctx.read_dirstream_buf.get() as *mut c_void, bufsz) as *mut c_char);
         }
-        null_mut()
+        let d = (ctx.read_dirstream_buf.get() as *mut dirent)
+            .as_mut()
+            .expect("xrealloc never returns null");
+        d.d_ino = 1;
+        d.d_type = *type_0;
+        memcpy(
+            d.d_name.as_mut_ptr().cast(),
+            name.as_ptr() as *const c_void,
+            name.len(),
+        );
+        // NUL-terminate (the snapshot name has no terminator).
+        *d.d_name.as_mut_ptr().add(name.len()) = 0;
+        &raw mut *d
     })
+}
+
+/// glob `closedir` callback: free the cursor [`open_dirstream`] allocated.
+///
+/// Replaces the former `gl_closedir = free`: the snapshot owns heap data, so it
+/// must be dropped through `Box`, not `free`d as a POD.
+extern "C" fn close_dirstream(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    // SAFETY: a non-null `stream` was produced by `Box::into_raw` in
+    // `open_dirstream`; glob hands each one back here exactly once.
+    drop(unsafe { Box::from_raw(stream as *mut dirstream) });
 }
 
 /// Point `gl` at the directory cache so glob() reads from it instead of
@@ -665,7 +680,7 @@ pub unsafe fn dir_setup_glob(gl: *mut glob_t) {
     gl.gl_offs = 0;
     gl.gl_opendir = Some(open_dirstream);
     gl.gl_readdir = Some(read_dirstream);
-    gl.gl_closedir = Some(free);
+    gl.gl_closedir = Some(close_dirstream);
     gl.gl_lstat = Some(lstat);
     gl.gl_stat = Some(stat);
 }
