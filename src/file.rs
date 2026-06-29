@@ -889,7 +889,41 @@ pub fn file_hash_2(mut _key: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
+/// Lexicographic order of two file hash names — the pure core of
+/// [`file_hash_cmp`], mirroring the C `strcmp` over the NUL-terminated
+/// `hname`s. Because each slice is the name without its terminating NUL, a
+/// shorter name that is a prefix of a longer one sorts first, exactly as
+/// `strcmp` sees the NUL.
+fn file_cmp(x_name: &[u8], y_name: &[u8]) -> ::core::cmp::Ordering {
+    x_name.cmp(y_name)
+}
+
 unsafe fn file_hash_cmp(x: *const ::core::ffi::c_void, y: *const ::core::ffi::c_void) -> i32 {
+    // Hash items are always live `file`s, so reborrow rather than null-guard.
+    let xf = &*(x as *const file);
+    let yf = &*(y as *const file);
+    // Identical `hname` pointers (the common interned-name case) are equal
+    // without inspecting the bytes.
+    if xf.hname == yf.hname {
+        return 0;
+    }
+    // `Ordering` is `#[repr(i8)]` (Less=-1/Equal=0/Greater=1), so `as i32` is a
+    // branchless tri-state carrying `strcmp`'s sign — all the gnulib hash table
+    // looks at (it only tests for equality).
+    file_cmp(
+        CStr::from_ptr(xf.hname).to_bytes(),
+        CStr::from_ptr(yf.hname).to_bytes(),
+    ) as i32
+}
+
+/// Verbatim pre-conversion `file_hash_cmp` (raw `strcmp` over `hname`),
+/// preserved per AGENTS.md rule 3 as a differential-test oracle for the safe
+/// [`file_cmp`] core above.
+#[cfg(test)]
+unsafe fn file_hash_cmp_unsafe_oracle(
+    x: *const ::core::ffi::c_void,
+    y: *const ::core::ffi::c_void,
+) -> i32 {
     let xh = (x as *const file)
         .as_ref()
         .map_or(::core::ptr::null(), |xf| xf.hname);
@@ -3214,6 +3248,55 @@ mod tests {
                 pack_unix_timestamp(secs, nsec as i64),
                 "SystemTime path diverged at secs={secs}, nsec={nsec}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod file_cmp_tests {
+    use super::*;
+    use ::core::cmp::Ordering;
+    use ::core::ffi::{c_char, c_void};
+
+    #[test]
+    fn orders_lexicographically_like_strcmp() {
+        assert_eq!(file_cmp(b"abc", b"abc"), Ordering::Equal);
+        assert_eq!(file_cmp(b"abc", b"abd"), Ordering::Less);
+        // A prefix sorts before the longer name (strcmp sees the NUL first).
+        assert_eq!(file_cmp(b"ab", b"abc"), Ordering::Less);
+        assert_eq!(file_cmp(b"abc", b"ab"), Ordering::Greater);
+        assert_eq!(file_cmp(b"", b"a"), Ordering::Less);
+        // High bytes compare as unsigned, like strcmp.
+        assert_eq!(file_cmp(b"a", b"\xff"), Ordering::Less);
+    }
+
+    /// Build a zeroed `file` carrying just `hname`; the hash compare callbacks
+    /// touch nothing else.
+    unsafe fn file_with_hname(name: &CStr) -> file {
+        let mut f: file = ::core::mem::zeroed();
+        f.hname = name.as_ptr() as *mut c_char;
+        f
+    }
+
+    #[test]
+    fn callback_sign_matches_unsafe_oracle() {
+        let names: [&CStr; 7] = [c"", c"a", c"ab", c"abc", c"abd", c"b", c"zzz"];
+        for nx in names {
+            for ny in names {
+                unsafe {
+                    let fx = file_with_hname(nx);
+                    let fy = file_with_hname(ny);
+                    let xp = &fx as *const file as *const c_void;
+                    let yp = &fy as *const file as *const c_void;
+                    assert_eq!(
+                        file_hash_cmp(xp, yp).signum(),
+                        file_hash_cmp_unsafe_oracle(xp, yp).signum(),
+                        "sign mismatch for {nx:?} vs {ny:?}",
+                    );
+                    // Same-pointer fast path: always equal.
+                    assert_eq!(file_hash_cmp(xp, xp), 0);
+                }
+            }
         }
     }
 }
