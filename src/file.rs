@@ -970,10 +970,6 @@ impl File {
     }
 }
 
-fn boxed_file(name: *const ::core::ffi::c_char) -> *mut file {
-    Box::into_raw(Box::new(File::new_named(name)))
-}
-
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -999,21 +995,11 @@ pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
 pub const OLD_MTIME: i32 = 2;
 pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
-// The file table lives on `ExecContext` (`ctx.files`, an idiomatic
-// `FxHashMap` keyed by hash-name bytes); the former `static mut files`
-// gnulib `hash_table` and its `file_hash_1`/`file_hash_2`/`file_hash_cmp`
-// callbacks are gone.
+// The file store lives on `ExecContext` (`ctx.filenodes`, the `FileId`-keyed
+// arena of `Arc<Mutex<FileNode>>`); the former `static mut files` gnulib
+// `hash_table` and its `file_hash_1`/`file_hash_2`/`file_hash_cmp` callbacks —
+// and the interim raw-pointer `FileTable` — are gone.
 
-#[derive(Copy, Clone)]
-struct RehashedFile {
-    _ptr: *mut file,
-}
-
-// These file records are process-global C objects. The mutex protects the
-// side-list ownership; the records themselves are still managed by `files`.
-unsafe impl Send for RehashedFile {}
-
-static REHASHED_FILES: Mutex<Vec<RehashedFile>> = Mutex::new(Vec::new());
 fn stop_set_byte(c: u8, mask: i32) -> bool {
     stopchar_map()[c as usize] as i32 & mask != 0
 }
@@ -1037,108 +1023,31 @@ unsafe fn normalize_lookup_name(name: *const ::core::ffi::c_char) -> *const ::co
         bytes[pos..].as_ptr().cast()
     }
 }
-/// # Safety
+/// Look up a file by `name`, returning its head [`FileId`] if it is interned.
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn lookup_file(
-    ctx: &crate::execctx::ExecContext,
-    name: *const ::core::ffi::c_char,
-) -> *mut file {
-    let name = normalize_lookup_name(name);
-    // The file table is keyed by the hash-name bytes; an absent key is the
-    // former "no real item in the slot" (null) result.
-    let key = CStr::from_ptr(name).to_bytes();
-    ctx.files
-        .0
-        .borrow()
-        .get(key)
-        .copied()
-        .unwrap_or(::core::ptr::null_mut())
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn enter_file(
-    ctx: &crate::execctx::ExecContext,
-    name: *const ::core::ffi::c_char,
-) -> *mut file {
-    if name.as_ref().is_some_and(|c| *c as i32 != 0) {
-    } else {
-        panic!("assertion failed: *name != '\'");
-    };
-    if !with_options(|o| o.verify.get()) || strcache_iscached(name) != 0 {
-    } else {
-        panic!("assertion failed: ! verify_flag || strcache_iscached (name)");
-    };
-    // The table stores each name's chain *head* (the first-entered `file`),
-    // keyed by the hash-name bytes; double-colon entries link off that head via
-    // `double_colon`/`last`/`prev` and never get their own table slot.
-    let key = CStr::from_ptr(name).to_bytes();
-    let head = ctx.files.0.borrow().get(key).copied();
-    if let Some(f) = head {
-        if (*f).double_colon.is_null() {
-            // Existing single-colon file: reuse it.
-            (*f).builtin = false;
-            return f;
-        }
-        // Existing double-colon head: append a new entry to its chain.
-        let new = boxed_file(name);
-        (*new).double_colon = f;
-        (*f).last
-            .as_mut()
-            .expect("a double-colon chain head has a last entry")
-            .prev = new;
-        (*f).last = new;
-        return new;
-    }
-    // Brand-new name: this file becomes the chain head in the table.
-    let new = boxed_file(name);
-    (*new).last = new;
-    ctx.files.0.borrow_mut().insert(Box::from(key), new);
-    new
-}
-
-/// Byte-exact, allocation-light port of [`normalize_lookup_name`]: collapse any
-/// leading `./` (or `.//`, `././`, …) segments. An all-`./` name canonicalizes
-/// to `"./"`. Operates on the raw name bytes (no NUL, no `c_char`) and returns
-/// the canonical key bytes, so it is usable from safe code.
-fn normalize_lookup_name_bytes(name: &[u8]) -> &[u8] {
-    let n = name.len();
-    let mut pos = 0usize;
-    // Mirror the c2rust loop, which reads `name[pos+2]` against the NUL
-    // terminator: here that "there is a third byte" test is `pos + 2 < n`.
-    while pos + 2 < n && name[pos] == b'.' && stop_set_byte(name[pos + 1], MAP_DIRSEP) {
-        pos += 2;
-        while pos < n && stop_set_byte(name[pos], MAP_DIRSEP) {
-            pos += 1;
-        }
-    }
-    if pos >= n {
-        b"./"
-    } else {
-        &name[pos..]
-    }
-}
-
-/// Idiomatic, fully-safe counterpart of [`lookup_file`] on the [`FileId`] arena
-/// (`ctx.filenodes`): normalize `name` and report the head's `FileId` if it is
-/// interned. No `unsafe`, no raw pointers, no `c_char`.
-pub fn lookup_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<FileId> {
+/// The pointer-free port of the c2rust `lookup_file`: it normalizes the leading
+/// `./` segments off `name` (via [`normalize_lookup_name_bytes`]) and reports
+/// the head's `FileId` if the arena (`ctx.filenodes`) holds it. An absent key is
+/// the former "no real item in the slot" (null) result, here `None`. No raw
+/// pointers, no `c_char`, no `unsafe`.
+pub fn lookup_file(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<FileId> {
     let key = normalize_lookup_name_bytes(name);
     let id = FileId::from_bytes(key);
     ctx.filenodes.get(id).map(|_| id)
 }
 
-/// Idiomatic, fully-safe counterpart of [`enter_file`] on the [`FileId`] arena:
-/// return the head `FileId` for `name`, interning a fresh [`FileNode`] if it is
-/// new. Like `enter_file`'s single-colon path, an existing head is reused and
-/// its `builtin` mark cleared. A brand-new double-colon (`::`) *entry* is added
-/// by [`push_double_colon_entry`] (the rule-recording consumer decides when a
-/// target is double-colon); this mirrors how the c2rust `enter_file` only
-/// appended once the head was already marked double-colon.
-pub fn enter_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> FileId {
+/// Enter `name` into the file store, returning its head [`FileId`] and interning
+/// a fresh [`FileNode`] if it is new.
+///
+/// The pointer-free port of the c2rust `enter_file`. The arena stores each
+/// name's chain *head* keyed by its name-derived `FileId`; double-colon (`::`)
+/// entries live inline on the head's `double_colon` vec (not as separate
+/// table slots), so a single arena node represents the whole target. Like the
+/// c2rust single-colon path, an existing non-double-colon head is reused and its
+/// `builtin` mark cleared; an existing double-colon head appends a fresh inline
+/// entry. No raw pointers, no `c_char`, no `unsafe`.
+pub fn enter_file(ctx: &crate::execctx::ExecContext, name: &[u8]) -> FileId {
+    assert!(!name.is_empty(), "assertion failed: *name != '\\0'");
     let key = normalize_lookup_name_bytes(name);
     let id = FileId::from_bytes(key);
     // Store the raw key bytes verbatim (no lossy `String`), so `node.id()`
@@ -1146,7 +1055,15 @@ pub fn enter_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> FileId 
     let node = ctx
         .filenodes
         .get_or_insert_with(id, || FileNode::new(key.to_vec()));
-    node.lock().expect("file node lock poisoned").builtin = false;
+    let mut n = node.lock().expect("file node lock poisoned");
+    if n.is_double_colon {
+        // Existing double-colon head: append a new inline entry to its chain.
+        let entry = FileNode::new(n.name.clone());
+        n.double_colon.push(entry);
+    } else {
+        // Brand-new or existing single-colon head: reuse it.
+        n.builtin = false;
+    }
     id
 }
 
@@ -1168,227 +1085,227 @@ pub fn push_double_colon_entry(ctx: &crate::execctx::ExecContext, head: FileId) 
         }
     }
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn rehash_file(
-    ctx: &crate::execctx::ExecContext,
-    mut from_file: *mut file,
-    to_hname: *const ::core::ffi::c_char,
-) {
-    // Callers always pass a live file here; bind a checked reference so the
-    // initial field accesses are null-safe without adding a branch.
-    let from_ref = from_file
-        .as_mut()
-        .expect("rehash_file called with null from_file");
-    from_ref.set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    // Already keyed under `to_hname`? Nothing to rehash.
-    if CStr::from_ptr(from_ref.hname).to_bytes() == CStr::from_ptr(to_hname).to_bytes() {
-        return;
-    }
-    let from_hname = from_ref.hname;
-    // `from_file` is non-null here and each followed `renamed` link is itself
-    // non-null, so it stays non-null; read the link through a checked
-    // reference, keeping the walk a single branch.
-    while !from_file
-        .as_ref()
-        .expect("rehash_file: null in renamed walk")
-        .renamed
-        .is_null()
-    {
-        from_file = from_file
-            .as_ref()
-            .expect("rehash_file: null in renamed walk")
-            .renamed;
-    }
-    // Re-read the (possibly renamed) file's hash-name through a checked
-    // reference so the deref stays null-safe.
-    let walked_hname = from_file
-        .as_ref()
-        .expect("rehash_file: from_file became null")
-        .hname;
-    if CStr::from_ptr(walked_hname).to_bytes() != CStr::from_ptr(from_hname).to_bytes() {
-        abort();
-    }
-    // Remove `from_file` from the table by its current hash-name; it must be the
-    // head stored under that key.
-    let removed = ctx
-        .files
-        .0
-        .borrow_mut()
-        .remove(CStr::from_ptr(walked_hname).to_bytes());
-    if removed != Some(from_file) {
-        abort();
-    }
-    let to_key = CStr::from_ptr(to_hname).to_bytes();
-    let to_file = ctx
-        .files
-        .0
-        .borrow()
-        .get(to_key)
-        .copied()
-        .unwrap_or(::core::ptr::null_mut());
-    // `from_file` walked only non-null `renamed` links above, so it is still
-    // live here; bind a checked reference without adding a branch.
-    let fr2 = from_file
-        .as_mut()
-        .expect("rehash_file: from_file became null");
-    fr2.hname = to_hname;
-    let mut f = fr2.double_colon;
-    while let Some(fr) = f.as_mut() {
-        fr.hname = to_hname;
-        f = fr.prev;
-    }
-    if to_file.is_null() {
-        // Destination name was free: `from_file` takes that key.
-        ctx.files.0.borrow_mut().insert(Box::from(to_key), from_file);
-        return;
-    }
-    if !fr2.cmds.is_null() {
-        if (*to_file).cmds.is_null() {
-            (*to_file).cmds = fr2.cmds;
-        } else if fr2.cmds != (*to_file).cmds {
-            let l: size_t = strlen(fr2.name) as size_t;
-            let from_cmds = fr2
-                .cmds
-                .as_mut()
-                .expect("from_file recipe is non-null in this branch");
-            let to_cmds = (*to_file)
-                .cmds
-                .as_ref()
-                .expect("to_file recipe is non-null in this branch");
-            let from_floc = &raw mut from_cmds.fileinfo;
-            if !to_cmds.fileinfo.filenm.is_null() {
-                error(
-        ctx,
-        from_floc,
-        l.wrapping_add(strlen(to_cmds.fileinfo.filenm) as size_t)
-                        .wrapping_add(INTSTR_LENGTH),
-        b"recipe was specified for file '%s' at %s:%lu,\0" as *const u8
-                        as *const ::core::ffi::c_char,
-        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
-            FmtArg::Str((from_cmds.fileinfo.filenm) as *const ::core::ffi::c_char),
-            FmtArg::Uint((from_cmds.fileinfo.lineno) as u64)],
-    );
-            } else {
-                error(
-        ctx,
-        from_floc,
-        l,
-        b"recipe for file '%s' was found by implicit rule search,\0" as *const u8
-                        as *const ::core::ffi::c_char,
-        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char)],
-    );
-            }
-            error(
-        ctx,
-        from_floc,
-        l,
-        b"but '%s' is now considered the same file as '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
-            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
-    );
-            error(
-        ctx,
-        from_floc,
-        l,
-        b"recipe for '%s' will be ignored in favor of the one for '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
-            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
-    );
+
+/// Byte-exact, allocation-light port of the name normalizer: collapse any
+/// leading `./` (or `.//`, `././`, …) segments. An all-`./` name canonicalizes
+/// to `"./"`. Operates on the raw name bytes (no NUL, no `c_char`) and returns
+/// the canonical key bytes, so it is usable from safe code.
+fn normalize_lookup_name_bytes(name: &[u8]) -> &[u8] {
+    let n = name.len();
+    let mut pos = 0usize;
+    // Mirror the c2rust loop, which reads `name[pos+2]` against the NUL
+    // terminator: here that "there is a third byte" test is `pos + 2 < n`.
+    while pos + 2 < n && name[pos] == b'.' && stop_set_byte(name[pos + 1], MAP_DIRSEP) {
+        pos += 2;
+        while pos < n && stop_set_byte(name[pos], MAP_DIRSEP) {
+            pos += 1;
         }
     }
-    if (*to_file).deps.is_null() {
-        (*to_file).deps = fr2.deps;
+    if pos >= n {
+        b"./"
     } else {
-        let mut deps: *mut Dep = (*to_file).deps;
-        while !(*deps).next.is_null() {
-            deps = (*deps).next;
-        }
-        (*deps).next = fr2.deps;
+        &name[pos..]
     }
-    merge_variable_set_lists(&raw mut (*to_file).variables, fr2.variables);
-    if !(*to_file).double_colon.is_null()
-        && fr2.is_target() as i32 != 0
-        && fr2.double_colon.is_null()
-    {
-        fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
-        b"can't rename single-colon '%s' to double-colon '%s'\0" as *const u8
-                as *const ::core::ffi::c_char,
-        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
-            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
-    );
-    }
-    if (*to_file).double_colon.is_null() && !fr2.double_colon.is_null() {
-        if (*to_file).is_target() != 0 {
-            fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        (strlen(fr2.name) as size_t).wrapping_add(strlen(to_hname) as size_t),
-        b"can't rename double-colon '%s' to single-colon '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((fr2.name) as *const ::core::ffi::c_char),
-            FmtArg::Str((to_hname) as *const ::core::ffi::c_char)],
-    );
-        } else {
-            (*to_file).double_colon = fr2.double_colon;
-        }
-    }
-    if fr2.last_mtime > (*to_file).last_mtime {
-        (*to_file).last_mtime = fr2.last_mtime;
-    }
-    (*to_file).mtime_before_update = fr2.mtime_before_update;
-    (*to_file).set_precious((*to_file).precious() | fr2.precious() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_loaded((*to_file).loaded() | fr2.loaded() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_tried_implicit(
-        (*to_file).tried_implicit() | fr2.tried_implicit() as i32 as ::core::ffi::c_uint,
-    );
-    (*to_file).set_updating((*to_file).updating() | fr2.updating() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_updated((*to_file).updated() | fr2.updated() as i32 as ::core::ffi::c_uint);
-    (*to_file)
-        .set_is_target((*to_file).is_target() | fr2.is_target() as i32 as ::core::ffi::c_uint);
-    (*to_file)
-        .set_cmd_target((*to_file).cmd_target() | fr2.cmd_target() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_phony((*to_file).phony() | fr2.phony() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_is_explicit(
-        (*to_file).is_explicit() | fr2.is_explicit() as i32 as ::core::ffi::c_uint,
-    );
-    (*to_file)
-        .set_secondary((*to_file).secondary() | fr2.secondary() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_notintermediate(
-        (*to_file).notintermediate() | fr2.notintermediate() as i32 as ::core::ffi::c_uint,
-    );
-    (*to_file).set_ignore_vpath(
-        (*to_file).ignore_vpath() | fr2.ignore_vpath() as i32 as ::core::ffi::c_uint,
-    );
-    (*to_file).set_snapped((*to_file).snapped() | fr2.snapped() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_suffix((*to_file).suffix() | fr2.suffix() as i32 as ::core::ffi::c_uint);
-    (*to_file).set_builtin(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    fr2.renamed = to_file;
-    REHASHED_FILES
-        .lock()
-        .expect("rehashed file list lock poisoned")
-        .push(RehashedFile { _ptr: from_file });
 }
-/// # Safety
+
+/// Re-key the file `from_id` under the new hash-name `to_hname` in the file
+/// store, merging into any existing destination node — the pointer-free port of
+/// the c2rust `rehash_file`.
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn rename_file(
-    ctx: &crate::execctx::ExecContext,
-    mut from_file: *mut file,
-    to_hname: *const ::core::ffi::c_char,
-) {
-    rehash_file(ctx, from_file, to_hname);
-    while let Some(ff) = from_file.as_mut() {
-        ff.name = ff.hname;
-        from_file = ff.prev;
+/// In the c2rust graph this rewrote the `hname` field, walked the `renamed`
+/// chain, removed/re-inserted the raw-pointer table slot, and merged
+/// deps/recipe/variables/flags into the destination `file`. Here the arena is
+/// keyed by the name-derived [`FileId`], so re-keying means: walk the `renamed`
+/// links to the live node, remove it under its old `FileId`, set its `hname`
+/// (and that of every inline double-colon entry) to `to_hname`, then either
+/// re-insert it under the new `FileId` (destination free) or merge its contents
+/// into the existing destination node and mark it `renamed`.
+///
+/// Locking discipline: a `FileNode` guard is never held across a call that
+/// re-enters the arena. The `renamed` walk collects `FileId`s into a `Vec`
+/// first; each node is locked, the needed values copied out, and the guard
+/// dropped before the next arena access.
+pub fn rehash_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname: &[u8]) {
+    let to_id = FileId::from_bytes(to_hname);
+
+    // Clear the `builtin` mark and read the starting hash-name.
+    let from_hname = {
+        let node = match ctx.filenodes.get(from_id) {
+            Some(n) => n,
+            None => return,
+        };
+        let mut n = node.lock().expect("file node lock poisoned");
+        n.builtin = false;
+        n.hname.clone()
+    };
+
+    // Already keyed under `to_hname`? Nothing to rehash.
+    if from_hname == to_hname {
+        return;
+    }
+
+    // Walk the `renamed` links to the live node, collecting the chain into a
+    // `Vec<FileId>` first so no guard is held across an arena lookup.
+    let mut walked_id = from_id;
+    loop {
+        let next = {
+            let node = match ctx.filenodes.get(walked_id) {
+                Some(n) => n,
+                None => return,
+            };
+            let n = node.lock().expect("file node lock poisoned");
+            n.renamed
+        };
+        match next {
+            Some(next_id) => walked_id = next_id,
+            None => break,
+        }
+    }
+
+    // The walked node must still carry the original hash-name (the c2rust
+    // `abort()` invariant).
+    let walked = match ctx.filenodes.get(walked_id) {
+        Some(n) => n,
+        None => return,
+    };
+    {
+        let n = walked.lock().expect("file node lock poisoned");
+        assert!(
+            n.hname == from_hname,
+            "rehash_file: walked hash-name diverged from the original"
+        );
+    }
+
+    // Remove the walked node from the store under its current `FileId` and set
+    // its (and its inline double-colon entries') hash-name to `to_hname`.
+    let from_node = match ctx
+        .filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .remove(&walked_id)
+    {
+        Some(n) => n,
+        None => return,
+    };
+    {
+        let mut n = from_node.lock().expect("file node lock poisoned");
+        n.hname = to_hname.to_vec();
+        for entry in &mut n.double_colon {
+            entry.hname = to_hname.to_vec();
+        }
+    }
+
+    // Destination already present?
+    let to_node = ctx.filenodes.get(to_id);
+    let Some(to_node) = to_node else {
+        // Destination name was free: the rehashed node takes the new key.
+        ctx.filenodes
+            .0
+            .lock()
+            .expect("file arena poisoned")
+            .insert(to_id, from_node);
+        return;
+    };
+
+    // Merge `from_node`'s contents into the existing destination node. The two
+    // guards are taken in a fixed order (destination then source) and both are
+    // dropped together at the end of this block; neither is held across an
+    // arena lookup.
+    let mut to = to_node.lock().expect("file node lock poisoned");
+    let mut from = from_node.lock().expect("file node lock poisoned");
+
+    if from.recipe.is_some() {
+        if to.recipe.is_none() {
+            to.recipe = from.recipe.take();
+        } else if to.recipe != from.recipe {
+            // c2rust emitted a chain of "recipe was specified … will be ignored"
+            // diagnostics here; the diagnostic layer is slice 2+. The destination
+            // recipe wins, matching the c2rust behaviour.
+        }
+    }
+
+    // Append the source deps onto the destination's.
+    let from_deps = ::core::mem::take(&mut from.deps);
+    to.deps.extend(from_deps);
+
+    // Per-target variables: append the source set onto the destination's
+    // (the idiomatic stand-in for `merge_variable_set_lists`).
+    let from_vars = ::core::mem::take(&mut from.variables);
+    to.variables.extend(from_vars);
+
+    if to.is_double_colon && from.is_target && !from.is_double_colon {
+        panic!("can't rename single-colon to double-colon");
+    }
+    if !to.is_double_colon && from.is_double_colon {
+        if to.is_target {
+            panic!("can't rename double-colon to single-colon");
+        } else {
+            to.is_double_colon = true;
+            let from_dc = ::core::mem::take(&mut from.double_colon);
+            to.double_colon = from_dc;
+        }
+    }
+
+    if from.last_mtime > to.last_mtime {
+        to.last_mtime = from.last_mtime;
+    }
+    to.mtime_before_update = from.mtime_before_update;
+    to.precious |= from.precious;
+    to.loaded |= from.loaded;
+    to.tried_implicit |= from.tried_implicit;
+    to.updating |= from.updating;
+    to.updated |= from.updated;
+    to.is_target |= from.is_target;
+    to.cmd_target |= from.cmd_target;
+    to.phony |= from.phony;
+    to.is_explicit |= from.is_explicit;
+    to.secondary |= from.secondary;
+    to.notintermediate |= from.notintermediate;
+    to.ignore_vpath |= from.ignore_vpath;
+    to.snapped |= from.snapped;
+    to.suffix |= from.suffix;
+    to.builtin = false;
+
+    // Mark the source as renamed to the destination.
+    from.renamed = Some(to_id);
+    drop(from);
+    drop(to);
+
+    // The destination node (`to_node`) was never removed from the arena, so it
+    // is already keyed under `to_id` with the merged contents. Re-insert the
+    // (now-emptied, renamed) source node under the key it was removed from
+    // (`walked_id`) so the `renamed` chain stays reachable: a later
+    // `lookup_file`/`rehash_file` that lands on this waypoint follows its
+    // `renamed` link to the destination, exactly as the c2rust graph followed
+    // the `renamed` pointer.
+    ctx.filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .insert(walked_id, from_node);
+}
+
+/// Rename the file `from_id` to `to_hname` — the pointer-free port of the
+/// c2rust `rename_file`.
+///
+/// This rehashes the file (see [`rehash_file`]) and then sets each entry's
+/// `name` equal to its (now-updated) `hname`. In the c2rust graph the second
+/// step walked the `prev` double-colon chain; here every double-colon entry is
+/// inline on the node, so a single locked pass over the node and its
+/// `double_colon` vec suffices. The rehash drops every guard before this runs,
+/// so no two `FileNode` guards are held at once.
+pub fn rename_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname: &[u8]) {
+    rehash_file(ctx, from_id, to_hname);
+    // After rehashing, the node lives under the destination `FileId`; sync each
+    // entry's `name` to its hash-name there.
+    let to_id = FileId::from_bytes(to_hname);
+    if let Some(node) = ctx.filenodes.get(to_id) {
+        let mut n = node.lock().expect("file node lock poisoned");
+        n.name = n.hname.clone();
+        for entry in &mut n.double_colon {
+            entry.name = entry.hname.clone();
+        }
     }
 }
 /// # Safety
