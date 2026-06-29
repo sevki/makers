@@ -38,6 +38,7 @@ pub mod output;
 pub mod parser;
 pub mod posixos;
 pub mod read;
+pub mod recipe;
 pub mod remake;
 pub mod remote_stub;
 pub mod rule;
