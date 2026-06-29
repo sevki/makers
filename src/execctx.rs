@@ -161,6 +161,17 @@ pub struct ExecContext {
     /// replacing the c2rust FFI `hash_table` and its hash/compare callbacks.
     pub directory_contents: DirContentsTable,
 
+    /// make's central file table (`struct file` records keyed by hash-name), the
+    /// former file-scoped `static mut file::files`. Owned per-run so there is no
+    /// process-global hash table; `lookup_file`/`enter_file`/`rehash_file` and the
+    /// `make -p` / target-list / intermediate-cleanup walks reach it through the
+    /// `&ExecContext` they carry. Populated during makefile parsing and reused
+    /// through the build, so `main_0` hands it across the build-phase context
+    /// rebuild rather than letting it reset (see its use site). Idiomatic Rust
+    /// [`rustc_hash::FxHashMap`] keyed by the file's hash-name bytes, replacing
+    /// the c2rust FFI `hash_table` and its `file_hash_*` callbacks.
+    pub files: FileTable,
+
     /// `read_dirstream`'s reused dirent scratch buffer — the heap block (and its
     /// size) that the glob `gl_readdir` callback rewrites for each enumerated
     /// file and returns a pointer into. These were the function-local process
@@ -254,6 +265,46 @@ impl Clone for DirContentsTable {
 impl ::core::fmt::Debug for DirContentsTable {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_tuple("DirContentsTable")
+            .field(&self.0.borrow().len())
+            .finish()
+    }
+}
+
+/// make's central file table: an idiomatic Rust [`rustc_hash::FxHashMap`] from a
+/// file's hash-name bytes (the interned `hname`, less its NUL) to its
+/// heap-stable `*mut file` record, replacing the c2rust FFI `hash_table` (and its
+/// `file_hash_*` callbacks).
+///
+/// Unlike the directory cache, the value is a raw `*mut file`, not an owned
+/// `Box`: `file` records are interned for the whole run and referenced by raw
+/// pointer all over the codebase (deps, goals, the build graph), so the table
+/// only *indexes* them — it does not own them. `RefCell` gives the interior
+/// mutability the former `Cell<hash_table>` provided on the shared
+/// `&ExecContext`.
+pub struct FileTable(
+    pub  ::core::cell::RefCell<rustc_hash::FxHashMap<Box<[u8]>, *mut crate::file::File>>,
+);
+
+impl Default for FileTable {
+    fn default() -> Self {
+        Self(::core::cell::RefCell::new(rustc_hash::FxHashMap::default()))
+    }
+}
+
+impl Clone for FileTable {
+    fn clone(&self) -> Self {
+        // Per-run build state handed across the build-phase rebuild by move
+        // (`mem::take`), never by clone; the `Clone` impl exists only to keep
+        // `ExecContext`'s derive working, and the entries are raw `*mut file`
+        // back-references that must not be duplicated, so a fresh empty table is
+        // the right (and only sound) snapshot.
+        Self::default()
+    }
+}
+
+impl ::core::fmt::Debug for FileTable {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_tuple("FileTable")
             .field(&self.0.borrow().len())
             .finish()
     }

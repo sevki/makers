@@ -186,7 +186,7 @@ pub unsafe fn set_file_variables(
         let name = nm.as_ptr() as *const c_char;
         let len = nm.len() as size_t;
 
-        let mut d = (*enter_file(strcache_add(c".SUFFIXES".as_ptr()))).deps;
+        let mut d = (*enter_file(ctx, strcache_add(c".SUFFIXES".as_ptr()))).deps;
         while !d.is_null() {
             let dn = dep_name(d);
             let slen = strlen(dn);
@@ -923,7 +923,6 @@ mod hash_2_tests {
     fn secondary_hashes_are_zero_and_ignore_key() {
         let dummy = 0xdead_beef_usize as *const c_void;
         for key in [ptr::null::<c_void>(), dummy] {
-            assert_eq!(crate::file::file_hash_2(key), 0);
             assert_eq!(crate::variable::variable_hash_2(key), 0);
         }
     }

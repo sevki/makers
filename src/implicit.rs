@@ -667,7 +667,7 @@ unsafe fn pattern_search(
                                     },
                                     dr.name
                                 );
-                                let df: *mut file = lookup_file(dr.name);
+                                let df: *mut file = lookup_file(ctx, dr.name);
                                 if let Some(dfr) = df.as_mut() {
                                     if dfr.is_explicit() != 0 {
                                         pe.set_is_explicit(1);
@@ -872,9 +872,9 @@ unsafe fn pattern_search(
                     // if absent. Use an explicit null check (not `as_mut`) so the
                     // looked-up pointer is treated as a validated, non-null
                     // pointer before it is dereferenced.
-                    let found: *mut file = lookup_file(imf.name);
+                    let found: *mut file = lookup_file(ctx, imf.name);
                     let f_ptr: *mut file = if found.is_null() {
-                        enter_file(imf.name)
+                        enter_file(ctx, imf.name)
                     } else {
                         found
                     };
@@ -903,13 +903,13 @@ unsafe fn pattern_search(
                                 as ::core::ffi::c_uint,
                     );
                     f.set_tried_implicit(1);
-                    let pattern_owner: *mut file = lookup_file(pe.pattern);
+                    let pattern_owner: *mut file = lookup_file(ctx, pe.pattern);
                     if pattern_owner.as_ref().is_some_and(|p| p.precious() != 0) {
                         f.set_precious(1);
                     }
                     let mut d: *mut dep = f.deps;
                     while let Some(dr) = d.as_mut() {
-                        dr.file = enter_file(dr.name);
+                        dr.file = enter_file(ctx, dr.name);
                         dr.name = ::core::ptr::null();
                         let dep_file = dr.file.as_mut().expect("just entered");
                         dep_file.set_tried_implicit(dep_file.tried_implicit() | dr.changed());
@@ -926,9 +926,9 @@ unsafe fn pattern_search(
                 if recursions != 0 {
                     nd.name = s;
                 } else {
-                    nd.file = lookup_file(s);
+                    nd.file = lookup_file(ctx, s);
                     if nd.file.is_null() {
-                        nd.file = enter_file(s);
+                        nd.file = enter_file(ctx, s);
                     }
                 }
                 if pe.file.is_null()
@@ -973,7 +973,7 @@ unsafe fn pattern_search(
             file_ref.set_is_target(1);
             // Inherit .PRECIOUS and .NOTINTERMEDIATE from the target pattern.
             let (found_target, _, _) = rule_target(found_rule, found_tr.matches as usize);
-            let pattern_file: *mut file = lookup_file(found_target);
+            let pattern_file: *mut file = lookup_file(ctx, found_target);
             if let Some(pf) = pattern_file.as_ref() {
                 if pf.precious() != 0 {
                     file_ref.set_precious(1);
@@ -1000,10 +1000,10 @@ unsafe fn pattern_search(
                     let new_dep: *mut dep = alloc_dep();
                     let nd = new_dep.as_mut().expect("xcalloc returned null");
                     nd.name = strcache_add(nm.as_ptr().cast());
-                    nd.file = enter_file(nd.name);
+                    nd.file = enter_file(ctx, nd.name);
                     nd.next = file_ref.also_make;
                     let other_file = nd.file.as_mut().expect("just entered");
-                    if let Some(other) = lookup_file(target_ptr).as_ref() {
+                    if let Some(other) = lookup_file(ctx, target_ptr).as_ref() {
                         if other.precious() != 0 {
                             other_file.set_precious(1);
                         }

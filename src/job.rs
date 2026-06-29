@@ -837,7 +837,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 });
             if DELETE_ON_ERROR.load(Ordering::Relaxed) == -1_i32 {
                 let f: *mut file =
-                    lookup_file(b".DELETE_ON_ERROR\0" as *const u8 as *const ::core::ffi::c_char);
+                    lookup_file(ctx, b".DELETE_ON_ERROR\0" as *const u8 as *const ::core::ffi::c_char);
                 DELETE_ON_ERROR.store(
                     (!f.is_null() && (*f).is_target() as i32 != 0) as i32,
                     Ordering::Relaxed,

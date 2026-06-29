@@ -252,7 +252,7 @@ pub unsafe fn set_default_suffixes(
     ctx: &crate::execctx::ExecContext,
     options: &crate::make_main::Options,
 ) {
-    suffix_file = enter_file(strcache_add(c".SUFFIXES".as_ptr()));
+    suffix_file = enter_file(ctx, strcache_add(c".SUFFIXES".as_ptr()));
     (*suffix_file).set_builtin(1);
 
     if options.no_builtin_rules.get() {
@@ -269,6 +269,7 @@ pub unsafe fn set_default_suffixes(
     } else {
         let mut p = &raw mut default_suffixes as *mut c_char;
         (*suffix_file).deps = enter_prereqs(
+            ctx,
             parse_file_seq::<crate::file::Dep>(
                 ctx,
                 &mut p,
@@ -307,12 +308,15 @@ pub unsafe fn set_default_suffixes(
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global file table.
-pub unsafe fn install_default_suffix_rules(options: &crate::make_main::Options) {
+pub unsafe fn install_default_suffix_rules(
+    ctx: &crate::execctx::ExecContext,
+    options: &crate::make_main::Options,
+) {
     if options.no_builtin_rules.get() {
         return;
     }
     for &(target, recipe) in DEFAULT_SUFFIX_RULES {
-        let f = enter_file(strcache_add(target.as_ptr()));
+        let f = enter_file(ctx, strcache_add(target.as_ptr()));
         // Don't clobber cmds given in a makefile if there were any.
         if (*f).cmds.is_null() {
             let cmds = xmalloc(::core::mem::size_of::<Commands>()) as *mut Commands;

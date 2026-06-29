@@ -288,7 +288,7 @@ use crate::expand::{
 };
 pub use crate::file::nameseq;
 use crate::file::{
-    enter_file, file_timestamp_now, file_timestamp_string, init_hash_files, lookup_file,
+    enter_file, file_timestamp_now, file_timestamp_string, lookup_file,
     print_file_data_base, print_targets, remove_intermediates, snap_deps, verify_file_data_base,
 };
 use crate::function::hash_init_function_table;
@@ -1452,7 +1452,7 @@ unsafe fn install_fatal_signal(sig: i32) {
 pub unsafe fn initialize_global_hash_tables(_ctx: &crate::execctx::ExecContext) {
     init_hash_global_variable_set();
     strcache_init();
-    init_hash_files();
+    // The file table now lives on `ExecContext` (`ctx.files`); no global init.
     hash_init_function_table();
 }
 /// Build the global `stopchar_map` character-classification table the parser
@@ -2192,11 +2192,16 @@ unsafe fn main_0(
     let carried_directory_contents = ::core::mem::take(&mut ctx.directory_contents);
     let carried_read_dirstream_buf = ::core::mem::take(&mut ctx.read_dirstream_buf);
     let carried_read_dirstream_bufsz = ::core::mem::take(&mut ctx.read_dirstream_bufsz);
+    // The file table is populated during parsing and consulted throughout the
+    // build, so carry it across the rebuild just like the directory cache;
+    // otherwise every file entered while reading makefiles would be lost.
+    let carried_files = ::core::mem::take(&mut ctx.files);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
         read_dirstream_buf: carried_read_dirstream_buf,
         read_dirstream_bufsz: carried_read_dirstream_bufsz,
+        files: carried_files,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
@@ -2454,7 +2459,7 @@ unsafe fn main_0(
         }
     }
     if options.stdin_offset.get() >= 0 {
-        let f: *mut file = enter_file(strcache_add(
+        let f: *mut file = enter_file(&ctx, strcache_add(
             options.makefiles.borrow()[options.stdin_offset.get() as usize].as_ptr(),
         ));
         (*f).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2492,7 +2497,7 @@ unsafe fn main_0(
     let fresh46 = &mut (*define_makeflags(&ctx, &options, 0));
     (*fresh46).set_export(v_export as variable_export);
     define_default_variables(&ctx, &options);
-    default_file = enter_file(strcache_add(
+    default_file = enter_file(&ctx, strcache_add(
         b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
     ));
     default_goal_var = define_variable_in_set(
@@ -2724,14 +2729,14 @@ unsafe fn main_0(
     }
     define_makeflags(&ctx, &options, 0);
     snap_deps(&ctx);
-    install_default_suffix_rules(&options);
+    install_default_suffix_rules(&ctx, &options);
     convert_to_pattern(&ctx);
     install_default_implicit_rules(&ctx, &options);
     snap_implicit_rules(&ctx);
     build_vpath_lists(&ctx);
     if !options.old_files.borrow().is_empty() {
         for of in options.old_files.borrow().iter() {
-            let f_0: *mut file = enter_file(strcache_add(of.as_ptr()));
+            let f_0: *mut file = enter_file(&ctx, strcache_add(of.as_ptr()));
             (*f_0).mtime_before_update = OLD_MTIME as uintmax_t;
             (*f_0).last_mtime = (*f_0).mtime_before_update;
             (*f_0).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2740,12 +2745,12 @@ unsafe fn main_0(
         }
     }
     if options.print_targets.get() {
-        print_targets();
+        print_targets(&ctx);
         die(&ctx, EXIT_SUCCESS);
     }
     if restarts == 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
-            let f_1: *mut file = enter_file(strcache_add(nf.as_ptr()));
+            let f_1: *mut file = enter_file(&ctx, strcache_add(nf.as_ptr()));
             (*f_1).mtime_before_update =
                 (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
                     0_i32 as uintmax_t
@@ -3295,7 +3300,7 @@ unsafe fn main_0(
     ctx.always_make_flag.set(options.always_make.get());
     if restarts != 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
-            let f_5: *mut file = enter_file(strcache_add(nf.as_ptr()));
+            let f_5: *mut file = enter_file(&ctx, strcache_add(nf.as_ptr()));
             (*f_5).mtime_before_update =
                 (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
                     0_i32 as uintmax_t
@@ -3328,7 +3333,7 @@ unsafe fn main_0(
             p_6 = variable_buffer;
         }
         if *p_6 as i32 != 0 {
-            let mut f_6: *mut file = lookup_file(p_6);
+            let mut f_6: *mut file = lookup_file(&ctx, p_6);
             if f_6.is_null() {
                 let ns: *mut NameSeq;
                 ns = parse_file_seq::<NameSeq>(
@@ -3350,7 +3355,7 @@ unsafe fn main_0(
                             &[],
                         );
                     }
-                    f_6 = enter_file(strcache_add((*ns).name));
+                    f_6 = enter_file(&ctx, strcache_add((*ns).name));
                     (*ns).name = ::core::ptr::null::<::core::ffi::c_char>();
                     free_ns_chain(ns);
                 }
@@ -3518,7 +3523,7 @@ unsafe fn handle_non_switch_argument(
         if strcmp(arg, b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
             return 1;
         }
-        f = enter_file(strcache_add(expand_command_line_file(ctx, arg)));
+        f = enter_file(ctx, strcache_add(expand_command_line_file(ctx, arg)));
         (*f).set_cmd_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         if goals.is_null() {
             goals = alloc_goaldep();
@@ -4557,7 +4562,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     print_variable_data_base();
     print_dir_data_base(ctx);
     print_rule_data_base(ctx);
-    print_file_data_base();
+    print_file_data_base(ctx);
     print_vpath_data_base();
     strcache_print_stats(b"#\0" as *const u8 as *const ::core::ffi::c_char);
     let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx).0))
