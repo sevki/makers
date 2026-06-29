@@ -1,24 +1,59 @@
 name: CI
 
+# Single consolidated CI graph for PR/push work. The heavy build pipeline
+# (apt deps + autoconf 2.72 from source + bootstrapping the in-tree C `make`
+# oracle) used to be repeated independently by ci.yml, coverage.yml,
+# change-risk.yml and mutants.yml — four times per PR. Here it runs ONCE in the
+# `build` job, which publishes the rust make and C make binaries as artifacts;
+# every downstream job (kernel diff, coverage, CRAP gate, mutants) consumes
+# those artifacts via `needs:` instead of rebuilding. cargo-geiger folds in as
+# an independent source-scan job in the same graph.
+#
+# rust-clippy stays in its own file: it uploads a code-scanning SARIF whose
+# configuration identity is the workflow path + job id, so moving it here would
+# orphan the `.github/workflows/rust-clippy.yml:rust-clippy-analyze` config that
+# main tracks. Scheduled security scans on their own cadence (fuzz nightly,
+# CodeQL weekly) and the event-driven PR-comments check also stay in their own
+# files.
+
 on:
     push:
         branches: [main, master]
     pull_request:
     workflow_dispatch:
+    schedule:
+        # Mon 06:00 UTC — full cargo-mutants run (build + mutants only).
+        - cron: "0 6 * * 1"
 
 concurrency:
     group: ci-${{ github.ref }}
     cancel-in-progress: true
+
+# Least privilege by default; jobs that need more widen it locally.
+permissions:
+    contents: read
 
 # ./bootstrap clones gnulib from this URL; the savannah default is often
 # slow/unreachable from CI, so use a GitHub mirror. The pinned revision
 # still comes from bootstrap.conf (GNULIB_REVISION), which the mirror carries.
 env:
     GNULIB_URL: https://github.com/sevki/gnulib.git
+    # Pin cargo-geiger so the gate's HEAD count and the committed baseline are
+    # produced by the SAME release. Bump here AND refresh the baseline together:
+    # bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline
+    GEIGER_VERSION: "0.13.0"
 
 jobs:
-    rust-make-builds-c-make:
+    # ─────────────────────────────────────────────────────────────────────
+    # ROOT: build the rust make and the C make oracle ONCE, publish both as
+    # artifacts. This is the single source of the expensive autoconf-from-source
+    # + bootstrap pipeline that the rest of the graph used to each repeat.
+    # ─────────────────────────────────────────────────────────────────────
+    build:
         name: rust make builds C make
+        # Runs for PR/push/dispatch, and for the Monday mutants cron (which
+        # needs the C make oracle).
+        if: github.event_name != 'schedule' || github.event.schedule == '0 6 * * 1'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -31,18 +66,34 @@ jobs:
                     automake autopoint gettext gperf texinfo \
                     git wget xz-utils
 
-            # bootstrap.conf requires autoconf >= 2.72; ubuntu-latest still ships 2.71.
-            - name: Install autoconf 2.72 from source
+            # bootstrap.conf requires autoconf >= 2.72; ubuntu-latest still ships
+            # 2.71. Build it from source ONCE and cache the install prefix, so
+            # subsequent runs restore it instead of recompiling (~2-3 min). The
+            # prefix is baked into the binaries, so it must restore to the same
+            # path — $HOME is stable on GitHub runners.
+            - name: Cache autoconf 2.72
+              id: autoconf-cache
+              uses: actions/cache@v4
+              with:
+                  path: ~/.local/autoconf-2.72
+                  key: autoconf-2.72-${{ runner.os }}
+
+            - name: Build autoconf 2.72 from source
+              if: steps.autoconf-cache.outputs.cache-hit != 'true'
               run: |
                   AC_VER=2.72
                   cd /tmp
                   curl -fsSLO https://ftp.gnu.org/gnu/autoconf/autoconf-${AC_VER}.tar.xz
                   tar xJf autoconf-${AC_VER}.tar.xz
                   cd autoconf-${AC_VER}
-                  ./configure --prefix=/usr/local
+                  ./configure --prefix="$HOME/.local/autoconf-2.72"
                   make -j"$(nproc)"
-                  sudo make install
-                  autoconf --version | head -1
+                  make install
+
+            - name: Put autoconf 2.72 first on PATH
+              run: |
+                  echo "$HOME/.local/autoconf-2.72/bin" >> "$GITHUB_PATH"
+                  "$HOME/.local/autoconf-2.72/bin/autoconf" --version | head -1
 
             - name: Cache cargo registry
               uses: actions/cache@v4
@@ -53,8 +104,11 @@ jobs:
                   key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
                   restore-keys: cargo-${{ runner.os }}-
 
+            # ORACLE_OUT preserves the pristine sh+cc C make from stage 0 (built
+            # WITHOUT the rust make) as an independent differential-test oracle,
+            # before stage 3 overwrites ./make with one the rust make builds.
             - name: Run ci-test.sh (rust make + C make)
-              run: ./scripts/ci-test.sh --skip-kernel
+              run: ORACLE_OUT="$PWD/c-make-oracle" ./scripts/ci-test.sh --skip-kernel
 
             - name: Upload rust make binary
               uses: actions/upload-artifact@v4
@@ -64,8 +118,8 @@ jobs:
                   if-no-files-found: error
                   retention-days: 7
 
-            # The C make built by ci-test.sh stage 3 (the in-tree ./make) is the
-            # oracle for the differential kernel build below.
+            # Stage-3 C make: built by the rust make. Used by kernel-build-c as
+            # the build driver for the differential kernel build.
             - name: Upload C make binary
               uses: actions/upload-artifact@v4
               with:
@@ -74,12 +128,25 @@ jobs:
                   if-no-files-found: error
                   retention-days: 7
 
+            # Independent C make oracle: built by build.sh (sh+cc) BEFORE the
+            # rust make exists. The coverage and mutants jobs install THIS as
+            # ./make so the differential suite scores rust make against an oracle
+            # the candidate did not build — matching the old per-workflow setup.
+            - name: Upload independent C make oracle
+              uses: actions/upload-artifact@v4
+              with:
+                  name: c-make-oracle-${{ github.sha }}
+                  path: c-make-oracle
+                  if-no-files-found: error
+                  retention-days: 7
+
     # Build the Linux kernel twice — once with the Rust make, once with the C
     # make — in parallel, then diff their stdout/stderr to catch regressions
     # where the Rust make drives the build differently from upstream make.
     kernel-build-rust:
         name: build Linux kernel (rust make)
-        needs: rust-make-builds-c-make
+        needs: build
+        if: github.event_name != 'schedule'
         runs-on: ubuntu-latest
         steps:
             - name: Download rust make artifact
@@ -128,7 +195,8 @@ jobs:
 
     kernel-build-c:
         name: build Linux kernel (C make)
-        needs: rust-make-builds-c-make
+        needs: build
+        if: github.event_name != 'schedule'
         runs-on: ubuntu-latest
         steps:
             - name: Download C make artifact
@@ -175,6 +243,7 @@ jobs:
     kernel-diff:
         name: diff kernel builds (rust make vs C make)
         needs: [kernel-build-rust, kernel-build-c]
+        if: github.event_name != 'schedule'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -198,3 +267,492 @@ jobs:
               with:
                   name: kernel-diff-${{ github.sha }}
                   path: "*.diff"
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Coverage: the ONE instrumented build+test run. It generates the single
+    # lcov.info that both this report and the CRAP gate (below) consume — the
+    # old design ran `cargo llvm-cov` twice per PR. Generated the way crap.sh
+    # does (`--ignore-run-fail`, no `--workspace`) so the CRAP gate stays
+    # consistent with its committed baseline.
+    # ─────────────────────────────────────────────────────────────────────
+    coverage:
+        name: coverage (cargo-llvm-cov)
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        # Informational: report is uploaded, printed to the summary, and posted
+        # as a PR comment, but a failure here does not block the run. The lcov is
+        # still published (it drives the CRAP gate), and continue-on-error keeps
+        # downstream `needs: coverage` jobs running.
+        continue-on-error: true
+        permissions:
+            contents: read
+            pull-requests: write
+            issues: write
+        steps:
+            - uses: actions/checkout@v4
+
+            # Reuse the INDEPENDENT C make oracle built once in `build` (sh+cc,
+            # not by the rust make) instead of re-bootstrapping it — no apt deps
+            # / autoconf / build.sh needed here.
+            - name: Download independent C make oracle
+              uses: actions/download-artifact@v4
+              with:
+                  name: c-make-oracle-${{ github.sha }}
+                  path: make-bin
+            - name: Install C make oracle as ./make
+              run: |
+                  chmod +x make-bin/c-make-oracle
+                  cp make-bin/c-make-oracle ./make
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Add llvm-tools-preview
+              run: rustup component add llvm-tools-preview
+
+            - name: Install cargo-llvm-cov
+              uses: taiki-e/install-action@cargo-llvm-cov
+
+            # The Rust port no longer links libgnu, so the instrumented binary
+            # builds against libc alone. cargo-llvm-cov also instruments the
+            # spawned `make` binary, so coverage reflects real recipe execution.
+            # --ignore-run-fail: still emit coverage even if a flaky test fails,
+            # so the CRAP gate always has data to score (matches scripts/crap.sh).
+            - name: Run tests under coverage
+              run: |
+                  cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info
+                  cargo llvm-cov report --summary-only | tee coverage-summary.txt
+
+            - name: Write coverage to job summary
+              if: always() && hashFiles('coverage-summary.txt') != ''
+              run: |
+                  {
+                    echo '## Coverage (cargo-llvm-cov)'
+                    echo ''
+                    echo '```'
+                    cat coverage-summary.txt
+                    echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            # Post (and refresh) an lcov coverage comment on the PR.
+            - name: Report coverage on PR
+              if: github.event_name == 'pull_request'
+              uses: romeovs/lcov-reporter-action@v0.3.1
+              with:
+                  lcov-file: ./lcov.info
+                  delete-old-comments: true
+                  title: Coverage (cargo-llvm-cov)
+
+            # Published for the CRAP gate job (and as a downloadable report).
+            - name: Upload coverage report
+              if: always() && hashFiles('lcov.info') != ''
+              uses: actions/upload-artifact@v4
+              with:
+                  name: coverage-${{ github.sha }}
+                  path: |
+                      lcov.info
+                      coverage-summary.txt
+                  if-no-files-found: error
+
+    # ─────────────────────────────────────────────────────────────────────
+    # CRAP gate: consumes the coverage job's lcov.info — NO second llvm-cov run.
+    # Renders the PR-comment report and gates on CRAP-score REGRESSION vs the
+    # trusted main-branch baseline.
+    # ─────────────────────────────────────────────────────────────────────
+    # Job name kept as `CRAP` (matching the old change-risk.yml job id) so the
+    # branch-protection required status check of that name keeps reporting after
+    # the consolidation. Renaming it would leave that required check forever
+    # pending and block every PR.
+    crap-gate:
+        name: CRAP
+        needs: coverage
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Download coverage lcov
+              uses: actions/download-artifact@v4
+              with:
+                  name: coverage-${{ github.sha }}
+                  path: cov
+            - run: cp cov/lcov.info lcov.info
+
+            - run: cargo install cargo-crap
+
+            # Gate against the TRUSTED main-branch baseline, not the one in the
+            # PR worktree. Otherwise a PR could raise a function's CRAP score and
+            # bump .cargo-crap-baseline.json in the same diff, so --fail-regression
+            # would compare new-vs-new and never fire. We resolve the baseline
+            # from origin/main; until main carries one, fall back to the in-tree file.
+            - name: Resolve trusted baseline
+              run: |
+                  git fetch --depth=1 origin main:refs/remotes/origin/main || true
+                  if git show origin/main:.cargo-crap-baseline.json > main-baseline.json 2>/dev/null; then
+                      echo "Using main-branch CRAP baseline"
+                  else
+                      echo "No baseline on main yet; falling back to in-tree baseline"
+                      cp .cargo-crap-baseline.json main-baseline.json
+                  fi
+
+            # Render the PR-comment report (deltas vs baseline). Generated before
+            # the gate so a regression failure still publishes the comment. The
+            # pr-comment format emits its own `<!-- cargo-crap-report -->` marker,
+            # which the post step below uses to update an existing comment instead
+            # of stacking new ones.
+            - name: Render PR comment
+              if: github.event_name == 'pull_request'
+              run: |
+                  cargo crap --lcov lcov.info \
+                    --baseline main-baseline.json \
+                    --format pr-comment --output crap-comment.md
+
+            # Post or update the report comment. Same-repo PRs carry
+            # pull-requests:write; skipped for fork/Dependabot PRs (read-only
+            # token would 403). continue-on-error keeps a comment hiccup from
+            # turning into a red run.
+            - name: Post or update PR comment
+              if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+              continue-on-error: true
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      const fs = require('fs');
+                      if (!fs.existsSync('crap-comment.md')) return;
+                      const body = fs.readFileSync('crap-comment.md', 'utf8');
+                      const prNumber = context.payload.pull_request.number;
+                      const marker = '<!-- cargo-crap-report -->';
+                      const { data: comments } = await github.rest.issues.listComments({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: prNumber,
+                      });
+                      const existing = comments.find(c => c.body.startsWith(marker));
+                      if (existing) {
+                        await github.rest.issues.updateComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          comment_id: existing.id,
+                          body,
+                        });
+                      } else {
+                        await github.rest.issues.createComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          issue_number: prNumber,
+                          body,
+                        });
+                      }
+
+            # Gate on regressions, not absolute score: the codebase already
+            # carries debt above threshold 30, so blocking on --fail-above
+            # would be red on every PR. CI fails only when a function gets WORSE.
+            # Refresh the in-tree baseline with: ./scripts/crap.sh \
+            #   --format json --output .cargo-crap-baseline.json
+            - run: cargo crap --lcov lcov.info --baseline main-baseline.json --fail-regression
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Mutation testing. Reuses the C make oracle artifact (no re-bootstrap).
+    # On PRs: mutate only the changed lines (--in-diff). Weekly Monday cron /
+    # manual dispatch: full scoped run.
+    # ─────────────────────────────────────────────────────────────────────
+    mutants:
+        name: mutation testing (cargo-mutants)
+        needs: build
+        # PR/push/dispatch, plus the Monday full-run cron. Skipped Friday.
+        if: github.event_name != 'schedule' || github.event.schedule == '0 6 * * 1'
+        runs-on: ubuntu-latest
+        continue-on-error: true
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  # Need history back to the PR base so `git diff base...HEAD`
+                  # (for --in-diff) can find the merge base.
+                  fetch-depth: 0
+
+            # Independent oracle (sh+cc, not built by the rust make), same as the
+            # coverage job — so mutation runs score against a trustworthy oracle.
+            - name: Download independent C make oracle
+              uses: actions/download-artifact@v4
+              with:
+                  name: c-make-oracle-${{ github.sha }}
+                  path: make-bin
+            - name: Install C make oracle as ./make
+              run: |
+                  chmod +x make-bin/c-make-oracle
+                  cp make-bin/c-make-oracle ./make
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Install cargo-mutants
+              uses: taiki-e/install-action@cargo-mutants
+
+            # Writes its report to ./mutants.out by default. On a PR, restrict
+            # to the lines the PR touched (intersected with mutants.toml scope);
+            # otherwise run the full scoped set.
+            - name: Run cargo-mutants
+              run: |
+                  if [ "${{ github.event_name }}" = "pull_request" ]; then
+                      base="origin/${{ github.base_ref }}"
+                      git fetch --no-tags origin "${{ github.base_ref }}"
+                      git diff "$base...HEAD" > pr.diff
+                      echo "=== PR changes vs ${{ github.base_ref }} ==="
+                      git --no-pager diff --stat "$base...HEAD" || true
+                      cargo mutants --no-shuffle --in-diff pr.diff
+                  else
+                      cargo mutants --no-shuffle
+                  fi
+
+            - name: Upload mutants report
+              if: always() && hashFiles('mutants.out/**') != ''
+              uses: actions/upload-artifact@v4
+              with:
+                  name: mutants-${{ github.sha }}
+                  path: mutants.out
+                  if-no-files-found: warn
+
+    # ─────────────────────────────────────────────────────────────────────
+    # cargo-geiger: unsafe-usage tracking dashboard. Independent source scan —
+    # no C make oracle needed, so it does not depend on `build`.
+    # ─────────────────────────────────────────────────────────────────────
+    cargo-geiger:
+        name: Scan unsafe usage with cargo-geiger
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            issues: write
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+              with:
+                  profile: minimal
+                  toolchain: nightly-2026-05-04
+                  override: true
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Cache cargo-geiger binary
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/cargo-geiger
+                  key: cargo-geiger-bin-${{ runner.os }}-${{ env.GEIGER_VERSION }}
+
+            - name: Install cargo-geiger
+              run: |
+                  if ! command -v cargo-geiger >/dev/null 2>&1; then
+                      cargo install cargo-geiger --version "${GEIGER_VERSION}" --locked
+                  fi
+                  cargo geiger --version
+
+            # cargo-geiger returns a non-zero exit code when unsafe usage is
+            # found, which is expected for a C2Rust port. Capture the report and
+            # never fail the job on the unsafe count itself; this job is a
+            # tracking dashboard, not a gate.
+            - name: Run cargo-geiger
+              run: |
+                  set +e
+                  cargo geiger \
+                      --all-features \
+                      --output-format Ascii \
+                      2>&1 | tee cargo-geiger.txt
+                  echo "cargo-geiger exit: ${PIPESTATUS[0]}"
+                  set -e
+
+            - name: Publish report to job summary
+              if: always()
+              run: |
+                  {
+                      echo '## cargo-geiger unsafe usage report'
+                      echo ''
+                      echo '```'
+                      cat cargo-geiger.txt
+                      echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Upload cargo-geiger report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cargo-geiger-${{ github.sha }}
+                  path: cargo-geiger.txt
+                  if-no-files-found: error
+                  retention-days: 30
+
+            # Maintain a single tracking issue with the latest report. Limited to
+            # main/master pushes and manual runs to avoid touching issues on PRs.
+            - name: Open or update tracking issue
+              if: >
+                  always() &&
+                  (github.ref == 'refs/heads/main' ||
+                   github.ref == 'refs/heads/master' ||
+                   github.event_name == 'workflow_dispatch')
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  TITLE="cargo-geiger: unsafe usage report"
+                  LABEL="cargo-geiger"
+
+                  # Ensure the label exists (idempotent; ignore "already exists").
+                  gh label create "$LABEL" \
+                      --color FFA500 \
+                      --description "Automated cargo-geiger unsafe-usage report" \
+                      2>/dev/null || true
+
+                  # GitHub caps issue bodies at 65536 chars; leave headroom for
+                  # the surrounding markdown and truncate the report if needed.
+                  REPORT=$(head -c 60000 cargo-geiger.txt)
+                  {
+                      echo "Automated unsafe-usage report from cargo-geiger."
+                      echo ""
+                      echo "- Commit: \`${GITHUB_SHA}\`"
+                      echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+                      echo "- Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                      echo ""
+                      echo '```'
+                      echo "$REPORT"
+                      echo '```'
+                  } > issue-body.md
+
+                  EXISTING=$(gh issue list \
+                      --state open \
+                      --search "\"$TITLE\" in:title" \
+                      --json number,title \
+                      --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+
+                  if [ -n "$EXISTING" ]; then
+                      gh issue edit "$EXISTING" --body-file issue-body.md
+                      echo "Updated existing issue #$EXISTING"
+                  else
+                      gh issue create \
+                          --title "$TITLE" \
+                          --label "$LABEL" \
+                          --body-file issue-body.md
+                  fi
+
+    # DIFF GATE: fail a PR only when it ADDS unsafe to the make-sys crate's own
+    # code. Gate on REGRESSION vs the trusted baseline on the PR's base branch
+    # (.cargo-geiger-baseline), never on an absolute number. Mirrors the CRAP gate.
+    geiger-gate:
+        name: Gate on new unsafe in make-sys
+        runs-on: ubuntu-latest
+        if: github.event_name == 'pull_request'
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install Rust toolchain
+              uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
+              with:
+                  profile: minimal
+                  toolchain: nightly-2026-05-04
+                  override: true
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Cache cargo-geiger binary
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/cargo-geiger
+                  key: cargo-geiger-bin-${{ runner.os }}-${{ env.GEIGER_VERSION }}
+
+            - name: Install cargo-geiger
+              run: |
+                  if ! command -v cargo-geiger >/dev/null 2>&1; then
+                      cargo install cargo-geiger --version "${GEIGER_VERSION}" --locked
+                  fi
+                  cargo geiger --version
+
+            # Gate against the TRUSTED baseline on the PR's BASE branch, not the
+            # one in the PR worktree. Resolve from github.base_ref so PRs into
+            # master/maintenance branches compare against the right tree; until
+            # that branch carries a baseline, fall back to the in-tree file.
+            - name: Resolve trusted baseline
+              run: |
+                  BASE_REF="${{ github.base_ref }}"
+                  git fetch --depth=1 origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+                  if git show "origin/${BASE_REF}:.cargo-geiger-baseline" > main-geiger-baseline 2>/dev/null; then
+                      echo "Using ${BASE_REF}-branch geiger baseline"
+                  else
+                      echo "No baseline on ${BASE_REF} yet; falling back to in-tree baseline"
+                      cp .cargo-geiger-baseline main-geiger-baseline
+                  fi
+
+            # cargo-geiger exits non-zero whenever unsafe is present (expected
+            # for this crate); the script handles that and prints only the
+            # make-sys own-unsafe integer.
+            - name: Compute current count
+              id: count
+              run: |
+                  HEAD_N=$(bash scripts/geiger-unsafe-count.sh)
+                  echo "current make-sys unsafe count: $HEAD_N"
+                  echo "head_n=$HEAD_N" >> "$GITHUB_OUTPUT"
+
+            - name: Gate
+              run: |
+                  BASE_N=$(tr -d '[:space:]' < main-geiger-baseline)
+                  HEAD_N="${{ steps.count.outputs.head_n }}"
+                  {
+                      echo "## cargo-geiger unsafe gate (make-sys)"
+                      echo ""
+                      echo "- Trusted baseline (origin/${{ github.base_ref }}): \`$BASE_N\`"
+                      echo "- This PR: \`$HEAD_N\`"
+                  } >> "$GITHUB_STEP_SUMMARY"
+                  if [ "$HEAD_N" -gt "$BASE_N" ]; then
+                      DELTA=$((HEAD_N - BASE_N))
+                      echo "::error::cargo-geiger: make-sys unsafe count increased: $BASE_N -> $HEAD_N (+$DELTA). New unsafe was added to the crate. If intentional, refresh the baseline: bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline"
+                      echo "" >> "$GITHUB_STEP_SUMMARY"
+                      echo "**FAILED**: unsafe count increased by $DELTA. If intentional, refresh the baseline: \`bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline\`" >> "$GITHUB_STEP_SUMMARY"
+                      exit 1
+                  fi
+                  if [ "$HEAD_N" -lt "$BASE_N" ]; then
+                      echo "make-sys unsafe count decreased: $BASE_N -> $HEAD_N. The baseline can be lowered: bash scripts/geiger-unsafe-count.sh > .cargo-geiger-baseline"
+                      echo "" >> "$GITHUB_STEP_SUMMARY"
+                      echo "Note: unsafe count decreased; the baseline can be lowered." >> "$GITHUB_STEP_SUMMARY"
+                  fi
+                  echo "OK: make-sys unsafe count did not increase ($HEAD_N <= $BASE_N)."
