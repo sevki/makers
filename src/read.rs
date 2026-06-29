@@ -2,18 +2,16 @@ pub use crate::ffi_types::{
     __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
     __size_t, __syscall_slong_t, __time_t, __uid_t, size_t, uintmax_t,
 };
-use crate::file::{dep, file, FileId, NameSeq, SeqNode};
+use crate::file::{dep, file, FileId, NameSeq};
 use crate::file::{
-    commands, CommandState, Commands, Dep, File, GoalDep, UpdateStatus, VariableSet,
-    VariableSetList,
+    CommandState, Commands, Dep, File, UpdateStatus, VariableSet, VariableSetList,
 };
 use crate::misc::{
-    collapse_continuations, copy_dep, copy_dep_chain, find_next_token, next_token, xcalloc,
-    xmalloc, xrealloc, xstrdup, xstrndup,
+    collapse_continuations, find_next_token, next_token, xmalloc, xrealloc, xstrdup, xstrndup,
 };
 use crate::output::FmtArg;
 use crate::stdio::FILE;
-use crate::strcache::{strcache_add, strcache_add_bytes, strcache_add_len};
+use crate::strcache::{strcache_add, strcache_add_bytes};
 use c2rust_bitfields;
 use libc::{
     __errno_location, free, getenv, getlogin, printf, puts, strchr, strcpy, strerror, strpbrk,
@@ -125,17 +123,17 @@ use crate::expand::{
     variable_buffer, variable_buffer_output,
 };
 pub use crate::file::nameseq;
-use crate::file::{enter_file, enter_prereqs, lookup_file, split_prereqs};
+use crate::file::{enter_file, lookup_file};
 use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
 use crate::load::load_file;
 use crate::make_main::{
-    db_level, default_file, default_goal_var, one_shell, opt_snapped_deps, posix_pedantic,
+    db_level, default_goal_var, one_shell, opt_snapped_deps, posix_pedantic,
     second_expansion, stopchar_map,
 };
 use crate::misc::concat;
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
 use crate::posixos::fd_noinherit;
-use crate::rule::{create_pattern_rule, suffix_file};
+use crate::rule::create_pattern_rule;
 use crate::variable::{
     assign_variable_definition, create_pattern_var, current_variable_set_list,
     define_variable_in_set, do_variable_definition, initialize_file_variables, lookup_variable,
@@ -268,16 +266,9 @@ unsafe fn floc_owned(flocp: *const Floc) -> (Option<Vec<u8>>, u64, u64) {
         }
     }
 }
-#[inline]
-unsafe extern "C" fn free_ns(n: *mut NameSeq) {
-    free(n as *mut ::core::ffi::c_void);
-}
-struct NameSeqNode {
-    name: *const ::core::ffi::c_char,
-    next: *mut NameSeq,
-}
 /// Count the nodes in a `NameSeq` chain, starting from its head node (or
-/// `None` for an empty chain).
+/// `None` for an empty chain). Retained as a pure, tested helper; the makefile
+/// reader no longer threads `NameSeq` chains (it uses owned `Vec<ParsedName>`).
 fn name_seq_len(head: Option<&NameSeq>) -> usize {
     let mut len: usize = 0;
     let mut cur = head;
@@ -289,19 +280,6 @@ fn name_seq_len(head: Option<&NameSeq>) -> usize {
         cur = unsafe { node.next.as_ref() };
     }
     len
-}
-unsafe fn pop_name_seq(n: *mut NameSeq, context: &str) -> NameSeqNode {
-    let node = n.as_ref().expect(context);
-    let popped = NameSeqNode {
-        name: node.name,
-        next: node.next,
-    };
-    free_ns(n);
-    popped
-}
-#[inline]
-unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
-    crate::file::free_seq_chain(d);
 }
 pub const NONEXISTENT_MTIME: i32 = 1;
 static mut toplevel_conditionals: conditionals = conditionals {
@@ -2868,8 +2846,7 @@ unsafe fn record_files(
             any_recurse: false,
         })
     } else if are_also_makes != 0 {
-        fatal(ctx, flocp, 0, b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char, &[]);
-        None
+        fatal(ctx, flocp, 0, b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char, &[])
     } else {
         None
     };
@@ -2983,7 +2960,7 @@ unsafe fn record_files(
                 let mut n = node.lock().expect("file node lock poisoned");
                 if n.is_double_colon {
                     let nm = n.name.clone();
-                    drop(n);
+                    // `fatal` diverges (aborts); the lock is released by unwind.
                     fatal(
                         ctx,
                         flocp,
@@ -2994,7 +2971,6 @@ unsafe fn record_files(
                             strcache_add_bytes(&nm) as *const ::core::ffi::c_char
                         )],
                     );
-                    n = node.lock().expect("file node lock poisoned");
                 }
                 if have_cmds && n.recipe.is_some() && n.is_target {
                     let nm = n.name.clone();
