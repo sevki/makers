@@ -225,19 +225,6 @@ crate::id_wireformat!(DepId[HASH_SIZE] <- DepNode);
 // contribute to the key, so a file's identity survives updates.
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
 
-impl FileId {
-    /// Derive the stable identity from a file's raw hash-name bytes. File names
-    /// are arbitrary OS bytes — not necessarily UTF-8 — so identity hashes the
-    /// bytes directly; the `String`-based `From` above (kept for ergonomic
-    /// call sites with a known-UTF-8 name) agrees with this on UTF-8 input.
-    pub fn from_name_bytes(name: &[u8]) -> FileId {
-        let hash = crate::content_hash::blake3_hash(name);
-        let mut bytes = [0u8; HASH_SIZE];
-        bytes.copy_from_slice(&hash.as_bytes()[..HASH_SIZE]);
-        FileId(bytes)
-    }
-}
-
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct DepFlags: u32 {
@@ -262,10 +249,14 @@ bitflags::bitflags! {
 /// and `c_char`.
 #[derive(Debug, Clone)]
 pub struct FileNode {
-    /// Name as written in the makefile.
-    pub name: String,
-    /// Hash name: the canonical key this file is interned under.
-    pub hname: String,
+    /// Name as written in the makefile. Raw bytes, not `String`: file names are
+    /// arbitrary OS bytes and need not be valid UTF-8 (use
+    /// `String::from_utf8_lossy` only for display).
+    pub name: Vec<u8>,
+    /// Hash name: the canonical key this file is interned under. Raw bytes so
+    /// that `id()` (`FileId::from_bytes(&hname)`) is byte-exact and always
+    /// equals the key the node was interned under.
+    pub hname: Vec<u8>,
     /// Resolved VPATH location, once found.
     pub vpath: Option<String>,
     /// Stem from an implicit-rule match (`%`).
@@ -329,7 +320,7 @@ impl FileNode {
     /// Create a fresh node interned under `name` (its hash name starts equal to
     /// its name; `rehash_file` may later rekey it). All build state starts in
     /// the same "not yet looked at" position as `File::default`.
-    pub fn new(name: String) -> Self {
+    pub fn new(name: Vec<u8>) -> Self {
         FileNode {
             hname: name.clone(),
             name,
@@ -376,7 +367,7 @@ impl FileNode {
     /// (the key it is interned under — equal to `name` until `rehash` rekeys
     /// it). Byte-exact, so non-UTF-8 names stay distinct.
     pub fn id(&self) -> FileId {
-        FileId::from_name_bytes(self.hname.as_bytes())
+        FileId::from_bytes(&self.hname)
     }
 }
 impl Default for GoalDep {
@@ -1142,7 +1133,7 @@ fn normalize_lookup_name_bytes(name: &[u8]) -> &[u8] {
 /// interned. No `unsafe`, no raw pointers, no `c_char`.
 pub fn lookup_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<FileId> {
     let key = normalize_lookup_name_bytes(name);
-    let id = FileId::from_name_bytes(key);
+    let id = FileId::from_bytes(key);
     ctx.filenodes.get(id).map(|_| id)
 }
 
@@ -1155,25 +1146,32 @@ pub fn lookup_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option
 /// appended once the head was already marked double-colon.
 pub fn enter_filenode(ctx: &crate::execctx::ExecContext, name: &[u8]) -> FileId {
     let key = normalize_lookup_name_bytes(name);
-    let id = FileId::from_name_bytes(key);
-    let name_str = String::from_utf8_lossy(key).into_owned();
+    let id = FileId::from_bytes(key);
+    // Store the raw key bytes verbatim (no lossy `String`), so `node.id()`
+    // equals `id` even for names that are not valid UTF-8.
     let node = ctx
         .filenodes
-        .get_or_insert_with(id, || FileNode::new(name_str));
+        .get_or_insert_with(id, || FileNode::new(key.to_vec()));
     node.lock().expect("file node lock poisoned").builtin = false;
     id
 }
 
-/// Append a new double-colon (`::`) entry to the target `head`, marking it a
-/// double-colon target. The entry shares `head`'s name and carries its own
-/// deps/recipe/state (see [`FileNode::double_colon`]). No-op if `head` is not
-/// interned.
+/// Record a double-colon (`::`) rule for the target `head`, mirroring the
+/// c2rust `enter_file` path. The **first** `::` rule lives on the head itself
+/// (legacy set `f->double_colon = f` and attached that rule's deps/recipe to
+/// `f`); only subsequent `::` rules append a fresh entry. So this marks the
+/// head on the first call and appends an inline entry on later calls. No-op if
+/// `head` is not interned.
 pub fn push_double_colon_entry(ctx: &crate::execctx::ExecContext, head: FileId) {
     if let Some(node) = ctx.filenodes.get(head) {
         let mut n = node.lock().expect("file node lock poisoned");
-        n.is_double_colon = true;
-        let entry = FileNode::new(n.name.clone());
-        n.double_colon.push(entry);
+        if !n.is_double_colon {
+            // First `::` definition: the head is the first entry.
+            n.is_double_colon = true;
+        } else {
+            let entry = FileNode::new(n.name.clone());
+            n.double_colon.push(entry);
+        }
     }
 }
 /// # Safety
@@ -3442,7 +3440,7 @@ mod tests {
         assert!(lookup_filenode(&ctx, b"bar.o").is_none());
 
         let node = ctx.filenodes.get(id).expect("interned");
-        assert_eq!(node.lock().unwrap().name, "foo.o");
+        assert_eq!(node.lock().unwrap().name, b"foo.o");
     }
 
     /// Double-colon entries live inline on the head (they share its name, so
@@ -3453,6 +3451,9 @@ mod tests {
         let ctx = crate::execctx::ExecContext::default();
 
         let id = enter_filenode(&ctx, b"all");
+        // First `::` rule marks the head (it is the first entry); the next two
+        // append inline entries.
+        push_double_colon_entry(&ctx, id);
         push_double_colon_entry(&ctx, id);
         push_double_colon_entry(&ctx, id);
 
@@ -3462,20 +3463,20 @@ mod tests {
         let n = node.lock().unwrap();
         assert!(n.is_double_colon);
         assert_eq!(n.double_colon.len(), 2);
-        assert!(n.double_colon.iter().all(|e| e.name == "all"));
+        assert!(n.double_colon.iter().all(|e| e.name == b"all"));
     }
 
     /// `FileId` is byte-exact: names that differ only outside valid UTF-8 stay
     /// distinct (the raw-pointer table keyed by bytes; the arena must too).
     #[test]
-    fn file_id_from_name_bytes_is_byte_exact() {
+    fn file_id_from_bytes_is_byte_exact() {
         assert_ne!(
-            FileId::from_name_bytes(&[0xff, 0x01]),
-            FileId::from_name_bytes(&[0xff, 0x02])
+            FileId::from_bytes(&[0xff, 0x01]),
+            FileId::from_bytes(&[0xff, 0x02])
         );
         assert_eq!(
-            FileId::from_name_bytes(b"foo.o"),
-            FileId::from_name_bytes(b"foo.o")
+            FileId::from_bytes(b"foo.o"),
+            FileId::from_bytes(b"foo.o")
         );
     }
 }
