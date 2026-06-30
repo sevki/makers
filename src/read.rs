@@ -2393,7 +2393,18 @@ unsafe fn record_target_var(
         let p: *mut pattern_var;
         percent = find_percent_cached(&raw mut name);
         if !percent.is_null() {
-            p = create_pattern_var(name, percent);
+            // `create_pattern_var` stores the `target`/`suffix` pointers
+            // verbatim (it does not copy), so they must point into persistent
+            // storage. `name` may still point into the local `name_buf` (the
+            // no-rewrite path of `find_percent_cached` does not intern), which
+            // is freed at the end of this iteration — intern the name and
+            // recompute the `%` offset into the cached copy so the stored
+            // pattern survives until the build-phase lookup.
+            let percent_off = percent.offset_from(name);
+            let cached_name = strcache_add(name);
+            let cached_percent = cached_name.offset(percent_off);
+            name = cached_name;
+            p = create_pattern_var(cached_name, cached_percent);
             (*p).variable.fileinfo = *flocp;
             v = assign_variable_definition(ctx, &raw mut (*p).variable, defn);
             let vref = v.as_mut().expect("assertion failed: v != 0");

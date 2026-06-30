@@ -277,6 +277,22 @@ fn escaped_percent_target() {
 }
 
 #[test]
+fn pattern_specific_variables() {
+    // Pattern-specific variables (`$(obj)/%.so: OBJCOPYFLAGS := ...`, plain
+    // `%.q` patterns, `+=` appends, and an exact-target override) must be
+    // visible in the matching recipe's expansion. Regression test: the
+    // FileId/FileNode flip stored the pattern's target/suffix as pointers into
+    // a freed buffer, so `lookup_pattern_var` matched nothing at build time and
+    // such flags were silently dropped (e.g. the Linux kernel vdso build).
+    check(
+        "pattern_specific_variables",
+        "89_pattern_specific_var.mk",
+        "all",
+        &[],
+    );
+}
+
+#[test]
 fn escaped_colon_prereq() {
     // `foo\:bar` is a prerequisite with a literal colon (via unescape_char), not
     // a target/prereq separator; both binaries must build the `foo:bar` target.
