@@ -19,7 +19,7 @@ use crate::execctx::ExecContext;
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::{die, program, starting_directory};
-use crate::misc::{get_tmpfd, writebuf, xrealloc};
+use crate::misc::{open_anon_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
     osync_release,
@@ -227,7 +227,7 @@ pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
 /// # Safety
 /// Always safe; unsafe for C-API compatibility.
 pub unsafe fn output_tmpfd(ctx: &ExecContext) -> i32 {
-    let fd: i32 = get_tmpfd(ctx, null_mut());
+    let fd: i32 = open_anon_tmpfd(ctx);
     fd_set_append(fd);
     fd
 }
