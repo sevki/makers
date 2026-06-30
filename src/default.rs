@@ -426,7 +426,7 @@ pub unsafe fn undefine_default_variables(ctx: &crate::execctx::ExecContext) {
             name.as_ptr(),
             name.to_bytes().len() as size_t,
             o_default,
-            null_mut(),
+            ::core::ptr::null_mut(),
         );
     }
 }

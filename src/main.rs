@@ -1323,8 +1323,95 @@ static mut long_option_aliases: [option; 9] = [
         val: 'f' as i32,
     },
 ];
-static mut goals: *mut GoalDep = ::core::ptr::null::<GoalDep>() as *mut GoalDep;
-static mut lastgoal: *mut GoalDep = ::core::ptr::null::<GoalDep>() as *mut GoalDep;
+/// The command-line goal targets, in order — the pointer-free replacement for
+/// the c2rust `*mut GoalDep goals`/`lastgoal` chain. Owned `GoalDepNode`s; the
+/// target file is `dep.file: Option<FileId>`.
+static mut goals: Vec<crate::dep::GoalDepNode> = Vec::new();
+
+/// The display name of a goal: its `dep.name` if set, else the name of its
+/// target file (raw bytes).
+fn goal_name_bytes(
+    ctx: &crate::execctx::ExecContext,
+    g: &crate::dep::GoalDepNode,
+) -> Vec<u8> {
+    if !g.dep.name.is_empty() {
+        return g.dep.name.clone().into_bytes();
+    }
+    if let Some(fid) = g.dep.file {
+        if let Some(node) = ctx.filenodes.get(fid) {
+            return node.lock().expect("file node poisoned").name.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// Materialize a goal's source location as an owned `Floc` whose `filenm` lives
+/// for the returned value's lifetime (the bytes are stored alongside it).
+fn goal_floc(g: &crate::dep::GoalDepNode) -> Option<(GoalFloc)> {
+    g.defined_in.as_ref().map(|f| {
+        let mut bytes = f.clone();
+        bytes.push(0);
+        GoalFloc {
+            floc: Floc {
+                filenm: bytes.as_ptr() as *const ::core::ffi::c_char,
+                lineno: g.lineno,
+                offset: g.offset,
+            },
+            _bytes: bytes,
+        }
+    })
+}
+
+/// Owns the NUL-terminated `filenm` bytes referenced by `floc.filenm`. Deref
+/// to `Floc` for the c2rust APIs that still take a `*const Floc`.
+struct GoalFloc {
+    floc: Floc,
+    _bytes: Vec<u8>,
+}
+
+impl ::core::ops::Deref for GoalFloc {
+    type Target = Floc;
+    fn deref(&self) -> &Floc {
+        &self.floc
+    }
+}
+
+/// The synthetic "new file" mtime used for `-W`/`--what-if` targets: the
+/// largest representable packed timestamp (`NEW_MTIME` in the C code).
+fn new_file_mtime() -> uintmax_t {
+    (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
+        0_i32 as uintmax_t
+    } else {
+        !(0_i32 as uintmax_t)
+            << (::core::mem::size_of::<uintmax_t>() as usize)
+                .wrapping_mul(CHAR_BIT as usize)
+                .wrapping_sub(1_usize)
+    })
+}
+
+/// Build a goal that targets `file` (no source location / flags).
+fn goaldep_for_file(file: crate::file::FileId) -> crate::dep::GoalDepNode {
+    crate::dep::GoalDepNode {
+        dep: crate::dep::DepNode {
+            name: String::new(),
+            file: Some(file),
+            shuf: None,
+            stem: None,
+            flags: crate::dep::DepFlags::empty(),
+            changed: false,
+            ignore_mtime: false,
+            static_pattern: false,
+            needs_second_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+        },
+        error: 0,
+        defined_in: None,
+        lineno: 0,
+        offset: 0,
+    }
+}
 static mut command_variables: *mut command_variable =
     ::core::ptr::null::<command_variable>() as *mut command_variable;
 pub static mut program: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -1333,7 +1420,6 @@ pub static mut directory_before_chdir: *mut ::core::ffi::c_char =
 pub static mut starting_directory: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
-pub static mut default_file: *mut file = ::core::ptr::null::<file>() as *mut file;
 // The four special-target feature latches — `.POSIX`, `.SECONDEXPANSION`,
 // `.ONESHELL`, `.NOTPARALLEL` — each set once when make sees the corresponding
 // special target and read widely thereafter. They live on the owned per-run
@@ -1823,7 +1909,7 @@ unsafe fn main_0(
 ) -> i32 {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut makefile_status: i32 = MAKE_SUCCESS;
-    let mut read_files: *mut goaldep;
+    let mut read_files: Vec<crate::dep::GoalDepNode>;
     let mut current_directory: [::core::ffi::c_char; 4097] = [0; 4097];
     let mut restarts: ::core::ffi::c_uint = 0;
     let mut syncing: ::core::ffi::c_uint;
@@ -2459,16 +2545,24 @@ unsafe fn main_0(
         }
     }
     if options.stdin_offset.get() >= 0 {
-        let f: *mut file = enter_file(&ctx, strcache_add(
-            options.makefiles.borrow()[options.stdin_offset.get() as usize].as_ptr(),
-        ));
-        (*f).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        (*f).set_update_status(us_success);
-        (*f).set_command_state(cs_finished);
-        (*f).set_intermediate(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        (*f).set_dontcare(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        (*f).mtime_before_update = f_mtime(&ctx, f, 0);
-        (*f).last_mtime = (*f).mtime_before_update;
+        let name_bytes = {
+            let mfs = options.makefiles.borrow();
+            ::std::ffi::CStr::from_ptr(mfs[options.stdin_offset.get() as usize].as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        let f = enter_file(&ctx, &name_bytes);
+        let mtime = f_mtime(&ctx, f, false);
+        if let Some(node) = ctx.filenodes.get(f) {
+            let mut guard = node.lock().expect("file node poisoned");
+            guard.updated = true;
+            guard.update_status = crate::file::UpdateStatus::Success;
+            guard.command_state = crate::file::CommandState::Finished;
+            guard.intermediate = false;
+            guard.dontcare = false;
+            guard.mtime_before_update = mtime;
+            guard.last_mtime = mtime;
+        }
     }
     bsd_signal(
         SIGCHLD,
@@ -2497,9 +2591,7 @@ unsafe fn main_0(
     let fresh46 = &mut (*define_makeflags(&ctx, &options, 0));
     (*fresh46).set_export(v_export as variable_export);
     define_default_variables(&ctx, &options);
-    default_file = enter_file(&ctx, strcache_add(
-        b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
-    ));
+    enter_file(&ctx, b".DEFAULT");
     default_goal_var = define_variable_in_set(
         &ctx,
         b".DEFAULT_GOAL\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2736,12 +2828,16 @@ unsafe fn main_0(
     build_vpath_lists(&ctx);
     if !options.old_files.borrow().is_empty() {
         for of in options.old_files.borrow().iter() {
-            let f_0: *mut file = enter_file(&ctx, strcache_add(of.as_ptr()));
-            (*f_0).mtime_before_update = OLD_MTIME as uintmax_t;
-            (*f_0).last_mtime = (*f_0).mtime_before_update;
-            (*f_0).set_updated(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            (*f_0).set_update_status(us_success);
-            (*f_0).set_command_state(cs_finished);
+            let name_bytes = ::std::ffi::CStr::from_ptr(of.as_ptr()).to_bytes().to_vec();
+            let f_0 = enter_file(&ctx, &name_bytes);
+            if let Some(node) = ctx.filenodes.get(f_0) {
+                let mut guard = node.lock().expect("file node poisoned");
+                guard.mtime_before_update = OLD_MTIME as uintmax_t;
+                guard.last_mtime = guard.mtime_before_update;
+                guard.updated = true;
+                guard.update_status = crate::file::UpdateStatus::Success;
+                guard.command_state = crate::file::CommandState::Finished;
+            }
         }
     }
     if options.print_targets.get() {
@@ -2750,17 +2846,13 @@ unsafe fn main_0(
     }
     if restarts == 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
-            let f_1: *mut file = enter_file(&ctx, strcache_add(nf.as_ptr()));
-            (*f_1).mtime_before_update =
-                (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
-                    0_i32 as uintmax_t
-                } else {
-                    !(0_i32 as uintmax_t)
-                        << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(CHAR_BIT as usize)
-                            .wrapping_sub(1_usize)
-                });
-            (*f_1).last_mtime = (*f_1).mtime_before_update;
+            let name_bytes = ::std::ffi::CStr::from_ptr(nf.as_ptr()).to_bytes().to_vec();
+            let f_1 = enter_file(&ctx, &name_bytes);
+            if let Some(node) = ctx.filenodes.get(f_1) {
+                let mut guard = node.lock().expect("file node poisoned");
+                guard.mtime_before_update = new_file_mtime();
+                guard.last_mtime = guard.mtime_before_update;
+            }
         }
     }
     remote_setup();
@@ -2775,9 +2867,8 @@ unsafe fn main_0(
         );
         fflush(stdout);
     }
-    if !read_files.is_null() {
-        let makefile_mtimes: *mut uintmax_t;
-        let mut skipped_makefiles: *mut GoalDep = ::core::ptr::null_mut::<GoalDep>();
+    if !read_files.is_empty() {
+        let mut skipped_makefiles: Vec<crate::dep::GoalDepNode> = Vec::new();
         let mut nargv: *mut *const ::core::ffi::c_char = argv as *mut *const ::core::ffi::c_char;
         let mut any_failed: i32 = 0;
         let mut status: UpdateStatus;
@@ -2785,112 +2876,89 @@ unsafe fn main_0(
             printf(b"Updating makefiles....\n\0" as *const u8 as *const ::core::ffi::c_char);
             fflush(stdout);
         }
-        let mut num_mkfiles: ::core::ffi::c_uint = 0;
-        let mut d: *mut GoalDep = read_files;
-        read_files = ::core::ptr::null_mut::<GoalDep>();
-        while !d.is_null() {
-            let t: *mut GoalDep = d;
-            d = (*d).next;
-            (*t).next = read_files;
-            read_files = t;
-            num_mkfiles = num_mkfiles.wrapping_add(1);
-        }
-        alloca_allocations.push(::std::vec::from_elem(
-            0,
-            (num_mkfiles as usize).wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
-                as usize,
-        ));
-        makefile_mtimes = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut uintmax_t;
-        let mut d_0: *mut GoalDep = read_files;
-        let mut last: *mut GoalDep = ::core::ptr::null_mut::<GoalDep>();
-        let mut mm_idx: ::core::ffi::c_uint = 0;
-        while let Some(d0r) = d_0.as_mut() {
-            let mut skip: i32 = 0;
-            let mut f_2: *mut file = d0r.file;
-            let Some(f2_init) = f_2.as_ref() else { break };
-            if f2_init.phony() != 0 {
-                skip = 1;
-            } else {
-                f_2 = f2_init.double_colon;
-                while let Some(f2r) = f_2.as_ref() {
-                    if f2r.deps.is_null() && !f2r.cmds.is_null() {
-                        skip = 1;
-                        break;
-                    } else {
-                        f_2 = f2r.prev;
+        // The c2rust list re-reversed `read_files` here (it had been built by
+        // front-pushing); mirror that so makefiles are remade in source order.
+        read_files.reverse();
+
+        // For each makefile goal, decide whether it might loop (skip remaking)
+        // and, for the rest, snapshot its current mtime. Drop skipped entries
+        // from `read_files`, diverting errored ones to `skipped_makefiles`.
+        let mut makefile_mtimes: Vec<uintmax_t> = Vec::with_capacity(read_files.len());
+        let mut kept: Vec<crate::dep::GoalDepNode> = Vec::with_capacity(read_files.len());
+        for g in ::core::mem::take(&mut read_files) {
+            let Some(fid) = g.dep.file else { continue };
+            // A makefile "might loop" if it is phony, or any of its double-colon
+            // entries has a recipe but no prerequisites.
+            let (skip, last_mtime, name) = {
+                let node = ctx.filenodes.get(fid);
+                match node {
+                    None => (true, UNKNOWN_MTIME as uintmax_t, Vec::new()),
+                    Some(node) => {
+                        let guard = node.lock().expect("file node poisoned");
+                        let mut skip = guard.phony;
+                        if !skip {
+                            for entry in std::iter::once(&*guard).chain(
+                                guard.double_colon.iter().map(|e| e),
+                            ) {
+                                if entry.deps.is_empty() && entry.recipe.is_some() {
+                                    skip = true;
+                                    break;
+                                }
+                            }
+                        }
+                        (skip, guard.last_mtime, guard.name.clone())
                     }
                 }
-            }
-            if skip == 0 {
-                let fresh48 = mm_idx;
-                mm_idx = mm_idx.wrapping_add(1);
-                let _file_ref = d0r
-                    .file
-                    .as_ref()
-                    .expect("read makefile goal has a null file pointer");
-                *makefile_mtimes.offset(fresh48 as isize) =
-                    if f2_init.last_mtime == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime(&ctx, d0r.file, 0)
-                    } else {
-                        f2_init.last_mtime
-                    };
-                last = d_0;
-                d_0 = d0r.next;
+            };
+            if !skip {
+                let mtime = if last_mtime == UNKNOWN_MTIME as uintmax_t {
+                    f_mtime(&ctx, fid, false)
+                } else {
+                    last_mtime
+                };
+                makefile_mtimes.push(mtime);
+                kept.push(g);
             } else {
                 if 0x2_i32 & db_level != 0 {
+                    let mut nm = name.clone();
+                    nm.push(0);
                     printf(
                         b"Makefile '%s' might loop; not remaking it.\n\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        f_2.as_ref().map_or(::core::ptr::null(), |f2r| f2r.name),
+                        nm.as_ptr() as *const ::core::ffi::c_char,
                     );
                     fflush(stdout);
                 }
-                if let Some(lastr) = last.as_mut() {
-                    lastr.next = d0r.next;
-                } else {
-                    read_files = d0r.next;
-                }
-                if d0r.error != 0 && d0r.flags() as i32 & RM_DONTCARE == 0 {
-                    d0r.next = skipped_makefiles;
-                    skipped_makefiles = d_0;
+                if g.error != 0 && !g.dep.flags.contains(crate::dep::DepFlags::DONTCARE) {
+                    skipped_makefiles.push(g);
                     any_failed = 1;
-                } else {
-                    free_goaldep(d_0);
                 }
-                d_0 = match last.as_ref() {
-                    Some(lastr) => lastr.next,
-                    None => read_files,
-                };
             }
         }
+        read_files = kept;
         define_makeflags(&ctx, &options, 1);
         let orig_db_level: i32 = db_level;
         if 0x100_i32 & db_level == 0 {
             db_level = DB_NONE;
         }
         options.rebuilding_makefiles.set(true);
-        status = update_goal_chain(&ctx, read_files);
+        status = update_goal_chain(&ctx, &mut read_files);
         options.rebuilding_makefiles.set(false);
         db_level = orig_db_level;
-        while !skipped_makefiles.is_null() {
-            let d_1: *mut goaldep = skipped_makefiles;
-            let Some(d_1r) = d_1.as_mut() else { break };
-            let err: *const ::core::ffi::c_char = strerror(d_1r.error);
-            let d1_name: *const ::core::ffi::c_char = if !d_1r.name.is_null() {
-                d_1r.name
-            } else {
-                d_1r.file.as_ref().map_or(::core::ptr::null(), |fr| fr.name)
-            };
+        for d_1 in &skipped_makefiles {
+            let err: *const ::core::ffi::c_char = strerror(d_1.error);
+            let mut name_bytes = goal_name_bytes(&ctx, d_1);
+            name_bytes.push(0);
+            let d1_name = name_bytes.as_ptr() as *const ::core::ffi::c_char;
+            let floc = goal_floc(d_1);
             error(
         &ctx,
-        &raw mut d_1r.floc,
+        floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
         (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
         b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
         &[FmtArg::Str((d1_name) as *const ::core::ffi::c_char),
             FmtArg::Str((err) as *const ::core::ffi::c_char)],
     );
-            skipped_makefiles = d_1r.next;
-            free_goaldep(d_1);
         }
         if any_failed != 0
             && status as ::core::ffi::c_uint == us_success as i32 as ::core::ffi::c_uint
@@ -2899,77 +2967,101 @@ unsafe fn main_0(
         }
         let needs_restart = match status as ::core::ffi::c_uint {
             1 => {
-                let mut d_2: *mut GoalDep;
-                d_2 = read_files;
-                while let Some(d_2r) = d_2.as_mut() {
-                    let f_3: *mut file = d_2r.file;
-                    if let Some(f3r) = f_3.as_mut() {
-                        if f3r.unloaded() != 0 {
-                            if load_file(&ctx, &raw mut d_2r.floc, f_3, 0) == 0 {
-                                fatal(
+                for d_2 in &read_files {
+                    let Some(fid) = d_2.dep.file else { continue };
+                    let unloaded = ctx
+                        .filenodes
+                        .get(fid)
+                        .map(|n| n.lock().expect("file node poisoned").unloaded)
+                        .unwrap_or(false);
+                    if unloaded {
+                        let floc = goal_floc(d_2);
+                        if load_file(
+                            &ctx,
+                            floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                            ::core::ptr::null_mut::<file>(),
+                            0,
+                        ) == 0
+                        {
+                            let mut nm = goal_name_bytes(&ctx, d_2);
+                            nm.push(0);
+                            fatal(
         &ctx,
-        &raw mut d_2r.floc,
-        strlen(f3r.name) as size_t,
+        floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+        strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
         b"%s: failed to load\0" as *const u8
-                                        as *const ::core::ffi::c_char,
-        &[FmtArg::Str((f3r.name) as *const ::core::ffi::c_char)],
+                                    as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
     );
-                            }
-                            f3r.set_unloaded(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            f3r.set_loaded(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                        }
+                        if let Some(node) = ctx.filenodes.get(fid) {
+                            let mut guard = node.lock().expect("file node poisoned");
+                            guard.unloaded = false;
+                            guard.loaded = true;
                         }
                     }
-                    d_2 = d_2r.next;
                 }
                 false
             }
             3 => {
                 let mut any_remade: i32 = 0;
-                let mut i_3: ::core::ffi::c_uint;
-                let mut d_4: *mut GoalDep;
-                i_3 = 0;
-                d_4 = read_files;
-                while let Some(d_4r) = d_4.as_mut() {
-                    let f_4: *mut file = d_4r.file;
-                    if f_4.as_ref().is_some_and(|f4r| f4r.updated() != 0) {
-                        let f4r = f_4.as_ref().expect("f_4 checked non-null above");
-                        if f4r.update_status() as i32 == us_success as i32 {
-                            any_remade |= ((if f4r.last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime(&ctx, f_4, 0)
+                for (i_3, d_4) in read_files.iter().enumerate() {
+                    let saved_mtime = makefile_mtimes.get(i_3).copied().unwrap_or(0);
+                    let fid = d_4.dep.file;
+                    let (updated, upd_status, last_mtime, name) = match fid
+                        .and_then(|f| ctx.filenodes.get(f).map(|n| (f, n)))
+                    {
+                        Some((_f, node)) => {
+                            let guard = node.lock().expect("file node poisoned");
+                            (
+                                guard.updated,
+                                guard.update_status,
+                                guard.last_mtime,
+                                guard.name.clone(),
+                            )
+                        }
+                        None => (false, crate::file::UpdateStatus::None, 0, Vec::new()),
+                    };
+                    if updated {
+                        if upd_status == crate::file::UpdateStatus::Success {
+                            let mtime = if last_mtime == UNKNOWN_MTIME as uintmax_t {
+                                f_mtime(&ctx, fid.unwrap(), false)
                             } else {
-                                f4r.last_mtime
-                            }) != *makefile_mtimes.offset(i_3 as isize))
-                                as i32;
-                        } else if d_4r.flags() as i32 & RM_DONTCARE == 0 {
+                                last_mtime
+                            };
+                            any_remade |= (mtime != saved_mtime) as i32;
+                        } else if !d_4.dep.flags.contains(crate::dep::DepFlags::DONTCARE) {
+                            let mut nm = name.clone();
+                            nm.push(0);
+                            let floc = goal_floc(d_4);
                             error(
         &ctx,
-        &raw mut d_4r.floc,
-        strlen(f4r.name) as size_t,
+        floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+        strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
         b"failed to remake makefile '%s'\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((f4r.name) as *const ::core::ffi::c_char)],
+                                as *const ::core::ffi::c_char,
+        &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
     );
-                            let mtime: uintmax_t = if f4r.last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime(&ctx, f_4, 0)
+                            let mtime: uintmax_t = if last_mtime == UNKNOWN_MTIME as uintmax_t {
+                                f_mtime(&ctx, fid.unwrap(), false)
                             } else {
-                                f4r.last_mtime
+                                last_mtime
                             };
                             any_remade |= (mtime != NONEXISTENT_MTIME as uintmax_t
-                                && mtime != *makefile_mtimes.offset(i_3 as isize))
+                                && mtime != saved_mtime)
                                 as i32;
                             makefile_status = MAKE_FAILURE;
                             any_failed = 1;
                         }
-                    } else if d_4r.flags() as i32 & RM_DONTCARE == 0 {
-                        let dnm: *const ::core::ffi::c_char = if !d_4r.name.is_null() {
-                            d_4r.name
-                        } else {
-                            f_4.as_ref().map_or(::core::ptr::null(), |f4r| f4r.name)
-                        };
-                        if d_4r.flags() as i32 & RM_INCLUDED != 0 {
+                    } else if !d_4.dep.flags.contains(crate::dep::DepFlags::DONTCARE) {
+                        let mut nm = goal_name_bytes(&ctx, d_4);
+                        nm.push(0);
+                        let dnm = nm.as_ptr() as *const ::core::ffi::c_char;
+                        if d_4.dep.flags.contains(crate::dep::DepFlags::INCLUDED) {
+                            let floc = goal_floc(d_4);
                             error(
                                 &ctx,
-                                &raw mut d_4r.floc,
+                                floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
                                 strlen(dnm) as size_t,
                                 b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
@@ -2987,8 +3079,6 @@ unsafe fn main_0(
                             any_failed = 1;
                         }
                     }
-                    i_3 = i_3.wrapping_add(1);
-                    d_4 = d_4r.next;
                 }
                 any_remade != 0
             }
@@ -3300,21 +3390,17 @@ unsafe fn main_0(
     ctx.always_make_flag.set(options.always_make.get());
     if restarts != 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
-            let f_5: *mut file = enter_file(&ctx, strcache_add(nf.as_ptr()));
-            (*f_5).mtime_before_update =
-                (!(0_i32 as uintmax_t)).wrapping_sub(if !(-1_i32 as uintmax_t <= 0 as uintmax_t) {
-                    0_i32 as uintmax_t
-                } else {
-                    !(0_i32 as uintmax_t)
-                        << (::core::mem::size_of::<uintmax_t>() as usize)
-                            .wrapping_mul(CHAR_BIT as usize)
-                            .wrapping_sub(1_usize)
-                });
-            (*f_5).last_mtime = (*f_5).mtime_before_update;
+            let name_bytes = ::std::ffi::CStr::from_ptr(nf.as_ptr()).to_bytes().to_vec();
+            let f_5 = enter_file(&ctx, &name_bytes);
+            if let Some(node) = ctx.filenodes.get(f_5) {
+                let mut guard = node.lock().expect("file node poisoned");
+                guard.mtime_before_update = new_file_mtime();
+                guard.last_mtime = guard.mtime_before_update;
+            }
         }
     }
     temp_stdin_unlink(&ctx);
-    if goals.is_null() {
+    if goals.is_empty() {
         let mut p_6: *mut ::core::ffi::c_char;
         if (*default_goal_var).recursive() != 0 {
             p_6 = expand_string_buf(
@@ -3333,10 +3419,10 @@ unsafe fn main_0(
             p_6 = variable_buffer;
         }
         if *p_6 as i32 != 0 {
-            let mut f_6: *mut file = lookup_file(&ctx, p_6);
-            if f_6.is_null() {
-                let ns: *mut NameSeq;
-                ns = parse_file_seq::<NameSeq>(
+            let mut f_6: Option<crate::file::FileId> =
+                lookup_file(&ctx, ::std::ffi::CStr::from_ptr(p_6).to_bytes());
+            if f_6.is_none() {
+                let names = parse_file_seq(
                     &ctx,
                     &raw mut p_6,
                     ::core::mem::size_of::<NameSeq>() as size_t,
@@ -3344,8 +3430,8 @@ unsafe fn main_0(
                     ::core::ptr::null::<::core::ffi::c_char>(),
                     PARSEFS_NONE,
                 );
-                if !ns.is_null() {
-                    if !(*ns).next.is_null() {
+                if !names.is_empty() {
+                    if names.len() > 1 {
                         fatal(
                             &ctx,
                             ::core::ptr::null_mut::<Floc>(),
@@ -3355,20 +3441,15 @@ unsafe fn main_0(
                             &[],
                         );
                     }
-                    f_6 = enter_file(&ctx, strcache_add((*ns).name));
-                    (*ns).name = ::core::ptr::null::<::core::ffi::c_char>();
-                    free_ns_chain(ns);
+                    f_6 = Some(enter_file(&ctx, &names[0].name));
                 }
             }
-            if !f_6.is_null() {
-                goals = alloc_goaldep();
-                (*goals).file = f_6;
+            if let Some(fid) = f_6 {
+                goals.push(goaldep_for_file(fid));
             }
         }
-    } else {
-        (*lastgoal).next = ::core::ptr::null_mut::<GoalDep>();
     }
-    if goals.is_null() {
+    if goals.is_empty() {
         let v_2: *mut variable = lookup_variable(
             &ctx,
             b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3389,12 +3470,12 @@ unsafe fn main_0(
             &[],
         );
     }
-    crate::shuffle::shuffle_deps_recursive(goals as *mut crate::file::Dep);
+    crate::shuffle::shuffle_goals_recursive(&ctx, &mut goals);
     if 0x1_i32 & db_level != 0 {
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
-    match update_goal_chain(&ctx, goals) as ::core::ffi::c_uint {
+    match update_goal_chain(&ctx, &mut goals) as ::core::ffi::c_uint {
         2 => {
             makefile_status = MAKE_TROUBLE;
         }
@@ -3522,16 +3603,17 @@ unsafe fn handle_non_switch_argument(
         if strcmp(arg, b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
             return 1;
         }
-        let f: *mut File = enter_file(ctx, strcache_add(expand_command_line_file(ctx, arg)));
-        (*f).set_cmd_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        if goals.is_null() {
-            goals = alloc_goaldep();
-            lastgoal = goals;
-        } else {
-            (*lastgoal).next = alloc_goaldep();
-            lastgoal = (*lastgoal).next;
+        let fname_bytes =
+            ::std::ffi::CStr::from_ptr(expand_command_line_file(ctx, arg)).to_bytes().to_vec();
+        let f = enter_file(ctx, &fname_bytes);
+        if let Some(node) = ctx.filenodes.get(f) {
+            node.lock().expect("file node poisoned").cmd_target = true;
         }
-        (*lastgoal).file = f;
+        goals.push(goaldep_for_file(f));
+        // NUL-terminated target name for the MAKECMDGOALS accumulation below.
+        let mut fname_c = fname_bytes.clone();
+        fname_c.push(0);
+        let fname_ptr = fname_c.as_ptr() as *const ::core::ffi::c_char;
         let gv: *mut variable;
         let value: *const ::core::ffi::c_char;
         gv = lookup_variable(
@@ -3540,13 +3622,13 @@ unsafe fn handle_non_switch_argument(
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         );
         if gv.is_null() {
-            value = (*f).name;
+            value = fname_ptr;
         } else {
             let oldlen: size_t;
             let newlen: size_t;
             let vp: *mut ::core::ffi::c_char;
             oldlen = strlen((*gv).value) as size_t;
-            newlen = strlen((*f).name) as size_t;
+            newlen = strlen(fname_ptr) as size_t;
             alloca_allocations.push(::std::vec::from_elem(
                 0,
                 oldlen.wrapping_add(1).wrapping_add(newlen).wrapping_add(1) as usize,
@@ -3561,7 +3643,7 @@ unsafe fn handle_non_switch_argument(
             memcpy(
                 vp.offset(oldlen.wrapping_add(1) as isize) as *mut ::core::ffi::c_char
                     as *mut ::core::ffi::c_void,
-                (*f).name as *const ::core::ffi::c_void,
+                fname_ptr as *const ::core::ffi::c_void,
                 (newlen as size_t).wrapping_add(1),
             );
             value = vp;
@@ -3943,8 +4025,10 @@ unsafe fn decode_switches(
     while !(*a).is_null() {
         let prior_found_wait: i32 = found_wait as i32;
         found_wait = handle_non_switch_argument(ctx, *a, origin);
-        if prior_found_wait != 0 && !lastgoal.is_null() {
-            (*lastgoal).wait_here = true;
+        if prior_found_wait != 0 {
+            if let Some(last) = goals.last_mut() {
+                last.dep.wait_here = true;
+            }
         }
         a = a.offset(1_i32 as isize);
     }
