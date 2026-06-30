@@ -403,8 +403,18 @@ pub fn pattern_search(
             if target.len() > 1 {
                 specific_rule_matched = true;
             }
-            // (deps.is_empty && cmds.is_none) was excluded above as a whole;
-            // a rule with neither deps nor cmds is recorded too — match C.
+            // A rule with neither dependencies nor commands exists solely to set
+            // `specific_rule_matched` when its target matches (C implicit.c:
+            // `if (rule->deps == 0 && rule->cmds == 0) continue;`). It must not
+            // be recorded as a usable candidate, or it would shadow the chained
+            // intermediate rule (e.g. a bare `%.out:` blocking `%.out: %.mid`).
+            let deps_and_cmds_empty = with_pattern_rules(|rules| {
+                let r = &rules[rule_idx];
+                r.deps.is_empty() && r.cmds.is_none()
+            });
+            if deps_and_cmds_empty {
+                continue;
+            }
             tryrules.push(TryRule {
                 rule: Some(rule_idx),
                 matches: ti as u32,
@@ -685,9 +695,18 @@ pub fn pattern_search(
                                     allow_compat_rules,
                                 ) {
                                     // The recursive search renamed the node to the
-                                    // matched pattern; capture it.
+                                    // matched pattern; capture it as the dep's
+                                    // pattern, then restore the node's concrete
+                                    // name (C: `pat->pattern = int_file->name;
+                                    // int_file->name = d->name;`). Without the
+                                    // restore the intermediate's `$@`/`$*` would
+                                    // expand to the literal `%`-pattern.
                                     let pat = file_name(ctx, int_id);
                                     pe.pattern = Some(pat);
+                                    if let Some(node) = ctx.filenodes.get(int_id) {
+                                        node.lock().expect("file node lock poisoned").name =
+                                            dr_name.clone();
+                                    }
                                     pe.file = Some(int_id);
                                     deplist.push(pe);
                                     found_intermediate = true;
