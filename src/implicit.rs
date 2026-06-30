@@ -3,34 +3,29 @@
 //! files — that can build a given target.
 //!
 //! Port of `implicit.c`.
+//!
+//! Slice 5 (`*mut`-to-handle): the search operates on [`FileId`] handles and the
+//! owned [`Rule`] database ([`crate::rule::PATTERN_RULES`]). Targets are
+//! identified by `FileId`, prerequisites are built as owned [`DepNode`]s on the
+//! [`FileNode`], and candidate rules are referenced by index into the database
+//! rather than by `*mut Rule`. No `*mut File`/`*mut Dep`/`*mut Commands`.
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Dep, File};
-use crate::misc::free_ns_chain;
-use crate::misc::{print_spaces, skip_reference, xcalloc};
 use crate::stdio::FILE;
-use crate::strcache::{strcache_add, strcache_add_len};
-use libc::{printf, strchr, strlen};
+use libc::printf;
 extern "C" {
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> i32;
 }
-pub type file = File;
-pub type dep = Dep;
+
 use crate::ar::ar_name;
-use crate::commands::set_file_variables;
+use crate::dep::{DepFlags, DepNode};
 use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
-use crate::expand::expand_string_for_file;
-pub use crate::file::nameseq;
-use crate::file::{enter_file, lookup_file};
+use crate::file::{enter_file, lookup_file, FileId};
 use crate::make_main::{db_level, stopchar_map};
-use crate::read::parse_file_seq;
-pub use crate::rule::rule;
-use crate::rule::{get_rule_defn, pattern_rules, Rule};
-use crate::variable::o_automatic;
-use crate::variable::{
-    define_variable_in_set, free_variable_set, initialize_file_variables, merge_variable_set_lists,
-};
+use crate::misc::{print_spaces, skip_reference};
+use crate::recipe::Recipe;
+use crate::rule::{with_pattern_rules, with_pattern_rules_mut};
 use crate::vpath::vpath_search;
 
 /// `DB_IMPLICIT`: `-d` implicit-rule tracing enabled in `db_level`.
@@ -40,260 +35,313 @@ const MAP_NUL: i32 = 0x0001;
 const MAP_BLANK: i32 = 0x0002;
 const MAP_NEWLINE: i32 = 0x0004;
 const MAP_PIPE: i32 = 0x0100;
-/// `parse_file_seq` flags (see `dep.h`).
-const PARSEFS_ONEWORD: i32 = 0x20;
-const PARSEFS_WAIT: i32 = 0x40;
 
-/// `STOP_SET (c, mask)` from `makeint.h`: is `c` in any of the character
-/// classes selected by `mask`?
+/// `STOP_SET (c, mask)` from `makeint.h`.
 fn stop_set(c: u8, mask: i32) -> bool {
     stopchar_map()[c as usize] as i32 & mask != 0
 }
 
-/// `DBS (DB_IMPLICIT, ...)` from the C original: print an indented trace
-/// line when implicit-rule debugging is enabled.
-macro_rules! dbs {
-    ($depth:expr, $fmt:expr $(, $arg:expr)* $(,)?) => {
+/// `DBS (DB_IMPLICIT, ...)`: print an indented trace line when implicit-rule
+/// debugging is enabled. Takes the depth and a preformatted byte string.
+fn dbs(depth: u32, msg: &[u8]) {
+    // SAFETY: tracing only; `db_level` is a process global and `print_spaces`
+    // / `printf` are the established trace sinks.
+    unsafe {
         if DB_IMPLICIT & db_level != 0 {
-            print_spaces($depth);
-            printf($fmt $(, $arg)*);
+            print_spaces(depth);
+            let mut s = msg.to_vec();
+            s.push(0);
+            printf(c"%s".as_ptr(), s.as_ptr());
             fflush(stdout);
         }
-    };
-}
-
-/// The name a dep goes by: its own `name` if set, otherwise its file's name.
-/// Mirrors the C `dep_name` macro.
-unsafe fn dep_name(d: *const dep) -> *const ::core::ffi::c_char {
-    let d = d.as_ref().expect("dep_name requires a non-null dep");
-    if !d.name.is_null() {
-        d.name
-    } else {
-        d.file
-            .as_ref()
-            .expect("dep without a name must have a file")
-            .name
     }
 }
 
-/// Borrow a NUL-terminated C string as a byte slice (without the NUL).
-unsafe fn cstr_bytes<'a>(s: *const ::core::ffi::c_char) -> &'a [u8] {
-    ::core::slice::from_raw_parts(s.cast::<u8>(), strlen(s))
-}
-
-/// String equality, mirroring make's `streq` macro (`strcmp(a, b) == 0`).
-fn streq(a: &::core::ffi::CStr, b: &::core::ffi::CStr) -> bool {
+/// String equality on byte slices (make's `streq`).
+fn streq(a: &[u8], b: &[u8]) -> bool {
     a == b
 }
 
-/// A prerequisite discovered while trying a pattern rule, together with the
-/// intermediate file that would build it (if any).
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct patdeps {
-    pub name: *const ::core::ffi::c_char,
-    pub pattern: *const ::core::ffi::c_char,
-    pub file: *mut File,
-    pub ignore_mtime: bool,
-    pub ignore_automatic_vars: bool,
-    pub is_explicit: bool,
-    pub wait_here: bool,
-}
-
-impl patdeps {
-    pub fn ignore_mtime(&self) -> ::core::ffi::c_uint { self.ignore_mtime as ::core::ffi::c_uint }
-    pub fn set_ignore_mtime(&mut self, value: ::core::ffi::c_uint) { self.ignore_mtime = value != 0; }
-    pub fn ignore_automatic_vars(&self) -> ::core::ffi::c_uint { self.ignore_automatic_vars as ::core::ffi::c_uint }
-    pub fn set_ignore_automatic_vars(&mut self, value: ::core::ffi::c_uint) { self.ignore_automatic_vars = value != 0; }
-    pub fn is_explicit(&self) -> ::core::ffi::c_uint { self.is_explicit as ::core::ffi::c_uint }
-    pub fn set_is_explicit(&mut self, value: ::core::ffi::c_uint) { self.is_explicit = value != 0; }
-    pub fn wait_here(&self) -> ::core::ffi::c_uint { self.wait_here as ::core::ffi::c_uint }
-    pub fn set_wait_here(&mut self, value: ::core::ffi::c_uint) { self.wait_here = value != 0; }
-}
-/// A candidate pattern rule recorded during the first matching pass.
-#[derive(Copy, Clone)]
-pub struct tryrule {
-    pub rule: *mut Rule,
-    pub stemlen: size_t,
-    pub matches: ::core::ffi::c_uint,
-    pub order: ::core::ffi::c_uint,
-    pub checked_lastslash: bool,
-}
 pub const PATH_MAX: usize = 4096;
 pub const GET_PATH_MAX: usize = PATH_MAX;
-/// # Safety
-///
-/// Must run single-threaded; returns a zeroed malloc'd dep owned by the
-/// caller.
-pub unsafe fn alloc_dep() -> *mut dep {
-    xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
+
+/// A prerequisite discovered while trying a pattern rule, together with the
+/// intermediate file that would build it (if any) — the pointer-free form of
+/// the c2rust `patdeps` (whose `file` was `*mut File`).
+#[derive(Debug, Clone)]
+struct PatDep {
+    /// Resolved prerequisite name (raw bytes).
+    name: Vec<u8>,
+    /// The matched pattern that built it, when this dep is an intermediate.
+    pattern: Option<Vec<u8>>,
+    /// The intermediate file's `FileId`, if this dep is built as one.
+    file: Option<FileId>,
+    ignore_mtime: bool,
+    ignore_automatic_vars: bool,
+    is_explicit: bool,
+    wait_here: bool,
 }
-#[inline]
-unsafe fn free_dep_chain(d: *mut dep) {
-    free_ns_chain(d as *mut nameseq);
+
+impl PatDep {
+    fn new(name: Vec<u8>) -> Self {
+        PatDep {
+            name,
+            pattern: None,
+            file: None,
+            ignore_mtime: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+        }
+    }
 }
+
+/// A candidate pattern rule recorded during the first matching pass. `rule` is
+/// an index into the pattern-rule database (the former `*mut Rule`); `None`
+/// marks a candidate discarded during winnowing.
+#[derive(Debug, Clone, Copy)]
+struct TryRule {
+    rule: Option<usize>,
+    stemlen: usize,
+    matches: u32,
+    order: u32,
+    checked_lastslash: bool,
+}
+
+/// Look up a file's `name` bytes (the `name` field of its [`FileNode`]).
+fn file_name(ctx: &crate::execctx::ExecContext, id: FileId) -> Vec<u8> {
+    ctx.filenodes
+        .get(id)
+        .map(|n| n.lock().expect("file node lock poisoned").name.clone())
+        .unwrap_or_default()
+}
+
+/// Build a `DepNode` carrying a resolved name.
+fn dep_with_name(name: Vec<u8>) -> DepNode {
+    DepNode {
+        name: String::from_utf8_lossy(&name).into_owned(),
+        file: None,
+        shuf: None,
+        stem: None,
+        flags: DepFlags::empty(),
+        changed: false,
+        ignore_mtime: false,
+        static_pattern: false,
+        needs_second_expansion: false,
+        ignore_automatic_vars: false,
+        is_explicit: false,
+        wait_here: false,
+    }
+}
+
+/// Whether `name` is impossible to make (wraps the name-based `file_impossible_p`).
+fn is_impossible(ctx: &crate::execctx::ExecContext, name: &[u8]) -> bool {
+    let mut buf = name.to_vec();
+    buf.push(0);
+    // SAFETY: NUL-terminated name; `file_impossible_p` is name-based.
+    unsafe { file_impossible_p(ctx, buf.as_ptr().cast()) != 0 }
+}
+
+/// Whether `name` exists on disk (wraps the name-based `file_exists_p`).
+fn exists(ctx: &crate::execctx::ExecContext, name: &[u8]) -> bool {
+    let mut buf = name.to_vec();
+    buf.push(0);
+    // SAFETY: NUL-terminated name; `file_exists_p` is name-based.
+    unsafe { file_exists_p(ctx, buf.as_ptr().cast()) != 0 }
+}
+
+/// Mark `name` impossible (wraps the name-based `file_impossible`).
+fn mark_impossible(ctx: &crate::execctx::ExecContext, name: &[u8]) {
+    let mut buf = name.to_vec();
+    buf.push(0);
+    // SAFETY: NUL-terminated name; `file_impossible` is name-based.
+    unsafe { file_impossible(ctx, buf.as_ptr().cast()) }
+}
+
+/// VPATH search for `name`; returns the resolved name bytes if found.
+fn vpath_lookup(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<Vec<u8>> {
+    let mut buf = name.to_vec();
+    buf.push(0);
+    // SAFETY: NUL-terminated name; the out-params are all null (we only want the
+    // resolved name). `vpath_search` is name-based.
+    let p = unsafe {
+        vpath_search(
+            ctx,
+            buf.as_ptr().cast(),
+            ::core::ptr::null_mut::<uintmax_t>(),
+            ::core::ptr::null_mut::<::core::ffi::c_uint>(),
+            ::core::ptr::null_mut::<::core::ffi::c_uint>(),
+        )
+    };
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: non-null NUL-terminated string from vpath_search.
+        Some(unsafe { ::core::ffi::CStr::from_ptr(p).to_bytes().to_vec() })
+    }
+}
+
 /// Search the implicit-rule database for a rule that can build `file`,
 /// retrying as an archive-member reference when the plain search fails.
-/// Returns 1 when a rule was found and applied to `file`.
-///
-/// # Safety
-/// `file` must point to a valid file entry; the rule database and all linked
-/// structures must be valid; must run single-threaded.
-pub unsafe fn try_implicit_rule(
-    ctx: &crate::execctx::ExecContext,
-    file: *mut file,
-    depth: ::core::ffi::c_uint,
-) -> i32 {
-    let name = file
-        .as_ref()
-        .expect("try_implicit_rule requires a file")
-        .name;
-    dbs!(
-        depth,
-        c"Looking for an implicit rule for '%s'.\n".as_ptr(),
-        name
-    );
-    if pattern_search(ctx, file, 0, depth, 0, 0) != 0 {
-        return 1;
+/// Returns `true` when a rule was found and applied to `file`.
+pub fn try_implicit_rule(ctx: &crate::execctx::ExecContext, file: FileId, depth: u32) -> bool {
+    let name = file_name(ctx, file);
+    let mut msg = b"Looking for an implicit rule for '".to_vec();
+    msg.extend_from_slice(&name);
+    msg.extend_from_slice(b"'.\n");
+    dbs(depth, &msg);
+    if pattern_search(ctx, file, 0, depth, 0, 0) {
+        return true;
     }
-    if ar_name(ctx, ::core::ffi::CStr::from_ptr(name)) {
-        dbs!(
-            depth,
-            c"Looking for archive-member implicit rule for '%s'.\n".as_ptr(),
-            name
-        );
-        if pattern_search(ctx, file, 1, depth, 0, 0) != 0 {
-            return 1;
+    let mut cname = name.clone();
+    cname.push(0);
+    // SAFETY: NUL-terminated.
+    let is_ar = unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast())) };
+    if is_ar {
+        let mut msg = b"Looking for archive-member implicit rule for '".to_vec();
+        msg.extend_from_slice(&name);
+        msg.extend_from_slice(b"'.\n");
+        dbs(depth, &msg);
+        if pattern_search(ctx, file, 1, depth, 0, 0) {
+            return true;
         }
-        dbs!(
-            depth,
-            c"No archive-member implicit rule found for '%s'.\n".as_ptr(),
-            name
-        );
+        let mut msg = b"No archive-member implicit rule found for '".to_vec();
+        msg.extend_from_slice(&name);
+        msg.extend_from_slice(b"'.\n");
+        dbs(depth, &msg);
     }
-    0
+    false
 }
-/// Scan past leading blanks to the next word of `buffer`, stopping at an
-/// unquoted blank, `|`, or NUL (skipping over `$(...)` references). Returns
-/// the word's start (storing its length through `length`), or null at EOL.
-unsafe fn get_next_word(
-    buffer: *const ::core::ffi::c_char,
-    length: *mut size_t,
-) -> *const ::core::ffi::c_char {
-    // View the NUL-terminated buffer as a byte slice (excluding the NUL) so the
-    // scan walks indices instead of dereferencing raw pointers.
-    let bytes: &[u8] = ::core::ffi::CStr::from_ptr(buffer).to_bytes();
+
+/// Scan past leading blanks to the next word of `bytes` starting at `from`,
+/// stopping at an unquoted blank, `|`, or end (skipping `$(...)` references).
+/// Returns `(start, len)` of the word, or `None` at end-of-input.
+fn get_next_word(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
     let n = bytes.len();
-    let mut i = 0usize;
-    // Skip any leading blanks or newlines.
+    let mut i = from;
     while i < n && stop_set(bytes[i], MAP_BLANK | MAP_NEWLINE) {
         i += 1;
     }
     let beg = i;
     if i >= n {
-        // The first non-blank byte is the terminating NUL: no word remains.
-        return ::core::ptr::null();
+        return None;
     }
-    // Consume the first byte of the word.
     let mut c = bytes[i];
     i += 1;
     loop {
         match c {
             0 | b' ' | b'\t' => {
-                // Back up over the terminating whitespace/NUL.
                 i -= 1;
                 break;
             }
             b'$' => {
-                // `skip_reference` consumes a `$(...)`/`${...}` reference. It
-                // takes the bytes following the `$` and returns the number of
-                // bytes consumed; advance our index by that amount.
                 let consumed = skip_reference(&bytes[i..]);
                 i += consumed;
             }
-            b'|' => {
-                break;
-            }
+            b'|' => break,
             _ => {}
         }
-        // Read the next byte, treating the position past the slice as the NUL.
         c = if i < n { bytes[i] } else { 0 };
         i += 1;
     }
-    if let Some(len) = length.as_mut() {
-        *len = (i - beg) as size_t;
-    }
-    bytes[beg..].as_ptr() as *const ::core::ffi::c_char
+    Some((beg, i - beg))
 }
-/// The per-target views of a rule needed for matching: the target string,
-/// its bytes, and the index of its `%`.
-unsafe fn rule_target(r: &rule, ti: usize) -> (*const ::core::ffi::c_char, &[u8], usize) {
-    let targets = ::core::slice::from_raw_parts(r.targets, r.num as usize);
-    let lens = ::core::slice::from_raw_parts(r.lens, r.num as usize);
-    let target = targets[ti];
-    let bytes = ::core::slice::from_raw_parts(target.cast::<u8>(), lens[ti] as usize);
-    let percent = bytes
-        .iter()
-        .position(|&b| b == b'%')
-        .expect("pattern rule target must contain a '%'");
-    (target, bytes, percent)
+
+/// A snapshot of a candidate rule's i-th target needed for matching.
+struct RuleTarget {
+    /// Target pattern bytes.
+    bytes: Vec<u8>,
+    /// Byte index of the `%`.
+    percent: usize,
 }
-unsafe fn pattern_search(
+
+/// Snapshot the i-th target of database rule `ri`.
+fn rule_target(ri: usize, ti: usize) -> RuleTarget {
+    with_pattern_rules(|rules| {
+        let r = &rules[ri];
+        let bytes = r.targets[ti].clone();
+        let percent = bytes
+            .iter()
+            .position(|&b| b == b'%')
+            .expect("pattern rule target must contain a '%'");
+        RuleTarget { bytes, percent }
+    })
+}
+
+/// Parse a NUL-terminated dep buffer into owned `DepNode`s with `parse_file_seq`.
+fn parse_deps(
     ctx: &crate::execctx::ExecContext,
-    file: *mut file,
+    buf: &mut Vec<u8>,
+    stopmap: i32,
+    prefix: *const ::core::ffi::c_char,
+    flags: i32,
+) -> Vec<DepNode> {
+    if buf.last() != Some(&0) {
+        buf.push(0);
+    }
+    let mut p: *mut ::core::ffi::c_char = buf.as_mut_ptr().cast();
+    // SAFETY: `parse_file_seq` reads through `p` to the NUL; `buf` is
+    // NUL-terminated and lives for the call.
+    let parsed = unsafe { crate::read::parse_file_seq(ctx, &raw mut p, 0, stopmap, prefix, flags) };
+    parsed
+        .into_iter()
+        .map(|pn| {
+            let mut d = dep_with_name(pn.name);
+            d.wait_here = pn.wait;
+            d
+        })
+        .collect()
+}
+
+/// `parse_file_seq` flags (see `dep.h`).
+const PARSEFS_ONEWORD: i32 = 0x20;
+const PARSEFS_WAIT: i32 = 0x40;
+
+pub fn pattern_search(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
     archive: i32,
-    mut depth: ::core::ffi::c_uint,
-    recursions: ::core::ffi::c_uint,
+    mut depth: u32,
+    recursions: u32,
     allow_compat_rules: i32,
-) -> i32 {
-    let file_ref = file.as_mut().expect("pattern_search requires a file");
-    // The target name (inside the parens for an archive member reference).
-    let filename: *const ::core::ffi::c_char = if archive != 0 {
-        strchr(file_ref.name, '(' as i32)
+) -> bool {
+    // The full target name, and the matching slice (inside the parens for an
+    // archive member reference).
+    let full_name = file_name(ctx, file);
+    let (name, name_off): (Vec<u8>, usize) = if archive != 0 {
+        match full_name.iter().position(|&b| b == b'(') {
+            Some(pos) => (full_name[pos..].to_vec(), pos),
+            None => (full_name.clone(), 0),
+        }
     } else {
-        file_ref.name
+        (full_name.clone(), 0)
     };
-    let namelen: size_t = strlen(filename);
-    // Byte view of the target name (without the NUL); the underlying string
-    // lives in the string cache and is never mutated during the search.
-    let name: &[u8] = ::core::slice::from_raw_parts(filename.cast::<u8>(), namelen);
-    // Backing storage for the "intermediate file" scratch entries; entries
-    // may be linked into the patdeps list, so they must live until return.
-    let mut int_file_storage: Vec<Box<file>> = Vec::new();
-    // A scratch entry kept for reuse when the previous intermediate search
-    // failed. Holding it in an `Option` (rather than a nullable raw pointer)
-    // keeps the pointer always valid storage-backed, never a null sentinel.
-    let mut int_file_reuse: Option<*mut file> = None;
-    let mut max_deps: ::core::ffi::c_uint = ctx.max_pattern_deps.get();
-    // The viable prerequisites recorded while trying a rule.
-    let mut deplist: Vec<patdeps> = Vec::with_capacity(max_deps as usize);
-    // Scratch buffer for a prerequisite name with the stem substituted.
-    let mut depname: Vec<u8> = Vec::with_capacity(
-        namelen
-            .wrapping_add(ctx.max_pattern_dep_length.get())
-            .wrapping_add(4),
-    );
+    let _ = name_off;
+    let namelen = name.len();
+
+    let mut max_deps = ctx.max_pattern_deps.get();
+    let mut deplist: Vec<PatDep> = Vec::with_capacity(max_deps as usize);
+    let mut depname: Vec<u8> = Vec::new();
     let mut stem_off: usize = 0;
-    let mut stemlen: size_t = 0;
-    let fullstemlen: size_t;
-    // Candidate rules whose targets match the name.
-    let mut tryrules: Vec<tryrule> = Vec::with_capacity(
-        ctx.num_pattern_rules
-            .get()
-            .wrapping_mul(ctx.max_pattern_targets.get()) as usize,
-    );
-    let foundrule: usize;
-    let mut file_vars_initialized: i32 = 0;
-    let mut specific_rule_matched: bool = false;
+    let mut stemlen: usize = 0;
+    let fullstemlen: usize;
+
+    let mut tryrules: Vec<TryRule> = Vec::new();
+    let mut specific_rule_matched = false;
     let mut ri: usize = 0;
-    let mut found_compat_rule: i32 = 0;
-    let mut rule: *mut rule;
-    let mut pathdir: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
-    let mut pathdir_buf: Vec<u8> = Vec::new();
-    let mut stem_str: [u8; PATH_MAX + 1] = [0; PATH_MAX + 1];
+    let mut found_compat_rule = false;
+    let mut found_rule_idx: Option<usize> = None;
+    let mut pathdir: Vec<u8> = Vec::new();
+    let mut stem_str: Vec<u8> = vec![0u8; PATH_MAX + 1];
     depth = depth.wrapping_add(1);
+
     // An archive member name has no directory part.
-    let pathlen: usize = if archive != 0 || ar_name(ctx, ::core::ffi::CStr::from_ptr(filename)) {
+    let mut cname = name.clone();
+    cname.push(0);
+    // SAFETY: NUL-terminated.
+    let is_ar =
+        unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast())) };
+    let pathlen: usize = if archive != 0 || is_ar {
         0
     } else {
         name[..namelen.saturating_sub(1)]
@@ -301,752 +349,756 @@ unsafe fn pattern_search(
             .rposition(|&b| b == b'/')
             .map_or(0, |slash| slash + 1)
     };
+
     // First pass: collect every pattern rule whose target matches the name.
-    rule = pattern_rules;
-    while let Some(r) = rule.as_ref() {
+    let nrules = with_pattern_rules(|r| r.len());
+    for rule_idx in 0..nrules {
+        let (has_deps_no_cmds, in_use, rnum, terminal, defn) = with_pattern_rules(|rules| {
+            let r = &rules[rule_idx];
+            (
+                !r.deps.is_empty() && r.cmds.is_none(),
+                r.in_use,
+                r.num,
+                r.terminal,
+                None::<Vec<u8>>,
+            )
+        });
+        let _ = defn;
         // A rule with prerequisites but no commands cannot be used directly.
-        if !(!r.deps.is_null() && r.cmds.is_null()) {
-            if r.in_use != 0 {
-                dbs!(
-                    depth,
-                    c"Avoiding implicit rule recursion for rule '%s'.\n".as_ptr(),
-                    get_rule_defn(rule)
-                );
-            } else {
-                for ti in 0..r.num as usize {
-                    let (_, target, percent) = rule_target(r, ti);
-                    // When recursing, only terminal rules may match "%" alone;
-                    // and the rule's fixed text must fit in the name.
-                    if recursions > 0 && target.len() == 1 && r.terminal == 0
-                        || target.len() > namelen
-                    {
-                        continue;
-                    }
-                    stem_off = percent;
-                    stemlen = namelen.wrapping_sub(target.len()).wrapping_add(1);
-                    // A target pattern without a slash matches only the part
-                    // of the name after its last slash.
-                    let check_lastslash = pathlen > 0 && !target.contains(&b'/');
-                    if check_lastslash {
-                        if pathlen > stemlen {
-                            continue;
-                        }
-                        stemlen -= pathlen;
-                        stem_off += pathlen;
-                    }
-                    // The target text before the stem must match the name
-                    // (relative to the last slash when the target has none).
-                    let prefix_start = if check_lastslash { pathlen } else { 0 };
-                    if target[..percent] != name[prefix_start..stem_off] {
-                        continue;
-                    }
-                    // The text after the stem (the suffix) must also match.
-                    if target[percent + 1..] != name[stem_off + stemlen..] {
-                        continue;
-                    }
-                    // A target with anything besides '%' is a specific rule.
-                    if target.len() > 1 {
-                        specific_rule_matched = true;
-                    }
-                    if !(r.deps.is_null() && r.cmds.is_null()) {
-                        tryrules.push(tryrule {
-                            rule,
-                            matches: ti as ::core::ffi::c_uint,
-                            stemlen: stemlen + if check_lastslash { pathlen } else { 0 },
-                            order: tryrules.len() as ::core::ffi::c_uint,
-                            checked_lastslash: check_lastslash,
-                        });
-                    }
-                }
-            }
+        if has_deps_no_cmds {
+            continue;
         }
-        rule = r.next;
+        if in_use {
+            let defn = rule_defn_of(rule_idx);
+            let mut msg = b"Avoiding implicit rule recursion for rule '".to_vec();
+            msg.extend_from_slice(&defn);
+            msg.extend_from_slice(b"'.\n");
+            dbs(depth, &msg);
+            continue;
+        }
+        for ti in 0..rnum as usize {
+            let tgt = rule_target(rule_idx, ti);
+            let target = &tgt.bytes;
+            let percent = tgt.percent;
+            if recursions > 0 && target.len() == 1 && !terminal || target.len() > namelen {
+                continue;
+            }
+            stem_off = percent;
+            stemlen = namelen.wrapping_sub(target.len()).wrapping_add(1);
+            let check_lastslash = pathlen > 0 && !target.contains(&b'/');
+            if check_lastslash {
+                if pathlen > stemlen {
+                    continue;
+                }
+                stemlen -= pathlen;
+                stem_off += pathlen;
+            }
+            let prefix_start = if check_lastslash { pathlen } else { 0 };
+            if target[..percent] != name[prefix_start..stem_off] {
+                continue;
+            }
+            if target[percent + 1..] != name[stem_off + stemlen..] {
+                continue;
+            }
+            if target.len() > 1 {
+                specific_rule_matched = true;
+            }
+            // (deps.is_empty && cmds.is_none) was excluded above as a whole;
+            // a rule with neither deps nor cmds is recorded too — match C.
+            tryrules.push(TryRule {
+                rule: Some(rule_idx),
+                matches: ti as u32,
+                stemlen: stemlen + if check_lastslash { pathlen } else { 0 },
+                order: tryrules.len() as u32,
+                checked_lastslash: check_lastslash,
+            });
+        }
     }
-    if !tryrules.is_empty() {
-        // Shortest-stem (most specific) candidates first, stable by order.
-        tryrules.sort_by_key(|tr| (tr.stemlen, tr.order));
-        // If a specific rule matched, discard non-terminal match-anything
-        // ("%") rules.
-        if specific_rule_matched {
-            for tr in &mut tryrules {
-                let r = tr.rule.as_ref().expect("collected rules are non-null");
-                if r.terminal == 0 {
-                    let lens = ::core::slice::from_raw_parts(r.lens, r.num as usize);
-                    if lens.contains(&1) {
-                        tr.rule = ::core::ptr::null_mut();
-                    }
+
+    if tryrules.is_empty() {
+        return finish_no_rule(ctx, depth, &full_name, found_compat_rule, file, archive, recursions, allow_compat_rules);
+    }
+
+    // Shortest-stem (most specific) candidates first, stable by order.
+    tryrules.sort_by_key(|tr| (tr.stemlen, tr.order));
+    // If a specific rule matched, discard non-terminal match-anything ("%") rules.
+    if specific_rule_matched {
+        for tr in &mut tryrules {
+            if let Some(idx) = tr.rule {
+                let (terminal, has_one) = with_pattern_rules(|rules| {
+                    let r = &rules[idx];
+                    (r.terminal, r.lens.contains(&1))
+                });
+                if !terminal && has_one {
+                    tr.rule = None;
                 }
             }
         }
-        // Second pass: try each candidate; the first round requires every
-        // prerequisite to exist or "ought to exist", the second round
-        // ("trying harder") also accepts buildable intermediate files.
-        let mut intermed_ok: i32 = 0;
-        while intermed_ok < 2 {
-            deplist.clear();
-            if intermed_ok != 0 {
-                dbs!(depth, c"Trying harder.\n".as_ptr());
-            }
-            ri = 0;
-            while ri < tryrules.len() {
-                let mut failed = false;
-                let mut file_variables_set: i32 = 0;
-                let mut deps_found: ::core::ffi::c_uint = 0;
-                let mut order_only: i32 = 0;
-                let tr = tryrules[ri];
-                rule = tr.rule;
-                let rule_terminal = rule.as_ref().map_or(0, |r| r.terminal);
-                if !rule.is_null() && !(intermed_ok != 0 && rule_terminal != 0) {
-                    let rule_ref = rule.as_mut().expect("checked non-null above");
-                    let matches = tr.matches as usize;
-                    let (_, target, percent) = rule_target(rule_ref, matches);
-                    stem_off = percent;
-                    stemlen = namelen.wrapping_sub(target.len()).wrapping_add(1);
-                    let check_lastslash = tr.checked_lastslash;
-                    if check_lastslash {
-                        stem_off += pathlen;
-                        stemlen -= pathlen;
-                        if pathdir.is_null() {
-                            // NUL-terminated copy of the directory prefix.
-                            pathdir_buf.clear();
-                            pathdir_buf.extend_from_slice(&name[..pathlen]);
-                            pathdir_buf.push(0);
-                            pathdir = pathdir_buf.as_mut_ptr().cast();
-                        }
-                    }
-                    dbs!(
-                        depth,
-                        c"Trying pattern rule '%s' with stem '%.*s'.\n".as_ptr(),
-                        get_rule_defn(rule),
-                        stemlen as i32,
-                        name[stem_off..].as_ptr()
-                    );
-                    if stemlen + if check_lastslash { pathlen } else { 0 } > GET_PATH_MAX {
-                        dbs!(
-                            depth,
-                            c"Stem too long: '%s%.*s'.\n".as_ptr(),
-                            if check_lastslash {
-                                pathdir as *const ::core::ffi::c_char
-                            } else {
-                                c"".as_ptr()
-                            },
-                            stemlen as i32,
-                            name[stem_off..].as_ptr()
-                        );
-                    } else {
-                        if !check_lastslash {
-                            stem_str[..stemlen]
-                                .copy_from_slice(&name[stem_off..stem_off + stemlen]);
-                            stem_str[stemlen] = 0;
-                        } else {
-                            stem_str[..pathlen].copy_from_slice(&name[..pathlen]);
-                            stem_str[pathlen..pathlen + stemlen]
-                                .copy_from_slice(&name[stem_off..stem_off + stemlen]);
-                            stem_str[pathlen + stemlen] = 0;
-                        }
-                        if rule_ref.deps.is_null() {
-                            // A matching rule without prerequisites wins
-                            // immediately.
-                            break;
-                        }
-                        rule_ref.in_use = 1;
-                        deplist.clear();
-                        let mut dep: *mut dep = rule_ref.deps;
-                        let mut nptr: *const ::core::ffi::c_char = dep_name(dep);
-                        loop {
-                            let mut dl: *mut dep = ::core::ptr::null_mut();
-                            let mut d: *mut dep;
-                            if nptr.is_null() {
-                                // This dep is exhausted; move to the next.
-                                dep = dep.as_ref().expect("dep chain node").next;
-                                if dep.is_null() {
-                                    break;
-                                }
-                                nptr = dep_name(dep);
-                            }
-                            let dep_ref = dep.as_ref().expect("dep is non-null here");
-                            if dep_ref.need_2nd_expansion() == 0 {
-                                // No second expansion: substitute the stem
-                                // for '%' and parse the whole name at once.
-                                let mut is_explicit: i32 = 1;
-                                let dep_bytes = cstr_bytes(nptr);
-                                depname.clear();
-                                if let Some(cp) = dep_bytes.iter().position(|&b| b == b'%') {
-                                    if check_lastslash {
-                                        depname.extend_from_slice(&name[..pathlen]);
-                                    }
-                                    depname.extend_from_slice(&dep_bytes[..cp]);
-                                    depname.extend_from_slice(&name[stem_off..stem_off + stemlen]);
-                                    depname.extend_from_slice(&dep_bytes[cp + 1..]);
-                                    is_explicit = 0;
-                                } else {
-                                    depname.extend_from_slice(dep_bytes);
-                                }
-                                depname.push(0);
-                                let mut p: *mut ::core::ffi::c_char = depname.as_mut_ptr().cast();
-                                dl = parse_file_seq::<dep>(
-                                    ctx,
-                                    &raw mut p,
-                                    ::core::mem::size_of::<dep>() as size_t,
-                                    MAP_NUL,
-                                    ::core::ptr::null(),
-                                    PARSEFS_ONEWORD | PARSEFS_WAIT,
-                                ) as *mut dep;
-                                d = dl;
-                                while let Some(dr) = d.as_mut() {
-                                    deps_found = deps_found.wrapping_add(1);
-                                    dr.set_ignore_mtime(dep_ref.ignore_mtime());
-                                    dr.set_ignore_automatic_vars(dep_ref.ignore_automatic_vars());
-                                    dr.set_wait_here(dr.wait_here() | dep_ref.wait_here());
-                                    dr.set_is_explicit(is_explicit as ::core::ffi::c_uint);
-                                    d = dr.next;
-                                }
-                                nptr = ::core::ptr::null();
-                            } else {
-                                // Second expansion: take one word at a time,
-                                // replace '%' with $* (or $(*F)), expand, and
-                                // parse the result.
-                                let mut add_dir: i32 = 0;
-                                let mut len: size_t = 0;
-                                nptr = get_next_word(nptr, &raw mut len);
-                                if nptr.is_null() {
-                                    continue;
-                                }
-                                let word: &[u8] =
-                                    ::core::slice::from_raw_parts(nptr.cast::<u8>(), len);
-                                let end: *const ::core::ffi::c_char = nptr.add(len);
-                                if order_only == 0 && word == b"|" {
-                                    order_only = 1;
-                                    nptr = end;
-                                    continue;
-                                }
-                                let is_explicit: i32;
-                                depname.clear();
-                                match word.iter().position(|&b| b == b'%') {
-                                    None => {
-                                        depname.extend_from_slice(word);
-                                        is_explicit = 1;
-                                    }
-                                    Some(first_percent) => {
-                                        is_explicit = 0;
-                                        let mut percent = first_percent;
-                                        let mut start = 0;
-                                        loop {
-                                            depname.extend_from_slice(&word[start..percent]);
-                                            if check_lastslash {
-                                                add_dir = 1;
-                                                depname.extend_from_slice(b"$(*F)");
-                                            } else {
-                                                depname.extend_from_slice(b"$*");
-                                            }
-                                            start = percent + 1;
-                                            if start == word.len() {
-                                                break;
-                                            }
-                                            // Skip the rest of this token so a
-                                            // '%' inside a reference is not
-                                            // substituted.
-                                            let mut scan = start;
-                                            while scan < word.len()
-                                                && !stop_set(
-                                                    word[scan],
-                                                    MAP_BLANK | MAP_NEWLINE | MAP_NUL,
-                                                )
-                                            {
-                                                scan += 1;
-                                            }
-                                            match word[scan..].iter().position(|&b| b == b'%') {
-                                                None => break,
-                                                Some(k) => percent = scan + k,
-                                            }
-                                        }
-                                        depname.extend_from_slice(&word[start..]);
-                                    }
-                                }
-                                depname.push(0);
-                                nptr = end;
-                                // The automatic variables ($*, $@, ...) must
-                                // be in place before expanding the dep.
-                                if file_vars_initialized == 0 {
-                                    initialize_file_variables(ctx, file, 0);
-                                    set_file_variables(ctx, file, stem_str.as_mut_ptr().cast());
-                                    file_vars_initialized = 1;
-                                } else if file_variables_set == 0 {
-                                    define_variable_in_set(
-                                        ctx,
-                                        c"*".as_ptr(),
-                                        1,
-                                        stem_str.as_mut_ptr().cast(),
-                                        o_automatic,
-                                        0,
-                                        file_ref
-                                            .variables
-                                            .as_ref()
-                                            .expect("file variables were initialized above")
-                                            .set,
-                                        ::core::ptr::null_mut(),
-                                    );
-                                    file_variables_set = 1;
-                                }
-                                let mut p: *mut ::core::ffi::c_char =
-                                    expand_string_for_file(ctx, depname.as_mut_ptr().cast(), file);
-                                let mut dptr: *mut *mut dep = &raw mut dl;
-                                loop {
-                                    let dp: *mut dep = parse_file_seq::<dep>(
-                                        ctx,
-                                        &raw mut p,
-                                        ::core::mem::size_of::<dep>() as size_t,
-                                        if order_only != 0 { MAP_NUL } else { MAP_PIPE },
-                                        if add_dir != 0 {
-                                            pathdir
-                                        } else {
-                                            ::core::ptr::null_mut()
-                                        },
-                                        PARSEFS_WAIT,
-                                    )
-                                        as *mut dep;
-                                    *dptr = dp;
-                                    d = dp;
-                                    while let Some(dr) = d.as_mut() {
-                                        deps_found = deps_found.wrapping_add(1);
-                                        if order_only != 0 {
-                                            dr.set_ignore_mtime(1);
-                                        }
-                                        dr.set_is_explicit(is_explicit as ::core::ffi::c_uint);
-                                        dptr = &raw mut dr.next;
-                                        d = dr.next;
-                                    }
-                                    if *p == '|' as ::core::ffi::c_char {
-                                        order_only = 1;
-                                        p = p.add(1);
-                                    }
-                                    if *p == 0 {
-                                        break;
-                                    }
-                                }
-                            }
-                            // Track the most deps any rule has produced (the
-                            // Vec grows on its own).
-                            if deps_found > max_deps {
-                                let new_max = ctx.max_pattern_deps.get().max(deps_found);
-                                ctx.max_pattern_deps.set(new_max);
-                                max_deps = new_max;
-                            }
-                            // Check each expanded prerequisite for viability.
-                            d = dl;
-                            while let Some(dr) = d.as_mut() {
-                                let is_rule = dr.name == dep_name(dep);
-                                let mut explicit = false;
-                                let mut dp: *mut dep = ::core::ptr::null_mut();
-                                if file_impossible_p(ctx, dr.name) != 0 {
-                                    dbs!(
-                                        depth,
-                                        if is_rule {
-                                            c"Rejecting rule '%s' due to impossible rule prerequisite '%s'.\n".as_ptr()
-                                        } else {
-                                            c"Rejecting rule '%s' due to impossible implicit prerequisite '%s'.\n".as_ptr()
-                                        },
-                                        get_rule_defn(rule),
-                                        dr.name
-                                    );
-                                    tryrules[ri].rule = ::core::ptr::null_mut();
-                                    failed = true;
-                                    break;
-                                }
-                                let mut pe: patdeps = ::core::mem::zeroed();
-                                pe.set_ignore_mtime(dr.ignore_mtime());
-                                pe.set_ignore_automatic_vars(dr.ignore_automatic_vars());
-                                pe.set_wait_here(dr.wait_here());
-                                pe.set_is_explicit(dr.is_explicit());
-                                dbs!(
-                                    depth,
-                                    if is_rule {
-                                        c"Trying rule prerequisite '%s'.\n".as_ptr()
-                                    } else {
-                                        c"Trying implicit prerequisite '%s'.\n".as_ptr()
-                                    },
-                                    dr.name
-                                );
-                                let df: *mut file = lookup_file(ctx, dr.name);
-                                if let Some(dfr) = df.as_mut() {
-                                    if dfr.is_explicit() != 0 {
-                                        pe.set_is_explicit(1);
-                                    }
-                                    if dfr.is_explicit() == 0 && dr.is_explicit() == 0 {
-                                        dfr.set_intermediate(1);
-                                    }
-                                }
-                                // A prerequisite "ought to exist" if it is an
-                                // explicit target or a dep of our target.
-                                if df.as_ref().is_some_and(|f| f.is_target() != 0) {
-                                    explicit = true;
-                                } else {
-                                    dp = file_ref.deps;
-                                    while let Some(dpr) = dp.as_ref() {
-                                        if streq(
-                                            ::core::ffi::CStr::from_ptr(dr.name),
-                                            ::core::ffi::CStr::from_ptr(dep_name(dp)),
-                                        ) {
-                                            break;
-                                        }
-                                        dp = dpr.next;
-                                    }
-                                }
-                                if explicit || !dp.is_null() {
-                                    pe.name = dr.name;
-                                    deplist.push(pe);
-                                    dbs!(depth, c"'%s' ought to exist.\n".as_ptr(), dr.name);
-                                } else if file_exists_p(ctx, dr.name) != 0 {
-                                    pe.name = dr.name;
-                                    deplist.push(pe);
-                                    dbs!(depth, c"Found '%s'.\n".as_ptr(), dr.name);
-                                } else if !df.is_null() && allow_compat_rules != 0 {
-                                    pe.name = dr.name;
-                                    deplist.push(pe);
-                                    dbs!(
-                                        depth,
-                                        c"Using compatibility rule '%s' due to '%s'.\n".as_ptr(),
-                                        get_rule_defn(rule),
-                                        dr.name
-                                    );
-                                } else {
-                                    if !df.is_null() {
-                                        dbs!(
-                                            depth,
-                                            c"Prerequisite '%s' of rule '%s' does not qualify as ought to exist.\n".as_ptr(),
-                                            dr.name,
-                                            get_rule_defn(rule)
-                                        );
-                                        found_compat_rule = 1;
-                                    }
-                                    let vname: *const ::core::ffi::c_char = vpath_search(
-                                        ctx,
-                                        dr.name,
-                                        ::core::ptr::null_mut::<uintmax_t>(),
-                                        ::core::ptr::null_mut::<::core::ffi::c_uint>(),
-                                        ::core::ptr::null_mut::<::core::ffi::c_uint>(),
-                                    );
-                                    if !vname.is_null() {
-                                        dbs!(
-                                            depth,
-                                            c"Found prerequisite '%s' as VPATH '%s'.\n".as_ptr(),
-                                            dr.name,
-                                            vname
-                                        );
-                                        pe.name = dr.name;
-                                        deplist.push(pe);
-                                    } else {
-                                        // Last resort: recursively search for
-                                        // a rule chain that builds it as an
-                                        // intermediate file.
-                                        let mut found_intermediate = false;
-                                        if intermed_ok != 0 {
-                                            dbs!(
-                                                depth,
-                                                if dr.is_explicit() != 0
-                                                    || df
-                                                        .as_ref()
-                                                        .is_some_and(|f| f.is_explicit() != 0)
-                                                {
-                                                    c"Looking for a rule with explicit file '%s'.\n"
-                                                        .as_ptr()
-                                                } else {
-                                                    c"Looking for a rule with intermediate file '%s'.\n".as_ptr()
-                                                },
-                                                dr.name
-                                            );
-                                            // Reuse the scratch entry kept from a previous failed
-                                            // search, or allocate a fresh one. Either way `int_file`
-                                            // comes from valid storage and is never a null sentinel.
-                                            let int_file: *mut file = match int_file_reuse.take() {
-                                                Some(p) => p,
-                                                None => {
-                                                    int_file_storage.push(Box::new(
-                                                        ::core::mem::zeroed::<file>(),
-                                                    ));
-                                                    &raw mut **int_file_storage
-                                                        .last_mut()
-                                                        .expect("just pushed")
-                                                }
-                                            };
-                                            // Reset the scratch entry to a zeroed file before
-                                            // reusing it (replaces a raw `write_bytes`).
-                                            {
-                                                let int_ref = int_file
-                                                    .as_mut()
-                                                    .expect("scratch entry is storage-backed");
-                                                *int_ref = ::core::mem::zeroed::<file>();
-                                                int_ref.name = dr.name;
-                                            }
-                                            if pattern_search(
-                                                ctx,
-                                                int_file,
-                                                0,
-                                                depth,
-                                                recursions.wrapping_add(1),
-                                                allow_compat_rules,
-                                            ) != 0
-                                            {
-                                                let int_ref = int_file
-                                                    .as_mut()
-                                                    .expect("scratch entry is storage-backed");
-                                                pe.pattern = int_ref.name;
-                                                int_ref.name = dr.name;
-                                                pe.file = int_file;
-                                                pe.name = dr.name;
-                                                deplist.push(pe);
-                                                found_intermediate = true;
-                                            } else {
-                                                let int_ref = int_file
-                                                    .as_mut()
-                                                    .expect("scratch entry is storage-backed");
-                                                if !int_ref.variables.is_null() {
-                                                    free_variable_set(int_ref.variables);
-                                                }
-                                                if !int_ref.pat_variables.is_null() {
-                                                    free_variable_set(int_ref.pat_variables);
-                                                }
-                                                if df.is_null() {
-                                                    file_impossible(ctx, dr.name);
-                                                }
-                                                // Keep this scratch entry to reuse next iteration.
-                                                int_file_reuse = Some(int_file);
-                                            }
-                                        }
-                                        if !found_intermediate {
-                                            if intermed_ok != 0 {
-                                                dbs!(
-                                                    depth,
-                                                    c"Rejecting rule '%s' due to impossible prerequisite '%s'.\n".as_ptr(),
-                                                    get_rule_defn(rule),
-                                                    dr.name
-                                                );
-                                            } else {
-                                                dbs!(depth, c"Not found '%s'.\n".as_ptr(), dr.name);
-                                            }
-                                            failed = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                d = dr.next;
-                            }
-                            free_dep_chain(dl);
-                            if failed {
-                                break;
-                            }
-                        }
-                        rule_ref.in_use = 0;
-                        if !failed {
-                            // Every prerequisite checked out: use this rule.
-                            break;
-                        }
-                    }
+    }
+
+    // Second pass: try each candidate.
+    let mut file_vars_initialized = false;
+    let mut intermed_ok: i32 = 0;
+    let mut matched = false;
+    'outer: while intermed_ok < 2 {
+        deplist.clear();
+        if intermed_ok != 0 {
+            dbs(depth, b"Trying harder.\n");
+        }
+        ri = 0;
+        while ri < tryrules.len() {
+            let tr = tryrules[ri];
+            let rule_idx = match tr.rule {
+                Some(idx) => idx,
+                None => {
+                    ri += 1;
+                    continue;
                 }
+            };
+            let rule_terminal = with_pattern_rules(|r| r[rule_idx].terminal);
+            if intermed_ok != 0 && rule_terminal {
                 ri += 1;
+                continue;
             }
-            if ri < tryrules.len() {
-                break;
-            }
-            rule = ::core::ptr::null_mut();
-            intermed_ok += 1;
-        }
-        if let Some(found_rule) = rule.as_ref() {
-            foundrule = ri;
-            let found_tr = tryrules[foundrule];
-            // When recursing, give the file the matched target pattern as its
-            // name; the caller uses it to build the real name from the stem.
-            if recursions > 0 {
-                let targets =
-                    ::core::slice::from_raw_parts(found_rule.targets, found_rule.num as usize);
-                file_ref.name = targets[found_tr.matches as usize];
-            }
-            // Walk the recorded prerequisites backwards, entering each one as
-            // a dep of the target (so the final list is in rule order).
-            while let Some(pe) = deplist.pop() {
-                if !pe.file.is_null() {
-                    // An intermediate file: merge the scratch entry into the
-                    // real file table.
-                    let imf = pe.file.as_mut().expect("checked non-null");
-                    // Resolve the real file for this intermediate, creating it
-                    // if absent. Use an explicit null check (not `as_mut`) so the
-                    // looked-up pointer is treated as a validated, non-null
-                    // pointer before it is dereferenced.
-                    let found: *mut file = lookup_file(ctx, imf.name);
-                    let f_ptr: *mut file = if found.is_null() {
-                        enter_file(ctx, imf.name)
-                    } else {
-                        found
-                    };
-                    let f = f_ptr.as_mut().expect("looked up or just entered");
-                    f.deps = imf.deps;
-                    f.cmds = imf.cmds;
-                    f.stem = imf.stem;
-                    merge_variable_set_lists(&raw mut f.variables, imf.variables);
-                    f.pat_variables = imf.pat_variables;
-                    f.set_pat_searched(imf.pat_searched());
-                    f.also_make = imf.also_make;
-                    f.set_is_target(1);
-                    f.set_is_explicit(
-                        f.is_explicit()
-                            | (imf.is_explicit() != 0 || pe.is_explicit() != 0)
-                                as ::core::ffi::c_uint,
-                    );
-                    f.set_notintermediate(
-                        f.notintermediate()
-                            | (imf.notintermediate() != 0 || ctx.no_intermediates.get())
-                                as ::core::ffi::c_uint,
-                    );
-                    f.set_intermediate(
-                        f.intermediate()
-                            | (f.is_explicit() == 0 && f.notintermediate() == 0)
-                                as ::core::ffi::c_uint,
-                    );
-                    f.set_tried_implicit(1);
-                    let pattern_owner: *mut file = lookup_file(ctx, pe.pattern);
-                    if pattern_owner.as_ref().is_some_and(|p| p.precious() != 0) {
-                        f.set_precious(1);
-                    }
-                    let mut d: *mut dep = f.deps;
-                    while let Some(dr) = d.as_mut() {
-                        dr.file = enter_file(ctx, dr.name);
-                        dr.name = ::core::ptr::null();
-                        let dep_file = dr.file.as_mut().expect("just entered");
-                        dep_file.set_tried_implicit(dep_file.tried_implicit() | dr.changed());
-                        d = dr.next;
-                    }
+            let mut failed = false;
+            let mut deps_found: u32 = 0;
+            let mut order_only = false;
+
+            let tgt = rule_target(rule_idx, tr.matches as usize);
+            let target = &tgt.bytes;
+            let percent = tgt.percent;
+            stem_off = percent;
+            stemlen = namelen.wrapping_sub(target.len()).wrapping_add(1);
+            let check_lastslash = tr.checked_lastslash;
+            if check_lastslash {
+                stem_off += pathlen;
+                stemlen -= pathlen;
+                if pathdir.is_empty() {
+                    pathdir.extend_from_slice(&name[..pathlen]);
+                    pathdir.push(0);
                 }
-                let new_dep: *mut dep = alloc_dep();
-                let nd = new_dep.as_mut().expect("xcalloc returned null");
-                nd.set_ignore_mtime(pe.ignore_mtime());
-                nd.set_is_explicit(pe.is_explicit());
-                nd.set_ignore_automatic_vars(pe.ignore_automatic_vars());
-                nd.set_wait_here(pe.wait_here());
-                let s: *const ::core::ffi::c_char = strcache_add(pe.name);
-                if recursions != 0 {
-                    nd.name = s;
-                } else {
-                    nd.file = lookup_file(ctx, s);
-                    if nd.file.is_null() {
-                        nd.file = enter_file(ctx, s);
-                    }
-                }
-                if pe.file.is_null()
-                    && found_tr
-                        .rule
-                        .as_ref()
-                        .expect("found rule is non-null")
-                        .terminal
-                        != 0
-                {
-                    // A terminal rule's non-intermediate prerequisites must
-                    // exist as-is; mark them so they are not built.
-                    if nd.file.is_null() {
-                        nd.set_changed(1);
-                    } else {
-                        nd.file
-                            .as_mut()
-                            .expect("checked non-null")
-                            .set_tried_implicit(1);
-                    }
-                }
-                nd.next = file_ref.deps;
-                file_ref.deps = new_dep;
-                file_ref.set_was_shuffled(0);
             }
-            if file_ref.was_shuffled() == 0 {
-                crate::shuffle::shuffle_deps_recursive(file_ref.deps);
+            {
+                let defn = rule_defn_of(rule_idx);
+                let mut msg = b"Trying pattern rule '".to_vec();
+                msg.extend_from_slice(&defn);
+                msg.extend_from_slice(b"' with stem '");
+                msg.extend_from_slice(&name[stem_off..stem_off + stemlen]);
+                msg.extend_from_slice(b"'.\n");
+                dbs(depth, &msg);
             }
-            if !found_tr.checked_lastslash {
-                file_ref.stem = strcache_add_len(name[stem_off..].as_ptr().cast(), stemlen);
-                fullstemlen = stemlen;
+            if stemlen + if check_lastslash { pathlen } else { 0 } > GET_PATH_MAX {
+                dbs(depth, b"Stem too long.\n");
+                ri += 1;
+                continue;
+            }
+            // Build the stem string.
+            if !check_lastslash {
+                stem_str[..stemlen].copy_from_slice(&name[stem_off..stem_off + stemlen]);
+                stem_str[stemlen] = 0;
             } else {
-                // The rule matched only the basename: the stem includes the
-                // directory part.
-                fullstemlen = pathlen + stemlen;
                 stem_str[..pathlen].copy_from_slice(&name[..pathlen]);
-                stem_str[pathlen..fullstemlen].copy_from_slice(&name[stem_off..stem_off + stemlen]);
-                stem_str[fullstemlen] = 0;
-                file_ref.stem = strcache_add(stem_str.as_ptr().cast());
+                stem_str[pathlen..pathlen + stemlen]
+                    .copy_from_slice(&name[stem_off..stem_off + stemlen]);
+                stem_str[pathlen + stemlen] = 0;
             }
-            file_ref.cmds = found_rule.cmds;
-            file_ref.set_is_target(1);
-            // Inherit .PRECIOUS and .NOTINTERMEDIATE from the target pattern.
-            let (found_target, _, _) = rule_target(found_rule, found_tr.matches as usize);
-            let pattern_file: *mut file = lookup_file(ctx, found_target);
-            if let Some(pf) = pattern_file.as_ref() {
-                if pf.precious() != 0 {
-                    file_ref.set_precious(1);
+            let no_deps = with_pattern_rules(|r| r[rule_idx].deps.is_empty());
+            if no_deps {
+                // A matching rule without prerequisites wins immediately.
+                matched = true;
+                found_rule_idx = Some(rule_idx);
+                break 'outer;
+            }
+            with_pattern_rules_mut(|r| r[rule_idx].in_use = true);
+            deplist.clear();
+
+            // Snapshot the rule's deps for iteration (names + flags).
+            let rule_deps = with_pattern_rules(|r| r[rule_idx].deps.clone());
+
+            'deps: for dep in &rule_deps {
+                let dep_name_bytes = dep.name.clone().into_bytes();
+                let expanded: Vec<DepNode>;
+                let mut is_explicit_default = 1;
+                if !dep.needs_second_expansion {
+                    // No second expansion: substitute the stem for '%' and parse.
+                    depname.clear();
+                    if let Some(cp) = dep_name_bytes.iter().position(|&b| b == b'%') {
+                        if check_lastslash {
+                            depname.extend_from_slice(&name[..pathlen]);
+                        }
+                        depname.extend_from_slice(&dep_name_bytes[..cp]);
+                        depname.extend_from_slice(&name[stem_off..stem_off + stemlen]);
+                        depname.extend_from_slice(&dep_name_bytes[cp + 1..]);
+                        is_explicit_default = 0;
+                    } else {
+                        depname.extend_from_slice(&dep_name_bytes);
+                    }
+                    let mut buf = depname.clone();
+                    let mut parsed = parse_deps(
+                        ctx,
+                        &mut buf,
+                        MAP_NUL,
+                        ::core::ptr::null(),
+                        PARSEFS_ONEWORD | PARSEFS_WAIT,
+                    );
+                    for d in &mut parsed {
+                        deps_found = deps_found.wrapping_add(1);
+                        d.ignore_mtime = dep.ignore_mtime;
+                        d.ignore_automatic_vars = dep.ignore_automatic_vars;
+                        d.wait_here = d.wait_here || dep.wait_here;
+                        d.is_explicit = is_explicit_default != 0;
+                    }
+                    expanded = parsed;
+                } else {
+                    // Second expansion. BOUNDARY: per-word `%`->`$*`/`$(*F)`
+                    // substitution then `expand_string_for_file`/automatic-var
+                    // setup require the still-legacy variable layer (slice owned
+                    // by variable.rs / commands.rs). We perform the textual
+                    // rewrite into `depname` here and call the pinned FileId-based
+                    // forms; those callees are not yet converted, so this arm is
+                    // expected not to type-check until they are.
+                    expanded = second_expansion_deps(
+                        ctx,
+                        file,
+                        dep,
+                        &name,
+                        stem_off,
+                        stemlen,
+                        check_lastslash,
+                        pathlen,
+                        &stem_str,
+                        &pathdir,
+                        &mut order_only,
+                        &mut deps_found,
+                        &mut file_vars_initialized,
+                    );
                 }
-                if pf.notintermediate() != 0 || ctx.no_intermediates.get() {
-                    file_ref.set_notintermediate(1);
+                if deps_found > max_deps {
+                    let new_max = ctx.max_pattern_deps.get().max(deps_found);
+                    ctx.max_pattern_deps.set(new_max);
+                    max_deps = new_max;
+                }
+
+                // Check each expanded prerequisite for viability.
+                for dr in &expanded {
+                    let dr_name = dr.name.clone().into_bytes();
+                    let is_rule = dr.name.as_bytes() == dep_name_bytes.as_slice();
+                    if is_impossible(ctx, &dr_name) {
+                        let defn = rule_defn_of(rule_idx);
+                        let mut msg = b"Rejecting rule '".to_vec();
+                        msg.extend_from_slice(&defn);
+                        msg.extend_from_slice(b"' due to impossible prerequisite '");
+                        msg.extend_from_slice(&dr_name);
+                        msg.extend_from_slice(b"'.\n");
+                        dbs(depth, &msg);
+                        tryrules[ri].rule = None;
+                        failed = true;
+                        break 'deps;
+                    }
+                    let mut pe = PatDep::new(dr_name.clone());
+                    pe.ignore_mtime = dr.ignore_mtime;
+                    pe.ignore_automatic_vars = dr.ignore_automatic_vars;
+                    pe.wait_here = dr.wait_here;
+                    pe.is_explicit = dr.is_explicit;
+                    let _ = is_rule;
+
+                    // Resolve the prerequisite's existing file (if any).
+                    let df = lookup_file(ctx, &dr_name);
+                    let mut df_is_explicit = false;
+                    let mut df_is_target = false;
+                    if let Some(dfid) = df {
+                        if let Some(node) = ctx.filenodes.get(dfid) {
+                            let mut n = node.lock().expect("file node lock poisoned");
+                            df_is_explicit = n.is_explicit;
+                            df_is_target = n.is_target;
+                            if !n.is_explicit && !dr.is_explicit {
+                                n.intermediate = true;
+                            }
+                        }
+                    }
+                    if df_is_explicit {
+                        pe.is_explicit = true;
+                    }
+
+                    // "ought to exist" if it is an explicit target or a dep of
+                    // our target.
+                    let mut ought = df_is_target;
+                    if !ought {
+                        // Is it among our target's existing deps?
+                        ought = ctx
+                            .filenodes
+                            .get(file)
+                            .map(|n| {
+                                n.lock()
+                                    .expect("file node lock poisoned")
+                                    .deps
+                                    .iter()
+                                    .any(|d| d.name.as_bytes() == dr_name.as_slice())
+                            })
+                            .unwrap_or(false);
+                    }
+
+                    if ought {
+                        deplist.push(pe);
+                        let mut msg = b"'".to_vec();
+                        msg.extend_from_slice(&dr_name);
+                        msg.extend_from_slice(b"' ought to exist.\n");
+                        dbs(depth, &msg);
+                    } else if exists(ctx, &dr_name) {
+                        deplist.push(pe);
+                        let mut msg = b"Found '".to_vec();
+                        msg.extend_from_slice(&dr_name);
+                        msg.extend_from_slice(b"'.\n");
+                        dbs(depth, &msg);
+                    } else if df.is_some() && allow_compat_rules != 0 {
+                        deplist.push(pe);
+                        let mut msg = b"Using compatibility rule due to '".to_vec();
+                        msg.extend_from_slice(&dr_name);
+                        msg.extend_from_slice(b"'.\n");
+                        dbs(depth, &msg);
+                    } else {
+                        if df.is_some() {
+                            found_compat_rule = true;
+                        }
+                        if let Some(vname) = vpath_lookup(ctx, &dr_name) {
+                            let mut msg = b"Found prerequisite '".to_vec();
+                            msg.extend_from_slice(&dr_name);
+                            msg.extend_from_slice(b"' as VPATH '");
+                            msg.extend_from_slice(&vname);
+                            msg.extend_from_slice(b"'.\n");
+                            dbs(depth, &msg);
+                            deplist.push(pe);
+                        } else {
+                            // Last resort: recursively search for a rule chain
+                            // that builds it as an intermediate file.
+                            let mut found_intermediate = false;
+                            if intermed_ok != 0 {
+                                // Enter the intermediate as a real arena node and
+                                // recurse on it.
+                                let int_id = enter_file(ctx, &dr_name);
+                                if pattern_search(
+                                    ctx,
+                                    int_id,
+                                    0,
+                                    depth,
+                                    recursions.wrapping_add(1),
+                                    allow_compat_rules,
+                                ) {
+                                    // The recursive search renamed the node to the
+                                    // matched pattern; capture it.
+                                    let pat = file_name(ctx, int_id);
+                                    pe.pattern = Some(pat);
+                                    pe.file = Some(int_id);
+                                    deplist.push(pe);
+                                    found_intermediate = true;
+                                } else {
+                                    if df.is_none() {
+                                        mark_impossible(ctx, &dr_name);
+                                    }
+                                }
+                            }
+                            if !found_intermediate {
+                                let mut msg = b"Not found '".to_vec();
+                                msg.extend_from_slice(&dr_name);
+                                msg.extend_from_slice(b"'.\n");
+                                dbs(depth, &msg);
+                                failed = true;
+                                break 'deps;
+                            }
+                        }
+                    }
                 }
             }
-            // A multi-target rule also makes the other targets (with the same
-            // stem substituted).
-            if found_rule.num > 1 {
-                for ti in 0..found_rule.num as usize {
-                    if ti == found_tr.matches as usize {
-                        continue;
+            with_pattern_rules_mut(|r| r[rule_idx].in_use = false);
+            if !failed {
+                matched = true;
+                found_rule_idx = Some(rule_idx);
+                break 'outer;
+            }
+            ri += 1;
+        }
+        intermed_ok += 1;
+    }
+
+    if !matched {
+        return finish_no_rule(ctx, depth, &full_name, found_compat_rule, file, archive, recursions, allow_compat_rules);
+    }
+
+    let found = found_rule_idx.expect("matched implies a found rule");
+    let found_tr = tryrules[ri];
+
+    // Recompute stem for the found rule (ri/found are aligned).
+    let tgt = rule_target(found, found_tr.matches as usize);
+    let target = &tgt.bytes;
+    let percent = tgt.percent;
+    stem_off = percent;
+    stemlen = namelen.wrapping_sub(target.len()).wrapping_add(1);
+    let check_lastslash = found_tr.checked_lastslash;
+    if check_lastslash {
+        stem_off += pathlen;
+        stemlen -= pathlen;
+    }
+
+    // When recursing, give the file the matched target pattern as its name.
+    if recursions > 0 {
+        let pat = with_pattern_rules(|r| r[found].targets[found_tr.matches as usize].clone());
+        if let Some(node) = ctx.filenodes.get(file) {
+            node.lock().expect("file node lock poisoned").name = pat;
+        }
+    }
+
+    // Walk recorded prerequisites in reverse, prepending each as a dep.
+    while let Some(pe) = deplist.pop() {
+        if let Some(int_id) = pe.file {
+            // An intermediate file: merge the scratch node into the real one.
+            // Since `int_id` is already a real arena node, mark its state.
+            merge_intermediate(ctx, int_id, &pe);
+        }
+        // Build the new dep.
+        let mut nd = dep_with_name(pe.name.clone());
+        nd.ignore_mtime = pe.ignore_mtime;
+        nd.is_explicit = pe.is_explicit;
+        nd.ignore_automatic_vars = pe.ignore_automatic_vars;
+        nd.wait_here = pe.wait_here;
+        if recursions != 0 {
+            // keep the name only.
+            nd.file = None;
+        } else {
+            nd.file = Some(
+                lookup_file(ctx, &pe.name).unwrap_or_else(|| enter_file(ctx, &pe.name)),
+            );
+        }
+        let rule_terminal = with_pattern_rules(|r| r[found].terminal);
+        if pe.file.is_none() && rule_terminal {
+            // A terminal rule's non-intermediate prerequisites must exist as-is.
+            match nd.file {
+                None => nd.changed = true,
+                Some(fid) => {
+                    if let Some(node) = ctx.filenodes.get(fid) {
+                        node.lock().expect("file node lock poisoned").tried_implicit = true;
                     }
-                    let (target_ptr, target, percent) = rule_target(found_rule, ti);
-                    let stem_bytes =
-                        ::core::slice::from_raw_parts(file_ref.stem.cast::<u8>(), fullstemlen);
-                    let mut nm: Vec<u8> = Vec::with_capacity(target.len() + fullstemlen + 1);
-                    nm.extend_from_slice(&target[..percent]);
-                    nm.extend_from_slice(stem_bytes);
-                    nm.extend_from_slice(&target[percent + 1..]);
-                    nm.push(0);
-                    let new_dep: *mut dep = alloc_dep();
-                    let nd = new_dep.as_mut().expect("xcalloc returned null");
-                    nd.name = strcache_add(nm.as_ptr().cast());
-                    nd.file = enter_file(ctx, nd.name);
-                    nd.next = file_ref.also_make;
-                    let other_file = nd.file.as_mut().expect("just entered");
-                    if let Some(other) = lookup_file(ctx, target_ptr).as_ref() {
-                        if other.precious() != 0 {
-                            other_file.set_precious(1);
-                        }
-                        if other.notintermediate() != 0 || ctx.no_intermediates.get() {
-                            other_file.set_notintermediate(1);
-                        }
-                    }
-                    other_file.set_is_target(1);
-                    file_ref.also_make = new_dep;
                 }
             }
         }
+        // Prepend to the target's deps.
+        if let Some(node) = ctx.filenodes.get(file) {
+            let mut n = node.lock().expect("file node lock poisoned");
+            n.deps.insert(0, nd);
+            n.was_shuffled = false;
+        }
+    }
+
+    // Set the stem on the target.
+    let stem_bytes: Vec<u8>;
+    if !check_lastslash {
+        stem_bytes = name[stem_off..stem_off + stemlen].to_vec();
+        fullstemlen = stemlen;
     } else {
-        rule = ::core::ptr::null_mut();
+        fullstemlen = pathlen + stemlen;
+        let mut s = Vec::with_capacity(fullstemlen);
+        s.extend_from_slice(&name[..pathlen]);
+        s.extend_from_slice(&name[stem_off..stem_off + stemlen]);
+        stem_bytes = s;
     }
+    let stem_string = Some(String::from_utf8_lossy(&stem_bytes).into_owned());
+
+    // Attach the recipe and stem, mark target.
+    let found_recipe: Option<Recipe> = with_pattern_rules(|r| r[found].cmds.clone());
+    if let Some(node) = ctx.filenodes.get(file) {
+        let mut n = node.lock().expect("file node lock poisoned");
+        n.stem = stem_string.clone();
+        n.recipe = found_recipe;
+        n.is_target = true;
+    }
+
+    // Inherit .PRECIOUS / .NOTINTERMEDIATE from the target pattern file.
+    let found_target = with_pattern_rules(|r| r[found].targets[found_tr.matches as usize].clone());
+    let (pat_precious, pat_notint) = lookup_flags(ctx, &found_target);
+    if let Some(node) = ctx.filenodes.get(file) {
+        let mut n = node.lock().expect("file node lock poisoned");
+        if pat_precious {
+            n.precious = true;
+        }
+        if pat_notint || ctx.no_intermediates.get() {
+            n.notintermediate = true;
+        }
+    }
+
+    // A multi-target rule also makes the other targets.
+    let rnum = with_pattern_rules(|r| r[found].num);
+    if rnum > 1 {
+        for ti in 0..rnum as usize {
+            if ti == found_tr.matches as usize {
+                continue;
+            }
+            let tgt = rule_target(found, ti);
+            let mut nm: Vec<u8> = Vec::new();
+            nm.extend_from_slice(&tgt.bytes[..tgt.percent]);
+            nm.extend_from_slice(&stem_bytes);
+            nm.extend_from_slice(&tgt.bytes[tgt.percent + 1..]);
+            let other_id = enter_file(ctx, &nm);
+            let (op, on) = lookup_flags(ctx, &tgt.bytes);
+            if let Some(node) = ctx.filenodes.get(other_id) {
+                let mut n = node.lock().expect("file node lock poisoned");
+                if op {
+                    n.precious = true;
+                }
+                if on || ctx.no_intermediates.get() {
+                    n.notintermediate = true;
+                }
+                n.is_target = true;
+            }
+            // Prepend to also_make.
+            let mut nd = dep_with_name(nm);
+            nd.file = Some(other_id);
+            if let Some(node) = ctx.filenodes.get(file) {
+                node.lock()
+                    .expect("file node lock poisoned")
+                    .also_make
+                    .insert(0, nd);
+            }
+        }
+    }
+
     depth = depth.wrapping_sub(1);
-    if !rule.is_null() {
-        dbs!(
-            depth,
-            c"Found implicit rule '%s' for '%s'.\n".as_ptr(),
-            get_rule_defn(rule),
-            filename
-        );
-        return 1;
+    let defn = rule_defn_of(found);
+    let mut msg = b"Found implicit rule '".to_vec();
+    msg.extend_from_slice(&defn);
+    msg.extend_from_slice(b"' for '");
+    msg.extend_from_slice(&full_name);
+    msg.extend_from_slice(b"'.\n");
+    dbs(depth, &msg);
+    true
+}
+
+/// Merge an intermediate file's discovered state into the real arena node.
+fn merge_intermediate(ctx: &crate::execctx::ExecContext, id: FileId, pe: &PatDep) {
+    // Resolve each dep's file and mark intermediate/target state.
+    let dep_names: Vec<Vec<u8>>;
+    {
+        let node = match ctx.filenodes.get(id) {
+            Some(n) => n,
+            None => return,
+        };
+        let mut n = node.lock().expect("file node lock poisoned");
+        n.is_target = true;
+        n.is_explicit = n.is_explicit || pe.is_explicit;
+        n.notintermediate = n.notintermediate || ctx.no_intermediates.get();
+        n.intermediate = n.intermediate || (!n.is_explicit && !n.notintermediate);
+        n.tried_implicit = true;
+        dep_names = n.deps.iter().map(|d| d.name.clone().into_bytes()).collect();
     }
-    if found_compat_rule != 0 {
-        dbs!(
-            depth,
-            c"Searching for a compatibility rule for '%s'.\n".as_ptr(),
-            filename
-        );
+    // Inherit precious from the matched pattern owner.
+    if let Some(pat) = &pe.pattern {
+        let (precious, _) = lookup_flags(ctx, pat);
+        if precious {
+            if let Some(node) = ctx.filenodes.get(id) {
+                node.lock().expect("file node lock poisoned").precious = true;
+            }
+        }
+    }
+    // Enter each dep's file and propagate `changed` into tried_implicit.
+    let changed_flags: Vec<bool> = {
+        match ctx.filenodes.get(id) {
+            Some(node) => node
+                .lock()
+                .expect("file node lock poisoned")
+                .deps
+                .iter()
+                .map(|d| d.changed)
+                .collect(),
+            None => Vec::new(),
+        }
+    };
+    for (i, dn) in dep_names.iter().enumerate() {
+        let fid = enter_file(ctx, dn);
+        if let Some(node) = ctx.filenodes.get(id) {
+            let mut n = node.lock().expect("file node lock poisoned");
+            if let Some(d) = n.deps.get_mut(i) {
+                d.file = Some(fid);
+                d.name = String::new();
+            }
+        }
+        if let Some(node) = ctx.filenodes.get(fid) {
+            let mut fn_ = node.lock().expect("file node lock poisoned");
+            fn_.tried_implicit = fn_.tried_implicit || changed_flags.get(i).copied().unwrap_or(false);
+        }
+    }
+}
+
+/// Look up `(precious, notintermediate)` of a file by name (default false).
+fn lookup_flags(ctx: &crate::execctx::ExecContext, name: &[u8]) -> (bool, bool) {
+    lookup_file(ctx, name)
+        .and_then(|id| ctx.filenodes.get(id))
+        .map(|n| {
+            let g = n.lock().expect("file node lock poisoned");
+            (g.precious, g.notintermediate)
+        })
+        .unwrap_or((false, false))
+}
+
+/// The cached printable definition of database rule `idx`.
+fn rule_defn_of(idx: usize) -> Vec<u8> {
+    with_pattern_rules_mut(|rules| rules[idx].rule_defn().to_vec())
+}
+
+/// Emit the "no rule found" trace, retrying once for a compatibility rule.
+#[allow(clippy::too_many_arguments)]
+fn finish_no_rule(
+    ctx: &crate::execctx::ExecContext,
+    depth: u32,
+    full_name: &[u8],
+    found_compat_rule: bool,
+    file: FileId,
+    archive: i32,
+    recursions: u32,
+    allow_compat_rules: i32,
+) -> bool {
+    let depth = depth.wrapping_sub(1);
+    if found_compat_rule {
+        let mut msg = b"Searching for a compatibility rule for '".to_vec();
+        msg.extend_from_slice(full_name);
+        msg.extend_from_slice(b"'.\n");
+        dbs(depth, &msg);
         assert!(
             allow_compat_rules == 0,
             "compatibility-rule retry must not recurse"
         );
         return pattern_search(ctx, file, archive, depth, recursions, 1);
     }
-    dbs!(
-        depth,
-        c"No implicit rule found for '%s'.\n".as_ptr(),
-        filename
-    );
-    0
+    let mut msg = b"No implicit rule found for '".to_vec();
+    msg.extend_from_slice(full_name);
+    msg.extend_from_slice(b"'.\n");
+    dbs(depth, &msg);
+    false
+}
+
+/// Second-expansion prerequisite expansion.
+///
+/// BOUNDARY: this performs the per-word `%`->`$*`/`$(*F)` textual rewrite (which
+/// is pointer-free) but then needs the variable layer to install the automatic
+/// variables and `expand_string_for_file` to expand the result — both still
+/// legacy `*mut File`-based (owned by commands.rs/variable.rs). The calls below
+/// are shaped per the pinned FileId-based signatures and will not type-check
+/// until those callees are converted.
+#[allow(clippy::too_many_arguments)]
+fn second_expansion_deps(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    dep: &DepNode,
+    name: &[u8],
+    stem_off: usize,
+    stemlen: usize,
+    check_lastslash: bool,
+    pathlen: usize,
+    stem_str: &[u8],
+    pathdir: &[u8],
+    order_only: &mut bool,
+    deps_found: &mut u32,
+    file_vars_initialized: &mut bool,
+) -> Vec<DepNode> {
+    let mut out: Vec<DepNode> = Vec::new();
+    let bytes = dep.name.clone().into_bytes();
+    let mut cursor = 0usize;
+    loop {
+        let (beg, len) = match get_next_word(&bytes, cursor) {
+            Some(w) => w,
+            None => break,
+        };
+        let word = &bytes[beg..beg + len];
+        let end = beg + len;
+        if !*order_only && word == b"|" {
+            *order_only = true;
+            cursor = end;
+            continue;
+        }
+        let mut depname: Vec<u8> = Vec::new();
+        let mut add_dir = false;
+        let is_explicit: bool;
+        match word.iter().position(|&b| b == b'%') {
+            None => {
+                depname.extend_from_slice(word);
+                is_explicit = true;
+            }
+            Some(first_percent) => {
+                is_explicit = false;
+                let mut percent = first_percent;
+                let mut start = 0usize;
+                loop {
+                    depname.extend_from_slice(&word[start..percent]);
+                    if check_lastslash {
+                        add_dir = true;
+                        depname.extend_from_slice(b"$(*F)");
+                    } else {
+                        depname.extend_from_slice(b"$*");
+                    }
+                    start = percent + 1;
+                    if start == word.len() {
+                        break;
+                    }
+                    let mut scan = start;
+                    while scan < word.len()
+                        && !stop_set(word[scan], MAP_BLANK | MAP_NEWLINE | MAP_NUL)
+                    {
+                        scan += 1;
+                    }
+                    match word[scan..].iter().position(|&b| b == b'%') {
+                        None => break,
+                        Some(k) => percent = scan + k,
+                    }
+                }
+                depname.extend_from_slice(&word[start..]);
+            }
+        }
+        cursor = end;
+
+        // The automatic variables ($*, $@, ...) must be in place before
+        // expanding. BOUNDARY: the variable layer is still pointer-based.
+        if !*file_vars_initialized {
+            let stem_slice: &[u8] = {
+                let nul = stem_str.iter().position(|&b| b == 0).unwrap_or(stem_str.len());
+                &stem_str[..nul]
+            };
+            crate::variable::initialize_file_variables(ctx, file, 0);
+            crate::commands::set_file_variables(ctx, file, Some(stem_slice));
+            *file_vars_initialized = true;
+        }
+
+        // Expand the rewritten depname for this file. BOUNDARY: needs a
+        // FileId-based `expand_string_for_file`.
+        let mut buf = depname.clone();
+        buf.push(0);
+        let expanded = crate::expand::expand_string_for_file(ctx, &buf, file);
+
+        // Parse the expanded result.
+        let mut parsed_buf = expanded;
+        if parsed_buf.last() != Some(&0) {
+            parsed_buf.push(0);
+        }
+        let prefix: *const ::core::ffi::c_char = if add_dir {
+            pathdir.as_ptr().cast()
+        } else {
+            ::core::ptr::null()
+        };
+        let stopmap = if *order_only { MAP_NUL } else { MAP_PIPE };
+        let mut p: *mut ::core::ffi::c_char = parsed_buf.as_mut_ptr().cast();
+        // SAFETY: NUL-terminated buffer for the call.
+        let parsed = unsafe {
+            crate::read::parse_file_seq(ctx, &raw mut p, 0, stopmap, prefix, PARSEFS_WAIT)
+        };
+        for pn in parsed {
+            let mut d = dep_with_name(pn.name);
+            d.wait_here = pn.wait;
+            *deps_found = deps_found.wrapping_add(1);
+            if *order_only {
+                d.ignore_mtime = true;
+            }
+            d.is_explicit = is_explicit;
+            out.push(d);
+        }
+        let _ = (stem_off, stemlen, pathlen);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1055,10 +1107,23 @@ mod streq_tests {
 
     #[test]
     fn equality_matches_strcmp() {
-        assert!(streq(c"foo.o", c"foo.o"));
-        assert!(streq(c"", c""));
-        assert!(!streq(c"foo.o", c"bar.o"));
-        assert!(!streq(c"foo", c"foobar")); // prefix is not equal
-        assert!(!streq(c"", c"x"));
+        assert!(streq(b"foo.o", b"foo.o"));
+        assert!(streq(b"", b""));
+        assert!(!streq(b"foo.o", b"bar.o"));
+        assert!(!streq(b"foo", b"foobar"));
+        assert!(!streq(b"", b"x"));
+    }
+}
+
+#[cfg(test)]
+mod get_next_word_tests {
+    use super::get_next_word;
+
+    #[test]
+    fn splits_words() {
+        assert_eq!(get_next_word(b"  foo bar", 0), Some((2, 3)));
+        assert_eq!(get_next_word(b"foo bar", 3), Some((4, 3)));
+        assert_eq!(get_next_word(b"   ", 0), None);
+        assert_eq!(get_next_word(b"a|b", 0), Some((0, 1)));
     }
 }
