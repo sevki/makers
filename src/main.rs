@@ -1323,7 +1323,7 @@ fn goal_name_bytes(
 
 /// Materialize a goal's source location as an owned `Floc` whose `filenm` lives
 /// for the returned value's lifetime (the bytes are stored alongside it).
-fn goal_floc(g: &crate::dep::GoalDepNode) -> Option<(GoalFloc)> {
+fn goal_floc(g: &crate::dep::GoalDepNode) -> Option<GoalFloc > {
     g.defined_in.as_ref().map(|f| {
         let mut bytes = f.clone();
         bytes.push(0);

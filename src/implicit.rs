@@ -1005,7 +1005,7 @@ fn second_expansion_deps(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
     dep: &DepNode,
-    name: &[u8],
+    _name: &[u8],
     stem_off: usize,
     stemlen: usize,
     check_lastslash: bool,
