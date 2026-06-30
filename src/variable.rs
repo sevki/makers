@@ -1764,9 +1764,6 @@ pub unsafe fn target_environment(
     );
     s = set_list;
     while !s.is_null() {
-        // SAFETY: `s` was just checked non-null; read its fields through a
-        // checked reference rather than raw pointer derefs.
-        let sr = s.as_ref().expect("set-list node is non-null");
         let set: *mut variable_set = (*s).set;
         let islocal: i32 = (s == set_list) as i32;
         let isglobal: i32 = (set == &raw mut global_variable_set) as i32;
