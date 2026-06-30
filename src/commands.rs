@@ -59,10 +59,26 @@ fn stop_set(c: u8, mask: i32) -> bool {
     stopchar_map()[c as usize] as i32 & mask != 0
 }
 
-/// The bytes a dependency goes by (the idiomatic [`DepNode`] keeps its `name`
-/// populated, so this is just its name's bytes).
-fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
-    d.name.clone().into_bytes()
+/// The bytes a dependency goes by — the idiomatic form of C make's
+/// `dep_name(d)` macro (`dep.h`: `(d)->name ? (d)->name : (d)->file->name`).
+///
+/// A dep's own `name` is normally populated, but `merge_intermediate`
+/// (implicit.rs) clears it for an intermediate prerequisite, relying on the
+/// resolved `file` handle for identity — exactly as C make stores a null
+/// `name` and falls back to `file->name`. So when `name` is empty we must fall
+/// back to the dep's file node's name; otherwise `$<`/`$^`/`$?`/`$+`/`$|`
+/// render empty for targets reached through a pattern→pattern intermediate
+/// chain (e.g. the kernel's `vdso-image-%.c: $(obj)/vdso%.so` → `%.so` rule).
+fn dep_name_bytes(ctx: &ExecContext, d: &DepNode) -> Vec<u8> {
+    if !d.name.is_empty() {
+        return d.name.clone().into_bytes();
+    }
+    if let Some(fid) = d.file {
+        if let Some(node) = ctx.filenodes.get(fid) {
+            return node.lock().expect("file node poisoned").name.clone();
+        }
+    }
+    Vec::new()
 }
 
 /// NUL-terminate a name list that was built into `buf` by writing `len` bytes
@@ -187,7 +203,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
             if let Some(snode) = ctx.filenodes.get(sid) {
                 let sdeps = snode.lock().expect("file node poisoned").deps.clone();
                 for d in &sdeps {
-                    let dn = dep_name_bytes(d);
+                    let dn = dep_name_bytes(ctx, d);
                     if nm.len() > dn.len() && nm.ends_with(&dn) {
                         derived = Some(nm[..nm.len() - dn.len()].to_vec());
                         break;
@@ -207,7 +223,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     let mut less: Vec<u8> = Vec::new();
     for d in &deps {
         if !d.ignore_mtime && dep_uses_auto_vars(d) {
-            less = dep_name_bytes(d);
+            less = dep_name_bytes(ctx, d);
             break;
         }
     }
@@ -231,7 +247,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     let mut plus: Vec<u8> = Vec::new();
     for d in &deps {
         if !d.ignore_mtime && dep_uses_auto_vars(d) {
-            push_entry(&mut plus, autovar_dep_name(ctx, &dep_name_bytes(d)));
+            push_entry(&mut plus, autovar_dep_name(ctx, &dep_name_bytes(ctx, d)));
         }
     }
     define_target_variable(ctx, file, b"+", &trim_list(plus), VarOrigin::Automatic);
@@ -242,7 +258,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     let mut ignore_mtime: Vec<bool> = deps.iter().map(|d| d.ignore_mtime).collect();
     for (i, d) in deps.iter().enumerate() {
         if dep_uses_auto_vars(d) {
-            let key: Box<[u8]> = dep_name_bytes(d).into();
+            let key: Box<[u8]> = dep_name_bytes(ctx, d).into();
             match canonical.entry(key) {
                 Entry::Vacant(slot) => {
                     slot.insert(i);
@@ -263,9 +279,9 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     let mut bar: Vec<u8> = Vec::new();
     for (i, d) in deps.iter().enumerate() {
         // Take only each name's canonical (first-inserted) dep.
-        if dep_uses_auto_vars(d) && canonical.get(dep_name_bytes(d).as_slice()).copied() == Some(i)
+        if dep_uses_auto_vars(d) && canonical.get(dep_name_bytes(ctx, d).as_slice()).copied() == Some(i)
         {
-            let nm = autovar_dep_name(ctx, &dep_name_bytes(d)).to_vec();
+            let nm = autovar_dep_name(ctx, &dep_name_bytes(ctx, d)).to_vec();
             if ignore_mtime[i] {
                 push_entry(&mut bar, &nm);
             } else {
