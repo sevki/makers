@@ -1632,15 +1632,13 @@ pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: FileId) {
         };
         set_file_variables(ctx, f, stem);
 
-        // BOUNDARY: the second-expansion string expander is still the legacy
-        // `*mut File`-based `expand_string_for_file`; it has no `FileId` form
-        // yet. Until the expand layer is flipped, this call cannot be satisfied
-        // from a `FileId`, so it remains a red boundary into `expand.rs`.
+        // Second-expansion string expansion in this target's variable context,
+        // via the FileId form of `expand_string_for_file`.
         let mut name_c = name_bytes.clone();
         name_c.push(0);
-        let p = expand_string_for_file(ctx, name_c.as_ptr() as *const ::core::ffi::c_char, f);
+        let mut expanded = expand_string_for_file(ctx, &name_c, f);
 
-        let mut new = split_prereqs(ctx, p);
+        let mut new = split_prereqs(ctx, expanded.as_mut_ptr() as *mut ::core::ffi::c_char);
         changed_dep = true;
         if new.is_empty() {
             continue;
@@ -1665,10 +1663,7 @@ pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: FileId) {
         n.deps = rebuilt;
     }
     if changed_dep {
-        // BOUNDARY: `shuffle_deps_recursive` still walks the legacy `*mut Dep`
-        // chain; the `Vec<DepNode>` form is not yet accepted by the shuffle
-        // layer, so this is a red boundary into `shuffle.rs`.
-        crate::shuffle::shuffle_deps_recursive(f);
+        crate::shuffle::shuffle_deps_recursive(ctx, f);
     }
 }
 

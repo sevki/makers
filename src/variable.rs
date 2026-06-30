@@ -47,6 +47,7 @@ use crate::expand::{
 };
 use crate::execctx::ExecContext;
 use crate::floc::Floc;
+use crate::strcache::strcache_add;
 use crate::function::func_shell_base;
 use crate::hash::{
     hash_delete_at, hash_deleted_item, hash_find_item, hash_find_slot, hash_free, hash_init,
@@ -1134,6 +1135,187 @@ pub unsafe fn install_file_context(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn restore_file_context(oldlist: *mut variable_set_list, oldfloc: *const Floc) {
+    current_variable_set_list = oldlist;
+    if !oldfloc.is_null() {
+        reading_file = oldfloc;
+    }
+}
+
+/// Populate a freshly-created `variable_set` from a slice of [`TargetVariable`]
+/// records (the FileNode's `variables` / `pat_variables`). Each entry is
+/// inserted via `define_variable_in_set` and then has its full flag set copied
+/// across so the resulting `variable` is faithful to the idiomatic record.
+unsafe fn populate_set_from_targets(
+    ctx: &crate::execctx::ExecContext,
+    set: *mut variable_set,
+    targets: &[TargetVariable],
+) {
+    for tv in targets {
+        let mut name_buf = tv.name.clone();
+        name_buf.push(0);
+        let mut value_buf = tv.value.clone();
+        value_buf.push(0);
+        let mut floc_storage = Floc {
+            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            lineno: tv.defined_lineno,
+            offset: 0,
+        };
+        let mut file_buf: Option<Vec<u8>> = None;
+        if let Some(ref f) = tv.defined_in {
+            let mut b = f.clone();
+            b.push(0);
+            floc_storage.filenm = strcache_add(b.as_ptr() as *const ::core::ffi::c_char);
+            file_buf = Some(b);
+        }
+        let flocp: *const Floc = if tv.defined_in.is_some() {
+            &raw const floc_storage
+        } else {
+            ::core::ptr::null::<Floc>()
+        };
+        let v = define_variable_in_set(
+            ctx,
+            name_buf.as_ptr() as *const ::core::ffi::c_char,
+            tv.name.len() as size_t,
+            value_buf.as_ptr() as *const ::core::ffi::c_char,
+            tv.origin as i32 as variable_origin,
+            tv.recursive as i32,
+            set,
+            flocp,
+        );
+        let _ = file_buf;
+        if !v.is_null() {
+            (*v).set_flavor(tv.flavor as i32 as variable_flavor);
+            (*v).set_export(tv.export as i32 as variable_export);
+            (*v).set_append(tv.append as ::core::ffi::c_uint);
+            (*v).set_conditional(tv.conditional as ::core::ffi::c_uint);
+            (*v).set_per_target(tv.per_target as ::core::ffi::c_uint);
+            (*v).set_special(tv.special as ::core::ffi::c_uint);
+            (*v).set_exportable(tv.exportable as ::core::ffi::c_uint);
+            (*v).set_private_var(tv.private_var as ::core::ffi::c_uint);
+        }
+    }
+}
+
+/// Build a transient C-ABI `variable_set_list` chain for a [`FileId`],
+/// mirroring the per-file `variables` list the legacy `*mut file` carried.
+///
+/// The head set holds the file's own per-target variables (its `variables`
+/// plus any pattern-specific `pat_variables`); its `next` link is the parent
+/// file's chain (recursively) when the node has a `parent`, otherwise the
+/// global set list — `next_is_parent` set so private variables stay private to
+/// the file. The returned chain is owned by the caller and must be released
+/// with [`free_file_setlist`] after use.
+pub unsafe fn build_file_setlist(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+) -> *mut variable_set_list {
+    let next: *mut variable_set_list;
+    let (variables, pat_variables, parent) = {
+        let Some(node) = ctx.filenodes.get(file) else {
+            return &raw mut global_setlist;
+        };
+        let guard = node.lock().expect("file node poisoned");
+        (
+            guard.variables.clone(),
+            guard.pat_variables.clone(),
+            guard.parent,
+        )
+    };
+    if let Some(parent_id) = parent {
+        next = build_file_setlist(ctx, parent_id);
+    } else {
+        next = &raw mut global_setlist;
+    }
+
+    let set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
+    hash_init(
+        &raw mut (*set).table,
+        SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        Some(variable_hash_1),
+        Some(variable_hash_2),
+        Some(variable_hash_cmp),
+    );
+    // Pattern-specific variables first, then the explicit per-target ones (so
+    // an explicit definition overrides a pattern one of the same name).
+    populate_set_from_targets(ctx, set, &pat_variables);
+    populate_set_from_targets(ctx, set, &variables);
+
+    let setlist =
+        xmalloc(::core::mem::size_of::<variable_set_list>() as size_t) as *mut variable_set_list;
+    (*setlist).set = set;
+    (*setlist).next = next;
+    (*setlist).next_is_parent = 1;
+    setlist
+}
+
+/// Release a chain built by [`build_file_setlist`], stopping at the shared
+/// `global_setlist` (which is process-wide and never freed).
+pub unsafe fn free_file_setlist(mut list: *mut variable_set_list) {
+    while !list.is_null() && list != &raw mut global_setlist {
+        let next = (*list).next;
+        free_variable_set(list);
+        list = next;
+    }
+}
+
+/// FileId-based form of [`install_file_context`]: build a transient set list
+/// for the target, make it current, and point `reading_file` at the recipe's
+/// source location. Returns the previous list (to restore) via `oldlist`; when
+/// `oldfloc` is non-null the previous `reading_file` is saved there.
+pub unsafe fn install_file_context_id(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    oldlist: *mut *mut variable_set_list,
+    oldfloc: *mut *const Floc,
+) {
+    *oldlist = current_variable_set_list;
+    current_variable_set_list = build_file_setlist(ctx, file);
+    if !oldfloc.is_null() {
+        *oldfloc = reading_file;
+        let recipe_floc: Option<(Vec<u8>, u64)> = ctx.filenodes.get(file).and_then(|node| {
+            let guard = node.lock().expect("file node poisoned");
+            guard
+                .recipe
+                .as_ref()
+                .and_then(|r| r.defined_in.as_ref().map(|f| (f.clone(), r.defined_lineno)))
+        });
+        if let Some((mut fname, lineno)) = recipe_floc {
+            fname.push(0);
+            let filenm = strcache_add(fname.as_ptr() as *const ::core::ffi::c_char);
+            RECIPE_READING_FLOC.with(|cell| {
+                *cell.borrow_mut() = Floc {
+                    filenm,
+                    lineno,
+                    offset: 0,
+                };
+                reading_file = cell.as_ptr();
+            });
+        } else {
+            reading_file = ::core::ptr::null::<Floc>();
+        }
+    }
+}
+
+thread_local! {
+    /// Backing storage for the `reading_file` `Floc` set by
+    /// [`install_file_context_id`]; kept alive for the duration of the context.
+    static RECIPE_READING_FLOC: ::std::cell::RefCell<Floc> = const {
+        ::std::cell::RefCell::new(Floc {
+            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            lineno: 0,
+            offset: 0,
+        })
+    };
+}
+
+/// FileId-based form of [`restore_file_context`] that also frees the transient
+/// set list built by [`install_file_context_id`].
+pub unsafe fn restore_file_context_id(
+    cur: *mut variable_set_list,
+    oldlist: *mut variable_set_list,
+    oldfloc: *const Floc,
+) {
+    free_file_setlist(cur);
     current_variable_set_list = oldlist;
     if !oldfloc.is_null() {
         reading_file = oldfloc;
