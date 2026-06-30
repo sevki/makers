@@ -48,9 +48,10 @@ make MAKE_CFLAGS="-Wall"   # or: ./build.sh
 ```
 
 `coverage-delta.sh` copies the existing `./make` into the base worktree, so
-the C oracle is built only once. If `./make` is missing, the script still
-runs but warns that the differential tests are skipped on both sides, which
-makes the delta less representative.
+the C oracle is built only once. If `./make` is missing, the differential
+tests do not skip — they fail (`c_make()` asserts the binary exists) — so the
+delta would omit the recipe paths they drive. `--enforce` therefore refuses
+to run without the oracle; report-only mode warns and continues.
 
 ## CI mode: report-only (for now)
 
