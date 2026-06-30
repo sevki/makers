@@ -13,7 +13,7 @@ use super::*;
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
     let mut eol: *mut ::core::ffi::c_char;
-    if (*ebuf).bufnext >= (*ebuf).bufstart.offset((*ebuf).size as isize) {
+    if (*ebuf).bufnext >= (*ebuf).bufstart.add((*ebuf).size) {
         return -1_i32 as ::core::ffi::c_long;
     }
     (*ebuf).buffer = (*ebuf).bufnext;
@@ -25,7 +25,7 @@ pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
         eol = strchr(eol, '\n' as i32);
         p = eol;
         if eol.is_null() {
-            (*ebuf).bufnext = (*ebuf).bufstart.offset((*ebuf).size as isize).offset(1);
+            (*ebuf).bufnext = (*ebuf).bufstart.add((*ebuf).size).add(1);
             return 0;
         }
         while p > bol && {
@@ -60,7 +60,7 @@ pub unsafe fn readline(
     }
     start = (*ebuf).bufstart;
     p = start;
-    end = p.offset((*ebuf).size as isize);
+    end = p.add((*ebuf).size);
     *p = 0;
     while !fgets(
         p,
@@ -79,7 +79,7 @@ pub unsafe fn readline(
             *p.offset(0_i32 as isize) = '\n' as i32 as ::core::ffi::c_char;
             len = 1;
         }
-        p = p.offset(len as isize);
+        p = p.add(len);
         if !(*p.offset(-1_i32 as isize) as i32 != '\n' as i32) {
             nlines += 1;
             if p.offset_from(start) as ::core::ffi::c_long > 1
@@ -114,8 +114,8 @@ pub unsafe fn readline(
             xrealloc(start as *mut ::core::ffi::c_void, (*ebuf).size) as *mut ::core::ffi::c_char;
         (*ebuf).buffer = (*ebuf).bufstart;
         start = (*ebuf).buffer;
-        p = start.offset(off as isize);
-        end = start.offset((*ebuf).size as isize);
+        p = start.add(off);
+        end = start.add((*ebuf).size);
         *p = 0;
     }
     if ferror((*ebuf).fp) != 0 {
