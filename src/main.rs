@@ -27,7 +27,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
@@ -410,7 +410,56 @@ pub const optional_argument: i32 = 2;
 /// option table's `default_value`, never written. Immutable removes a mutable
 /// global.
 static default_silent_flag: i32 = 0;
-pub static mut db_level: i32 = 0;
+/// Global debug-level bitmask set by `-d`/`--debug` flags (`DB_*` constants).
+/// Was a c2rust `static mut`; now an atomic behind safe accessors. The process
+/// reads/writes this from a single thread (option parsing, then the build),
+/// so `Relaxed` preserves the original ordering with no synchronization cost.
+static DB_LEVEL: AtomicI32 = AtomicI32::new(0);
+
+/// Read the global debug-level bitmask.
+#[inline]
+pub fn db_level() -> i32 {
+    DB_LEVEL.load(Ordering::Relaxed)
+}
+
+/// Overwrite the global debug-level bitmask.
+#[inline]
+pub fn set_db_level(level: i32) {
+    DB_LEVEL.store(level, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod db_level_tests {
+    use super::{
+        db_level, set_db_level, DB_ALL, DB_BASIC, DB_IMPLICIT, DB_JOBS, DB_NONE, DB_PRINT, DB_WHY,
+    };
+
+    /// Exercises the accessors that replaced the `static mut`: a plain
+    /// store/load round-trip plus the `db_level |= ...` read-modify-write that
+    /// `decode_debug_flags` performs. Kept as a single test because `DB_LEVEL`
+    /// is a process global and parallel tests would otherwise race on it.
+    #[test]
+    fn accessors_match_static_mut_semantics() {
+        // store then load round-trips, like the old `static mut` read/write.
+        set_db_level(DB_NONE);
+        assert_eq!(db_level(), DB_NONE);
+        set_db_level(DB_ALL);
+        assert_eq!(db_level(), DB_ALL);
+
+        // `|= ...` bit accumulation, as in the `-d` flag decoder.
+        set_db_level(DB_NONE);
+        set_db_level(db_level() | DB_BASIC);
+        set_db_level(db_level() | DB_JOBS);
+        set_db_level(db_level() | DB_IMPLICIT);
+        assert_eq!(db_level(), DB_BASIC | DB_JOBS | DB_IMPLICIT);
+
+        // The `n` flag resets to zero mid-stream.
+        set_db_level(0);
+        set_db_level(db_level() | DB_PRINT | DB_WHY);
+        assert_eq!(db_level(), DB_PRINT | DB_WHY);
+        set_db_level(DB_NONE);
+    }
+}
 /// Read-only `--keep-going` default: only referenced via `&raw const` as the
 /// option table's `default_value`, never written. Immutable removes a mutable
 /// global.
@@ -1678,7 +1727,7 @@ mod expand_command_line_file_tests {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn debug_signal_handler(mut _sig: i32) {
-    db_level = if db_level != 0 { DB_NONE } else { DB_BASIC };
+    set_db_level(if db_level() != 0 { DB_NONE } else { DB_BASIC });
 }
 /// # Safety
 ///
@@ -1686,10 +1735,10 @@ pub unsafe extern "C" fn debug_signal_handler(mut _sig: i32) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Options) {
     if options.debug_flag.get() {
-        db_level = DB_ALL;
+        set_db_level(DB_ALL);
     }
     if options.trace.get() {
-        db_level |= DB_PRINT | DB_WHY;
+        set_db_level(db_level() | DB_PRINT | DB_WHY);
     }
     {
         let db_flags = options.db_flags.borrow();
@@ -1698,31 +1747,31 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
             loop {
                 match tolower(*p.offset(0_i32 as isize) as i32) {
                     97 => {
-                        db_level |= DB_ALL;
+                        set_db_level(db_level() | DB_ALL);
                     }
                     98 => {
-                        db_level |= DB_BASIC;
+                        set_db_level(db_level() | DB_BASIC);
                     }
                     105 => {
-                        db_level |= DB_BASIC | DB_IMPLICIT;
+                        set_db_level(db_level() | DB_BASIC | DB_IMPLICIT);
                     }
                     106 => {
-                        db_level |= DB_JOBS;
+                        set_db_level(db_level() | DB_JOBS);
                     }
                     109 => {
-                        db_level |= DB_BASIC | DB_MAKEFILES;
+                        set_db_level(db_level() | DB_BASIC | DB_MAKEFILES);
                     }
                     110 => {
-                        db_level = 0;
+                        set_db_level(0);
                     }
                     112 => {
-                        db_level |= DB_PRINT;
+                        set_db_level(db_level() | DB_PRINT);
                     }
                     118 => {
-                        db_level |= DB_BASIC | DB_VERBOSE;
+                        set_db_level(db_level() | DB_BASIC | DB_VERBOSE);
                     }
                     119 => {
-                        db_level |= DB_WHY;
+                        set_db_level(db_level() | DB_WHY);
                     }
                     _ => {
                         fatal(
@@ -1752,10 +1801,10 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
             }
         }
     }
-    if db_level != 0 {
+    if db_level() != 0 {
         options.verify.set(true);
     }
-    if db_level == 0 {
+    if db_level() == 0 {
         options.debug_flag.set(false);
     }
 }
@@ -2278,7 +2327,7 @@ unsafe fn main_0(
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
-    if 0x1_i32 & db_level != 0 {
+    if 0x1_i32 & db_level() != 0 {
         print_version();
         fflush(stdout);
     }
@@ -2777,7 +2826,7 @@ unsafe fn main_0(
             }
         }
     }
-    if options.jobserver_auth.borrow().is_some() && (0x2_i32 | 0x4_i32) & db_level != 0 {
+    if options.jobserver_auth.borrow().is_some() && (0x2_i32 | 0x4_i32) & db_level() != 0 {
         let auth = options.jobserver_auth.borrow().clone().unwrap();
         let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
         printf(
@@ -2786,7 +2835,7 @@ unsafe fn main_0(
         );
         fflush(stdout);
     }
-    if options.sync_mutex.borrow().is_some() && 0x2_i32 & db_level != 0 {
+    if options.sync_mutex.borrow().is_some() && 0x2_i32 & db_level() != 0 {
         let mtx = options.sync_mutex.borrow().clone().unwrap();
         let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
         printf(
@@ -2834,7 +2883,7 @@ unsafe fn main_0(
     remote_setup();
     output_context = ::core::ptr::null_mut::<output>();
     crate::output::output_close(&ctx, &raw mut make_sync);
-    if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level != 0 {
+    if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level() != 0 {
         let sm = options.shuffle_mode.borrow().clone().unwrap();
         let sm_c = ::std::ffi::CString::new(sm.as_bytes()).unwrap_or_default();
         printf(
@@ -2848,7 +2897,7 @@ unsafe fn main_0(
         let mut nargv: *mut *const ::core::ffi::c_char = argv as *mut *const ::core::ffi::c_char;
         let mut any_failed: i32 = 0;
         let mut status: UpdateStatus;
-        if 0x1_i32 & db_level != 0 {
+        if 0x1_i32 & db_level() != 0 {
             printf(b"Updating makefiles....\n\0" as *const u8 as *const ::core::ffi::c_char);
             fflush(stdout);
         }
@@ -2900,7 +2949,7 @@ unsafe fn main_0(
                 makefile_mtimes.push(mtime);
                 kept.push(g);
             } else {
-                if 0x2_i32 & db_level != 0 {
+                if 0x2_i32 & db_level() != 0 {
                     let mut nm = name.clone();
                     nm.push(0);
                     printf(
@@ -2918,14 +2967,14 @@ unsafe fn main_0(
         }
         read_files = kept;
         define_makeflags(&ctx, &options, 1);
-        let orig_db_level: i32 = db_level;
-        if 0x100_i32 & db_level == 0 {
-            db_level = DB_NONE;
+        let orig_db_level: i32 = db_level();
+        if 0x100_i32 & db_level() == 0 {
+            set_db_level(DB_NONE);
         }
         options.rebuilding_makefiles.set(true);
         status = update_goal_chain(&ctx, &mut read_files);
         options.rebuilding_makefiles.set(false);
-        db_level = orig_db_level;
+        set_db_level(orig_db_level);
         for d_1 in &skipped_makefiles {
             let err: *const ::core::ffi::c_char = strerror(d_1.error);
             let mut name_bytes = goal_name_bytes(&ctx, d_1);
@@ -3272,7 +3321,7 @@ unsafe fn main_0(
                 }
             }
             restarts = restarts.wrapping_add(1);
-            if 0x1_i32 & db_level != 0 {
+            if 0x1_i32 & db_level() != 0 {
                 let mut p_3: *mut *const ::core::ffi::c_char;
                 printf(
                     b"Re-executing[%u]:\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3452,7 +3501,7 @@ unsafe fn main_0(
         );
     }
     crate::shuffle::shuffle_goals_recursive(&ctx, &mut goals);
-    if 0x1_i32 & db_level != 0 {
+    if 0x1_i32 & db_level() != 0 {
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }

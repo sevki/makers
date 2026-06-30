@@ -517,7 +517,7 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
         tokens += 1;
     }
 
-    if 0x4 & db_level != 0 {
+    if 0x4 & db_level() != 0 {
         printf(c"Acquired all %u jobserver tokens.\n".as_ptr(), tokens);
         fflush(stdout);
     }
@@ -886,7 +886,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
         if fd >= 0 {
             return fd;
         }
-        if 0x1 & db_level != 0 {
+        if 0x1 & db_level() != 0 {
             printf(
                 c"Cannot open '%s' with O_TMPFILE: %s.\n".as_ptr(),
                 tdir,

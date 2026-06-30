@@ -47,7 +47,7 @@ fn dbs(depth: u32, msg: &[u8]) {
     // SAFETY: tracing only; `db_level` is a process global and `print_spaces`
     // / `printf` are the established trace sinks.
     unsafe {
-        if DB_IMPLICIT & db_level != 0 {
+        if DB_IMPLICIT & db_level() != 0 {
             print_spaces(depth);
             let mut s = msg.to_vec();
             s.push(0);
