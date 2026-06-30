@@ -6,16 +6,8 @@ use crate::file::{Dep, File, SeqNode};
 use crate::misc::xstrdup;
 use crate::strcache::strcache_add;
 extern "C" {
-    fn qsort(
-        __base: *mut ::core::ffi::c_void,
-        __nmemb: size_t,
-        __size: size_t,
-        __compar: __compar_fn_t,
-    );
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
-pub type __compar_fn_t =
-    Option<unsafe extern "C" fn(*const ::core::ffi::c_void, *const ::core::ffi::c_void) -> i32>;
 pub type file = File;
 pub type cmd_state = ::core::ffi::c_uint;
 pub const cs_finished: cmd_state = 3;
@@ -50,7 +42,7 @@ use crate::arscan::{ar_member_touch, ar_name_equal, ar_scan};
 use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
-use crate::misc::{alpha_compare, concat};
+use crate::misc::{alpha_cmp, concat};
 use crate::output::{error, fatal, out_of_memory, perror_with_name};
 use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
@@ -438,16 +430,12 @@ pub unsafe fn ar_glob<T: SeqNode>(
     arname: *const ::core::ffi::c_char,
     member_pattern: *const ::core::ffi::c_char,
 ) -> *mut T {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut state: ArGlobState<T> = ArGlobState {
         arname: ::core::ptr::null::<::core::ffi::c_char>(),
         pattern: ::core::ptr::null::<::core::ffi::c_char>(),
         chain: ::core::ptr::null_mut::<T>(),
         n: 0,
     };
-    let mut n: *mut T;
-    let names: *mut *const ::core::ffi::c_char;
-    let mut i: ::core::ffi::c_uint;
     if !ar_glob_pattern_p(::core::ffi::CStr::from_ptr(member_pattern).to_bytes(), true) {
         return ::core::ptr::null_mut::<T>();
     }
@@ -464,34 +452,26 @@ pub unsafe fn ar_glob<T: SeqNode>(
     if state.chain.is_null() {
         return ::core::ptr::null_mut::<T>();
     }
-    alloca_allocations.push(::std::vec::from_elem(
-        0,
-        (state.n as usize)
-            .wrapping_mul(::core::mem::size_of::<*const ::core::ffi::c_char>() as usize)
-            as usize,
-    ));
-    names = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *const ::core::ffi::c_char;
-    i = 0;
-    n = state.chain;
+    // Gather the member-name pointers from the chain, sort them with make's
+    // `alpha_compare` ordering (now the safe `alpha_cmp` over the C strings'
+    // bytes), then write the sorted names back into the chain in order. This
+    // replaces a hand-rolled `*mut *const c_char` scratch buffer and a libc
+    // `qsort` with an idiomatic `Vec` + `slice::sort_by`.
+    let mut names: Vec<*const ::core::ffi::c_char> = Vec::with_capacity(state.n as usize);
+    let mut n = state.chain;
     while !n.is_null() {
-        let fresh1 = i;
-        i = i.wrapping_add(1);
-        let fresh2 = &mut (*names.offset(fresh1 as isize));
-        *fresh2 = T::name(n);
+        names.push(T::name(n));
         n = T::next(n);
     }
-    qsort(
-        names as *mut ::core::ffi::c_void,
-        i as size_t,
-        ::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t,
-        Some(alpha_compare),
-    );
-    i = 0;
-    n = state.chain;
-    while !n.is_null() {
-        let fresh3 = i;
-        i = i.wrapping_add(1);
-        T::set_name(n, *names.offset(fresh3 as isize));
+    names.sort_by(|&a, &b| {
+        alpha_cmp(
+            ::core::ffi::CStr::from_ptr(a).to_bytes(),
+            ::core::ffi::CStr::from_ptr(b).to_bytes(),
+        )
+    });
+    let mut n = state.chain;
+    for &name in &names {
+        T::set_name(n, name);
         n = T::next(n);
     }
     state.chain

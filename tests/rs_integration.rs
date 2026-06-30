@@ -1357,6 +1357,54 @@ fn load_directive_unsupported_aborts() {
 }
 
 #[test]
+fn ar_glob_member_sort_matches_oracle() {
+    // ar_glob (src/ar.rs): archive-member wildcards like `lib.a(*.o)` expand to
+    // the members sorted by make's `alpha_compare` ordering. That sort was a
+    // libc `qsort` driven by an `unsafe extern "C"` comparator; it is now an
+    // idiomatic `Vec::sort_by` over the safe `misc::alpha_cmp`. Build an archive
+    // whose members are inserted OUT of sorted order, then assert both makes
+    // expand the wildcard to the same (sorted) sequence — proving the new sort
+    // is byte-for-byte order-equivalent to the C oracle.
+    let dir = tempdir();
+    // Insertion order is deliberately unsorted; the expansion must come out
+    // sorted. Mixed case exercises the first-byte ordering ('M'=77 < 'a'=97).
+    let members = ["zeta.o", "alpha.o", "Mid.o", "beta.o", "mid.o"];
+    for m in &members {
+        std::fs::write(dir.join(m), b"x\n").unwrap();
+    }
+    let ar_ok = Command::new("ar")
+        .arg("rc")
+        .arg("libdiff.a")
+        .args(members)
+        .current_dir(&dir)
+        .status()
+        .expect("failed to spawn ar")
+        .success();
+    assert!(ar_ok, "ar failed to build the archive");
+
+    std::fs::write(
+        dir.join("Makefile"),
+        "all: ; @echo '[$(wildcard libdiff.a(*.o))]'\n",
+    )
+    .unwrap();
+
+    let c = c_make();
+    let r = std::path::PathBuf::from(RUST_MAKE);
+    let run_in = |bin: &std::path::Path| -> Run {
+        Command::new(bin)
+            .arg("--no-print-directory")
+            .arg("all")
+            .current_dir(&dir)
+            .output()
+            .expect("failed to spawn make")
+            .into()
+    };
+    let c_run = run_in(&c);
+    let r_run = run_in(&r);
+    assert_diff("ar-glob-member-sort", &c_run, &r_run, &c, &r);
+}
+
+#[test]
 fn variable_flavors() {
     // Exercises do_variable_definition / parse_variable_definition: =, :=, ::=,
     // +=, !=, ?=, and recursive append (which leaves a trailing space).

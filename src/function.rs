@@ -4,7 +4,7 @@ pub use crate::ffi_types::{
 };
 use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{
-    end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
+    alpha_cmp, end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
 };
 use crate::output::FmtArg;
 use crate::stdio::FILE;
@@ -1676,25 +1676,6 @@ unsafe fn func_error(
     }
     o
 }
-/// Order two words as make's `alpha_compare` does: by the signed difference of
-/// their first bytes when those differ (`char` is signed on the supported
-/// targets), otherwise by a `strcmp`-equivalent unsigned byte comparison.
-/// Pure mirror of `misc::alpha_compare` for NUL-free word slices.
-fn alpha_cmp(a: &[u8], b: &[u8]) -> ::core::cmp::Ordering {
-    match (a.first(), b.first()) {
-        // Mirror `misc::alpha_compare`'s `*s1 as i32 - *s2 as i32`: the
-        // first differing byte is promoted through `c_char`, so its sign
-        // follows the target's `char` signedness (signed on x86, unsigned on
-        // e.g. aarch64) rather than always being signed.
-        (Some(&x), Some(&y)) if x != y => {
-            (x as ::core::ffi::c_char as i32).cmp(&(y as ::core::ffi::c_char as i32))
-        }
-        // Equal first byte (or an empty operand): fall back to strcmp, i.e. an
-        // unsigned lexicographic comparison (words contain no interior NUL).
-        _ => a.cmp(b),
-    }
-}
-
 unsafe fn func_sort(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
