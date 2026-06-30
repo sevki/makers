@@ -330,15 +330,19 @@ pub unsafe fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c
 /// # Safety
 /// Every stored item must be an owned `malloc`-family allocation.
 pub unsafe fn hash_free_items(ht: *mut hash_table) {
-    assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
+    assert!(
+        ht.as_ref().expect("hash table pointer is null").ht_in_map() == 0,
+        "hash table modified during mapping"
+    );
     for slot in table_slots_mut(ht) {
         if is_real_item(*slot) {
             free(*slot);
         }
         *slot = null_mut();
     }
-    (*ht).ht_fill = 0;
-    (*ht).ht_empty_slots = (*ht).ht_size;
+    let htr = ht.as_mut().expect("hash table pointer is null");
+    htr.ht_fill = 0;
+    htr.ht_empty_slots = htr.ht_size;
 }
 
 /// Clear the table without freeing the items, resetting the statistics.
@@ -346,13 +350,17 @@ pub unsafe fn hash_free_items(ht: *mut hash_table) {
 /// # Safety
 /// `ht` must be initialized.
 pub unsafe fn hash_delete_items(ht: *mut hash_table) {
-    assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
+    assert!(
+        ht.as_ref().expect("hash table pointer is null").ht_in_map() == 0,
+        "hash table modified during mapping"
+    );
     table_slots_mut(ht).fill(null_mut());
-    (*ht).ht_fill = 0;
-    (*ht).ht_collisions = 0;
-    (*ht).ht_lookups = 0;
-    (*ht).ht_rehashes = 0;
-    (*ht).ht_empty_slots = (*ht).ht_size;
+    let htr = ht.as_mut().expect("hash table pointer is null");
+    htr.ht_fill = 0;
+    htr.ht_collisions = 0;
+    htr.ht_lookups = 0;
+    htr.ht_rehashes = 0;
+    htr.ht_empty_slots = htr.ht_size;
 }
 
 /// Free the table's vector (and, when `free_items`, the items too).
@@ -361,16 +369,21 @@ pub unsafe fn hash_delete_items(ht: *mut hash_table) {
 /// `ht` must be initialized; with `free_items` every stored item must be
 /// an owned allocation.
 pub unsafe fn hash_free(ht: *mut hash_table, free_items: i32) {
-    assert!((*ht).ht_in_map() == 0, "hash table modified during mapping");
+    assert!(
+        ht.as_ref().expect("hash table pointer is null").ht_in_map() == 0,
+        "hash table modified during mapping"
+    );
     if free_items != 0 {
         hash_free_items(ht);
     } else {
-        (*ht).ht_fill = 0;
-        (*ht).ht_empty_slots = (*ht).ht_size;
+        let htr = ht.as_mut().expect("hash table pointer is null");
+        htr.ht_fill = 0;
+        htr.ht_empty_slots = htr.ht_size;
     }
-    free((*ht).ht_vec as *mut c_void);
-    (*ht).ht_vec = null_mut();
-    (*ht).ht_capacity = 0;
+    let htr = ht.as_mut().expect("hash table pointer is null");
+    free(htr.ht_vec as *mut c_void);
+    htr.ht_vec = null_mut();
+    htr.ht_capacity = 0;
 }
 
 /// Call `map` on every item. The table must not be modified while mapping.
@@ -379,13 +392,13 @@ pub unsafe fn hash_free(ht: *mut hash_table, free_items: i32) {
 /// `ht` must be initialized and `map` non-null.
 pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
-    (*ht).set_ht_in_map(1);
+    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(1);
     for &item in table_slots(ht) {
         if is_real_item(item) {
             map(item);
         }
     }
-    (*ht).set_ht_in_map(0);
+    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(0);
 }
 
 /// Call `map(item, arg)` on every item. The table must not be modified

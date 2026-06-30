@@ -699,12 +699,14 @@ pub unsafe fn free_variable_name_and_value(item: *const ::core::ffi::c_void) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn free_variable_set(list: *mut variable_set_list) {
-    hash_map(
-        &raw mut (*(*list).set).table,
-        Some(free_variable_name_and_value),
-    );
-    hash_free(&raw mut (*(*list).set).table, 1);
-    free((*list).set as *mut ::core::ffi::c_void);
+    // SAFETY: caller guarantees `list` and its `set` are valid. Read the set
+    // pointer through a checked reference, then take the table address through
+    // a checked reference (no raw-pointer field derefs).
+    let set = list.as_ref().expect("variable_set_list is non-null").set;
+    let table = &raw mut set.as_mut().expect("variable_set is non-null").table;
+    hash_map(table, Some(free_variable_name_and_value));
+    hash_free(table, 1);
+    free(set as *mut ::core::ffi::c_void);
     free(list as *mut ::core::ffi::c_void);
 }
 /// # Safety
@@ -1764,42 +1766,61 @@ pub unsafe fn target_environment(
     );
     s = set_list;
     while !s.is_null() {
-        let set: *mut variable_set = (*s).set;
+        // SAFETY: `s` was just checked non-null; read its fields through a
+        // checked reference rather than raw pointer derefs.
+        let sr = s.as_ref().expect("set-list node is non-null");
+        let set: *mut variable_set = sr.set;
         let islocal: i32 = (s == set_list) as i32;
         let isglobal: i32 = (set == &raw mut global_variable_set) as i32;
-        v_slot = (*set).table.ht_vec as *mut *mut variable;
-        v_end = v_slot.offset((*set).table.ht_size as isize);
+        // SAFETY: `set` came from a valid set-list node; read the table fields
+        // through a checked reference.
+        let set_ref = set.as_ref().expect("variable_set is non-null");
+        v_slot = set_ref.table.ht_vec as *mut *mut variable;
+        v_end = v_slot.offset(set_ref.table.ht_size as isize);
         while v_slot < v_end {
-            if !((*v_slot).is_null()
-                || *v_slot as *mut ::core::ffi::c_void
-                    == hash_deleted_item as *mut ::core::ffi::c_void)
+            // SAFETY: `v_slot` ranges over the table's slot array; read the slot
+            // through a checked reference.
+            let v: *mut variable = *v_slot.as_ref().expect("slot pointer in bounds");
+            if !(v.is_null()
+                || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
             {
                 let evslot: *mut *mut variable;
-                let v: *mut variable = *v_slot;
-                if !(islocal == 0 && (*v).private_var() as i32 != 0) {
+                // SAFETY: the slot is occupied (checked above), so `v` is a
+                // live, non-null variable; bind a checked reference.
+                let vr = v.as_ref().expect("variable in occupied slot is non-null");
+                if !(islocal == 0 && vr.private_var() as i32 != 0) {
                     evslot = hash_find_slot(&raw mut table, v as *const ::core::ffi::c_void)
                         as *mut *mut variable;
-                    if (*evslot).is_null()
-                        || *evslot as *mut ::core::ffi::c_void
+                    // SAFETY: `hash_find_slot` returns a valid slot pointer; read
+                    // the stored entry through a checked reference.
+                    let existing: *mut variable =
+                        *evslot.as_ref().expect("hash slot pointer is non-null");
+                    if existing.is_null()
+                        || existing as *mut ::core::ffi::c_void
                             == hash_deleted_item as *mut ::core::ffi::c_void
                     {
                         // `v` is a live, non-null variable taken from an
                         // occupied hash slot just above.
-                        if isglobal == 0 || should_export(&*v) {
+                        if isglobal == 0 || should_export(vr) {
                             hash_insert_at(
                                 &raw mut table,
                                 v as *const ::core::ffi::c_void,
                                 evslot as *const ::core::ffi::c_void,
                             );
                         }
-                    } else if (**evslot).export() as i32 == v_default as i32 {
-                        (**evslot).set_export((*v).export() as variable_export);
+                    } else {
+                        // SAFETY: `existing` is the non-null entry already in the
+                        // merged table; bind a checked reference to update it.
+                        let er = existing.as_mut().expect("existing variable is non-null");
+                        if er.export() as i32 == v_default as i32 {
+                            er.set_export(vr.export() as variable_export);
+                        }
                     }
                 }
             }
             v_slot = v_slot.offset(1_i32 as isize);
         }
-        s = (*s).next;
+        s = sr.next;
     }
     result_0 = xmalloc(
         (table.ht_fill as size_t)
