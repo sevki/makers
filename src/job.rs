@@ -1136,8 +1136,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
     // by `job_next_command`).
     let line_idx = (*child).command_line.wrapping_sub(1);
     if !(*child).command_ptr.is_null() {
-        let line_flag_bits = (*child)
-            .line_flags
+        let line_flags_ref: &[RecipeLineFlags] = &(*child).line_flags;
+        let line_flag_bits = line_flags_ref
             .get(line_idx)
             .copied()
             .unwrap_or(RecipeLineFlags::empty())
@@ -1165,7 +1165,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             .set_recursive((flags & 1 != 0) as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         // Persist any newly-discovered RECURSE bit into the child's own copy of
         // the line flags (the former write-back into `cmds.lines_flags`).
-        if let Some(lf) = (*child).line_flags.get_mut(line_idx) {
+        let line_flags_mut: &mut Vec<RecipeLineFlags> = &mut (*child).line_flags;
+        if let Some(lf) = line_flags_mut.get_mut(line_idx) {
             if flags & COMMANDS_RECURSE != 0 {
                 *lf |= RecipeLineFlags::RECURSE;
             }
@@ -1188,8 +1189,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
         *p2 = *p1;
         let mut end: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         // Re-read the (possibly RECURSE-updated) line flags for the argv build.
-        let argv_line_flags = (*child)
-            .line_flags
+        let argv_flags_ref: &[RecipeLineFlags] = &(*child).line_flags;
+        let argv_line_flags = argv_flags_ref
             .get(line_idx)
             .copied()
             .unwrap_or(RecipeLineFlags::empty())
@@ -1900,7 +1901,8 @@ pub unsafe fn job_next_command(child: *mut child) -> i32 {
         (*child).command_line = (*child).command_line.wrapping_add(1);
         // Own a NUL-terminated working copy of this line; `command_ptr` walks
         // within it (`start_job_command` may rewrite it in place).
-        let mut buf = (*child).command_lines[idx].clone();
+        let command_lines_ref: &Vec<Vec<u8>> = &(*child).command_lines;
+        let mut buf = command_lines_ref[idx].clone();
         buf.push(0);
         (*child).command_buf = buf;
         (*child).command_ptr = (*child).command_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
