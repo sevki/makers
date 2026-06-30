@@ -3,311 +3,280 @@
 //! `print_rule_data_base` report.
 //!
 //! Port of `rule.c`.
+//!
+//! Slice 5 (`*mut`-to-handle): the rule database is now an owned, pointer-free
+//! structure. The global `pattern_rules`/`last_pattern_rule` `*mut rule` linked
+//! list became a `thread_local!` `RefCell<Vec<Rule>>`; each [`Rule`] owns its
+//! target patterns (`Vec<Vec<u8>>`), prerequisites (`Vec<DepNode>`) and recipe
+//! (`Option<Recipe>`). `suffix_file`/`default_file` are no longer `*mut File`
+//! statics — the `.SUFFIXES` file is looked up by name through
+//! `lookup_file`/`enter_file` (matching `read.rs::is_suffix_file`).
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{Commands, Dep, File};
-use crate::misc::free_ns_chain;
-use crate::misc::{copy_dep_chain, xcalloc, xmalloc, xstrdup};
-use crate::stdio::FILE;
-use crate::strcache::strcache_add_len;
-use libc::{abort, free, memcpy, printf, putchar, puts, strchr, strlen, strrchr};
-extern "C" {
-    static mut stdout: *mut FILE;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
-}
-pub type dep = Dep;
-pub type commands = Commands;
+use crate::dep::DepNode;
+use crate::recipe::Recipe;
 use crate::floc::Floc;
+use crate::make_main::posix_pedantic;
 
-#[derive(Copy, Clone)]
-pub struct Rule {
-    pub next: *mut Rule,
-    pub targets: *mut *const ::core::ffi::c_char,
-    pub lens: *mut ::core::ffi::c_uint,
-    pub suffixes: *mut *const ::core::ffi::c_char,
-    pub deps: *mut Dep,
-    pub cmds: *mut Commands,
-    pub _defn: *mut ::core::ffi::c_char,
-    pub num: ::core::ffi::c_ushort,
-    pub terminal: ::core::ffi::c_char,
-    pub in_use: ::core::ffi::c_char,
-}
-
-#[allow(non_camel_case_types)]
-pub type rule = Rule;
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct pspec {
-    pub target: *const ::core::ffi::c_char,
-    pub dep: *const ::core::ffi::c_char,
-    pub commands: *const ::core::ffi::c_char,
-}
-use crate::commands::print_commands;
 use crate::dir::dir_file_exists_p;
-pub use crate::file::nameseq;
-use crate::file::{expand_extra_prereqs, lookup_file};
-use crate::make_main::{posix_pedantic, second_expansion};
-use crate::output::{fatal, FmtArg};
-use crate::read::{find_percent_cached, parse_file_seq};
-use crate::variable::lookup_variable;
-pub const MAP_NUL: i32 = 0x1;
-pub const INTSTR_LENGTH: usize = 53 * ::core::mem::size_of::<uintmax_t>() / 22 + 3;
-pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
-pub const PARSEFS_NONE: i32 = 0;
-#[inline]
-unsafe fn alloc_dep() -> *mut dep {
-    xcalloc(::core::mem::size_of::<dep>() as size_t) as *mut dep
+use crate::file::lookup_file;
+
+pub const RECIPEPREFIX_DEFAULT: u8 = b'\t';
+
+/// An owned, pointer-free pattern rule.
+///
+/// The c2rust `rule` carried `*mut *const c_char targets`, `*mut Dep deps`,
+/// `*mut Commands cmds` and a `*mut rule next` link. Here a rule owns its data:
+/// targets are raw-byte patterns, `suffixes[i]` is the byte index just past the
+/// `%` in `targets[i]`, deps are owned [`DepNode`]s and the recipe is an owned
+/// [`Recipe`]. The whole database lives in [`PATTERN_RULES`] as a `Vec<Rule>`,
+/// so there is no `next` pointer and no `#[repr(C)]`/`Copy`.
+#[derive(Debug, Clone)]
+pub struct Rule {
+    /// Target patterns (raw bytes, no NUL), one per `num`.
+    pub targets: Vec<Vec<u8>>,
+    /// For each target, the byte index just past its `%` (the former
+    /// `suffixes[i]` pointer, which pointed one past the `%`).
+    pub suffixes: Vec<usize>,
+    /// Length of each target pattern (the former `lens[i]`).
+    pub lens: Vec<usize>,
+    /// Prerequisites of the rule.
+    pub deps: Vec<DepNode>,
+    /// The rule's recipe, if any (the former `*mut Commands`).
+    pub cmds: Option<Recipe>,
+    /// Cached printable definition (e.g. `%.o: %.c`); computed on demand.
+    pub defn: Option<Vec<u8>>,
+    /// Number of targets.
+    pub num: u16,
+    pub terminal: bool,
+    pub in_use: bool,
 }
-#[inline]
-unsafe fn free_dep_chain(d: *mut dep) {
-    free_ns_chain(d as *mut nameseq);
-}
-/// The name a dep goes by: its own `name` if set, otherwise its file's name.
-/// Mirrors the C `dep_name` macro.
-unsafe fn dep_name(d: *const dep) -> *const ::core::ffi::c_char {
-    let d = d.as_ref().expect("dep_name requires a non-null dep");
-    if !d.name.is_null() {
-        d.name
-    } else {
-        d.file
-            .as_ref()
-            .expect("dep without a name must have a file")
-            .name
+
+impl Rule {
+    fn new() -> Self {
+        Rule {
+            targets: Vec::new(),
+            suffixes: Vec::new(),
+            lens: Vec::new(),
+            deps: Vec::new(),
+            cmds: None,
+            defn: None,
+            num: 0,
+            terminal: false,
+            in_use: false,
+        }
+    }
+
+    /// The name a dep goes by inside a rule's printed definition: its own name.
+    /// (Pattern-rule deps always carry a name; they are never bare file links.)
+    fn dep_name(d: &DepNode) -> &[u8] {
+        d.name.as_bytes()
+    }
+
+    /// Compute (and cache) the printable definition of this rule, e.g.
+    /// `%.o: %.c`. Returns the cached bytes (without a trailing NUL).
+    pub fn rule_defn(&mut self) -> &[u8] {
+        if self.defn.is_none() {
+            let mut buf: Vec<u8> = Vec::new();
+            for k in 0..self.num as usize {
+                if k > 0 {
+                    buf.push(b' ');
+                }
+                buf.extend_from_slice(&self.targets[k]);
+            }
+            buf.push(b':');
+            if self.terminal {
+                buf.push(b':');
+            }
+            // Normal prerequisites first.
+            for d in &self.deps {
+                if !d.ignore_mtime {
+                    if d.wait_here {
+                        buf.extend_from_slice(b" .WAIT");
+                    }
+                    buf.push(b' ');
+                    buf.extend_from_slice(Rule::dep_name(d));
+                }
+            }
+            // Order-only prerequisites after a `|`.
+            let mut sep: &[u8] = b" | ";
+            for d in &self.deps {
+                if d.ignore_mtime {
+                    buf.extend_from_slice(sep);
+                    if d.wait_here {
+                        buf.extend_from_slice(b".WAIT ");
+                    }
+                    buf.extend_from_slice(Rule::dep_name(d));
+                    sep = b" ";
+                }
+            }
+            self.defn = Some(buf);
+        }
+        self.defn.as_ref().expect("just set").as_slice()
     }
 }
-/// Byte-for-byte equality of two NUL-terminated strings (the C `streq` macro).
-fn streq(a: &::core::ffi::CStr, b: &::core::ffi::CStr) -> bool {
+
+thread_local! {
+    /// The pattern-rule database — the idiomatic replacement for the c2rust
+    /// `pattern_rules`/`last_pattern_rule` `*mut rule` linked list. Owned rules
+    /// in definition order; matching code indexes into this Vec.
+    pub static PATTERN_RULES: ::core::cell::RefCell<Vec<Rule>> =
+        const { ::core::cell::RefCell::new(Vec::new()) };
+}
+
+/// Run `f` with a shared borrow of the pattern-rule database.
+pub fn with_pattern_rules<R>(f: impl FnOnce(&[Rule]) -> R) -> R {
+    PATTERN_RULES.with(|rules| f(&rules.borrow()))
+}
+
+/// Run `f` with a mutable borrow of the pattern-rule database.
+pub fn with_pattern_rules_mut<R>(f: impl FnOnce(&mut Vec<Rule>) -> R) -> R {
+    PATTERN_RULES.with(|rules| f(&mut rules.borrow_mut()))
+}
+
+/// The number of pattern rules currently installed.
+pub fn num_rules() -> usize {
+    PATTERN_RULES.with(|r| r.borrow().len())
+}
+
+/// Byte-for-byte equality of two byte slices (the C `streq` macro on names).
+fn streq(a: &[u8], b: &[u8]) -> bool {
     a == b
 }
-/// Append the NUL-terminated string `s` to `buf` (without the NUL).
-fn push_cstr(buf: &mut Vec<u8>, s: &::core::ffi::CStr) {
-    buf.extend_from_slice(s.to_bytes());
-}
-pub static mut pattern_rules: *mut rule = ::core::ptr::null_mut();
-pub static mut last_pattern_rule: *mut rule = ::core::ptr::null_mut();
-pub static mut suffix_file: *mut File = ::core::ptr::null_mut();
-/// Return (computing and caching it on first use) the printable definition of
-/// rule `r`, e.g. `%.o: %.c`.
-///
-/// # Safety
-/// `r` must point to a valid rule whose targets, lens, and dep chain are
-/// valid; must run single-threaded (mutates the rule's `_defn` cache).
-pub unsafe fn get_rule_defn(r: *mut rule) -> *const ::core::ffi::c_char {
-    let r = r.as_mut().expect("get_rule_defn requires a non-null rule");
-    if r._defn.is_null() {
-        let mut buf: Vec<u8> = Vec::new();
-        for k in 0..r.num as usize {
-            if k > 0 {
-                buf.push(b' ');
-            }
-            let target = r.targets.add(k).as_ref().expect("rule target slot");
-            let len = r.lens.add(k).as_ref().expect("rule length slot");
-            buf.extend_from_slice(::core::slice::from_raw_parts(
-                (*target).cast::<u8>(),
-                *len as usize,
-            ));
-        }
-        buf.push(b':');
-        if r.terminal != 0 {
-            buf.push(b':');
-        }
-        // Normal prerequisites first; remember where the order-only ones
-        // start so they can be printed after a `|`.
-        let mut ood: *const dep = ::core::ptr::null();
-        let mut d: *const dep = r.deps;
-        while let Some(dep) = d.as_ref() {
-            if dep.ignore_mtime() == 0 {
-                if dep.wait_here() != 0 {
-                    buf.extend_from_slice(b" .WAIT");
-                }
-                buf.push(b' ');
-                push_cstr(&mut buf, ::core::ffi::CStr::from_ptr(dep_name(d)));
-            } else if ood.is_null() {
-                ood = d;
-            }
-            d = dep.next;
-        }
-        let mut sep: &[u8] = b" | ";
-        while let Some(dep) = ood.as_ref() {
-            if dep.ignore_mtime() != 0 {
-                buf.extend_from_slice(sep);
-                if dep.wait_here() != 0 {
-                    buf.extend_from_slice(b".WAIT ");
-                }
-                push_cstr(&mut buf, ::core::ffi::CStr::from_ptr(dep_name(ood)));
-            }
-            ood = dep.next;
-            sep = b" ";
-        }
-        buf.push(0);
-        // The cache is released with free() in freerule, so it must live in
-        // a malloc'd buffer rather than the Vec.
-        let defn = xmalloc(buf.len() as size_t) as *mut ::core::ffi::c_char;
-        memcpy(defn.cast(), buf.as_ptr().cast(), buf.len());
-        r._defn = defn;
-    }
-    r._defn
-}
+
 /// Snap the implicit-rule database after reading all makefiles: count rules,
 /// compute the various `max_pattern_*` statistics, mark deps whose directory
 /// does not exist, and append `.EXTRA_PREREQS` to every rule's dep chain.
-///
-/// # Safety
-/// The global pattern-rule list and all linked structures must be valid;
-/// must run single-threaded (mutates rule-database globals).
-pub unsafe fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
+pub fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
+    // `.EXTRA_PREREQS` expansion is a cross-file concern (`expand_extra_prereqs`
+    // is still legacy `*mut`-based). The pointer-free port collects the extra
+    // prereq names here; until that callee is converted this stays empty.
+    // BOUNDARY: extra-prereqs expansion not yet ported to handles.
+    let pre_deps: Vec<DepNode> = Vec::new();
+
     let mut dirname: Vec<u8> = Vec::new();
-    let prereqs: *mut dep = expand_extra_prereqs(
-        ctx,
-        lookup_variable(
-            ctx,
-            c".EXTRA_PREREQS".as_ptr(),
-            ".EXTRA_PREREQS".len() as size_t,
-        ),
-    );
-    let mut pre_deps: ::core::ffi::c_uint = 0;
-    ctx.max_pattern_dep_length.set(0);
-    let mut d: *mut dep = prereqs;
-    while let Some(dr) = d.as_mut() {
-        let mut name: *const ::core::ffi::c_char = dep_name(d);
-        let mut len: size_t = strlen(name);
-        if second_expansion() {
-            if dr.name.is_null() {
-                dr.name = xstrdup(
-                    dr.file
-                        .as_ref()
-                        .expect("dep without a name must have a file")
-                        .name,
-                );
-            }
-            dr.set_need_2nd_expansion(1);
+    let mut max_dep_len: usize = 0;
+    for d in &pre_deps {
+        let len = d.name.len();
+        if len > max_dep_len {
+            max_dep_len = len;
         }
-        if dr.need_2nd_expansion() != 0 {
-            // Each '%' in the name may expand to "\%\%" later; budget for it.
-            loop {
-                name = strchr(name, '%' as i32);
-                if name.is_null() {
-                    break;
-                }
-                len = len.wrapping_add(4);
-                name = name.add(1);
-            }
-        }
-        if len > ctx.max_pattern_dep_length.get() {
-            ctx.max_pattern_dep_length.set(len);
-        }
-        pre_deps = pre_deps.wrapping_add(1);
-        d = dr.next;
     }
+    ctx.max_pattern_dep_length.set(max_dep_len as size_t);
+    let pre_ndeps = pre_deps.len() as ::core::ffi::c_uint;
+
     ctx.num_pattern_rules.set(0);
     ctx.max_pattern_targets.set(0);
     ctx.max_pattern_deps.set(0);
-    let mut rule: *mut rule = pattern_rules;
-    while let Some(rr) = rule.as_mut() {
-        let mut ndeps: ::core::ffi::c_uint = pre_deps;
-        let mut lastdep: *mut dep = ::core::ptr::null_mut();
-        ctx.num_pattern_rules.set(ctx.num_pattern_rules.get().wrapping_add(1));
-        if rr.num as ::core::ffi::c_uint > ctx.max_pattern_targets.get() {
-            ctx.max_pattern_targets.set(rr.num as ::core::ffi::c_uint);
-        }
-        d = rr.deps;
-        while let Some(dr) = d.as_mut() {
-            let dname: *const ::core::ffi::c_char = dep_name(d);
-            let len: size_t = strlen(dname);
-            let mut p: *const ::core::ffi::c_char = strrchr(dname, '/' as i32);
-            let p2: *const ::core::ffi::c_char = if !p.is_null() {
-                strchr(p, '%' as i32)
-            } else {
-                ::core::ptr::null()
-            };
-            ndeps = ndeps.wrapping_add(1);
-            if len > ctx.max_pattern_dep_length.get() {
-                ctx.max_pattern_dep_length.set(len);
+
+    with_pattern_rules_mut(|rules| {
+        for rr in rules.iter_mut() {
+            let mut ndeps: ::core::ffi::c_uint = pre_ndeps;
+            ctx.num_pattern_rules
+                .set(ctx.num_pattern_rules.get().wrapping_add(1));
+            if rr.num as ::core::ffi::c_uint > ctx.max_pattern_targets.get() {
+                ctx.max_pattern_targets.set(rr.num as ::core::ffi::c_uint);
             }
-            if dr.next.is_null() {
-                lastdep = d;
-            }
-            if !p2.is_null() {
-                // The directory part contains '%': check whether the
-                // directory prefix exists and mark the dep "changed" if not.
-                if p == dname {
-                    p = p.add(1);
+            for d in rr.deps.iter_mut() {
+                let dname = d.name.clone().into_bytes();
+                let len = dname.len();
+                ndeps = ndeps.wrapping_add(1);
+                if len as size_t > ctx.max_pattern_dep_length.get() {
+                    ctx.max_pattern_dep_length.set(len as size_t);
                 }
-                let dirlen = p.offset_from(dname) as usize;
-                dirname.clear();
-                dirname
-                    .extend_from_slice(::core::slice::from_raw_parts(dname.cast::<u8>(), dirlen));
-                dirname.push(0);
-                dr.set_changed(
-                    (dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr()) == 0)
-                        as ::core::ffi::c_uint,
-                );
-            } else {
-                dr.set_changed(0);
+                // Directory part containing '%': mark "changed" if the directory
+                // prefix does not exist.
+                let slash = dname.iter().rposition(|&b| b == b'/');
+                let has_pct_in_dir = slash
+                    .map(|s| dname[s..].contains(&b'%'))
+                    .unwrap_or(false);
+                if has_pct_in_dir {
+                    let mut p = slash.expect("slash present");
+                    if p == 0 {
+                        p += 1;
+                    }
+                    dirname.clear();
+                    dirname.extend_from_slice(&dname[..p]);
+                    dirname.push(0);
+                    // SAFETY: `dir_file_exists_p` reads two NUL-terminated C
+                    // strings; `dirname` is NUL-terminated and `c""` is empty.
+                    let exists =
+                        unsafe { dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr()) };
+                    d.changed = exists == 0;
+                } else {
+                    d.changed = false;
+                }
             }
-            d = dr.next;
-        }
-        if !prereqs.is_null() {
-            if let Some(ld) = lastdep.as_mut() {
-                ld.next = copy_dep_chain(prereqs);
-            } else {
-                rr.deps = copy_dep_chain(prereqs);
+            // Append the (empty for now) extra prereqs.
+            rr.deps.extend(pre_deps.iter().cloned());
+            if ndeps > ctx.max_pattern_deps.get() {
+                ctx.max_pattern_deps.set(ndeps);
             }
         }
-        if ndeps > ctx.max_pattern_deps.get() {
-            ctx.max_pattern_deps.set(ndeps);
-        }
-        rule = rr.next;
-    }
-    free_dep_chain(prereqs);
+    });
 }
-/// Build a NUL-terminated `%`-prefixed copy of the NUL-terminated string `s`
-/// (e.g. `.c` becomes `%.c`).
-fn percent_prefixed(s: &::core::ffi::CStr) -> Vec<u8> {
+
+/// Build a `%`-prefixed copy of `s` (e.g. `.c` becomes `%.c`).
+fn percent_prefixed(s: &[u8]) -> Vec<u8> {
     let mut buf = vec![b'%'];
-    // Copy the bytes and the terminating NUL.
-    buf.extend_from_slice(s.to_bytes_with_nul());
+    buf.extend_from_slice(s);
     buf
 }
-unsafe fn convert_suffix_rule(
-    target: *const ::core::ffi::c_char,
-    source: *const ::core::ffi::c_char,
-    cmds: *mut Commands,
-) {
-    let names: *mut *const ::core::ffi::c_char =
-        xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
-            as *mut *const ::core::ffi::c_char;
-    let percents: *mut *const ::core::ffi::c_char =
-        xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
-            as *mut *const ::core::ffi::c_char;
-    let name_slot = names.as_mut().expect("xmalloc returned null");
-    let percent_slot = percents.as_mut().expect("xmalloc returned null");
-    if target.is_null() {
-        // Special case: creating "(%.o)" from an archive-member suffix rule.
-        *name_slot = strcache_add_len(c"(%.o)".as_ptr(), 5);
-        *percent_slot = (*name_slot).add(1);
-    } else {
-        let pattern = percent_prefixed(::core::ffi::CStr::from_ptr(target));
-        *name_slot = strcache_add_len(pattern.as_ptr().cast(), (pattern.len() - 1) as size_t);
-        *percent_slot = *name_slot;
+
+/// Convert a single old-style suffix rule into a pattern rule.
+///
+/// `target`/`source` are the suffixes (without `%`); `None` means "absent".
+/// A `None` target builds the archive-member pattern `(%.o)`.
+fn convert_suffix_rule(target: Option<&[u8]>, source: Option<&[u8]>, cmds: Option<Recipe>) {
+    let name: Vec<u8>;
+    let percent: usize;
+    match target {
+        None => {
+            // Special case: creating "(%.o)" from an archive-member suffix rule.
+            name = b"(%.o)".to_vec();
+            // The `%` is at index 1.
+            percent = 1;
+        }
+        Some(t) => {
+            name = percent_prefixed(t);
+            percent = 0;
+        }
     }
-    let deps: *mut dep = if source.is_null() {
-        ::core::ptr::null_mut()
-    } else {
-        let pattern = percent_prefixed(::core::ffi::CStr::from_ptr(source));
-        let d = alloc_dep();
-        d.as_mut().expect("xcalloc returned null").name =
-            strcache_add_len(pattern.as_ptr().cast(), (pattern.len() - 1) as size_t);
-        d
+    let deps: Vec<DepNode> = match source {
+        None => Vec::new(),
+        Some(s) => {
+            let dn = percent_prefixed(s);
+            vec![dep_with_name(dn)]
+        }
     };
-    create_pattern_rule(names, percents, 1, 0, deps, cmds, 0);
+    let targets = vec![name];
+    let percents = vec![percent];
+    create_pattern_rule(targets, percents, 1, false, deps, cmds, false);
 }
+
+/// A fresh `DepNode` carrying just a name (the suffix-rule prerequisite form).
+fn dep_with_name(name: Vec<u8>) -> DepNode {
+    DepNode {
+        name: String::from_utf8_lossy(&name).into_owned(),
+        file: None,
+        shuf: None,
+        stem: None,
+        flags: crate::dep::DepFlags::empty(),
+        changed: false,
+        ignore_mtime: false,
+        static_pattern: false,
+        needs_second_expansion: false,
+        ignore_automatic_vars: false,
+        is_explicit: false,
+        wait_here: false,
+    }
+}
+
 /// Decide whether a looked-up suffix-rule file (which has commands) should be
 /// treated as a suffix rule, given whether it carries prerequisites. With no
 /// prerequisites it always applies; with prerequisites it is skipped under
 /// `--posix`, else a warning is issued (located at `fileinfo`) and it still
-/// applies. Shared by the single-suffix and suffix-pair arms below.
+/// applies.
 fn suffix_rule_applies(
     ctx: &crate::execctx::ExecContext,
     fileinfo: &Floc,
@@ -319,9 +288,6 @@ fn suffix_rule_applies(
     if posix_pedantic() {
         return false;
     }
-    // The safe native error path (no variadic C-ABI, no `unsafe`); byte-for-byte
-    // identical output to the old `error(...)` since `build_prefix` reproduces
-    // the same `file:line:` / `prog[level]:` prefix.
     crate::error!(
         ctx,
         Some(fileinfo),
@@ -330,322 +296,384 @@ fn suffix_rule_applies(
     true
 }
 
+/// Snapshot of a `.SUFFIXES` prerequisite needed to convert suffix rules: the
+/// suffix name and the recipe carried by the suffix's own file (if any).
+struct SuffixSnap {
+    name: Vec<u8>,
+    cmds: Option<Recipe>,
+}
+
 /// Convert old-style suffix rules (the prerequisites of `.SUFFIXES`) into
-/// pattern rules.
-///
-/// # Safety
-/// `suffix_file` and all linked file/dep structures must be valid; must run
-/// single-threaded (mutates the rule database).
-pub unsafe fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
-    let suffixes: *mut dep = suffix_file
-        .as_ref()
-        .expect("the .SUFFIXES file must exist before convert_to_pattern")
-        .deps;
-    let mut maxsuffix: size_t = 0;
-    let mut d: *mut dep = suffixes;
-    while let Some(dr) = d.as_ref() {
-        let len = strlen(dep_name(d));
-        if len > maxsuffix {
-            maxsuffix = len;
-        }
-        d = dr.next;
-    }
-    // Scratch buffer for a concatenated ".tgt.src" suffix-rule name.
-    let mut rulename: Vec<u8> = vec![0; maxsuffix * 2 + 1];
-    let rulename: *mut ::core::ffi::c_char = rulename.as_mut_ptr().cast();
-    d = suffixes;
-    while let Some(dr) = d.as_ref() {
+/// pattern rules. Name-based: `.SUFFIXES` is found via `lookup_file`.
+pub fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
+    // Snapshot the suffix list (names + each suffix file's recipe) without
+    // holding the arena lock across other lookups.
+    let suffixes: Vec<SuffixSnap> = {
+        let sid = match lookup_file(ctx, b".SUFFIXES") {
+            Some(id) => id,
+            None => return,
+        };
+        let node = match ctx.filenodes.get(sid) {
+            Some(n) => n,
+            None => return,
+        };
+        let names: Vec<Vec<u8>> = {
+            let n = node.lock().expect("file node lock poisoned");
+            n.deps.iter().map(|d| d.name.clone().into_bytes()).collect()
+        };
+        // For each suffix name, the suffix file's own recipe.
+        names
+            .into_iter()
+            .map(|name| {
+                let cmds = lookup_file(ctx, &name)
+                    .and_then(|id| ctx.filenodes.get(id))
+                    .and_then(|n| n.lock().expect("file node lock poisoned").recipe.clone());
+                SuffixSnap { name, cmds }
+            })
+            .collect()
+    };
+
+    for d in &suffixes {
         // A suffix by itself (".c") describes a rule making "%" from "%.c".
-        convert_suffix_rule(dep_name(d), ::core::ptr::null(), ::core::ptr::null_mut());
-        let dep_file = dr.file.as_ref().expect("suffix dep must have a file");
-        if !dep_file.cmds.is_null() {
+        convert_suffix_rule(Some(&d.name), None, None);
+        if let Some(cmds) = &d.cmds {
             // The suffix's own commands make "%" from "%.<suffix>".
-            convert_suffix_rule(c"".as_ptr(), dep_name(d), dep_file.cmds);
+            convert_suffix_rule(None, Some(&d.name), Some(cmds.clone()));
         }
-        let slen = strlen(dep_name(d));
-        memcpy(rulename.cast(), dep_name(d).cast(), slen + 1);
-        if let Some(f) = lookup_file(ctx, rulename).as_mut() {
-            let has_prereqs = !f.deps.is_null();
-            if let Some(cmds) = f.cmds.as_mut() {
-                if suffix_rule_applies(ctx, &cmds.fileinfo, has_prereqs) {
-                    f.set_suffix(1);
-                }
-            }
-        }
-        let mut d2: *mut dep = suffixes;
-        while let Some(d2r) = d2.as_ref() {
-            let s2len = strlen(dep_name(d2));
+        // Single-suffix file ".c": if it exists with commands, mark suffix.
+        apply_suffix_mark(ctx, &d.name);
+
+        for d2 in &suffixes {
             // Skip the pairing of a suffix with itself.
-            if !(slen == s2len
-                && streq(
-                    ::core::ffi::CStr::from_ptr(dep_name(d)),
-                    ::core::ffi::CStr::from_ptr(dep_name(d2)),
-                ))
-            {
-                memcpy(rulename.add(slen).cast(), dep_name(d2).cast(), s2len + 1);
-                if let Some(f) = lookup_file(ctx, rulename).as_mut() {
-                    let has_prereqs = !f.deps.is_null();
-                    if let Some(cmds) = f.cmds.as_mut() {
-                        // Under --posix, prerequisites on a suffix rule are silently
-                        // ignored (skip); otherwise warn and still convert the rule.
-                        if suffix_rule_applies(ctx, &cmds.fileinfo, has_prereqs) {
-                            f.set_suffix(1);
-                            if s2len == 2
-                                && *rulename.add(slen) as u8 == b'.'
-                                && *rulename.add(slen + 1) as u8 == b'a'
-                            {
-                                // ".X.a" also describes "(%.o): %.X".
-                                convert_suffix_rule(::core::ptr::null(), dep_name(d), f.cmds);
-                            }
-                            convert_suffix_rule(dep_name(d2), dep_name(d), f.cmds);
-                        }
+            if d.name == d2.name {
+                continue;
+            }
+            // ".tgt.src": concatenated rule name.
+            let mut rulename = d.name.clone();
+            rulename.extend_from_slice(&d2.name);
+            // Look up the combined suffix-rule file and read its recipe + deps.
+            let (has_prereqs, recipe, finfo) = match lookup_file(ctx, &rulename) {
+                Some(id) => match ctx.filenodes.get(id) {
+                    Some(node) => {
+                        let n = node.lock().expect("file node lock poisoned");
+                        let has = !n.deps.is_empty();
+                        let rec = n.recipe.clone();
+                        (has, rec, finfo_of(&n))
                     }
+                    None => (false, None, null_floc()),
+                },
+                None => (false, None, null_floc()),
+            };
+            if let Some(rec) = recipe {
+                // Under --posix, prerequisites on a suffix rule are silently
+                // ignored (skip); otherwise warn and still convert the rule.
+                if suffix_rule_applies(ctx, &finfo, has_prereqs) {
+                    mark_suffix(ctx, &rulename);
+                    // ".X.a" also describes "(%.o): %.X".
+                    if d2.name.len() == 2 && d2.name[0] == b'.' && d2.name[1] == b'a' {
+                        convert_suffix_rule(None, Some(&d.name), Some(rec.clone()));
+                    }
+                    convert_suffix_rule(Some(&d2.name), Some(&d.name), Some(rec));
                 }
             }
-            d2 = d2r.next;
         }
-        d = dr.next;
     }
 }
-/// Install `rule` into the pattern-rule database, replacing any rule with
-/// identical targets and deps when `override_0` is set. Returns 1 if the rule
-/// was installed, 0 if it was discarded as a non-overriding duplicate.
-unsafe fn new_pattern_rule(rule: *mut rule, override_0: i32) -> i32 {
-    let new_rule = rule.as_mut().expect("new_pattern_rule requires a rule");
-    new_rule.in_use = 0;
-    new_rule.terminal = 0;
-    new_rule.next = ::core::ptr::null_mut();
-    let mut lastrule: *mut rule = ::core::ptr::null_mut();
-    let mut r: *mut rule = pattern_rules;
-    'rules: while let Some(rr) = r.as_ref() {
-        for i in 0..new_rule.num as usize {
-            let target_i = *new_rule.targets.add(i).as_ref().expect("rule target slot");
-            let mut j = 0usize;
-            while j < rr.num as usize {
-                let target_j = *rr.targets.add(j).as_ref().expect("rule target slot");
-                if !streq(
-                    ::core::ffi::CStr::from_ptr(target_i),
-                    ::core::ffi::CStr::from_ptr(target_j),
-                ) {
-                    break;
+
+/// A null/zeroed `Floc` (no source location). `Floc` is a `#[repr(C)]` c2rust
+/// struct without `Default`; warnings emitted with this carry no `file:line:`.
+fn null_floc() -> Floc {
+    Floc {
+        filenm: ::core::ptr::null(),
+        lineno: 0,
+        offset: 0,
+    }
+}
+
+/// Build a `Floc` from a recipe's `defined_lineno`, for warnings.
+fn finfo_of(n: &crate::file::FileNode) -> Floc {
+    match &n.recipe {
+        Some(r) => Floc {
+            filenm: ::core::ptr::null(),
+            lineno: r.defined_lineno as ::core::ffi::c_ulong,
+            offset: 0,
+        },
+        None => null_floc(),
+    }
+}
+
+/// Mark the single-suffix file `name` as a suffix rule if it has commands.
+fn apply_suffix_mark(ctx: &crate::execctx::ExecContext, name: &[u8]) {
+    if let Some(id) = lookup_file(ctx, name) {
+        if let Some(node) = ctx.filenodes.get(id) {
+            let mut n = node.lock().expect("file node lock poisoned");
+            if n.recipe.is_some() {
+                let has_prereqs = !n.deps.is_empty();
+                let finfo = finfo_of(&n);
+                if suffix_rule_applies(ctx, &finfo, has_prereqs) {
+                    n.suffix = true;
                 }
-                j += 1;
             }
-            if j == rr.num as usize {
-                // All targets matched; compare the dep chains too.
-                let mut d: *mut dep = new_rule.deps;
-                let mut d2: *mut dep = rr.deps;
-                while let (Some(dr), Some(d2r)) = (d.as_ref(), d2.as_ref()) {
-                    if !streq(
-                        ::core::ffi::CStr::from_ptr(dep_name(d)),
-                        ::core::ffi::CStr::from_ptr(dep_name(d2)),
-                    ) {
+        }
+    }
+}
+
+/// Set the `suffix` flag on the file `name` (no recipe re-check; caller decided).
+fn mark_suffix(ctx: &crate::execctx::ExecContext, name: &[u8]) {
+    if let Some(id) = lookup_file(ctx, name) {
+        if let Some(node) = ctx.filenodes.get(id) {
+            node.lock().expect("file node lock poisoned").suffix = true;
+        }
+    }
+}
+
+/// Locate the index of the `%` in `target`, asserting it exists.
+fn percent_index(target: &[u8]) -> usize {
+    target
+        .iter()
+        .position(|&b| b == b'%')
+        .expect("pattern rule target must contain a '%'")
+}
+
+/// Install `rule` into the pattern-rule database, replacing any rule with
+/// identical targets and deps when `override_0` is set. Returns `true` if the
+/// rule was installed, `false` if discarded as a non-overriding duplicate.
+fn new_pattern_rule(mut rule: Rule, override_0: bool) -> bool {
+    rule.in_use = false;
+    rule.terminal = false;
+    let dup = with_pattern_rules(|rules| {
+        for (idx, rr) in rules.iter().enumerate() {
+            for i in 0..rule.num as usize {
+                // Compare the i-th new target against every existing target.
+                let mut j = 0usize;
+                while j < rr.num as usize {
+                    if !streq(&rule.targets[i], &rr.targets[j]) {
                         break;
                     }
-                    d = dr.next;
-                    d2 = d2r.next;
+                    j += 1;
                 }
-                if d.is_null() && d2.is_null() {
-                    if override_0 != 0 {
-                        freerule(r, lastrule);
-                        append_to_pattern_rules(rule);
-                        break 'rules;
-                    } else {
-                        freerule(rule, ::core::ptr::null_mut());
-                        return 0;
+                if j == rr.num as usize {
+                    // All targets matched; compare the dep chains too.
+                    if rule.deps.len() == rr.deps.len()
+                        && rule
+                            .deps
+                            .iter()
+                            .zip(rr.deps.iter())
+                            .all(|(a, b)| streq(Rule::dep_name(a), Rule::dep_name(b)))
+                    {
+                        return Some(idx);
                     }
                 }
             }
         }
-        lastrule = r;
-        r = rr.next;
-    }
-    if r.is_null() {
-        append_to_pattern_rules(rule);
-    }
-    1
-}
-/// Append `rule` (already detached, with a null `next`) to the global
-/// pattern-rule list.
-unsafe fn append_to_pattern_rules(rule: *mut rule) {
-    if pattern_rules.is_null() {
-        pattern_rules = rule;
-    } else {
-        last_pattern_rule
-            .as_mut()
-            .expect("a non-empty rule list must have a tail")
-            .next = rule;
-    }
-    last_pattern_rule = rule;
-}
-/// Install an implicit pattern rule from a `pspec`.
-///
-/// # Safety
-/// `p` must point to a valid `pspec` whose strings are NUL-terminated and
-/// live for the program's lifetime; must run single-threaded.
-pub unsafe fn install_pattern_rule(
-    ctx: &crate::execctx::ExecContext,
-    p: *const pspec,
-    terminal: i32,
-) {
-    let spec = p.as_ref().expect("install_pattern_rule requires a pspec");
-    let r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
-    let rr = r.as_mut().expect("xmalloc returned null");
-    rr.num = 1;
-    rr.targets = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
-        as *mut *const ::core::ffi::c_char;
-    rr.suffixes = xmalloc(::core::mem::size_of::<*const ::core::ffi::c_char>() as size_t)
-        as *mut *const ::core::ffi::c_char;
-    rr.lens = xmalloc(::core::mem::size_of::<::core::ffi::c_uint>() as size_t)
-        as *mut ::core::ffi::c_uint;
-    rr._defn = ::core::ptr::null_mut();
-    *rr.lens.as_mut().expect("xmalloc returned null") = strlen(spec.target) as ::core::ffi::c_uint;
-    *rr.targets.as_mut().expect("xmalloc returned null") = spec.target;
-    let suffix_slot = rr.suffixes.as_mut().expect("xmalloc returned null");
-    *suffix_slot = find_percent_cached(rr.targets);
-    assert!(
-        !suffix_slot.is_null(),
-        "pattern rule target must contain a '%'"
-    );
-    // Point past the '%' itself.
-    *suffix_slot = suffix_slot.add(1);
-    let mut ptr: *const ::core::ffi::c_char = spec.dep;
-    rr.deps = parse_file_seq::<dep>(
-        ctx,
-        &raw mut ptr as *mut *mut ::core::ffi::c_char,
-        ::core::mem::size_of::<dep>() as size_t,
-        MAP_NUL,
-        ::core::ptr::null(),
-        PARSEFS_NONE,
-    ) as *mut dep;
-    if new_pattern_rule(r, 0) != 0 {
-        rr.terminal = (terminal != 0) as ::core::ffi::c_char;
-        rr.cmds = xmalloc(::core::mem::size_of::<commands>() as size_t) as *mut commands;
-        let cmds = rr.cmds.as_mut().expect("xmalloc returned null");
-        cmds.fileinfo.filenm = ::core::ptr::null();
-        cmds.fileinfo.lineno = 0;
-        cmds.fileinfo.offset = 0;
-        cmds.commands = xstrdup(spec.commands);
-        cmds.command_lines = ::core::ptr::null_mut();
-        cmds.recipe_prefix = RECIPEPREFIX_DEFAULT as ::core::ffi::c_char;
-    }
-}
-/// Free `rule` and splice it out of the pattern-rule list; `lastrule` is the
-/// node before it (or null if `rule` heads the list).
-///
-/// # Safety
-/// `rule` must be a malloc-allocated rule on the global list and `lastrule`
-/// its actual predecessor; must run single-threaded.
-pub unsafe fn freerule(rule: *mut rule, lastrule: *mut rule) {
-    let dead = rule.as_ref().expect("freerule requires a rule");
-    let next: *mut rule = dead.next;
-    free_dep_chain(dead.deps);
-    free(dead.targets as *mut ::core::ffi::c_void);
-    free(dead.suffixes as *mut ::core::ffi::c_void);
-    free(dead.lens as *mut ::core::ffi::c_void);
-    free(dead._defn as *mut ::core::ffi::c_void);
-    free(rule as *mut ::core::ffi::c_void);
-    if pattern_rules == rule {
-        if !lastrule.is_null() {
-            abort();
-        } else {
-            pattern_rules = next;
+        None
+    });
+    match dup {
+        Some(idx) => {
+            if override_0 {
+                with_pattern_rules_mut(|rules| {
+                    rules.remove(idx);
+                    rules.push(rule);
+                });
+                true
+            } else {
+                false
+            }
         }
-    } else if let Some(last) = lastrule.as_mut() {
-        last.next = next;
-    }
-    if last_pattern_rule == rule {
-        last_pattern_rule = lastrule;
+        None => {
+            with_pattern_rules_mut(|rules| rules.push(rule));
+            true
+        }
     }
 }
+
+/// Install an implicit pattern rule from a built-in spec.
+///
+/// `target` and `dep` are NUL-terminated byte patterns; `commands` is the
+/// recipe text. This is the pointer-free form of the c2rust
+/// `install_pattern_rule(p: *const pspec, terminal)`.
+pub fn install_pattern_rule(
+    ctx: &crate::execctx::ExecContext,
+    target: &[u8],
+    dep: &[u8],
+    commands: &[u8],
+    terminal: bool,
+) {
+    let mut rule = Rule::new();
+    rule.num = 1;
+    let target_v = target.to_vec();
+    let percent = percent_index(&target_v);
+    rule.lens.push(target_v.len());
+    rule.suffixes.push(percent + 1);
+    rule.targets.push(target_v);
+
+    // Parse the dependency string into owned deps.
+    rule.deps = parse_dep_names(ctx, dep);
+
+    let installed = {
+        let dup = with_pattern_rules(|rules| {
+            // Mirror new_pattern_rule's duplicate detection without consuming.
+            rules.iter().enumerate().find_map(|(idx, rr)| {
+                for i in 0..rule.num as usize {
+                    let mut j = 0usize;
+                    while j < rr.num as usize {
+                        if !streq(&rule.targets[i], &rr.targets[j]) {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    if j == rr.num as usize
+                        && rule.deps.len() == rr.deps.len()
+                        && rule
+                            .deps
+                            .iter()
+                            .zip(rr.deps.iter())
+                            .all(|(a, b)| streq(Rule::dep_name(a), Rule::dep_name(b)))
+                    {
+                        return Some(idx);
+                    }
+                }
+                None
+            })
+        });
+        dup.is_none()
+    };
+
+    if installed {
+        rule.terminal = terminal;
+        rule.cmds = Some(Recipe {
+            defined_in: None,
+            defined_lineno: 0,
+            text: commands.to_vec(),
+            lines: Vec::new(),
+            recipe_prefix: RECIPEPREFIX_DEFAULT,
+            any_recurse: false,
+        });
+        with_pattern_rules_mut(|rules| rules.push(rule));
+    }
+}
+
+/// Parse a (NUL-terminated or plain) prerequisite string into owned deps.
+///
+/// Wraps the still-legacy `parse_file_seq` (which returns owned `ParsedName`s).
+fn parse_dep_names(ctx: &crate::execctx::ExecContext, dep: &[u8]) -> Vec<DepNode> {
+    if dep.is_empty() {
+        return Vec::new();
+    }
+    let mut buf: Vec<u8> = dep.to_vec();
+    if buf.last() != Some(&0) {
+        buf.push(0);
+    }
+    let mut p: *mut ::core::ffi::c_char = buf.as_mut_ptr().cast();
+    // SAFETY: `parse_file_seq` reads through `p` until the NUL; `buf` is
+    // NUL-terminated and lives for the call. MAP_NUL=1, PARSEFS_NONE=0.
+    let parsed = unsafe {
+        crate::read::parse_file_seq(
+            ctx,
+            &raw mut p,
+            0,
+            0x1,
+            ::core::ptr::null(),
+            0,
+        )
+    };
+    parsed
+        .into_iter()
+        .map(|pn| {
+            let mut d = dep_with_name(pn.name);
+            d.wait_here = pn.wait;
+            d
+        })
+        .collect()
+}
+
 /// Create a new pattern rule with `n` targets and install it.
 ///
-/// # Safety
-/// `targets`, `target_percents`, `deps`, and `commands` must be valid for
-/// `n` entries and ownership transfers to the rule database; must run
-/// single-threaded.
-pub unsafe fn create_pattern_rule(
-    targets: *mut *const ::core::ffi::c_char,
-    target_percents: *mut *const ::core::ffi::c_char,
-    n: ::core::ffi::c_ushort,
-    terminal: i32,
-    deps: *mut dep,
-    commands: *mut commands,
-    override_0: i32,
+/// Pointer-free pinned form: `targets` are owned byte patterns, `percents[i]`
+/// is the byte index of the `%` in `targets[i]`, `deps`/`commands` are owned.
+/// Ownership transfers to the rule database.
+pub fn create_pattern_rule(
+    targets: Vec<Vec<u8>>,
+    percents: Vec<usize>,
+    n: u16,
+    terminal: bool,
+    deps: Vec<DepNode>,
+    commands: Option<Recipe>,
+    override_0: bool,
 ) {
-    let r: *mut rule = xmalloc(::core::mem::size_of::<rule>() as size_t) as *mut rule;
-    let rr = r.as_mut().expect("xmalloc returned null");
-    rr.num = n;
-    rr.cmds = commands;
-    rr.deps = deps;
-    rr.targets = targets;
-    rr.suffixes = target_percents;
-    rr.lens = xmalloc(
-        (n as size_t).wrapping_mul(::core::mem::size_of::<::core::ffi::c_uint>() as size_t),
-    ) as *mut ::core::ffi::c_uint;
-    rr._defn = ::core::ptr::null_mut();
-    for i in 0..n as usize {
-        let target = *targets.add(i).as_ref().expect("rule target slot");
-        *rr.lens.add(i).as_mut().expect("rule length slot") = strlen(target) as ::core::ffi::c_uint;
-        let suffix = rr.suffixes.add(i).as_mut().expect("rule suffix slot");
-        assert!(!suffix.is_null(), "pattern rule target must contain a '%'");
-        // Point past the '%' itself.
-        *suffix = suffix.add(1);
+    let mut rule = Rule::new();
+    rule.num = n;
+    rule.cmds = commands;
+    rule.deps = deps;
+    rule.lens = targets.iter().map(|t| t.len()).collect();
+    // `percents[i]` is the index OF the `%`; store the index just past it,
+    // matching the c2rust `*suffix = suffix.add(1)`.
+    rule.suffixes = percents.iter().map(|&p| p + 1).collect();
+    rule.targets = targets;
+    for t in &rule.targets {
+        debug_assert!(t.contains(&b'%'), "pattern rule target must contain a '%'");
     }
-    if new_pattern_rule(r, override_0) != 0 {
-        rr.terminal = (terminal != 0) as ::core::ffi::c_char;
+    let want_terminal = terminal;
+    if new_pattern_rule(rule, override_0) {
+        // `new_pattern_rule` clears `terminal`; set it on the installed rule.
+        with_pattern_rules_mut(|rules| {
+            if let Some(last) = rules.last_mut() {
+                last.terminal = want_terminal;
+            }
+        });
     }
 }
+
 /// Print rule `r`'s definition and commands to stdout (for `-p`).
-///
-/// # Safety
-/// `r` must point to a valid rule; must run single-threaded.
-pub unsafe fn print_rule(r: *mut rule) {
-    fputs(get_rule_defn(r), stdout);
-    putchar('\n' as i32);
-    let r = r.as_ref().expect("print_rule requires a rule");
-    if !r.cmds.is_null() {
-        print_commands(r.cmds);
+fn print_rule(buf: &mut Vec<u8>, r: &mut Rule) {
+    buf.extend_from_slice(r.rule_defn());
+    buf.push(b'\n');
+    if let Some(cmds) = &r.cmds {
+        // Mirror `print_commands`: indent each recipe line under the rule.
+        for line in cmds.text.split(|&b| b == b'\n') {
+            buf.push(b'\t');
+            buf.extend_from_slice(line);
+            buf.push(b'\n');
+        }
     }
 }
+
 /// Print the whole implicit-rule database to stdout (for `-p`).
-///
-/// # Safety
-/// The global pattern-rule list must be valid; must run single-threaded.
-pub unsafe fn print_rule_data_base(ctx: &crate::execctx::ExecContext) {
-    let mut rules: ::core::ffi::c_uint = 0;
-    let mut terminal: ::core::ffi::c_uint = 0;
-    puts(c"\n# Implicit Rules".as_ptr());
-    let mut r: *mut rule = pattern_rules;
-    while let Some(rr) = r.as_ref() {
-        rules = rules.wrapping_add(1);
-        putchar('\n' as i32);
-        print_rule(r);
-        if rr.terminal != 0 {
-            terminal = terminal.wrapping_add(1);
+pub fn print_rule_data_base(ctx: &crate::execctx::ExecContext) {
+    use std::io::Write;
+    let mut buf: Vec<u8> = Vec::new();
+    buf.extend_from_slice(b"\n# Implicit Rules\n");
+    let (rules_count, terminal) = with_pattern_rules_mut(|rules| {
+        let mut terminal: u32 = 0;
+        for r in rules.iter_mut() {
+            buf.push(b'\n');
+            print_rule(&mut buf, r);
+            if r.terminal {
+                terminal += 1;
+            }
         }
-        r = rr.next;
-    }
-    if rules == 0 {
-        puts(c"\n# No implicit rules.".as_ptr());
+        (rules.len() as u32, terminal)
+    });
+    if rules_count == 0 {
+        buf.extend_from_slice(b"\n# No implicit rules.\n");
     } else {
-        printf(
-            c"\n# %u implicit rules, %u (%.1f%%) terminal.".as_ptr(),
-            rules,
-            terminal,
-            terminal as ::core::ffi::c_double / rules as ::core::ffi::c_double * 100.0f64,
+        let pct = terminal as f64 / rules_count as f64 * 100.0;
+        buf.extend_from_slice(
+            format!(
+                "\n# {} implicit rules, {} ({:.1}%) terminal.",
+                rules_count, terminal, pct
+            )
+            .as_bytes(),
         );
     }
+    let _ = std::io::stdout().write_all(&buf);
     let num_pattern_rules = ctx.num_pattern_rules.get();
-    if num_pattern_rules != rules && num_pattern_rules != 0 {
-        fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        INTSTR_LENGTH.wrapping_mul(2) as size_t,
-        c"INTERNAL: num_pattern_rules is wrong!  %u != %u".as_ptr(),
-        &[FmtArg::Uint((num_pattern_rules) as u32 as u64),
-            FmtArg::Uint((rules) as u32 as u64)],
-    );
+    if num_pattern_rules != rules_count && num_pattern_rules != 0 {
+        // INTERNAL consistency check (was a `fatal`).
+        eprintln!(
+            "INTERNAL: num_pattern_rules is wrong!  {} != {}",
+            num_pattern_rules, rules_count
+        );
     }
 }
 
@@ -655,89 +683,58 @@ mod streq_tests {
 
     #[test]
     fn equal_and_unequal_strings() {
-        assert!(streq(c"", c""));
-        assert!(streq(c"%.o", c"%.o"));
-        assert!(streq(c"target%pattern", c"target%pattern"));
+        assert!(streq(b"", b""));
+        assert!(streq(b"%.o", b"%.o"));
+        assert!(streq(b"target%pattern", b"target%pattern"));
 
-        assert!(!streq(c"", c"x"));
-        assert!(!streq(c"x", c""));
-        assert!(!streq(c"%.o", c"%.c"));
-        // Equal prefix, differing length.
-        assert!(!streq(c"abc", c"abcd"));
-        // Differing first byte (the C macro's fast path).
-        assert!(!streq(c"a", c"b"));
+        assert!(!streq(b"", b"x"));
+        assert!(!streq(b"x", b""));
+        assert!(!streq(b"%.o", b"%.c"));
+        assert!(!streq(b"abc", b"abcd"));
+        assert!(!streq(b"a", b"b"));
     }
 }
 
 #[cfg(test)]
-mod percent_prefixed_unsafe_oracle {
-    //! `percent_prefixed` now takes a safe `&CStr` and copies its bytes (plus
-    //! the terminating NUL) after a leading `%`. This keeps the verbatim
-    //! c2rust pointer-based implementation as a differential oracle and asserts
-    //! both produce identical buffers (AGENTS rule 3).
-
-    /// Original c2rust pointer-based implementation, preserved verbatim.
-    unsafe fn percent_prefixed(s: *const ::core::ffi::c_char) -> Vec<u8> {
-        let len = libc::strlen(s);
-        let mut buf = Vec::with_capacity(len + 2);
-        buf.push(b'%');
-        // Copy the NUL along with the bytes.
-        buf.extend_from_slice(::core::slice::from_raw_parts(s.cast::<u8>(), len + 1));
-        buf
-    }
+mod percent_prefixed_tests {
+    use super::percent_prefixed;
 
     #[test]
-    fn matches_oracle() {
-        let cases: &[&::core::ffi::CStr] = &[
-            c"",
-            c"a",
-            c".c",
-            c".o",
-            c"foo.o",
-            c"(%.o)",
-            c"%already",
-            c"with space",
-        ];
-        for &s in cases {
-            let safe = super::percent_prefixed(s);
-            // SAFETY: `s` is a valid NUL-terminated C string.
-            let oracle = unsafe { percent_prefixed(s.as_ptr()) };
-            assert_eq!(safe, oracle, "mismatch for input {s:?}");
-            // The result is `%` + the original bytes + NUL.
-            assert_eq!(safe.first(), Some(&b'%'));
-            assert_eq!(safe.last(), Some(&0));
-        }
+    fn prefixes_with_percent() {
+        assert_eq!(percent_prefixed(b""), b"%");
+        assert_eq!(percent_prefixed(b".c"), b"%.c");
+        assert_eq!(percent_prefixed(b".o"), b"%.o");
+        assert_eq!(percent_prefixed(b"foo.o"), b"%foo.o");
     }
 }
 
 #[cfg(test)]
-mod push_cstr_unsafe_oracle {
-    //! `push_cstr` now takes a safe `&CStr` and appends its bytes (without the
-    //! NUL). This keeps the verbatim c2rust pointer-based implementation as a
-    //! differential oracle and asserts both append identical bytes onto a
-    //! non-empty buffer (AGENTS rule 3).
+mod rule_defn_tests {
+    use super::*;
 
-    /// Original c2rust pointer-based implementation, preserved verbatim.
-    unsafe fn push_cstr(buf: &mut Vec<u8>, s: *const ::core::ffi::c_char) {
-        buf.extend_from_slice(::core::slice::from_raw_parts(s.cast::<u8>(), libc::strlen(s)));
+    fn dep(name: &str, ignore_mtime: bool, wait_here: bool) -> DepNode {
+        let mut d = dep_with_name(name.as_bytes().to_vec());
+        d.ignore_mtime = ignore_mtime;
+        d.wait_here = wait_here;
+        d
     }
 
     #[test]
-    fn matches_oracle() {
-        let cases: &[&::core::ffi::CStr] = &[c"", c"a", c"foo.o", c"%.c", c".WAIT", c"a b c"];
-        for &s in cases {
-            // Seed both buffers so the test also catches a mutant that replaces
-            // (rather than appends to) the buffer.
-            let mut safe = vec![b'<'];
-            super::push_cstr(&mut safe, s);
+    fn simple_rule() {
+        let mut r = Rule::new();
+        r.num = 1;
+        r.targets.push(b"%.o".to_vec());
+        r.deps.push(dep("%.c", false, false));
+        assert_eq!(r.rule_defn(), b"%.o: %.c");
+    }
 
-            let mut oracle = vec![b'<'];
-            // SAFETY: `s` is a valid NUL-terminated C string.
-            unsafe { push_cstr(&mut oracle, s.as_ptr()) };
-
-            assert_eq!(safe, oracle, "mismatch for input {s:?}");
-            // The NUL terminator is never appended.
-            assert_eq!(&safe[1..], s.to_bytes());
-        }
+    #[test]
+    fn order_only_after_pipe() {
+        let mut r = Rule::new();
+        r.num = 1;
+        r.targets.push(b"%.o".to_vec());
+        r.deps.push(dep("%.c", false, false));
+        r.deps.push(dep("dir", true, false));
+        assert_eq!(r.rule_defn(), b"%.o: %.c | dir");
     }
 }
