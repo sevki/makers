@@ -538,10 +538,6 @@ fn file_command_state_entry(
 }
 
 /// Read a target's `update_status` through the arena, dropping the lock first.
-fn file_update_status(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStatus {
-    file_update_status_entry(ctx, file, 0)
-}
-
 fn file_update_status_entry(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
@@ -557,14 +553,6 @@ fn file_update_status_entry(
 }
 
 /// Set a target's `update_status` through the arena, dropping the lock first.
-fn set_file_update_status(
-    ctx: &crate::execctx::ExecContext,
-    file: FileId,
-    status: UpdateStatus,
-) {
-    set_file_update_status_entry(ctx, file, 0, status);
-}
-
 fn set_file_update_status_entry(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
@@ -578,14 +566,6 @@ fn set_file_update_status_entry(
 }
 
 /// Set a target's `command_state` through the arena, dropping the lock first.
-fn set_file_command_state(
-    ctx: &crate::execctx::ExecContext,
-    file: FileId,
-    state: CommandState,
-) {
-    set_file_command_state_entry(ctx, file, 0, state);
-}
-
 fn set_file_command_state_entry(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
