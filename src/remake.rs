@@ -2087,21 +2087,7 @@ pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize
         })
         .unwrap_or((false, false, false, false, false));
     if !has_recipe {
-        if phony || is_target {
-            if let Some(node) = ctx.filenodes.get(file) {
-                let mut g = node.lock().expect("file node lock poisoned");
-                entry_node_mut(&mut g, entry).update_status = UpdateStatus::Success;
-            }
-        } else {
-            if !opt_rebuilding_makefiles() || !dontcare {
-                // lock: no guard held across complain.
-                complain(ctx, file);
-            }
-            if let Some(node) = ctx.filenodes.get(file) {
-                let mut g = node.lock().expect("file node lock poisoned");
-                entry_node_mut(&mut g, entry).update_status = UpdateStatus::Failed;
-            }
-        }
+        remake_no_recipe(ctx, file, entry, phony, is_target, dontcare);
     } else {
         // chop_commands needs &mut Recipe; lock briefly to chop in place.
         if let Some(node) = ctx.filenodes.get(file) {
@@ -2122,6 +2108,35 @@ pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize
         }
     }
     notice_finished_file(ctx, file, entry);
+}
+
+/// Handle the recipe-less case of [`remake_file`]: a phony or explicit target
+/// succeeds trivially; anything else fails (and `complain`s unless we are
+/// rebuilding makefiles and the file is `dontcare`). Split out so `remake_file`'s
+/// recipe path stays under the complexity gate.
+fn remake_no_recipe(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+    phony: bool,
+    is_target: bool,
+    dontcare: bool,
+) {
+    if phony || is_target {
+        if let Some(node) = ctx.filenodes.get(file) {
+            let mut g = node.lock().expect("file node lock poisoned");
+            entry_node_mut(&mut g, entry).update_status = UpdateStatus::Success;
+        }
+    } else {
+        if !opt_rebuilding_makefiles() || !dontcare {
+            // lock: no guard held across complain.
+            complain(ctx, file);
+        }
+        if let Some(node) = ctx.filenodes.get(file) {
+            let mut g = node.lock().expect("file node lock poisoned");
+            entry_node_mut(&mut g, entry).update_status = UpdateStatus::Failed;
+        }
+    }
 }
 
 /// Refresh `f_mtime`'s cached "adjusted now" from a freshly sampled clock.
@@ -2429,81 +2444,99 @@ pub unsafe fn name_mtime(
         return NONEXISTENT_MTIME as uintmax_t;
     }
     if crate::make_main::opt_check_symlink() && strlen(name) <= GET_PATH_MAX as size_t {
-        let mut lpath: [::core::ffi::c_char; 4097] = [0; 4097];
-        strcpy(&raw mut lpath as *mut ::core::ffi::c_char, name);
+        mtime = follow_symlink_mtime(ctx, name, mtime);
+    }
+    mtime
+}
+
+/// `-L`/`--check-symlink-times` support for [`name_mtime`]: walk the symlink
+/// chain starting at `name`, folding in the max of each link's own mtime, and
+/// return the resulting timestamp. Split out of `name_mtime` so the chain walk's
+/// branchy `lstat`/`readlink` loop lives in its own function.
+///
+/// # Safety
+/// `name` must be a valid nul-terminated path no longer than `GET_PATH_MAX`.
+unsafe fn follow_symlink_mtime(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+    mut mtime: uintmax_t,
+) -> uintmax_t {
+    let mut st: stat = ::core::mem::zeroed();
+    let mut e: i32;
+    let mut lpath: [::core::ffi::c_char; 4097] = [0; 4097];
+    strcpy(&raw mut lpath as *mut ::core::ffi::c_char, name);
+    loop {
+        let ltime: uintmax_t;
+        let mut lbuf: [::core::ffi::c_char; 4097] = [0; 4097];
+        let mut llen: ::core::ffi::c_long;
+        let p: *mut ::core::ffi::c_char;
         loop {
-            let ltime: uintmax_t;
-            let mut lbuf: [::core::ffi::c_char; 4097] = [0; 4097];
-            let mut llen: ::core::ffi::c_long;
-            let p: *mut ::core::ffi::c_char;
+            e = lstat(&raw mut lpath as *mut ::core::ffi::c_char, &raw mut st);
+            if !(e == -1_i32 && *__errno_location() == EINTR) {
+                break;
+            }
+        }
+        if e != 0 {
+            if *__errno_location() != ENOENT && *__errno_location() != ENOTDIR {
+                perror_with_name(
+                    ctx,
+                    b"lstat: \0" as *const u8 as *const ::core::ffi::c_char,
+                    &raw mut lpath as *mut ::core::ffi::c_char,
+                );
+            }
+            break;
+        } else {
+            if !(st.st_mode & __S_IFMT as __mode_t == 0o120000 as __mode_t) {
+                break;
+            }
+            ltime = file_timestamp_cons(
+                ctx,
+                &raw mut lpath as *mut ::core::ffi::c_char,
+                system_time_from_unix(st.st_mtim.tv_sec, st.st_mtim.tv_nsec as u32),
+            );
+            if ltime > mtime {
+                mtime = ltime;
+            }
             loop {
-                e = lstat(&raw mut lpath as *mut ::core::ffi::c_char, &raw mut st);
-                if !(e == -1_i32 && *__errno_location() == EINTR) {
+                llen = readlink(
+                    &raw mut lpath as *mut ::core::ffi::c_char,
+                    &raw mut lbuf as *mut ::core::ffi::c_char,
+                    (4096_i32 - 1) as size_t,
+                ) as ::core::ffi::c_long;
+                if !(llen == -1_i32 as ::core::ffi::c_long && *__errno_location() == EINTR) {
                     break;
                 }
             }
-            if e != 0 {
-                if *__errno_location() != ENOENT && *__errno_location() != ENOTDIR {
-                    perror_with_name(
-                        ctx,
-                        b"lstat: \0" as *const u8 as *const ::core::ffi::c_char,
-                        &raw mut lpath as *mut ::core::ffi::c_char,
-                    );
-                }
+            if llen < 0 {
+                perror_with_name(
+                    ctx,
+                    b"readlink: \0" as *const u8 as *const ::core::ffi::c_char,
+                    &raw mut lpath as *mut ::core::ffi::c_char,
+                );
                 break;
             } else {
-                if !(st.st_mode & __S_IFMT as __mode_t == 0o120000 as __mode_t) {
-                    break;
-                }
-                ltime = file_timestamp_cons(
-                    ctx,
-                    &raw mut lpath as *mut ::core::ffi::c_char,
-                    system_time_from_unix(st.st_mtim.tv_sec, st.st_mtim.tv_nsec as u32),
-                );
-                if ltime > mtime {
-                    mtime = ltime;
-                }
-                loop {
-                    llen = readlink(
+                lbuf[llen as usize] = 0;
+                if lbuf[0_i32 as usize] as i32 == '/' as i32 || {
+                    p = strrchr(&raw mut lpath as *mut ::core::ffi::c_char, '/' as i32);
+                    p.is_null()
+                } {
+                    strcpy(
                         &raw mut lpath as *mut ::core::ffi::c_char,
                         &raw mut lbuf as *mut ::core::ffi::c_char,
-                        (4096_i32 - 1) as size_t,
-                    ) as ::core::ffi::c_long;
-                    if !(llen == -1_i32 as ::core::ffi::c_long && *__errno_location() == EINTR) {
+                    );
+                } else {
+                    if p.offset_from(&raw mut lpath as *mut ::core::ffi::c_char)
+                        as ::core::ffi::c_long
+                        + llen
+                        + 2
+                        > GET_PATH_MAX as ::core::ffi::c_long
+                    {
                         break;
                     }
-                }
-                if llen < 0 {
-                    perror_with_name(
-                        ctx,
-                        b"readlink: \0" as *const u8 as *const ::core::ffi::c_char,
-                        &raw mut lpath as *mut ::core::ffi::c_char,
+                    strcpy(
+                        p.offset(1_i32 as isize),
+                        &raw mut lbuf as *mut ::core::ffi::c_char,
                     );
-                    break;
-                } else {
-                    lbuf[llen as usize] = 0;
-                    if lbuf[0_i32 as usize] as i32 == '/' as i32 || {
-                        p = strrchr(&raw mut lpath as *mut ::core::ffi::c_char, '/' as i32);
-                        p.is_null()
-                    } {
-                        strcpy(
-                            &raw mut lpath as *mut ::core::ffi::c_char,
-                            &raw mut lbuf as *mut ::core::ffi::c_char,
-                        );
-                    } else {
-                        if p.offset_from(&raw mut lpath as *mut ::core::ffi::c_char)
-                            as ::core::ffi::c_long
-                            + llen
-                            + 2
-                            > GET_PATH_MAX as ::core::ffi::c_long
-                        {
-                            break;
-                        }
-                        strcpy(
-                            p.offset(1_i32 as isize),
-                            &raw mut lbuf as *mut ::core::ffi::c_char,
-                        );
-                    }
                 }
             }
         }

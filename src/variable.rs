@@ -1122,11 +1122,21 @@ pub unsafe fn install_file_context(
     current_variable_set_list = (*file).variables;
     if !oldfloc.is_null() {
         *oldfloc = reading_file;
-        if !(*file).cmds.is_null() && !(*(*file).cmds).fileinfo.filenm.is_null() {
-            reading_file = &raw mut (*(*file).cmds).fileinfo;
-        } else {
-            reading_file = ::core::ptr::null::<Floc>();
-        }
+        reading_file = file_recipe_floc(file);
+    }
+}
+
+/// The `reading_file` location to adopt while expanding in `file`'s context: the
+/// file's recipe `fileinfo` when it has one with a real source name, else null.
+/// Split out of [`install_file_context`] so its branch lives on its own.
+///
+/// # Safety
+/// `file` must be a valid pointer for the call.
+unsafe fn file_recipe_floc(file: *mut file) -> *const Floc {
+    if !(*file).cmds.is_null() && !(*(*file).cmds).fileinfo.filenm.is_null() {
+        &raw mut (*(*file).cmds).fileinfo
+    } else {
+        ::core::ptr::null::<Floc>()
     }
 }
 /// # Safety
@@ -2763,20 +2773,19 @@ pub fn print_file_variables(ctx: &ExecContext, file: FileId) {
         guard.variables.clone()
     };
     let prefix = b"# \0";
-    for tv in &vars {
-        if tv.origin != VarOrigin::Automatic {
-            continue;
-        }
-        // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
-        // which outlive the `print_variable` call below.
-        let (cv, _n, _v, _f) = c_variable_from_target(tv);
-        unsafe {
-            print_variable(
-                &raw const cv as *const ::core::ffi::c_void,
-                prefix.as_ptr() as *mut ::core::ffi::c_void,
-            );
-        }
-    }
+    vars.iter()
+        .filter(|tv| tv.origin == VarOrigin::Automatic)
+        .for_each(|tv| {
+            // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
+            // which outlive the `print_variable` call below.
+            let (cv, _n, _v, _f) = c_variable_from_target(tv);
+            unsafe {
+                print_variable(
+                    &raw const cv as *const ::core::ffi::c_void,
+                    prefix.as_ptr() as *mut ::core::ffi::c_void,
+                );
+            }
+        });
     // NOTE (slice5 boundary): the legacy path also emitted hash-table stats for
     // the per-file `variable_set`; the `FileNode` store has no hash table, so
     // those stats lines are intentionally dropped.
@@ -2795,20 +2804,19 @@ pub fn print_target_variables(ctx: &ExecContext, file: FileId) {
     let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 3);
     prefix.extend_from_slice(&name);
     prefix.extend_from_slice(b": \0");
-    for tv in &vars {
-        if tv.origin == VarOrigin::Automatic {
-            continue;
-        }
-        // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
-        // which outlive the `print_variable` call below.
-        let (cv, _n, _v, _f) = c_variable_from_target(tv);
-        unsafe {
-            print_variable(
-                &raw const cv as *const ::core::ffi::c_void,
-                prefix.as_mut_ptr() as *mut ::core::ffi::c_void,
-            );
-        }
-    }
+    vars.iter()
+        .filter(|tv| tv.origin != VarOrigin::Automatic)
+        .for_each(|tv| {
+            // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
+            // which outlive the `print_variable` call below.
+            let (cv, _n, _v, _f) = c_variable_from_target(tv);
+            unsafe {
+                print_variable(
+                    &raw const cv as *const ::core::ffi::c_void,
+                    prefix.as_mut_ptr() as *mut ::core::ffi::c_void,
+                );
+            }
+        });
 }
 unsafe extern "C" fn run_static_initializers() {
     defined_vars = [
@@ -3282,6 +3290,44 @@ mod variable_cmp_tests {
                     "{x:?} vs {y:?}",
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod file_context_coverage_tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    // `current_variable_set_list`/`reading_file` are process globals; serialize
+    // this test against itself and save/restore them so it can't perturb others.
+    static CTX_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// Install a (default) file's context — swapping `current_variable_set_list`
+    /// and `reading_file` — then restore the saved values. Exercises both
+    /// `install_file_context` and `restore_file_context`.
+    #[test]
+    fn install_then_restore_file_context_roundtrips_globals() {
+        let _g = CTX_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let saved_list = current_variable_set_list;
+            let saved_reading = crate::read::reading_file;
+
+            let mut f = crate::file::File::default();
+            let mut oldlist: *mut variable_set_list = ::core::ptr::null_mut();
+            let mut oldfloc: *const Floc = ::core::ptr::null();
+            install_file_context(&raw mut f, &raw mut oldlist, &raw mut oldfloc);
+            // The saved-out list is whatever was active before the swap.
+            assert_eq!(oldlist, saved_list);
+            restore_file_context(oldlist, oldfloc);
+            assert_eq!(current_variable_set_list, saved_list);
+
+            // Fully restore the globals regardless of intermediate state.
+            current_variable_set_list = saved_list;
+            crate::read::reading_file = saved_reading;
         }
     }
 }
