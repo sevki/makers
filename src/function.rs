@@ -576,24 +576,23 @@ pub unsafe fn string_glob(
     static mut result: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut length: size_t = 0;
-    let mut chain: *mut NameSeq;
     let mut idx: size_t;
-    chain = parse_file_seq::<nameseq>(
+    // 0x1 = MAP_NUL stopmap; 0x1|0x10|0x8 = PARSEFS_NOSTRIP|PARSEFS_NOCACHE|...
+    let chain = parse_file_seq(
         ctx,
         &raw mut line,
         ::core::mem::size_of::<nameseq>() as size_t,
         0x1_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x1_i32 | 0x10_i32 | 0x8_i32,
-    ) as *mut nameseq;
+    );
     if result.is_null() {
         length = 100;
         result = xmalloc(100) as *mut ::core::ffi::c_char;
     }
     idx = 0;
-    while !chain.is_null() {
-        let next: *mut NameSeq = (*chain).next;
-        let len: size_t = strlen((*chain).name) as size_t;
+    for pn in &chain {
+        let len: size_t = pn.name.len() as size_t;
         if idx.wrapping_add(len).wrapping_add(1) > length {
             length = length.wrapping_add(len.wrapping_add(1 as size_t).wrapping_mul(2));
             result =
@@ -601,16 +600,13 @@ pub unsafe fn string_glob(
         }
         memcpy(
             result.offset(idx as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-            (*chain).name as *const ::core::ffi::c_void,
+            pn.name.as_ptr() as *const ::core::ffi::c_void,
             len as size_t,
         );
         idx = idx.wrapping_add(len);
         let fresh2 = idx;
         idx = idx.wrapping_add(1);
         *result.offset(fresh2 as isize) = ' ' as i32 as ::core::ffi::c_char;
-        free((*chain).name as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void);
-        free(chain as *mut ::core::ffi::c_void);
-        chain = next;
     }
     if idx == 0 {
         *result.offset(0_i32 as isize) = 0;
@@ -2319,7 +2315,7 @@ pub unsafe fn func_shell_base(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
-        ::core::ptr::null_mut::<File>(),
+        None,
         0,
         &raw mut batch_filename,
     );
@@ -2332,7 +2328,7 @@ pub unsafe fn func_shell_base(
     } else {
         fileno(stderr)
     };
-    child.environment = target_environment(ctx, ::core::ptr::null_mut::<file>(), 0);
+    child.environment = target_environment(ctx, None, 0);
     if pipe(&raw mut pipedes as *mut i32) < 0 {
         error(
         ctx,

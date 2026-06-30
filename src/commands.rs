@@ -439,7 +439,11 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId) {
         }
     }
 
-    new_job(ctx, file);
+    // SAFETY: `new_job` enters the job machinery, which is still the c2rust
+    // pointer-based scheduler; `file` is a valid arena handle.
+    unsafe {
+        new_job(ctx, file);
+    }
 }
 
 /// Nonzero while a fatal signal is being handled; checked by code that
