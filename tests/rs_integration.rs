@@ -277,6 +277,22 @@ fn escaped_percent_target() {
 }
 
 #[test]
+fn intermediate_pattern_prereq() {
+    // A pattern-rule target reached as an intermediate prerequisite of another
+    // pattern rule must still expose its prerequisites in `$^`/`$<`. Regression
+    // test: `merge_intermediate` clears such a dep's `name` (relying on its file
+    // handle, like C make), but the dep-name accessor lacked C's `dep_name()`
+    // fallback to `file->name`, so the automatic vars came out empty — which is
+    // what broke the Linux kernel `vdso64.so` build (objcopy got no input).
+    check(
+        "intermediate_pattern_prereq",
+        "90_intermediate_pattern_prereq.mk",
+        "all",
+        &[],
+    );
+}
+
+#[test]
 fn pattern_specific_variables() {
     // Pattern-specific variables (`$(obj)/%.so: OBJCOPYFLAGS := ...`, plain
     // `%.q` patterns, `+=` appends, and an exact-target override) must be
