@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use libc::{
     __errno_location, calloc, free, getenv, getpid, malloc, memcpy, mkstemp, putchar, read,
-    realloc, sleep, sprintf, stpcpy, strcmp, strcpy, strdup, strerror, strlen, strndup, umask,
+    realloc, sleep, sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask,
     unlink, write, EINTR,
 };
 
@@ -162,19 +162,31 @@ pub unsafe fn make_rand() -> c_uint {
     }
 }
 
-/// `qsort`-style comparison of two `char *` pointed to by `v1`/`v2`. Compares
-/// the first byte inline before falling back to `strcmp`.
+/// Order two strings the way make's `alpha_compare` does: by the signed
+/// difference of their first bytes when those differ (`char` is signed on the
+/// supported targets), otherwise by a `strcmp`-equivalent unsigned byte
+/// comparison.
 ///
-/// # Safety
-/// `v1` and `v2` must point to valid `char *` values that point to valid
-/// NUL-terminated strings.
-pub unsafe extern "C" fn alpha_compare(v1: *const c_void, v2: *const c_void) -> i32 {
-    let s1: *const c_char = *(v1 as *mut *mut c_char);
-    let s2: *const c_char = *(v2 as *mut *mut c_char);
-    if *s1 != *s2 {
-        return *s1 as i32 - *s2 as i32;
+/// This replaces the c2rust `qsort` comparator `unsafe extern "C" fn
+/// alpha_compare(*const c_void, *const c_void) -> i32` — a safe `Ordering` over
+/// byte slices is what a Rust `sort_by` wants, and it lets callers drop the
+/// `void*`/`qsort` FFI entirely. The original is preserved verbatim as a test
+/// oracle (see `alpha_compare_tests`). An absent first byte (empty slice) is
+/// treated as the NUL the C code reads at `*s`, so the ordering matches
+/// `alpha_compare` for every input, including empty operands.
+pub(crate) fn alpha_cmp(a: &[u8], b: &[u8]) -> ::core::cmp::Ordering {
+    let c1 = a.first().copied().unwrap_or(0);
+    let c2 = b.first().copied().unwrap_or(0);
+    if c1 != c2 {
+        // Promote through `c_char` so the first differing byte's sign follows
+        // the target's `char` signedness, exactly as `*s1 as i32 - *s2 as i32`.
+        (c1 as c_char as i32).cmp(&(c2 as c_char as i32))
+    } else {
+        // Equal first byte (or both empty): `strcmp`, i.e. unsigned
+        // lexicographic order. These strings carry no interior NUL, so the
+        // shorter-is-a-prefix case matches `strcmp` reaching the terminator.
+        a.cmp(b)
     }
-    strcmp(s1, s2)
 }
 
 /// Collapse backslash-newline continuations in `buf` in place, returning the
@@ -1017,38 +1029,83 @@ mod make_toui_tests {
 
 #[cfg(test)]
 mod alpha_compare_tests {
-    use super::alpha_compare;
-    use ::core::ffi::{c_char, c_void, CStr};
+    use super::alpha_cmp;
+    use ::core::cmp::Ordering;
+    use ::core::ffi::{c_char, c_void};
 
-    // `alpha_compare` takes `const void *` arguments that each point to a
-    // `char *` (the qsort element type), so pass the address of a string
-    // pointer.
-    unsafe fn cmp(a: &CStr, b: &CStr) -> i32 {
-        let pa: *const c_char = a.as_ptr();
-        let pb: *const c_char = b.as_ptr();
-        alpha_compare(
+    /// Verbatim pre-refactor `qsort` comparator, preserved as the behavior
+    /// oracle (AGENTS.md: keep the original `unsafe` code as a `#[cfg(test)]`
+    /// oracle and assert the safe replacement agrees with it).
+    unsafe extern "C" fn alpha_compare_unsafe_oracle(v1: *const c_void, v2: *const c_void) -> i32 {
+        let s1: *const c_char = *(v1 as *mut *mut c_char);
+        let s2: *const c_char = *(v2 as *mut *mut c_char);
+        if *s1 != *s2 {
+            return *s1 as i32 - *s2 as i32;
+        }
+        libc::strcmp(s1, s2)
+    }
+
+    /// Drive two NUL-terminated byte strings through the oracle, matching how
+    /// `qsort` invoked it: each element is a `char *`, so pass the address of a
+    /// string pointer.
+    unsafe fn oracle(a: &[u8], b: &[u8]) -> Ordering {
+        let ca: Vec<u8> = a.iter().copied().chain([0]).collect();
+        let cb: Vec<u8> = b.iter().copied().chain([0]).collect();
+        let pa: *const c_char = ca.as_ptr() as *const c_char;
+        let pb: *const c_char = cb.as_ptr() as *const c_char;
+        let r = alpha_compare_unsafe_oracle(
             (&pa as *const *const c_char).cast::<c_void>(),
             (&pb as *const *const c_char).cast::<c_void>(),
-        )
+        );
+        r.cmp(&0)
     }
 
     #[test]
     fn equal_first_byte_falls_back_to_strcmp() {
-        unsafe {
-            assert!(cmp(c"abc", c"abd") < 0);
-            assert_eq!(cmp(c"abc", c"abc"), 0);
-            assert!(cmp(c"abd", c"abc") > 0);
-            // A NUL (end of the shorter string) sorts before any byte.
-            assert!(cmp(c"ab", c"abc") < 0);
-        }
+        assert_eq!(alpha_cmp(b"abc", b"abd"), Ordering::Less);
+        assert_eq!(alpha_cmp(b"abc", b"abc"), Ordering::Equal);
+        assert_eq!(alpha_cmp(b"abd", b"abc"), Ordering::Greater);
+        // A NUL (end of the shorter string) sorts before any byte.
+        assert_eq!(alpha_cmp(b"ab", b"abc"), Ordering::Less);
     }
 
     #[test]
     fn differing_first_byte_orders_by_that_byte() {
-        unsafe {
-            // 'B' (66) sorts before 'a' (97): the first-byte fast path.
-            assert!(cmp(c"B", c"a") < 0);
-            assert!(cmp(c"a", c"B") > 0);
+        // 'B' (66) sorts before 'a' (97): the first-byte fast path.
+        assert_eq!(alpha_cmp(b"B", b"a"), Ordering::Less);
+        assert_eq!(alpha_cmp(b"a", b"B"), Ordering::Greater);
+    }
+
+    /// The safe `alpha_cmp` must return the same ordering as the preserved
+    /// unsafe `qsort` comparator for every pair — including empty operands and
+    /// high (sign-bit) bytes, where the signed-first-byte vs unsigned-`strcmp`
+    /// split is observable.
+    #[test]
+    fn matches_unsafe_oracle() {
+        let samples: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"B",
+            b"ab",
+            b"abc",
+            b"abd",
+            b"abcd",
+            b"\x80",
+            b"\x80a",
+            b"\x01",
+            b"\xff",
+            b"\x7f",
+            b"A\x80",
+        ];
+        for &a in samples {
+            for &b in samples {
+                let safe = alpha_cmp(a, b);
+                let unsafe_ord = unsafe { oracle(a, b) };
+                assert_eq!(
+                    safe, unsafe_ord,
+                    "alpha_cmp({a:?}, {b:?}) = {safe:?} but oracle = {unsafe_ord:?}"
+                );
+            }
         }
     }
 }
