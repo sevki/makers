@@ -1,6 +1,6 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{
-    file, Commands, Dep, File, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin, VariableSet,
+    file, Commands, Dep, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin, VariableSet,
     VariableSetList,
 };
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};

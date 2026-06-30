@@ -15,13 +15,11 @@ pub use crate::ffi_types::{
     intmax_t, size_t, time_t, uintmax_t,
 };
 use crate::misc::free_ns_chain;
-use crate::misc::{copy_dep_chain, end_of_token, xcalloc, xmalloc, xrealloc, xstrdup};
+use crate::misc::{xcalloc, xrealloc};
 use crate::stdio::FILE;
-use crate::strcache::{strcache_add_len, strcache_iscached};
 use c2rust_bitfields;
-use libc::{__errno_location, abort, free, printf, putchar, puts, strchr, strcmp, strcpy, unlink};
+use libc::{__errno_location, free, printf, putchar, puts, unlink};
 use std::ffi::{CStr, CString};
-use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 extern "C" {
     static mut stdout: *mut FILE;
@@ -445,7 +443,7 @@ use crate::make_main::{
 use crate::output::{error, fatal, perror_with_name, FmtArg};
 use crate::read::{find_percent, parse_file_seq};
 use crate::variable::{
-    initialize_file_variables, lookup_variable, lookup_variable_in_set, merge_variable_set_lists,
+    initialize_file_variables, lookup_variable,
     print_file_variables, print_target_variables,
 };
 
@@ -2762,6 +2760,7 @@ pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 mod tests {
     use super::*;
     use crate::make_main::initialize_stopchar_map;
+    use std::sync::Mutex;
 
     // FFI declarations and types the pre-std clock cascade depended on. They
     // were removed from production code when `file_timestamp_now` moved to
