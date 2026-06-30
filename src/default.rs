@@ -5,15 +5,15 @@
 //! still C-shaped APIs shared across modules.
 
 use ::core::ffi::{c_char, CStr};
-use ::core::ptr::{null, null_mut};
+use ::core::ptr::null;
 
+use crate::dep::DepNode;
 use crate::ffi_types::size_t;
-use crate::file::{enter_file, enter_prereqs, Commands};
+use crate::file::{enter_file, enter_prereqs, lookup_file};
 use crate::floc::Floc;
-use crate::misc::{xmalloc, xstrdup};
 use crate::read::{parse_file_seq, MAP_NUL, PARSEFS_NONE};
-use crate::rule::{install_pattern_rule, pspec, suffix_file};
-use crate::strcache::strcache_add;
+use crate::recipe::Recipe;
+use crate::rule::install_pattern_rule;
 use crate::variable::{
     current_variable_set_list, define_variable_in_set, o_default, undefine_variable_in_set,
 };
@@ -252,8 +252,10 @@ pub unsafe fn set_default_suffixes(
     ctx: &crate::execctx::ExecContext,
     options: &crate::make_main::Options,
 ) {
-    suffix_file = enter_file(ctx, strcache_add(c".SUFFIXES".as_ptr()));
-    (*suffix_file).set_builtin(1);
+    let suffix_file = enter_file(ctx, b".SUFFIXES");
+    if let Some(node) = ctx.filenodes.get(suffix_file) {
+        node.lock().expect("file node poisoned").builtin = true;
+    }
 
     if options.no_builtin_rules.get() {
         define_variable_in_set(
@@ -267,39 +269,59 @@ pub unsafe fn set_default_suffixes(
             null::<Floc>(),
         );
     } else {
-        let mut p = &raw mut default_suffixes as *mut c_char;
-        (*suffix_file).deps = enter_prereqs(
-            ctx,
-            parse_file_seq::<crate::file::Dep>(
-                ctx,
-                &mut p,
-                ::core::mem::size_of::<crate::file::Dep>(),
-                MAP_NUL,
-                null(),
-                PARSEFS_NONE,
-            ) as *mut crate::file::Dep,
-            null(),
-        );
-
-        let mut d = (*suffix_file).deps;
-        while !d.is_null() {
-            (*d).file
-                .as_mut()
-                .expect("a .SUFFIXES dep always has a file")
-                .set_builtin(1);
-            d = (*d).next;
+        // Parse the default suffix list into owned deps, resolve+enter each
+        // prerequisite, and mark the entered files built-in.
+        let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
+        let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE);
+        let deps: Vec<DepNode> = parsed
+            .into_iter()
+            .map(|pn| {
+                let mut d = dep_with_name(pn.name);
+                d.wait_here = pn.wait;
+                d
+            })
+            .collect();
+        let deps = enter_prereqs(ctx, deps, None);
+        for d in &deps {
+            if let Some(fid) = d.file {
+                if let Some(fnode) = ctx.filenodes.get(fid) {
+                    fnode.lock().expect("file node poisoned").builtin = true;
+                }
+            }
+        }
+        if let Some(node) = ctx.filenodes.get(suffix_file) {
+            node.lock().expect("file node poisoned").deps = deps;
         }
 
         define_variable_in_set(
             ctx,
             c"SUFFIXES".as_ptr(),
             8,
-            &raw const default_suffixes as *const c_char,
+            default_suffixes.as_ptr() as *const c_char,
             o_default,
             0,
             (*current_variable_set_list).set,
             null::<Floc>(),
         );
+    }
+}
+
+/// Build a fresh [`DepNode`] carrying just a name (no resolved file yet) — the
+/// pointer-free analogue of allocating a `Dep` and setting its `name`.
+fn dep_with_name(name: Vec<u8>) -> DepNode {
+    DepNode {
+        name: String::from_utf8_lossy(&name).into_owned(),
+        file: None,
+        shuf: None,
+        stem: None,
+        flags: crate::dep::DepFlags::empty(),
+        changed: false,
+        ignore_mtime: false,
+        static_pattern: false,
+        needs_second_expansion: false,
+        ignore_automatic_vars: false,
+        is_explicit: false,
+        wait_here: false,
     }
 }
 
@@ -316,16 +338,21 @@ pub unsafe fn install_default_suffix_rules(
         return;
     }
     for &(target, recipe) in DEFAULT_SUFFIX_RULES {
-        let f = enter_file(ctx, strcache_add(target.as_ptr()));
-        // Don't clobber cmds given in a makefile if there were any.
-        if (*f).cmds.is_null() {
-            let cmds = xmalloc(::core::mem::size_of::<Commands>()) as *mut Commands;
-            (*cmds).fileinfo.filenm = null();
-            (*cmds).commands = xstrdup(recipe.as_ptr());
-            (*cmds).command_lines = null_mut();
-            (*cmds).recipe_prefix = RECIPEPREFIX_DEFAULT;
-            (*f).cmds = cmds;
-            (*f).set_builtin(1);
+        let f = enter_file(ctx, target.to_bytes());
+        if let Some(node) = ctx.filenodes.get(f) {
+            let mut guard = node.lock().expect("file node poisoned");
+            // Don't clobber a recipe given in a makefile if there was one.
+            if guard.recipe.is_none() {
+                guard.recipe = Some(Recipe {
+                    defined_in: None,
+                    defined_lineno: 0,
+                    text: recipe.to_bytes().to_vec(),
+                    lines: Vec::new(),
+                    recipe_prefix: RECIPEPREFIX_DEFAULT as u8,
+                    any_recurse: false,
+                });
+                guard.builtin = true;
+            }
         }
     }
 }
@@ -342,20 +369,22 @@ pub unsafe fn install_default_implicit_rules(
         return;
     }
     for &(target, dep, commands) in DEFAULT_PATTERN_RULES {
-        let spec = pspec {
-            target: target.as_ptr(),
-            dep: dep.as_ptr(),
-            commands: commands.as_ptr(),
-        };
-        install_pattern_rule(ctx, &spec, 0);
+        install_pattern_rule(
+            ctx,
+            target.to_bytes(),
+            dep.to_bytes(),
+            commands.to_bytes(),
+            false,
+        );
     }
     for &(target, dep, commands) in DEFAULT_TERMINAL_RULES {
-        let spec = pspec {
-            target: target.as_ptr(),
-            dep: dep.as_ptr(),
-            commands: commands.as_ptr(),
-        };
-        install_pattern_rule(ctx, &spec, 1);
+        install_pattern_rule(
+            ctx,
+            target.to_bytes(),
+            dep.to_bytes(),
+            commands.to_bytes(),
+            true,
+        );
     }
 }
 

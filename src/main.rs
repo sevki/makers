@@ -312,7 +312,7 @@ pub use crate::read::goaldep;
 use crate::read::{eval_buffer, parse_file_seq, read_all_makefiles, tilde_expand};
 use crate::remake::{f_mtime, update_goal_chain};
 use crate::remote_stub::remote_description;
-use crate::rule::{convert_to_pattern, print_rule_data_base, snap_implicit_rules, suffix_file};
+use crate::rule::{convert_to_pattern, print_rule_data_base, snap_implicit_rules};
 use crate::variable::{
     current_variable_set_list, define_automatic_variables, define_variable_in_set,
     init_hash_global_variable_set, lookup_variable, reset_env_override, try_variable_definition,
@@ -4083,9 +4083,13 @@ unsafe extern "C" fn quote_for_env(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; the global rule/variable tables must be initialized.
 unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) {
-    if !suffix_file.is_null() && (*suffix_file).builtin() as i32 != 0 {
-        free_dep_chain((*suffix_file).deps);
-        (*suffix_file).deps = ::core::ptr::null_mut::<dep>();
+    if let Some(suffix_file) = crate::file::lookup_file(ctx, b".SUFFIXES") {
+        if let Some(node) = ctx.filenodes.get(suffix_file) {
+            let mut guard = node.lock().expect("file node poisoned");
+            if guard.builtin {
+                guard.deps.clear();
+            }
+        }
     }
     define_variable_in_set(
         ctx,

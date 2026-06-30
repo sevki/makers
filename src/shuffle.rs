@@ -1,4 +1,5 @@
-use crate::file::{Dep, File};
+use crate::dep::DepNode;
+use crate::file::FileId;
 use std::sync::{Mutex, OnceLock};
 
 use crate::fatal;
@@ -75,7 +76,7 @@ pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
     }
 }
 
-fn random_shuffle(slice: &mut [*mut Dep]) {
+fn random_shuffle<T>(slice: &mut [T]) {
     let len = slice.len();
     if len <= 1 {
         return;
@@ -88,73 +89,58 @@ fn random_shuffle(slice: &mut [*mut Dep]) {
     }
 }
 
-fn reverse_shuffle<T>(slice: &mut [*mut T]) {
+fn reverse_shuffle<T>(slice: &mut [T]) {
     let len = slice.len();
     for i in 0..len / 2 {
         slice.swap(i, len - 1 - i);
     }
 }
 
-fn identity_shuffle<T>(_: &mut [*mut T]) {}
+fn identity_shuffle<T>(_: &mut [T]) {}
 
-/// Walk the deps linked list, shuffle the order, and write the new order back
-/// via the `shuf` field on each node.
-unsafe fn shuffle_deps(deps: *mut Dep) {
-    let mut ndeps: usize = 0;
-    let mut d = deps;
-    while !d.is_null() {
-        if (*d).wait_here {
-            return;
-        }
-        ndeps += 1;
-        d = (*d).next;
-    }
-    if ndeps == 0 {
+/// Reorder a `Vec<DepNode>` per the active shuffle mode. A `wait_here` marker
+/// anywhere in the list disables shuffling for that list (matching the C code,
+/// which leaves `->shuf` null so the original `->next` order is kept).
+///
+/// Unlike the C version (which preserved `->next` and recorded the reordering
+/// in a separate `->shuf` link), the idiomatic updater iterates the `deps`
+/// vector directly, so the reorder is applied to the vector in place — the same
+/// observable build order.
+fn shuffle_deps(deps: &mut [DepNode]) {
+    if deps.is_empty() || deps.iter().any(|d| d.wait_here) {
         return;
     }
-
-    let mut deps_order = Vec::with_capacity(ndeps);
-
-    d = deps;
-    for _ in 0..ndeps {
-        deps_order.push(d);
-        d = (*d).next;
-    }
-
     match config().mode {
         Mode::None => {}
-        Mode::Random => random_shuffle(&mut deps_order),
-        Mode::Reverse => reverse_shuffle(&mut deps_order),
-        Mode::Identity => identity_shuffle(&mut deps_order),
-    }
-
-    d = deps;
-    for dep in deps_order {
-        (*d).shuf = dep;
-        d = (*d).next;
+        Mode::Random => random_shuffle(deps),
+        Mode::Reverse => reverse_shuffle(deps),
+        Mode::Identity => identity_shuffle(deps),
     }
 }
 
-unsafe fn shuffle_file_deps_recursive(f: *mut File) {
-    if f.is_null() || (*f).was_shuffled {
-        return;
-    }
-    (*f).was_shuffled = true;
-    shuffle_deps((*f).deps);
-    let mut d = (*f).deps;
-    while !d.is_null() {
-        shuffle_file_deps_recursive((*d).file);
-        d = (*d).next;
+/// Recursively shuffle a file's deps and the deps of each prerequisite file,
+/// guarded by `was_shuffled` so each file is processed once.
+fn shuffle_file_deps_recursive(ctx: &crate::execctx::ExecContext, f: FileId) {
+    let children: Vec<FileId> = {
+        let Some(node) = ctx.filenodes.get(f) else {
+            return;
+        };
+        let mut guard = node.lock().expect("file node poisoned");
+        if guard.was_shuffled {
+            return;
+        }
+        guard.was_shuffled = true;
+        shuffle_deps(&mut guard.deps);
+        guard.deps.iter().filter_map(|d| d.file).collect()
+    };
+    for child in children {
+        shuffle_file_deps_recursive(ctx, child);
     }
 }
 
-/// Shuffle the order of `deps` and recursively shuffle each file's deps. Safe
-/// to call when shuffling is disabled (no-op).
-///
-/// # Safety
-/// `deps` must be a valid (possibly null) head of a properly-linked `Dep`
-/// chain, and the chain's `File` pointers must be valid.
-pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
+/// Shuffle the deps of `file` and recursively shuffle each prerequisite's deps.
+/// Safe to call when shuffling is disabled (no-op).
+pub fn shuffle_deps_recursive(ctx: &crate::execctx::ExecContext, file: FileId) {
     let (mode, seed) = {
         let cfg = config();
         (cfg.mode, cfg.seed)
@@ -163,13 +149,41 @@ pub unsafe fn shuffle_deps_recursive(deps: *mut Dep) {
         return;
     }
     if mode == Mode::Random {
-        make_seed(seed);
+        unsafe { make_seed(seed) };
     }
-    shuffle_deps(deps);
-    let mut d = deps;
-    while !d.is_null() {
-        shuffle_file_deps_recursive((*d).file);
-        d = (*d).next;
+    shuffle_file_deps_recursive(ctx, file);
+}
+
+/// Shuffle the goal list (`Vec<GoalDepNode>`) and recursively shuffle each
+/// goal's target file's deps. The C entry point shuffled `goals` (a `GoalDep`
+/// chain) the same way it shuffled any dep list; here the goal vector is
+/// reordered in place and each goal's file is descended into.
+pub fn shuffle_goals_recursive(
+    ctx: &crate::execctx::ExecContext,
+    goals: &mut [crate::dep::GoalDepNode],
+) {
+    let (mode, seed) = {
+        let cfg = config();
+        (cfg.mode, cfg.seed)
+    };
+    if mode == Mode::None || not_parallel() {
+        return;
+    }
+    if mode == Mode::Random {
+        unsafe { make_seed(seed) };
+    }
+    // A `wait_here` marker on any goal disables shuffling for the list.
+    if !goals.iter().any(|g| g.dep.wait_here) {
+        match mode {
+            Mode::None => {}
+            Mode::Random => random_shuffle(goals),
+            Mode::Reverse => reverse_shuffle(goals),
+            Mode::Identity => identity_shuffle(goals),
+        }
+    }
+    let files: Vec<FileId> = goals.iter().filter_map(|g| g.dep.file).collect();
+    for f in files {
+        shuffle_file_deps_recursive(ctx, f);
     }
 }
 

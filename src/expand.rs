@@ -629,7 +629,7 @@ pub unsafe fn expand_argument(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn expand_string_for_file(
+pub unsafe fn expand_string_for_file_c(
     ctx: &crate::execctx::ExecContext,
     string: *const ::core::ffi::c_char,
     file: *mut File,
@@ -654,6 +654,49 @@ pub unsafe fn expand_string_for_file(
     restore_file_context(savev, savef);
     result
 }
+
+/// FileId-based string expansion in a target's variable context.
+///
+/// `string` is the NUL-terminated source bytes to expand; the trailing NUL is
+/// required (callers push one). Returns the expanded bytes, NUL-terminated.
+/// Installs the target's transient variable-set chain (per-target/pattern
+/// variables plus the parent/global scopes) for the duration of the expansion,
+/// the idiomatic replacement for the former `*mut File` install/restore dance.
+pub fn expand_string_for_file(
+    ctx: &crate::execctx::ExecContext,
+    string: &[u8],
+    file: crate::file::FileId,
+) -> Vec<u8> {
+    // SAFETY: the inner expander remains the c2rust pointer machinery; we feed
+    // it a NUL-terminated buffer and a freshly-built per-file scope, then read
+    // the NUL-terminated result back into an owned Vec.
+    unsafe {
+        let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
+        let mut savef: *const Floc = ::core::ptr::null::<Floc>();
+        crate::variable::install_file_context_id(ctx, file, &raw mut savev, &raw mut savef);
+        let cur = crate::variable::current_variable_set_list;
+        let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut olen: size_t = 0;
+        install_variable_buffer(&raw mut obuf, &raw mut olen);
+        expand_string_buf(
+            ctx,
+            ::core::ptr::null_mut::<::core::ffi::c_char>(),
+            string.as_ptr() as *const ::core::ffi::c_char,
+            SIZE_MAX,
+        );
+        let result = swap_variable_buffer(obuf, olen);
+        crate::variable::restore_file_context_id(cur, savev, savef);
+        if result.is_null() {
+            vec![0]
+        } else {
+            let len = strlen(result) as usize;
+            let mut v = ::core::slice::from_raw_parts(result as *const u8, len).to_vec();
+            v.push(0);
+            free(result as *mut ::core::ffi::c_void);
+            v
+        }
+    }
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -666,7 +709,7 @@ pub unsafe fn allocated_expand_string_for_file(
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(&raw mut obuf, &raw mut olen);
-    expand_string_for_file(ctx, string, file);
+    expand_string_for_file_c(ctx, string, file);
     swap_variable_buffer(obuf, olen)
 }
 /// Walk the variable-set chain outward, concatenating every `+=`-style
