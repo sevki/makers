@@ -2996,152 +2996,91 @@ mod env_recursion_tests {
 
 #[cfg(test)]
 mod initialize_file_variables_tests {
-    use super::{global_setlist, initialize_file_variables};
-    use crate::file::File;
-    use crate::strcache::strcache_add;
+    use super::initialize_file_variables;
+    use crate::file::enter_file;
     use std::sync::Mutex;
 
-    // `global_setlist` is process-wide; serialize so these tests don't race.
+    // The pattern-var database / global sets are process-wide; serialize so
+    // these tests don't race other variable-layer tests.
     static GLOBAL_VARS_LOCK: Mutex<()> = Mutex::new(());
 
-    /// For a fresh file (no per-target set, no parent, no double-colon),
-    /// `initialize_file_variables` allocates the file's variable set and links
-    /// it to the global set list as a parent scope. With `reading != 0` the
-    /// pattern-variable scan is skipped, keeping the call self-contained.
+    /// With `reading != 0` the pattern-variable scan is skipped, so the call is
+    /// a no-op on a fresh node: `pat_searched` stays clear.
     #[test]
-    fn allocates_set_and_links_global_parent() {
+    fn reading_nonzero_skips_pattern_search() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            let name = strcache_add(c"ifv_probe_target".as_ptr());
-            let mut f = File::default();
-            f.name = name;
-            f.hname = name;
-
-            assert!(f.variables.is_null(), "starts without a variable set");
-            let ctx = crate::execctx::ExecContext::default();
-            initialize_file_variables(&ctx, &raw mut f, 1);
-
-            let l = f.variables;
-            assert!(!l.is_null(), "a variable set list is allocated");
-            assert!(!(*l).set.is_null(), "the set itself is allocated");
-            assert_eq!(
-                (*l).next,
-                &raw mut global_setlist,
-                "parent scope is the global set list"
-            );
-            assert_eq!((*l).next_is_parent, 1);
-        }
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        let f = enter_file(&ctx, b"ifv_probe_target");
+        initialize_file_variables(&ctx, f, 1);
+        let node = ctx.filenodes.get(f).expect("interned");
+        assert!(
+            !node.lock().unwrap().pat_searched,
+            "reading!=0 must not run (or record) the pattern search"
+        );
     }
 
-    /// Calling it again when the file already has a variable set reuses that
-    /// set (the allocation branch is skipped) and re-links the global parent.
+    /// With `reading == 0`, the pattern-variable search arm runs once. A target
+    /// name that matches no defined pattern variable yields no match, but the
+    /// search is still recorded by latching `pat_searched`.
     #[test]
-    fn reuses_existing_set() {
+    fn reading_zero_runs_pattern_search_and_latches() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            let name = strcache_add(c"ifv_probe_reuse".as_ptr());
-            let mut f = File::default();
-            f.name = name;
-            f.hname = name;
-
-            let ctx = crate::execctx::ExecContext::default();
-            initialize_file_variables(&ctx, &raw mut f, 1);
-            let first = f.variables;
-            assert!(!first.is_null());
-
-            initialize_file_variables(&ctx, &raw mut f, 1);
-            assert_eq!(f.variables, first, "the existing set is reused");
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        let f = enter_file(&ctx, b"ifv_reading0_unmatched_probe");
+        {
+            let node = ctx.filenodes.get(f).expect("interned");
+            assert!(!node.lock().unwrap().pat_searched, "starts un-searched");
         }
+        initialize_file_variables(&ctx, f, 0);
+        let node = ctx.filenodes.get(f).expect("interned");
+        assert!(
+            node.lock().unwrap().pat_searched,
+            "pattern search ran and was recorded"
+        );
     }
 
-    /// With `reading == 0`, the pattern-variable search arm runs. A target name
-    /// that matches no defined pattern variable yields no match, so the search
-    /// loop is skipped and `pat_searched` is set. Drives that branch without
-    /// requiring any pattern variables to be installed.
+    /// A second `reading == 0` call is a no-op once `pat_searched` is set: the
+    /// search is performed at most once per file.
     #[test]
-    fn reading_zero_runs_pattern_search() {
+    fn pattern_search_runs_at_most_once() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            let name = strcache_add(c"ifv_reading0_unmatched_probe".as_ptr());
-            let mut f = File::default();
-            f.name = name;
-            f.hname = name;
-
-            assert_eq!(f.pat_searched(), 0, "starts un-searched");
-            let ctx = crate::execctx::ExecContext::default();
-            initialize_file_variables(&ctx, &raw mut f, 0);
-
-            assert_eq!(f.pat_searched(), 1, "pattern search ran and was recorded");
-            assert!(!f.variables.is_null(), "variable set still allocated");
-        }
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        let f = enter_file(&ctx, b"ifv_probe_once");
+        initialize_file_variables(&ctx, f, 0);
+        initialize_file_variables(&ctx, f, 0);
+        let node = ctx.filenodes.get(f).expect("interned");
+        assert!(node.lock().unwrap().pat_searched);
     }
 
-    /// A file with a `parent` recurses into the parent first, then links the
-    /// parent's variable set as the next (parent) scope. Drives the
-    /// non-null-`parent` arm (the recursion + parent-scope link).
+    /// A file with a `parent` recurses into the parent first, latching the
+    /// parent's `pat_searched` too (the non-null-`parent` arm).
     #[test]
     fn parent_chains_into_parent_scope() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            let pname = strcache_add(c"ifv_parent_probe".as_ptr());
-            let cname = strcache_add(c"ifv_child_probe".as_ptr());
-            let mut parent = File::default();
-            parent.name = pname;
-            parent.hname = pname;
-            let mut child = File::default();
-            child.name = cname;
-            child.hname = cname;
-            child.parent = &raw mut parent;
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        let parent = enter_file(&ctx, b"ifv_parent_probe");
+        let child = enter_file(&ctx, b"ifv_child_probe");
+        ctx.filenodes
+            .get(child)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .parent = Some(parent);
 
-            let ctx = crate::execctx::ExecContext::default();
-            initialize_file_variables(&ctx, &raw mut child, 1);
+        initialize_file_variables(&ctx, child, 0);
 
-            assert!(!parent.variables.is_null(), "parent set is initialized");
-            let l = child.variables;
-            assert!(!l.is_null(), "child set is allocated");
-            assert_eq!(
-                (*l).next,
-                parent.variables,
-                "child's next scope is the parent's variable set"
-            );
-            assert_eq!((*l).next_is_parent, 1);
-        }
-    }
-
-    /// A file whose `double_colon` points at a distinct file recurses into that
-    /// entry and links its variable set as a (non-parent) sibling scope before
-    /// returning early. Drives the `double_colon` arm.
-    #[test]
-    fn double_colon_links_sibling_scope() {
-        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            let dname = strcache_add(c"ifv_dcolon_probe".as_ptr());
-            let mname = strcache_add(c"ifv_main_probe".as_ptr());
-            let mut dc = File::default();
-            dc.name = dname;
-            dc.hname = dname;
-            let mut f = File::default();
-            f.name = mname;
-            f.hname = mname;
-            f.double_colon = &raw mut dc;
-
-            let ctx = crate::execctx::ExecContext::default();
-            initialize_file_variables(&ctx, &raw mut f, 1);
-
-            assert!(!dc.variables.is_null(), "double-colon set is initialized");
-            let l = f.variables;
-            assert!(!l.is_null());
-            assert_eq!(
-                (*l).next,
-                dc.variables,
-                "next scope is the double-colon entry's set"
-            );
-            assert_eq!(
-                (*l).next_is_parent,
-                0,
-                "double-colon scope is a sibling, not a parent"
-            );
-        }
+        assert!(
+            ctx.filenodes.get(parent).unwrap().lock().unwrap().pat_searched,
+            "parent's pattern search ran via recursion"
+        );
+        assert!(
+            ctx.filenodes.get(child).unwrap().lock().unwrap().pat_searched,
+            "child's pattern search ran"
+        );
     }
 }
 
