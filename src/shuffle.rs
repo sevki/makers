@@ -245,4 +245,182 @@ mod tests {
         set_mode(&ctx, "random");
         assert!(get_mode().is_some());
     }
+
+    // --- behavioral tests for the dep/goal reordering machinery ---
+
+    fn dep_named(name: &str) -> DepNode {
+        DepNode {
+            name: name.to_string(),
+            file: None,
+            shuf: None,
+            stem: None,
+            flags: crate::dep::DepFlags::empty(),
+            changed: false,
+            ignore_mtime: false,
+            static_pattern: false,
+            needs_second_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+        }
+    }
+
+    fn goal_named(name: &str) -> crate::dep::GoalDepNode {
+        crate::dep::GoalDepNode {
+            dep: dep_named(name),
+            error: 0,
+            defined_in: None,
+            lineno: 0,
+            offset: 0,
+        }
+    }
+
+    fn dep_names(deps: &[DepNode]) -> Vec<String> {
+        deps.iter().map(|d| d.name.clone()).collect()
+    }
+
+    fn file_dep_names(ctx: &crate::execctx::ExecContext, f: FileId) -> Vec<String> {
+        let node = ctx.filenodes.get(f).expect("file node present");
+        let guard = node.lock().expect("file node poisoned");
+        dep_names(&guard.deps)
+    }
+
+    /// `reverse` mode must actually reverse a dep list in place.
+    #[test]
+    fn shuffle_deps_reverse_reorders_in_place() {
+        let _guard = lock_mode_tests();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        let mut deps = vec![dep_named("a"), dep_named("b"), dep_named("c"), dep_named("d")];
+        shuffle_deps(&mut deps);
+        assert_eq!(dep_names(&deps), vec!["d", "c", "b", "a"]);
+        set_mode(&ctx, "none");
+    }
+
+    /// A `wait_here` marker anywhere in a *non-empty* list must disable shuffling
+    /// for that list (guards the `is_empty() || any(wait_here)` short-circuit).
+    #[test]
+    fn shuffle_deps_wait_here_marker_disables_shuffle() {
+        let _guard = lock_mode_tests();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        let mut b = dep_named("b");
+        b.wait_here = true;
+        let mut deps = vec![dep_named("a"), b, dep_named("c")];
+        shuffle_deps(&mut deps);
+        // Order is preserved because the wait marker disables shuffling.
+        assert_eq!(dep_names(&deps), vec!["a", "b", "c"]);
+        set_mode(&ctx, "none");
+    }
+
+    /// `shuffle_deps_recursive` must reorder the target's deps *and* descend into
+    /// each prerequisite file, reordering its deps too.
+    #[test]
+    fn shuffle_deps_recursive_reorders_target_and_children() {
+        let _guard = lock_mode_tests();
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+
+        let p = crate::file::enter_file(&ctx, b"shuf_P");
+        let c1 = crate::file::enter_file(&ctx, b"shuf_C1");
+        let c2 = crate::file::enter_file(&ctx, b"shuf_C2");
+        {
+            let node = ctx.filenodes.get(p).expect("parent present");
+            let mut g = node.lock().expect("file node poisoned");
+            let mut d1 = dep_named("shuf_C1");
+            d1.file = Some(c1);
+            let mut d2 = dep_named("shuf_C2");
+            d2.file = Some(c2);
+            g.deps = vec![d1, d2, dep_named("shuf_Z")];
+        }
+        {
+            let node = ctx.filenodes.get(c1).expect("child present");
+            let mut g = node.lock().expect("file node poisoned");
+            g.deps = vec![dep_named("g1"), dep_named("g2")];
+        }
+
+        shuffle_deps_recursive(&ctx, p);
+
+        assert_eq!(
+            file_dep_names(&ctx, p),
+            vec!["shuf_Z", "shuf_C2", "shuf_C1"],
+            "parent deps must be reversed"
+        );
+        assert_eq!(
+            file_dep_names(&ctx, c1),
+            vec!["g2", "g1"],
+            "child deps must be reversed via recursion"
+        );
+        set_mode(&ctx, "none");
+    }
+
+    /// With shuffling disabled (`Mode::None`), `shuffle_deps_recursive` must
+    /// return before touching anything — in particular it must not mark the file
+    /// `was_shuffled` (guards the `mode == None || not_parallel()` short-circuit).
+    #[test]
+    fn shuffle_deps_recursive_none_mode_is_a_noop() {
+        let _guard = lock_mode_tests();
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "none");
+
+        let f = crate::file::enter_file(&ctx, b"shuf_none");
+        {
+            let node = ctx.filenodes.get(f).expect("file present");
+            let mut g = node.lock().expect("file node poisoned");
+            g.deps = vec![dep_named("x"), dep_named("y")];
+        }
+        shuffle_deps_recursive(&ctx, f);
+
+        let node = ctx.filenodes.get(f).expect("file present");
+        let was = node.lock().expect("file node poisoned").was_shuffled;
+        assert!(!was, "None mode must not descend / mark was_shuffled");
+    }
+
+    /// `random` mode re-seeds the RNG on every entry, so two independent files
+    /// carrying the same dep list shuffle to the *same* order. The seeding is
+    /// what makes runs reproducible; without it the second shuffle would diverge.
+    #[test]
+    fn shuffle_random_reseeds_for_reproducible_order() {
+        let _guard = lock_mode_tests();
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "424242");
+
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        let p1 = crate::file::enter_file(&ctx, b"shuf_R1");
+        let p2 = crate::file::enter_file(&ctx, b"shuf_R2");
+        for &p in &[p1, p2] {
+            let node = ctx.filenodes.get(p).expect("file present");
+            let mut g = node.lock().expect("file node poisoned");
+            g.deps = names.iter().map(|n| dep_named(n)).collect();
+        }
+
+        shuffle_deps_recursive(&ctx, p1);
+        shuffle_deps_recursive(&ctx, p2);
+
+        assert_eq!(
+            file_dep_names(&ctx, p1),
+            file_dep_names(&ctx, p2),
+            "re-seeding must make the two shuffles reproduce the same order"
+        );
+        set_mode(&ctx, "none");
+    }
+
+    /// The goal-list entry point must reorder the goals (`reverse` here) when no
+    /// `wait_here` marker is present.
+    #[test]
+    fn shuffle_goals_recursive_reverse_reorders() {
+        let _guard = lock_mode_tests();
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+
+        let mut goals = vec![goal_named("a"), goal_named("b"), goal_named("c")];
+        shuffle_goals_recursive(&ctx, &mut goals);
+        let names: Vec<String> = goals.iter().map(|g| g.dep.name.clone()).collect();
+        assert_eq!(names, vec!["c", "b", "a"]);
+        set_mode(&ctx, "none");
+    }
 }
