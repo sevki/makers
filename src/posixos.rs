@@ -22,7 +22,7 @@ use crate::commands::handling_fatal_signal;
 use crate::ffi_types::mode_t;
 use crate::floc::Floc;
 use crate::make_main::db_level;
-use crate::misc::{get_tmpdir, get_tmpfd, make_pid, xmalloc, xstrdup};
+use crate::misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup};
 use crate::output::{error, fatal, perror_with_name, pfatal_with_name, FmtArg, INTSTR_LENGTH};
 use crate::stdio::FILE;
 
@@ -658,7 +658,8 @@ pub fn osync_enabled() -> c_uint {
 /// # Safety
 /// Must run single-threaded during startup.
 pub unsafe fn osync_setup(ctx: &crate::execctx::ExecContext) {
-    let h = get_tmpfd(ctx, &raw mut osync_tmpfile);
+    let (h, nm) = open_named_tmpfd(ctx);
+    osync_tmpfile = nm;
     OSYNC_HANDLE.store(h, Ordering::Relaxed);
     fd_noinherit(h);
     SYNC_ROOT.store(true, Ordering::Relaxed);

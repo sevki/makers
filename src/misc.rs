@@ -793,22 +793,23 @@ pub unsafe fn get_tmptemplate(ctx: &crate::execctx::ExecContext) -> *mut c_char 
 /// # Safety
 /// `name` must be null or valid for writes; the caller takes ownership of
 /// `*name`.
-pub unsafe fn get_tmpfd(ctx: &crate::execctx::ExecContext, name: *mut *mut c_char) -> i32 {
-    let mut fd: i32;
-
-    if !name.is_null() {
-        *name = null_mut();
-    } else {
-        // If there's an OS-specific way to get an anonymous temp file, use it.
-        fd = os_anontmp(ctx);
-        if fd >= 0 {
-            return fd;
-        }
-    }
-
+/// Create a named temporary file with `mkstemp` and return its descriptor
+/// together with the `xmalloc`'d file name the caller owns (and frees). On
+/// failure reports the error and returns `(-1, null)`.
+///
+/// Replaces the c2rust `get_tmpfd(name: *mut *mut c_char)` out-parameter: the
+/// descriptor and the name are the result, so callers no longer thread a
+/// pointer-to-pointer, and the "name is null ⇒ anonymous" overload is gone (see
+/// [`open_anon_tmpfd`]).
+///
+/// # Safety
+/// Always safe in practice; `unsafe` only for the libc temp-file calls. The
+/// caller takes ownership of the returned name.
+pub unsafe fn open_named_tmpfd(ctx: &crate::execctx::ExecContext) -> (i32, *mut c_char) {
     // Make sure the temporary file is never readable by other users.
     let mask: mode_t = umask(0o77);
     let tmpnm = get_tmptemplate(ctx);
+    let mut fd: i32;
     loop {
         fd = mkstemp(tmpnm);
         if !(fd == -1 && *__errno_location() == EINTR) {
@@ -828,35 +829,57 @@ pub unsafe fn get_tmpfd(ctx: &crate::execctx::ExecContext, name: *mut *mut c_cha
             ],
         );
         free(tmpnm as *mut c_void);
-        return -1;
-    }
-
-    if !name.is_null() {
-        *name = tmpnm;
-    } else {
-        let mut r: i32;
-        loop {
-            r = unlink(tmpnm);
-            if !(r == -1 && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        if r < 0 {
-            error(
-                ctx,
-                null::<Floc>(),
-                0,
-                c"cannot unlink temporary file %s: %s".as_ptr(),
-                &[
-                    FmtArg::Str(tmpnm),
-                    FmtArg::Str(strerror(*__errno_location())),
-                ],
-            );
-        }
-        free(tmpnm as *mut c_void);
+        // Note: like the original, `umask` is intentionally left at the
+        // restrictive value on this failure path.
+        return (-1, null_mut());
     }
 
     umask(mask);
+    (fd, tmpnm)
+}
+
+/// Create a temporary file descriptor with no visible name: an OS anonymous
+/// temp file where available, otherwise an `mkstemp` file unlinked immediately.
+/// On failure reports the error and returns `-1`.
+///
+/// # Safety
+/// Always safe in practice; `unsafe` only for the libc temp-file calls.
+pub unsafe fn open_anon_tmpfd(ctx: &crate::execctx::ExecContext) -> i32 {
+    // If there's an OS-specific way to get an anonymous temp file, use it.
+    let fd = os_anontmp(ctx);
+    if fd >= 0 {
+        return fd;
+    }
+
+    let (fd, tmpnm) = open_named_tmpfd(ctx);
+    if fd < 0 {
+        // `open_named_tmpfd` already reported the error and freed the name.
+        return -1;
+    }
+
+    // Unlink immediately so the file has no name; `umask` only affects the
+    // already-completed creation, so restoring it before the unlink (as
+    // `open_named_tmpfd` does) is equivalent to the original's order.
+    let mut r: i32;
+    loop {
+        r = unlink(tmpnm);
+        if !(r == -1 && *__errno_location() == EINTR) {
+            break;
+        }
+    }
+    if r < 0 {
+        error(
+            ctx,
+            null::<Floc>(),
+            0,
+            c"cannot unlink temporary file %s: %s".as_ptr(),
+            &[
+                FmtArg::Str(tmpnm),
+                FmtArg::Str(strerror(*__errno_location())),
+            ],
+        );
+    }
+    free(tmpnm as *mut c_void);
     fd
 }
 
@@ -872,7 +895,8 @@ pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_c
 
     let name = name.as_mut().expect("get_tmpfile: name must be non-null");
 
-    let fd = get_tmpfd(ctx, name);
+    let (fd, tmpnm) = open_named_tmpfd(ctx);
+    *name = tmpnm;
     if fd < 0 {
         return null_mut();
     }
@@ -912,11 +936,11 @@ pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_c
 
 #[cfg(test)]
 mod tmpfile_tests {
-    use super::{dbg, get_tmpfd, get_tmpfile};
+    use super::{dbg, get_tmpfile, open_anon_tmpfd, open_named_tmpfd};
     use ::core::ffi::c_char;
     use ::core::ptr::null_mut;
 
-    // `get_tmpfile` drives the whole temp-file chain (`get_tmpfd` ->
+    // `get_tmpfile` drives the whole temp-file chain (`open_named_tmpfd` ->
     // `get_tmptemplate` -> `get_tmpdir`): it must hand back a writable
     // `FILE *` and an owned, non-null name. Round-trip a write through it to
     // prove the descriptor is real, then clean up.
@@ -950,15 +974,38 @@ mod tmpfile_tests {
         }
     }
 
-    // The anonymous branch (`name` is null) takes the `os_anontmp` /
-    // unlink-immediately path and just returns a bare descriptor.
+    // The anonymous path takes the `os_anontmp` / unlink-immediately branch and
+    // just returns a bare descriptor with no visible name.
     #[test]
-    fn get_tmpfd_anonymous_returns_open_descriptor() {
+    fn open_anon_tmpfd_returns_open_descriptor() {
         let ctx = crate::execctx::ExecContext::default();
         unsafe {
-            let fd = get_tmpfd(&ctx, null_mut());
-            assert!(fd >= 0, "anonymous get_tmpfd failed: {fd}");
+            let fd = open_anon_tmpfd(&ctx);
+            assert!(fd >= 0, "anonymous open_anon_tmpfd failed: {fd}");
             libc::close(fd);
+        }
+    }
+
+    // The named path returns both a live descriptor and the owned, non-null
+    // name; the file must exist on disk at that name and the descriptor must be
+    // writable. This is the replacement for the old `*mut *mut c_char`
+    // out-parameter.
+    #[test]
+    fn open_named_tmpfd_returns_descriptor_and_name() {
+        let ctx = crate::execctx::ExecContext::default();
+        unsafe {
+            let (fd, name) = open_named_tmpfd(&ctx);
+            assert!(fd >= 0, "open_named_tmpfd failed: {fd}");
+            assert!(!name.is_null(), "open_named_tmpfd left the name unset");
+
+            let data = b"named-tmpfd-probe\n";
+            let wrote = libc::write(fd, data.as_ptr().cast(), data.len());
+            assert_eq!(wrote, data.len() as isize);
+
+            // The name must refer to the very file we just wrote.
+            assert_eq!(libc::unlink(name), 0, "named temp file should exist");
+            libc::close(fd);
+            libc::free(name.cast());
         }
     }
 
