@@ -275,4 +275,14 @@ mod tests {
         }
         assert_eq!(e, intern_into(&mut db, &mut a, &mut u, &mut n, b""));
     }
+
+    #[test]
+    fn iscached_tracks_the_global_cache() {
+        // A pointer handed out by the global `strcache_add_bytes` is reported as
+        // cached; an unrelated pointer is not.
+        let p = strcache_add_bytes(b"strcache-iscached-probe");
+        assert_eq!(strcache_iscached(p), 1, "interned pointer must be cached");
+        let bogus = 0xdead_beef_usize as *const c_char;
+        assert_eq!(strcache_iscached(bogus), 0, "foreign pointer is not cached");
+    }
 }

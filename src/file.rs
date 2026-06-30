@@ -1218,7 +1218,29 @@ pub fn rehash_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname:
     // arena lookup.
     let mut to = to_node.lock().expect("file node lock poisoned");
     let mut from = from_node.lock().expect("file node lock poisoned");
+    merge_rehashed_node(&mut to, &mut from, to_id);
+    drop(from);
+    drop(to);
 
+    // The destination node (`to_node`) was never removed from the arena, so it
+    // is already keyed under `to_id` with the merged contents. Re-insert the
+    // (now-emptied, renamed) source node under the key it was removed from
+    // (`walked_id`) so the `renamed` chain stays reachable: a later
+    // `lookup_file`/`rehash_file` that lands on this waypoint follows its
+    // `renamed` link to the destination, exactly as the c2rust graph followed
+    // the `renamed` pointer.
+    ctx.filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .insert(walked_id, from_node);
+}
+
+/// Merge the rehashed source node `from` into the destination node `to` (both
+/// already locked by [`rehash_file`]), then mark `from` renamed to `to_id`.
+/// Extracted from `rehash_file` so the merge's branchy flag/recipe/dep folding
+/// lives in its own function.
+fn merge_rehashed_node(to: &mut FileNode, from: &mut FileNode, to_id: FileId) {
     if from.recipe.is_some() {
         if to.recipe.is_none() {
             to.recipe = from.recipe.take();
@@ -1273,21 +1295,6 @@ pub fn rehash_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname:
 
     // Mark the source as renamed to the destination.
     from.renamed = Some(to_id);
-    drop(from);
-    drop(to);
-
-    // The destination node (`to_node`) was never removed from the arena, so it
-    // is already keyed under `to_id` with the merged contents. Re-insert the
-    // (now-emptied, renamed) source node under the key it was removed from
-    // (`walked_id`) so the `renamed` chain stays reachable: a later
-    // `lookup_file`/`rehash_file` that lands on this waypoint follows its
-    // `renamed` link to the destination, exactly as the c2rust graph followed
-    // the `renamed` pointer.
-    ctx.filenodes
-        .0
-        .lock()
-        .expect("file arena poisoned")
-        .insert(walked_id, from_node);
 }
 
 /// Rename the file `from_id` to `to_hname` — the pointer-free port of the
@@ -1307,9 +1314,9 @@ pub fn rename_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname:
     if let Some(node) = ctx.filenodes.get(to_id) {
         let mut n = node.lock().expect("file node lock poisoned");
         n.name = n.hname.clone();
-        for entry in &mut n.double_colon {
-            entry.name = entry.hname.clone();
-        }
+        n.double_colon
+            .iter_mut()
+            .for_each(|entry| entry.name = entry.hname.clone());
     }
 }
 /// # Safety
@@ -2591,9 +2598,7 @@ pub unsafe fn print_file_data_base(ctx: &crate::execctx::ExecContext) {
         .copied()
         .collect();
     let count = ids.len();
-    for fid in ids {
-        print_file(ctx, fid);
-    }
+    ids.into_iter().for_each(|fid| print_file(ctx, fid));
     printf(
         b"\n# %lu files in the file table.\n\0" as *const u8 as *const ::core::ffi::c_char,
         count as ::core::ffi::c_ulong,
@@ -2633,23 +2638,34 @@ pub unsafe fn print_targets(ctx: &crate::execctx::ExecContext) {
         .values()
         .map(::std::sync::Arc::clone)
         .collect();
-    for node in nodes {
-        let name = {
-            let n = node.lock().expect("file node lock poisoned");
-            if !n.is_target || n.suffix {
-                continue;
-            }
-            n.name.clone()
-        };
-        // Skip built-in special targets, whose names are a dot followed by one
-        // or more all-uppercase letters (e.g. `.SUFFIXES`, `.PHONY`).
-        if name.len() >= 2 && name[0] == b'.' && name[1..].iter().all(u8::is_ascii_uppercase) {
-            continue;
+    nodes
+        .iter()
+        .for_each(|node| unsafe { print_one_target(node) });
+}
+
+/// Print a single target's name for `print_targets` (the `make -p` `# Files`
+/// stanza's target list). Skips non-targets, suffix-rule files, and the
+/// built-in special targets (a dot followed by all-uppercase letters).
+///
+/// # Safety
+///
+/// Calls the C `puts`; `node` must be a live arena handle.
+unsafe fn print_one_target(node: &::std::sync::Mutex<FileNode>) {
+    let name = {
+        let n = node.lock().expect("file node lock poisoned");
+        if !n.is_target || n.suffix {
+            return;
         }
-        let mut cname = name;
-        cname.push(0);
-        puts(cname.as_ptr() as *const ::core::ffi::c_char);
+        n.name.clone()
+    };
+    // Skip built-in special targets, whose names are a dot followed by one
+    // or more all-uppercase letters (e.g. `.SUFFIXES`, `.PHONY`).
+    if name.len() >= 2 && name[0] == b'.' && name[1..].iter().all(u8::is_ascii_uppercase) {
+        return;
     }
+    let mut cname = name;
+    cname.push(0);
+    puts(cname.as_ptr() as *const ::core::ffi::c_char);
 }
 /// # Safety
 ///
@@ -2678,10 +2694,10 @@ pub unsafe fn verify_file_data_base(ctx: &crate::execctx::ExecContext) {
         .values()
         .map(::std::sync::Arc::clone)
         .collect();
-    for node in nodes {
+    nodes.iter().for_each(|node| {
         let n = node.lock().expect("file node lock poisoned");
         verify_file(ctx, &n);
-    }
+    });
 }
 /// # Safety
 ///
@@ -3583,5 +3599,43 @@ mod tests {
             FileId::from_bytes(b"foo.o"),
             FileId::from_bytes(b"foo.o")
         );
+    }
+}
+
+#[cfg(test)]
+mod arena_helper_coverage_tests {
+    use super::*;
+
+    /// `File::new_named` stamps both `name` and `hname` from its argument and
+    /// starts at `us_none` update status.
+    #[test]
+    fn new_named_sets_name_hname_and_status() {
+        let nm = c"arena-coverage-new-named";
+        let f = File::new_named(nm.as_ptr());
+        assert_eq!(f.name, nm.as_ptr());
+        assert_eq!(f.hname, nm.as_ptr());
+        assert_eq!(f.update_status(), us_none);
+    }
+
+    /// The raw-pointer `set_command_state` sets the file's state; with no
+    /// `also_make` peers the sibling loop is a no-op.
+    #[test]
+    fn set_command_state_sets_state() {
+        let mut f = File::default();
+        unsafe {
+            set_command_state(&raw mut f, CommandState::Running);
+        }
+        assert_eq!(f.command_state, CommandState::Running);
+    }
+
+    /// `verify_file_data_base` walks every arena node (a structural no-op now);
+    /// here it must run cleanly over a populated arena.
+    #[test]
+    fn verify_file_data_base_walks_the_arena() {
+        let ctx = crate::execctx::ExecContext::default();
+        let _ = enter_file(&ctx, b"verify-fdb-coverage");
+        unsafe {
+            verify_file_data_base(&ctx);
+        }
     }
 }

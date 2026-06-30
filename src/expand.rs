@@ -360,26 +360,6 @@ pub unsafe fn allocated_expand_variable(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn allocated_expand_variable_for_file(
-    ctx: &crate::execctx::ExecContext,
-    name: *const ::core::ffi::c_char,
-    length: size_t,
-    file: *mut File,
-) -> *mut ::core::ffi::c_char {
-    let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let mut savef: *const Floc = ::core::ptr::null::<Floc>();
-    if file.is_null() {
-        return allocated_expand_variable(ctx, name, length);
-    }
-    install_file_context(file, &raw mut savev, &raw mut savef);
-    let result = allocated_expand_variable(ctx, name, length);
-    restore_file_context(savev, savef);
-    result
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 pub unsafe fn expand_string_buf(
     ctx: &crate::execctx::ExecContext,
     mut buf: *mut ::core::ffi::c_char,

@@ -1412,3 +1412,32 @@ mod concat_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod free_ns_tests {
+    use super::{free_ns, free_ns_chain};
+    use crate::file::NameSeq;
+
+    /// `free_ns_chain` must walk and free every node in a `next`-linked chain
+    /// (which exercises `free_ns` on each), and a single-node chain is the base
+    /// case. The nodes are `malloc`-allocated so the C `free` inside is valid.
+    #[test]
+    fn free_ns_chain_walks_and_frees_every_node() {
+        unsafe {
+            let sz = ::core::mem::size_of::<NameSeq>();
+            let a = libc::malloc(sz) as *mut NameSeq;
+            let b = libc::malloc(sz) as *mut NameSeq;
+            (*a).next = b;
+            (*a).name = ::core::ptr::null();
+            (*b).next = ::core::ptr::null_mut();
+            (*b).name = ::core::ptr::null();
+            free_ns_chain(a as *mut crate::file::nameseq);
+
+            // Single node, freed directly through `free_ns`.
+            let c = libc::malloc(sz) as *mut NameSeq;
+            (*c).next = ::core::ptr::null_mut();
+            (*c).name = ::core::ptr::null();
+            free_ns(c as *mut crate::file::nameseq);
+        }
+    }
+}

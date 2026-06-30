@@ -724,10 +724,14 @@ pub fn print_commands(recipe: &Recipe) {
         }
     }
 
-    // A recipe line ends at an unescaped newline. Walk the raw text the same
-    // way the c2rust version did so the printed output is byte-identical.
     let prefix = crate::make_main::opt_cmd_prefix() as u8;
-    let bytes = recipe.text.as_slice();
+    print_recipe_lines(recipe.text.as_slice(), prefix);
+}
+
+/// Print each recipe line prefixed with the recipe-prefix character. A line ends
+/// at an unescaped newline; the raw text is walked exactly as the c2rust version
+/// did so the printed output is byte-identical.
+fn print_recipe_lines(bytes: &[u8], prefix: u8) {
     let mut s = 0usize;
     while s < bytes.len() {
         let mut end = s;

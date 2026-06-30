@@ -482,26 +482,16 @@ unsafe fn selective_vpath_search(
     for (i, &entry) in searchpath_entries(path).iter().enumerate() {
         let entry_b = cstr_bytes(entry);
 
-        // Lay down "<entry>[/<dirprefix>]" and remember P: the index of the
-        // separator before the filename (or where the filename starts).
-        let mut p = entry_b.len();
-        name_buf[..p].copy_from_slice(entry_b);
-        if name_dplen > 0 {
-            name_buf[p] = b'/';
-            p += 1;
-            name_buf[p..p + name_dplen].copy_from_slice(&file_bytes[..name_dplen]);
-            p += name_dplen;
-        }
-
-        // Now add the name-within-directory at the end of NAME.
-        if p != 0 && name_buf[p - 1] != b'/' {
-            name_buf[p] = b'/';
-            name_buf[p + 1..p + 1 + flen].copy_from_slice(fname_bytes);
-            name_buf[p + 1 + flen] = 0;
-        } else {
-            name_buf[p..p + flen].copy_from_slice(fname_bytes);
-            name_buf[p + flen] = 0;
-        }
+        // Lay down "<entry>[/<dirprefix>]/<filename>\0" into the scratch buffer;
+        // P is the index of the separator before the filename.
+        let p = lay_down_vpath_name(
+            &mut name_buf,
+            entry_b,
+            &file_bytes,
+            name_dplen,
+            fname_bytes,
+            flen,
+        );
         let name = name_buf.as_mut_ptr() as *mut c_char;
 
         // Check whether the file is mentioned in a makefile. If *FILE is
@@ -578,6 +568,37 @@ unsafe fn selective_vpath_search(
     }
 
     null()
+}
+
+/// Compose `"<entry>[/<dirprefix>]/<filename>\0"` into `name_buf` and return the
+/// index of the separator before the filename (the c2rust `p`). Split out of
+/// [`selective_vpath_search`] so its prefix/separator branching lives on its own.
+fn lay_down_vpath_name(
+    name_buf: &mut [u8],
+    entry_b: &[u8],
+    file_bytes: &[u8],
+    name_dplen: usize,
+    fname_bytes: &[u8],
+    flen: usize,
+) -> usize {
+    let mut p = entry_b.len();
+    name_buf[..p].copy_from_slice(entry_b);
+    if name_dplen > 0 {
+        name_buf[p] = b'/';
+        p += 1;
+        name_buf[p..p + name_dplen].copy_from_slice(&file_bytes[..name_dplen]);
+        p += name_dplen;
+    }
+    // Now add the name-within-directory at the end of NAME.
+    if p != 0 && name_buf[p - 1] != b'/' {
+        name_buf[p] = b'/';
+        name_buf[p + 1..p + 1 + flen].copy_from_slice(fname_bytes);
+        name_buf[p + 1 + flen] = 0;
+    } else {
+        name_buf[p..p + flen].copy_from_slice(fname_bytes);
+        name_buf[p + flen] = 0;
+    }
+    p
 }
 
 /// Search the VPATH list whose pattern matches `file` for a directory where

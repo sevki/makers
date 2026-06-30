@@ -228,30 +228,30 @@ fn percent_prefixed(s: &[u8]) -> Vec<u8> {
 /// `target`/`source` are the suffixes (without `%`); `None` means "absent".
 /// A `None` target builds the archive-member pattern `(%.o)`.
 fn convert_suffix_rule(target: Option<&[u8]>, source: Option<&[u8]>, cmds: Option<Recipe>) {
-    let name: Vec<u8>;
-    let percent: usize;
-    match target {
-        None => {
-            // Special case: creating "(%.o)" from an archive-member suffix rule.
-            name = b"(%.o)".to_vec();
-            // The `%` is at index 1.
-            percent = 1;
-        }
-        Some(t) => {
-            name = percent_prefixed(t);
-            percent = 0;
-        }
-    }
-    let deps: Vec<DepNode> = match source {
-        None => Vec::new(),
-        Some(s) => {
-            let dn = percent_prefixed(s);
-            vec![dep_with_name(dn)]
-        }
-    };
+    let (name, percent) = suffix_rule_target(target);
+    let deps = suffix_rule_source_deps(source);
     let targets = vec![name];
     let percents = vec![percent];
     create_pattern_rule(targets, percents, 1, false, deps, cmds, false);
+}
+
+/// The pattern target name and `%` offset for a suffix rule. `None` is the
+/// archive-member special case `(%.o)` (percent at index 1); `Some(t)` becomes
+/// a `%`-prefixed pattern (percent at index 0).
+fn suffix_rule_target(target: Option<&[u8]>) -> (Vec<u8>, usize) {
+    match target {
+        None => (b"(%.o)".to_vec(), 1),
+        Some(t) => (percent_prefixed(t), 0),
+    }
+}
+
+/// The prerequisite deps for a suffix rule: empty for `None`, else a single
+/// `%`-prefixed dep built from `source`.
+fn suffix_rule_source_deps(source: Option<&[u8]>) -> Vec<DepNode> {
+    match source {
+        None => Vec::new(),
+        Some(s) => vec![dep_with_name(percent_prefixed(s))],
+    }
 }
 
 /// A fresh `DepNode` carrying just a name (the suffix-rule prerequisite form).
@@ -630,11 +630,11 @@ fn print_rule(buf: &mut Vec<u8>, r: &mut Rule) {
     buf.push(b'\n');
     if let Some(cmds) = &r.cmds {
         // Mirror `print_commands`: indent each recipe line under the rule.
-        for line in cmds.text.split(|&b| b == b'\n') {
+        cmds.text.split(|&b| b == b'\n').for_each(|line| {
             buf.push(b'\t');
             buf.extend_from_slice(line);
             buf.push(b'\n');
-        }
+        });
     }
 }
 

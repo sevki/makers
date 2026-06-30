@@ -256,7 +256,20 @@ pub unsafe fn set_default_suffixes(
     if let Some(node) = ctx.filenodes.get(suffix_file) {
         node.lock().expect("file node poisoned").builtin = true;
     }
+    populate_suffixes(ctx, options, suffix_file);
+}
 
+/// Define the `SUFFIXES` variable for [`set_default_suffixes`]: empty under
+/// `--no-builtin-rules`, else the built-in suffix list (which also enters and
+/// marks each suffix file). Split out so the branch lives on its own.
+///
+/// # Safety
+/// Must run single-threaded: mutates global file/variable state.
+unsafe fn populate_suffixes(
+    ctx: &crate::execctx::ExecContext,
+    options: &crate::make_main::Options,
+    suffix_file: crate::file::FileId,
+) {
     if options.no_builtin_rules.get() {
         define_variable_in_set(
             ctx,
@@ -269,41 +282,50 @@ pub unsafe fn set_default_suffixes(
             null::<Floc>(),
         );
     } else {
-        // Parse the default suffix list into owned deps, resolve+enter each
-        // prerequisite, and mark the entered files built-in.
-        let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
-        let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE);
-        let deps: Vec<DepNode> = parsed
-            .into_iter()
-            .map(|pn| {
-                let mut d = dep_with_name(pn.name);
-                d.wait_here = pn.wait;
-                d
-            })
-            .collect();
-        let deps = enter_prereqs(ctx, deps, None);
-        for d in &deps {
-            if let Some(fid) = d.file {
-                if let Some(fnode) = ctx.filenodes.get(fid) {
-                    fnode.lock().expect("file node poisoned").builtin = true;
-                }
-            }
-        }
-        if let Some(node) = ctx.filenodes.get(suffix_file) {
-            node.lock().expect("file node poisoned").deps = deps;
-        }
-
-        define_variable_in_set(
-            ctx,
-            c"SUFFIXES".as_ptr(),
-            8,
-            default_suffixes.as_ptr() as *const c_char,
-            o_default,
-            0,
-            (*current_variable_set_list).set,
-            null::<Floc>(),
-        );
+        install_builtin_suffixes(ctx, suffix_file);
     }
+}
+
+/// Parse the built-in `.SUFFIXES` list, resolve+enter each prerequisite, mark
+/// the entered files built-in, attach them as `.SUFFIXES`' deps, and define the
+/// `SUFFIXES` variable. Split out of [`set_default_suffixes`] so its prereq walk
+/// lives in its own function.
+///
+/// # Safety
+/// Must run single-threaded: mutates global file/variable state.
+unsafe fn install_builtin_suffixes(
+    ctx: &crate::execctx::ExecContext,
+    suffix_file: crate::file::FileId,
+) {
+    let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
+    let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE);
+    let deps: Vec<DepNode> = parsed
+        .into_iter()
+        .map(|pn| {
+            let mut d = dep_with_name(pn.name);
+            d.wait_here = pn.wait;
+            d
+        })
+        .collect();
+    let deps = enter_prereqs(ctx, deps, None);
+    deps.iter()
+        .filter_map(|d| d.file)
+        .filter_map(|fid| ctx.filenodes.get(fid))
+        .for_each(|fnode| fnode.lock().expect("file node poisoned").builtin = true);
+    if let Some(node) = ctx.filenodes.get(suffix_file) {
+        node.lock().expect("file node poisoned").deps = deps;
+    }
+
+    define_variable_in_set(
+        ctx,
+        c"SUFFIXES".as_ptr(),
+        8,
+        default_suffixes.as_ptr() as *const c_char,
+        o_default,
+        0,
+        (*current_variable_set_list).set,
+        null::<Floc>(),
+    );
 }
 
 /// Build a fresh [`DepNode`] carrying just a name (no resolved file yet) — the
@@ -337,22 +359,36 @@ pub unsafe fn install_default_suffix_rules(
     if options.no_builtin_rules.get() {
         return;
     }
-    for &(target, recipe) in DEFAULT_SUFFIX_RULES {
-        let f = enter_file(ctx, target.to_bytes());
-        if let Some(node) = ctx.filenodes.get(f) {
-            let mut guard = node.lock().expect("file node poisoned");
-            // Don't clobber a recipe given in a makefile if there was one.
-            if guard.recipe.is_none() {
-                guard.recipe = Some(Recipe {
-                    defined_in: None,
-                    defined_lineno: 0,
-                    text: recipe.to_bytes().to_vec(),
-                    lines: Vec::new(),
-                    recipe_prefix: RECIPEPREFIX_DEFAULT as u8,
-                    any_recurse: false,
-                });
-                guard.builtin = true;
-            }
+    DEFAULT_SUFFIX_RULES
+        .iter()
+        .for_each(|&(target, recipe)| install_one_suffix_rule(ctx, target, recipe));
+}
+
+/// Install one built-in suffix rule's recipe onto its target file, unless the
+/// makefile already gave the target a recipe. Split out of
+/// [`install_default_suffix_rules`] so the per-rule branching lives on its own.
+///
+/// # Safety
+/// Must run single-threaded: mutates the global file store.
+unsafe fn install_one_suffix_rule(
+    ctx: &crate::execctx::ExecContext,
+    target: &::core::ffi::CStr,
+    recipe: &::core::ffi::CStr,
+) {
+    let f = enter_file(ctx, target.to_bytes());
+    if let Some(node) = ctx.filenodes.get(f) {
+        let mut guard = node.lock().expect("file node poisoned");
+        // Don't clobber a recipe given in a makefile if there was one.
+        if guard.recipe.is_none() {
+            guard.recipe = Some(Recipe {
+                defined_in: None,
+                defined_lineno: 0,
+                text: recipe.to_bytes().to_vec(),
+                lines: Vec::new(),
+                recipe_prefix: RECIPEPREFIX_DEFAULT as u8,
+                any_recurse: false,
+            });
+            guard.builtin = true;
         }
     }
 }
