@@ -8,14 +8,12 @@ pub use crate::ffi_types::{
     uintmax_t,
 };
 use crate::file::{
-    cs_finished, dep, file, us_success, Dep, File, GoalDep, NameSeq,
-    UpdateStatus, VariableSet, VariableSetList,
+    file, us_success, NameSeq, UpdateStatus, VariableSet, VariableSetList,
 };
 use crate::floc::Floc;
 use crate::load::unload_all;
-use crate::misc::free_ns_chain;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
-use crate::misc::{make_toui, xcalloc, xmalloc, xstrdup};
+use crate::misc::{make_toui, xmalloc, xstrdup};
 use crate::read::construct_include_path;
 use crate::remote_stub::{remote_cleanup, remote_setup};
 use crate::stdio::FILE;
@@ -402,28 +400,6 @@ pub const PARSEFS_NONE: i32 = 0;
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn alloc_goaldep() -> *mut goaldep {
-    xcalloc(::core::mem::size_of::<goaldep>() as size_t) as *mut goaldep
-}
-#[inline]
-unsafe extern "C" fn free_ns(n: *mut NameSeq) {
-    free(n as *mut ::core::ffi::c_void);
-}
-#[inline]
-unsafe extern "C" fn free_dep(d: *mut Dep) {
-    free_ns(d as *mut NameSeq);
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn free_goaldep(g: *mut goaldep) {
-    free_dep(g as *mut dep);
-}
-#[inline]
-unsafe extern "C" fn free_dep_chain(d: *mut Dep) {
-    crate::file::free_seq_chain(d);
-}
 pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
 pub const OLD_MTIME: i32 = 2;

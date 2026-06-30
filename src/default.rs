@@ -9,7 +9,7 @@ use ::core::ptr::null;
 
 use crate::dep::DepNode;
 use crate::ffi_types::size_t;
-use crate::file::{enter_file, enter_prereqs, lookup_file};
+use crate::file::{enter_file, enter_prereqs};
 use crate::floc::Floc;
 use crate::read::{parse_file_seq, MAP_NUL, PARSEFS_NONE};
 use crate::recipe::Recipe;
