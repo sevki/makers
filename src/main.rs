@@ -2896,10 +2896,15 @@ unsafe fn main_0(
                     Some(node) => {
                         let guard = node.lock().expect("file node poisoned");
                         let mut skip = guard.phony;
-                        if !skip {
-                            for entry in std::iter::once(&*guard).chain(
-                                guard.double_colon.iter().map(|e| e),
-                            ) {
+                        // Match C: the "recipe but no deps ⇒ might loop" check
+                        // walks only the `double_colon` chain (`f->double_colon`).
+                        // For a single-colon target that chain is empty, so the
+                        // check never applies — a plain `gen.mk:` rule with no
+                        // prereqs must still be remade.
+                        if !skip && guard.is_double_colon {
+                            for entry in
+                                std::iter::once(&*guard).chain(guard.double_colon.iter())
+                            {
                                 if entry.deps.is_empty() && entry.recipe.is_some() {
                                     skip = true;
                                     break;
