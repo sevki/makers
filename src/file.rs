@@ -1439,42 +1439,58 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
 pub unsafe fn split_prereqs(
     ctx: &crate::execctx::ExecContext,
     mut p: *mut ::core::ffi::c_char,
-) -> *mut dep {
-    let mut new: *mut dep = parse_file_seq::<dep>(
+) -> Vec<DepNode> {
+    // 0x100 = PARSEFS_NOSTRIP, 0x40 = PARSEFS_WAIT (recognise `.WAIT`).
+    let names = parse_file_seq(
         ctx,
         &raw mut p,
         ::core::mem::size_of::<dep>() as size_t,
         0x100_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x40_i32,
-    ) as *mut dep;
+    );
+    let mut deps: Vec<DepNode> = names
+        .into_iter()
+        .map(|n| dep_node_from_name(n.name, n.wait, false))
+        .collect();
+    // Order-only prerequisites follow a `|`: they are tagged `ignore_mtime`.
     if p.as_ref().is_some_and(|c| *c != 0) {
-        let mut ood: *mut dep;
         p = p.offset(1_i32 as isize);
-        ood = parse_file_seq::<dep>(
+        let ood_names = parse_file_seq(
             ctx,
             &raw mut p,
             ::core::mem::size_of::<dep>() as size_t,
             0x1_i32,
             ::core::ptr::null::<::core::ffi::c_char>(),
             0x40_i32,
-        ) as *mut dep;
-        if new.is_null() {
-            new = ood;
-        } else {
-            let mut dp: *mut Dep;
-            dp = new;
-            while !(*dp).next.is_null() {
-                dp = (*dp).next;
-            }
-            (*dp).next = ood;
-        }
-        while !ood.is_null() {
-            (*ood).ignore_mtime = true;
-            ood = (*ood).next;
+        );
+        for n in ood_names {
+            let mut d = dep_node_from_name(n.name, n.wait, false);
+            d.ignore_mtime = true;
+            deps.push(d);
         }
     }
-    new
+    deps
+}
+
+/// Build a fresh [`DepNode`] from an owned prerequisite name plus its `.WAIT`
+/// marker. `static_pattern` is the initial static-pattern flag. The pointer-free
+/// companion to the former `alloc_dep`/name-set dance.
+fn dep_node_from_name(name: Vec<u8>, wait: bool, static_pattern: bool) -> DepNode {
+    DepNode {
+        name: String::from_utf8_lossy(&name).into_owned(),
+        file: None,
+        shuf: None,
+        stem: None,
+        flags: DepFlags::empty(),
+        changed: false,
+        ignore_mtime: false,
+        static_pattern,
+        needs_second_expansion: false,
+        ignore_automatic_vars: false,
+        is_explicit: false,
+        wait_here: wait,
+    }
 }
 /// # Safety
 ///
@@ -1482,33 +1498,32 @@ pub unsafe fn split_prereqs(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn enter_prereqs(
     ctx: &crate::execctx::ExecContext,
-    mut deps: *mut dep,
-    stem: *const ::core::ffi::c_char,
-) -> *mut dep {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut d1: *mut Dep;
-    if deps.is_null() {
-        return ::core::ptr::null_mut::<Dep>();
+    mut deps: Vec<DepNode>,
+    stem: Option<&[u8]>,
+) -> Vec<DepNode> {
+    if deps.is_empty() {
+        return deps;
     }
-    if !stem.is_null() {
+    if let Some(stem_bytes) = stem {
         let pattern: *const ::core::ffi::c_char = b"%\0" as *const u8 as *const ::core::ffi::c_char;
-        let mut dp: *mut dep = deps;
-        let mut dl: *mut dep = ::core::ptr::null_mut::<dep>();
-        while let Some(dpr) = dp.as_mut() {
-            let percent: *mut ::core::ffi::c_char;
-            let nl: size_t = (strlen(dpr.name) as size_t).wrapping_add(1);
-            alloca_allocations.push(::std::vec::from_elem(0, nl as usize));
-            let nm: *mut ::core::ffi::c_char =
-                alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-            memcpy(
-                nm as *mut ::core::ffi::c_void,
-                dpr.name as *const ::core::ffi::c_void,
-                nl as size_t,
-            );
-            percent = find_percent(nm);
+        let mut kept: Vec<DepNode> = Vec::with_capacity(deps.len());
+        for mut d in deps.into_iter() {
+            if d.needs_second_expansion {
+                kept.push(d);
+                continue;
+            }
+            // Mutable, NUL-terminated copy of the name for the in-place
+            // `find_percent` rewrite.
+            let mut nm: Vec<u8> = d.name.clone().into_bytes();
+            nm.push(0);
+            let nm_ptr = nm.as_mut_ptr() as *mut ::core::ffi::c_char;
+            let percent = find_percent(nm_ptr);
             if !percent.is_null() {
+                // NUL-terminated stem for the C patsubst/expand helpers.
+                let mut stem_c: Vec<u8> = stem_bytes.to_vec();
+                stem_c.push(0);
                 let o: *mut ::core::ffi::c_char;
-                if *stem.offset(0_i32 as isize) as i32 == 0 {
+                if stem_bytes.is_empty() {
                     memmove(
                         percent as *mut ::core::ffi::c_void,
                         percent.offset(1_i32 as isize) as *const ::core::ffi::c_void,
@@ -1516,66 +1531,52 @@ pub unsafe fn enter_prereqs(
                     );
                     o = variable_buffer_output(
                         variable_buffer,
-                        nm,
-                        (strlen(nm) as size_t).wrapping_add(1),
+                        nm_ptr,
+                        (strlen(nm_ptr) as size_t).wrapping_add(1),
                     );
                 } else {
                     o = patsubst_expand_pat(
                         variable_buffer,
-                        stem,
+                        stem_c.as_ptr() as *const ::core::ffi::c_char,
                         pattern,
-                        nm,
+                        nm_ptr,
                         pattern.offset(1_i32 as isize),
                         percent.offset(1_i32 as isize),
                     );
                 }
                 if *variable_buffer.offset(0_i32 as isize) as i32 == 0 {
-                    let df: *mut dep = dp;
-                    if dp == deps {
-                        // `dpr` is the null-checked reference to `dp`, and here
-                        // `dp == deps`, so it is also the reference to `deps`.
-                        deps = dpr.next;
-                        dp = deps;
-                    } else {
-                        // `dl` is the previous list node; it was assigned from a
-                        // non-null `dp` on a prior iteration, so it is non-null.
-                        // Bind a checked reference (CodeQL-safe, no extra branch).
-                        let dlr = dl.as_mut().expect("enter_prereqs: null prev dep");
-                        dlr.next = dpr.next;
-                        dp = dlr.next;
-                    }
-                    free_dep(df);
+                    // Expanded to nothing: drop this prerequisite.
                     continue;
                 } else {
-                    dpr.name = strcache_add_len(
-                        variable_buffer,
-                        o.offset_from(variable_buffer) as ::core::ffi::c_long as size_t,
+                    let result = ::core::slice::from_raw_parts(
+                        variable_buffer as *const u8,
+                        o.offset_from(variable_buffer) as usize,
                     );
+                    d.name = String::from_utf8_lossy(result).into_owned();
                 }
             }
-            dpr.stem = stem;
-            dpr.set_staticpattern(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            dl = dp;
-            dp = dpr.next;
+            d.stem = Some(String::from_utf8_lossy(stem_bytes).into_owned());
+            d.static_pattern = true;
+            kept.push(d);
         }
+        deps = kept;
     }
-    d1 = deps;
-    while let Some(d1r) = d1.as_mut() {
-        if !(d1r.need_2nd_expansion() != 0) {
-            d1r.file = lookup_file(ctx, d1r.name);
-            if d1r.file.is_null() {
-                d1r.file = enter_file(ctx, d1r.name);
-            }
-            d1r.set_staticpattern(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-            d1r.name = ::core::ptr::null::<::core::ffi::c_char>();
-            if stem.is_null() {
-                d1r.file
-                    .as_mut()
-                    .expect("dep file was just entered above")
-                    .set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    // Resolve targets to FileIds for non-second-expansion deps.
+    for d in deps.iter_mut() {
+        if !d.needs_second_expansion {
+            let name_bytes = d.name.clone().into_bytes();
+            let fid =
+                lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
+            d.file = Some(fid);
+            d.static_pattern = false;
+            // The c2rust graph nulled `name` once `file` was resolved; we keep
+            // `name` (cheap owned String) for diagnostics and dep_name parity.
+            if stem.is_none() {
+                if let Some(node) = ctx.filenodes.get(fid) {
+                    node.lock().expect("file node lock poisoned").is_explicit = true;
+                }
             }
         }
-        d1 = d1r.next;
     }
     deps
 }
@@ -1583,131 +1584,119 @@ pub unsafe fn enter_prereqs(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: *mut file) {
-    let mut d: *mut dep;
-    let mut dp: *mut *mut dep;
-    let mut fstem: *const ::core::ffi::c_char;
-    let mut initialized: i32 = 0;
-    let mut changed_dep: i32 = 0;
-    if (*f).snapped() != 0 {
+pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: FileId) {
+    let Some(node) = ctx.filenodes.get(f) else {
         return;
-    }
-    (*f).snapped = true;
-    dp = &raw mut (*f).deps;
-    d = (*f).deps;
-    while !d.is_null() {
-        let p: *mut ::core::ffi::c_char;
-        let mut new: *mut Dep;
-        let next: *mut Dep;
-        if (*d).name.is_null() || !(*d).need_2nd_expansion {
-            dp = &raw mut (*d).next;
-            d = (*d).next;
-        } else {
-            if (*d).staticpattern {
-                let mut cs: *const ::core::ffi::c_char = (*d).name;
-                let mut nperc: size_t = 0;
-                loop {
-                    cs = strchr(cs, '%' as i32);
-                    if cs.is_null() {
-                        break;
-                    }
-                    nperc = nperc.wrapping_add(1);
-                    cs = cs.offset(1_i32 as isize);
+    };
+
+    // Latch `snapped` and snapshot the current deps + the file's own stem. The
+    // guard is dropped before any reentrant variable/expansion call.
+    let (mut deps, file_stem): (Vec<DepNode>, Option<Vec<u8>>) = {
+        let mut n = node.lock().expect("file node lock poisoned");
+        if n.snapped {
+            return;
+        }
+        n.snapped = true;
+        (
+            std::mem::take(&mut n.deps),
+            n.stem.as_ref().map(|s| s.clone().into_bytes()),
+        )
+    };
+
+    let mut initialized = false;
+    let mut changed_dep = false;
+    // Rebuilt dep list: untouched deps are pushed through verbatim; a
+    // second-expansion dep is replaced by its expansion's resolved deps.
+    let mut rebuilt: Vec<DepNode> = Vec::with_capacity(deps.len());
+
+    for d in deps.drain(..) {
+        if d.name.is_empty() || !d.needs_second_expansion {
+            rebuilt.push(d);
+            continue;
+        }
+
+        // For a static-pattern dep, rewrite every `%` token in the name to
+        // `$*` so the upcoming expansion substitutes the stem.
+        let mut name_bytes = d.name.clone().into_bytes();
+        if d.static_pattern && name_bytes.contains(&b'%') {
+            name_bytes = rewrite_static_pattern_name(&name_bytes);
+        }
+
+        if !initialized {
+            initialize_file_variables(ctx, f, 0);
+            initialized = true;
+        }
+        let stem: Option<&[u8]> = match &d.stem {
+            Some(s) => Some(s.as_bytes()),
+            None => file_stem.as_deref(),
+        };
+        set_file_variables(ctx, f, stem);
+
+        // BOUNDARY: the second-expansion string expander is still the legacy
+        // `*mut File`-based `expand_string_for_file`; it has no `FileId` form
+        // yet. Until the expand layer is flipped, this call cannot be satisfied
+        // from a `FileId`, so it remains a red boundary into `expand.rs`.
+        let mut name_c = name_bytes.clone();
+        name_c.push(0);
+        let p = expand_string_for_file(ctx, name_c.as_ptr() as *const ::core::ffi::c_char, f);
+
+        let mut new = split_prereqs(ctx, p);
+        changed_dep = true;
+        if new.is_empty() {
+            continue;
+        }
+        let fstem = d.stem.clone();
+        for nd in new.iter_mut() {
+            let nm = nd.name.clone().into_bytes();
+            let fid = lookup_file(ctx, &nm).unwrap_or_else(|| enter_file(ctx, &nm));
+            nd.file = Some(fid);
+            nd.stem = fstem.clone();
+            if fstem.is_none() {
+                if let Some(fnode) = ctx.filenodes.get(fid) {
+                    fnode.lock().expect("file node lock poisoned").is_explicit = true;
                 }
-                if nperc != 0 {
-                    let name_len = strlen((*d).name) as size_t;
-                    let slen: size_t = name_len.wrapping_add(nperc).wrapping_add(1);
-                    // End of the source name, computed once so the per-`%`
-                    // token scan below stays bounded against it instead of
-                    // re-`strlen`'ing the whole remaining suffix each iteration
-                    // (which would be O(n^2) over a name with many `%`).
-                    let name_end: *const ::core::ffi::c_char = (*d).name.add(name_len as usize);
-                    let mut pcs: *const ::core::ffi::c_char = (*d).name;
-                    let name: *mut ::core::ffi::c_char = xmalloc(slen) as *mut ::core::ffi::c_char;
-                    let mut s: *mut ::core::ffi::c_char = name;
-                    cs = strchr(pcs, '%' as i32);
-                    while !cs.is_null() {
-                        s = mempcpy(
-                            s as *mut ::core::ffi::c_void,
-                            pcs as *const ::core::ffi::c_void,
-                            cs.offset_from(pcs) as ::core::ffi::c_long as size_t,
-                        ) as *mut ::core::ffi::c_char;
-                        let fresh0 = s;
-                        s = s.offset(1_i32 as isize);
-                        *fresh0 = '$' as i32 as ::core::ffi::c_char;
-                        let fresh1 = s;
-                        s = s.offset(1_i32 as isize);
-                        *fresh1 = '*' as i32 as ::core::ffi::c_char;
-                        cs = cs.offset(1_i32 as isize);
-                        pcs = cs;
-                        // Bridge to the safe `end_of_token`: it returns the
-                        // offset of the first whitespace/NUL within `[cs, NUL)`,
-                        // which we add back to `cs` to recover the C pointer.
-                        // `cs` points within `(*d).name`, so bound the slice with
-                        // the precomputed `name_end` rather than re-`strlen`'ing.
-                        let cs_avail = name_end.offset_from(cs) as usize;
-                        let eot = cs.add(end_of_token(::core::slice::from_raw_parts(
-                            cs as *const u8,
-                            cs_avail,
-                        )));
-                        cs = strchr(eot, '%' as i32);
-                    }
-                    strcpy(s, pcs);
-                    free((*d).name as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void);
-                    (*d).name = name;
-                }
-            }
-            if initialized == 0 {
-                initialize_file_variables(ctx, f, 0);
-                initialized = 1;
-            }
-            set_file_variables(
-                ctx,
-                f,
-                if !(*d).stem.is_null() {
-                    (*d).stem
-                } else {
-                    (*f).stem
-                },
-            );
-            p = expand_string_for_file(ctx, (*d).name, f);
-            free((*d).name as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void);
-            new = split_prereqs(ctx, p);
-            if new.is_null() {
-                *dp = (*d).next;
-                changed_dep = 1;
-                free_dep(d);
-                d = *dp;
-            } else {
-                fstem = (*d).stem;
-                next = (*d).next;
-                changed_dep = 1;
-                free_dep(d);
-                *dp = new;
-                dp = &raw mut new;
-                for d in seq_iter(new) {
-                    (*d).file = lookup_file(ctx, (*d).name);
-                    if (*d).file.is_null() {
-                        (*d).file = enter_file(ctx, (*d).name);
-                    }
-                    (*d).name = ::core::ptr::null::<::core::ffi::c_char>();
-                    (*d).stem = fstem;
-                    if fstem.is_null() {
-                        (*d).file
-                            .as_mut()
-                            .expect("dep file was just entered above")
-                            .set_is_explicit(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                    }
-                    dp = &raw mut (*d).next;
-                }
-                *dp = next;
-                d = *dp;
             }
         }
+        rebuilt.append(&mut new);
     }
-    if changed_dep != 0 {
-        crate::shuffle::shuffle_deps_recursive((*f).deps);
+
+    {
+        let mut n = node.lock().expect("file node lock poisoned");
+        n.deps = rebuilt;
     }
+    if changed_dep {
+        // BOUNDARY: `shuffle_deps_recursive` still walks the legacy `*mut Dep`
+        // chain; the `Vec<DepNode>` form is not yet accepted by the shuffle
+        // layer, so this is a red boundary into `shuffle.rs`.
+        crate::shuffle::shuffle_deps_recursive(f);
+    }
+}
+
+/// Rewrite a static-pattern prerequisite name for second expansion: each `%`
+/// token is replaced by `$*` so the subsequent variable expansion substitutes
+/// the stem. Operates on raw name bytes (the former in-place `xmalloc`/`mempcpy`
+/// dance over the c2rust `(*d).name`).
+fn rewrite_static_pattern_name(name: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(name.len() + 2);
+    let mut i = 0usize;
+    while i < name.len() {
+        if name[i] == b'%' {
+            // Replace the `%` with `$*`, then copy the rest of the current
+            // whitespace-delimited token verbatim (the C copied through the end
+            // of the token before scanning for the next `%`).
+            out.push(b'$');
+            out.push(b'*');
+            i += 1;
+            while i < name.len() && !name[i].is_ascii_whitespace() {
+                out.push(name[i]);
+                i += 1;
+            }
+        } else {
+            out.push(name[i]);
+            i += 1;
+        }
+    }
+    out
 }
 /// # Safety
 ///
@@ -1716,30 +1705,27 @@ pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: *mut file) {
 pub unsafe fn expand_extra_prereqs(
     ctx: &crate::execctx::ExecContext,
     extra: *const variable,
-) -> *mut dep {
-    let mut d: *mut dep;
-    let prereqs: *mut dep = if !extra.is_null() {
-        split_prereqs(
-            ctx,
-            expand_string_buf(
-                ctx,
-                ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                (*extra).value,
-                SIZE_MAX as size_t,
-            ),
-        )
-    } else {
-        ::core::ptr::null_mut::<Dep>()
-    };
-    d = prereqs;
-    while let Some(dr) = d.as_mut() {
-        dr.file = lookup_file(ctx, dr.name);
-        if dr.file.is_null() {
-            dr.file = enter_file(ctx, dr.name);
-        }
-        dr.name = ::core::ptr::null::<::core::ffi::c_char>();
-        dr.set_ignore_automatic_vars(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        d = dr.next;
+) -> Vec<DepNode> {
+    if extra.is_null() {
+        return Vec::new();
+    }
+    // Expand the `.EXTRA_PREREQS` value, then split it into prerequisites. The
+    // expansion buffer is a freshly-allocated C string we own and free.
+    let expanded = expand_string_buf(
+        ctx,
+        ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        (*extra).value,
+        SIZE_MAX as size_t,
+    );
+    let mut prereqs = split_prereqs(ctx, expanded);
+    free(expanded as *mut ::core::ffi::c_void);
+    // Resolve each prerequisite to a target and flag it so automatic variables
+    // are ignored when it is evaluated.
+    for d in prereqs.iter_mut() {
+        let name_bytes = d.name.clone().into_bytes();
+        let fid = lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
+        d.file = Some(fid);
+        d.ignore_automatic_vars = true;
     }
     prereqs
 }
@@ -1747,217 +1733,182 @@ pub unsafe fn expand_extra_prereqs(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: *mut file, deps: *const dep) {
-    let mut prereqs: *mut dep = ::core::ptr::null_mut::<dep>();
-    let mut d: *mut dep;
-    // `snap_file` is only ever called with a non-null file (its sole caller
-    // `expand_deps` filters out null slots). Bind a checked reference so the
-    // derefs below are null-safe without adding a control-flow branch.
-    let fr = f.as_mut().expect("snap_file called with null file");
-    if !second_expansion() {
-        fr.set_updating(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    }
-    if ctx.all_secondary.get() && fr.notintermediate() == 0 {
-        fr.set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    }
-    if ctx.no_intermediates.get() && fr.intermediate() == 0 && fr.secondary() == 0 {
-        fr.set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    }
-    if let Some(file_vars) = fr.variables.as_ref() {
-        prereqs = expand_extra_prereqs(
-            ctx,
-            lookup_variable_in_set(
-                ctx,
-                b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-                file_vars.set,
-            ),
-        );
+pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: FileId, deps: &[DepNode]) {
+    let Some(node) = ctx.filenodes.get(f) else {
+        return;
+    };
+
+    // First pass over the node's flags: reset `updating`, fold in the global
+    // `.SECONDARY`/`.NOTINTERMEDIATE` defaults, read `is_target`, snapshot the
+    // node's name, the existing deps, and the `.EXTRA_PREREQS` value (if any).
+    // The guard is dropped before any reentrant arena call below.
+    let (fname, is_target, extra_value, has_variables) = {
+        let mut n = node.lock().expect("file node lock poisoned");
+        if !second_expansion() {
+            n.updating = false;
+        }
+        if ctx.all_secondary.get() && !n.notintermediate {
+            n.intermediate = true;
+        }
+        if ctx.no_intermediates.get() && !n.intermediate && !n.secondary {
+            n.notintermediate = true;
+        }
+        let has_variables = !n.variables.is_empty();
+        let extra_value = n
+            .variables
+            .iter()
+            .find(|v| v.name == b".EXTRA_PREREQS")
+            .map(|v| v.value.clone());
+        (n.name.clone(), n.is_target, extra_value, has_variables)
+    };
+
+    // Compute the prerequisites to add. With per-target variables, take
+    // `.EXTRA_PREREQS`; otherwise a target file copies the shared `deps`.
+    let mut prereqs: Vec<DepNode> = if has_variables {
+        let pre = match &extra_value {
+            Some(value) => expand_extra_prereqs_value(ctx, value),
+            None => Vec::new(),
+        };
         if second_expansion() {
-            d = prereqs;
-            while let Some(dr) = d.as_mut() {
-                if dr.name.is_null() {
-                    dr.name = xstrdup(dr.file.as_ref().expect("a nameless prereq has a file").name);
-                }
-                dr.set_need_2nd_expansion(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                d = dr.next;
+            let mut pre = pre;
+            for d in pre.iter_mut() {
+                // The owned `name` is always populated in the node model, so the
+                // former "name was nulled, copy it back from file" path is moot.
+                d.needs_second_expansion = true;
             }
-        }
-    } else if fr.is_target() != 0 {
-        prereqs = copy_dep_chain(deps);
-    }
-    if !prereqs.is_null() {
-        d = prereqs;
-        while let Some(dr) = d.as_ref() {
-            let dname: *const ::core::ffi::c_char = if !dr.name.is_null() {
-                dr.name
-            } else {
-                dr.file.as_ref().expect("expand_deps: null dep file").name
-            };
-            let fname = fr.name;
-            let same = match (dname.as_ref(), fname.as_ref()) {
-                (Some(&db), Some(&fb)) => {
-                    fb as i32 == db as i32
-                        && (fb as i32 == 0 || strcmp(fname.offset(1), dname.offset(1)) == 0)
-                }
-                _ => false,
-            };
-            if same {
-                break;
-            }
-            d = dr.next;
-        }
-        if !d.is_null() {
-            free_dep_chain(prereqs);
-        } else if fr.deps.is_null() {
-            fr.deps = prereqs;
+            pre
         } else {
-            // `fr.deps` is non-null in this arm and each `.next` we follow is
-            // non-null until the last node; walk to the tail through checked
-            // references (single branch) and append.
-            d = fr.deps;
-            while !d
-                .as_ref()
-                .expect("snap_file: null in deps walk")
-                .next
-                .is_null()
-            {
-                d = d.as_ref().expect("snap_file: null in deps walk").next;
-            }
-            d.as_mut().expect("snap_file: null deps tail").next = prereqs;
+            pre
         }
+    } else if is_target {
+        deps.to_vec()
+    } else {
+        Vec::new()
+    };
+
+    if prereqs.is_empty() {
+        return;
     }
+
+    // Skip circular dependencies: if any prereq names this file, drop the whole
+    // batch (matching the C early-break + free_dep_chain).
+    let circular = prereqs.iter().any(|d| dep_name_bytes(d) == fname);
+    if circular {
+        return;
+    }
+
+    let mut n = node.lock().expect("file node lock poisoned");
+    n.deps.append(&mut prereqs);
+}
+
+/// Expand an `.EXTRA_PREREQS` variable value, split it into prerequisites, and
+/// resolve each to a target — the value-taking companion to
+/// [`expand_extra_prereqs`] used by the per-target path in [`snap_file`], where
+/// the value lives on the [`FileNode`] (`Vec<TargetVariable>`) rather than behind
+/// a legacy `*const variable`.
+unsafe fn expand_extra_prereqs_value(
+    ctx: &crate::execctx::ExecContext,
+    value: &[u8],
+) -> Vec<DepNode> {
+    let mut value_c: Vec<u8> = value.to_vec();
+    value_c.push(0);
+    let expanded = expand_string_buf(
+        ctx,
+        ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        value_c.as_ptr() as *const ::core::ffi::c_char,
+        SIZE_MAX as size_t,
+    );
+    let mut prereqs = split_prereqs(ctx, expanded);
+    free(expanded as *mut ::core::ffi::c_void);
+    for d in prereqs.iter_mut() {
+        let name_bytes = d.name.clone().into_bytes();
+        let fid = lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
+        d.file = Some(fid);
+        d.ignore_automatic_vars = true;
+    }
+    prereqs
+}
+
+/// The name of a dependency as owned bytes: the [`DepNode`] keeps its `name`
+/// populated, so this is just the name's bytes.
+fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
+    d.name.clone().into_bytes()
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
-    let mut f: *mut file;
-    let mut f2: *mut file;
-    let mut d: *mut dep;
     crate::make_main::mark_snapped_deps();
-    f = lookup_file(ctx, b".PRECIOUS\0" as *const u8 as *const ::core::ffi::c_char);
-    while !f.is_null() {
-        let Some(fr) = f.as_ref() else { break };
-        d = fr.deps;
-        while let Some(dr) = d.as_ref() {
-            f2 = dr.file;
-            while let Some(f2r) = f2.as_mut() {
-                f2r.set_precious(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                f2 = f2r.prev;
-            }
-            d = dr.next;
-        }
-        f = fr.prev;
+
+    // `.PRECIOUS`: mark each prereq target precious.
+    for fid in special_dep_targets(ctx, b".PRECIOUS") {
+        apply_to_file_and_double_colon(ctx, fid, |n| n.precious = true);
     }
-    f = lookup_file(ctx, b".LOW_RESOLUTION_TIME\0" as *const u8 as *const ::core::ffi::c_char);
-    while !f.is_null() {
-        let Some(fr) = f.as_ref() else { break };
-        d = fr.deps;
-        while let Some(dr) = d.as_ref() {
-            f2 = dr.file;
-            while let Some(f2r) = f2.as_mut() {
-                f2r.set_low_resolution_time(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                f2 = f2r.prev;
-            }
-            d = dr.next;
-        }
-        f = fr.prev;
+
+    // `.LOW_RESOLUTION_TIME`: mark each prereq target.
+    for fid in special_dep_targets(ctx, b".LOW_RESOLUTION_TIME") {
+        apply_to_file_and_double_colon(ctx, fid, |n| n.low_resolution_time = true);
     }
-    f = lookup_file(ctx, b".PHONY\0" as *const u8 as *const ::core::ffi::c_char);
-    while !f.is_null() {
-        let Some(fr) = f.as_ref() else { break };
-        d = fr.deps;
-        while let Some(dr) = d.as_ref() {
-            f2 = dr.file;
-            while let Some(f2r) = f2.as_mut() {
-                f2r.set_phony(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                f2r.set_is_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                f2r.last_mtime = NONEXISTENT_MTIME as uintmax_t;
-                f2r.mtime_before_update = NONEXISTENT_MTIME as uintmax_t;
-                f2 = f2r.prev;
-            }
-            d = dr.next;
-        }
-        f = fr.prev;
+
+    // `.PHONY`: mark each prereq target as a phony, nonexistent target.
+    for fid in special_dep_targets(ctx, b".PHONY") {
+        apply_to_file_and_double_colon(ctx, fid, |n| {
+            n.phony = true;
+            n.is_target = true;
+            n.last_mtime = NONEXISTENT_MTIME as u64;
+            n.mtime_before_update = NONEXISTENT_MTIME as u64;
+        });
     }
-    f = lookup_file(ctx, b".NOTINTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
-    while !f.is_null() {
-        let Some(fr) = f.as_ref() else { break };
-        if !fr.deps.is_null() {
-            d = fr.deps;
-            while let Some(dr) = d.as_ref() {
-                f2 = dr.file;
-                while let Some(f2r) = f2.as_mut() {
-                    f2r.set_notintermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                    f2 = f2r.prev;
-                }
-                d = dr.next;
+
+    // `.NOTINTERMEDIATE`: with deps, mark each; with no deps, mark all files.
+    match special_target_state(ctx, b".NOTINTERMEDIATE") {
+        SpecialTargetState::WithDeps(targets) => {
+            for fid in targets {
+                apply_to_file_and_double_colon(ctx, fid, |n| n.notintermediate = true);
             }
-        } else {
-            ctx.no_intermediates.set(true);
         }
-        f = fr.prev;
+        SpecialTargetState::NoDeps => ctx.no_intermediates.set(true),
+        SpecialTargetState::Absent => {}
     }
-    f = lookup_file(ctx, b".INTERMEDIATE\0" as *const u8 as *const ::core::ffi::c_char);
-    while !f.is_null() {
-        let Some(fr) = f.as_ref() else { break };
-        d = fr.deps;
-        while let Some(dr) = d.as_ref() {
-            f2 = dr.file;
-            while let Some(f2r) = f2.as_mut() {
-                if f2r.notintermediate() != 0 {
-                    fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(f2r.name) as size_t,
-        b"%s cannot be both .NOTINTERMEDIATE and .INTERMEDIATE\0" as *const u8
-                            as *const ::core::ffi::c_char,
-        &[FmtArg::Str((f2r.name) as *const ::core::ffi::c_char)],
-    );
-                } else {
-                    f2r.set_intermediate(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                }
-                f2 = f2r.prev;
+
+    // `.INTERMEDIATE`: mark each prereq target intermediate (fatal if it is
+    // also `.NOTINTERMEDIATE`).
+    for fid in special_dep_targets(ctx, b".INTERMEDIATE") {
+        let conflict = apply_to_file_and_double_colon_checked(ctx, fid, |n| {
+            if n.notintermediate {
+                return Some(n.name.clone());
             }
-            d = dr.next;
+            n.intermediate = true;
+            None
+        });
+        if let Some(name) = conflict {
+            fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .INTERMEDIATE");
         }
-        f = fr.prev;
     }
-    f = lookup_file(ctx, b".SECONDARY\0" as *const u8 as *const ::core::ffi::c_char);
-    while !f.is_null() {
-        let Some(fr) = f.as_ref() else { break };
-        if !fr.deps.is_null() {
-            d = fr.deps;
-            while let Some(dr) = d.as_ref() {
-                f2 = dr.file;
-                while let Some(f2r) = f2.as_mut() {
-                    if f2r.notintermediate() != 0 {
-                        fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(f2r.name) as size_t,
-        b"%s cannot be both .NOTINTERMEDIATE and .SECONDARY\0" as *const u8
-                                as *const ::core::ffi::c_char,
-        &[FmtArg::Str((f2r.name) as *const ::core::ffi::c_char)],
-    );
-                    } else {
-                        let rhs = {
-                            f2r.set_secondary(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            f2r.secondary()
-                        } as ::core::ffi::c_uint;
-                        f2r.set_intermediate(rhs);
+
+    // `.SECONDARY`: with deps, mark each both secondary and intermediate (fatal
+    // if also `.NOTINTERMEDIATE`); with no deps, mark all files secondary.
+    match special_target_state(ctx, b".SECONDARY") {
+        SpecialTargetState::WithDeps(targets) => {
+            for fid in targets {
+                let conflict = apply_to_file_and_double_colon_checked(ctx, fid, |n| {
+                    if n.notintermediate {
+                        return Some(n.name.clone());
                     }
-                    f2 = f2r.prev;
+                    n.secondary = true;
+                    n.intermediate = n.secondary;
+                    None
+                });
+                if let Some(name) = conflict {
+                    fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY");
                 }
-                d = dr.next;
             }
-        } else {
-            ctx.all_secondary.set(true);
         }
-        f = fr.prev;
+        SpecialTargetState::NoDeps => ctx.all_secondary.set(true),
+        SpecialTargetState::Absent => {}
     }
+
     if ctx.no_intermediates.get() && ctx.all_secondary.get() {
         fatal(
             ctx,
@@ -1968,66 +1919,48 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             &[],
         );
     }
-    f = lookup_file(ctx, b".EXPORT_ALL_VARIABLES\0" as *const u8 as *const ::core::ffi::c_char);
-    if f.as_ref().is_some_and(|fr| fr.is_target() as i32 != 0) {
+
+    // `.EXPORT_ALL_VARIABLES`: a target presence enables global export.
+    if special_target_is_target(ctx, b".EXPORT_ALL_VARIABLES") {
         with_options(|o| o.export_all_variables.set(true));
     }
-    f = lookup_file(ctx, b".IGNORE\0" as *const u8 as *const ::core::ffi::c_char);
-    if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
-        if fr.deps.is_null() {
-            crate::make_main::set_ignore_errors_mirror(true);
-        } else {
-            d = fr.deps;
-            while let Some(dr) = d.as_ref() {
-                f2 = dr.file;
-                while let Some(f2r) = f2.as_mut() {
-                    f2r.command_flags |= COMMANDS_NOERROR;
-                    f2 = f2r.prev;
-                }
-                d = dr.next;
+
+    // `.IGNORE`: with deps, set per-target NOERROR; with no deps, global.
+    match special_target_command_flag_state(ctx, b".IGNORE") {
+        SpecialTargetState::WithDeps(targets) => {
+            for fid in targets {
+                apply_to_file_and_double_colon(ctx, fid, |n| n.command_flags |= COMMANDS_NOERROR);
             }
         }
+        SpecialTargetState::NoDeps => crate::make_main::set_ignore_errors_mirror(true),
+        SpecialTargetState::Absent => {}
     }
-    f = lookup_file(ctx, b".SILENT\0" as *const u8 as *const ::core::ffi::c_char);
-    if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
-        if fr.deps.is_null() {
-            with_options(|o| o.run_silent.set(true));
-        } else {
-            d = fr.deps;
-            while let Some(dr) = d.as_ref() {
-                f2 = dr.file;
-                while let Some(f2r) = f2.as_mut() {
-                    f2r.command_flags |= COMMANDS_SILENT;
-                    f2 = f2r.prev;
-                }
-                d = dr.next;
+
+    // `.SILENT`: with deps, set per-target SILENT; with no deps, global.
+    match special_target_command_flag_state(ctx, b".SILENT") {
+        SpecialTargetState::WithDeps(targets) => {
+            for fid in targets {
+                apply_to_file_and_double_colon(ctx, fid, |n| n.command_flags |= COMMANDS_SILENT);
             }
         }
+        SpecialTargetState::NoDeps => with_options(|o| o.run_silent.set(true)),
+        SpecialTargetState::Absent => {}
     }
-    f = lookup_file(ctx, b".NOTPARALLEL\0" as *const u8 as *const ::core::ffi::c_char);
-    if let Some(fr) = f.as_ref().filter(|fr| fr.is_target() as i32 != 0) {
-        let mut d2: *mut dep;
-        if fr.deps.is_null() {
-            crate::make_main::set_not_parallel();
-        } else {
-            d = fr.deps;
-            while let Some(dr) = d.as_ref() {
-                f2 = dr.file;
-                while let Some(f2r) = f2.as_mut() {
-                    if !f2r.deps.is_null() {
-                        d2 = f2r.deps.as_ref().expect("checked non-null above").next;
-                        while let Some(d2r) = d2.as_mut() {
-                            d2r.set_wait_here(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                            d2 = d2r.next;
-                        }
-                    }
-                    f2 = f2r.prev;
-                }
-                d = dr.next;
+
+    // `.NOTPARALLEL`: with deps, mark each prereq target's own deps (after the
+    // first) `wait_here`; with no deps, disable parallelism globally.
+    match special_target_command_flag_state(ctx, b".NOTPARALLEL") {
+        SpecialTargetState::WithDeps(targets) => {
+            for fid in targets {
+                mark_notparallel(ctx, fid);
             }
         }
+        SpecialTargetState::NoDeps => crate::make_main::set_not_parallel(),
+        SpecialTargetState::Absent => {}
     }
-    let prereqs: *mut dep = expand_extra_prereqs(
+
+    // Global `.EXTRA_PREREQS`: expand once, then offer to every snapped file.
+    let prereqs: Vec<DepNode> = expand_extra_prereqs(
         ctx,
         lookup_variable(
             ctx,
@@ -2035,13 +1968,183 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
         ),
     );
-    // Snapshot the table's files, then snap each. Matching the C `hash_dump`,
+    // Snapshot the arena's files, then snap each. Matching the C `hash_dump`,
     // any files entered while snapping are not themselves re-processed here.
-    let filedump: Vec<*mut file> = ctx.files.0.borrow().values().copied().collect();
-    for fp in filedump {
-        snap_file(ctx, fp, prereqs);
+    let filedump: Vec<FileId> = ctx
+        .filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .keys()
+        .copied()
+        .collect();
+    for fid in filedump {
+        snap_file(ctx, fid, &prereqs);
     }
-    free_dep_chain(prereqs);
+}
+
+/// Outcome of inspecting a special target (`.PHONY`, `.SECONDARY`, …): it may
+/// be absent, present but with no prerequisites (the "applies to everything"
+/// form), or present with a list of prerequisite target [`FileId`]s.
+enum SpecialTargetState {
+    Absent,
+    NoDeps,
+    WithDeps(Vec<FileId>),
+}
+
+/// Resolve the prerequisite target [`FileId`]s of a special target, walking the
+/// special target's own double-colon entries and resolving each prereq's
+/// `file`. Names that have not been entered are skipped (matching the C, where a
+/// prereq always has a resolved `file` by snap time). Returns an empty `Vec`
+/// when the special target is absent or has no prereqs.
+///
+/// Locking discipline: the head node is locked only to clone out its `deps` and
+/// double-colon entries' `deps`; the guard is dropped before each prereq name is
+/// resolved through the arena.
+fn special_dep_targets(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Vec<FileId> {
+    match special_target_state(ctx, name) {
+        SpecialTargetState::WithDeps(t) => t,
+        _ => Vec::new(),
+    }
+}
+
+/// Like [`special_dep_targets`] but distinguishing "absent" from "present, no
+/// deps" so the no-argument forms of `.NOTINTERMEDIATE`/`.SECONDARY` can latch
+/// their global flags.
+fn special_target_state(ctx: &crate::execctx::ExecContext, name: &[u8]) -> SpecialTargetState {
+    let Some(head_id) = lookup_file(ctx, name) else {
+        return SpecialTargetState::Absent;
+    };
+    let Some(node) = ctx.filenodes.get(head_id) else {
+        return SpecialTargetState::Absent;
+    };
+    // Collect every dep name across the head and its double-colon entries,
+    // dropping the guard before resolving any name through the arena.
+    let dep_names: Vec<Vec<u8>> = {
+        let n = node.lock().expect("file node lock poisoned");
+        let mut names: Vec<Vec<u8>> = Vec::new();
+        for d in &n.deps {
+            names.push(dep_name_bytes(d));
+        }
+        for dc in &n.double_colon {
+            for d in &dc.deps {
+                names.push(dep_name_bytes(d));
+            }
+        }
+        names
+    };
+    if dep_names.is_empty() {
+        return SpecialTargetState::NoDeps;
+    }
+    let mut targets: Vec<FileId> = Vec::with_capacity(dep_names.len());
+    for nm in dep_names {
+        if let Some(fid) = lookup_file(ctx, &nm) {
+            targets.push(fid);
+        }
+    }
+    SpecialTargetState::WithDeps(targets)
+}
+
+/// `.IGNORE`/`.SILENT`/`.NOTPARALLEL` only act when the special target was
+/// actually mentioned as a target (`is_target`). Returns `Absent` when it was
+/// merely referenced as a prerequisite name, mirroring the C `f->is_target`
+/// guard.
+fn special_target_command_flag_state(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+) -> SpecialTargetState {
+    if !special_target_is_target(ctx, name) {
+        return SpecialTargetState::Absent;
+    }
+    special_target_state(ctx, name)
+}
+
+/// Whether the named special target exists and was mentioned as a target.
+fn special_target_is_target(ctx: &crate::execctx::ExecContext, name: &[u8]) -> bool {
+    let Some(head_id) = lookup_file(ctx, name) else {
+        return false;
+    };
+    let Some(node) = ctx.filenodes.get(head_id) else {
+        return false;
+    };
+    let n = node.lock().expect("file node lock poisoned");
+    n.is_target
+}
+
+/// Apply `f` to the file `fid` and each of its inline double-colon entries (the
+/// former `for (f2 = ...; f2; f2 = f2->prev)` chain walk). A single guard is held
+/// for the whole node, which is sound: `f` does not re-enter the arena.
+fn apply_to_file_and_double_colon(
+    ctx: &crate::execctx::ExecContext,
+    fid: FileId,
+    mut f: impl FnMut(&mut FileNode),
+) {
+    if let Some(node) = ctx.filenodes.get(fid) {
+        let mut n = node.lock().expect("file node lock poisoned");
+        f(&mut n);
+        for dc in n.double_colon.iter_mut() {
+            f(dc);
+        }
+    }
+}
+
+/// Like [`apply_to_file_and_double_colon`] but `f` may return `Some(name)` to
+/// signal a conflict, which short-circuits and is returned to the caller (used
+/// for the `.INTERMEDIATE`/`.SECONDARY` vs `.NOTINTERMEDIATE` fatal checks).
+fn apply_to_file_and_double_colon_checked(
+    ctx: &crate::execctx::ExecContext,
+    fid: FileId,
+    mut f: impl FnMut(&mut FileNode) -> Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    let node = ctx.filenodes.get(fid)?;
+    let mut n = node.lock().expect("file node lock poisoned");
+    if let Some(conflict) = f(&mut n) {
+        return Some(conflict);
+    }
+    for dc in n.double_colon.iter_mut() {
+        if let Some(conflict) = f(dc) {
+            return Some(conflict);
+        }
+    }
+    None
+}
+
+/// `.NOTPARALLEL` with explicit prereqs: for the named target `fid`, mark every
+/// one of its own prerequisites *after the first* as `wait_here` (the C
+/// `f2->deps->next` walk), across the head and its double-colon entries.
+fn mark_notparallel(ctx: &crate::execctx::ExecContext, fid: FileId) {
+    if let Some(node) = ctx.filenodes.get(fid) {
+        let mut n = node.lock().expect("file node lock poisoned");
+        for d in n.deps.iter_mut().skip(1) {
+            d.wait_here = true;
+        }
+        for dc in n.double_colon.iter_mut() {
+            for d in dc.deps.iter_mut().skip(1) {
+                d.wait_here = true;
+            }
+        }
+    }
+}
+
+/// Emit the byte-identical fatal diagnostic for a target that is both
+/// `.NOTINTERMEDIATE` and `.INTERMEDIATE`/`.SECONDARY`.
+unsafe fn fatal_special_conflict(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+    kinds: &[u8],
+) -> ! {
+    let mut name_c = name.to_vec();
+    name_c.push(0);
+    let mut msg = b"%s cannot be both ".to_vec();
+    msg.extend_from_slice(kinds);
+    msg.push(0);
+    fatal(
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        name.len() as size_t,
+        msg.as_ptr() as *const ::core::ffi::c_char,
+        &[FmtArg::Str(name_c.as_ptr() as *const ::core::ffi::c_char)],
+    )
 }
 /// # Safety
 ///
@@ -2245,64 +2348,38 @@ pub fn file_timestamp_string(ts: uintmax_t) -> String {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_prereqs(mut deps: *const dep) {
-    let mut ood: *const dep = ::core::ptr::null::<dep>();
-    while !deps.is_null() {
-        if !(*deps).ignore_mtime {
-            printf(
-                b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                if (*deps).wait_here() as i32 != 0 {
-                    b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
-                } else {
-                    b"\0" as *const u8 as *const ::core::ffi::c_char
-                },
-                if !(*deps).name.is_null() {
-                    (*deps).name
-                } else {
-                    (*deps)
-                        .file
-                        .as_ref()
-                        .expect("a nameless dep has a file")
-                        .name
-                },
-            );
-        } else if ood.is_null() {
-            ood = deps;
-        }
-        deps = (*deps).next;
-    }
-    if let Some(oodr) = ood.as_ref() {
+pub unsafe fn print_prereqs(deps: &[DepNode]) {
+    // Print one prerequisite: optional `.WAIT ` marker plus its name.
+    unsafe fn print_one(d: &DepNode, leading: &[u8]) {
+        let mut name = dep_name_bytes(d);
+        name.push(0);
+        let wait = if d.wait_here {
+            b".WAIT \0".as_ptr() as *const ::core::ffi::c_char
+        } else {
+            b"\0".as_ptr() as *const ::core::ffi::c_char
+        };
         printf(
-            b" | %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-            if oodr.wait_here() as i32 != 0 {
-                b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
-            } else {
-                b"\0" as *const u8 as *const ::core::ffi::c_char
-            },
-            if !oodr.name.is_null() {
-                oodr.name
-            } else {
-                oodr.file.as_ref().expect("a nameless dep has a file").name
-            },
+            leading.as_ptr() as *const ::core::ffi::c_char,
+            wait,
+            name.as_ptr() as *const ::core::ffi::c_char,
         );
-        ood = oodr.next;
-        while let Some(oodn) = ood.as_ref() {
-            if oodn.ignore_mtime() != 0 {
-                printf(
-                    b" %s%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    if oodn.wait_here() as i32 != 0 {
-                        b".WAIT \0" as *const u8 as *const ::core::ffi::c_char
-                    } else {
-                        b"\0" as *const u8 as *const ::core::ffi::c_char
-                    },
-                    if !oodn.name.is_null() {
-                        oodn.name
-                    } else {
-                        oodn.file.as_ref().expect("a nameless dep has a file").name
-                    },
-                );
+    }
+    // Normal prerequisites first; the first order-only prereq starts the `|`
+    // block.
+    let mut first_ood: Option<usize> = None;
+    for (i, d) in deps.iter().enumerate() {
+        if !d.ignore_mtime {
+            print_one(d, b" %s%s\0");
+        } else if first_ood.is_none() {
+            first_ood = Some(i);
+        }
+    }
+    if let Some(start) = first_ood {
+        print_one(&deps[start], b" | %s%s\0");
+        for d in &deps[start + 1..] {
+            if d.ignore_mtime {
+                print_one(d, b" %s%s\0");
             }
-            ood = oodn.next;
         }
     }
     putchar('\n' as i32);
@@ -2311,159 +2388,179 @@ pub unsafe fn print_prereqs(mut deps: *const dep) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
-    let f: *const file = item as *const file;
-    if crate::make_main::opt_no_builtin_rules() && (*f).builtin() as i32 != 0 {
+pub unsafe fn print_file(ctx: &crate::execctx::ExecContext, fid: FileId) {
+    let Some(node) = ctx.filenodes.get(fid) else {
+        return;
+    };
+    // Snapshot the head and each inline double-colon entry, then print each in
+    // order (the former `prev`-chain recursion). The guard is dropped before any
+    // printing so reentrant variable lookups never deadlock on this node.
+    let (head, entries): (FileNode, Vec<FileNode>) = {
+        let n = node.lock().expect("file node lock poisoned");
+        (n.clone(), n.double_colon.clone())
+    };
+    print_file_node(ctx, fid, &head, !entries.is_empty());
+    for e in &entries {
+        print_file_node(ctx, fid, e, false);
+    }
+}
+
+/// Print one file node (`make -p` database entry). `fid` is the head's arena id,
+/// used for the per-target/per-file variable dumps (inline double-colon entries
+/// share the head's identity). `has_double_colon` controls the `::`/`:` after
+/// the target name.
+unsafe fn print_file_node(
+    ctx: &crate::execctx::ExecContext,
+    fid: FileId,
+    f: &FileNode,
+    has_double_colon: bool,
+) {
+    if crate::make_main::opt_no_builtin_rules() && f.builtin {
         return;
     }
     putchar('\n' as i32);
-    if (*f)
-        .cmds
-        .as_ref()
-        .is_some_and(|c| c.recipe_prefix as i32 != crate::make_main::opt_cmd_prefix() as i32)
-    {
-        fputs(
-            b".RECIPEPREFIX = \0" as *const u8 as *const ::core::ffi::c_char,
-            stdout,
-        );
-        let new_prefix = (*f)
-            .cmds
-            .as_ref()
-            .expect("cmds is non-null when its recipe_prefix differs")
-            .recipe_prefix;
-        with_options(|o| o.cmd_prefix.set(new_prefix));
-        if new_prefix as i32 != RECIPEPREFIX_DEFAULT {
-            putchar(new_prefix as i32);
+    if let Some(recipe) = f.recipe.as_ref() {
+        if recipe.recipe_prefix as i32 != crate::make_main::opt_cmd_prefix() as i32 {
+            fputs(
+                b".RECIPEPREFIX = \0" as *const u8 as *const ::core::ffi::c_char,
+                stdout,
+            );
+            let new_prefix = recipe.recipe_prefix as ::core::ffi::c_char;
+            with_options(|o| o.cmd_prefix.set(new_prefix));
+            if new_prefix as i32 != RECIPEPREFIX_DEFAULT {
+                putchar(new_prefix as i32);
+            }
+            putchar('\n' as i32);
         }
-        putchar('\n' as i32);
     }
-    if !(*f).variables.is_null() {
-        print_target_variables(f);
+    if !f.variables.is_empty() {
+        print_target_variables(ctx, fid);
     }
-    if !(*f).is_target {
+    if !f.is_target {
         puts(b"# Not a target:\0" as *const u8 as *const ::core::ffi::c_char);
     }
+    let mut name_c = f.name.clone();
+    name_c.push(0);
     printf(
         b"%s:%s\0" as *const u8 as *const ::core::ffi::c_char,
-        (*f).name,
-        if !(*f).double_colon.is_null() {
+        name_c.as_ptr() as *const ::core::ffi::c_char,
+        if has_double_colon {
             b":\0" as *const u8 as *const ::core::ffi::c_char
         } else {
             b"\0" as *const u8 as *const ::core::ffi::c_char
         },
     );
-    print_prereqs((*f).deps);
-    if (*f).precious {
+    print_prereqs(&f.deps);
+    if f.precious {
         puts(
             b"#  Precious file (prerequisite of .PRECIOUS).\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    if (*f).phony {
+    if f.phony {
         puts(
             b"#  Phony target (prerequisite of .PHONY).\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    if (*f).cmd_target {
+    if f.cmd_target {
         puts(b"#  Command line target.\0" as *const u8 as *const ::core::ffi::c_char);
     }
-    if (*f).dontcare {
+    if f.dontcare {
         puts(
             b"#  A default, MAKEFILES, or -include/sinclude makefile.\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    if (*f).builtin {
+    if f.builtin {
         puts(b"#  Builtin rule\0" as *const u8 as *const ::core::ffi::c_char);
     }
-    puts(if (*f).tried_implicit() as i32 != 0 {
+    puts(if f.tried_implicit {
         b"#  Implicit rule search has been done.\0" as *const u8 as *const ::core::ffi::c_char
     } else {
         b"#  Implicit rule search has not been done.\0" as *const u8 as *const ::core::ffi::c_char
     });
-    if !(*f).stem.is_null() {
+    if let Some(stem) = f.stem.as_ref() {
+        let mut stem_c = stem.clone().into_bytes();
+        stem_c.push(0);
         printf(
             b"#  Implicit/static pattern stem: '%s'\n\0" as *const u8 as *const ::core::ffi::c_char,
-            (*f).stem,
+            stem_c.as_ptr() as *const ::core::ffi::c_char,
         );
     }
-    if (*f).intermediate {
+    if f.intermediate {
         puts(
             b"#  File is an intermediate prerequisite.\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    if (*f).notintermediate {
+    if f.notintermediate {
         puts(
             b"#  File is a prerequisite of .NOTINTERMEDIATE.\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    if (*f).secondary {
+    if f.secondary {
         puts(
             b"#  File is secondary (prerequisite of .SECONDARY).\0" as *const u8
                 as *const ::core::ffi::c_char,
         );
     }
-    if (*f).is_explicit {
+    if f.is_explicit {
         puts(b"#  File is explicitly mentioned.\0" as *const u8 as *const ::core::ffi::c_char);
     }
-    if !(*f).also_make.is_null() {
-        let _d: *const Dep;
+    if !f.also_make.is_empty() {
         fputs(
             b"#  Also makes:\0" as *const u8 as *const ::core::ffi::c_char,
             stdout,
         );
-        for d in seq_iter((*f).also_make) {
+        for d in &f.also_make {
+            let mut nm = dep_name_bytes(d);
+            nm.push(0);
             printf(
                 b" %s\0" as *const u8 as *const ::core::ffi::c_char,
-                if !(*d).name.is_null() {
-                    (*d).name
-                } else {
-                    (*d).file.as_ref().expect("a nameless dep has a file").name
-                },
+                nm.as_ptr() as *const ::core::ffi::c_char,
             );
         }
         putchar('\n' as i32);
     }
-    if (*f).last_mtime == UNKNOWN_MTIME as uintmax_t {
+    if f.last_mtime == UNKNOWN_MTIME as u64 {
         puts(b"#  Modification time never checked.\0" as *const u8 as *const ::core::ffi::c_char);
-    } else if (*f).last_mtime == NONEXISTENT_MTIME as uintmax_t {
+    } else if f.last_mtime == NONEXISTENT_MTIME as u64 {
         puts(b"#  File does not exist.\0" as *const u8 as *const ::core::ffi::c_char);
-    } else if (*f).last_mtime == OLD_MTIME as uintmax_t {
+    } else if f.last_mtime == OLD_MTIME as u64 {
         puts(b"#  File is very old.\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
-        let stamp = CString::new(file_timestamp_string((*f).last_mtime))
+        let stamp = CString::new(file_timestamp_string(f.last_mtime))
             .expect("formatted timestamp never contains an interior NUL");
         printf(
             b"#  Last modified %s\n\0" as *const u8 as *const ::core::ffi::c_char,
             stamp.as_ptr(),
         );
     }
-    puts(if (*f).updated() as i32 != 0 {
+    puts(if f.updated {
         b"#  File has been updated.\0" as *const u8 as *const ::core::ffi::c_char
     } else {
         b"#  File has not been updated.\0" as *const u8 as *const ::core::ffi::c_char
     });
-    match (*f).command_state() as i32 {
-        2 => {
+    match f.command_state {
+        CommandState::Running => {
             puts(
                 b"#  Recipe currently running (THIS IS A BUG).\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
-        1 => {
+        CommandState::DepsRunning => {
             puts(
                 b"#  Dependencies recipe running (THIS IS A BUG).\0" as *const u8
                     as *const ::core::ffi::c_char,
             );
         }
-        0 | 3 => match (*f).update_status() as i32 {
-            0 => {
+        CommandState::NotStarted | CommandState::Finished => match f.update_status {
+            UpdateStatus::Success => {
                 puts(b"#  Successfully updated.\0" as *const u8 as *const ::core::ffi::c_char);
             }
-            2 => {
+            UpdateStatus::Question => {
                 if crate::make_main::opt_question() {
                 } else {
                     panic!("assertion failed: question_flag");
@@ -2475,24 +2572,12 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
             }
             _ => {}
         },
-        _ => {
-            puts(
-                b"#  Invalid value in 'command_state' member!\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
-            fflush(stdout);
-            fflush(stderr);
-            abort();
-        }
     }
-    if !(*f).variables.is_null() {
-        print_file_variables(f);
+    if !f.variables.is_empty() {
+        print_file_variables(ctx, fid);
     }
-    if !(*f).cmds.is_null() {
-        print_commands((*f).cmds);
-    }
-    if !(*f).prev.is_null() {
-        print_file((*f).prev as *const ::core::ffi::c_void);
+    if let Some(recipe) = f.recipe.as_ref() {
+        print_commands(recipe);
     }
 }
 /// # Safety
@@ -2501,13 +2586,24 @@ pub unsafe fn print_file(item: *const ::core::ffi::c_void) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_file_data_base(ctx: &crate::execctx::ExecContext) {
     puts(b"\n# Files\0" as *const u8 as *const ::core::ffi::c_char);
-    // `print_file` walks each name's prev/double-colon chain; `for_each`
-    // snapshots so the table borrow is not held across it.
-    ctx.files
-        .for_each(|f| unsafe { print_file(f as *const ::core::ffi::c_void) });
+    // Snapshot the arena's `FileId`s under the map lock, drop it, then print
+    // each (`print_file` walks the node's inline double-colon entries). Any
+    // files entered while printing are not re-processed.
+    let ids: Vec<FileId> = ctx
+        .filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .keys()
+        .copied()
+        .collect();
+    let count = ids.len();
+    for fid in ids {
+        print_file(ctx, fid);
+    }
     printf(
         b"\n# %lu files in the file table.\n\0" as *const u8 as *const ::core::ffi::c_char,
-        ctx.files.0.borrow().len() as ::core::ffi::c_ulong,
+        count as ::core::ffi::c_ulong,
     );
 }
 /// # Safety
@@ -2562,63 +2658,37 @@ pub unsafe fn print_targets(ctx: &crate::execctx::ExecContext) {
         puts(cname.as_ptr() as *const ::core::ffi::c_char);
     }
 }
-/// Report (via `error`) when a single file/dep field is set but not interned
-/// in the strcache. A null/empty field, or one already cached, is silent.
-unsafe fn verify_field_cached(
-    ctx: &crate::execctx::ExecContext,
-    owner: *const ::core::ffi::c_char,
-    field: &::core::ffi::CStr,
-    value: *const ::core::ffi::c_char,
-) {
-    // A field is well-formed when it is null/empty, or interned in the strcache.
-    if value.is_null() || *value as i32 == 0 || strcache_iscached(value) != 0 {
-        return;
-    }
-    error(
-        ctx,
-        ::core::ptr::null::<Floc>(),
-        (strlen(owner) as size_t)
-            .wrapping_add(field.count_bytes() as size_t)
-            .wrapping_add(strlen(value) as size_t),
-        b"%s: field '%s' not cached: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((owner) as *const ::core::ffi::c_char),
-            FmtArg::Str((field.as_ptr()) as *const ::core::ffi::c_char),
-            FmtArg::Str((value) as *const ::core::ffi::c_char)],
-    );
-}
-
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn verify_file(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
-    // Invoked via `hash_map_arg`; `arg` carries the borrowed `ExecContext` so the
-    // diagnostics below can be prefixed correctly without any global.
-    let ctx = &*(arg as *const crate::execctx::ExecContext);
-    let f: *const file = item as *const file;
-
-    verify_field_cached(ctx, (*f).name, c"name", (*f).name);
-    verify_field_cached(ctx, (*f).name, c"hname", (*f).hname);
-    verify_field_cached(ctx, (*f).name, c"vpath", (*f).vpath);
-    verify_field_cached(ctx, (*f).name, c"stem", (*f).stem);
-
-    let mut d: *const dep = (*f).deps;
-    while !d.is_null() {
-        if (*d).need_2nd_expansion() == 0 {
-            verify_field_cached(ctx, (*d).name, c"name", (*d).name);
-        }
-        verify_field_cached(ctx, (*d).name, c"stem", (*d).stem);
-        d = (*d).next;
-    }
+pub unsafe fn verify_file(_ctx: &crate::execctx::ExecContext, _f: &FileNode) {
+    // In the c2rust graph this checked that every name/stem field on a `*mut file`
+    // and its deps was interned in the strcache (a raw `*const c_char` was only
+    // valid if cached). In the `FileNode` model these fields are owned `Vec<u8>`/
+    // `String`, so they are well-formed by construction and there is no strcache
+    // pointer to verify. The walk is retained as a structural no-op so the
+    // `make --debug` consistency pass keeps the same call shape.
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn verify_file_data_base(ctx: &crate::execctx::ExecContext) {
-    let ctx_arg = ctx as *const crate::execctx::ExecContext as *mut ::core::ffi::c_void;
-    ctx.files
-        .for_each(|f| unsafe { verify_file(f as *const ::core::ffi::c_void, ctx_arg) });
+    // Snapshot the nodes under the map lock, drop it, then verify each under its
+    // own lock.
+    let nodes: Vec<::std::sync::Arc<::std::sync::Mutex<FileNode>>> = ctx
+        .filenodes
+        .0
+        .lock()
+        .expect("file arena poisoned")
+        .values()
+        .map(::std::sync::Arc::clone)
+        .collect();
+    for node in nodes {
+        let n = node.lock().expect("file node lock poisoned");
+        verify_file(ctx, &n);
+    }
 }
 /// # Safety
 ///
@@ -2696,9 +2766,7 @@ pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::implicit::alloc_dep;
     use crate::make_main::initialize_stopchar_map;
-    use crate::strcache::strcache_add;
 
     // FFI declarations and types the pre-std clock cascade depended on. They
     // were removed from production code when `file_timestamp_now` moved to
@@ -2959,17 +3027,25 @@ mod tests {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             crate::make_main::install_default_options_for_test();
+            initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
-            let mut f = File::default();
-            f.set_updating(1);
-            snap_file(&ctx, &raw mut f, ::core::ptr::null());
-            assert_eq!(f.updating(), 0, "updating cleared when not 2nd-expanding");
+            let fid = enter_file(&ctx, b"snap_plain_probe");
+            {
+                let node = ctx.filenodes.get(fid).unwrap();
+                node.lock().unwrap().updating = true;
+            }
+            snap_file(&ctx, fid, &[]);
+            let node = ctx.filenodes.get(fid).unwrap();
+            assert!(
+                !node.lock().unwrap().updating,
+                "updating cleared when not 2nd-expanding"
+            );
         }
     }
 
     /// For a target file with no per-target variables, `snap_file` copies the
-    /// `.EXTRA_PREREQS` dep chain (here a single prereq whose name matches the
-    /// target, so the self-match break path runs and the copy is freed).
+    /// shared dep list (here a single prereq whose name matches the target, so
+    /// the self-match break path runs and nothing is appended).
     #[test]
     fn snap_file_target_copies_extra_prereqs() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -2977,26 +3053,26 @@ mod tests {
             crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
-            let name = strcache_add(c"snapself".as_ptr());
-            let mut f = File::default();
-            f.name = name;
-            f.hname = name;
-            f.set_is_target(1);
-
-            // A one-element prereq chain whose dep name equals the target name.
-            let d = alloc_dep();
-            (*d).name = name;
-            (*d).next = ::core::ptr::null_mut();
-            snap_file(&ctx, &raw mut f, d as *const Dep);
+            let fid = enter_file(&ctx, b"snapself");
+            {
+                let node = ctx.filenodes.get(fid).unwrap();
+                node.lock().unwrap().is_target = true;
+            }
+            // A one-element shared dep list whose dep name equals the target name.
+            let deps = vec![dep_node_from_name(b"snapself".to_vec(), false, false)];
+            snap_file(&ctx, fid, &deps);
             // The self-referential prereq is dropped, so deps stays empty.
-            assert!(f.deps.is_null(), "self-prereq is not appended");
-            free_dep(d);
+            let node = ctx.filenodes.get(fid).unwrap();
+            assert!(
+                node.lock().unwrap().deps.is_empty(),
+                "self-prereq is not appended"
+            );
         }
     }
 
-    /// `enter_prereqs(deps, NULL)` resolves each prerequisite to a file via
-    /// `enter_file`, nulls the dep name, and (with a null stem) marks the
-    /// entered file explicit. Drives the common no-pattern path.
+    /// `enter_prereqs(deps, None)` resolves each prerequisite to a file via
+    /// `enter_file` and (with no stem) marks the entered file explicit. Drives
+    /// the common no-pattern path.
     #[test]
     fn enter_prereqs_resolves_files_for_plain_deps() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -3005,30 +3081,28 @@ mod tests {
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
 
-            let nm = strcache_add(c"enter_prereqs_probe_target".as_ptr());
-            let d = alloc_dep();
-            (*d).name = nm;
-            (*d).next = ::core::ptr::null_mut();
-
-            let head = enter_prereqs(&ctx, d, ::core::ptr::null());
-            assert_eq!(head, d, "the chain head is returned unchanged");
-            // Name is consumed (replaced by the resolved file) and a file exists.
-            assert!((*head).name.is_null(), "resolved dep name is cleared");
-            assert!(!(*head).file.is_null(), "prereq resolved to a file");
+            let deps = vec![dep_node_from_name(
+                b"enter_prereqs_probe_target".to_vec(),
+                false,
+                false,
+            )];
+            let out = enter_prereqs(&ctx, deps, None);
+            assert_eq!(out.len(), 1, "the chain length is unchanged");
+            assert!(out[0].file.is_some(), "prereq resolved to a file");
             assert!(
-                !lookup_file(&ctx, nm).is_null(),
+                lookup_file(&ctx, b"enter_prereqs_probe_target").is_some(),
                 "the prerequisite file is now in the table"
             );
         }
     }
 
-    /// `enter_prereqs(NULL, _)` is a no-op returning null.
+    /// `enter_prereqs([], _)` is a no-op returning an empty list.
     #[test]
     fn enter_prereqs_null_is_noop() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             let ctx = crate::execctx::ExecContext::default();
-            assert!(enter_prereqs(&ctx, ::core::ptr::null_mut(), ::core::ptr::null()).is_null());
+            assert!(enter_prereqs(&ctx, Vec::new(), None).is_empty());
         }
     }
 
@@ -3043,13 +3117,12 @@ mod tests {
             initialize_stopchar_map();
             let a = crate::execctx::ExecContext::default();
             let b = crate::execctx::ExecContext::default();
-            let nm = strcache_add(c"per_ctx_probe_target".as_ptr());
 
-            let f = enter_file(&a, nm);
-            assert!(!f.is_null(), "file is entered into context a");
-            assert_eq!(lookup_file(&a, nm), f, "and found again in context a");
+            let f = enter_file(&a, b"per_ctx_probe_target");
+            assert_eq!(lookup_file(&a, b"per_ctx_probe_target"), Some(f),
+                "and found again in context a");
             assert!(
-                lookup_file(&b, nm).is_null(),
+                lookup_file(&b, b"per_ctx_probe_target").is_none(),
                 "an independent context shares no global file table"
             );
         }
@@ -3057,8 +3130,7 @@ mod tests {
 
     /// With a non-null stem, `enter_prereqs` walks the static-pattern block. A
     /// prerequisite name with no `%` finds no percent, so it keeps its name but
-    /// is tagged with the stem and `staticpattern`, then resolved to a file.
-    /// This exercises the stem branch without touching the variable buffer.
+    /// is tagged with the stem, then resolved to a file.
     #[test]
     fn enter_prereqs_static_pattern_without_percent() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -3067,23 +3139,24 @@ mod tests {
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
 
-            let nm = strcache_add(c"enter_prereqs_static_probe".as_ptr());
-            let stem = strcache_add(c"thestem".as_ptr());
-            let d = alloc_dep();
-            (*d).name = nm;
-            (*d).next = ::core::ptr::null_mut();
-
-            let head = enter_prereqs(&ctx, d, stem);
-            assert_eq!(head, d);
+            let deps = vec![dep_node_from_name(
+                b"enter_prereqs_static_probe".to_vec(),
+                false,
+                false,
+            )];
+            let out = enter_prereqs(&ctx, deps, Some(b"thestem"));
+            assert_eq!(out.len(), 1);
             // The dep was tagged with the stem (staticpattern path ran) and then
-            // resolved: name cleared, file entered, staticpattern reset to 0.
-            assert_eq!((*head).stem, stem, "stem recorded on the static pattern");
-            assert!((*head).name.is_null(), "resolved dep name is cleared");
-            assert!(!(*head).file.is_null(), "prereq resolved to a file");
+            // resolved: file entered, static_pattern reset to false.
             assert_eq!(
-                (*head).staticpattern(),
-                0,
-                "staticpattern is reset after resolution"
+                out[0].stem.as_deref(),
+                Some("thestem"),
+                "stem recorded on the static pattern"
+            );
+            assert!(out[0].file.is_some(), "prereq resolved to a file");
+            assert!(
+                !out[0].static_pattern,
+                "static_pattern is reset after resolution"
             );
         }
     }
@@ -3104,19 +3177,14 @@ mod tests {
             let ctx = crate::execctx::ExecContext::default();
             crate::expand::initialize_variable_output();
 
-            let nm = strcache_add(c"%.o".as_ptr());
-            let stem = strcache_add(c"epp_stem".as_ptr());
-            let d = alloc_dep();
-            (*d).name = nm;
-            (*d).next = ::core::ptr::null_mut();
-
-            let head = enter_prereqs(&ctx, d, stem);
-            assert_eq!(head, d);
+            let deps = vec![dep_node_from_name(b"%.o".to_vec(), false, false)];
+            let out = enter_prereqs(&ctx, deps, Some(b"epp_stem"));
+            assert_eq!(out.len(), 1);
             // `%` expanded to the stem and the dep resolved to a file named
-            // "epp_stem.o"; the dep name itself is cleared after resolution.
-            assert!((*head).name.is_null(), "resolved dep name is cleared");
+            // "epp_stem.o".
+            assert!(out[0].file.is_some(), "prereq resolved to a file");
             assert!(
-                !lookup_file(&ctx, strcache_add(c"epp_stem.o".as_ptr())).is_null(),
+                lookup_file(&ctx, b"epp_stem.o").is_some(),
                 "the expanded prerequisite file was entered"
             );
         }
@@ -3124,8 +3192,8 @@ mod tests {
 
     /// When a `%` prerequisite expands to the empty string (a bare `%` with an
     /// empty stem: the percent is dropped and nothing remains), `enter_prereqs`
-    /// removes that prerequisite from the chain and frees it. With a single
-    /// such dep the chain collapses to empty.
+    /// removes that prerequisite from the chain. With a single such dep the
+    /// chain collapses to empty.
     #[test]
     fn enter_prereqs_drops_prereq_that_expands_empty() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -3137,16 +3205,11 @@ mod tests {
             let ctx = crate::execctx::ExecContext::default();
             crate::expand::initialize_variable_output();
 
-            let nm = strcache_add(c"%".as_ptr());
-            let stem = strcache_add(c"".as_ptr());
-            let d = alloc_dep();
-            (*d).name = nm;
-            (*d).next = ::core::ptr::null_mut();
-
+            let deps = vec![dep_node_from_name(b"%".to_vec(), false, false)];
             // The bare `%` with an empty stem expands to "", so the dep is
-            // dropped and freed; the returned chain is empty.
-            let head = enter_prereqs(&ctx, d, stem);
-            assert!(head.is_null(), "the empty-expanding prereq is removed");
+            // dropped; the returned chain is empty.
+            let out = enter_prereqs(&ctx, deps, Some(b""));
+            assert!(out.is_empty(), "the empty-expanding prereq is removed");
         }
     }
 
