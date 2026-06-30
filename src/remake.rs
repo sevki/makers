@@ -198,10 +198,10 @@ fn new_mtime() -> uintmax_t {
     })
 }
 
-/// Read the global debug level (`db_level` is a `static mut`).
+/// Read the global debug level via the `make_main` accessor.
 #[inline]
 fn dbg() -> i32 {
-    unsafe { db_level }
+    db_level()
 }
 
 /// Whether `id` or any of its double-colon entries is running/deps-running.

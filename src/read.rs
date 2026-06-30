@@ -319,7 +319,7 @@ pub unsafe fn read_all_makefiles(
         (*current_variable_set_list).set,
         NILF,
     );
-    if 0x1_i32 & db_level != 0 {
+    if 0x1_i32 & db_level() != 0 {
         printf(b"Reading makefiles...\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
@@ -463,7 +463,7 @@ unsafe fn eval_makefile(
     ebuf.floc.filenm = filename;
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
-    if 0x2_i32 & db_level != 0 {
+    if 0x2_i32 & db_level() != 0 {
         printf(
             b"Reading makefile '%s'\0" as *const u8 as *const ::core::ffi::c_char,
             filename,
@@ -822,7 +822,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                 && *ul.offset(2_i32 as isize) as i32 == 0xbf_i32
             {
                 line = line.offset(3_i32 as isize);
-                if 0x1_i32 & db_level != 0 {
+                if 0x1_i32 & db_level() != 0 {
                     if !(*ebuf).floc.filenm.is_null() {
                         printf(
                             b"Skipping UTF-8 BOM in makefile '%s'\n\0" as *const u8

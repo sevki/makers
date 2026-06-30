@@ -383,6 +383,22 @@ fn conditionals_debug() {
 }
 
 #[test]
+fn debug_basic_trace() {
+    // `--debug=b` parses into the global debug-level bitmask (converted from a
+    // c2rust `static mut` to an atomic behind safe accessors), which the build
+    // then reads to emit basic tracing ("Must remake target 'first'.", ...).
+    // `-n` keeps the run a dry run so no files are written and the output stays
+    // deterministic. Unordered because make's self-printed recipe lines and the
+    // debug trace flush through paths whose interleaving can jitter.
+    check_unordered(
+        "debug-basic-trace",
+        "91_debug_basic.mk",
+        "all",
+        &["--debug=b", "-n"],
+    );
+}
+
+#[test]
 fn conditionals_else_if_chain_default() {
     // `else ifeq` / `else ifdef` chain in conditional_line, falling through to
     // the final plain `else`.
