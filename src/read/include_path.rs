@@ -56,16 +56,14 @@ fn push_include_dir(out: &mut Vec<std::path::PathBuf>, dir: &[u8]) {
 /// Build the include search path from the `-I` directories plus the default
 /// system directories, owning the result as a native `Vec<PathBuf>`.
 ///
-/// # Safety
-///
-/// Calls into the C variable machinery (`do_variable_definition`); must run
-/// single-threaded like the rest of startup. The resolved search path is then
-/// stored in `main_0`'s owned `Options` via the `with_options` borrow channel,
-/// not in any process-global mutable state.
-pub unsafe fn construct_include_path(
-    ctx: &crate::execctx::ExecContext,
-    arg_dirs: &[std::path::PathBuf],
-) {
+/// This is a safe function: the directory handling is all safe Rust, and the
+/// only `unsafe` is the internal FFI call into the C variable machinery
+/// (`do_variable_definition`), which is always valid here — the `.INCLUDE_DIRS`
+/// name is a static C string and each value is either a static empty string or
+/// a strcache-interned C string. It must still run single-threaded like the
+/// rest of startup; the resolved search path is stored in the owned `Options`
+/// via the `with_options` borrow channel, not in any process-global state.
+pub fn construct_include_path(ctx: &crate::execctx::ExecContext, arg_dirs: &[std::path::PathBuf]) {
     use std::os::unix::ffi::OsStrExt;
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     let mut disable = false;
@@ -84,30 +82,38 @@ pub unsafe fn construct_include_path(
             push_include_dir(&mut dirs, d);
         }
     }
-    do_variable_definition(
-        ctx,
-        NILF,
-        b".INCLUDE_DIRS\0" as *const u8 as *const ::core::ffi::c_char,
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        f_simple,
-        0,
-        s_global,
-    );
-    for dir in &dirs {
-        // Intern the path bytes to obtain a canonical, cache-owned pointer for
-        // the C variable machinery; no CString/manual NUL constructed here.
-        let value = crate::strcache::strcache_add_bytes(dir.as_os_str().as_bytes());
+    // SAFETY: FFI boundary. The name is a static NUL-terminated C string and the
+    // value is a static empty C string, so every pointer arg is valid.
+    unsafe {
         do_variable_definition(
             ctx,
             NILF,
             b".INCLUDE_DIRS\0" as *const u8 as *const ::core::ffi::c_char,
-            value,
+            b"\0" as *const u8 as *const ::core::ffi::c_char,
             o_default,
-            f_append,
+            f_simple,
             0,
             s_global,
         );
+    }
+    for dir in &dirs {
+        // Intern the path bytes to obtain a canonical, cache-owned pointer for
+        // the C variable machinery; no CString/manual NUL constructed here.
+        let value = crate::strcache::strcache_add_bytes(dir.as_os_str().as_bytes());
+        // SAFETY: FFI boundary. The name is a static C string and `value` is a
+        // strcache-interned, NUL-terminated C string valid for the call.
+        unsafe {
+            do_variable_definition(
+                ctx,
+                NILF,
+                b".INCLUDE_DIRS\0" as *const u8 as *const ::core::ffi::c_char,
+                value,
+                o_default,
+                f_append,
+                0,
+                s_global,
+            );
+        }
     }
     crate::make_main::with_options(|o| {
         *o.resolved_include_dirs.borrow_mut() = dirs;
