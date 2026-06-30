@@ -3,7 +3,7 @@ pub use crate::ffi_types::{
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
     ssize_t, time_t, uintmax_t,
 };
-use crate::file::{FileId, VariableSet, VariableSetList};
+use crate::file::{FileId, FileNode, VariableSet, VariableSetList};
 use crate::file::{
     cs_finished, cs_running, us_failed, us_question, us_success, CommandState,
     UpdateStatus,
@@ -195,6 +195,10 @@ pub struct child {
     pub next: *mut child,
     /// The target this child builds, by arena handle (the former `*mut File`).
     pub file: FileId,
+    /// Which inline entry of a (possibly double-colon) target this child runs:
+    /// `0` = the head node itself, `i >= 1` = `head.double_colon[i-1]`. For a
+    /// single-colon target this is always `0`.
+    pub entry: usize,
     pub sh_batch_file: *mut ::core::ffi::c_char,
     /// Owned, fully-expanded recipe lines (each NUL-free), the former
     /// `command_lines: *mut *mut c_char` + intrusive `ncommand_lines`.
@@ -515,16 +519,39 @@ fn recipe_floc(
 /// returning (per the job-state locking discipline: never hold a `FileNode`
 /// guard across a job spawn or `notice_finished_file`).
 fn file_command_state(ctx: &crate::execctx::ExecContext, file: FileId) -> CommandState {
+    file_command_state_entry(ctx, file, 0)
+}
+
+/// Entry-aware form: `entry` 0 = the head, `i>=1` = `double_colon[i-1]`.
+fn file_command_state_entry(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+) -> CommandState {
     match ctx.filenodes.get(file) {
-        Some(node) => node.lock().expect("file node poisoned").command_state,
+        Some(node) => {
+            let mut guard = node.lock().expect("file node poisoned");
+            entry_node(&mut guard, entry).command_state
+        }
         None => CommandState::Finished,
     }
 }
 
 /// Read a target's `update_status` through the arena, dropping the lock first.
 fn file_update_status(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStatus {
+    file_update_status_entry(ctx, file, 0)
+}
+
+fn file_update_status_entry(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+) -> UpdateStatus {
     match ctx.filenodes.get(file) {
-        Some(node) => node.lock().expect("file node poisoned").update_status,
+        Some(node) => {
+            let mut guard = node.lock().expect("file node poisoned");
+            entry_node(&mut guard, entry).update_status
+        }
         None => UpdateStatus::Success,
     }
 }
@@ -535,8 +562,18 @@ fn set_file_update_status(
     file: FileId,
     status: UpdateStatus,
 ) {
+    set_file_update_status_entry(ctx, file, 0, status);
+}
+
+fn set_file_update_status_entry(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+    status: UpdateStatus,
+) {
     if let Some(node) = ctx.filenodes.get(file) {
-        node.lock().expect("file node poisoned").update_status = status;
+        let mut guard = node.lock().expect("file node poisoned");
+        entry_node(&mut guard, entry).update_status = status;
     }
 }
 
@@ -546,8 +583,28 @@ fn set_file_command_state(
     file: FileId,
     state: CommandState,
 ) {
+    set_file_command_state_entry(ctx, file, 0, state);
+}
+
+fn set_file_command_state_entry(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+    state: CommandState,
+) {
     if let Some(node) = ctx.filenodes.get(file) {
-        node.lock().expect("file node poisoned").command_state = state;
+        let mut guard = node.lock().expect("file node poisoned");
+        entry_node(&mut guard, entry).command_state = state;
+    }
+}
+
+/// Resolve a (possibly double-colon) entry within a locked head node: `0` is
+/// the head itself, `i>=1` is `double_colon[i-1]`.
+fn entry_node(guard: &mut FileNode, entry: usize) -> &mut FileNode {
+    if entry == 0 {
+        guard
+    } else {
+        &mut guard.double_colon[entry - 1]
     }
 }
 
@@ -946,9 +1003,10 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(ctx, c, exit_code, exit_sig, coredump, 0);
             }
-            set_file_update_status(
+            set_file_update_status_entry(
                 ctx,
                 (*c).file,
+                (*c).entry,
                 if child_failed == MAKE_FAILURE {
                     us_failed
                 } else {
@@ -975,7 +1033,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             }
             if job_next_command(c) != 0 {
                 if handling_fatal_signal != 0 {
-                    set_file_update_status(ctx, (*c).file, us_failed);
+                    set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_failed);
                 } else {
                     if crate::make_main::opt_output_sync() == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(ctx, &raw mut (*c).output);
@@ -986,20 +1044,24 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     );
                     start_job_command(ctx, c);
                     unblock_sigs();
-                    if file_command_state(ctx, (*c).file) as i32 == cs_running as i32 {
+                    if file_command_state_entry(ctx, (*c).file, (*c).entry) as i32
+                        == cs_running as i32
+                    {
                         continue;
                     }
                 }
-                if file_update_status(ctx, (*c).file) as i32 != us_success as i32 {
+                if file_update_status_entry(ctx, (*c).file, (*c).entry) as i32
+                    != us_success as i32
+                {
                     delete_child_targets(ctx, c);
                 }
             } else {
-                set_file_update_status(ctx, (*c).file, us_success);
+                set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_success);
             }
         }
         crate::output::output_dump(ctx, &raw mut (*c).output);
         if handling_fatal_signal == 0 {
-            notice_finished_file(ctx, (*c).file);
+            notice_finished_file(ctx, (*c).file, (*c).entry);
         }
         block_sigs();
         if (*c).pid > 0 && 0x4_i32 & db_level != 0 {
@@ -1222,8 +1284,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
             }
-            set_file_update_status(ctx, (*child).file, us_question);
-            notice_finished_file(ctx, (*child).file);
+            set_file_update_status_entry(ctx, (*child).file, (*child).entry, us_question);
+            notice_finished_file(ctx, (*child).file, (*child).entry);
             return;
         }
         if crate::make_main::opt_touch() && !(flags & 1 != 0) {
@@ -1353,7 +1415,12 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 if (*child).pid >= 0 {
                     JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
                 }
-                set_file_command_state(ctx, (*child).file, CommandState::Running);
+                set_file_command_state_entry(
+                    ctx,
+                    (*child).file,
+                    (*child).entry,
+                    CommandState::Running,
+                );
                 if !argv.is_null() {
                     free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                     free(argv as *mut ::core::ffi::c_void);
@@ -1366,9 +1433,9 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
     if job_next_command(child) != 0 {
         start_job_command(ctx, child);
     } else {
-        set_file_command_state(ctx, (*child).file, cs_running);
-        set_file_update_status(ctx, (*child).file, us_success);
-        notice_finished_file(ctx, (*child).file);
+        set_file_command_state_entry(ctx, (*child).file, (*child).entry, cs_running);
+        set_file_update_status_entry(ctx, (*child).file, (*child).entry, us_success);
+        notice_finished_file(ctx, (*child).file, (*child).entry);
     }
     output_context = ::core::ptr::null_mut::<output>();
 }
@@ -1378,11 +1445,12 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child) -> i32 {
     let f: FileId = (*c).file;
+    let e: usize = (*c).entry;
     (*c).set_remote(
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     if (*c).remote() == 0 && (job_slots_used() > 0 && load_too_high(ctx) != 0) {
-        set_file_command_state(ctx, f, cs_running);
+        set_file_command_state_entry(ctx, f, e, cs_running);
         (*c).next = waiting_jobs;
         waiting_jobs = c;
         return 0;
@@ -1391,7 +1459,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     // Finished states (cs_not_started reset to success, cs_finished) need the
     // file noticed and the child freed; a still-running job does not.
     let mut finish = false;
-    match file_command_state(ctx, f) as i32 {
+    match file_command_state_entry(ctx, f, e) as i32 {
         2 => {
             (*c).next = children;
             if (*c).pid > 0 {
@@ -1421,21 +1489,21 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
             unblock_sigs();
         }
         0 => {
-            set_file_update_status(ctx, f, UpdateStatus::Success);
+            set_file_update_status_entry(ctx, f, e, UpdateStatus::Success);
             finish = true;
         }
         3 => {
             finish = true;
         }
         _ => {
-            if file_command_state(ctx, f) as i32 == cs_finished as i32 {
+            if file_command_state_entry(ctx, f, e) as i32 == cs_finished as i32 {
             } else {
                 panic!("assertion failed: f->command_state == cs_finished");
             };
         }
     }
     if finish {
-        notice_finished_file(ctx, f);
+        notice_finished_file(ctx, f, e);
         free_child(ctx, c);
     }
     1
@@ -1589,13 +1657,15 @@ unsafe fn collapse_dollar_refs(line: *mut ::core::ffi::c_char) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId) {
+pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize) {
     start_waiting_jobs(ctx);
     reap_children(ctx, 0, 0);
 
     // Chop the target's recipe into per-line text + flags. We clone the recipe,
     // chop the clone, then write the chopped lines back so the node's recipe is
     // populated too — all without holding the arena lock across a job spawn.
+    // `entry` selects which inline entry of a double-colon target runs (0 =
+    // head, i>=1 = double_colon[i-1]).
     let (mut chopped, dontcare) = {
         let node = ctx
             .filenodes
@@ -1603,13 +1673,18 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId) {
             .expect("new_job requires an interned file");
         let mut guard = node.lock().expect("file node poisoned");
         let dontcare = guard.dontcare;
-        let mut recipe = guard
+        let entry_node: &mut FileNode = if entry == 0 {
+            &mut guard
+        } else {
+            &mut guard.double_colon[entry - 1]
+        };
+        let mut recipe = entry_node
             .recipe
             .clone()
             .expect("new_job requires a recipe");
         chop_commands(ctx, &mut recipe);
-        // Persist the chopped view back onto the node.
-        if let Some(r) = guard.recipe.as_mut() {
+        // Persist the chopped view back onto the entry's recipe.
+        if let Some(r) = entry_node.recipe.as_mut() {
             r.lines = recipe.lines.clone();
             r.any_recurse = recipe.any_recurse;
         }
@@ -1629,6 +1704,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId) {
         },
         next: ::core::ptr::null_mut::<child>(),
         file,
+        entry,
         sh_batch_file: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         command_lines: Vec::new(),
         line_flags: Vec::new(),

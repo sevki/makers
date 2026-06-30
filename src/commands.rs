@@ -9,7 +9,7 @@ pub use crate::ffi_types::{pid_t, sig_atomic_t, size_t, time_t, uintmax_t};
 use crate::dep::DepNode;
 use crate::file::{
     file_timestamp_cons, lookup_file, remove_intermediates, system_time_from_unix, CommandState,
-    FileId, UpdateStatus, VarOrigin, NONEXISTENT_MTIME, ORDINARY_MTIME_MIN,
+    FileId, FileNode, UpdateStatus, VarOrigin, NONEXISTENT_MTIME, ORDINARY_MTIME_MIN,
 };
 use crate::floc::Floc;
 use crate::job::{child, children, job_slots_used, new_job, reap_children};
@@ -384,22 +384,36 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Run `file`'s commands: set up its variables and start a job, or mark it
 /// finished immediately when the recipe is effectively empty.
-pub fn execute_file_commands(ctx: &ExecContext, file: FileId) {
+/// Resolve a (possibly double-colon) entry within a locked head node: `0` is
+/// the head itself, `i>=1` is `double_colon[i-1]`.
+fn entry_node(guard: &mut FileNode, entry: usize) -> &mut FileNode {
+    if entry == 0 {
+        guard
+    } else {
+        &mut guard.double_colon[entry - 1]
+    }
+}
+
+pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
     let Some(node) = ctx.filenodes.get(file) else {
         return;
     };
 
     // A recipe of nothing but whitespace and `-`/`@`/`+` prefixes means there
-    // is nothing to execute. Snapshot the recipe text, loaded flag and name.
+    // is nothing to execute. Snapshot the entry's recipe text, loaded flag and
+    // name (`entry` 0 = head, i>=1 = double_colon[i-1]).
     let (recipe_text, loaded, name): (Vec<u8>, bool, Vec<u8>) = {
-        let guard = node.lock().expect("file node poisoned");
-        let text = guard
+        let mut guard = node.lock().expect("file node poisoned");
+        let loaded = guard.loaded;
+        let nm = guard.name.clone();
+        let en = entry_node(&mut guard, entry);
+        let text = en
             .recipe
             .as_ref()
             .expect("execute_file_commands requires a recipe")
             .text
             .clone();
-        (text, guard.loaded, guard.name.clone())
+        (text, loaded, nm)
     };
 
     let empty = recipe_text.iter().all(|&c| {
@@ -408,21 +422,20 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId) {
     if empty {
         {
             let mut guard = node.lock().expect("file node poisoned");
-            guard.command_state = CommandState::Running;
-            guard.update_status = UpdateStatus::Success;
+            let en = entry_node(&mut guard, entry);
+            en.command_state = CommandState::Running;
+            en.update_status = UpdateStatus::Success;
         }
-        // SAFETY: remake.rs boundary still takes `*mut file`; this flip lands
-        // when remake.rs is converted to FileId (slice 5b cleanup).
         unsafe {
-            notice_finished_file(ctx, file);
+            notice_finished_file(ctx, file, entry);
         }
         return;
     }
 
     initialize_file_variables(ctx, file, 0);
     let stem = {
-        let guard = node.lock().expect("file node poisoned");
-        guard.stem.as_ref().map(|s| s.clone().into_bytes())
+        let mut guard = node.lock().expect("file node poisoned");
+        entry_node(&mut guard, entry).stem.as_ref().map(|s| s.clone().into_bytes())
     };
     set_file_variables(ctx, file, stem.as_deref());
 
@@ -442,7 +455,7 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId) {
     // SAFETY: `new_job` enters the job machinery, which is still the c2rust
     // pointer-based scheduler; `file` is a valid arena handle.
     unsafe {
-        new_job(ctx, file);
+        new_job(ctx, file, entry);
     }
 }
 

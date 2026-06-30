@@ -2977,6 +2977,11 @@ unsafe fn record_files(
 
         let name_bytes = ::std::ffi::CStr::from_ptr(name).to_bytes().to_vec();
         let f: FileId;
+        // For a `::` target, which inline entry this rule's deps/recipe/flags
+        // belong to: `None` = the head (the first `::` rule), `Some(i)` = the
+        // i-th appended `double_colon` entry (a subsequent rule). For a single
+        // colon target this stays `None` (the head).
+        let mut dc_index: Option<usize> = None;
         if two_colon == 0 {
             f = enter_file(ctx, &name_bytes);
             // Diagnostics + recipe/dep merge, under the node lock (no arena
@@ -3053,11 +3058,36 @@ unsafe fn record_files(
                     );
                 }
             }
+            // Was this target already a `::` head before this rule? If so,
+            // `enter_file` will append a fresh inline entry for this rule; the
+            // first `::` rule instead lives on the head itself.
+            let was_double_colon = lookup_file(ctx, &name_bytes)
+                .and_then(|existing| ctx.filenodes.get(existing))
+                .map(|n| n.lock().expect("file node lock poisoned").is_double_colon)
+                .unwrap_or(false);
+            // `enter_file` appends a new inline `double_colon` entry when the
+            // head is already a `::` target (see its doc); do NOT also call
+            // `push_double_colon_entry` or the entry would be appended twice.
             f = enter_file(ctx, &name_bytes);
-            crate::file::push_double_colon_entry(ctx, f);
+            {
+                let node = ctx.filenodes.get(f).expect("record_files: missing dcolon");
+                let mut n = node.lock().expect("file node lock poisoned");
+                if was_double_colon {
+                    // `enter_file` just appended this rule's entry.
+                    dc_index = Some(n.double_colon.len() - 1);
+                } else {
+                    // First `::` rule: it lives on the head.
+                    n.is_double_colon = true;
+                    dc_index = None;
+                }
+            }
             if let Some(r) = recipe.clone() {
                 let node = ctx.filenodes.get(f).expect("record_files: missing dcolon");
-                node.lock().expect("file node lock poisoned").recipe = Some(r);
+                let mut n = node.lock().expect("file node lock poisoned");
+                match dc_index {
+                    Some(i) => n.double_colon[i].recipe = Some(r),
+                    None => n.recipe = Some(r),
+                }
             }
         }
 
@@ -3065,8 +3095,14 @@ unsafe fn record_files(
         {
             let node = ctx.filenodes.get(f).expect("record_files: missing target");
             let mut n = node.lock().expect("file node lock poisoned");
+            // The head always carries `is_target`/`is_explicit`; a subsequent
+            // `::` entry mirrors them on itself too.
             n.is_explicit = true;
             n.is_target = true;
+            if let Some(i) = dc_index {
+                n.double_colon[i].is_explicit = true;
+                n.double_colon[i].is_target = true;
+            }
         }
         if are_also_makes != 0 {
             also_make_ids.push(f);
@@ -3091,8 +3127,12 @@ unsafe fn record_files(
             .to_vec();
             {
                 let node = ctx.filenodes.get(f).expect("record_files: missing target");
-                node.lock().expect("file node lock poisoned").stem =
-                    Some(String::from_utf8_lossy(&stem).into_owned());
+                let mut n = node.lock().expect("file node lock poisoned");
+                let s = Some(String::from_utf8_lossy(&stem).into_owned());
+                match dc_index {
+                    Some(i) => n.double_colon[i].stem = s,
+                    None => n.stem = s,
+                }
             }
             // Apply the stem to `this` (static-pattern prereqs).
             if !this.is_empty() {
@@ -3113,14 +3153,18 @@ unsafe fn record_files(
         if !this.is_empty() {
             let node = ctx.filenodes.get(f).expect("record_files: missing target");
             let mut n = node.lock().expect("file node lock poisoned");
-            if n.deps.is_empty() {
-                n.deps = this;
+            let deps_slot: &mut Vec<crate::dep::DepNode> = match dc_index {
+                Some(i) => &mut n.double_colon[i].deps,
+                None => &mut n.deps,
+            };
+            if deps_slot.is_empty() {
+                *deps_slot = this;
             } else if have_cmds {
                 let mut combined = this;
-                combined.append(&mut n.deps);
-                n.deps = combined;
+                combined.append(deps_slot);
+                *deps_slot = combined;
             } else {
-                n.deps.append(&mut this);
+                deps_slot.append(&mut this);
             }
         }
         check_special_file(ctx, f, flocp);
