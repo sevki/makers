@@ -2616,11 +2616,14 @@ unsafe fn construct_command_argv_internal(
         }
         if !ifs.is_null() {
             cap = ifs;
-            while *cap as i32 != 0 {
-                if *cap as i32 != ' ' as i32
-                    && *cap as i32 != '\t' as i32
-                    && *cap as i32 != '\n' as i32
-                {
+            loop {
+                // SAFETY: `cap` walks the NUL-terminated IFS string starting at
+                // the non-null `ifs`; read each byte through a checked reference.
+                let c = *cap.as_ref().unwrap() as i32;
+                if c == 0 {
+                    break;
+                }
+                if c != ' ' as i32 && c != '\t' as i32 && c != '\n' as i32 {
                     break 'fast;
                 }
                 cap = cap.offset(1_i32 as isize);

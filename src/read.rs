@@ -663,8 +663,8 @@ pub unsafe fn eval_buffer(
     ebuf.bufnext = ebuf.bufstart;
     ebuf.buffer = ebuf.bufnext;
     ebuf.fp = ::core::ptr::null_mut::<FILE>();
-    if !flocp.is_null() {
-        ebuf.floc = *flocp;
+    if let Some(fl) = flocp.as_ref() {
+        ebuf.floc = *fl;
     } else if !reading_file.is_null() {
         ebuf.floc = *reading_file;
     } else {

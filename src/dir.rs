@@ -267,11 +267,11 @@ unsafe fn dir_contents_file_exists_p(
     }
 
     if !filename.is_null() {
-        if *filename == 0 {
+        let key = ::core::ffi::CStr::from_ptr(filename).to_bytes();
+        if key.is_empty() {
             // Checking for the directory itself; it exists.
             return 1;
         }
-        let key = ::core::ffi::CStr::from_ptr(filename).to_bytes();
         if let Some(entry) = dc.dirfiles.as_ref().and_then(|m| m.get(key)) {
             return (!entry.impossible) as i32;
         }

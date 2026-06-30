@@ -2879,47 +2879,53 @@ unsafe fn expand_builtin_function(
     entry_p: *const function_table_entry,
 ) -> *mut ::core::ffi::c_char {
     let p: *mut ::core::ffi::c_char;
-    if argc < (*entry_p).minimum_args as ::core::ffi::c_uint {
+    // SAFETY: `entry_p` is a function-table entry resolved by the caller and is
+    // valid for the duration of the call. Bind a checked reference so the field
+    // accesses below go through a provably-valid reference, not raw derefs.
+    let entry = entry_p
+        .as_ref()
+        .expect("function_table_entry pointer is non-null");
+    if argc < entry.minimum_args as ::core::ffi::c_uint {
         fatal(
             ctx,
             *expanding_var,
-            strlen((*entry_p).name) as size_t,
+            strlen(entry.name) as size_t,
             b"insufficient number of arguments (%u) to function '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[
                 FmtArg::Uint((argc) as u32 as u64),
-                FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char),
+                FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
             ],
         );
     }
-    if argc == 0 && (*entry_p).alloc_fn() == 0 {
+    if argc == 0 && entry.alloc_fn() == 0 {
         return o;
     }
-    if (*entry_p).fptr.func_ptr.is_none() {
+    if entry.fptr.func_ptr.is_none() {
         fatal(
             ctx,
             *expanding_var,
-            strlen((*entry_p).name) as size_t,
+            strlen(entry.name) as size_t,
             b"unimplemented on this platform: function '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
-            &[FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char)],
+            &[FmtArg::Str((entry.name) as *const ::core::ffi::c_char)],
         );
     }
-    if (*entry_p).adds_command() != 0 {
+    if entry.adds_command() != 0 {
         crate::make_main::bump_command_count();
     }
-    if (*entry_p).alloc_fn() == 0 {
-        return (*entry_p).fptr.func_ptr.expect("non-null function pointer")(
+    if entry.alloc_fn() == 0 {
+        return entry.fptr.func_ptr.expect("non-null function pointer")(
             ctx,
             o,
             argv,
-            (*entry_p).name,
+            entry.name,
         );
     }
-    p = (*entry_p)
+    p = entry
         .fptr
         .alloc_func_ptr
-        .expect("non-null function pointer")((*entry_p).name, argc, argv);
+        .expect("non-null function pointer")(entry.name, argc, argv);
     if !p.is_null() {
         o = output_owned_result(o, p);
     }
@@ -2980,7 +2986,13 @@ pub unsafe fn handle_function(
     if entry_p.is_null() {
         return 0;
     }
-    beg = beg.offset((*entry_p).len as i32 as isize);
+    // SAFETY: `entry_p` was just checked non-null and points to a valid
+    // function-table entry. Bind a checked reference so the field reads below
+    // go through a provably-valid reference rather than raw pointer derefs.
+    let entry = entry_p
+        .as_ref()
+        .expect("function_table_entry pointer is non-null");
+    beg = beg.offset(entry.len as i32 as isize);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*beg as ::core::ffi::c_uchar as isize) as i32
         & (0x2_i32 | 0x4_i32)
@@ -3013,10 +3025,10 @@ pub unsafe fn handle_function(
         fatal(
         ctx,
         *expanding_var,
-        strlen((*entry_p).name) as size_t,
+        strlen(entry.name) as size_t,
         b"unterminated call to function '%s': missing '%c'\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*entry_p).name) as *const ::core::ffi::c_char),
+        &[FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
             FmtArg::Int((closeparen as i32) as i64)],
     );
     }
@@ -3028,14 +3040,14 @@ pub unsafe fn handle_function(
     ));
     argv = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *mut ::core::ffi::c_char;
     argvp = argv;
-    if (*entry_p).expand_args() != 0 {
+    if entry.expand_args() != 0 {
         let mut p: *const ::core::ffi::c_char;
         p = beg;
         nargs = 0;
         while p <= end {
             let mut next: *const ::core::ffi::c_char;
             nargs = nargs.wrapping_add(1);
-            if nargs == (*entry_p).maximum_args as ::core::ffi::c_uint || {
+            if nargs == entry.maximum_args as ::core::ffi::c_uint || {
                 let span = end as usize - p as usize;
                 let bytes = ::core::slice::from_raw_parts(p as *const u8, span);
                 next = match find_next_argument(openparen as u8, closeparen as u8, bytes) {
@@ -3074,7 +3086,7 @@ pub unsafe fn handle_function(
         while p_0 <= aend {
             let mut next_0: *mut ::core::ffi::c_char;
             nargs = nargs.wrapping_add(1);
-            if nargs == (*entry_p).maximum_args as ::core::ffi::c_uint || {
+            if nargs == entry.maximum_args as ::core::ffi::c_uint || {
                 let span = aend as usize - p_0 as usize;
                 let bytes = ::core::slice::from_raw_parts(p_0 as *const u8, span);
                 next_0 = match find_next_argument(openparen as u8, closeparen as u8, bytes) {
@@ -3093,7 +3105,7 @@ pub unsafe fn handle_function(
     }
     *argvp = ::core::ptr::null_mut::<::core::ffi::c_char>();
     *op = expand_builtin_function(ctx, *op, nargs, argv, entry_p);
-    if (*entry_p).expand_args() != 0 {
+    if entry.expand_args() != 0 {
         argvp = argv;
         while !(*argvp).is_null() {
             free(*argvp as *mut ::core::ffi::c_void);
