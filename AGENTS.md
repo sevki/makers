@@ -2,6 +2,12 @@
 
 # C2Rust Porting Rules
 
+## Issue tracking and project management
+
+Github issues should be used to track followups todos and basic project 
+maanagement. The [project](https://github.com/users/sevki/projects/7) 
+is to trcack everything used.
+
 ## North Star (the watermark)
 
 Before writing or accepting any change, ask: **"Is this how
