@@ -6,7 +6,7 @@
 
 Github issues should be used to track followups todos and basic project 
 maanagement. The [project](https://github.com/users/sevki/projects/7) 
-is to trcack everything used.
+is to trcack everything.
 
 ## North Star (the watermark)
 
