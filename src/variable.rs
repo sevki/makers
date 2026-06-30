@@ -1248,6 +1248,28 @@ pub unsafe fn build_file_setlist(
     setlist
 }
 
+/// Snapshot every live variable in `set` into owned [`TargetVariable`] records
+/// — the inverse of [`populate_set_from_targets`], used to write a file's
+/// per-target variable definitions back onto its [`FileNode`] after the
+/// pointer-based definition machinery has run.
+pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVariable> {
+    let mut out: Vec<TargetVariable> = Vec::new();
+    let Some(setr) = set.as_ref() else {
+        return out;
+    };
+    let mut slot = setr.table.ht_vec as *mut *mut variable;
+    let end = slot.offset(setr.table.ht_size as isize);
+    while slot < end {
+        let v = *slot;
+        if !(v.is_null() || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
+        {
+            out.push(target_variable_from_c(v));
+        }
+        slot = slot.offset(1_i32 as isize);
+    }
+    out
+}
+
 /// Release a chain built by [`build_file_setlist`], stopping at the shared
 /// `global_setlist` (which is process-wide and never freed).
 pub unsafe fn free_file_setlist(mut list: *mut variable_set_list) {
@@ -1679,10 +1701,20 @@ pub fn should_export(v: &variable) -> bool {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn target_environment(
     ctx: &crate::execctx::ExecContext,
-    file: *mut file,
+    file: Option<FileId>,
     recursive: i32,
 ) -> *mut *mut ::core::ffi::c_char {
     let set_list: *mut variable_set_list;
+    // For a target context, build the transient per-file variable chain and
+    // install it as current so the nested `recursively_expand_for_file` calls
+    // (which expand in `current_variable_set_list`) see the file's scope. The
+    // chain is freed before returning.
+    let mut owned_list: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
+    let saved_current: *mut variable_set_list = current_variable_set_list;
+    if let Some(f) = file {
+        owned_list = build_file_setlist(ctx, f);
+        current_variable_set_list = owned_list;
+    }
     let mut s: *mut variable_set_list;
     let mut table: hash_table = hash_table {
         ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
@@ -1708,14 +1740,14 @@ pub unsafe fn target_environment(
     let mut found_makelevel: i32 = 0;
     let mut found_mflags: i32 = 0;
     let mut found_makeflags: i32 = 0;
-    if file.is_null() {
+    if file.is_none() {
         ENV_RECURSION.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     if recursive == 0 && crate::make_main::opt_jobserver_auth_present() {
         invalid = jobserver_get_invalid_auth();
     }
-    if !file.is_null() {
-        set_list = (*file).variables;
+    if file.is_some() {
+        set_list = owned_list;
     } else {
         set_list = current_variable_set_list;
     }
@@ -1795,7 +1827,10 @@ pub unsafe fn target_environment(
                                         .offset(1_i32 as isize),
                                 ) == 0))
                 {
-                    cp = recursively_expand_for_file(ctx, v_0, file);
+                    // `current_variable_set_list` is already the file's scope
+                    // (installed above when `file` is Some), so expand in that
+                    // context with a null file pointer.
+                    cp = recursively_expand_for_file(ctx, v_0, ::core::ptr::null_mut::<file>());
                     value = cp;
                 }
                 if added_shell == 0
@@ -1937,8 +1972,12 @@ pub unsafe fn target_environment(
     }
     *result = ::core::ptr::null_mut::<::core::ffi::c_char>();
     hash_free(&raw mut table, 0);
-    if file.is_null() {
+    if file.is_none() {
         ENV_RECURSION.fetch_sub(1, ::std::sync::atomic::Ordering::Relaxed);
+    }
+    if !owned_list.is_null() {
+        current_variable_set_list = saved_current;
+        free_file_setlist(owned_list);
     }
     result_0
 }

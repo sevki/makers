@@ -2408,21 +2408,18 @@ unsafe fn record_target_var(
                 vref.value = xstrdup(vref.value);
             }
         } else {
-            let mut f: *mut File;
-            f = lookup_file(ctx, name);
-            if f.is_null() {
-                f = enter_file(ctx, strcache_add(name));
-            } else if let Some(fref) = f.as_ref().filter(|x| !x.double_colon.is_null()) {
-                f = fref.double_colon;
-            }
-            initialize_file_variables(
-                ctx,
-                ::core::ptr::NonNull::new(f)
-                    .expect("record_target_var: null file")
-                    .as_ptr(),
-                1,
-            );
-            current_variable_set_list = f.as_ref().expect("record_target_var: null file").variables;
+            // Resolve (or enter) the target file. Per-target variable storage
+            // now lives on the `FileNode` as a `Vec<TargetVariable>`; build a
+            // transient set seeded from those, define into its head, then
+            // snapshot the head back onto the node.
+            let name_bytes = ::std::ffi::CStr::from_ptr(name).to_bytes();
+            let fid = match lookup_file(ctx, name_bytes) {
+                Some(existing) => existing,
+                None => enter_file(ctx, name_bytes),
+            };
+            initialize_file_variables(ctx, fid, 1);
+            let head = crate::variable::build_file_setlist(ctx, fid);
+            current_variable_set_list = head;
             v = try_variable_definition(ctx, flocp, defn, origin, s_target);
             if v.is_null() {
                 fatal(
@@ -2434,8 +2431,42 @@ unsafe fn record_target_var(
                     &[],
                 );
             }
+            let vref = v.as_mut().expect("record_target_var: null variable");
+            vref.set_per_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            vref.set_private_var((*vmod).private_v() as ::core::ffi::c_uint);
+            if (*vmod).export_v() as i32 != v_default as i32 {
+                vref.set_export((*vmod).export_v() as variable_export);
+            }
+            if vref.origin() as i32 != o_override as i32 {
+                let len: size_t = strlen(vref.name) as size_t;
+                // The global lookup must search the underlying global set, not
+                // the per-file head we just installed.
+                current_variable_set_list = global;
+                let gv: *mut variable = lookup_variable(ctx, vref.name, len);
+                current_variable_set_list = head;
+                if !gv.is_null()
+                    && v != gv
+                    && ((*gv).origin() as i32 == o_env_override as i32
+                        || (*gv).origin() as i32 == o_command as i32)
+                {
+                    free(vref.value as *mut ::core::ffi::c_void);
+                    vref.value = xstrdup((*gv).value);
+                    vref.set_origin((*gv).origin() as variable_origin);
+                    vref.set_recursive((*gv).recursive() as ::core::ffi::c_uint);
+                    vref.set_append(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+                }
+            }
+            // Snapshot the head set's variables back onto the file node.
+            let snapshot = crate::variable::snapshot_set_to_targets((*head).set);
+            if let Some(node) = ctx.filenodes.get(fid) {
+                node.lock().expect("file node poisoned").variables = snapshot;
+            }
             current_variable_set_list = global;
+            crate::variable::free_file_setlist(head);
+            continue;
         }
+        // Pattern-variable branch: the variable was defined on a `pattern_var`,
+        // not a file, so finalize its flags directly.
         let vref = v.as_mut().expect("record_target_var: null variable");
         vref.set_per_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         vref.set_private_var((*vmod).private_v() as ::core::ffi::c_uint);
@@ -2878,10 +2909,9 @@ unsafe fn record_files(
     }
 
     if !implicit_percent.is_null() {
-        // Implicit / pattern rule: BOUNDARY (slice 5 — `rule.rs::create_pattern_rule`
-        // still takes raw `*mut Dep`/`*mut Commands`). Collect the target names and
-        // their `%` positions and hand them off; the call will not type-check until
-        // `create_pattern_rule` is converted.
+        // Implicit / pattern rule. Collect each target's owned pattern bytes and
+        // the byte index of its `%`, then hand them to the pointer-free
+        // `create_pattern_rule`.
         if !pattern.is_null() {
             fatal(
                 ctx,
@@ -2892,31 +2922,27 @@ unsafe fn record_files(
                 &[],
             );
         }
-        // Collect (cached name ptr, percent ptr) per target.
-        let mut targets: Vec<*const ::core::ffi::c_char> = vec![name];
-        let mut target_pats: Vec<*const ::core::ffi::c_char> = vec![implicit_percent];
+        let mut targets: Vec<Vec<u8>> = Vec::with_capacity(filenames.len());
+        let mut percents: Vec<usize> = Vec::with_capacity(filenames.len());
+        // The first target's bytes/percent come from `name`/`implicit_percent`.
+        let first_name = ::std::ffi::CStr::from_ptr(name).to_bytes().to_vec();
+        let first_pct = implicit_percent.offset_from(name) as usize;
+        targets.push(first_name);
+        percents.push(first_pct);
         for entry in &filenames[1..] {
             let mut nb = entry.name.clone();
             nb.push(0);
-            // Intern so the pointer outlives this loop iteration's buffer.
             let mut np: *const ::core::ffi::c_char =
                 strcache_add(nb.as_ptr() as *const ::core::ffi::c_char);
             let ip = find_percent_cached(&raw mut np);
             if ip.is_null() {
                 fatal(ctx, flocp, 0, b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char, &[]);
             }
-            targets.push(np);
-            target_pats.push(ip);
+            targets.push(::std::ffi::CStr::from_ptr(np).to_bytes().to_vec());
+            percents.push(ip.offset_from(np) as usize);
         }
-        create_pattern_rule(
-            targets.as_mut_ptr(),
-            target_pats.as_mut_ptr(),
-            targets.len() as ::core::ffi::c_ushort,
-            two_colon,
-            deps,
-            recipe,
-            1,
-        );
+        let n = targets.len() as u16;
+        create_pattern_rule(targets, percents, n, two_colon != 0, deps, recipe, true);
         return;
     }
 

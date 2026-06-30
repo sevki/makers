@@ -244,13 +244,13 @@ pub unsafe fn ar_member_date(
     let arname = parsed.arname();
     let memname = parsed.memname();
     let val: intmax_t;
-    let mut arfile: *mut file;
-    arfile = lookup_file(ctx, arname);
-    if arfile.is_null() && file_exists_p(ctx, arname) != 0 {
-        arfile = enter_file(ctx, strcache_add(arname));
+    let arname_bytes = ::core::ffi::CStr::from_ptr(arname).to_bytes();
+    let mut arfile = lookup_file(ctx, arname_bytes);
+    if arfile.is_none() && file_exists_p(ctx, arname) != 0 {
+        arfile = Some(enter_file(ctx, arname_bytes));
     }
-    if !arfile.is_null() {
-        f_mtime(ctx, arfile, 0);
+    if let Some(fid) = arfile {
+        f_mtime(ctx, fid, false);
     }
     val = ar_scan(
         ctx,
@@ -286,8 +286,8 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
     let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut val: i32;
     ar_parse_name(ctx, name, &raw mut arname, &raw mut memname);
-    let arfile: *mut file = enter_file(ctx, strcache_add(arname));
-    f_mtime(ctx, arfile, 0);
+    let arfile = enter_file(ctx, ::core::ffi::CStr::from_ptr(arname).to_bytes());
+    f_mtime(ctx, arfile, false);
     val = 1;
     match ar_member_touch(ctx, arname, memname) {
         -1 => {

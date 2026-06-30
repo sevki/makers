@@ -1198,7 +1198,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             ctx,
             p,
             &raw mut end,
-            (*child).file,
+            Some((*child).file),
             argv_line_flags | command_flags,
             &raw mut (*child).sh_batch_file,
         );
@@ -1298,10 +1298,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                             .unwrap_or(false),
                         None => false,
                     };
-                    // BOUNDARY: `target_environment` is still pointer-based; this
-                    // flips when the variable layer is converted to FileId.
                     (*child).environment =
-                        target_environment(ctx, (*child).file, any_recurse as i32);
+                        target_environment(ctx, Some((*child).file), any_recurse as i32);
                 }
                 // Run the job locally unless it is successfully handed off to a
                 // remote executor.
@@ -3016,26 +3014,52 @@ pub const PRESERVE_BSNL: i32 = 1;
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
+/// Expand `string` (NUL-terminated) either in a target's variable context
+/// (`Some(file)`) or in the global context (`None` — the former null
+/// `*mut File`). Returns the expanded bytes, NUL-terminated.
+unsafe fn expand_for_opt_file(
+    ctx: &crate::execctx::ExecContext,
+    string: &[u8],
+    file: Option<FileId>,
+) -> Vec<u8> {
+    match file {
+        Some(f) => crate::expand::expand_string_for_file(ctx, string, f),
+        None => {
+            let p = crate::expand::allocated_expand_string_for_file(
+                ctx,
+                string.as_ptr() as *const ::core::ffi::c_char,
+                ::core::ptr::null_mut::<crate::file::File>(),
+            );
+            if p.is_null() {
+                return vec![0];
+            }
+            let len = libc::strlen(p) as usize;
+            let mut v = ::core::slice::from_raw_parts(p as *const u8, len).to_vec();
+            v.push(0);
+            libc::free(p as *mut ::core::ffi::c_void);
+            v
+        }
+    }
+}
+
 pub unsafe fn construct_command_argv(
     ctx: &crate::execctx::ExecContext,
     line: *mut ::core::ffi::c_char,
     restp: *mut *mut ::core::ffi::c_char,
-    file: FileId,
+    file: Option<FileId>,
     cmd_flags: i32,
     batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {
     let argv: *mut *mut ::core::ffi::c_char;
     let save: Action = warning::action(Type::UndefinedVar);
     warning::set_action(Type::UndefinedVar, Action::Ignore);
-    // BOUNDARY: the variable layer is converging on the FileId form (see
-    // implicit.rs's `expand_string_for_file(ctx, &[u8], FileId)`); call the
-    // SHELL/.SHELLFLAGS/IFS lookups that way even though the expand/variable
-    // modules are still mid-flip. Each returns an owned NUL-terminated buffer.
-    let shell_buf: Vec<u8> = crate::expand::expand_string_for_file(ctx, b"$(SHELL)\0", file);
+    // Look up SHELL/.SHELLFLAGS/IFS in the target's variable context (or the
+    // global context when `file` is None — the former null `*mut File`). Each
+    // returns an owned NUL-terminated buffer.
+    let shell_buf: Vec<u8> = expand_for_opt_file(ctx, b"$(SHELL)\0", file);
     // `.SHELLFLAGS`: a non-empty (set) value is used verbatim; otherwise fall
     // back to the posix-pedantic `-ec` or the default `-c`.
-    let shellflags_set: Vec<u8> =
-        crate::expand::expand_string_for_file(ctx, b"$(.SHELLFLAGS)\0", file);
+    let shellflags_set: Vec<u8> = expand_for_opt_file(ctx, b"$(.SHELLFLAGS)\0", file);
     let shellflags_owned: Vec<u8> = if shellflags_set.first().is_some_and(|&b| b != 0) {
         let mut v = shellflags_set.clone();
         if v.last() != Some(&0) {
@@ -3047,7 +3071,7 @@ pub unsafe fn construct_command_argv(
     } else {
         b"-c\0".to_vec()
     };
-    let ifs_buf: Vec<u8> = crate::expand::expand_string_for_file(ctx, b"$(IFS)\0", file);
+    let ifs_buf: Vec<u8> = expand_for_opt_file(ctx, b"$(IFS)\0", file);
     warning::set_action(Type::UndefinedVar, save);
     let shell = shell_buf.as_ptr() as *const ::core::ffi::c_char;
     let shellflags = shellflags_owned.as_ptr() as *const ::core::ffi::c_char;
