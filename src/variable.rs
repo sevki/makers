@@ -1,5 +1,8 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{file, Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{
+    file, Commands, Dep, File, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin, VariableSet,
+    VariableSetList,
+};
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
 use c2rust_bitfields;
@@ -42,6 +45,7 @@ use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, expanding_var,
     install_variable_buffer, recursively_expand_for_file, swap_variable_buffer, variable_buffer,
 };
+use crate::execctx::ExecContext;
 use crate::floc::Floc;
 use crate::function::func_shell_base;
 use crate::hash::{
@@ -158,6 +162,170 @@ fn variable_changenum() -> u64 {
 static mut pattern_vars: *mut pattern_var = ::core::ptr::null::<pattern_var>() as *mut pattern_var;
 static mut last_pattern_vars: [*mut pattern_var; 256] =
     [::core::ptr::null::<pattern_var>() as *mut pattern_var; 256];
+
+/// Map a c2rust `variable_flavor` discriminant to the idiomatic [`VarFlavor`].
+fn flavor_from_c(f: variable_flavor) -> VarFlavor {
+    match f as i32 {
+        x if x == f_simple as i32 => VarFlavor::Simple,
+        x if x == f_recursive as i32 => VarFlavor::Recursive,
+        x if x == f_expand as i32 => VarFlavor::Expand,
+        x if x == f_append as i32 => VarFlavor::Append,
+        x if x == f_shell as i32 => VarFlavor::Shell,
+        x if x == f_append_value as i32 => VarFlavor::AppendValue,
+        _ => VarFlavor::Bogus,
+    }
+}
+
+/// Map a c2rust `variable_origin` discriminant to the idiomatic [`VarOrigin`].
+fn origin_from_c(o: variable_origin) -> VarOrigin {
+    match o as i32 {
+        x if x == o_env as i32 => VarOrigin::Environment,
+        x if x == o_file as i32 => VarOrigin::File,
+        x if x == o_env_override as i32 => VarOrigin::EnvOverride,
+        x if x == o_command as i32 => VarOrigin::Command,
+        x if x == o_override as i32 => VarOrigin::Override,
+        x if x == o_automatic as i32 => VarOrigin::Automatic,
+        x if x == o_invalid as i32 => VarOrigin::Invalid,
+        _ => VarOrigin::Default,
+    }
+}
+
+/// Map a c2rust `variable_export` discriminant to the idiomatic [`VarExport`].
+fn export_from_c(e: variable_export) -> VarExport {
+    match e as i32 {
+        x if x == v_export as i32 => VarExport::Export,
+        x if x == v_noexport as i32 => VarExport::NoExport,
+        x if x == v_ifset as i32 => VarExport::IfSet,
+        _ => VarExport::Default,
+    }
+}
+
+/// Read the NUL-terminated bytes of a c2rust C string into an owned `Vec<u8>`
+/// (without the trailing NUL). A null pointer yields an empty vector.
+///
+/// # Safety
+/// `p` must be null or a valid NUL-terminated C string for the call.
+unsafe fn c_str_to_vec(p: *const ::core::ffi::c_char) -> Vec<u8> {
+    if p.is_null() {
+        return Vec::new();
+    }
+    let len = strlen(p);
+    ::core::slice::from_raw_parts(p as *const u8, len).to_vec()
+}
+
+/// Build an idiomatic [`TargetVariable`] from a c2rust `variable` record (the
+/// representation held in a `pattern_var`). This is the bridge used when the
+/// per-target/pattern variable store moves onto [`FileNode`]'s `Vec`s.
+///
+/// # Safety
+/// `v` must point to a valid, fully initialized `variable`.
+unsafe fn target_variable_from_c(v: *const variable) -> TargetVariable {
+    let defined_in = if (*v).fileinfo.filenm.is_null() {
+        None
+    } else {
+        Some(c_str_to_vec((*v).fileinfo.filenm))
+    };
+    TargetVariable {
+        name: c_str_to_vec((*v).name),
+        value: c_str_to_vec((*v).value),
+        defined_in,
+        defined_lineno: (*v).fileinfo.lineno.wrapping_add((*v).fileinfo.offset),
+        flavor: flavor_from_c((*v).flavor()),
+        origin: origin_from_c((*v).origin()),
+        export: export_from_c((*v).export()),
+        recursive: (*v).recursive() != 0,
+        append: (*v).append() != 0,
+        conditional: (*v).conditional() != 0,
+        per_target: (*v).per_target() != 0,
+        special: (*v).special() != 0,
+        exportable: (*v).exportable() != 0,
+        private_var: (*v).private_var() != 0,
+    }
+}
+
+/// Materialize a transient c2rust `variable` from a [`TargetVariable`] so the
+/// existing pointer-based printers (`print_variable`) can render it. The
+/// returned `variable` borrows the NUL-terminated buffers handed back in the
+/// tuple's second/third/fourth slots; keep those alive for the call.
+///
+/// Returns `(variable, name_buf, value_buf, file_buf)`. The bitfields are set
+/// through the c2rust setters so the rendered output matches the legacy path.
+fn c_variable_from_target(tv: &TargetVariable) -> (variable, Vec<u8>, Vec<u8>, Option<Vec<u8>>) {
+    let mut name_buf = tv.name.clone();
+    name_buf.push(0);
+    let mut value_buf = tv.value.clone();
+    value_buf.push(0);
+    let file_buf = tv.defined_in.as_ref().map(|f| {
+        let mut b = f.clone();
+        b.push(0);
+        b
+    });
+    let mut v: variable = variable {
+        name: name_buf.as_ptr() as *mut ::core::ffi::c_char,
+        value: value_buf.as_ptr() as *mut ::core::ffi::c_char,
+        fileinfo: Floc {
+            filenm: file_buf
+                .as_ref()
+                .map_or(::core::ptr::null(), |b| b.as_ptr() as *const ::core::ffi::c_char),
+            lineno: tv.defined_lineno,
+            offset: 0,
+        },
+        length: tv.name.len() as ::core::ffi::c_uint,
+        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+    };
+    v.set_flavor(tv.flavor as i32 as variable_flavor);
+    v.set_origin(tv.origin as i32 as variable_origin);
+    v.set_export(tv.export as i32 as variable_export);
+    v.set_recursive(tv.recursive as ::core::ffi::c_uint);
+    v.set_append(tv.append as ::core::ffi::c_uint);
+    v.set_conditional(tv.conditional as ::core::ffi::c_uint);
+    v.set_per_target(tv.per_target as ::core::ffi::c_uint);
+    v.set_special(tv.special as ::core::ffi::c_uint);
+    v.set_exportable(tv.exportable as ::core::ffi::c_uint);
+    v.set_private_var(tv.private_var as ::core::ffi::c_uint);
+    (v, name_buf, value_buf, file_buf)
+}
+
+/// Define (or replace) a per-target variable directly on a [`FileNode`]'s
+/// `variables` vec — the idiomatic stand-in for `define_variable_in_set` into a
+/// file's own `variable_set`. Used for the automatic variables (`$@`, `$<`, …)
+/// that `set_file_variables` attaches to a target. An existing entry of the same
+/// name is overwritten in place (matching the hash-table upsert); otherwise the
+/// new definition is appended. No raw pointers, no `c_char`.
+pub fn define_target_variable(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    name: &[u8],
+    value: &[u8],
+    origin: VarOrigin,
+) {
+    let Some(node) = ctx.filenodes.get(file) else {
+        return;
+    };
+    let mut guard = node.lock().expect("file node poisoned");
+    let tv = TargetVariable {
+        name: name.to_vec(),
+        value: value.to_vec(),
+        defined_in: None,
+        defined_lineno: 0,
+        flavor: VarFlavor::Recursive,
+        origin,
+        export: VarExport::Default,
+        recursive: true,
+        append: false,
+        conditional: false,
+        per_target: true,
+        special: false,
+        exportable: false,
+        private_var: false,
+    };
+    if let Some(slot) = guard.variables.iter_mut().find(|v| v.name == name) {
+        *slot = tv;
+    } else {
+        guard.variables.push(tv);
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -773,56 +941,57 @@ pub unsafe fn lookup_variable_in_set(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_file_variables(
-    ctx: &crate::execctx::ExecContext,
-    file: *mut file,
-    reading: i32,
-) {
-    let mut l: *mut variable_set_list = (*file).variables;
-    if l.is_null() {
-        l = xmalloc(::core::mem::size_of::<variable_set_list>() as size_t)
-            as *mut variable_set_list;
-        (*l).set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
-        hash_init(
-            &raw mut (*(*l).set).table,
-            PERFILE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
-            Some(variable_hash_1),
-            Some(variable_hash_2),
-            Some(variable_hash_cmp),
-        );
-        (*file).variables = l;
+pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) {
+    // Per-target variable storage now lives directly on the `FileNode`
+    // (`variables` / `pat_variables` as `Vec<TargetVariable>`); there is no
+    // per-file `variable_set_list` to allocate. The former chain wiring
+    // (`(*l).next`, `next_is_parent`, the `global_setlist` link) belonged to the
+    // legacy lookup machinery and is reconstructed on demand by the lookup layer
+    // (see the slice5 boundary note below), so this routine's remaining job is to
+    // perform the pattern-variable search and populate `FileNode.pat_variables`.
+    let Some(node) = ctx.filenodes.get(file) else {
+        return;
+    };
+
+    // Recurse into the parent first (matching the original ordering) without
+    // holding this node's lock across the call.
+    let parent = {
+        let guard = node.lock().expect("file node poisoned");
+        guard.parent
+    };
+    if let Some(parent_id) = parent {
+        initialize_file_variables(ctx, parent_id, reading);
     }
-    if !(*file).double_colon.is_null() && (*file).double_colon != file {
-        initialize_file_variables(ctx, (*file).double_colon, reading);
-        (*l).next = (*(*file).double_colon).variables;
-        (*l).next_is_parent = 0;
+
+    // The pattern-variable search only runs when building (not while reading)
+    // and only once per file.
+    let (need_search, name) = {
+        let guard = node.lock().expect("file node poisoned");
+        (reading == 0 && !guard.pat_searched, guard.name.clone())
+    };
+    if !need_search {
         return;
     }
-    if (*file).parent.is_null() {
-        (*l).next = &raw mut global_setlist;
-    } else {
-        initialize_file_variables(ctx, (*file).parent, reading);
-        (*l).next = (*(*file).parent).variables;
-    }
-    (*l).next_is_parent = 1;
-    if reading == 0 && !(*file).pat_searched {
-        let mut p: *mut pattern_var;
-        let targlen: size_t = strlen((*file).name) as size_t;
-        p = lookup_pattern_var(
-            ::core::ptr::null_mut::<pattern_var>(),
-            (*file).name,
-            targlen,
-        );
+
+    let mut collected: Vec<TargetVariable> = Vec::new();
+    // SAFETY: the pattern-var list and the legacy definition helpers are still
+    // the c2rust pointer-based machinery; only their inputs/outputs cross into
+    // the idiomatic side here.
+    unsafe {
+        let mut name_c = name.clone();
+        name_c.push(0);
+        let name_ptr = name_c.as_ptr() as *const ::core::ffi::c_char;
+        let targlen: size_t = name.len() as size_t;
+        let mut p: *mut pattern_var =
+            lookup_pattern_var(::core::ptr::null_mut::<pattern_var>(), name_ptr, targlen);
         if !p.is_null() {
+            // Expand the matched pattern values inside a throwaway scope so the
+            // legacy expanders behave exactly as before, then snapshot each
+            // resulting `variable` into an owned `TargetVariable`.
             let global: *mut variable_set_list = current_variable_set_list;
-            (*file).pat_variables = create_new_variable_set();
-            current_variable_set_list = (*file).pat_variables;
+            let scope = create_new_variable_set();
+            current_variable_set_list = scope;
             loop {
-                // Both definition paths return a live variable; bind it once as
-                // a checked `&mut` produced by the if/else so every field write
-                // below is a reference access (no raw deref for CodeQL) and the
-                // `f_simple` flavor write reuses that same binding — no extra
-                // statement line and no added branch.
                 let v = if (*p).variable.flavor() as i32 == f_simple as i32 {
                     let v = define_variable_in_set(
                         ctx,
@@ -855,20 +1024,23 @@ pub unsafe fn initialize_file_variables(
                 v.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
                 v.set_export((*p).variable.export() as variable_export);
                 v.set_private_var((*p).variable.private_var() as ::core::ffi::c_uint);
-                p = lookup_pattern_var(p, (*file).name, targlen);
+                collected.push(target_variable_from_c(v as *const variable));
+                p = lookup_pattern_var(p, name_ptr, targlen);
                 if p.is_null() {
                     break;
                 }
             }
+            // Tear the throwaway scope back down: we own the snapshots now.
+            pop_variable_scope();
             current_variable_set_list = global;
         }
-        (*file).pat_searched = true;
     }
-    if !(*file).pat_variables.is_null() {
-        (*(*file).pat_variables).next = (*l).next;
-        (*(*file).pat_variables).next_is_parent = (*l).next_is_parent;
-        (*l).next = (*file).pat_variables;
-        (*l).next_is_parent = 0;
+
+    // Commit the snapshot onto the FileNode's pattern-variable store.
+    {
+        let mut guard = node.lock().expect("file node poisoned");
+        guard.pat_variables = collected;
+        guard.pat_searched = true;
     }
 }
 /// # Safety
@@ -2324,43 +2496,63 @@ pub unsafe fn print_variable_data_base() {
         );
     };
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_file_variables(file: *const file) {
-    let file = file.as_ref().expect("print_file_variables requires a file");
-    if let Some(file_vars) = file.variables.as_ref() {
-        print_variable_set(
-            file_vars.set,
-            b"# \0" as *const u8 as *const ::core::ffi::c_char,
-            1,
-        );
+/// Print the per-target variable set of `file` (the automatic variables), each
+/// line prefixed with `"# "`. Reads from [`FileNode::variables`] rather than the
+/// legacy per-file `variable_set_list`.
+pub fn print_file_variables(ctx: &ExecContext, file: FileId) {
+    let Some(node) = ctx.filenodes.get(file) else {
+        return;
+    };
+    let vars = {
+        let guard = node.lock().expect("file node poisoned");
+        guard.variables.clone()
+    };
+    let prefix = b"# \0";
+    for tv in &vars {
+        if tv.origin != VarOrigin::Automatic {
+            continue;
+        }
+        // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
+        // which outlive the `print_variable` call below.
+        let (cv, _n, _v, _f) = c_variable_from_target(tv);
+        unsafe {
+            print_variable(
+                &raw const cv as *const ::core::ffi::c_void,
+                prefix.as_ptr() as *mut ::core::ffi::c_void,
+            );
+        }
     }
+    // NOTE (slice5 boundary): the legacy path also emitted hash-table stats for
+    // the per-file `variable_set`; the `FileNode` store has no hash table, so
+    // those stats lines are intentionally dropped.
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_target_variables(file: *const file) {
-    let file = file
-        .as_ref()
-        .expect("print_target_variables requires a file");
-    if let Some(file_vars) = file.variables.as_ref() {
-        // Prefix each variable line with "<target>: ".
-        let name = ::core::slice::from_raw_parts(file.name.cast::<u8>(), strlen(file.name));
-        let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 3);
-        prefix.extend_from_slice(name);
-        prefix.extend_from_slice(b": \0");
-        let set = file_vars
-            .set
-            .as_mut()
-            .expect("a variable set list always has a set");
-        hash_map_arg(
-            &raw mut set.table,
-            Some(print_noauto_variable),
-            prefix.as_mut_ptr() as *mut ::core::ffi::c_void,
-        );
+/// Print the per-target variable set of `file` (the non-automatic variables),
+/// each line prefixed with `"<target>: "`. Reads from [`FileNode::variables`].
+pub fn print_target_variables(ctx: &ExecContext, file: FileId) {
+    let Some(node) = ctx.filenodes.get(file) else {
+        return;
+    };
+    let (vars, name) = {
+        let guard = node.lock().expect("file node poisoned");
+        (guard.variables.clone(), guard.name.clone())
+    };
+    // Prefix each variable line with "<target>: ".
+    let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 3);
+    prefix.extend_from_slice(&name);
+    prefix.extend_from_slice(b": \0");
+    for tv in &vars {
+        if tv.origin == VarOrigin::Automatic {
+            continue;
+        }
+        // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
+        // which outlive the `print_variable` call below.
+        let (cv, _n, _v, _f) = c_variable_from_target(tv);
+        unsafe {
+            print_variable(
+                &raw const cv as *const ::core::ffi::c_void,
+                prefix.as_mut_ptr() as *mut ::core::ffi::c_void,
+            );
+        }
     }
 }
 unsafe extern "C" fn run_static_initializers() {
