@@ -624,7 +624,10 @@ pub fn update_file(
         let cs = ctx
             .filenodes
             .get(live)
-            .map(|node| node.lock().expect("file node lock poisoned").command_state)
+            .map(|node| {
+                let mut g = node.lock().expect("file node lock poisoned");
+                entry_node_mut(&mut g, entry).command_state
+            })
             .unwrap_or(cs_finished);
         if cs as i32 == cs_running as i32 || cs as i32 == cs_deps_running as i32 {
             return UpdateStatus::Success;
@@ -1275,7 +1278,7 @@ fn update_file_1(
                 },
             );
         });
-        notice_finished_file(ctx, file);
+        notice_finished_file(ctx, file, entry);
         if 0x2_i32 & dbg() != 0 {
             unsafe {
                 print_spaces(depth);
@@ -1417,7 +1420,7 @@ fn update_file_1(
                 n.secondary = true;
             });
         }
-        notice_finished_file(ctx, file);
+        notice_finished_file(ctx, file, entry);
         // c2rust: reset name=hname over the chain; with one node per name this is
         // a single sync of the head's name to its hash-name.
         with_entry!(n, {
@@ -1452,7 +1455,7 @@ fn update_file_1(
             n.ignore_vpath = true;
         });
     }
-    remake_file(ctx, file);
+    remake_file(ctx, file, entry);
     let cstate2 = with_entry!(n, { n.command_state });
     if cstate2 as i32 != cs_finished as i32 {
         if 0x2_i32 & dbg() != 0 {
@@ -1516,6 +1519,16 @@ fn update_file_1(
     ustatus2
 }
 
+/// Resolve a (possibly double-colon) entry within a locked head node: `0` is
+/// the head itself, `i>=1` is `double_colon[i-1]`.
+fn entry_node_mut(guard: &mut FileNode, entry: usize) -> &mut FileNode {
+    if entry == 0 {
+        guard
+    } else {
+        &mut guard.double_colon[entry - 1]
+    }
+}
+
 /// FileId port of `notice_finished_file`: mark the target finished/updated,
 /// possibly touch it, propagate timestamps across the double-colon chain, and
 /// finish its grouped-target (also_make) peers.
@@ -1523,13 +1536,14 @@ fn update_file_1(
 /// Lock discipline: the head node is locked only for short field-copy/writeback
 /// bursts; `touch_file`, `f_mtime`, and `check_also_make` run with no guard held
 /// (each re-enters the arena). Peer ids are snapshotted before being locked.
-pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId) {
-    // Snapshot the bits we need, set command_state/updated.
+pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize) {
+    // Snapshot the bits we need, set command_state/updated on the entry.
     let (ran, has_recipe, recipe_any_recurse, recipe_line_flags, file_phony) = {
         let Some(node) = ctx.filenodes.get(file) else {
             return;
         };
-        let mut n = node.lock().expect("file node lock poisoned");
+        let mut guard = node.lock().expect("file node lock poisoned");
+        let n = entry_node_mut(&mut guard, entry);
         let ran = (n.command_state as i32 == cs_running as i32) as i32;
         n.command_state = cs_finished;
         n.updated = true;
@@ -1545,7 +1559,10 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId) {
     let ustatus = ctx
         .filenodes
         .get(file)
-        .map(|node| node.lock().expect("file node lock poisoned").update_status)
+        .map(|node| {
+            let mut g = node.lock().expect("file node lock poisoned");
+            entry_node_mut(&mut g, entry).update_status
+        })
         .unwrap_or(us_success);
     if crate::make_main::opt_touch() && ustatus as i32 == us_success as i32 {
         // Touch unless every recipe line is recursive (RECURSE); one
@@ -1563,14 +1580,15 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId) {
         if should_touch {
             if file_phony {
                 if let Some(node) = ctx.filenodes.get(file) {
-                    node.lock().expect("file node lock poisoned").update_status =
-                        UpdateStatus::Success;
+                    let mut g = node.lock().expect("file node lock poisoned");
+                    entry_node_mut(&mut g, entry).update_status = UpdateStatus::Success;
                 }
             } else if has_recipe {
                 // lock: no guard held across touch_file.
                 let ts = touch_file(ctx, file);
                 if let Some(node) = ctx.filenodes.get(file) {
-                    node.lock().expect("file node lock poisoned").update_status = ts;
+                    let mut g = node.lock().expect("file node lock poisoned");
+                    entry_node_mut(&mut g, entry).update_status = ts;
                 }
                 ctx.commands_started
                     .set(ctx.commands_started.get().wrapping_add(1));
@@ -1580,7 +1598,8 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId) {
     }
     {
         if let Some(node) = ctx.filenodes.get(file) {
-            let mut n = node.lock().expect("file node lock poisoned");
+            let mut g = node.lock().expect("file node lock poisoned");
+            let n = entry_node_mut(&mut g, entry);
             if n.mtime_before_update == UNKNOWN_MTIME as uintmax_t {
                 n.mtime_before_update = n.last_mtime;
             }
@@ -1604,14 +1623,18 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId) {
             let is_target = ctx
                 .filenodes
                 .get(file)
-                .map(|node| node.lock().expect("file node lock poisoned").is_target)
+                .map(|node| {
+                    let mut g = node.lock().expect("file node lock poisoned");
+                    entry_node_mut(&mut g, entry).is_target
+                })
                 .unwrap_or(false);
             if is_target && !has_recipe {
                 i_0 = 1;
             }
         }
         if let Some(node) = ctx.filenodes.get(file) {
-            node.lock().expect("file node lock poisoned").last_mtime = if i_0 == 0 {
+            let mut g = node.lock().expect("file node lock poisoned");
+            entry_node_mut(&mut g, entry).last_mtime = if i_0 == 0 {
                 UNKNOWN_MTIME as uintmax_t
             } else {
                 new_mtime()
@@ -1621,7 +1644,7 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId) {
     // Double-colon chain timestamp propagation: if every entry is updated,
     // propagate the max last_mtime to all entries. Entries are inline, so a
     // single lock on the head suffices.
-    {
+    if entry == 0 {
         if let Some(node) = ctx.filenodes.get(file) {
             let mut n = node.lock().expect("file node lock poisoned");
             if n.is_double_colon && !n.double_colon.is_empty() {
@@ -1689,7 +1712,8 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId) {
         }
     } else if ustatus as i32 == us_none as i32 {
         if let Some(node) = ctx.filenodes.get(file) {
-            node.lock().expect("file node lock poisoned").update_status = us_success;
+            let mut g = node.lock().expect("file node lock poisoned");
+            entry_node_mut(&mut g, entry).update_status = us_success;
         }
     }
 }
@@ -2031,12 +2055,13 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
 ///
 /// Lock discipline: the node is locked only for brief field reads/writes; never
 /// across `complain`, `execute_file_commands`, or `notice_finished_file`.
-pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId) {
+pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize) {
     let (has_recipe, phony, is_target, dontcare, any_recurse) = ctx
         .filenodes
         .get(file)
         .map(|node| {
-            let n = node.lock().expect("file node lock poisoned");
+            let mut g = node.lock().expect("file node lock poisoned");
+            let n = entry_node_mut(&mut g, entry);
             (
                 n.recipe.is_some(),
                 n.phony,
@@ -2049,7 +2074,8 @@ pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId) {
     if !has_recipe {
         if phony || is_target {
             if let Some(node) = ctx.filenodes.get(file) {
-                node.lock().expect("file node lock poisoned").update_status = UpdateStatus::Success;
+                let mut g = node.lock().expect("file node lock poisoned");
+                entry_node_mut(&mut g, entry).update_status = UpdateStatus::Success;
             }
         } else {
             if !opt_rebuilding_makefiles() || !dontcare {
@@ -2057,27 +2083,30 @@ pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId) {
                 complain(ctx, file);
             }
             if let Some(node) = ctx.filenodes.get(file) {
-                node.lock().expect("file node lock poisoned").update_status = UpdateStatus::Failed;
+                let mut g = node.lock().expect("file node lock poisoned");
+                entry_node_mut(&mut g, entry).update_status = UpdateStatus::Failed;
             }
         }
     } else {
         // chop_commands needs &mut Recipe; lock briefly to chop in place.
         if let Some(node) = ctx.filenodes.get(file) {
-            let mut n = node.lock().expect("file node lock poisoned");
+            let mut g = node.lock().expect("file node lock poisoned");
+            let n = entry_node_mut(&mut g, entry);
             if let Some(recipe) = n.recipe.as_mut() {
                 chop_commands(ctx, recipe);
             }
         }
         if !crate::make_main::opt_touch() || any_recurse {
             // lock: no guard held across execute_file_commands.
-            execute_file_commands(ctx, file);
+            execute_file_commands(ctx, file, entry);
             return;
         }
         if let Some(node) = ctx.filenodes.get(file) {
-            node.lock().expect("file node lock poisoned").update_status = UpdateStatus::Success;
+            let mut g = node.lock().expect("file node lock poisoned");
+            entry_node_mut(&mut g, entry).update_status = UpdateStatus::Success;
         }
     }
-    notice_finished_file(ctx, file);
+    notice_finished_file(ctx, file, entry);
 }
 
 /// Refresh `f_mtime`'s cached "adjusted now" from a freshly sampled clock.
