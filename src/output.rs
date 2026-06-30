@@ -624,14 +624,13 @@ unsafe fn push_error_prefix(
     makelevel: u32,
     fatal_marker: bool,
 ) {
-    if !flocp.is_null() && !(*flocp).filenm.is_null() {
+    if let Some(fl) = flocp.as_ref().filter(|fl| !fl.filenm.is_null()) {
         // `filenm` is non-null in this arm, so it is always `Some`.
-        push_cstr(out, Some(::core::ffi::CStr::from_ptr((*flocp).filenm)));
+        push_cstr(out, Some(::core::ffi::CStr::from_ptr(fl.filenm)));
         out.push(b':');
         out.extend_from_slice(
-            (*flocp)
-                .lineno
-                .wrapping_add((*flocp).offset)
+            fl.lineno
+                .wrapping_add(fl.offset)
                 .to_string()
                 .as_bytes(),
         );

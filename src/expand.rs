@@ -611,7 +611,7 @@ pub unsafe fn expand_argument(
     if str == end {
         return xstrdup(c"".as_ptr());
     }
-    if end.is_null() || *end == 0 {
+    if end.is_null() || *end.as_ref().unwrap() == 0 {
         return allocated_expand_string_for_file(ctx, str, ::core::ptr::null_mut::<file>());
     }
     // Copy the [str, end) slice into an owned, NUL-terminated buffer (the C
