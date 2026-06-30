@@ -572,9 +572,29 @@ fn set_file_command_state_entry(
     entry: usize,
     state: CommandState,
 ) {
-    if let Some(node) = ctx.filenodes.get(file) {
+    // Port of C's `set_command_state`: set the state on this entry and, for the
+    // head entry, propagate it to every `also_make` (grouped `&:`) peer. The
+    // peers are snapshotted under the head guard, the guard is dropped, then
+    // each peer is assigned on its own brief lock. Without this, starting the
+    // recipe for one grouped target leaves its siblings at `cs_not_started`, so
+    // a sibling considered before the running job is reaped starts the shared
+    // recipe a second time.
+    let peers: Vec<FileId> = {
+        let Some(node) = ctx.filenodes.get(file) else {
+            return;
+        };
         let mut guard = node.lock().expect("file node poisoned");
         entry_node(&mut guard, entry).command_state = state;
+        if entry == 0 {
+            guard.also_make.iter().filter_map(|d| d.file).collect()
+        } else {
+            Vec::new()
+        }
+    };
+    for pid in peers {
+        if let Some(node) = ctx.filenodes.get(pid) {
+            node.lock().expect("file node poisoned").command_state = state;
+        }
     }
 }
 
