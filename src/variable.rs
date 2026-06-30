@@ -890,26 +890,6 @@ pub unsafe fn lookup_variable(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn lookup_variable_for_file(
-    ctx: &crate::execctx::ExecContext,
-    name: *const ::core::ffi::c_char,
-    length: size_t,
-    file: *mut File,
-) -> *mut variable {
-    let var: *mut variable;
-    let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    if file.is_null() {
-        return lookup_variable(ctx, name, length);
-    }
-    install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
-    var = lookup_variable(ctx, name, length);
-    restore_file_context(savev, ::core::ptr::null::<Floc>());
-    var
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 pub unsafe fn lookup_variable_in_set(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
