@@ -3456,25 +3456,25 @@ mod tests {
         assert_eq!(normalize_lookup_name_bytes(b"sub/foo.o"), b"sub/foo.o");
     }
 
-    /// `enter_filenode` interns a fresh node and is idempotent on the name;
-    /// `lookup_filenode` finds it (after normalization) and misses otherwise.
+    /// `enter_file` interns a fresh node and is idempotent on the name;
+    /// `lookup_file` finds it (after normalization) and misses otherwise.
     #[test]
     fn enter_and_lookup_filenode_round_trip_on_the_arena() {
         initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
 
-        assert!(lookup_filenode(&ctx, b"foo.o").is_none());
+        assert!(lookup_file(&ctx, b"foo.o").is_none());
 
-        let id = enter_filenode(&ctx, b"foo.o");
+        let id = enter_file(&ctx, b"foo.o");
         assert_eq!(ctx.filenodes.len(), 1);
         // Re-entering the same (and the "./"-prefixed) name reuses the head.
-        assert_eq!(enter_filenode(&ctx, b"foo.o"), id);
-        assert_eq!(enter_filenode(&ctx, b"./foo.o"), id);
+        assert_eq!(enter_file(&ctx, b"foo.o"), id);
+        assert_eq!(enter_file(&ctx, b"./foo.o"), id);
         assert_eq!(ctx.filenodes.len(), 1);
 
-        assert_eq!(lookup_filenode(&ctx, b"foo.o"), Some(id));
-        assert_eq!(lookup_filenode(&ctx, b"./foo.o"), Some(id));
-        assert!(lookup_filenode(&ctx, b"bar.o").is_none());
+        assert_eq!(lookup_file(&ctx, b"foo.o"), Some(id));
+        assert_eq!(lookup_file(&ctx, b"./foo.o"), Some(id));
+        assert!(lookup_file(&ctx, b"bar.o").is_none());
 
         let node = ctx.filenodes.get(id).expect("interned");
         assert_eq!(node.lock().unwrap().name, b"foo.o");
@@ -3487,7 +3487,7 @@ mod tests {
         initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
 
-        let id = enter_filenode(&ctx, b"all");
+        let id = enter_file(&ctx, b"all");
         // First `::` rule marks the head (it is the first entry); the next two
         // append inline entries.
         push_double_colon_entry(&ctx, id);

@@ -1124,6 +1124,10 @@ mod get_next_word_tests {
         assert_eq!(get_next_word(b"  foo bar", 0), Some((2, 3)));
         assert_eq!(get_next_word(b"foo bar", 3), Some((4, 3)));
         assert_eq!(get_next_word(b"   ", 0), None);
-        assert_eq!(get_next_word(b"a|b", 0), Some((0, 1)));
+        // A `|` (order-only separator) terminates the word but, matching the C
+        // `get_next_word` (`case '|': goto done;` with no `--p`), the byte that
+        // was already consumed is included in the returned length — so "a|" of
+        // "a|b" is the word here.
+        assert_eq!(get_next_word(b"a|b", 0), Some((0, 2)));
     }
 }

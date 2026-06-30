@@ -477,6 +477,7 @@ fn file_name_cstr(ctx: &crate::execctx::ExecContext, file: FileId) -> Vec<u8> {
 fn recipe_floc(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
+    offset: u64,
     buf: &mut Vec<u8>,
 ) -> Floc {
     let (defined_in, lineno) = match ctx.filenodes.get(file) {
@@ -496,7 +497,10 @@ fn recipe_floc(
             Floc {
                 filenm: buf.as_ptr() as *const ::core::ffi::c_char,
                 lineno: lineno as ::core::ffi::c_ulong,
-                offset: 0,
+                // The error reports `lineno + offset`; the offset is the failing
+                // command's 0-based index in the recipe (C: `fileinfo.offset =
+                // child->command_line - 1`).
+                offset: offset as ::core::ffi::c_ulong,
             }
         }
         None => Floc {
@@ -568,7 +572,8 @@ unsafe fn child_error(
     let mut post: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut floc_buf: Vec<u8> = Vec::new();
-    let floc = recipe_floc(ctx, (*child).file, &mut floc_buf);
+    let cmd_offset = ((*child).command_line as u64).saturating_sub(1);
+    let floc = recipe_floc(ctx, (*child).file, cmd_offset, &mut floc_buf);
     let name_buf = file_name_cstr(ctx, (*child).file);
     let f_name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
     let mut smode: Option<&::core::ffi::CStr> = None;
