@@ -221,26 +221,30 @@ unsafe fn c_str_to_vec(p: *const ::core::ffi::c_char) -> Vec<u8> {
 /// # Safety
 /// `v` must point to a valid, fully initialized `variable`.
 unsafe fn target_variable_from_c(v: *const variable) -> TargetVariable {
-    let defined_in = if (*v).fileinfo.filenm.is_null() {
+    // SAFETY: the caller guarantees `v` points to a valid, fully initialized
+    // `variable`. Bind a checked reference so every field read below goes
+    // through a provably-valid reference rather than raw pointer derefs.
+    let vr = v.as_ref().expect("variable pointer is non-null");
+    let defined_in = if vr.fileinfo.filenm.is_null() {
         None
     } else {
-        Some(c_str_to_vec((*v).fileinfo.filenm))
+        Some(c_str_to_vec(vr.fileinfo.filenm))
     };
     TargetVariable {
-        name: c_str_to_vec((*v).name),
-        value: c_str_to_vec((*v).value),
+        name: c_str_to_vec(vr.name),
+        value: c_str_to_vec(vr.value),
         defined_in,
-        defined_lineno: (*v).fileinfo.lineno.wrapping_add((*v).fileinfo.offset),
-        flavor: flavor_from_c((*v).flavor()),
-        origin: origin_from_c((*v).origin()),
-        export: export_from_c((*v).export()),
-        recursive: (*v).recursive() != 0,
-        append: (*v).append() != 0,
-        conditional: (*v).conditional() != 0,
-        per_target: (*v).per_target() != 0,
-        special: (*v).special() != 0,
-        exportable: (*v).exportable() != 0,
-        private_var: (*v).private_var() != 0,
+        defined_lineno: vr.fileinfo.lineno.wrapping_add(vr.fileinfo.offset),
+        flavor: flavor_from_c(vr.flavor()),
+        origin: origin_from_c(vr.origin()),
+        export: export_from_c(vr.export()),
+        recursive: vr.recursive() != 0,
+        append: vr.append() != 0,
+        conditional: vr.conditional() != 0,
+        per_target: vr.per_target() != 0,
+        special: vr.special() != 0,
+        exportable: vr.exportable() != 0,
+        private_var: vr.private_var() != 0,
     }
 }
 
@@ -1272,7 +1276,9 @@ pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVaria
 /// `global_setlist` (which is process-wide and never freed).
 pub unsafe fn free_file_setlist(mut list: *mut variable_set_list) {
     while !list.is_null() && list != &raw mut global_setlist {
-        let next = (*list).next;
+        // SAFETY: `list` was just checked non-null; read `next` through a
+        // checked reference before freeing the node.
+        let next = list.as_ref().expect("list node is non-null").next;
         free_variable_set(list);
         list = next;
     }
@@ -1758,6 +1764,9 @@ pub unsafe fn target_environment(
     );
     s = set_list;
     while !s.is_null() {
+        // SAFETY: `s` was just checked non-null; read its fields through a
+        // checked reference rather than raw pointer derefs.
+        let sr = s.as_ref().expect("set-list node is non-null");
         let set: *mut variable_set = (*s).set;
         let islocal: i32 = (s == set_list) as i32;
         let isglobal: i32 = (set == &raw mut global_variable_set) as i32;
