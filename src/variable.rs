@@ -608,25 +608,38 @@ pub unsafe fn define_variable_in_set(
     if !(v.is_null()
         || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        if crate::make_main::env_overrides() && (*v).origin() as i32 == o_env as i32 {
-            (*v).set_origin(o_env_override as variable_origin);
+        // SAFETY: `v` was just checked to be neither null nor the hash
+        // deleted-item sentinel, so it points to a valid `variable`. Bind a
+        // checked reference so the field accesses below go through a
+        // provably-valid reference rather than raw-pointer derefs.
+        let vr = v
+            .as_mut()
+            .expect("existing variable slot pointer is non-null");
+        if crate::make_main::env_overrides() && vr.origin() as i32 == o_env as i32 {
+            vr.set_origin(o_env_override as variable_origin);
         }
-        if origin as i32 >= (*v).origin() as i32 {
-            free((*v).value as *mut ::core::ffi::c_void);
-            (*v).value = xstrdup(value);
-            if !flocp.is_null() {
-                (*v).fileinfo = *flocp;
+        if origin as i32 >= vr.origin() as i32 {
+            free(vr.value as *mut ::core::ffi::c_void);
+            vr.value = xstrdup(value);
+            if let Some(floc) = flocp.as_ref() {
+                vr.fileinfo = *floc;
             } else {
-                (*v).fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
+                vr.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
             }
-            (*v).set_origin(origin as variable_origin);
-            (*v).set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            vr.set_origin(origin as variable_origin);
+            vr.set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
         return v;
     }
     v = xcalloc(::core::mem::size_of::<variable>() as size_t) as *mut variable;
-    (*v).name = xstrndup(name, length);
-    (*v).length = length as ::core::ffi::c_uint;
+    // SAFETY: `xcalloc` aborts on allocation failure, so `v` is non-null and
+    // points to a zeroed `variable`. Bind a checked reference for the rest of
+    // this block so all field accesses go through a provably-valid reference.
+    let vr = v
+        .as_mut()
+        .expect("xcalloc returns a non-null variable pointer");
+    vr.name = xstrndup(name, length);
+    vr.length = length as ::core::ffi::c_uint;
     hash_insert_at(
         &raw mut (*set).table,
         v as *const ::core::ffi::c_void,
@@ -635,20 +648,20 @@ pub unsafe fn define_variable_in_set(
     if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
         VARIABLE_CHANGENUM.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
-    (*v).value = xstrdup(value);
-    if !flocp.is_null() {
-        (*v).fileinfo = *flocp;
+    vr.value = xstrdup(value);
+    if let Some(floc) = flocp.as_ref() {
+        vr.fileinfo = *floc;
     }
-    (*v).set_origin(origin as variable_origin);
-    (*v).set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    (*v).set_export(v_default as variable_export);
-    (*v).set_exportable(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    name = (*v).name;
+    vr.set_origin(origin as variable_origin);
+    vr.set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    vr.set_export(v_default as variable_export);
+    vr.set_exportable(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    name = vr.name;
     if *name as i32 != '_' as i32
         && ((*name as i32) < 'A' as i32 || *name as i32 > 'Z' as i32)
         && ((*name as i32) < 'a' as i32 || *name as i32 > 'z' as i32)
     {
-        (*v).set_exportable(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        vr.set_exportable(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     } else {
         name = name.offset(1_i32 as isize);
         while *name as i32 != 0 {
@@ -663,7 +676,7 @@ pub unsafe fn define_variable_in_set(
             name = name.offset(1_i32 as isize);
         }
         if *name as i32 != 0 {
-            (*v).set_exportable(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            vr.set_exportable(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
     }
     v
@@ -1135,9 +1148,12 @@ unsafe fn populate_set_from_targets(
         name_buf.push(0);
         let mut value_buf = tv.value.clone();
         value_buf.push(0);
+        // For synthetic entries (no recorded source file) keep the floc fully
+        // zeroed, matching the previous null-pointer path where the callee left
+        // `fileinfo` untouched apart from clearing `filenm`.
         let mut floc_storage = Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
-            lineno: tv.defined_lineno,
+            lineno: 0,
             offset: 0,
         };
         let mut file_buf: Option<Vec<u8>> = None;
@@ -1145,13 +1161,15 @@ unsafe fn populate_set_from_targets(
             let mut b = f.clone();
             b.push(0);
             floc_storage.filenm = strcache_add(b.as_ptr() as *const ::core::ffi::c_char);
+            floc_storage.lineno = tv.defined_lineno;
             file_buf = Some(b);
         }
-        let flocp: *const Floc = if tv.defined_in.is_some() {
-            &raw const floc_storage
-        } else {
-            ::core::ptr::null::<Floc>()
-        };
+        // Always hand `define_variable_in_set` a pointer to the on-stack
+        // `floc_storage`, never a null pointer. When the target variable has no
+        // recorded source file, `floc_storage.filenm` is already null, so the
+        // resulting `fileinfo` is equivalent to the previous null-pointer path
+        // without ever flowing a null pointer into the callee's deref.
+        let flocp: *const Floc = &raw const floc_storage;
         let v = define_variable_in_set(
             ctx,
             name_buf.as_ptr() as *const ::core::ffi::c_char,
@@ -2229,8 +2247,15 @@ pub unsafe fn do_variable_definition(
             },
             flocp,
         );
-        (*v).set_append(append as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        (*v).set_conditional(conditional as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        // SAFETY: `define_variable_in_set` always returns a valid, non-null
+        // `variable` pointer (it either upserts into the set or `xcalloc`s a new
+        // entry, aborting on OOM). Bind a checked reference so these flag writes
+        // go through a provably-valid reference.
+        let vr = v
+            .as_mut()
+            .expect("define_variable_in_set returns a non-null variable pointer");
+        vr.set_append(append as ::core::ffi::c_uint as ::core::ffi::c_uint);
+        vr.set_conditional(conditional as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     free(alloc_value as *mut ::core::ffi::c_void);
     match v.as_mut() {
@@ -2332,8 +2357,10 @@ pub unsafe fn try_variable_definition(
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     let vp: *mut variable;
-    if !flocp.is_null() {
-        v.fileinfo = *flocp;
+    // SAFETY: dereference `flocp` only behind the null check; `as_ref` yields a
+    // checked reference so the read is provably valid.
+    if let Some(floc) = flocp.as_ref() {
+        v.fileinfo = *floc;
     } else {
         v.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
     }
