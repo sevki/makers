@@ -3,12 +3,13 @@ pub use crate::ffi_types::{
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
     ssize_t, time_t, uintmax_t,
 };
-use crate::file::{dep, file, Commands, Dep, File, VariableSet, VariableSetList};
+use crate::file::{FileId, VariableSet, VariableSetList};
 use crate::file::{
     cs_finished, cs_running, us_failed, us_question, us_success, CommandState,
     UpdateStatus,
 };
-use crate::misc::{xcalloc, xmalloc, xstrdup};
+use crate::recipe::RecipeLineFlags;
+use crate::misc::{xmalloc, xstrdup};
 use crate::stdio::FILE;
 use ::c2rust_bitfields;
 use libc::{
@@ -182,18 +183,35 @@ pub struct childbase {
     pub environment: *mut *mut ::core::ffi::c_char,
     pub output: output,
 }
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(BitfieldStruct)]
 #[repr(C)]
 pub struct child {
+    // The first three fields mirror `childbase` (same order, `#[repr(C)]`) so
+    // that `child as *mut childbase` stays a valid prefix cast for
+    // `child_execute_job`/`free_childbase`.
     pub cmd_name: *mut ::core::ffi::c_char,
     pub environment: *mut *mut ::core::ffi::c_char,
     pub output: output,
     pub next: *mut child,
-    pub file: *mut File,
+    /// The target this child builds, by arena handle (the former `*mut File`).
+    pub file: FileId,
     pub sh_batch_file: *mut ::core::ffi::c_char,
-    pub command_lines: *mut *mut ::core::ffi::c_char,
+    /// Owned, fully-expanded recipe lines (each NUL-free), the former
+    /// `command_lines: *mut *mut c_char` + intrusive `ncommand_lines`.
+    pub command_lines: Vec<Vec<u8>>,
+    /// Per-line flags captured at chop time, parallel to `command_lines`.
+    pub line_flags: Vec<RecipeLineFlags>,
+    /// Cursor into `command_lines`: index of the next line to run.
+    pub command_line: usize,
+    /// Owned, NUL-terminated working copy of the line currently being
+    /// consumed; `command_ptr` walks within it (the former in-place rewrite of
+    /// the heap `command_lines[i]` buffer). Kept alive for the whole time
+    /// `command_ptr` is non-null.
+    pub command_buf: Vec<u8>,
+    /// Cursor within `command_buf`; null when no line is loaded (the former
+    /// `command_ptr`). Always points into `command_buf`, so it stays valid as
+    /// long as `command_buf` is not reallocated.
     pub command_ptr: *mut ::core::ffi::c_char,
-    pub command_line: ::core::ffi::c_uint,
     pub pid: pid_t,
     #[bitfield(name = "remote", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "noerror", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -243,8 +261,7 @@ pub struct posix_spawn_file_actions_t {
     pub __pad: [i32; 16],
 }
 use crate::commands::{chop_commands, delete_child_targets, handling_fatal_signal};
-use crate::expand::{allocated_expand_string_for_file, allocated_expand_variable_for_file};
-use crate::file::{lookup_file, set_command_state};
+use crate::file::lookup_file;
 use crate::findprog::find_in_given_path;
 use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
@@ -258,7 +275,7 @@ use crate::posixos::{
     jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
 };
 use crate::remake::{notice_finished_file, show_goal_error};
-use crate::variable::{lookup_variable_for_file, target_environment};
+use crate::variable::target_environment;
 use crate::warning::{self, Action, Type};
 pub const __S_IFMT: i32 = 0o170000_i32;
 pub const __S_IEXEC: i32 = 0o100_i32;
@@ -437,6 +454,107 @@ fn smode_or_empty(smode: Option<&::core::ffi::CStr>) -> &::core::ffi::CStr {
     smode.unwrap_or(c"")
 }
 
+/// Snapshot a target's NUL-terminated name from the arena into an owned buffer.
+/// Returns an empty `"\0"` when the node is absent. The lock is dropped before
+/// returning.
+fn file_name_cstr(ctx: &crate::execctx::ExecContext, file: FileId) -> Vec<u8> {
+    match ctx.filenodes.get(file) {
+        Some(node) => {
+            let g = node.lock().expect("file node poisoned");
+            let mut nm = g.name.clone();
+            nm.push(0);
+            nm
+        }
+        None => vec![0],
+    }
+}
+
+/// Snapshot a target's recipe definition location (`defined_in`/
+/// `defined_lineno`) into an owned [`Floc`] plus the backing filename buffer.
+/// The returned `Floc.filenm` points into `buf` (which the caller must keep
+/// alive); a recipe with no source file yields a null `filenm`. The arena lock
+/// is dropped before returning.
+fn recipe_floc(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    buf: &mut Vec<u8>,
+) -> Floc {
+    let (defined_in, lineno) = match ctx.filenodes.get(file) {
+        Some(node) => {
+            let g = node.lock().expect("file node poisoned");
+            match g.recipe.as_ref() {
+                Some(r) => (r.defined_in.clone(), r.defined_lineno),
+                None => (None, 0),
+            }
+        }
+        None => (None, 0),
+    };
+    match defined_in {
+        Some(mut name) => {
+            name.push(0);
+            *buf = name;
+            Floc {
+                filenm: buf.as_ptr() as *const ::core::ffi::c_char,
+                lineno: lineno as ::core::ffi::c_ulong,
+                offset: 0,
+            }
+        }
+        None => Floc {
+            filenm: ::core::ptr::null(),
+            lineno: 0,
+            offset: 0,
+        },
+    }
+}
+
+/// Read a target's `command_state` through the arena, dropping the lock before
+/// returning (per the job-state locking discipline: never hold a `FileNode`
+/// guard across a job spawn or `notice_finished_file`).
+fn file_command_state(ctx: &crate::execctx::ExecContext, file: FileId) -> CommandState {
+    match ctx.filenodes.get(file) {
+        Some(node) => node.lock().expect("file node poisoned").command_state,
+        None => CommandState::Finished,
+    }
+}
+
+/// Read a target's `update_status` through the arena, dropping the lock first.
+fn file_update_status(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStatus {
+    match ctx.filenodes.get(file) {
+        Some(node) => node.lock().expect("file node poisoned").update_status,
+        None => UpdateStatus::Success,
+    }
+}
+
+/// Set a target's `update_status` through the arena, dropping the lock first.
+fn set_file_update_status(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    status: UpdateStatus,
+) {
+    if let Some(node) = ctx.filenodes.get(file) {
+        node.lock().expect("file node poisoned").update_status = status;
+    }
+}
+
+/// Set a target's `command_state` through the arena, dropping the lock first.
+fn set_file_command_state(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    state: CommandState,
+) {
+    if let Some(node) = ctx.filenodes.get(file) {
+        node.lock().expect("file node poisoned").command_state = state;
+    }
+}
+
+/// Read a target's `dontcare` flag through the arena, dropping the lock first.
+fn file_dontcare(ctx: &crate::execctx::ExecContext, file: FileId) -> bool {
+    match ctx.filenodes.get(file) {
+        Some(node) => node.lock().expect("file node poisoned").dontcare,
+        None => false,
+    }
+}
+
 unsafe fn child_error(
     ctx: &crate::execctx::ExecContext,
     child: *mut child,
@@ -449,14 +567,10 @@ unsafe fn child_error(
     let mut pre: *const ::core::ffi::c_char = b"*** \0" as *const u8 as *const ::core::ffi::c_char;
     let mut post: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
-    let f: *const file = (*child).file;
-    let flocp: *const Floc = &raw const f
-        .as_ref()
-        .expect("a child always has a file")
-        .cmds
-        .as_ref()
-        .expect("a child being reported has a recipe")
-        .fileinfo;
+    let mut floc_buf: Vec<u8> = Vec::new();
+    let floc = recipe_floc(ctx, (*child).file, &mut floc_buf);
+    let name_buf = file_name_cstr(ctx, (*child).file);
+    let f_name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
     let mut smode: Option<&::core::ffi::CStr> = None;
     let l: size_t;
     if ignored != 0 && crate::make_main::opt_run_silent() {
@@ -469,10 +583,10 @@ unsafe fn child_error(
         pre = b"\0" as *const u8 as *const ::core::ffi::c_char;
         post = b" (ignored)\0" as *const u8 as *const ::core::ffi::c_char;
     }
-    let nm = child_error_label(&*flocp, &mut alloca_allocations);
+    let nm = child_error_label(&floc, &mut alloca_allocations);
     l = strlen(pre)
         .wrapping_add(strlen(nm))
-        .wrapping_add(strlen((*f).name))
+        .wrapping_add(strlen(f_name))
         .wrapping_add(strlen(post)) as size_t;
     if let Some(label) = crate::shuffle::get_mode() {
         let mut buf = format!(" shuffle={}", label).into_bytes();
@@ -497,7 +611,7 @@ unsafe fn child_error(
         b"%s[%s: %s] Error %d%s%s\0" as *const u8 as *const ::core::ffi::c_char,
         &[FmtArg::Str((pre) as *const ::core::ffi::c_char),
             FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((f_name) as *const ::core::ffi::c_char),
             FmtArg::Int((exit_code) as i32 as i64),
             FmtArg::Str((post) as *const ::core::ffi::c_char),
             FmtArg::Str(smode_or_empty(smode).as_ptr())],
@@ -512,7 +626,7 @@ unsafe fn child_error(
         b"%s[%s: %s] %s%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
         &[FmtArg::Str((pre) as *const ::core::ffi::c_char),
             FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str(((*f).name) as *const ::core::ffi::c_char),
+            FmtArg::Str((f_name) as *const ::core::ffi::c_char),
             FmtArg::Str((s) as *const ::core::ffi::c_char),
             FmtArg::Str((dump) as *const ::core::ffi::c_char),
             FmtArg::Str((post) as *const ::core::ffi::c_char),
@@ -602,7 +716,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         b"Live child %p (%s) PID %s %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,
                         c,
-                        (*c).file.as_ref().expect("a child always has a file").name,
+                        file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
                         pid2str((*c).pid),
                         if (*c).remote() as i32 != 0 {
                             b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
@@ -827,21 +941,24 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(ctx, c, exit_code, exit_sig, coredump, 0);
             }
-            (*c).file
-                .as_mut()
-                .expect("a child always has a file")
-                .set_update_status(if child_failed == MAKE_FAILURE {
+            set_file_update_status(
+                ctx,
+                (*c).file,
+                if child_failed == MAKE_FAILURE {
                     us_failed
                 } else {
                     us_question
-                });
+                },
+            );
             if DELETE_ON_ERROR.load(Ordering::Relaxed) == -1_i32 {
-                let f: *mut file =
-                    lookup_file(ctx, b".DELETE_ON_ERROR\0" as *const u8 as *const ::core::ffi::c_char);
-                DELETE_ON_ERROR.store(
-                    (!f.is_null() && (*f).is_target() as i32 != 0) as i32,
-                    Ordering::Relaxed,
-                );
+                let is_target = match lookup_file(ctx, b".DELETE_ON_ERROR") {
+                    Some(fid) => match ctx.filenodes.get(fid) {
+                        Some(node) => node.lock().expect("file node poisoned").is_target,
+                        None => false,
+                    },
+                    None => false,
+                };
+                DELETE_ON_ERROR.store(is_target as i32, Ordering::Relaxed);
             }
             if exit_sig != 0 || DELETE_ON_ERROR.load(Ordering::Relaxed) != 0 {
                 delete_child_targets(ctx, c);
@@ -853,10 +970,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             }
             if job_next_command(c) != 0 {
                 if handling_fatal_signal != 0 {
-                    (*c).file
-                        .as_mut()
-                        .expect("a child always has a file")
-                        .set_update_status(us_failed);
+                    set_file_update_status(ctx, (*c).file, us_failed);
                 } else {
                     if crate::make_main::opt_output_sync() == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(ctx, &raw mut (*c).output);
@@ -867,30 +981,15 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     );
                     start_job_command(ctx, c);
                     unblock_sigs();
-                    if (*c)
-                        .file
-                        .as_ref()
-                        .expect("a child always has a file")
-                        .command_state() as i32
-                        == cs_running as i32
-                    {
+                    if file_command_state(ctx, (*c).file) as i32 == cs_running as i32 {
                         continue;
                     }
                 }
-                if (*c)
-                    .file
-                    .as_ref()
-                    .expect("a child always has a file")
-                    .update_status() as i32
-                    != us_success as i32
-                {
+                if file_update_status(ctx, (*c).file) as i32 != us_success as i32 {
                     delete_child_targets(ctx, c);
                 }
             } else {
-                (*c).file
-                    .as_mut()
-                    .expect("a child always has a file")
-                    .set_update_status(us_success);
+                set_file_update_status(ctx, (*c).file, us_success);
             }
         }
         crate::output::output_dump(ctx, &raw mut (*c).output);
@@ -962,9 +1061,13 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
     if handling_fatal_signal != 0 {
         return;
     }
-    free_command_lines(child);
+    // Free the c2rust-allocated `childbase` members (cmd_name/environment) the
+    // same way as before; the owned `command_lines`/`line_flags`/`command_buf`
+    // Vecs are released when the `Box` is dropped below.
     free_childbase(child as *mut childbase);
-    free(child as *mut ::core::ffi::c_void);
+    // The child was allocated with `Box::into_raw`; reclaim it so its owned
+    // fields drop. Takes the place of the former `free(child)`.
+    drop(Box::from_raw(child));
 }
 
 /// Account for this child's jobserver token as it is freed: assert a token is
@@ -979,25 +1082,17 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
 /// `child` must be a valid `child` whose `file` is live; the jobserver globals
 /// must be initialized.
 unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut child) {
+    let name_buf = file_name_cstr(ctx, (*child).file);
+    let name = name_buf.as_ptr() as *const ::core::ffi::c_char;
     if jobserver_tokens() == 0 {
         fatal(
         ctx,
         ::core::ptr::null_mut::<Floc>(),
-        INTSTR_LENGTH.wrapping_add(strlen(
-                (*child)
-                    .file
-                    .as_ref()
-                    .expect("a child always has a file")
-                    .name,
-            ) as size_t),
+        INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
         b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
                 as *const ::core::ffi::c_char,
         &[FmtArg::Ptr((child) as *const ::core::ffi::c_void),
-            FmtArg::Str(((*child)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .name) as *const ::core::ffi::c_char)],
+            FmtArg::Str((name) as *const ::core::ffi::c_char)],
     );
     }
     if jobserver_enabled() != 0 && jobserver_tokens() > 1 {
@@ -1006,11 +1101,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
             printf(
                 b"Released token for child %p (%s).\n\0" as *const u8 as *const ::core::ffi::c_char,
                 child,
-                (*child)
-                    .file
-                    .as_ref()
-                    .expect("a child always has a file")
-                    .name,
+                name,
             );
             fflush(stdout);
         }
@@ -1018,34 +1109,6 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
     JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
 }
 
-/// Free a child's expanded per-line recipe argv — each line buffer and then the
-/// array itself — if one was built. Split out of `free_child` to keep that
-/// function's complexity flat.
-///
-/// # Safety
-///
-/// `child` must be a valid `child` whose `command_lines`, when non-null, holds
-/// `ncommand_lines` heap-allocated line pointers.
-unsafe fn free_command_lines(child: *mut child) {
-    if (*child).command_lines.is_null() {
-        return;
-    }
-    let mut i: ::core::ffi::c_uint = 0;
-    while i
-        < (*child)
-            .file
-            .as_ref()
-            .expect("a child always has a file")
-            .cmds
-            .as_ref()
-            .expect("a child being run has a recipe")
-            .ncommand_lines as ::core::ffi::c_uint
-    {
-        free(*(*child).command_lines.offset(i as isize) as *mut ::core::ffi::c_void);
-        i = i.wrapping_add(1);
-    }
-    free((*child).command_lines as *mut ::core::ffi::c_void);
-}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -1054,21 +1117,32 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
     let mut flags: i32;
     let mut p: *mut ::core::ffi::c_char;
     let mut argv: *mut *mut ::core::ffi::c_char;
+    // Snapshot the file's command-line flags and recipe prefix once, dropping
+    // the arena lock before any job spawn or `notice_finished_file`.
+    let (command_flags, prefix): (i32, ::core::ffi::c_char) = match ctx.filenodes.get((*child).file)
+    {
+        Some(node) => {
+            let g = node.lock().expect("file node poisoned");
+            let pfx = g
+                .recipe
+                .as_ref()
+                .map(|r| r.recipe_prefix)
+                .unwrap_or(b'\t');
+            (g.command_flags, pfx as ::core::ffi::c_char)
+        }
+        None => (0, b'\t' as ::core::ffi::c_char),
+    };
+    // Index of the line currently loaded (`command_line` was advanced past it
+    // by `job_next_command`).
+    let line_idx = (*child).command_line.wrapping_sub(1);
     if !(*child).command_ptr.is_null() {
-        flags = (*child)
-            .file
-            .as_ref()
-            .expect("a child always has a file")
-            .command_flags
-            | *(*child)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .cmds
-                .as_ref()
-                .expect("a child being run has a recipe")
-                .lines_flags
-                .offset((*child).command_line.wrapping_sub(1) as isize) as i32;
+        let line_flag_bits = (*child)
+            .line_flags
+            .get(line_idx)
+            .copied()
+            .unwrap_or(RecipeLineFlags::empty())
+            .bits() as i32;
+        flags = command_flags | line_flag_bits;
         p = (*child).command_ptr;
         (*child).set_noerror((flags & 4 != 0) as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         while *p as i32 != 0 {
@@ -1089,24 +1163,13 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
         }
         (*child)
             .set_recursive((flags & 1 != 0) as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        let fresh10 = &mut (*(*child)
-            .file
-            .as_ref()
-            .expect("a child always has a file")
-            .cmds
-            .as_ref()
-            .expect("a child being run has a recipe")
-            .lines_flags
-            .offset((*child).command_line.wrapping_sub(1) as isize));
-        *fresh10 = (*fresh10 as i32 | flags & COMMANDS_RECURSE) as ::core::ffi::c_uchar;
-        let prefix: ::core::ffi::c_char = (*child)
-            .file
-            .as_ref()
-            .expect("a child always has a file")
-            .cmds
-            .as_ref()
-            .expect("a child being run has a recipe")
-            .recipe_prefix;
+        // Persist any newly-discovered RECURSE bit into the child's own copy of
+        // the line flags (the former write-back into `cmds.lines_flags`).
+        if let Some(lf) = (*child).line_flags.get_mut(line_idx) {
+            if flags & COMMANDS_RECURSE != 0 {
+                *lf |= RecipeLineFlags::RECURSE;
+            }
+        }
         let mut p1: *mut ::core::ffi::c_char;
         let mut p2: *mut ::core::ffi::c_char;
         p2 = p;
@@ -1124,25 +1187,19 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
         }
         *p2 = *p1;
         let mut end: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        // Re-read the (possibly RECURSE-updated) line flags for the argv build.
+        let argv_line_flags = (*child)
+            .line_flags
+            .get(line_idx)
+            .copied()
+            .unwrap_or(RecipeLineFlags::empty())
+            .bits() as i32;
         argv = construct_command_argv(
             ctx,
             p,
             &raw mut end,
             (*child).file,
-            *(*child)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .cmds
-                .as_ref()
-                .expect("a child being run has a recipe")
-                .lines_flags
-                .offset((*child).command_line.wrapping_sub(1) as isize) as i32
-                | (*child)
-                    .file
-                    .as_ref()
-                    .expect("a child always has a file")
-                    .command_flags,
+            argv_line_flags | command_flags,
             &raw mut (*child).sh_batch_file,
         );
         if end.is_null() {
@@ -1159,11 +1216,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
             }
-            (*child)
-                .file
-                .as_mut()
-                .expect("a child always has a file")
-                .set_update_status(us_question);
+            set_file_update_status(ctx, (*child).file, us_question);
             notice_finished_file(ctx, (*child).file);
             return;
         }
@@ -1235,18 +1288,20 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 }
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
-                    (*child).environment = target_environment(
-                        ctx,
-                        (*child).file,
-                        (*child)
-                            .file
+                    let any_recurse = match ctx.filenodes.get((*child).file) {
+                        Some(node) => node
+                            .lock()
+                            .expect("file node poisoned")
+                            .recipe
                             .as_ref()
-                            .expect("a child always has a file")
-                            .cmds
-                            .as_ref()
-                            .expect("a child being run has a recipe")
-                            .any_recurse() as i32,
-                    );
+                            .map(|r| r.any_recurse)
+                            .unwrap_or(false),
+                        None => false,
+                    };
+                    // BOUNDARY: `target_environment` is still pointer-based; this
+                    // flips when the variable layer is converted to FileId.
+                    (*child).environment =
+                        target_environment(ctx, (*child).file, any_recurse as i32);
                 }
                 // Run the job locally unless it is successfully handed off to a
                 // remote executor.
@@ -1294,7 +1349,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 if (*child).pid >= 0 {
                     JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
                 }
-                set_command_state((*child).file, CommandState::Running);
+                set_file_command_state(ctx, (*child).file, CommandState::Running);
                 if !argv.is_null() {
                     free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                     free(argv as *mut ::core::ffi::c_void);
@@ -1307,12 +1362,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
     if job_next_command(child) != 0 {
         start_job_command(ctx, child);
     } else {
-        set_command_state((*child).file, cs_running);
-        (*child)
-            .file
-            .as_mut()
-            .expect("a child always has a file")
-            .set_update_status(us_success);
+        set_file_command_state(ctx, (*child).file, cs_running);
+        set_file_update_status(ctx, (*child).file, us_success);
         notice_finished_file(ctx, (*child).file);
     }
     output_context = ::core::ptr::null_mut::<output>();
@@ -1322,12 +1373,12 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child) -> i32 {
-    let f: *mut file = (*c).file;
+    let f: FileId = (*c).file;
     (*c).set_remote(
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     if (*c).remote() == 0 && (job_slots_used() > 0 && load_too_high(ctx) != 0) {
-        set_command_state(f, cs_running);
+        set_file_command_state(ctx, f, cs_running);
         (*c).next = waiting_jobs;
         waiting_jobs = c;
         return 0;
@@ -1336,7 +1387,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     // Finished states (cs_not_started reset to success, cs_finished) need the
     // file noticed and the child freed; a still-running job does not.
     let mut finish = false;
-    match (*f).command_state() as i32 {
+    match file_command_state(ctx, f) as i32 {
         2 => {
             (*c).next = children;
             if (*c).pid > 0 {
@@ -1345,7 +1396,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
                         b"Putting child %p (%s) PID %s%s on the chain.\n\0" as *const u8
                             as *const ::core::ffi::c_char,
                         c,
-                        (*c).file.as_ref().expect("a child always has a file").name,
+                        file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
                         pid2str((*c).pid),
                         if (*c).remote() as i32 != 0 {
                             b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
@@ -1366,14 +1417,14 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
             unblock_sigs();
         }
         0 => {
-            (*f).update_status = UpdateStatus::Success;
+            set_file_update_status(ctx, f, UpdateStatus::Success);
             finish = true;
         }
         3 => {
             finish = true;
         }
         _ => {
-            if (*f).command_state() as i32 == cs_finished as i32 {
+            if file_command_state(ctx, f) as i32 == cs_finished as i32 {
             } else {
                 panic!("assertion failed: f->command_state == cs_finished");
             };
@@ -1534,40 +1585,89 @@ unsafe fn collapse_dollar_refs(line: *mut ::core::ffi::c_char) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let cmds: *mut Commands = (*file).cmds;
-    let c: *mut child;
-    let lines: *mut *mut ::core::ffi::c_char;
-    let mut i: ::core::ffi::c_uint;
+pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId) {
     start_waiting_jobs(ctx);
     reap_children(ctx, 0, 0);
-    chop_commands(ctx, cmds);
-    c = xcalloc(::core::mem::size_of::<child>() as size_t) as *mut child;
-    crate::output::output_init(&raw mut (*c).output);
-    (*c).file = file;
-    (*c).sh_batch_file = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    (*c).set_dontcare((*file).dontcare() as ::core::ffi::c_uint);
-    output_context = if (*c).output.syncout() as i32 != 0 {
-        &raw mut (*c).output
+
+    // Chop the target's recipe into per-line text + flags. We clone the recipe,
+    // chop the clone, then write the chopped lines back so the node's recipe is
+    // populated too — all without holding the arena lock across a job spawn.
+    let (mut chopped, dontcare) = {
+        let node = ctx
+            .filenodes
+            .get(file)
+            .expect("new_job requires an interned file");
+        let mut guard = node.lock().expect("file node poisoned");
+        let dontcare = guard.dontcare;
+        let mut recipe = guard
+            .recipe
+            .clone()
+            .expect("new_job requires a recipe");
+        chop_commands(ctx, &mut recipe);
+        // Persist the chopped view back onto the node.
+        if let Some(r) = guard.recipe.as_mut() {
+            r.lines = recipe.lines.clone();
+            r.any_recurse = recipe.any_recurse;
+        }
+        (recipe, dontcare)
+    };
+
+    // Allocate the child on the heap via Box (the former xcalloc); it owns its
+    // expanded recipe lines.
+    let mut boxed = Box::new(child {
+        cmd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        environment: ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
+        output: output {
+            out: 0,
+            err: 0,
+            syncout: [0; 1],
+            c2rust_padding: [0; 3],
+        },
+        next: ::core::ptr::null_mut::<child>(),
+        file,
+        sh_batch_file: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        command_lines: Vec::new(),
+        line_flags: Vec::new(),
+        command_line: 0,
+        command_buf: Vec::new(),
+        command_ptr: ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        pid: 0,
+        remote_noerror_good_stdin_deleted_recursive_jobslot_dontcare: [0; 1],
+        c2rust_padding: [0; 7],
+    });
+    crate::output::output_init(&raw mut boxed.output);
+    boxed.set_dontcare(dontcare as ::core::ffi::c_uint);
+    output_context = if boxed.output.syncout() as i32 != 0 {
+        &raw mut boxed.output
     } else {
         ::core::ptr::null_mut::<output>()
     };
-    lines = xmalloc(
-        ((*cmds).ncommand_lines as size_t)
-            .wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
-    ) as *mut *mut ::core::ffi::c_char;
-    i = 0;
-    while i < (*cmds).ncommand_lines as ::core::ffi::c_uint {
-        collapse_dollar_refs(*(*cmds).command_lines.offset(i as isize));
-        (*cmds).fileinfo.offset = i as ::core::ffi::c_ulong;
-        let fresh7 = &mut (*lines.offset(i as isize));
-        *fresh7 =
-            allocated_expand_string_for_file(ctx, *(*cmds).command_lines.offset(i as isize), file);
-        i = i.wrapping_add(1);
+
+    // Expand each chopped recipe line for this file, collapsing `$`-reference
+    // continuations first (the former in-place `collapse_dollar_refs`). Each
+    // expanded line is stored NUL-free in `command_lines`; its flags go in
+    // `line_flags`.
+    for line in chopped.lines.drain(..) {
+        // collapse_dollar_refs rewrites in place over a NUL-terminated buffer.
+        let mut buf = line.text.clone();
+        buf.push(0);
+        collapse_dollar_refs(buf.as_mut_ptr() as *mut ::core::ffi::c_char);
+        let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        buf.truncate(nul);
+        buf.push(0);
+        // BOUNDARY: `expand_string_for_file` is converging on the FileId form
+        // (see implicit.rs); call it that way even though the expand layer is
+        // still mid-flip. Returns the expanded bytes (NUL-terminated).
+        let mut expanded: Vec<u8> = crate::expand::expand_string_for_file(ctx, &buf, file);
+        // Drop the trailing NUL so each stored command line is NUL-free.
+        if expanded.last() == Some(&0) {
+            expanded.pop();
+        }
+        boxed.command_lines.push(expanded);
+        boxed.line_flags.push(line.flags);
     }
-    (*cmds).fileinfo.offset = 0;
-    (*c).command_lines = lines;
+
+    let c: *mut child = Box::into_raw(boxed);
     job_next_command(c);
     // `job_slots` is fixed for the run (set only during `main_0` job setup), so
     // snapshot it once rather than reading the borrow channel each spin.
@@ -1619,7 +1719,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
                     b"Obtained token for child %p (%s).\n\0" as *const u8
                         as *const ::core::ffi::c_char,
                     c,
-                    (*c).file.as_ref().expect("a child always has a file").name,
+                    file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
                 );
                 fflush(stdout);
             }
@@ -1628,212 +1728,155 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
     }
     JOBSERVER_TOKENS.fetch_add(1, Ordering::Relaxed);
     if 0x20_i32 & db_level != 0 {
-        // Owns the concatenated also-make name list when one is built below;
-        // stays empty (no allocation) when the target has no also_make set.
-        let mut nmbuf_buf: Vec<u8> = Vec::new();
-        let nm: *const ::core::ffi::c_char;
-        let tp: *const ::core::ffi::c_char;
-        if (*cmds).fileinfo.filenm.is_null() {
-            nm = b"<builtin>\0" as *const u8 as *const ::core::ffi::c_char;
-        } else {
-            alloca_allocations.push(::std::vec::from_elem(
-                0,
-                strlen((*cmds).fileinfo.filenm)
-                    .wrapping_add(1)
-                    .wrapping_add(11)
-                    .wrapping_add(1) as usize,
-            ));
-            let n: *mut ::core::ffi::c_char =
-                alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-            sprintf(
-                n,
-                b"%s:%lu\0" as *const u8 as *const ::core::ffi::c_char,
-                (*cmds).fileinfo.filenm,
-                (*cmds).fileinfo.lineno,
-            );
-            nm = n;
+        // Build the "update target '...' due to: ..." diagnostic from the arena
+        // (the former pointer walk over `cmds.fileinfo`/`also_make`/`deps`).
+        // Snapshot everything we need under the lock, then format and drop it.
+        struct DbgInfo {
+            defined_in: Option<Vec<u8>>,
+            defined_lineno: u64,
+            name: Vec<u8>,
+            also_make_names: Vec<Vec<u8>>,
+            phony: bool,
+            last_mtime: u64,
+            // Names of prerequisites that do not (yet) exist.
+            nonexistent_deps: Vec<Vec<u8>>,
         }
-        if (*c)
-            .file
-            .as_ref()
-            .expect("a child always has a file")
-            .also_make
-            .is_null()
-        {
-            tp = (*c).file.as_ref().expect("a child always has a file").name;
-        } else {
-            let mut dp: *const Dep;
-            let mut cp: *mut ::core::ffi::c_char;
-            let mut len: size_t =
-                strlen((*c).file.as_ref().expect("a child always has a file").name) as size_t;
-            dp = (*c)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .also_make;
-            while !dp.is_null() {
-                len = len.wrapping_add(
-                    strlen((*dp).file.as_ref().expect("a dep always has a file").name)
-                        .wrapping_add(4) as size_t,
-                );
-                dp = (*dp).next;
+        let info: Option<DbgInfo> = ctx.filenodes.get(file).map(|node| {
+            let g = node.lock().expect("file node poisoned");
+            let (defined_in, defined_lineno) = match g.recipe.as_ref() {
+                Some(r) => (r.defined_in.clone(), r.defined_lineno),
+                None => (None, 0),
+            };
+            let also_make_names = g
+                .also_make
+                .iter()
+                .filter_map(|d| d.file)
+                .filter_map(|fid| {
+                    ctx.filenodes
+                        .get(fid)
+                        .map(|n| n.lock().expect("file node poisoned").name.clone())
+                })
+                .collect();
+            let nonexistent_deps = g
+                .deps
+                .iter()
+                .filter_map(|d| d.file)
+                .filter_map(|fid| ctx.filenodes.get(fid))
+                .filter_map(|n| {
+                    let dg = n.lock().expect("file node poisoned");
+                    if dg.last_mtime == NONEXISTENT_MTIME as u64 {
+                        Some(dg.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            DbgInfo {
+                defined_in,
+                defined_lineno,
+                name: g.name.clone(),
+                also_make_names,
+                phony: g.phony,
+                last_mtime: g.last_mtime,
+                nonexistent_deps,
             }
-            nmbuf_buf = Vec::with_capacity(len.wrapping_add(1) as usize);
-            let nmbuf = nmbuf_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
-            tp = nmbuf;
-            cp = stpcpy(
-                nmbuf,
-                (*c).file.as_ref().expect("a child always has a file").name,
-            );
-            dp = (*c)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .also_make;
-            while !dp.is_null() {
-                cp = stpcpy(
-                    stpcpy(cp, b"', '\0" as *const u8 as *const ::core::ffi::c_char),
-                    (*dp).file.as_ref().expect("a dep always has a file").name,
-                );
-                dp = (*dp).next;
+        });
+        if let Some(info) = info {
+            // Location label (`<builtin>` or `file:line`), NUL-terminated.
+            let mut nm_buf: Vec<u8> = match &info.defined_in {
+                None => b"<builtin>\0".to_vec(),
+                Some(fnm) => {
+                    let mut v = fnm.clone();
+                    v.push(b':');
+                    v.extend_from_slice(info.defined_lineno.to_string().as_bytes());
+                    v.push(0);
+                    v
+                }
+            };
+            // Target list: the target name plus any also-make siblings, joined
+            // by `', '`, NUL-terminated.
+            let mut tp_buf: Vec<u8> = info.name.clone();
+            for sib in &info.also_make_names {
+                tp_buf.extend_from_slice(b"', '");
+                tp_buf.extend_from_slice(sib);
             }
-        }
-        if (*c)
-            .file
-            .as_ref()
-            .expect("a child always has a file")
-            .phony()
-            != 0
-        {
-            message(
-        ctx,
-        0,
-        (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-        b"%s: update target '%s' due to: target is .PHONY\0" as *const u8
-                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str((tp) as *const ::core::ffi::c_char)],
-    );
-        } else if (*c)
-            .file
-            .as_ref()
-            .expect("a child always has a file")
-            .last_mtime
-            == NONEXISTENT_MTIME as uintmax_t
-        {
-            message(
-                ctx,
-                0,
-                (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-                b"%s: update target '%s' due to: target does not exist\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[
-                    FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                    FmtArg::Str((tp) as *const ::core::ffi::c_char),
-                ],
-            );
-        } else {
-            let mut newer: *mut ::core::ffi::c_char = allocated_expand_variable_for_file(
-                ctx,
-                b"?\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 2]>() as size_t).wrapping_sub(1),
-                (*c).file,
-            );
-            if *newer.offset(0_i32 as isize) as i32 != 0 {
+            tp_buf.push(0);
+            let nm = nm_buf.as_mut_ptr() as *const ::core::ffi::c_char;
+            let tp = tp_buf.as_mut_ptr() as *const ::core::ffi::c_char;
+            if info.phony {
                 message(
                     ctx,
                     0,
-                    (strlen(nm) as size_t)
-                        .wrapping_add(strlen(tp) as size_t)
-                        .wrapping_add(strlen(newer) as size_t),
-                    b"%s: update target '%s' due to: %s\0" as *const u8
+                    (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
+                    b"%s: update target '%s' due to: target is .PHONY\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    &[
-                        FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                        FmtArg::Str((tp) as *const ::core::ffi::c_char),
-                        FmtArg::Str((newer) as *const ::core::ffi::c_char),
-                    ],
+                    &[FmtArg::Str(nm), FmtArg::Str(tp)],
                 );
-                free(newer as *mut ::core::ffi::c_void);
+            } else if info.last_mtime == NONEXISTENT_MTIME as u64 {
+                message(
+                    ctx,
+                    0,
+                    (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
+                    b"%s: update target '%s' due to: target does not exist\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[FmtArg::Str(nm), FmtArg::Str(tp)],
+                );
             } else {
-                let mut len_0: size_t = 0;
-                let mut d: *mut dep;
-                d = (*c).file.as_ref().expect("a child always has a file").deps;
-                while !d.is_null() {
-                    if (*d)
-                        .file
-                        .as_ref()
-                        .expect("a dep always has a file")
-                        .last_mtime
-                        == NONEXISTENT_MTIME as uintmax_t
-                    {
-                        len_0 = len_0.wrapping_add(
-                            strlen((*d).file.as_ref().expect("a dep always has a file").name)
-                                .wrapping_add(1) as size_t,
-                        );
+                // The set of newer prerequisites ($?), expanded for this file.
+                // BOUNDARY: FileId-convention expand (see implicit.rs).
+                let newer: Vec<u8> = crate::expand::expand_string_for_file(ctx, b"$?\0", file);
+                if newer.first().is_some_and(|&b| b != 0) {
+                    let mut newer_buf = newer.clone();
+                    if newer_buf.last() != Some(&0) {
+                        newer_buf.push(0);
                     }
-                    d = (*d).next;
-                }
-                if len_0 == 0 {
+                    let np = newer_buf.as_ptr() as *const ::core::ffi::c_char;
+                    message(
+                        ctx,
+                        0,
+                        (strlen(nm) as size_t)
+                            .wrapping_add(strlen(tp) as size_t)
+                            .wrapping_add(strlen(np) as size_t),
+                        b"%s: update target '%s' due to: %s\0" as *const u8
+                            as *const ::core::ffi::c_char,
+                        &[FmtArg::Str(nm), FmtArg::Str(tp), FmtArg::Str(np)],
+                    );
+                } else if info.nonexistent_deps.is_empty() {
                     message(
                         ctx,
                         0,
                         (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
                         b"%s: update target '%s' due to: unknown reasons\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        &[
-                            FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                            FmtArg::Str((tp) as *const ::core::ffi::c_char),
-                        ],
+                        &[FmtArg::Str(nm), FmtArg::Str(tp)],
                     );
                 } else {
-                    alloca_allocations.push(::std::vec::from_elem(0, len_0 as usize));
-                    newer = alloca_allocations.last_mut().unwrap().as_mut_ptr()
-                        as *mut ::core::ffi::c_char;
-                    let mut cp_0: *mut ::core::ffi::c_char = newer;
-                    d = (*c).file.as_ref().expect("a child always has a file").deps;
-                    while !d.is_null() {
-                        if (*d)
-                            .file
-                            .as_ref()
-                            .expect("a dep always has a file")
-                            .last_mtime
-                            == NONEXISTENT_MTIME as uintmax_t
-                        {
-                            if cp_0 > newer {
-                                let fresh8 = cp_0;
-                                cp_0 = cp_0.offset(1_i32 as isize);
-                                *fresh8 = ' ' as i32 as ::core::ffi::c_char;
-                            }
-                            cp_0 = stpcpy(
-                                cp_0,
-                                (*d).file.as_ref().expect("a dep always has a file").name,
-                            );
+                    let mut newer_buf: Vec<u8> = Vec::new();
+                    for dn in &info.nonexistent_deps {
+                        if !newer_buf.is_empty() {
+                            newer_buf.push(b' ');
                         }
-                        d = (*d).next;
+                        newer_buf.extend_from_slice(dn);
                     }
+                    newer_buf.push(0);
+                    let np = newer_buf.as_ptr() as *const ::core::ffi::c_char;
                     message(
                         ctx,
                         0,
                         (strlen(nm) as size_t)
                             .wrapping_add(strlen(tp) as size_t)
-                            .wrapping_add(strlen(newer) as size_t),
+                            .wrapping_add(strlen(np) as size_t),
                         b"%s: update target '%s' due to: %s\0" as *const u8
                             as *const ::core::ffi::c_char,
-                        &[
-                            FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                            FmtArg::Str((tp) as *const ::core::ffi::c_char),
-                            FmtArg::Str((newer) as *const ::core::ffi::c_char),
-                        ],
+                        &[FmtArg::Str(nm), FmtArg::Str(tp), FmtArg::Str(np)],
                     );
                 }
             }
         }
-        drop(nmbuf_buf);
     }
     start_waiting_job(ctx, c);
     if crate::make_main::opt_job_slots() == 1 || not_parallel() {
-        while (*file).command_state() as i32 == cs_running as i32 {
+        while file_command_state(ctx, file) as i32 == cs_running as i32 {
             reap_children(ctx, 1, 0);
         }
     }
@@ -1844,43 +1887,26 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: *mut file) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn job_next_command(child: *mut child) -> i32 {
+    // Advance to the next non-empty expanded line, loading it into the owned
+    // `command_buf` and pointing `command_ptr` at its start. The former model
+    // walked a `*mut *mut c_char` array and an in-place `command_ptr` cursor;
+    // here each line is an owned `Vec<u8>` that we NUL-terminate into
+    // `command_buf` so `command_ptr` (a raw cursor) stays valid while the line
+    // is being consumed.
     while (*child).command_ptr.is_null() || *(*child).command_ptr as i32 == 0 {
-        if (*child).command_line
-            == (*child)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .cmds
-                .as_ref()
-                .expect("a child being run has a recipe")
-                .ncommand_lines as ::core::ffi::c_uint
-        {
+        if (*child).command_line >= (*child).command_lines.len() {
             (*child).command_ptr = ::core::ptr::null_mut::<::core::ffi::c_char>();
-            (*child)
-                .file
-                .as_ref()
-                .expect("a child always has a file")
-                .cmds
-                .as_mut()
-                .expect("a child being run has a recipe")
-                .fileinfo
-                .offset = 0;
             return 0;
-        } else {
-            let fresh15 = (*child).command_line;
-            (*child).command_line = (*child).command_line.wrapping_add(1);
-            (*child).command_ptr = *(*child).command_lines.offset(fresh15 as isize);
         }
+        let idx = (*child).command_line;
+        (*child).command_line = (*child).command_line.wrapping_add(1);
+        // Own a NUL-terminated working copy of this line; `command_ptr` walks
+        // within it (`start_job_command` may rewrite it in place).
+        let mut buf = (*child).command_lines[idx].clone();
+        buf.push(0);
+        (*child).command_buf = buf;
+        (*child).command_ptr = (*child).command_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
     }
-    (*child)
-        .file
-        .as_ref()
-        .expect("a child always has a file")
-        .cmds
-        .as_mut()
-        .expect("a child being run has a recipe")
-        .fileinfo
-        .offset = (*child).command_line.wrapping_sub(1) as ::core::ffi::c_ulong;
     1
 }
 pub const LOAD_WEIGHT_A: ::core::ffi::c_double = 0.25f64;
@@ -2994,60 +3020,48 @@ pub unsafe fn construct_command_argv(
     ctx: &crate::execctx::ExecContext,
     line: *mut ::core::ffi::c_char,
     restp: *mut *mut ::core::ffi::c_char,
-    file: *mut file,
+    file: FileId,
     cmd_flags: i32,
     batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {
-    let shell: *mut ::core::ffi::c_char;
-    let ifs: *mut ::core::ffi::c_char;
-    let mut allocflags: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let shellflags: *const ::core::ffi::c_char;
     let argv: *mut *mut ::core::ffi::c_char;
-    let var: *mut variable;
     let save: Action = warning::action(Type::UndefinedVar);
     warning::set_action(Type::UndefinedVar, Action::Ignore);
-    shell = allocated_expand_variable_for_file(
-        ctx,
-        b"SHELL\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-        file,
-    );
-    var = lookup_variable_for_file(
-        ctx,
-        b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),
-        file,
-    ) as *mut variable;
-    if var.is_null() {
-        shellflags = b"\0" as *const u8 as *const ::core::ffi::c_char;
-    } else if (*var).origin() as i32 != o_default as i32 {
-        allocflags = allocated_expand_string_for_file(ctx, (*var).value, file);
-        shellflags = allocflags;
+    // BOUNDARY: the variable layer is converging on the FileId form (see
+    // implicit.rs's `expand_string_for_file(ctx, &[u8], FileId)`); call the
+    // SHELL/.SHELLFLAGS/IFS lookups that way even though the expand/variable
+    // modules are still mid-flip. Each returns an owned NUL-terminated buffer.
+    let shell_buf: Vec<u8> = crate::expand::expand_string_for_file(ctx, b"$(SHELL)\0", file);
+    // `.SHELLFLAGS`: a non-empty (set) value is used verbatim; otherwise fall
+    // back to the posix-pedantic `-ec` or the default `-c`.
+    let shellflags_set: Vec<u8> =
+        crate::expand::expand_string_for_file(ctx, b"$(.SHELLFLAGS)\0", file);
+    let shellflags_owned: Vec<u8> = if shellflags_set.first().is_some_and(|&b| b != 0) {
+        let mut v = shellflags_set.clone();
+        if v.last() != Some(&0) {
+            v.push(0);
+        }
+        v
     } else if posix_pedantic() && !crate::make_main::opt_ignore_errors() && !(cmd_flags & 4 != 0) {
-        shellflags = b"-ec\0" as *const u8 as *const ::core::ffi::c_char;
+        b"-ec\0".to_vec()
     } else {
-        shellflags = b"-c\0" as *const u8 as *const ::core::ffi::c_char;
-    }
-    ifs = allocated_expand_variable_for_file(
-        ctx,
-        b"IFS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 4]>() as size_t).wrapping_sub(1),
-        file,
-    );
+        b"-c\0".to_vec()
+    };
+    let ifs_buf: Vec<u8> = crate::expand::expand_string_for_file(ctx, b"$(IFS)\0", file);
     warning::set_action(Type::UndefinedVar, save);
+    let shell = shell_buf.as_ptr() as *const ::core::ffi::c_char;
+    let shellflags = shellflags_owned.as_ptr() as *const ::core::ffi::c_char;
+    let ifs = ifs_buf.as_ptr() as *const ::core::ffi::c_char;
     argv = construct_command_argv_internal(
         ctx,
         line,
         restp,
-        shell,
+        shell as *mut ::core::ffi::c_char,
         shellflags,
         ifs,
         cmd_flags,
         batch_filename,
     );
-    free(shell as *mut ::core::ffi::c_void);
-    free(allocflags as *mut ::core::ffi::c_void);
-    free(ifs as *mut ::core::ffi::c_void);
     argv
 }
 
