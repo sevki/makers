@@ -2861,7 +2861,7 @@ unsafe fn record_files(
         v
     };
     let mut name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
-    let mut implicit_percent: *const ::core::ffi::c_char = find_percent_cached(&raw mut name);
+    let implicit_percent: *const ::core::ffi::c_char = find_percent_cached(&raw mut name);
 
     // Build the recipe (the former `*mut Commands`) as an idiomatic `Recipe`.
     let recipe: Option<crate::recipe::Recipe> = if commands_idx > 0 {

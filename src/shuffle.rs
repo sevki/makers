@@ -149,7 +149,7 @@ pub fn shuffle_deps_recursive(ctx: &crate::execctx::ExecContext, file: FileId) {
         return;
     }
     if mode == Mode::Random {
-        unsafe { make_seed(seed) };
+        make_seed(seed);
     }
     shuffle_file_deps_recursive(ctx, file);
 }
@@ -170,7 +170,7 @@ pub fn shuffle_goals_recursive(
         return;
     }
     if mode == Mode::Random {
-        unsafe { make_seed(seed) };
+        make_seed(seed);
     }
     // A `wait_here` marker on any goal disables shuffling for the list.
     if !goals.iter().any(|g| g.dep.wait_here) {
