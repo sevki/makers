@@ -61,7 +61,8 @@ and/or an integration case in `tests/rs_integration.rs` that
 differential-checks the relevant `make` behavior against the C oracle. The
 `cargo-llvm-cov` coverage delta for a pass must be `>= 0`; never merge a
 change that lowers coverage. Prefer targets that are currently untested so
-the conversion also closes a coverage gap.
+the conversion also closes a coverage gap. Measure the delta before pushing
+with `./scripts/coverage-delta.sh --enforce` (see [coverage.md](coverage.md)).
 
 1. **Remove raw pointer arithmetic** outside `ffi/`. Replace
    `.add()` / `.sub()` / `.offset()` / `.offset_from()` and walked `*p`
