@@ -67,9 +67,20 @@ BASE_REF="$(git merge-base HEAD "$BASE" 2>/dev/null || git rev-parse --verify "$
 BASE_SHORT="$(git rev-parse --short "$BASE_REF")"
 
 if [ ! -x "$ROOT/make" ]; then
-    echo "note: C oracle ./make not found; the differential tests will be skipped" >&2
-    echo "      on both sides. Build it first for a representative delta:" >&2
-    echo "        make MAKE_CFLAGS=\"-Wall\"      # or ./build.sh" >&2
+    # Without ./make the differential tests in tests/rs_integration.rs do not
+    # skip — `c_make()` asserts the binary exists, so they fail. Under
+    # --ignore-run-fail coverage is still emitted, but it omits the recipe
+    # paths those tests drive, so the delta is not representative. Refuse to
+    # gate on that in --enforce mode; only warn in report-only mode.
+    msg_build='Build the C oracle first:
+        make MAKE_CFLAGS="-Wall"      # or ./build.sh'
+    if [ "$ENFORCE" -eq 1 ]; then
+        echo "error: C oracle ./make not found; the differential tests would fail" >&2
+        echo "       and the coverage delta would be non-representative. $msg_build" >&2
+        exit 1
+    fi
+    echo "note: C oracle ./make not found; the differential tests will FAIL on" >&2
+    echo "      both sides, so this delta is not representative. $msg_build" >&2
 fi
 
 # Run the instrumented suite in $1 and print its total line-coverage percent.
