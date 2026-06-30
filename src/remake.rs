@@ -523,11 +523,26 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                         .map(|f| node_name(ctx, f))
                         .unwrap_or_default();
                     let cn = cname(&name);
+                    // The error is located at the goal's source floc (the
+                    // include directive), the c2rust `&goal->floc`. Materialize
+                    // it from the goal's owned `defined_in`/lineno/offset.
+                    let mut floc_name: Vec<u8> = goal.defined_in.clone().unwrap_or_default();
+                    let floc = goal.defined_in.as_ref().map(|_| {
+                        floc_name.push(0);
+                        Floc {
+                            filenm: floc_name.as_ptr() as *const ::core::ffi::c_char,
+                            lineno: goal.lineno as ::core::ffi::c_ulong,
+                            offset: goal.offset as ::core::ffi::c_ulong,
+                        }
+                    });
+                    let floc_ptr = floc
+                        .as_ref()
+                        .map_or(::core::ptr::null_mut::<Floc>(), |f| f as *const Floc as *mut Floc);
                     unsafe {
                         let errstr = strerror(goal.error);
                         error(
                             ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            floc_ptr,
                             (name.len() as size_t).wrapping_add(strlen(errstr) as size_t),
                             b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                             &[
