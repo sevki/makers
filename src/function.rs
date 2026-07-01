@@ -2608,23 +2608,51 @@ unsafe fn func_intcmp(
     }
     o
 }
+/// Byte offsets `[start, end)` of the make-whitespace-trimmed content of
+/// `bytes`, or `None` when the span is empty (an empty or all-whitespace
+/// argument). This is the span the boolean builtins (`if`/`or`/`and`) feed to
+/// `expand_argument`; it replaces the C `begp = arg; endp = arg + strlen - 1;
+/// strip_whitespace(&begp, &endp)` pointer walk with slice indexing over the
+/// same `MAP_BLANK | MAP_NEWLINE` whitespace class.
+fn trimmed_span_offsets(bytes: &[u8]) -> Option<(usize, usize)> {
+    let (lead, trail) = trim_whitespace_span(bytes, |c| stop_set(c, MAP_BLANK | MAP_NEWLINE));
+    if lead + trail >= bytes.len() {
+        None
+    } else {
+        Some((lead, bytes.len() - trail))
+    }
+}
+
+/// Expand argument `arg` after trimming leading/trailing make-whitespace,
+/// mirroring the C `strip_whitespace` + `expand_argument` pair. Returns `None`
+/// when the trimmed span is empty (the `begp > endp` state the C loops leave
+/// behind). The `[start, end)` slice pointers are derived by indexing the
+/// argument bytes rather than by raw `begp`/`endp` pointer arithmetic.
+unsafe fn expand_trimmed(
+    ctx: &crate::execctx::ExecContext,
+    arg: *const ::core::ffi::c_char,
+) -> Option<ExpandedArg> {
+    let bytes = ::core::ffi::CStr::from_ptr(arg).to_bytes();
+    let (start, end) = trimmed_span_offsets(bytes)?;
+    Some(ExpandedArg::new(
+        ctx,
+        bytes[start..].as_ptr() as *const ::core::ffi::c_char,
+        bytes[end..].as_ptr() as *const ::core::ffi::c_char,
+    ))
+}
 unsafe fn func_if(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut begp: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
-    let mut endp: *const ::core::ffi::c_char = begp
-        .offset(strlen(*argv.offset(0_i32 as isize)) as isize)
-        .offset(-(1_i32 as isize));
-    let mut result: i32 = 0;
-    strip_whitespace(&raw mut begp, &raw mut endp);
-    if begp <= endp {
-        let expansion = ExpandedArg::new(ctx, begp, endp.offset(1_i32 as isize));
-        result = (*expansion.as_ptr().offset(0_i32 as isize) as i32 != 0) as i32;
-    }
-    argv = argv.offset((1 + (result == 0) as i32) as isize);
+    // The condition is true when its trimmed, expanded text is non-empty (first
+    // byte is not the terminating NUL), matching the C `*expansion != '\0'`.
+    let condition =
+        expand_trimmed(ctx, *argv.offset(0_i32 as isize)).is_some_and(|e| *e.as_ptr() != 0);
+    // then-branch is argv[1]; else-branch is argv[2]. Skip the extra argument
+    // when the condition is false.
+    argv = argv.offset((1 + (!condition) as i32) as isize);
     if !(*argv).is_null() {
         let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
         o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
@@ -2638,13 +2666,7 @@ unsafe fn func_or(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     while !(*argv).is_null() {
-        let mut begp: *const ::core::ffi::c_char = *argv;
-        let mut endp: *const ::core::ffi::c_char = begp
-            .offset(strlen(*argv) as isize)
-            .offset(-(1_i32 as isize));
-        strip_whitespace(&raw mut begp, &raw mut endp);
-        if !(begp > endp) {
-            let expansion = ExpandedArg::new(ctx, begp, endp.offset(1_i32 as isize));
+        if let Some(expansion) = expand_trimmed(ctx, *argv) {
             let result = strlen(expansion.as_ptr()) as size_t;
             if result != 0 {
                 o = variable_buffer_output(o, expansion.as_ptr(), result);
@@ -2662,15 +2684,11 @@ unsafe fn func_and(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     loop {
-        let mut begp: *const ::core::ffi::c_char = *argv;
-        let mut endp: *const ::core::ffi::c_char = begp
-            .offset(strlen(*argv) as isize)
-            .offset(-(1_i32 as isize));
-        strip_whitespace(&raw mut begp, &raw mut endp);
-        if begp > endp {
+        // An empty argument (empty trimmed span) makes the whole `$(and ...)`
+        // empty, matching the C `begp > endp` early return.
+        let Some(expansion) = expand_trimmed(ctx, *argv) else {
             return o;
-        }
-        let expansion = ExpandedArg::new(ctx, begp, endp.offset(1_i32 as isize));
+        };
         let result = strlen(expansion.as_ptr()) as size_t;
         if result == 0 {
             break;
@@ -2683,6 +2701,67 @@ unsafe fn func_and(
         // More arguments remain: drop this expansion and evaluate the next.
     }
     o
+}
+#[cfg(test)]
+mod trimmed_span_tests {
+    //! `trimmed_span_offsets` replaces the boolean builtins' `begp/endp`
+    //! pointer-arithmetic whitespace trim. Validate it against the *actual*
+    //! pre-conversion path — the real `strip_whitespace` walked over a
+    //! NUL-terminated buffer — so agreement proves the arithmetic removal is
+    //! byte-for-byte behavior-preserving.
+    use super::trimmed_span_offsets;
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::c_char;
+
+    /// Pre-conversion span computation: `begp = arg; endp = arg + strlen - 1;
+    /// strip_whitespace(&begp, &endp)`, then read back `[start, end)` offsets
+    /// (`None` when `begp > endp`, i.e. empty/all-whitespace).
+    fn oracle(bytes: &[u8]) -> Option<(usize, usize)> {
+        if bytes.is_empty() {
+            // The C code sets `endp = arg - 1` here; `begp > endp` immediately,
+            // so the span is empty. Handled directly to avoid forming an
+            // out-of-bounds pointer in the oracle.
+            return None;
+        }
+        let cbuf: Vec<u8> = bytes.iter().copied().chain(std::iter::once(0)).collect();
+        unsafe {
+            let base = cbuf.as_ptr() as *const c_char;
+            let mut begp: *const c_char = base;
+            let mut endp: *const c_char = base.add(bytes.len()).offset(-1);
+            super::strip_whitespace(&raw mut begp, &raw mut endp);
+            if begp > endp {
+                return None;
+            }
+            Some((
+                begp.offset_from(base) as usize,
+                endp.offset_from(base) as usize + 1,
+            ))
+        }
+    }
+
+    #[test]
+    fn matches_strip_whitespace_pointer_walk() {
+        initialize_stopchar_map();
+        let cases: &[&[u8]] = &[
+            b"",
+            b"   ",
+            b"\t\n ",
+            b"x",
+            b"  x  ",
+            b"a b",
+            b"\t\na\r ",
+            b"  ab cd  ",
+            b"no-trim",
+            b" \tlead",
+            b"trail\n ",
+        ];
+        for &c in cases {
+            assert_eq!(trimmed_span_offsets(c), oracle(c), "input {c:?}");
+        }
+        // Exact spans for a couple of documented cases.
+        assert_eq!(trimmed_span_offsets(b"  ab cd  "), Some((2, 7)));
+        assert_eq!(trimmed_span_offsets(b"   "), None);
+    }
 }
 unsafe fn func_wildcard(
     ctx: &crate::execctx::ExecContext,
