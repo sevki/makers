@@ -11,6 +11,7 @@ extern crate self as make_sys;
 pub mod ar;
 pub mod arscan;
 pub mod commands;
+pub mod content_graph;
 pub mod content_hash;
 pub mod default;
 pub mod dep;
