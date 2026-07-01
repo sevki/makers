@@ -1894,58 +1894,129 @@ fn func_sort(
 }
 #[cfg(test)]
 mod strip_sort_tests {
-    use super::{sort_words, stop_set, strip_words, MAP_BLANK, MAP_NEWLINE};
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_strip`
+    //! and `func_sort` are preserved *verbatim* below as `*_unsafe_oracle` and
+    //! driven through the real variable-output buffer alongside the converted
+    //! safe handlers, asserting the emitted bytes are identical — including the
+    //! per-word `variable_buffer_output` calls and the trailing `o -= 1` trim
+    //! the safe versions replaced with an owned buffer + `pop()`.
+    use super::{
+        func_sort, func_strip, size_t, stop_set, tokens, MAP_BLANK, MAP_NEWLINE,
+    };
+    use crate::expand::{
+        initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK,
+    };
+    use crate::make_main::initialize_stopchar_map;
+    use crate::misc::alpha_cmp;
+    use std::ffi::{c_char, CString};
 
-    fn join_space(words: &[Vec<u8>]) -> Vec<u8> {
-        let mut out = Vec::new();
-        for (i, w) in words.iter().enumerate() {
-            if i != 0 {
-                out.push(b' ');
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    /// Verbatim pre-conversion `func_strip`: emit each word followed by a
+    /// separator space via `variable_buffer_output`, then trim the trailing
+    /// space by walking the cursor back one byte.
+    unsafe fn func_strip_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let s: *const c_char = *argv.offset(0_i32 as isize);
+        let bytes = ::core::ffi::CStr::from_ptr(s).to_bytes();
+        let mut idx = 0usize;
+        let mut doneany = false;
+        while idx < bytes.len() {
+            while idx < bytes.len() && stop_set(bytes[idx], MAP_BLANK | MAP_NEWLINE) {
+                idx += 1;
             }
-            out.extend_from_slice(w);
+            let word_start = idx;
+            while idx < bytes.len() && !stop_set(bytes[idx], MAP_BLANK | MAP_NEWLINE) {
+                idx += 1;
+            }
+            let word_len = idx - word_start;
+            if word_len == 0 {
+                break;
+            }
+            o = super::variable_buffer_output(
+                o,
+                bytes[word_start..].as_ptr() as *const c_char,
+                word_len as size_t,
+            );
+            o = super::variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+            doneany = true;
         }
+        if doneany {
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+
+    /// Verbatim pre-conversion `func_sort`: sort/dedup the tokens, emit each
+    /// followed by a separator space, then trim the trailing space by walking
+    /// the cursor back one byte.
+    unsafe fn func_sort_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+        let mut words: Vec<&[u8]> = tokens(bytes).collect();
+        if !words.is_empty() {
+            words.sort_by(|a, b| alpha_cmp(a, b));
+            words.dedup();
+            for w in words {
+                o = super::variable_buffer_output(
+                    o,
+                    w.as_ptr() as *const c_char,
+                    w.len() as size_t,
+                );
+                o = super::variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+            }
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+
+    /// Drive `handler` with a single argument through a freshly initialized
+    /// variable-output buffer and return the bytes it wrote (`[start, end)`).
+    unsafe fn emit(handler: Handler, arg: &[u8]) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let cstr = CString::new(arg).unwrap();
+        let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let name = CString::new("f").unwrap();
+        let start = initialize_variable_output();
+        let end = handler(
+            &crate::execctx::ExecContext::default(),
+            start,
+            argv.as_mut_ptr(),
+            name.as_ptr(),
+        );
+        let len = end.offset_from(start);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(start as *const u8, len as usize).to_vec();
+        // Keep `cstr` alive until after the handler has read `argv`.
+        assert!(!variable_buffer.is_null());
+        drop(cstr);
         out
     }
 
-    /// Split `bytes` into words the way the pre-conversion `func_strip` did —
-    /// over make's `MAP_BLANK | MAP_NEWLINE` separator class — but expressed via
-    /// `split` + empty-filter rather than the manual index cursor, so agreement
-    /// with `strip_words` cross-checks the join form against a distinct shape.
-    fn strip_words_oracle(bytes: &[u8]) -> Vec<u8> {
-        let words: Vec<Vec<u8>> = bytes
-            .split(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE))
-            .filter(|w| !w.is_empty())
-            .map(<[u8]>::to_vec)
-            .collect();
-        join_space(&words)
-    }
-
-    /// Tokenize `bytes` with the actual pre-conversion pointer walk
-    /// (`misc::find_next_token`) over a NUL-terminated buffer, then sort/dedup
-    /// and rejoin. Using the *old* tokenizer — not `tokens` — proves the
-    /// converted `sort_words` agrees with `find_next_token`, not just itself.
-    fn sort_words_oracle(bytes: &[u8]) -> Vec<u8> {
-        let cbuf: Vec<u8> = bytes.iter().copied().chain(::core::iter::once(0)).collect();
-        let mut iter: *const ::core::ffi::c_char = cbuf.as_ptr() as *const ::core::ffi::c_char;
-        let mut words: Vec<Vec<u8>> = Vec::new();
-        loop {
-            let mut len: usize = 0;
-            let p = unsafe { crate::misc::find_next_token(&raw mut iter, &raw mut len) };
-            if p.is_null() {
-                break;
-            }
-            words.push(unsafe { ::core::slice::from_raw_parts(p as *const u8, len).to_vec() });
-        }
-        words.sort_by(|a, b| super::alpha_cmp(a, b));
-        words.dedup();
-        join_space(&words)
+    fn assert_matches(safe: Handler, oracle: Handler, arg: &[u8]) {
+        let got = unsafe { emit(safe, arg) };
+        let want = unsafe { emit(oracle, arg) };
+        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
     }
 
     #[test]
-    fn strip_matches_oracle() {
-        // `stop_set` classifies whitespace through the runtime `stopchar_map`;
-        // initialize it (as the read/file tests do) before exercising it.
-        crate::make_main::initialize_stopchar_map();
+    fn func_strip_matches_unsafe_oracle() {
         let cases: &[&[u8]] = &[
             b"",
             b"   ",
@@ -1956,16 +2027,15 @@ mod strip_sort_tests {
             b"\ta\t",
         ];
         for &c in cases {
-            assert_eq!(strip_words(c), strip_words_oracle(c));
+            assert_matches(func_strip, func_strip_unsafe_oracle, c);
         }
-        // Exact bytes for the documented collapse and the all-whitespace case.
-        assert_eq!(strip_words(b"  a   b  "), b"a b");
-        assert!(strip_words(b"   ").is_empty());
+        // Exact bytes for the documented collapse.
+        assert_eq!(unsafe { emit(func_strip, b"  a   b  ") }, b"a b");
+        assert!(unsafe { emit(func_strip, b"   ") }.is_empty());
     }
 
     #[test]
-    fn sort_matches_oracle() {
-        crate::make_main::initialize_stopchar_map();
+    fn func_sort_matches_unsafe_oracle() {
         let cases: &[&[u8]] = &[
             b"",
             b"foo",
@@ -1976,11 +2046,11 @@ mod strip_sort_tests {
             b"2 10 1",          // byte order, not numeric
         ];
         for &c in cases {
-            assert_eq!(sort_words(c), sort_words_oracle(c));
+            assert_matches(func_sort, func_sort_unsafe_oracle, c);
         }
         // Exact bytes: sorted, de-duplicated, single-space-joined.
-        assert_eq!(sort_words(b"foo foo bar"), b"bar foo");
-        assert!(sort_words(b"").is_empty());
+        assert_eq!(unsafe { emit(func_sort, b"foo foo bar") }, b"bar foo");
+        assert!(unsafe { emit(func_sort, b"") }.is_empty());
     }
 }
 /// Is `c` whitespace in make's `MAP_SPACE` class (`next_token`'s skip set):
