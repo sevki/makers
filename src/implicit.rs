@@ -58,6 +58,7 @@ fn dbs(depth: u32, msg: &[u8]) {
 }
 
 /// String equality on byte slices (make's `streq`).
+#[cfg(test)]
 fn streq(a: &[u8], b: &[u8]) -> bool {
     a == b
 }

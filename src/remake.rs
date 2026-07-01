@@ -28,11 +28,6 @@ extern "C" {
     ) -> ssize_t;
     static mut stdout: *mut FILE;
     fn fflush(__stream: *mut FILE) -> i32;
-    fn memcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
 pub use crate::sys_stat::stat;

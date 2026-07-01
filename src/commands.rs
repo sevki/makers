@@ -87,6 +87,7 @@ fn dep_name_bytes(ctx: &ExecContext, d: &DepNode) -> Vec<u8> {
 /// otherwise the list is empty and byte 0 is set to NUL. `buf` must hold at
 /// least `len + 1` bytes (the callers always allocate the extra terminator
 /// slot). Pure index math, no pointer arithmetic.
+#[cfg(test)]
 fn finish_list(buf: &mut [u8], len: usize) {
     if len > 0 {
         buf[len - 1] = 0;
@@ -442,9 +443,7 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
             en.command_state = CommandState::Running;
             en.update_status = UpdateStatus::Success;
         }
-        unsafe {
-            notice_finished_file(ctx, file, entry);
-        }
+        notice_finished_file(ctx, file, entry);
         return;
     }
 
@@ -461,7 +460,7 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
         nm.push(0);
         // SAFETY: `unload_file` still takes a `*const c_char`; the buffer lives
         // for the call.
-        if unsafe { unload_file(ctx, nm.as_ptr() as *const c_char) } == 0 {
+        if unload_file(ctx, nm.as_ptr() as *const c_char) == 0 {
             let mut guard = node.lock().expect("file node poisoned");
             guard.loaded = false;
             guard.unloaded = true;
