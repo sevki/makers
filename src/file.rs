@@ -151,18 +151,11 @@ impl Default for File {
         }
     }
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct VariableSetList {
-    pub next: *mut VariableSetList,
-    pub set: *mut VariableSet,
-    pub next_is_parent: i32,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct VariableSet {
-    pub table: hash_table,
-}
+// The legacy c2rust variable-scope containers `VariableSet` / `VariableSetList`
+// now live in their domain module (`crate::variable`). Re-exported here so
+// existing `crate::file::VariableSet` / `VariableSetList` paths — and the
+// `variable_set` / `variable_set_list` aliases — keep resolving.
+pub use crate::variable::{VariableSet, VariableSetList};
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;

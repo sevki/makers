@@ -1,8 +1,5 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{
-    file, Commands, Dep, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin, VariableSet,
-    VariableSetList,
-};
+use crate::file::{file, Commands, Dep, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin};
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
 use c2rust_bitfields;
@@ -39,6 +36,25 @@ pub type variable_set = VariableSet;
 pub type hash_table = crate::hash::hash_table;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
+
+/// A scoped set of variables: a `hash_table` of `variable` records. Legacy
+/// c2rust `#[repr(C)]` container; `file.rs` re-exports it for compatibility.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct VariableSet {
+    pub table: hash_table,
+}
+
+/// A stack of [`VariableSet`] scopes, innermost first, linked by `next`. Legacy
+/// c2rust `#[repr(C)]` container; `file.rs` re-exports it for compatibility.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct VariableSetList {
+    pub next: *mut VariableSetList,
+    pub set: *mut VariableSet,
+    pub next_is_parent: i32,
+}
+
 pub type dep = Dep;
 pub type commands = Commands;
 use crate::expand::{
