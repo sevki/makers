@@ -19,19 +19,15 @@ use crate::misc::free_ns_chain;
 use crate::misc::{xcalloc, xrealloc};
 use crate::stdio::FILE;
 use libc::{__errno_location, free, printf, putchar, puts, unlink};
-use std::ffi::{CStr, CString};
+#[cfg(test)]
+use std::ffi::CStr;
+use std::ffi::CString;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 extern "C" {
     static mut stdout: *mut FILE;
-    static mut stderr: *mut FILE;
     fn fflush(__stream: *mut FILE) -> i32;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
-    fn memcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
     fn memmove(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -862,6 +858,7 @@ pub const COMMANDS_SILENT: i32 = 2;
 pub const COMMANDS_NOERROR: i32 = 4;
 
 impl File {
+    #[cfg(test)]
     fn new_named(name: *const ::core::ffi::c_char) -> Self {
         let mut file = Self {
             name,
@@ -907,6 +904,7 @@ fn stop_set_byte(c: u8, mask: i32) -> bool {
     stopchar_map()[c as usize] as i32 & mask != 0
 }
 
+#[cfg(test)]
 unsafe fn normalize_lookup_name(name: *const ::core::ffi::c_char) -> *const ::core::ffi::c_char {
     assert!(!name.is_null(), "assertion failed: name != NULL");
     let bytes = CStr::from_ptr(name).to_bytes_with_nul();
@@ -3021,20 +3019,18 @@ mod tests {
     #[test]
     fn file_table_is_per_context_not_global() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            crate::make_main::install_default_options_for_test();
-            initialize_stopchar_map();
-            let a = crate::execctx::ExecContext::default();
-            let b = crate::execctx::ExecContext::default();
+        crate::make_main::install_default_options_for_test();
+        initialize_stopchar_map();
+        let a = crate::execctx::ExecContext::default();
+        let b = crate::execctx::ExecContext::default();
 
-            let f = enter_file(&a, b"per_ctx_probe_target");
-            assert_eq!(lookup_file(&a, b"per_ctx_probe_target"), Some(f),
-                "and found again in context a");
-            assert!(
-                lookup_file(&b, b"per_ctx_probe_target").is_none(),
-                "an independent context shares no global file table"
-            );
-        }
+        let f = enter_file(&a, b"per_ctx_probe_target");
+        assert_eq!(lookup_file(&a, b"per_ctx_probe_target"), Some(f),
+            "and found again in context a");
+        assert!(
+            lookup_file(&b, b"per_ctx_probe_target").is_none(),
+            "an independent context shares no global file table"
+        );
     }
 
     /// With a non-null stem, `enter_prereqs` walks the static-pattern block. A

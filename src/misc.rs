@@ -33,7 +33,6 @@ extern "C" {
     fn fopen(filename: *const c_char, modes: *const c_char) -> *mut FILE;
     fn fdopen(fd: i32, modes: *const c_char) -> *mut FILE;
     fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> i32;
-    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> i32;
     fn time(timer: *mut time_t) -> time_t;
 }
 

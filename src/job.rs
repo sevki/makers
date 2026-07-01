@@ -608,14 +608,6 @@ fn entry_node(guard: &mut FileNode, entry: usize) -> &mut FileNode {
     }
 }
 
-/// Read a target's `dontcare` flag through the arena, dropping the lock first.
-fn file_dontcare(ctx: &crate::execctx::ExecContext, file: FileId) -> bool {
-    match ctx.filenodes.get(file) {
-        Some(node) => node.lock().expect("file node poisoned").dontcare,
-        None => false,
-    }
-}
-
 unsafe fn child_error(
     ctx: &crate::execctx::ExecContext,
     child: *mut child,

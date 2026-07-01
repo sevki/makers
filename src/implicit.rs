@@ -58,6 +58,7 @@ fn dbs(depth: u32, msg: &[u8]) {
 }
 
 /// String equality on byte slices (make's `streq`).
+#[cfg(test)]
 fn streq(a: &[u8], b: &[u8]) -> bool {
     a == b
 }
@@ -322,9 +323,8 @@ pub fn pattern_search(
     let mut max_deps = ctx.max_pattern_deps.get();
     let mut deplist: Vec<PatDep> = Vec::with_capacity(max_deps as usize);
     let mut depname: Vec<u8> = Vec::new();
-    let mut stem_off: usize = 0;
-    let mut stemlen: usize = 0;
-    let fullstemlen: usize;
+    let mut stem_off: usize;
+    let mut stemlen: usize;
 
     let mut tryrules: Vec<TryRule> = Vec::new();
     let mut specific_rule_matched = false;
@@ -811,9 +811,8 @@ pub fn pattern_search(
     let stem_bytes: Vec<u8>;
     if !check_lastslash {
         stem_bytes = name[stem_off..stem_off + stemlen].to_vec();
-        fullstemlen = stemlen;
     } else {
-        fullstemlen = pathlen + stemlen;
+        let fullstemlen = pathlen + stemlen;
         let mut s = Vec::with_capacity(fullstemlen);
         s.extend_from_slice(&name[..pathlen]);
         s.extend_from_slice(&name[stem_off..stem_off + stemlen]);
