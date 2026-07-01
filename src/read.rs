@@ -125,6 +125,7 @@ pub struct passwd {
     pub pw_shell: *mut ::core::ffi::c_char,
 }
 use crate::ar::{ar_glob, ar_name, ar_parse_name};
+use crate::dep::{alloc_dep, alloc_goaldep};
 use crate::dir::{dir_setup_glob, file_exists_p};
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, expand_string_buf,
@@ -222,39 +223,6 @@ pub const RM_INCLUDED: i32 = (1) << 1;
 pub const RM_DONTCARE: i32 = (1) << 2;
 pub const RM_NO_TILDE: i32 = (1) << 3;
 pub const PARSEFS_NONE: i32 = 0;
-/// Build a fresh, empty dependency edge — the idiomatic replacement for the
-/// c2rust `alloc_dep` (which `xcalloc`'d a zeroed `Dep`). All flags clear, no
-/// resolved target, empty name; callers fill in what they need.
-#[inline]
-fn alloc_dep() -> crate::dep::DepNode {
-    crate::dep::DepNode {
-        name: String::new(),
-        file: None,
-        shuf: None,
-        stem: None,
-        flags: crate::dep::DepFlags::empty(),
-        changed: false,
-        ignore_mtime: false,
-        static_pattern: false,
-        needs_second_expansion: false,
-        ignore_automatic_vars: false,
-        is_explicit: false,
-        wait_here: false,
-    }
-}
-/// Build a fresh, empty goal — the idiomatic replacement for the c2rust
-/// `alloc_goaldep` (a zeroed `GoalDep`): an empty [`DepNode`] edge plus zeroed
-/// error/location bookkeeping.
-#[inline]
-fn alloc_goaldep() -> crate::dep::GoalDepNode {
-    crate::dep::GoalDepNode {
-        dep: alloc_dep(),
-        error: 0,
-        defined_in: None,
-        lineno: 0,
-        offset: 0,
-    }
-}
 /// Decompose a (possibly null) `*const Floc` into the owned source-location
 /// triple `GoalDepNode`/`Recipe` carry: `(defined_in, lineno, offset)`, copying
 /// the `filenm` C string into owned bytes (`None` for a null `filenm`).
