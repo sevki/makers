@@ -3,7 +3,7 @@
 // `Dep`/`GoalDep` records stay below with the other c2rust FFI structs until
 // the `*mut`-to-handle swap deletes them.
 use crate::content_hash::ContentHash;
-pub use crate::dep::{DepFlags, DepId, DepNode, GoalDepNode};
+pub use crate::dep::{DepFlags, DepId, DepNode, GoalDepId, GoalDepNode};
 // The recipe types (idiomatic replacement for the c2rust `Commands`) live in
 // `crate::recipe`; re-export so `crate::file::Recipe` paths keep resolving.
 pub use crate::recipe::{Recipe, RecipeLine, RecipeLineFlags};
