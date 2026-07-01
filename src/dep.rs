@@ -62,7 +62,7 @@ bitflags::bitflags! {
 /// `GoalDepNode::default()` is a fresh, empty goal (an empty [`DepNode`] plus
 /// zeroed error/location bookkeeping) — the idiomatic replacement for the
 /// c2rust `alloc_goaldep`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, ContentHash)]
 pub struct GoalDepNode {
     /// The dependency edge itself (name, target `FileId`, flags, …).
     pub dep: DepNode,
@@ -76,6 +76,50 @@ pub struct GoalDepNode {
     pub lineno: u64,
     /// Byte offset within the line (`floc.offset`).
     pub offset: u64,
+}
+
+// Stable identity for a goal: content-hash of the full (immutable) `GoalDepNode`.
+// Mirrors `DepId <- DepNode` above and `FileId <- FileNode` (file.rs), extending
+// blake3 content-hash identity across the dependency graph's node/edge/goal
+// triad. Like those two, this is scaffolding for an in-progress migration —
+// no caller derives a `GoalDepId` yet.
+crate::id_wireformat!(GoalDepId[HASH_SIZE] <- GoalDepNode);
+
+#[cfg(test)]
+mod goal_dep_id_tests {
+    use super::{DepNode, GoalDepId, GoalDepNode};
+
+    /// Two structurally-identical goals hash identically; goals differing in
+    /// the underlying dep edge, or in the goal-only bookkeeping fields
+    /// (error/location), hash differently.
+    #[test]
+    fn hashes_whole_struct_deterministically() {
+        let goal = |name: &str| GoalDepNode {
+            dep: DepNode {
+                name: name.to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let a = goal("all");
+        let a_again = goal("all");
+        let b = goal("clean");
+        assert_eq!(GoalDepId::from(&a), GoalDepId::from(&a_again));
+        assert_ne!(GoalDepId::from(&a), GoalDepId::from(&b));
+
+        // Same dep edge, different goal-only bookkeeping (error/location) —
+        // still distinct, since the whole struct is hashed.
+        let mut c = goal("all");
+        let before = GoalDepId::from(&c);
+        c.error = 2;
+        let after = GoalDepId::from(&c);
+        assert_ne!(before, after);
+
+        let mut d = goal("all");
+        d.lineno = 7;
+        assert_ne!(GoalDepId::from(&a), GoalDepId::from(&d));
+    }
 }
 
 /// A simple chain of names — the base name-chain node whose `next`/`name`
