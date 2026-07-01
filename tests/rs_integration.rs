@@ -1718,3 +1718,43 @@ fn dash_i_include_resolution_found_and_not_found() {
     let r_nf = run_in(&r, &base, &notfound);
     assert_diff("dash_i_not_found", &c_nf, &r_nf, &c, &r);
 }
+
+#[test]
+fn origin_and_flavor_functions() {
+    // `$(origin NAME)` / `$(flavor NAME)`: exercises func_origin/func_flavor
+    // (converted from `unsafe fn` to safe `fn`, confining unsafe to the
+    // lookup_variable/variable_buffer_output FFI edges) across every
+    // origin/flavor combination reachable from a plain invocation.
+    check(
+        "origin-flavor",
+        "92_origin_flavor.mk",
+        "all",
+        &["CMDLINE_VAR=cli-value"],
+    );
+}
+
+#[test]
+fn origin_environment_variable() {
+    // `$(origin NAME)` for a variable that comes solely from the process
+    // environment (not touched by the makefile) reports "environment".
+    // Needs an explicit env var on the child, so it bypasses `check()`.
+    let fixture = fixtures_dir().join("92_origin_flavor.mk");
+    let workdir = tempdir();
+    let c = c_make();
+    let r = PathBuf::from(RUST_MAKE);
+    let run_with_env = |make_bin: &Path| -> Run {
+        Command::new(make_bin)
+            .arg("--no-print-directory")
+            .arg("-f")
+            .arg(&fixture)
+            .env("ORIGIN_ENV_VAR", "from-environment")
+            .current_dir(&workdir)
+            .arg("all")
+            .output()
+            .expect("failed to spawn make")
+            .into()
+    };
+    let c_run = run_with_env(&c);
+    let r_run = run_with_env(&r);
+    assert_diff("origin-environment", &c_run, &r_run, &c, &r);
+}
