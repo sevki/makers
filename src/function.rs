@@ -706,21 +706,33 @@ fn join_lists(list1: &[u8], list2: &[u8]) -> Vec<u8> {
     out.pop();
     out
 }
-unsafe fn func_join(
+fn func_join(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
+    _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let list1 = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
-    let list2 = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
+    // A safe `fn` still coerces to the function table's `unsafe fn` pointer; the
+    // only unsafe is the FFI at the edges. SAFETY: the dispatcher passes an
+    // `argv` of at least `maximum_args` NUL-terminated C strings (`join` has
+    // min = max = 2), so `argv[0]`/`argv[1]` are valid.
+    let (list1, list2) = unsafe {
+        (
+            ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes(),
+            ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes(),
+        )
+    };
     let joined = join_lists(list1, list2);
     if !joined.is_empty() {
-        o = variable_buffer_output(
-            o,
-            joined.as_ptr() as *const ::core::ffi::c_char,
-            joined.len() as size_t,
-        );
+        // SAFETY: `o` is the caller's variable-buffer output cursor and `joined`
+        // is a valid byte buffer of the given length.
+        o = unsafe {
+            variable_buffer_output(
+                o,
+                joined.as_ptr() as *const ::core::ffi::c_char,
+                joined.len() as size_t,
+            )
+        };
     }
     o
 }
