@@ -683,14 +683,20 @@ unsafe fn func_patsubst(
 /// so `$(join a b,1 2 3)` is `a1 b2 3`. Pure over the two whitespace-token
 /// lists, replacing the paired `find_next_token` pointer walks with `tokens`.
 fn join_lists(list1: &[u8], list2: &[u8]) -> Vec<u8> {
-    let w1: Vec<&[u8]> = tokens(list1).collect();
-    let w2: Vec<&[u8]> = tokens(list2).collect();
+    // Stream both token iterators once in lockstep, as the C loop did, rather
+    // than materializing the word lists.
+    let mut it1 = tokens(list1);
+    let mut it2 = tokens(list2);
     let mut out = Vec::new();
-    for i in 0..w1.len().max(w2.len()) {
-        if let Some(t) = w1.get(i) {
+    loop {
+        let (t, p) = (it1.next(), it2.next());
+        if t.is_none() && p.is_none() {
+            break;
+        }
+        if let Some(t) = t {
             out.extend_from_slice(t);
         }
-        if let Some(p) = w2.get(i) {
+        if let Some(p) = p {
             out.extend_from_slice(p);
         }
         out.push(b' ');
@@ -721,16 +727,36 @@ unsafe fn func_join(
 
 #[cfg(test)]
 mod func_join_tests {
-    use super::{join_lists, tokens};
+    use super::join_lists;
+
+    /// Tokenize `list` with the actual pre-conversion pointer walk
+    /// (`misc::find_next_token`) over a NUL-terminated buffer. Using the *old*
+    /// tokenizer — not `tokens` — is what makes the oracle a genuine check: the
+    /// test then also proves `tokens` agrees with `find_next_token` for these
+    /// inputs, not just that the pairing logic is self-consistent.
+    unsafe fn tokens_via_pointer_walk(list: &[u8]) -> Vec<Vec<u8>> {
+        let cbuf: Vec<u8> = list.iter().copied().chain(::core::iter::once(0)).collect();
+        let mut iter: *const ::core::ffi::c_char = cbuf.as_ptr() as *const ::core::ffi::c_char;
+        let mut words = Vec::new();
+        loop {
+            let mut len: usize = 0;
+            let p = crate::misc::find_next_token(&raw mut iter, &raw mut len);
+            if p.is_null() {
+                break;
+            }
+            words.push(::core::slice::from_raw_parts(p as *const u8, len).to_vec());
+        }
+        words
+    }
 
     /// Behavior oracle: the pre-conversion `find_next_token` loop, reproduced
-    /// over the two token lists — advance each list independently, emit this
-    /// row's word1 then word2, append a space while either side produced a word,
-    /// and trim the final space. Structurally mirrors the C control flow (not
-    /// `join_lists`' max-index form) so the two agreeing is a real cross-check.
+    /// over the two lists tokenized by the old pointer walk — advance each list
+    /// independently, emit this row's word1 then word2, append a space while
+    /// either side produced a word, and trim the final space. Structurally
+    /// mirrors the C control flow (not `join_lists`' streaming form).
     fn join_lists_oracle(list1: &[u8], list2: &[u8]) -> Vec<u8> {
-        let w1: Vec<&[u8]> = tokens(list1).collect();
-        let w2: Vec<&[u8]> = tokens(list2).collect();
+        let w1 = unsafe { tokens_via_pointer_walk(list1) };
+        let w2 = unsafe { tokens_via_pointer_walk(list2) };
         let mut out = Vec::new();
         let (mut i1, mut i2) = (0usize, 0usize);
         let mut doneany = false;
@@ -764,6 +790,10 @@ mod func_join_tests {
 
     #[test]
     fn matches_unsafe_oracle() {
+        // `find_next_token` classifies whitespace through the runtime
+        // `stopchar_map`; initialize it (as the read/file tests do) so the old
+        // pointer walk sees the same blank/newline classes `tokens` uses.
+        crate::make_main::initialize_stopchar_map();
         let cases: &[(&[u8], &[u8])] = &[
             (b"", b""),
             (b"a", b""),
