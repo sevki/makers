@@ -1110,8 +1110,12 @@ fn func_lastword(_name: &[u8], args: &[&[u8]]) -> Vec<u8> {
 }
 fn func_words(_name: &[u8], args: &[&[u8]]) -> Vec<u8> {
     // Format the count in decimal in Rust rather than through `sprintf` into a
-    // stack buffer; `usize::to_string` produces the same bytes as `sprintf("%u")`.
-    tokens(args[0]).count().to_string().into_bytes()
+    // stack buffer. Narrow to `c_uint` first so the bytes match the C
+    // `sprintf("%u", (unsigned)count)` across the whole domain — including the
+    // (absurd) case of more than `u32::MAX` words, where C wraps to 32 bits.
+    (tokens(args[0]).count() as ::core::ffi::c_uint)
+        .to_string()
+        .into_bytes()
 }
 #[cfg(test)]
 mod word_family_tests {
