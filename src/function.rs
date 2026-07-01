@@ -1525,16 +1525,20 @@ fn func_wordlist(
     if start < 1 {
         unsafe {
             fatal(
-        ctx,
-        *expanding_var,
-        (badfirst.to_bytes().len() as size_t)
-                .wrapping_add(
+                ctx,
+                *expanding_var,
+                (badfirst.to_bytes().len() as size_t).wrapping_add(
                     strlen(make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
-        c"%s: '%s'".as_ptr(),
-        &[FmtArg::Str((badfirst.as_ptr()) as *const ::core::ffi::c_char),
-            FmtArg::Str((make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as *const ::core::ffi::c_char)],
-    );
+                c"%s: '%s'".as_ptr(),
+                &[
+                    FmtArg::Str((badfirst.as_ptr()) as *const ::core::ffi::c_char),
+                    FmtArg::Str(
+                        (make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char))
+                            as *const ::core::ffi::c_char,
+                    ),
+                ],
+            );
         }
     }
     let stop = unsafe {
@@ -1547,16 +1551,20 @@ fn func_wordlist(
     if stop < 0 {
         unsafe {
             fatal(
-        ctx,
-        *expanding_var,
-        (badsecond.to_bytes().len() as size_t)
-                .wrapping_add(
+                ctx,
+                *expanding_var,
+                (badsecond.to_bytes().len() as size_t).wrapping_add(
                     strlen(make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
                 ),
-        c"%s: '%s'".as_ptr(),
-        &[FmtArg::Str((badsecond.as_ptr()) as *const ::core::ffi::c_char),
-            FmtArg::Str((make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as *const ::core::ffi::c_char)],
-    );
+                c"%s: '%s'".as_ptr(),
+                &[
+                    FmtArg::Str((badsecond.as_ptr()) as *const ::core::ffi::c_char),
+                    FmtArg::Str(
+                        (make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char))
+                            as *const ::core::ffi::c_char,
+                    ),
+                ],
+            );
         }
     }
     let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(2_i32 as isize)).to_bytes() };
