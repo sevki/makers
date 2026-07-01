@@ -415,6 +415,36 @@ impl BasenameDir {
     }
 }
 
+/// `$(addprefix prefix,list)` and `$(addsuffix suffix,list)` both attach a fixed
+/// string to each whitespace-separated word of `list`; they differ only in which
+/// side the fixed string lands on.
+///
+/// make's c2rust handler distinguished the two by reading the raw fourth byte of
+/// the function name (`funcname[3] == 'p'`), an opaque magic-number wall. Which
+/// function is selected is a pure function of the name bytes, so it belongs in
+/// the AST layer as a typed classifier rather than as an inline byte comparison.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum AddprefixAddsuffix {
+    /// `$(addprefix …)` — prepend the fixed string to each word.
+    Addprefix,
+    /// `$(addsuffix …)` — append the fixed string to each word.
+    Addsuffix,
+}
+
+impl AddprefixAddsuffix {
+    /// Classify a built-in function `name` as one of the two affix functions, or
+    /// `None` if it is not one of them. Matching is exact on the full name,
+    /// mirroring the closed set the function table routes to
+    /// `func_addsuffix_addprefix`.
+    pub fn from_funcname(name: &[u8]) -> Option<AddprefixAddsuffix> {
+        Some(match name {
+            b"addprefix" => AddprefixAddsuffix::Addprefix,
+            b"addsuffix" => AddprefixAddsuffix::Addsuffix,
+            _ => return None,
+        })
+    }
+}
+
 /// The typed classification of a whole logical (non-recipe) line: which of
 /// make's four `eval` dispatch arms the line takes. It is composed from the
 /// leading-word classifiers in make's `eval` order — conditional directives are
@@ -1934,6 +1964,41 @@ mod tests {
         ] {
             assert_eq!(
                 BasenameDir::from_funcname(w),
+                None,
+                "{:?} must not classify",
+                w
+            );
+        }
+    }
+
+    #[test]
+    fn addprefix_addsuffix_classify() {
+        assert_eq!(
+            AddprefixAddsuffix::from_funcname(b"addprefix"),
+            Some(AddprefixAddsuffix::Addprefix)
+        );
+        assert_eq!(
+            AddprefixAddsuffix::from_funcname(b"addsuffix"),
+            Some(AddprefixAddsuffix::Addsuffix)
+        );
+    }
+
+    #[test]
+    fn addprefix_addsuffix_reject_non_matches() {
+        // The old wall switched on the fourth byte alone (`funcname[3] == 'p'`),
+        // so any name with 'p'/'s' there would have been miscategorised; the
+        // typed classifier matches the full name instead.
+        for w in [
+            b"addprefi".as_slice(),
+            b"addprefixes".as_slice(),
+            b"addp".as_slice(),
+            b"addsuffi".as_slice(),
+            b"Addprefix".as_slice(),
+            b"subst".as_slice(),
+            b"".as_slice(),
+        ] {
+            assert_eq!(
+                AddprefixAddsuffix::from_funcname(w),
                 None,
                 "{:?} must not classify",
                 w

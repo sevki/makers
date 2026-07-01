@@ -1038,36 +1038,52 @@ fn func_basename_dir(
     }
     o
 }
-unsafe fn func_addsuffix_addprefix(
+/// `$(addprefix fix,list)` / `$(addsuffix fix,list)`: attach `fix` to each
+/// whitespace-separated word of `list` — on the front for `addprefix`, the back
+/// for `addsuffix` — space-separated with no trailing space. Mirrors the C
+/// loop's emit-space-then-`o -= 1` via `pop()` (every word contributes).
+fn addsuffix_addprefix_result(fix: &[u8], list: &[u8], is_addprefix: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    for tok in tokens(list) {
+        if is_addprefix {
+            out.extend_from_slice(fix);
+        }
+        out.extend_from_slice(tok);
+        if !is_addprefix {
+            out.extend_from_slice(fix);
+        }
+        out.push(b' ');
+    }
+    out.pop();
+    out
+}
+fn func_addsuffix_addprefix(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let fixlen: size_t = strlen(*argv.offset(0_i32 as isize)) as size_t;
-    let mut list_iterator: *const ::core::ffi::c_char = *argv.offset(1_i32 as isize);
-    let is_addprefix: i32 = (*funcname.offset(3_i32 as isize) as i32 == 'p' as i32) as i32;
-    let is_addsuffix: i32 = (is_addprefix == 0) as i32;
-    let mut doneany: i32 = 0;
-    let mut p: *const ::core::ffi::c_char;
-    let mut len: size_t = 0;
-    loop {
-        p = find_next_token(&raw mut list_iterator, &raw mut len);
-        if p.is_null() {
-            break;
-        }
-        if is_addprefix != 0 {
-            o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
-        }
-        o = variable_buffer_output(o, p, len);
-        if is_addsuffix != 0 {
-            o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
-        }
-        o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-        doneany = 1;
-    }
-    if doneany != 0 {
-        o = o.offset(-1_i32 as isize);
+    // Classify the affix function (`addprefix`/`addsuffix`) through the typed
+    // AST layer instead of switching on the raw fourth byte of the name.
+    // SAFETY: `funcname`/`argv[0..=1]` are NUL-terminated C strings from the dispatcher.
+    let is_addprefix = matches!(
+        crate::parser::AddprefixAddsuffix::from_funcname(
+            unsafe { ::std::ffi::CStr::from_ptr(funcname) }.to_bytes()
+        ),
+        Some(crate::parser::AddprefixAddsuffix::Addprefix)
+    );
+    let fix = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
+    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)) }.to_bytes();
+    let result = addsuffix_addprefix_result(fix, list, is_addprefix);
+    if !result.is_empty() {
+        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
+        o = unsafe {
+            variable_buffer_output(
+                o,
+                result.as_ptr() as *const ::core::ffi::c_char,
+                result.len() as size_t,
+            )
+        };
     }
     o
 }
@@ -1517,6 +1533,149 @@ mod path_family_tests {
         }
         assert_eq!(unsafe { emit(func_basename_dir, b"basename", b"src/foo.c bar") }, b"src/foo bar");
         assert_eq!(unsafe { emit(func_basename_dir, b"dir", b"src/foo.c noext") }, b"src/ ./");
+    }
+}
+#[cfg(test)]
+mod affix_tests {
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` body of
+    //! `func_addsuffix_addprefix` — which tokenized `list` (argv[1]) with the raw
+    //! `find_next_token` pointer walk and emitted the fixed affix (argv[0]) plus
+    //! each word directly into the variable buffer with a trailing-space-then-
+    //! `o -= 1` fixup — is preserved verbatim below as `*_unsafe_oracle` and
+    //! driven through the real variable-output buffer alongside the converted
+    //! safe handler, asserting byte-identical output for both addprefix/addsuffix.
+    use super::{
+        find_next_token, func_addsuffix_addprefix, size_t, strlen, variable_buffer_output,
+    };
+    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CString};
+
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    unsafe fn func_addsuffix_addprefix_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        funcname: *const c_char,
+    ) -> *mut c_char {
+        let fixlen: size_t = strlen(*argv.offset(0_i32 as isize)) as size_t;
+        let mut list_iterator: *const c_char = *argv.offset(1_i32 as isize);
+        let is_addprefix: i32 = (*funcname.offset(3_i32 as isize) as i32 == 'p' as i32) as i32;
+        let is_addsuffix: i32 = (is_addprefix == 0) as i32;
+        let mut doneany: i32 = 0;
+        let mut p: *const c_char;
+        let mut len: size_t = 0;
+        loop {
+            p = find_next_token(&raw mut list_iterator, &raw mut len);
+            if p.is_null() {
+                break;
+            }
+            if is_addprefix != 0 {
+                o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
+            }
+            o = variable_buffer_output(o, p, len);
+            if is_addsuffix != 0 {
+                o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
+            }
+            o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+            doneany = 1;
+        }
+        if doneany != 0 {
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+
+    /// Drive `handler` with a fixed affix (argv[0]) and a list (argv[1]) plus a
+    /// real function name through a freshly initialized variable-output buffer
+    /// and return the bytes it wrote.
+    unsafe fn emit(handler: Handler, funcname: &[u8], fix: &[u8], list: &[u8]) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let fix_c = CString::new(fix).unwrap();
+        let list_c = CString::new(list).unwrap();
+        let mut argv: [*mut c_char; 3] = [
+            fix_c.as_ptr() as *mut c_char,
+            list_c.as_ptr() as *mut c_char,
+            ::core::ptr::null_mut(),
+        ];
+        let name = CString::new(funcname).unwrap();
+        let start = initialize_variable_output();
+        let end = handler(
+            &crate::execctx::ExecContext::default(),
+            start,
+            argv.as_mut_ptr(),
+            name.as_ptr(),
+        );
+        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        // measure the span from the current base rather than the stale `start`.
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec();
+        drop(fix_c);
+        drop(list_c);
+        out
+    }
+
+    fn assert_matches(safe: Handler, oracle: Handler, funcname: &[u8], fix: &[u8], list: &[u8]) {
+        let got = unsafe { emit(safe, funcname, fix, list) };
+        let want = unsafe { emit(oracle, funcname, fix, list) };
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for {funcname:?} fix {fix:?} list {list:?}"
+        );
+    }
+
+    const LISTS: &[&[u8]] = &[
+        b"",
+        b"   ",
+        b"a",
+        b"a b c",
+        b"  a   b  ",
+        b"a\tb\nc",
+        b"src/foo.c bar.h",
+        b"one two three four",
+    ];
+    const FIXES: &[&[u8]] = &[b"", b"pre_", b".o", b"/", b"x"];
+
+    #[test]
+    fn func_addsuffix_addprefix_matches_unsafe_oracle() {
+        for &fix in FIXES {
+            for &list in LISTS {
+                assert_matches(
+                    func_addsuffix_addprefix,
+                    func_addsuffix_addprefix_unsafe_oracle,
+                    b"addprefix",
+                    fix,
+                    list,
+                );
+                assert_matches(
+                    func_addsuffix_addprefix,
+                    func_addsuffix_addprefix_unsafe_oracle,
+                    b"addsuffix",
+                    fix,
+                    list,
+                );
+            }
+        }
+        assert_eq!(
+            unsafe { emit(func_addsuffix_addprefix, b"addprefix", b"src/", b"foo.c bar.c") },
+            b"src/foo.c src/bar.c"
+        );
+        assert_eq!(
+            unsafe { emit(func_addsuffix_addprefix, b"addsuffix", b".o", b"foo bar") },
+            b"foo.o bar.o"
+        );
     }
 }
 /// Trim whitespace from both ends of the inclusive byte span `s` that the C
