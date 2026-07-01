@@ -2294,7 +2294,10 @@ mod selection_tests {
     fn assert_matches(safe: Handler, oracle: Handler, args: &[&[u8]]) {
         let got = unsafe { emit(safe, args) };
         let want = unsafe { emit(oracle, args) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for args {args:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for args {args:?}"
+        );
     }
 
     #[test]
@@ -3191,44 +3194,63 @@ fn expand_trimmed(
     // in-bounds, dereferenceable pointers into the argument buffer.
     Some(unsafe { ExpandedArg::new(ctx, beg, end) })
 }
-unsafe fn func_if(
+/// A safe `fn`: the only `unsafe` is the FFI/raw-pointer edges (`argv`
+/// indexing, `ExpandedArg::new`, `strlen`, `variable_buffer_output`) — the
+/// same pattern as `func_join`/`func_origin`.
+fn func_if(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
+    // SAFETY: the dispatcher passes an `argv` of at least `maximum_args`
+    // NUL-terminated C strings (`if` has min = 2, max = 3), so `argv[0]` is valid.
     // The condition is true when its trimmed, expanded text is non-empty (first
     // byte is not the terminating NUL), matching the C `*expansion != '\0'`.
-    let condition =
-        expand_trimmed(ctx, *argv.offset(0_i32 as isize)).is_some_and(|e| *e.as_ptr() != 0);
+    let condition = expand_trimmed(ctx, unsafe { *argv.offset(0_i32 as isize) })
+        .is_some_and(|e| unsafe { *e.as_ptr() != 0 });
     // then-branch is argv[1]; else-branch is argv[2]. Skip the extra argument
     // when the condition is false.
-    argv = argv.offset((1 + (!condition) as i32) as isize);
-    if !(*argv).is_null() {
-        let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
-        o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
+    // SAFETY: the offset stays within the dispatcher's NUL-terminated argv array.
+    argv = unsafe { argv.offset((1 + (!condition) as i32) as isize) };
+    // SAFETY: `argv` remains within the dispatcher's argv array.
+    if !unsafe { (*argv).is_null() } {
+        // SAFETY: `*argv` is a valid NUL-terminated C string from the
+        // dispatcher; `expansion` is then a valid `malloc`ed NUL-terminated
+        // buffer, and `o` is the caller's variable-buffer output cursor.
+        o = unsafe {
+            let expansion =
+                ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
+            variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t)
+        };
     }
     o
 }
-unsafe fn func_or(
+/// A safe `fn`; see `func_if`.
+fn func_or(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    while !(*argv).is_null() {
-        if let Some(expansion) = expand_trimmed(ctx, *argv) {
-            let result = strlen(expansion.as_ptr()) as size_t;
+    // SAFETY: the dispatcher passes a NUL-terminated `argv` array; every
+    // `*argv.offset(n)` read below stays within that array.
+    while !unsafe { (*argv).is_null() } {
+        if let Some(expansion) = expand_trimmed(ctx, unsafe { *argv }) {
+            // SAFETY: `expansion` owns a valid NUL-terminated buffer.
+            let result = unsafe { strlen(expansion.as_ptr()) as size_t };
             if result != 0 {
-                o = variable_buffer_output(o, expansion.as_ptr(), result);
+                // SAFETY: `o` is the caller's variable-buffer output cursor.
+                o = unsafe { variable_buffer_output(o, expansion.as_ptr(), result) };
                 break;
             }
         }
-        argv = argv.offset(1_i32 as isize);
+        argv = unsafe { argv.offset(1_i32 as isize) };
     }
     o
 }
-unsafe fn func_and(
+/// A safe `fn`; see `func_if`.
+fn func_and(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
@@ -3237,21 +3259,183 @@ unsafe fn func_and(
     loop {
         // An empty argument (empty trimmed span) makes the whole `$(and ...)`
         // empty, matching the C `begp > endp` early return.
-        let Some(expansion) = expand_trimmed(ctx, *argv) else {
+        // SAFETY: the dispatcher passes a NUL-terminated `argv` array.
+        let Some(expansion) = expand_trimmed(ctx, unsafe { *argv }) else {
             return o;
         };
-        let result = strlen(expansion.as_ptr()) as size_t;
+        // SAFETY: `expansion` owns a valid NUL-terminated buffer.
+        let result = unsafe { strlen(expansion.as_ptr()) as size_t };
         if result == 0 {
             break;
         }
-        argv = argv.offset(1_i32 as isize);
-        if (*argv).is_null() {
-            o = variable_buffer_output(o, expansion.as_ptr(), result);
+        // SAFETY: the offset stays within the dispatcher's argv array.
+        argv = unsafe { argv.offset(1_i32 as isize) };
+        // SAFETY: `argv` remains within the dispatcher's argv array.
+        if unsafe { (*argv).is_null() } {
+            // SAFETY: `o` is the caller's variable-buffer output cursor.
+            o = unsafe { variable_buffer_output(o, expansion.as_ptr(), result) };
             break;
         }
         // More arguments remain: drop this expansion and evaluate the next.
     }
     o
+}
+#[cfg(test)]
+mod bool_builtin_tests {
+    use super::{expand_trimmed, size_t, strlen, variable_buffer_output, ExpandedArg};
+    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use std::ffi::{c_char, CString};
+
+    // AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_if`,
+    // `func_or`, and `func_and` are preserved verbatim below (renamed
+    // `*_unsafe_oracle`) and driven through the real variable-output buffer
+    // alongside the converted safe handlers, asserting byte-identical output.
+
+    unsafe fn func_if_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        mut argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let condition =
+            expand_trimmed(ctx, *argv.offset(0_i32 as isize)).is_some_and(|e| *e.as_ptr() != 0);
+        argv = argv.offset((1 + (!condition) as i32) as isize);
+        if !(*argv).is_null() {
+            let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<c_char>());
+            o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
+        }
+        o
+    }
+
+    unsafe fn func_or_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        mut argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        while !(*argv).is_null() {
+            if let Some(expansion) = expand_trimmed(ctx, *argv) {
+                let result = strlen(expansion.as_ptr()) as size_t;
+                if result != 0 {
+                    o = variable_buffer_output(o, expansion.as_ptr(), result);
+                    break;
+                }
+            }
+            argv = argv.offset(1_i32 as isize);
+        }
+        o
+    }
+
+    unsafe fn func_and_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        mut argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        loop {
+            let Some(expansion) = expand_trimmed(ctx, *argv) else {
+                return o;
+            };
+            let result = strlen(expansion.as_ptr()) as size_t;
+            if result == 0 {
+                break;
+            }
+            argv = argv.offset(1_i32 as isize);
+            if (*argv).is_null() {
+                o = variable_buffer_output(o, expansion.as_ptr(), result);
+                break;
+            }
+        }
+        o
+    }
+
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    /// Drive `handler` with a NUL-terminated `argv` built from `args` (plain
+    /// text, no `$` references, so expansion is a pure copy-through and needs
+    /// no variable-table setup beyond the output buffer) through a freshly
+    /// initialized variable-output buffer, and return the bytes written.
+    unsafe fn emit(handler: Handler, args: &[&[u8]]) -> Vec<u8> {
+        let _buf_g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // `expand_trimmed`'s whitespace classification reads the runtime
+        // `stopchar_map`; initialize it once, as `func_join_tests` does.
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        let cargs: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap()).collect();
+        let mut argv: Vec<*mut c_char> = cargs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+        argv.push(::core::ptr::null_mut());
+        let fname = CString::new("f").unwrap();
+        let start = initialize_variable_output();
+        let end = handler(&ctx, start, argv.as_mut_ptr(), fname.as_ptr());
+        // `variable_buffer_output` may `xrealloc` and move the global buffer,
+        // so measure the written span from the current base rather than the
+        // possibly-stale `start`.
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec()
+    }
+
+    fn assert_matches(safe: Handler, oracle: Handler, args: &[&[u8]]) {
+        let got = unsafe { emit(safe, args) };
+        let want = unsafe { emit(oracle, args) };
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for args {args:?}"
+        );
+    }
+
+    #[test]
+    fn func_if_matches_unsafe_oracle() {
+        // condition true, else branch absent.
+        assert_matches(super::func_if, func_if_unsafe_oracle, &[b"1", b"then"]);
+        // condition true, else branch present (skipped).
+        assert_matches(
+            super::func_if,
+            func_if_unsafe_oracle,
+            &[b"1", b"then", b"else"],
+        );
+        // condition false (empty/whitespace-only), else branch present.
+        assert_matches(
+            super::func_if,
+            func_if_unsafe_oracle,
+            &[b"  ", b"then", b"else"],
+        );
+        // condition false, else branch absent -> empty output.
+        assert_matches(super::func_if, func_if_unsafe_oracle, &[b"", b"then"]);
+    }
+
+    #[test]
+    fn func_or_matches_unsafe_oracle() {
+        // first arg wins.
+        assert_matches(super::func_or, func_or_unsafe_oracle, &[b"a", b"b"]);
+        // first empty, second wins.
+        assert_matches(super::func_or, func_or_unsafe_oracle, &[b"", b"b"]);
+        // all empty -> empty output.
+        assert_matches(super::func_or, func_or_unsafe_oracle, &[b"", b"  ", b""]);
+        // single arg, non-empty.
+        assert_matches(super::func_or, func_or_unsafe_oracle, &[b"only"]);
+    }
+
+    #[test]
+    fn func_and_matches_unsafe_oracle() {
+        // all non-empty -> last expansion.
+        assert_matches(super::func_and, func_and_unsafe_oracle, &[b"a", b"b", b"c"]);
+        // middle empty -> empty output.
+        assert_matches(super::func_and, func_and_unsafe_oracle, &[b"a", b"", b"c"]);
+        // first empty -> empty output.
+        assert_matches(super::func_and, func_and_unsafe_oracle, &[b"", b"b"]);
+        // single arg, non-empty -> that expansion.
+        assert_matches(super::func_and, func_and_unsafe_oracle, &[b"only"]);
+    }
 }
 #[cfg(test)]
 mod trimmed_span_tests {
