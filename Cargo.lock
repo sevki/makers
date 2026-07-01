@@ -430,6 +430,7 @@ dependencies = [
  "c2rust-bitfields",
  "chrono",
  "digest",
+ "hashbrown",
  "insta",
  "itertools",
  "jj-lib-proc-macros",
