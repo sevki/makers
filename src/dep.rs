@@ -78,12 +78,15 @@ pub struct GoalDepNode {
     pub offset: u64,
 }
 
-/// A simple chain of names, as produced by `parse_file_seq` — the base
-/// name-chain node whose `next`/`name` prefix [`Dep`] and [`GoalDep`] share
-/// (see the `SeqNode` trait in `file.rs`). Legacy c2rust raw-pointer type; the
-/// makefile reader now uses owned `Vec`s instead of threading these chains.
-/// `file.rs` re-exports it (and the `nameseq` alias) for compatibility.
+/// A simple chain of names — the base name-chain node whose `next`/`name`
+/// prefix [`Dep`] and [`GoalDep`] share (see the `SeqNode` trait in `file.rs`).
+/// Legacy c2rust raw-pointer type; the makefile reader now builds owned `Vec`s
+/// instead of threading these chains, so it survives only for the remaining
+/// pointer-punning sites (e.g. `ar_glob`, the `free_ns*` helpers). `#[repr(C)]`
+/// like its `Dep`/`GoalDep` siblings: those layout-punning casts rely on `next`
+/// sitting at offset 0. `file.rs` re-exports it (and the `nameseq` alias).
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct NameSeq {
     pub next: *mut NameSeq,
     pub name: *const ::core::ffi::c_char,
