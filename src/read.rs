@@ -2378,7 +2378,6 @@ unsafe fn record_target_var(
             let percent_off = percent.offset_from(name);
             let cached_name = strcache_add(name);
             let cached_percent = cached_name.offset(percent_off);
-            name = cached_name;
             p = create_pattern_var(cached_name, cached_percent);
             (*p).variable.fileinfo = *flocp;
             v = assign_variable_definition(ctx, &raw mut (*p).variable, defn);
