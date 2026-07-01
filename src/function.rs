@@ -1042,7 +1042,7 @@ fn func_basename_dir(
 /// whitespace-separated word of `list` — on the front for `addprefix`, the back
 /// for `addsuffix` — space-separated with no trailing space. Mirrors the C
 /// loop's emit-space-then-`o -= 1` via `pop()` (every word contributes).
-fn addsuffix_addprefix_result(fix: &[u8], list: &[u8], is_addprefix: bool) -> Vec<u8> {
+fn addprefix_addsuffix_result(fix: &[u8], list: &[u8], is_addprefix: bool) -> Vec<u8> {
     let mut out = Vec::new();
     for tok in tokens(list) {
         if is_addprefix {
@@ -1074,7 +1074,7 @@ fn func_addsuffix_addprefix(
     );
     let fix = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
     let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)) }.to_bytes();
-    let result = addsuffix_addprefix_result(fix, list, is_addprefix);
+    let result = addprefix_addsuffix_result(fix, list, is_addprefix);
     if !result.is_empty() {
         // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
         o = unsafe {
