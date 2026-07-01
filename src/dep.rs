@@ -35,6 +35,41 @@ pub struct DepNode {
 // Stable identity for a dep edge: content-hash of the full (immutable) `DepNode`.
 crate::id_wireformat!(DepId[HASH_SIZE] <- DepNode);
 
+#[cfg(test)]
+mod dep_id_tests {
+    use super::{DepFlags, DepId, DepNode};
+
+    /// Two structurally-identical dep edges hash identically; edges differing
+    /// in any field — name, flags, or a bool marker — hash differently, since
+    /// the whole struct is content-hashed. (`DepId` predates this session's
+    /// `FileId`/`GoalDepId` work but had no test coverage of its own.)
+    #[test]
+    fn hashes_whole_struct_deterministically() {
+        let a = DepNode {
+            name: "foo.o".to_string(),
+            ..Default::default()
+        };
+        let a_again = DepNode {
+            name: "foo.o".to_string(),
+            ..Default::default()
+        };
+        let b = DepNode {
+            name: "bar.o".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(DepId::from(&a), DepId::from(&a_again));
+        assert_ne!(DepId::from(&a), DepId::from(&b));
+
+        let mut c = a.clone();
+        c.flags = DepFlags::DONTCARE;
+        assert_ne!(DepId::from(&a), DepId::from(&c));
+
+        let mut d = a.clone();
+        d.is_explicit = true;
+        assert_ne!(DepId::from(&a), DepId::from(&d));
+    }
+}
+
 bitflags::bitflags! {
     /// Goal-dep resolution flags — the idiomatic form of the c2rust
     /// `Dep`/`GoalDep` `flags: c_uint` field. Bit values match the `RM_*`
