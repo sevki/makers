@@ -2628,23 +2628,27 @@ fn trimmed_span_offsets(bytes: &[u8]) -> Option<(usize, usize)> {
 /// when the trimmed span is empty (the `begp > endp` state the C loops leave
 /// behind). The `[start, end)` slice pointers are derived by indexing the
 /// argument bytes rather than by raw `begp`/`endp` pointer arithmetic.
-unsafe fn expand_trimmed(
+///
+/// A safe `fn`: the only `unsafe` is the FFI at the edges (`CStr::from_ptr`,
+/// `ExpandedArg::new` → `expand_argument`).
+fn expand_trimmed(
     ctx: &crate::execctx::ExecContext,
     arg: *const ::core::ffi::c_char,
 ) -> Option<ExpandedArg> {
+    // SAFETY: `arg` is a NUL-terminated C string supplied by the dispatcher.
+    let with_nul = unsafe { ::core::ffi::CStr::from_ptr(arg) }.to_bytes_with_nul();
+    let content = &with_nul[..with_nul.len() - 1];
+    let (start, end) = trimmed_span_offsets(content)?;
     // Index a NUL-inclusive view so the end pointer stays dereferenceable:
     // when the trimmed span has no trailing whitespace `end == content.len()`,
     // and `with_nul[end..]` then points *at* the terminator (in-bounds) rather
     // than one past a NUL-excluding `to_bytes()` slice. `expand_argument`
     // dereferences a non-null `end` to test for NUL, so it must be valid.
-    let with_nul = ::core::ffi::CStr::from_ptr(arg).to_bytes_with_nul();
-    let content = &with_nul[..with_nul.len() - 1];
-    let (start, end) = trimmed_span_offsets(content)?;
-    Some(ExpandedArg::new(
-        ctx,
-        with_nul[start..].as_ptr() as *const ::core::ffi::c_char,
-        with_nul[end..].as_ptr() as *const ::core::ffi::c_char,
-    ))
+    let beg = with_nul[start..].as_ptr() as *const ::core::ffi::c_char;
+    let end = with_nul[end..].as_ptr() as *const ::core::ffi::c_char;
+    // SAFETY: `beg`/`end` index the NUL-inclusive slice, so both are valid,
+    // in-bounds, dereferenceable pointers into the argument buffer.
+    Some(unsafe { ExpandedArg::new(ctx, beg, end) })
 }
 unsafe fn func_if(
     ctx: &crate::execctx::ExecContext,
