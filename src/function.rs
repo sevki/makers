@@ -833,110 +833,136 @@ mod func_join_tests {
         assert!(join_lists(b"", b"").is_empty());
     }
 }
-unsafe fn func_origin(
+/// `$(origin NAME)` result text for a variable with the given C
+/// `variable_origin` discriminant (`None` for a lookup miss). Mirrors the
+/// original C `switch`; `o_invalid` (7) aborts and is handled by the caller
+/// before reaching this table, so it never appears here.
+fn origin_message(origin: Option<i32>) -> Option<&'static [u8]> {
+    match origin {
+        None => Some(b"undefined"),
+        Some(0) => Some(b"default"),
+        Some(1) => Some(b"environment"),
+        Some(2) => Some(b"file"),
+        Some(3) => Some(b"environment override"),
+        Some(4) => Some(b"command line"),
+        Some(5) => Some(b"override"),
+        Some(6) => Some(b"automatic"),
+        Some(_) => None,
+    }
+}
+fn func_origin(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let v: *mut variable = lookup_variable(
-        ctx,
-        *argv.offset(0_i32 as isize),
-        strlen(*argv.offset(0_i32 as isize)) as size_t,
-    );
-    if v.is_null() {
-        o = variable_buffer_output(
-            o,
-            b"undefined\0" as *const u8 as *const ::core::ffi::c_char,
-            9,
-        );
+    // SAFETY: the dispatcher passes an `argv` of at least `maximum_args`
+    // NUL-terminated C strings (`origin` has min = max = 1), so `argv[0]`
+    // and its `strlen` are valid inputs to `lookup_variable`.
+    let v: *mut variable = unsafe {
+        lookup_variable(
+            ctx,
+            *argv.offset(0_i32 as isize),
+            strlen(*argv.offset(0_i32 as isize)) as size_t,
+        )
+    };
+    let origin = if v.is_null() {
+        None
     } else {
-        match (*v).origin() as i32 {
-            7 => {
-                abort();
-            }
-            0 => {
-                o = variable_buffer_output(
-                    o,
-                    b"default\0" as *const u8 as *const ::core::ffi::c_char,
-                    7,
-                );
-            }
-            1 => {
-                o = variable_buffer_output(
-                    o,
-                    b"environment\0" as *const u8 as *const ::core::ffi::c_char,
-                    11,
-                );
-            }
-            2 => {
-                o = variable_buffer_output(
-                    o,
-                    b"file\0" as *const u8 as *const ::core::ffi::c_char,
-                    4,
-                );
-            }
-            3 => {
-                o = variable_buffer_output(
-                    o,
-                    b"environment override\0" as *const u8 as *const ::core::ffi::c_char,
-                    20,
-                );
-            }
-            4 => {
-                o = variable_buffer_output(
-                    o,
-                    b"command line\0" as *const u8 as *const ::core::ffi::c_char,
-                    12,
-                );
-            }
-            5 => {
-                o = variable_buffer_output(
-                    o,
-                    b"override\0" as *const u8 as *const ::core::ffi::c_char,
-                    8,
-                );
-            }
-            6 => {
-                o = variable_buffer_output(
-                    o,
-                    b"automatic\0" as *const u8 as *const ::core::ffi::c_char,
-                    9,
-                );
-            }
-            _ => {}
-        }
+        // SAFETY: `v` is non-null, so it's a valid pointer to a live
+        // `variable` returned by `lookup_variable`.
+        Some(unsafe { (*v).origin() as i32 })
+    };
+    if origin == Some(7) {
+        // SAFETY: matches the original C `case o_invalid: abort()`.
+        unsafe { abort() };
+    }
+    if let Some(msg) = origin_message(origin) {
+        // SAFETY: `o` is the caller's variable-buffer output cursor and
+        // `msg` is a valid byte buffer of the given length.
+        o = unsafe {
+            variable_buffer_output(
+                o,
+                msg.as_ptr() as *const ::core::ffi::c_char,
+                msg.len() as size_t,
+            )
+        };
     }
     o
 }
-unsafe fn func_flavor(
+/// `$(flavor NAME)` result text: `None` for a lookup miss, `Some(true)`/
+/// `Some(false)` for a recursively/simply expanded variable.
+fn flavor_message(recursive: Option<bool>) -> &'static [u8] {
+    match recursive {
+        None => b"undefined",
+        Some(true) => b"recursive",
+        Some(false) => b"simple",
+    }
+}
+fn func_flavor(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let v: *mut variable = lookup_variable(
-        ctx,
-        *argv.offset(0_i32 as isize),
-        strlen(*argv.offset(0_i32 as isize)) as size_t,
-    );
-    if v.is_null() {
-        o = variable_buffer_output(
-            o,
-            b"undefined\0" as *const u8 as *const ::core::ffi::c_char,
-            9,
-        );
-    } else if (*v).recursive() != 0 {
-        o = variable_buffer_output(
-            o,
-            b"recursive\0" as *const u8 as *const ::core::ffi::c_char,
-            9,
-        );
+    // SAFETY: as in `func_origin`, `argv[0]` is a valid NUL-terminated
+    // string owned by the dispatcher for the call's duration.
+    let v: *mut variable = unsafe {
+        lookup_variable(
+            ctx,
+            *argv.offset(0_i32 as isize),
+            strlen(*argv.offset(0_i32 as isize)) as size_t,
+        )
+    };
+    let recursive = if v.is_null() {
+        None
     } else {
-        o = variable_buffer_output(o, b"simple\0" as *const u8 as *const ::core::ffi::c_char, 6);
-    }
+        // SAFETY: `v` is non-null, so it's a valid pointer to a live
+        // `variable` returned by `lookup_variable`.
+        Some(unsafe { (*v).recursive() != 0 })
+    };
+    let msg = flavor_message(recursive);
+    // SAFETY: `o` is the caller's variable-buffer output cursor and `msg`
+    // is a valid byte buffer of the given length.
+    o = unsafe {
+        variable_buffer_output(
+            o,
+            msg.as_ptr() as *const ::core::ffi::c_char,
+            msg.len() as size_t,
+        )
+    };
     o
 }
+
+#[cfg(test)]
+mod func_origin_flavor_tests {
+    use super::{flavor_message, origin_message};
+
+    #[test]
+    fn origin_message_matches_c_switch() {
+        assert_eq!(origin_message(None), Some(&b"undefined"[..]));
+        assert_eq!(origin_message(Some(0)), Some(&b"default"[..]));
+        assert_eq!(origin_message(Some(1)), Some(&b"environment"[..]));
+        assert_eq!(origin_message(Some(2)), Some(&b"file"[..]));
+        assert_eq!(origin_message(Some(3)), Some(&b"environment override"[..]));
+        assert_eq!(origin_message(Some(4)), Some(&b"command line"[..]));
+        assert_eq!(origin_message(Some(5)), Some(&b"override"[..]));
+        assert_eq!(origin_message(Some(6)), Some(&b"automatic"[..]));
+        // `o_invalid` (7) is handled by the caller via `abort()` before
+        // reaching this table; any other out-of-range value is the C
+        // switch's silent-no-output default.
+        assert_eq!(origin_message(Some(8)), None);
+        assert_eq!(origin_message(Some(-1)), None);
+    }
+
+    #[test]
+    fn flavor_message_matches_c_if_chain() {
+        assert_eq!(flavor_message(None), b"undefined");
+        assert_eq!(flavor_message(Some(true)), b"recursive");
+        assert_eq!(flavor_message(Some(false)), b"simple");
+    }
+}
+
 /// `$(notdir ...)` / `$(suffix ...)`: for each whitespace-separated word, keep
 /// the tail after the last directory separator (`notdir`) or the extension from
 /// the last `.` (`suffix`), space-separated with no trailing space. `suffix`
