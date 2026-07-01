@@ -4,7 +4,7 @@ pub use crate::ffi_types::{
 };
 use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{
-    alpha_cmp, end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xrealloc, xstrndup,
+    alpha_cmp, end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xstrndup,
 };
 use crate::output::FmtArg;
 use crate::stdio::FILE;
@@ -569,15 +569,15 @@ fn find_next_argument(startparen: u8, endparen: u8, bytes: &[u8]) -> Option<usiz
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn string_glob(
-    ctx: &crate::execctx::ExecContext,
-    mut line: *mut ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
-    static mut result: *mut ::core::ffi::c_char =
-        ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-    static mut length: size_t = 0;
-    let mut idx: size_t;
-    // 0x1 = MAP_NUL stopmap; 0x1|0x10|0x8 = PARSEFS_NOSTRIP|PARSEFS_NOCACHE|...
+/// Glob `line` (make's `$(wildcard ...)`) and return the matched names joined
+/// by single spaces as an owned byte buffer (no trailing space or NUL).
+///
+/// # Safety
+///
+/// `line` must be valid for [`parse_file_seq`]: a writable, NUL-terminated C
+/// string, which this consumes as the glob input.
+pub unsafe fn string_glob(ctx: &crate::execctx::ExecContext, mut line: *mut ::core::ffi::c_char) -> Vec<u8> {
+    // 0x1 = MAP_NUL stopmap; 0x1|0x10|0x8 = PARSEFS_NOSTRIP|PARSEFS_NOCACHE|PARSEFS_EXISTS
     let chain = parse_file_seq(
         ctx,
         &raw mut line,
@@ -586,34 +586,17 @@ pub unsafe fn string_glob(
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x1_i32 | 0x10_i32 | 0x8_i32,
     );
-    if result.is_null() {
-        length = 100;
-        result = xmalloc(100) as *mut ::core::ffi::c_char;
-    }
-    idx = 0;
+    // Join the matched names with single spaces into an owned buffer, replacing
+    // the c2rust `static mut` scratch buffer grown in place through raw pointer
+    // arithmetic. `ParsedName::name` already carries the bytes with no NUL.
+    let mut names = Vec::new();
     for pn in &chain {
-        let len: size_t = pn.name.len() as size_t;
-        if idx.wrapping_add(len).wrapping_add(1) > length {
-            length = length.wrapping_add(len.wrapping_add(1 as size_t).wrapping_mul(2));
-            result =
-                xrealloc(result as *mut ::core::ffi::c_void, length) as *mut ::core::ffi::c_char;
+        if !names.is_empty() {
+            names.push(b' ');
         }
-        memcpy(
-            result.offset(idx as isize) as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-            pn.name.as_ptr() as *const ::core::ffi::c_void,
-            len as size_t,
-        );
-        idx = idx.wrapping_add(len);
-        let fresh2 = idx;
-        idx = idx.wrapping_add(1);
-        *result.offset(fresh2 as isize) = ' ' as i32 as ::core::ffi::c_char;
+        names.extend_from_slice(&pn.name);
     }
-    if idx == 0 {
-        *result.offset(0_i32 as isize) = 0;
-    } else {
-        *result.offset(idx.wrapping_sub(1) as isize) = 0;
-    }
-    result
+    names
 }
 unsafe fn func_patsubst(
     _ctx: &crate::execctx::ExecContext,
@@ -1970,8 +1953,8 @@ unsafe fn func_wildcard(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let p: *mut ::core::ffi::c_char = string_glob(ctx, *argv.offset(0_i32 as isize));
-    o = variable_buffer_output(o, p, strlen(p) as size_t);
+    let names = string_glob(ctx, *argv.offset(0_i32 as isize));
+    o = variable_buffer_output(o, names.as_ptr() as *const ::core::ffi::c_char, names.len() as size_t);
     o
 }
 unsafe fn func_eval(
