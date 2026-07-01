@@ -573,30 +573,11 @@ pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, mut len: size_t) -> ssize_t 
     msg.offset_from(buffer as *mut c_char) as ssize_t
 }
 
-/// Copy a single dependency edge. The idiomatic [`DepNode`] owns its fields
-/// (the `name: String` is cloned, the linked-target `file: Option<FileId>` is a
-/// `Copy` handle), so a value clone is the whole copy — there is no `next` link
-/// to clear and no second-expansion name aliasing to break.
-pub fn copy_dep(d: &crate::dep::DepNode) -> crate::dep::DepNode {
-    d.clone()
-}
-
-/// Copy a whole prerequisite list as an owned `Vec<DepNode>` clone — the
-/// pointer-free replacement for following and duplicating a `*mut Dep` chain.
-pub fn copy_dep_chain(d: &[crate::dep::DepNode]) -> Vec<crate::dep::DepNode> {
-    d.to_vec()
-}
-
-/// Copy a single goal edge as an owned [`GoalDepNode`] value clone.
-pub fn copy_goaldep(d: &crate::dep::GoalDepNode) -> crate::dep::GoalDepNode {
-    d.clone()
-}
-
-/// Copy a whole goal list as an owned `Vec<GoalDepNode>` clone — the
-/// pointer-free replacement for duplicating a `*mut GoalDep` chain.
-pub fn copy_goal_chain(d: &[crate::dep::GoalDepNode]) -> Vec<crate::dep::GoalDepNode> {
-    d.to_vec()
-}
+// The idiomatic dependency-edge copy helpers now live in the `dep` domain
+// module next to the [`DepNode`]/[`GoalDepNode`] types they clone. Re-exported
+// here so existing `crate::misc::copy_dep{,_chain}` / `copy_goal{dep,_chain}`
+// paths keep resolving.
+pub use crate::dep::{copy_dep, copy_dep_chain, copy_goal_chain, copy_goaldep};
 
 /// Free a chain of `nameseq` structures (the names themselves are cached and
 /// not freed).

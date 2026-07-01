@@ -73,6 +73,66 @@ pub struct GoalDepNode {
     pub offset: u64,
 }
 
+/// Build a fresh, empty dependency edge — the idiomatic replacement for the
+/// c2rust `alloc_dep` (which `xcalloc`'d a zeroed `Dep`). All flags clear, no
+/// resolved target, empty name; callers fill in what they need.
+#[inline]
+pub(crate) fn alloc_dep() -> DepNode {
+    DepNode {
+        name: String::new(),
+        file: None,
+        shuf: None,
+        stem: None,
+        flags: DepFlags::empty(),
+        changed: false,
+        ignore_mtime: false,
+        static_pattern: false,
+        needs_second_expansion: false,
+        ignore_automatic_vars: false,
+        is_explicit: false,
+        wait_here: false,
+    }
+}
+
+/// Build a fresh, empty goal — the idiomatic replacement for the c2rust
+/// `alloc_goaldep` (a zeroed `GoalDep`): an empty [`DepNode`] edge plus zeroed
+/// error/location bookkeeping.
+#[inline]
+pub(crate) fn alloc_goaldep() -> GoalDepNode {
+    GoalDepNode {
+        dep: alloc_dep(),
+        error: 0,
+        defined_in: None,
+        lineno: 0,
+        offset: 0,
+    }
+}
+
+/// Copy a single dependency edge. The idiomatic [`DepNode`] owns its fields
+/// (the `name: String` is cloned, the linked-target `file: Option<FileId>` is a
+/// `Copy` handle), so a value clone is the whole copy — there is no `next` link
+/// to clear and no second-expansion name aliasing to break.
+pub fn copy_dep(d: &DepNode) -> DepNode {
+    d.clone()
+}
+
+/// Copy a whole prerequisite list as an owned `Vec<DepNode>` clone — the
+/// pointer-free replacement for following and duplicating a `*mut Dep` chain.
+pub fn copy_dep_chain(d: &[DepNode]) -> Vec<DepNode> {
+    d.to_vec()
+}
+
+/// Copy a single goal edge as an owned [`GoalDepNode`] value clone.
+pub fn copy_goaldep(d: &GoalDepNode) -> GoalDepNode {
+    d.clone()
+}
+
+/// Copy a whole goal list as an owned `Vec<GoalDepNode>` clone — the
+/// pointer-free replacement for duplicating a `*mut GoalDep` chain.
+pub fn copy_goal_chain(d: &[GoalDepNode]) -> Vec<GoalDepNode> {
+    d.to_vec()
+}
+
 /// Legacy c2rust dependency-edge record: a raw-pointer linked list. The
 /// idiomatic, pointer-free replacement is [`DepNode`]; this `#[repr(C)]` struct
 /// stays only until the `*mut`-to-handle swap removes the last `*mut Dep` site.
