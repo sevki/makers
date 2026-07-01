@@ -1,11 +1,12 @@
 //! Idiomatic dependency-graph edge types.
 //!
-//! [`DepNode`] (keyed by [`DepId`]) is the idiomatic replacement for the c2rust
-//! [`Dep`]/[`GoalDep`] records — no raw pointers, no `c_char`, no `#[repr(C)]`.
-//! Both live here now: the legacy `#[repr(C)]` structs at the bottom of the
-//! module and the pointer-free forms the dependency graph is migrating to at the
-//! top. `file.rs` re-exports `Dep`/`GoalDep` for compatibility until the
-//! `*mut`-to-handle swap deletes them.
+//! Both representations of a dependency edge live here. At the top are the
+//! idiomatic, pointer-free forms the dependency graph is migrating to —
+//! [`DepNode`] (keyed by [`DepId`]) and [`GoalDepNode`]: owned `String`s and
+//! `FileId` handles, no raw pointers, no `c_char`, no `#[repr(C)]`. At the
+//! bottom are the legacy c2rust [`Dep`]/[`GoalDep`] records they replace — the
+//! raw-pointer `#[repr(C)]` structs (`*mut`, `c_char`), which `file.rs`
+//! re-exports for compatibility until the `*mut`-to-handle swap deletes them.
 
 use crate::content_hash::ContentHash;
 use crate::file::{File, FileId, HASH_SIZE};
