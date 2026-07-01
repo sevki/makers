@@ -5,10 +5,12 @@
 //! flavor/origin/export enums mirror the c2rust `f_*`/`o_*`/`v_*` discriminants
 //! so the two representations round-trip. `file.rs` re-exports these names.
 
+use crate::content_hash::ContentHash;
+
 /// How a variable's value is expanded — the idiomatic form of the c2rust
 /// `variable_flavor`. Discriminants match the `f_*` constants so the two
 /// representations round-trip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ContentHash)]
 pub enum VarFlavor {
     /// `f_bogus` — undefined/placeholder.
     #[default]
@@ -29,7 +31,7 @@ pub enum VarFlavor {
 
 /// Where a variable came from — the idiomatic form of `variable_origin`.
 /// Discriminants match the `o_*` constants and order by precedence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ContentHash)]
 pub enum VarOrigin {
     /// `o_default` — make's built-in default.
     #[default]
@@ -51,7 +53,7 @@ pub enum VarOrigin {
 }
 
 /// A variable's export disposition — the idiomatic form of `variable_export`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ContentHash)]
 pub enum VarExport {
     /// `v_default` — follow the global export rules.
     #[default]
@@ -68,7 +70,7 @@ pub enum VarExport {
 /// for the c2rust `variable` record held in a target's `VariableSetList`. Name
 /// and value are raw bytes (no `c_char`); the c2rust bitfield is split into
 /// plain enums/bools.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, ContentHash)]
 pub struct TargetVariable {
     pub name: Vec<u8>,
     pub value: Vec<u8>,

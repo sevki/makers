@@ -2,6 +2,7 @@
 // re-export so `crate::file::DepNode` paths keep resolving. The legacy C-ABI
 // `Dep`/`GoalDep` records stay below with the other c2rust FFI structs until
 // the `*mut`-to-handle swap deletes them.
+use crate::content_hash::ContentHash;
 pub use crate::dep::{DepFlags, DepId, DepNode, GoalDepNode};
 // The recipe types (idiomatic replacement for the c2rust `Commands`) live in
 // `crate::recipe`; re-export so `crate::file::Recipe` paths keep resolving.
@@ -162,10 +163,14 @@ pub type hash_func_t = crate::hash::hash_func_t;
 
 pub(crate) const HASH_SIZE: usize = 32;
 
-// Stable identity for a file: derived from its canonical name only.
-// Mutable runtime state (timestamps, flags, command state) does not
-// contribute to the key, so a file's identity survives updates.
-crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
+// `FileId[HASH_SIZE] <- FileNode` also derives `impl From<&FileNode> for
+// FileId`, a content-hash of the *whole* node (blake3), mirroring
+// `DepId <- DepNode` (dep.rs). That conversion is scaffolding, not the
+// graph's live identity path: the arena keys nodes by `FileNode::id()`
+// (`FileId::from_bytes(&self.hname)`), derived from the canonical name only,
+// so mutable runtime state (timestamps, flags, command state) does not
+// contribute to a file's identity and it survives updates.
+crate::id_wireformat!(FileId[HASH_SIZE] <- FileNode);
 
 // The legacy c2rust dependency-edge records `Dep`/`GoalDep` and their base
 // name-chain sibling `NameSeq` now live in their domain module (`crate::dep`),
@@ -185,7 +190,7 @@ pub use crate::dep::{Dep, GoalDep, NameSeq};
 /// into the same arena; prerequisites are owned [`DepNode`]s, the recipe is an
 /// owned [`Recipe`], and per-target/pattern variables are owned
 /// [`TargetVariable`]s. The struct is free of raw pointers and `c_char`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ContentHash)]
 pub struct FileNode {
     /// Name as written in the makefile. Raw bytes, not `String`: file names are
     /// arbitrary OS bytes and need not be valid UTF-8 (use
@@ -508,7 +513,7 @@ pub type commands = Commands;
 /// A file's recipe state — the former `cs_*` integer constants. Discriminants
 /// match the original `cmd_state` values (0..=3) so the 2-bit `command_state`
 /// bitfield round-trips bit-for-bit.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ContentHash)]
 #[repr(u32)]
 pub enum CommandState {
     NotStarted = 0,
@@ -533,7 +538,7 @@ impl CommandState {
 /// A file's update result — the former `us_*` integer constants. Discriminants
 /// match the original `update_status` values (0..=3) so the 2-bit
 /// `update_status` bitfield round-trips bit-for-bit.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ContentHash)]
 #[repr(u32)]
 pub enum UpdateStatus {
     Success = 0,
@@ -3493,6 +3498,31 @@ mod tests {
             FileId::from_bytes(b"foo.o"),
             FileId::from_bytes(b"foo.o")
         );
+    }
+
+    /// `FileId::from(&FileNode)` (the `id_wireformat!` `<-` form) content-hashes
+    /// the *whole* node, deterministically and sensitive to every field — unlike
+    /// `FileNode::id()` (`FileId::from_bytes(&hname)`), which is the graph's
+    /// live identity and depends on the name alone. Mirrors `DepId <- DepNode`
+    /// (dep.rs).
+    #[test]
+    fn file_id_from_node_hashes_whole_struct() {
+        let a = FileNode::new(b"a.o".to_vec());
+        let a_again = FileNode::new(b"a.o".to_vec());
+        let b = FileNode::new(b"b.o".to_vec());
+        assert_eq!(FileId::from(&a), FileId::from(&a_again));
+        assert_ne!(FileId::from(&a), FileId::from(&b));
+
+        // Two nodes with the same name but different mutable state hash
+        // differently under `From<&FileNode>` — the opposite of `.id()`,
+        // which stays fixed as long as `hname` is unchanged.
+        let mut c = FileNode::new(b"c.o".to_vec());
+        let before = FileId::from(&c);
+        assert_eq!(c.id(), FileNode::new(b"c.o".to_vec()).id());
+        c.precious = true;
+        let after = FileId::from(&c);
+        assert_ne!(before, after);
+        assert_eq!(c.id(), FileId::from_bytes(b"c.o"));
     }
 }
 
