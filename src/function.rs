@@ -2632,12 +2632,18 @@ unsafe fn expand_trimmed(
     ctx: &crate::execctx::ExecContext,
     arg: *const ::core::ffi::c_char,
 ) -> Option<ExpandedArg> {
-    let bytes = ::core::ffi::CStr::from_ptr(arg).to_bytes();
-    let (start, end) = trimmed_span_offsets(bytes)?;
+    // Index a NUL-inclusive view so the end pointer stays dereferenceable:
+    // when the trimmed span has no trailing whitespace `end == content.len()`,
+    // and `with_nul[end..]` then points *at* the terminator (in-bounds) rather
+    // than one past a NUL-excluding `to_bytes()` slice. `expand_argument`
+    // dereferences a non-null `end` to test for NUL, so it must be valid.
+    let with_nul = ::core::ffi::CStr::from_ptr(arg).to_bytes_with_nul();
+    let content = &with_nul[..with_nul.len() - 1];
+    let (start, end) = trimmed_span_offsets(content)?;
     Some(ExpandedArg::new(
         ctx,
-        bytes[start..].as_ptr() as *const ::core::ffi::c_char,
-        bytes[end..].as_ptr() as *const ::core::ffi::c_char,
+        with_nul[start..].as_ptr() as *const ::core::ffi::c_char,
+        with_nul[end..].as_ptr() as *const ::core::ffi::c_char,
     ))
 }
 unsafe fn func_if(
