@@ -125,7 +125,6 @@ pub struct passwd {
     pub pw_shell: *mut ::core::ffi::c_char,
 }
 use crate::ar::{ar_glob, ar_name, ar_parse_name};
-use crate::dep::{alloc_dep, alloc_goaldep};
 use crate::dir::{dir_setup_glob, file_exists_p};
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, expand_string_buf,
@@ -372,7 +371,7 @@ pub unsafe fn read_all_makefiles(
         } else {
             p_0 = &raw const default_makefiles as *const *const ::core::ffi::c_char;
             while !(*p_0).is_null() {
-                let mut d_0 = alloc_goaldep();
+                let mut d_0 = crate::dep::GoalDepNode::default();
                 let fid = enter_file(ctx, CStr::from_ptr(*p_0).to_bytes());
                 d_0.dep.file = Some(fid);
                 d_0.dep.flags = crate::dep::DepFlags::DONTCARE;
@@ -435,7 +434,7 @@ unsafe fn eval_makefile(
     let curfile: *const Floc;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     deps_idx = read_files.len();
-    read_files.push(alloc_goaldep());
+    read_files.push(crate::dep::GoalDepNode::default());
     ebuf.floc.filenm = filename;
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
@@ -1437,7 +1436,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 if r == -1_i32 {
                                     continue;
                                 }
-                                let mut g = alloc_goaldep();
+                                let mut g = crate::dep::GoalDepNode::default();
                                 let (defined_in, lineno, offset) =
                                     floc_owned(&raw const (*ebuf).floc);
                                 g.defined_in = defined_in;
@@ -2714,7 +2713,7 @@ unsafe fn split_prereqs_vec(
 /// Build a fresh [`DepNode`] from an owned prerequisite name plus its `.WAIT`
 /// marker. `static_pattern` is the initial static-pattern flag.
 fn dep_from_name(name: Vec<u8>, wait: bool, static_pattern: bool) -> crate::dep::DepNode {
-    let mut d = alloc_dep();
+    let mut d = crate::dep::DepNode::default();
     d.name = String::from_utf8_lossy(&name).into_owned();
     d.wait_here = wait;
     d.static_pattern = static_pattern;
@@ -2879,7 +2878,7 @@ unsafe fn record_files(
                 ::std::ffi::CStr::from_ptr(depstr).to_bytes(),
             )
         {
-            let mut d = alloc_dep();
+            let mut d = crate::dep::DepNode::default();
             d.name = String::from_utf8_lossy(::std::ffi::CStr::from_ptr(depstr).to_bytes())
                 .into_owned();
             d.needs_second_expansion = true;
@@ -3185,7 +3184,7 @@ unsafe fn record_files(
             .iter()
             .filter(|&&o| o != fid)
             .map(|&o| {
-                let mut d = alloc_dep();
+                let mut d = crate::dep::DepNode::default();
                 if let Some(node) = ctx.filenodes.get(o) {
                     d.name = String::from_utf8_lossy(
                         &node.lock().expect("file node lock poisoned").name,

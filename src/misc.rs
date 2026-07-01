@@ -573,12 +573,6 @@ pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, mut len: size_t) -> ssize_t 
     msg.offset_from(buffer as *mut c_char) as ssize_t
 }
 
-// The idiomatic dependency-edge copy helpers now live in the `dep` domain
-// module next to the [`DepNode`]/[`GoalDepNode`] types they clone. Re-exported
-// here so existing `crate::misc::copy_dep{,_chain}` / `copy_goal{dep,_chain}`
-// paths keep resolving.
-pub use crate::dep::{copy_dep, copy_dep_chain, copy_goal_chain, copy_goaldep};
-
 /// Free a chain of `nameseq` structures (the names themselves are cached and
 /// not freed).
 /// # Safety
