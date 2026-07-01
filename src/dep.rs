@@ -88,6 +88,75 @@ crate::id_wireformat!(GoalDepId[HASH_SIZE] <- GoalDepNode);
 #[cfg(test)]
 mod goal_dep_id_tests {
     use super::{DepNode, GoalDepId, GoalDepNode};
+    use crate::file::{FileId, FileNode};
+
+    /// Build a small but non-trivial dependency graph — a program linked from
+    /// two object files, each compiled from a source file — using real
+    /// `FileNode`s, wiring the `DepNode` edges with the actual content-hash
+    /// `FileId::from(&node)` of each prerequisite (not placeholder literals
+    /// or the name-only `.id()`, which by design stays fixed across content
+    /// changes and so wouldn't let a leaf edit ripple upward). Returns the
+    /// top-level goal for `prog`.
+    fn build_graph(main_source_name: &str) -> GoalDepNode {
+        let main_c = FileNode::new(main_source_name.as_bytes().to_vec());
+        let util_c = FileNode::new(b"util.c".to_vec());
+
+        let mut main_o = FileNode::new(b"main.o".to_vec());
+        main_o.deps.push(DepNode {
+            name: main_source_name.to_string(),
+            file: Some(FileId::from(&main_c)),
+            is_explicit: true,
+            ..Default::default()
+        });
+
+        let mut util_o = FileNode::new(b"util.o".to_vec());
+        util_o.deps.push(DepNode {
+            name: "util.c".to_string(),
+            file: Some(FileId::from(&util_c)),
+            is_explicit: true,
+            ..Default::default()
+        });
+
+        let mut prog = FileNode::new(b"prog".to_vec());
+        prog.deps.push(DepNode {
+            name: "main.o".to_string(),
+            file: Some(FileId::from(&main_o)),
+            is_explicit: true,
+            ..Default::default()
+        });
+        prog.deps.push(DepNode {
+            name: "util.o".to_string(),
+            file: Some(FileId::from(&util_o)),
+            is_explicit: true,
+            ..Default::default()
+        });
+
+        GoalDepNode {
+            dep: DepNode {
+                name: "prog".to_string(),
+                file: Some(FileId::from(&prog)),
+                is_explicit: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// End-to-end: hashing a realistic multi-node graph (source -> object ->
+    /// program -> goal, four real `FileNode`s deep, linked by real computed
+    /// `FileId` content hashes) is deterministic across an independent
+    /// rebuild, and a change to a single leaf source ripples through every
+    /// ancestor's content hash up to the goal.
+    #[test]
+    fn hashes_a_realistic_multi_node_graph_end_to_end() {
+        let goal = build_graph("main.c");
+        let rebuilt = build_graph("main.c");
+        let tampered = build_graph("main2.c");
+
+        assert_eq!(GoalDepId::from(&goal), GoalDepId::from(&rebuilt));
+        assert_ne!(GoalDepId::from(&goal), GoalDepId::from(&tampered));
+        assert_ne!(goal.dep.file, tampered.dep.file);
+    }
 
     /// Two structurally-identical goals hash identically; goals differing in
     /// the underlying dep edge, or in the goal-only bookkeeping fields
