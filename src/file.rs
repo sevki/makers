@@ -174,10 +174,11 @@ pub(crate) const HASH_SIZE: usize = 32;
 // contribute to the key, so a file's identity survives updates.
 crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
 
-// The legacy c2rust dependency-edge records `Dep`/`GoalDep` now live in their
-// domain module (`crate::dep`), next to the idiomatic `DepNode` they migrate to.
-// Re-exported here so existing `crate::file::Dep` / `GoalDep` paths keep
-// resolving during the `*mut`-to-handle swap.
+// The legacy c2rust dependency-edge records `Dep`/`GoalDep` and their base
+// name-chain sibling `NameSeq` now live in their domain module (`crate::dep`),
+// next to the idiomatic `DepNode` they migrate to. Re-exported here so existing
+// `crate::file::Dep` / `GoalDep` / `NameSeq` paths (and the `nameseq` alias)
+// keep resolving during the `*mut`-to-handle swap.
 pub use crate::dep::{Dep, GoalDep, NameSeq};
 
 /// Idiomatic Rust file node for the new dependency graph layer — the file-side
