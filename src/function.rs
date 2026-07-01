@@ -677,40 +677,109 @@ unsafe fn func_patsubst(
     );
     o
 }
+/// make's `$(join list1,list2)`: concatenate the i-th word of `list1` with the
+/// i-th word of `list2`, for every row up to the longer list, space-separated
+/// with no trailing space. A missing word on either side contributes nothing,
+/// so `$(join a b,1 2 3)` is `a1 b2 3`. Pure over the two whitespace-token
+/// lists, replacing the paired `find_next_token` pointer walks with `tokens`.
+fn join_lists(list1: &[u8], list2: &[u8]) -> Vec<u8> {
+    let w1: Vec<&[u8]> = tokens(list1).collect();
+    let w2: Vec<&[u8]> = tokens(list2).collect();
+    let mut out = Vec::new();
+    for i in 0..w1.len().max(w2.len()) {
+        if let Some(t) = w1.get(i) {
+            out.extend_from_slice(t);
+        }
+        if let Some(p) = w2.get(i) {
+            out.extend_from_slice(p);
+        }
+        out.push(b' ');
+    }
+    // Drop the trailing separator the C loop trimmed via `o -= 1` (no-op when
+    // both lists are empty and nothing was emitted).
+    out.pop();
+    out
+}
 unsafe fn func_join(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut doneany: i32 = 0;
-    let mut tp: *const ::core::ffi::c_char;
-    let mut pp: *const ::core::ffi::c_char;
-    let mut list1_iterator: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
-    let mut list2_iterator: *const ::core::ffi::c_char = *argv.offset(1_i32 as isize);
-    loop {
-        let mut len1: size_t = 0;
-        let mut len2: size_t = 0;
-        tp = find_next_token(&raw mut list1_iterator, &raw mut len1);
-        if !tp.is_null() {
-            o = variable_buffer_output(o, tp, len1);
-        }
-        pp = find_next_token(&raw mut list2_iterator, &raw mut len2);
-        if !pp.is_null() {
-            o = variable_buffer_output(o, pp, len2);
-        }
-        if !tp.is_null() || !pp.is_null() {
-            o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-            doneany = 1;
-        }
-        if !(!tp.is_null() || !pp.is_null()) {
-            break;
-        }
-    }
-    if doneany != 0 {
-        o = o.offset(-1_i32 as isize);
+    let list1 = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+    let list2 = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
+    let joined = join_lists(list1, list2);
+    if !joined.is_empty() {
+        o = variable_buffer_output(
+            o,
+            joined.as_ptr() as *const ::core::ffi::c_char,
+            joined.len() as size_t,
+        );
     }
     o
+}
+
+#[cfg(test)]
+mod func_join_tests {
+    use super::{join_lists, tokens};
+
+    /// Behavior oracle: the pre-conversion `find_next_token` loop, reproduced
+    /// over the two token lists — advance each list independently, emit this
+    /// row's word1 then word2, append a space while either side produced a word,
+    /// and trim the final space. Structurally mirrors the C control flow (not
+    /// `join_lists`' max-index form) so the two agreeing is a real cross-check.
+    fn join_lists_oracle(list1: &[u8], list2: &[u8]) -> Vec<u8> {
+        let w1: Vec<&[u8]> = tokens(list1).collect();
+        let w2: Vec<&[u8]> = tokens(list2).collect();
+        let mut out = Vec::new();
+        let (mut i1, mut i2) = (0usize, 0usize);
+        let mut doneany = false;
+        loop {
+            let t = w1.get(i1);
+            if t.is_some() {
+                i1 += 1;
+            }
+            let p = w2.get(i2);
+            if p.is_some() {
+                i2 += 1;
+            }
+            if let Some(t) = t {
+                out.extend_from_slice(t);
+            }
+            if let Some(p) = p {
+                out.extend_from_slice(p);
+            }
+            if t.is_some() || p.is_some() {
+                out.push(b' ');
+                doneany = true;
+            } else {
+                break;
+            }
+        }
+        if doneany {
+            out.pop();
+        }
+        out
+    }
+
+    #[test]
+    fn matches_unsafe_oracle() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"", b""),
+            (b"a", b""),
+            (b"", b"1"),
+            (b"a b", b"1 2"),
+            (b"a b", b"1 2 3"),   // list2 longer
+            (b"a b c", b"1 2"),   // list1 longer
+            (b"  a   b  ", b"1\t2"), // irregular whitespace
+        ];
+        for &(l1, l2) in cases {
+            assert_eq!(join_lists(l1, l2), join_lists_oracle(l1, l2));
+        }
+        // Exact bytes for the documented example and the empty case.
+        assert_eq!(join_lists(b"a b", b"1 2 3"), b"a1 b2 3");
+        assert!(join_lists(b"", b"").is_empty());
+    }
 }
 unsafe fn func_origin(
     ctx: &crate::execctx::ExecContext,
