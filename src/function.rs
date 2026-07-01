@@ -3889,47 +3889,193 @@ unsafe fn func_file(
     }
     o
 }
-unsafe fn func_abspath(
+/// `$(abspath ...)`: for each whitespace-separated word, resolve it to an
+/// absolute path lexically (`abspath_into`, no filesystem access), relative to
+/// `starting_dir`. Words are space-separated with no trailing space; a word at
+/// or past `GET_PATH_MAX` bytes, or one `abspath_into` rejects, contributes
+/// nothing. Mirrors the C loop's emit-space-then-`o -= 1` via `pop()`.
+fn abspath_result(list: &[u8], starting_dir: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for tok in tokens(list) {
+        if tok.len() < GET_PATH_MAX as usize {
+            let mut buf: [u8; 4097] = [0; 4097];
+            if let Some(n) = abspath_into(tok, starting_dir, &mut buf) {
+                out.extend_from_slice(&buf[..n]);
+                out.push(b' ');
+            }
+        }
+    }
+    out.pop();
+    out
+}
+fn func_abspath(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
-    let mut path: *const ::core::ffi::c_char;
-    let mut doneany: i32 = 0;
-    let mut len: size_t = 0;
-    // Resolve the working-directory global once, as bytes, at the FFI edge.
-    let starting_dir: &[u8] = if starting_directory.is_null() {
-        &[]
-    } else {
-        ::core::ffi::CStr::from_ptr(starting_directory).to_bytes()
+    // SAFETY: `argv[0]` and the `starting_directory` global are NUL-terminated
+    // C strings owned elsewhere; borrow them as bytes only at this FFI edge.
+    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
+    let starting_dir: &[u8] = unsafe {
+        if starting_directory.is_null() {
+            &[]
+        } else {
+            ::core::ffi::CStr::from_ptr(starting_directory).to_bytes()
+        }
     };
-    loop {
-        path = find_next_token(&raw mut p, &raw mut len);
-        if path.is_null() {
-            break;
-        }
-        if len < GET_PATH_MAX as size_t {
-            let mut out: [u8; 4097] = [0; 4097];
-            // The argv token is borrowed as a byte slice at the FFI edge; the
-            // path normalization itself runs entirely in safe code.
-            let name = ::core::slice::from_raw_parts(path as *const u8, len as usize);
-            if let Some(out_len) = abspath_into(name, starting_dir, &mut out) {
-                o = variable_buffer_output(
-                    o,
-                    out.as_ptr() as *mut ::core::ffi::c_char,
-                    out_len as size_t,
-                );
-                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-                doneany = 1;
-            }
-        }
-    }
-    if doneany != 0 {
-        o = o.offset(-1_i32 as isize);
+    let result = abspath_result(list, starting_dir);
+    if !result.is_empty() {
+        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
+        o = unsafe {
+            variable_buffer_output(
+                o,
+                result.as_ptr() as *const ::core::ffi::c_char,
+                result.len() as size_t,
+            )
+        };
     }
     o
+}
+#[cfg(test)]
+mod func_abspath_tests {
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` body of `func_abspath` —
+    //! which tokenized argv[0] with the raw `find_next_token` pointer walk and
+    //! emitted each `abspath_into` result directly into the variable buffer with
+    //! a trailing-space-then-`o -= 1` fixup — is preserved verbatim below as
+    //! `func_abspath_unsafe_oracle` and driven through the real variable-output
+    //! buffer alongside the converted safe handler, asserting byte-identical
+    //! output. Both read the same `starting_directory` global, so they agree
+    //! regardless of its value; the direct assertions pin the pure helper's
+    //! behavior with an explicit base.
+    use super::{
+        abspath_into, abspath_result, find_next_token, func_abspath, size_t, starting_directory,
+        variable_buffer_output, GET_PATH_MAX,
+    };
+    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CString};
+
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    unsafe fn func_abspath_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let mut p: *const c_char = *argv.offset(0_i32 as isize);
+        let mut path: *const c_char;
+        let mut doneany: i32 = 0;
+        let mut len: size_t = 0;
+        let starting_dir: &[u8] = if starting_directory.is_null() {
+            &[]
+        } else {
+            ::core::ffi::CStr::from_ptr(starting_directory).to_bytes()
+        };
+        loop {
+            path = find_next_token(&raw mut p, &raw mut len);
+            if path.is_null() {
+                break;
+            }
+            if len < GET_PATH_MAX as size_t {
+                let mut out: [u8; 4097] = [0; 4097];
+                let name = ::core::slice::from_raw_parts(path as *const u8, len as usize);
+                if let Some(out_len) = abspath_into(name, starting_dir, &mut out) {
+                    o = variable_buffer_output(o, out.as_ptr() as *mut c_char, out_len as size_t);
+                    o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+                    doneany = 1;
+                }
+            }
+        }
+        if doneany != 0 {
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+
+    /// Drive `handler` with a single argument through a freshly initialized
+    /// variable-output buffer and return the bytes it wrote.
+    unsafe fn emit(handler: Handler, arg: &[u8]) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let cstr = CString::new(arg).unwrap();
+        let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let name = CString::new("abspath").unwrap();
+        let start = initialize_variable_output();
+        let end = handler(
+            &crate::execctx::ExecContext::default(),
+            start,
+            argv.as_mut_ptr(),
+            name.as_ptr(),
+        );
+        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        // measure the span from the current base rather than the stale `start`.
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec();
+        drop(cstr);
+        out
+    }
+
+    fn assert_matches(safe: Handler, oracle: Handler, arg: &[u8]) {
+        let got = unsafe { emit(safe, arg) };
+        let want = unsafe { emit(oracle, arg) };
+        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+    }
+
+    const CASES: &[&[u8]] = &[
+        b"",
+        b"   ",
+        b"/a/b/../c",
+        b"/x//y",
+        b"/foo/./bar",
+        b"/a/b/../c /x//y /foo/./bar",
+        b"/",
+        b"/.././..",
+        b"rel/path",
+        b"a b /abs/./x",
+        b"/trailing/",
+        b"/tab\t/newline\n/here",
+    ];
+
+    #[test]
+    fn func_abspath_matches_unsafe_oracle() {
+        for &c in CASES {
+            assert_matches(func_abspath, func_abspath_unsafe_oracle, c);
+        }
+    }
+
+    #[test]
+    fn abspath_result_normalizes_lexically() {
+        // Absolute inputs resolve independently of the base.
+        assert_eq!(abspath_result(b"/a/b/../c", b""), b"/a/c");
+        assert_eq!(abspath_result(b"/x//y", b""), b"/x/y");
+        assert_eq!(abspath_result(b"/foo/./bar", b""), b"/foo/bar");
+        assert_eq!(
+            abspath_result(b"/a/b/../c /x//y /foo/./bar", b""),
+            b"/a/c /x/y /foo/bar"
+        );
+        // A relative word resolves against the explicit base; a bare "." drops.
+        assert_eq!(abspath_result(b"rel", b"/base"), b"/base/rel");
+        assert_eq!(abspath_result(b"a/../b", b"/base"), b"/base/b");
+        // With no base a relative word contributes nothing.
+        assert!(abspath_result(b"rel", b"").is_empty());
+        // A relative and an absolute word: only the absolute survives (no base).
+        assert_eq!(abspath_result(b"rel /abs/./x", b""), b"/abs/x");
+        // Empty / whitespace-only lists yield nothing.
+        assert!(abspath_result(b"", b"").is_empty());
+        assert!(abspath_result(b"   ", b"").is_empty());
+    }
 }
 /// Build a `function_table_entry` at compile time. Replaces the c2rust-
 /// translated `run_static_initializers` constructor that ran ~1000 lines of
