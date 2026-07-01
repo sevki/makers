@@ -927,121 +927,114 @@ unsafe fn func_flavor(
     }
     o
 }
-unsafe fn func_notdir_suffix(
+/// `$(notdir ...)` / `$(suffix ...)`: for each whitespace-separated word, keep
+/// the tail after the last directory separator (`notdir`) or the extension from
+/// the last `.` (`suffix`), space-separated with no trailing space. `suffix`
+/// contributes nothing for a word with no `.`; `notdir` echoes a word with no
+/// separator. Mirrors the C loop's emit-space-then-`o -= 1` via `pop()`.
+fn notdir_suffix_result(list: &[u8], is_suffix: bool) -> Vec<u8> {
+    let stop: i32 = MAP_DIRSEP | if is_suffix { MAP_DOT } else { 0 };
+    let mut out = Vec::new();
+    for tok in tokens(list) {
+        match tok.iter().rposition(|&c| stop_set(c, stop)) {
+            Some(pos) => {
+                if !is_suffix {
+                    out.extend_from_slice(&tok[pos + 1..]);
+                } else if tok[pos] != b'.' {
+                    // A separator with no extension: `$(suffix)` emits nothing.
+                    continue;
+                } else {
+                    out.extend_from_slice(&tok[pos..]);
+                }
+                out.push(b' ');
+            }
+            None => {
+                if !is_suffix {
+                    out.extend_from_slice(tok);
+                    out.push(b' ');
+                }
+            }
+        }
+    }
+    out.pop();
+    out
+}
+fn func_notdir_suffix(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut list_iterator: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
-    let mut p2: *const ::core::ffi::c_char;
-    let mut doneany: i32 = 0;
-    let mut len: size_t = 0;
     // Classify the list-trimming function (`notdir`/`suffix`) through the typed
     // AST layer instead of switching on the raw first byte of the name.
-    let is_suffix: i32 = matches!(
-        crate::parser::NotdirSuffix::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+    // SAFETY: `funcname`/`argv[0]` are NUL-terminated C strings from the dispatcher.
+    let is_suffix = matches!(
+        crate::parser::NotdirSuffix::from_funcname(unsafe { ::std::ffi::CStr::from_ptr(funcname) }.to_bytes()),
         Some(crate::parser::NotdirSuffix::Suffix)
-    ) as i32;
-    let is_notdir: i32 = (is_suffix == 0) as i32;
-    let stop: i32 = MAP_DIRSEP | (if is_suffix != 0 { MAP_DOT } else { 0 });
-    loop {
-        p2 = find_next_token(&raw mut list_iterator, &raw mut len);
-        if p2.is_null() {
-            break;
-        }
-        // The token is `len` bytes at p2; scan back to the last separator
-        // (or '.' for $(suffix)) by index rather than walking pointers.
-        let tok = ::core::slice::from_raw_parts(p2 as *const u8, len as usize);
-        match tok.iter().rposition(|&c| stop_set(c, stop)) {
-            Some(pos) => {
-                if is_notdir != 0 {
-                    o = variable_buffer_output(
-                        o,
-                        tok[pos + 1..].as_ptr() as *const ::core::ffi::c_char,
-                        (tok.len() - pos - 1) as size_t,
-                    );
-                } else if tok[pos] != b'.' {
-                    continue;
-                } else {
-                    o = variable_buffer_output(
-                        o,
-                        tok[pos..].as_ptr() as *const ::core::ffi::c_char,
-                        (tok.len() - pos) as size_t,
-                    );
-                }
-                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-                doneany = 1;
-            }
-            None => {
-                if is_notdir != 0 {
-                    o = variable_buffer_output(o, p2, len);
-                    o = variable_buffer_output(
-                        o,
-                        b" \0" as *const u8 as *const ::core::ffi::c_char,
-                        1,
-                    );
-                    doneany = 1;
-                }
-            }
-        }
-    }
-    if doneany != 0 {
-        o = o.offset(-1_i32 as isize);
+    );
+    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
+    let result = notdir_suffix_result(list, is_suffix);
+    if !result.is_empty() {
+        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
+        o = unsafe {
+            variable_buffer_output(
+                o,
+                result.as_ptr() as *const ::core::ffi::c_char,
+                result.len() as size_t,
+            )
+        };
     }
     o
 }
-unsafe fn func_basename_dir(
+/// `$(basename ...)` / `$(dir ...)`: for each whitespace-separated word, keep
+/// the stem before the last `.` (`basename`) or the directory prefix through the
+/// last separator (`dir`), space-separated with no trailing space. A `basename`
+/// word with no `.` echoes whole; a `dir` word with no separator becomes `./`.
+/// Every word contributes, so the C loop's emit-space-then-`o -= 1` is a `pop()`.
+fn basename_dir_result(list: &[u8], is_basename: bool) -> Vec<u8> {
+    let is_dir = !is_basename;
+    let stop: i32 = MAP_DIRSEP | (if is_basename { MAP_DOT } else { 0 }) | MAP_NUL;
+    let mut out = Vec::new();
+    for tok in tokens(list) {
+        match tok.iter().rposition(|&c| stop_set(c, stop)) {
+            // Keep the directory part, including the separator.
+            Some(pos) if is_dir => out.extend_from_slice(&tok[..pos + 1]),
+            // $(basename): drop the extension from the last '.'.
+            Some(pos) if tok[pos] == b'.' => out.extend_from_slice(&tok[..pos]),
+            _ if is_dir => out.extend_from_slice(b"./"),
+            _ => out.extend_from_slice(tok),
+        }
+        out.push(b' ');
+    }
+    out.pop();
+    out
+}
+fn func_basename_dir(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut p3: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
-    let mut p2: *const ::core::ffi::c_char;
-    let mut doneany: i32 = 0;
-    let mut len: size_t = 0;
     // Classify the path-component function (`basename`/`dir`) through the typed
     // AST layer instead of switching on the raw first byte of the name.
-    let is_basename: i32 = matches!(
-        crate::parser::BasenameDir::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+    // SAFETY: `funcname`/`argv[0]` are NUL-terminated C strings from the dispatcher.
+    let is_basename = matches!(
+        crate::parser::BasenameDir::from_funcname(
+            unsafe { ::std::ffi::CStr::from_ptr(funcname) }.to_bytes()
+        ),
         Some(crate::parser::BasenameDir::Basename)
-    ) as i32;
-    let is_dir: i32 = (is_basename == 0) as i32;
-    let stop: i32 = MAP_DIRSEP | (if is_basename != 0 { MAP_DOT } else { 0 }) | MAP_NUL;
-    loop {
-        p2 = find_next_token(&raw mut p3, &raw mut len);
-        if p2.is_null() {
-            break;
-        }
-        // Scan the token back to the last separator (or '.' for $(basename))
-        // by index instead of walking pointers.
-        let tok = ::core::slice::from_raw_parts(p2 as *const u8, len as usize);
-        match tok.iter().rposition(|&c| stop_set(c, stop)) {
-            Some(pos) if is_dir != 0 => {
-                // Keep the directory part, including the separator.
-                o = variable_buffer_output(o, p2, (pos + 1) as size_t);
-            }
-            Some(pos) if tok[pos] == b'.' => {
-                // $(basename): drop the extension from the last '.'.
-                o = variable_buffer_output(o, p2, pos as size_t);
-            }
-            _ if is_dir != 0 => {
-                o = variable_buffer_output(
-                    o,
-                    b"./\0" as *const u8 as *const ::core::ffi::c_char,
-                    2,
-                );
-            }
-            _ => {
-                o = variable_buffer_output(o, p2, len);
-            }
-        }
-        o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
-        doneany = 1;
-    }
-    if doneany != 0 {
-        o = o.offset(-1_i32 as isize);
+    );
+    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
+    let result = basename_dir_result(list, is_basename);
+    if !result.is_empty() {
+        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
+        o = unsafe {
+            variable_buffer_output(
+                o,
+                result.as_ptr() as *const ::core::ffi::c_char,
+                result.len() as size_t,
+            )
+        };
     }
     o
 }
@@ -1324,6 +1317,206 @@ mod word_family_tests {
         // Decimal count, matching sprintf("%u").
         assert_eq!(unsafe { emit(func_words, b"a b c") }, b"3");
         assert_eq!(unsafe { emit(func_words, b"   ") }, b"0");
+    }
+}
+#[cfg(test)]
+mod path_family_tests {
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of
+    //! `func_notdir_suffix` and `func_basename_dir` — which tokenized with the
+    //! raw `find_next_token` pointer walk and emitted directly into the variable
+    //! buffer with a trailing-space-then-`o -= 1` fixup — are preserved verbatim
+    //! below as `*_unsafe_oracle` and driven through the real variable-output
+    //! buffer alongside the converted safe handlers, asserting byte-identical
+    //! output for both `notdir`/`suffix` and `basename`/`dir`.
+    use super::{
+        find_next_token, func_basename_dir, func_notdir_suffix, size_t, stop_set, variable_buffer_output,
+        MAP_DIRSEP, MAP_DOT, MAP_NUL,
+    };
+    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CString};
+
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    unsafe fn func_notdir_suffix_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        funcname: *const c_char,
+    ) -> *mut c_char {
+        let mut list_iterator: *const c_char = *argv.offset(0_i32 as isize);
+        let mut p2: *const c_char;
+        let mut doneany: i32 = 0;
+        let mut len: size_t = 0;
+        let is_suffix: i32 = matches!(
+            crate::parser::NotdirSuffix::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+            Some(crate::parser::NotdirSuffix::Suffix)
+        ) as i32;
+        let is_notdir: i32 = (is_suffix == 0) as i32;
+        let stop: i32 = MAP_DIRSEP | (if is_suffix != 0 { MAP_DOT } else { 0 });
+        loop {
+            p2 = find_next_token(&raw mut list_iterator, &raw mut len);
+            if p2.is_null() {
+                break;
+            }
+            let tok = ::core::slice::from_raw_parts(p2 as *const u8, len as usize);
+            match tok.iter().rposition(|&c| stop_set(c, stop)) {
+                Some(pos) => {
+                    if is_notdir != 0 {
+                        o = variable_buffer_output(
+                            o,
+                            tok[pos + 1..].as_ptr() as *const c_char,
+                            (tok.len() - pos - 1) as size_t,
+                        );
+                    } else if tok[pos] != b'.' {
+                        continue;
+                    } else {
+                        o = variable_buffer_output(
+                            o,
+                            tok[pos..].as_ptr() as *const c_char,
+                            (tok.len() - pos) as size_t,
+                        );
+                    }
+                    o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+                    doneany = 1;
+                }
+                None => {
+                    if is_notdir != 0 {
+                        o = variable_buffer_output(o, p2, len);
+                        o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+                        doneany = 1;
+                    }
+                }
+            }
+        }
+        if doneany != 0 {
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+
+    unsafe fn func_basename_dir_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        funcname: *const c_char,
+    ) -> *mut c_char {
+        let mut p3: *const c_char = *argv.offset(0_i32 as isize);
+        let mut p2: *const c_char;
+        let mut doneany: i32 = 0;
+        let mut len: size_t = 0;
+        let is_basename: i32 = matches!(
+            crate::parser::BasenameDir::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+            Some(crate::parser::BasenameDir::Basename)
+        ) as i32;
+        let is_dir: i32 = (is_basename == 0) as i32;
+        let stop: i32 = MAP_DIRSEP | (if is_basename != 0 { MAP_DOT } else { 0 }) | MAP_NUL;
+        loop {
+            p2 = find_next_token(&raw mut p3, &raw mut len);
+            if p2.is_null() {
+                break;
+            }
+            let tok = ::core::slice::from_raw_parts(p2 as *const u8, len as usize);
+            match tok.iter().rposition(|&c| stop_set(c, stop)) {
+                Some(pos) if is_dir != 0 => {
+                    o = variable_buffer_output(o, p2, (pos + 1) as size_t);
+                }
+                Some(pos) if tok[pos] == b'.' => {
+                    o = variable_buffer_output(o, p2, pos as size_t);
+                }
+                _ if is_dir != 0 => {
+                    o = variable_buffer_output(o, b"./\0" as *const u8 as *const c_char, 2);
+                }
+                _ => {
+                    o = variable_buffer_output(o, p2, len);
+                }
+            }
+            o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+            doneany = 1;
+        }
+        if doneany != 0 {
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+
+    /// Drive `handler` with a single argument and a real function name through a
+    /// freshly initialized variable-output buffer and return the bytes it wrote.
+    unsafe fn emit(handler: Handler, funcname: &[u8], arg: &[u8]) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let cstr = CString::new(arg).unwrap();
+        let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let name = CString::new(funcname).unwrap();
+        let start = initialize_variable_output();
+        let end = handler(
+            &crate::execctx::ExecContext::default(),
+            start,
+            argv.as_mut_ptr(),
+            name.as_ptr(),
+        );
+        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        // measure the span from the current base rather than the stale `start`.
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec();
+        drop(cstr);
+        out
+    }
+
+    fn assert_matches(safe: Handler, oracle: Handler, funcname: &[u8], arg: &[u8]) {
+        let got = unsafe { emit(safe, funcname, arg) };
+        let want = unsafe { emit(oracle, funcname, arg) };
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for {funcname:?} input {arg:?}"
+        );
+    }
+
+    const CASES: &[&[u8]] = &[
+        b"",
+        b"   ",
+        b"a",
+        b"a b c",
+        b"  a   b  ",
+        b"a\tb\nc",
+        b"src/foo.c",
+        b"src/foo.c bar.h baz",
+        b"/a/b/c.tar.gz",
+        b"noext",
+        b"dir/.hidden",
+        b"a.b/c d.e/f.g",
+        b"./x ../y",
+        b"trailing/",
+    ];
+
+    #[test]
+    fn func_notdir_suffix_matches_unsafe_oracle() {
+        for &c in CASES {
+            assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"notdir", c);
+            assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"suffix", c);
+        }
+        assert_eq!(unsafe { emit(func_notdir_suffix, b"notdir", b"src/foo.c bar") }, b"foo.c bar");
+        assert_eq!(unsafe { emit(func_notdir_suffix, b"suffix", b"src/foo.c bar.h noext") }, b".c .h");
+    }
+
+    #[test]
+    fn func_basename_dir_matches_unsafe_oracle() {
+        for &c in CASES {
+            assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"basename", c);
+            assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"dir", c);
+        }
+        assert_eq!(unsafe { emit(func_basename_dir, b"basename", b"src/foo.c bar") }, b"src/foo bar");
+        assert_eq!(unsafe { emit(func_basename_dir, b"dir", b"src/foo.c noext") }, b"src/ ./");
     }
 }
 /// Trim whitespace from both ends of the inclusive byte span `s` that the C
