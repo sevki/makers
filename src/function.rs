@@ -1139,57 +1139,187 @@ fn word_span(s: &[u8], start: usize, stop: usize) -> Option<&[u8]> {
     begin.map(|b| &s[b..end])
 }
 
-unsafe fn func_firstword(
+fn func_firstword(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
+    _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+    // A safe `fn` still coerces to the function table's `unsafe fn` pointer; the
+    // only unsafe is the FFI at the edges. SAFETY: `argv[0]` is a NUL-terminated
+    // C string supplied by the dispatcher (`firstword` has min = max = 1).
+    let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes() };
     if let Some(w) = tokens(bytes).next() {
-        o = variable_buffer_output(
-            o,
-            w.as_ptr() as *const ::core::ffi::c_char,
-            w.len() as size_t,
-        );
+        // SAFETY: `o` is the caller's output cursor; `w` is a valid subslice.
+        o = unsafe {
+            variable_buffer_output(o, w.as_ptr() as *const ::core::ffi::c_char, w.len() as size_t)
+        };
     }
     o
 }
-unsafe fn func_lastword(
+fn func_lastword(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
+    _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+    // SAFETY: as `func_firstword` — `argv[0]` is a NUL-terminated C string.
+    let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes() };
     if let Some(w) = tokens(bytes).next_back() {
-        o = variable_buffer_output(
-            o,
-            w.as_ptr() as *const ::core::ffi::c_char,
-            w.len() as size_t,
-        );
+        // SAFETY: `o` is the caller's output cursor; `w` is a valid subslice.
+        o = unsafe {
+            variable_buffer_output(o, w.as_ptr() as *const ::core::ffi::c_char, w.len() as size_t)
+        };
     }
     o
 }
-unsafe fn func_words(
+fn func_words(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
+    _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+    // SAFETY: as `func_firstword` — `argv[0]` is a NUL-terminated C string.
+    let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes() };
     let i = tokens(bytes).count() as ::core::ffi::c_uint;
-    let mut buf: [::core::ffi::c_char; 22] = [0; 22];
-    o = variable_buffer_output(
-        o,
-        &raw mut buf as *mut ::core::ffi::c_char,
-        sprintf(
-            &raw mut buf as *mut ::core::ffi::c_char,
-            b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-            i,
-        ) as size_t,
-    );
+    // Format the count in decimal in Rust rather than through `sprintf` into a
+    // stack buffer; `u32::to_string` produces the same bytes as `sprintf("%u")`.
+    let s = i.to_string();
+    // SAFETY: `o` is the caller's output cursor; `s` is a valid byte buffer.
+    o = unsafe {
+        variable_buffer_output(o, s.as_ptr() as *const ::core::ffi::c_char, s.len() as size_t)
+    };
     o
+}
+#[cfg(test)]
+mod word_family_tests {
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_firstword`,
+    //! `func_lastword` and `func_words` are preserved verbatim below as
+    //! `*_unsafe_oracle` and driven through the real variable-output buffer
+    //! alongside the converted safe handlers, asserting byte-identical output.
+    //! For `func_words` this cross-checks `u32::to_string` against the original
+    //! `sprintf("%u")`.
+    use super::{func_firstword, func_lastword, func_words, size_t, tokens};
+    use crate::expand::{
+        initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK,
+    };
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CString};
+
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    unsafe fn func_firstword_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+        if let Some(w) = tokens(bytes).next() {
+            o = super::variable_buffer_output(o, w.as_ptr() as *const c_char, w.len() as size_t);
+        }
+        o
+    }
+
+    unsafe fn func_lastword_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+        if let Some(w) = tokens(bytes).next_back() {
+            o = super::variable_buffer_output(o, w.as_ptr() as *const c_char, w.len() as size_t);
+        }
+        o
+    }
+
+    unsafe fn func_words_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
+        let i = tokens(bytes).count() as ::core::ffi::c_uint;
+        let mut buf: [c_char; 22] = [0; 22];
+        o = super::variable_buffer_output(
+            o,
+            &raw mut buf as *mut c_char,
+            super::sprintf(
+                &raw mut buf as *mut c_char,
+                b"%u\0" as *const u8 as *const c_char,
+                i,
+            ) as size_t,
+        );
+        o
+    }
+
+    /// Drive `handler` with a single argument through a freshly initialized
+    /// variable-output buffer and return the bytes it wrote (`[start, end)`).
+    unsafe fn emit(handler: Handler, arg: &[u8]) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let cstr = CString::new(arg).unwrap();
+        let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let name = CString::new("f").unwrap();
+        let start = initialize_variable_output();
+        let end = handler(
+            &crate::execctx::ExecContext::default(),
+            start,
+            argv.as_mut_ptr(),
+            name.as_ptr(),
+        );
+        let len = end.offset_from(start);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(start as *const u8, len as usize).to_vec();
+        assert!(!variable_buffer.is_null());
+        drop(cstr);
+        out
+    }
+
+    fn assert_matches(safe: Handler, oracle: Handler, arg: &[u8]) {
+        let got = unsafe { emit(safe, arg) };
+        let want = unsafe { emit(oracle, arg) };
+        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+    }
+
+    const CASES: &[&[u8]] = &[b"", b"   ", b"a", b"a b c", b"  a   b  ", b"a\tb\nc"];
+
+    #[test]
+    fn func_firstword_matches_unsafe_oracle() {
+        for &c in CASES {
+            assert_matches(func_firstword, func_firstword_unsafe_oracle, c);
+        }
+        assert_eq!(unsafe { emit(func_firstword, b"  a b c ") }, b"a");
+        assert!(unsafe { emit(func_firstword, b"   ") }.is_empty());
+    }
+
+    #[test]
+    fn func_lastword_matches_unsafe_oracle() {
+        for &c in CASES {
+            assert_matches(func_lastword, func_lastword_unsafe_oracle, c);
+        }
+        assert_eq!(unsafe { emit(func_lastword, b"  a b c ") }, b"c");
+        assert!(unsafe { emit(func_lastword, b"   ") }.is_empty());
+    }
+
+    #[test]
+    fn func_words_matches_unsafe_oracle() {
+        for &c in CASES {
+            assert_matches(func_words, func_words_unsafe_oracle, c);
+        }
+        // Decimal count, matching sprintf("%u").
+        assert_eq!(unsafe { emit(func_words, b"a b c") }, b"3");
+        assert_eq!(unsafe { emit(func_words, b"   ") }, b"0");
+    }
 }
 /// Trim whitespace from both ends of the inclusive byte span `s` that the C
 /// `strip_whitespace` walks between its two cursors. `is_ws` is the whitespace
