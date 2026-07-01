@@ -936,7 +936,13 @@ fn func_flavor(
 
 #[cfg(test)]
 mod func_origin_flavor_tests {
-    use super::{flavor_message, origin_message};
+    use super::{
+        define_variable_in_set, flavor_message, lookup_variable, o_override, origin_message,
+        size_t, strlen, variable, variable_buffer_output, variable_origin,
+    };
+    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use std::ffi::{c_char, CString};
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn origin_message_matches_c_switch() {
@@ -960,6 +966,231 @@ mod func_origin_flavor_tests {
         assert_eq!(flavor_message(None), b"undefined");
         assert_eq!(flavor_message(Some(true)), b"recursive");
         assert_eq!(flavor_message(Some(false)), b"simple");
+    }
+
+    // AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_origin`
+    // and `func_flavor` are preserved verbatim below (renamed
+    // `*_unsafe_oracle`) and driven through the real variable-output buffer
+    // alongside the converted safe handlers, asserting byte-identical output.
+
+    unsafe fn func_origin_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let v: *mut variable = lookup_variable(
+            ctx,
+            *argv.offset(0_i32 as isize),
+            strlen(*argv.offset(0_i32 as isize)) as size_t,
+        );
+        if v.is_null() {
+            o = variable_buffer_output(o, b"undefined\0" as *const u8 as *const c_char, 9);
+        } else {
+            match (*v).origin() as i32 {
+                7 => {
+                    super::abort();
+                }
+                0 => {
+                    o = variable_buffer_output(o, b"default\0" as *const u8 as *const c_char, 7);
+                }
+                1 => {
+                    o = variable_buffer_output(
+                        o,
+                        b"environment\0" as *const u8 as *const c_char,
+                        11,
+                    );
+                }
+                2 => {
+                    o = variable_buffer_output(o, b"file\0" as *const u8 as *const c_char, 4);
+                }
+                3 => {
+                    o = variable_buffer_output(
+                        o,
+                        b"environment override\0" as *const u8 as *const c_char,
+                        20,
+                    );
+                }
+                4 => {
+                    o = variable_buffer_output(
+                        o,
+                        b"command line\0" as *const u8 as *const c_char,
+                        12,
+                    );
+                }
+                5 => {
+                    o = variable_buffer_output(o, b"override\0" as *const u8 as *const c_char, 8);
+                }
+                6 => {
+                    o = variable_buffer_output(o, b"automatic\0" as *const u8 as *const c_char, 9);
+                }
+                _ => {}
+            }
+        }
+        o
+    }
+
+    unsafe fn func_flavor_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let v: *mut variable = lookup_variable(
+            ctx,
+            *argv.offset(0_i32 as isize),
+            strlen(*argv.offset(0_i32 as isize)) as size_t,
+        );
+        if v.is_null() {
+            o = variable_buffer_output(o, b"undefined\0" as *const u8 as *const c_char, 9);
+        } else if (*v).recursive() != 0 {
+            o = variable_buffer_output(o, b"recursive\0" as *const u8 as *const c_char, 9);
+        } else {
+            o = variable_buffer_output(o, b"simple\0" as *const u8 as *const c_char, 6);
+        }
+        o
+    }
+
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    // `global_variable_set`/`current_variable_set_list` are process globals;
+    // serialize test bodies that define/undefine variables in them so
+    // concurrently-run cases in this module can't observe each other's
+    // in-progress state.
+    static GLOBAL_VAR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// Optionally define `name` in the global variable set with the given
+    /// origin/recursive flag, drive `handler` with `argv = [name]` through a
+    /// freshly initialized variable-output buffer, and return the bytes
+    /// written. Undefines the variable again afterward.
+    unsafe fn emit(
+        handler: Handler,
+        name: &[u8],
+        origin: Option<(variable_origin, bool)>,
+    ) -> Vec<u8> {
+        let _buf_g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _var_g = GLOBAL_VAR_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // The global variable set's hash table has no `main`-driven startup
+        // in a unit-test binary; initialize it once so `lookup_variable`'s
+        // `hash_find_item` has a valid table to probe, even for the
+        // lookup-miss (`origin: None`) case.
+        static HASH_INIT: ::std::sync::Once = ::std::sync::Once::new();
+        HASH_INIT.call_once(|| crate::variable::init_hash_global_variable_set());
+        // `define_variable_in_set` reads `env_overrides()`, which needs a
+        // thread-local `Options` installed (there's no `main`-driven startup
+        // in a unit-test binary).
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        let cname = CString::new(name).unwrap();
+        let cvalue = CString::new("v").unwrap();
+        if let Some((org, recursive)) = origin {
+            define_variable_in_set(
+                &ctx,
+                cname.as_ptr(),
+                name.len() as size_t,
+                cvalue.as_ptr(),
+                org,
+                recursive as i32,
+                ::core::ptr::null_mut(),
+                ::core::ptr::null(),
+            );
+        }
+        let mut argv: [*mut c_char; 2] = [cname.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let fname = CString::new("f").unwrap();
+        let start = initialize_variable_output();
+        let end = handler(&ctx, start, argv.as_mut_ptr(), fname.as_ptr());
+        // `variable_buffer_output` may `xrealloc` and move the global buffer,
+        // so measure the written span from the current base rather than the
+        // possibly-stale `start`.
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec();
+        if origin.is_some() {
+            crate::variable::undefine_variable_in_set(
+                &ctx,
+                ::core::ptr::null(),
+                cname.as_ptr(),
+                name.len() as size_t,
+                o_override,
+                ::core::ptr::null_mut(),
+            );
+        }
+        out
+    }
+
+    /// Compare the safe handler against the verbatim unsafe oracle for a
+    /// representative sample of origin/recursive states: a lookup miss, a
+    /// plain file-defined variable (recursive and simple), and an
+    /// `override`-origin variable — covering the lookup-miss path, the
+    /// common case, and the high end of the origin table below `o_invalid`.
+    fn assert_matches(
+        safe: Handler,
+        oracle: Handler,
+        name: &[u8],
+        origin: Option<(variable_origin, bool)>,
+    ) {
+        let got = unsafe { emit(safe, name, origin) };
+        let want = unsafe { emit(oracle, name, origin) };
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for name {name:?}, origin {origin:?}"
+        );
+    }
+
+    #[test]
+    fn func_origin_matches_unsafe_oracle() {
+        assert_matches(
+            super::func_origin,
+            func_origin_unsafe_oracle,
+            b"CODEX_ORACLE_UNDEFINED",
+            None,
+        );
+        assert_matches(
+            super::func_origin,
+            func_origin_unsafe_oracle,
+            b"CODEX_ORACLE_FILE",
+            Some((super::o_file, true)),
+        );
+        assert_matches(
+            super::func_origin,
+            func_origin_unsafe_oracle,
+            b"CODEX_ORACLE_OVERRIDE",
+            Some((super::o_override, true)),
+        );
+    }
+
+    #[test]
+    fn func_flavor_matches_unsafe_oracle() {
+        assert_matches(
+            super::func_flavor,
+            func_flavor_unsafe_oracle,
+            b"CODEX_ORACLE_UNDEFINED_2",
+            None,
+        );
+        assert_matches(
+            super::func_flavor,
+            func_flavor_unsafe_oracle,
+            b"CODEX_ORACLE_RECURSIVE",
+            Some((super::o_file, true)),
+        );
+        assert_matches(
+            super::func_flavor,
+            func_flavor_unsafe_oracle,
+            b"CODEX_ORACLE_SIMPLE",
+            Some((super::o_file, false)),
+        );
     }
 }
 
