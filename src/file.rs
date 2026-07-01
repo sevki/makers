@@ -17,7 +17,6 @@ pub use crate::ffi_types::{
 use crate::misc::free_ns_chain;
 use crate::misc::{xcalloc, xrealloc};
 use crate::stdio::FILE;
-use c2rust_bitfields;
 use libc::{__errno_location, free, printf, putchar, puts, unlink};
 use std::ffi::{CStr, CString};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -334,20 +333,11 @@ impl FileNode {
         FileId::from_bytes(&self.hname)
     }
 }
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct Commands {
-    pub fileinfo: Floc,
-    pub commands: *mut ::core::ffi::c_char,
-    pub command_lines: *mut *mut ::core::ffi::c_char,
-    pub lines_flags: *mut ::core::ffi::c_uchar,
-    pub ncommand_lines: ::core::ffi::c_ushort,
-    pub recipe_prefix: ::core::ffi::c_char,
-    #[bitfield(name = "any_recurse", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub any_recurse: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 4],
-}
+// The legacy c2rust `Commands` record now lives in its domain module
+// (`crate::recipe`), next to the idiomatic `Recipe` that replaces it.
+// Re-exported here so existing `crate::file::Commands` paths — and the
+// `pub type commands = Commands` alias below — keep resolving.
+pub use crate::recipe::Commands;
 use crate::commands::{print_commands, set_file_variables};
 use crate::expand::{
     expand_string_buf, expand_string_for_file, variable_buffer, variable_buffer_output,

@@ -1,9 +1,13 @@
 //! A target's recipe — the idiomatic replacement for the c2rust `Commands`
 //! record (`*mut Commands` on `File`).
 //!
-//! Split out of `file.rs` to keep that module focused on the file node. The
-//! recipe text and its chopped per-line view ([`RecipeLine`]/[`RecipeLineFlags`])
-//! carry no raw pointers and no `c_char`. `file.rs` re-exports these names.
+//! Split out of `file.rs` to keep that module focused on the file node. At the
+//! top are the idiomatic, pointer-free forms ([`Recipe`] / [`RecipeLine`] /
+//! [`RecipeLineFlags`]) — no raw pointers, no `c_char`. At the bottom is the
+//! legacy c2rust [`Commands`] record they replace (the raw-pointer `#[repr(C)]`
+//! struct). `file.rs` re-exports these names.
+
+use crate::floc::Floc;
 
 bitflags::bitflags! {
     /// Per-line recipe modifiers — the idiomatic form of the c2rust
@@ -62,4 +66,23 @@ impl Default for Recipe {
             any_recurse: false,
         }
     }
+}
+
+/// Legacy c2rust recipe record: a target's commands as raw pointers. The
+/// idiomatic, pointer-free replacement is [`Recipe`]; this `#[repr(C)]` struct
+/// stays only until the last `*mut Commands` site on `File` is swapped for a
+/// handle. `file.rs` re-exports it (and the `commands` alias) for compatibility.
+#[derive(Copy, Clone, BitfieldStruct)]
+#[repr(C)]
+pub struct Commands {
+    pub fileinfo: Floc,
+    pub commands: *mut ::core::ffi::c_char,
+    pub command_lines: *mut *mut ::core::ffi::c_char,
+    pub lines_flags: *mut ::core::ffi::c_uchar,
+    pub ncommand_lines: ::core::ffi::c_ushort,
+    pub recipe_prefix: ::core::ffi::c_char,
+    #[bitfield(name = "any_recurse", ty = "::core::ffi::c_uint", bits = "0..=0")]
+    pub any_recurse: [u8; 1],
+    #[bitfield(padding)]
+    pub c2rust_padding: [u8; 4],
 }
