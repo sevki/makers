@@ -2367,11 +2367,16 @@ mod strip_sort_tests {
             argv.as_mut_ptr(),
             name.as_ptr(),
         );
-        let len = end.offset_from(start);
+        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        // `start` can be stale after the call. Measure the written span from the
+        // current base (`variable_buffer`), which `end` is guaranteed to point
+        // into, rather than the possibly-freed `start`.
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
-        let out = ::core::slice::from_raw_parts(start as *const u8, len as usize).to_vec();
+        let out = ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec();
         // Keep `cstr` alive until after the handler has read `argv`.
-        assert!(!variable_buffer.is_null());
         drop(cstr);
         out
     }
@@ -4597,9 +4602,14 @@ mod subst_and_strip_tests {
         initialize_stopchar_map();
         let start = initialize_variable_output();
         let end = body(start);
-        let len = end.offset_from(start);
+        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        // `start` can be stale after `body` runs. Measure the written span from
+        // the current base (`variable_buffer`), which `end` points into.
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
-        std::slice::from_raw_parts(start as *const u8, len as usize).to_vec()
+        std::slice::from_raw_parts(base as *const u8, len as usize).to_vec()
     }
 
     #[test]
