@@ -7,6 +7,7 @@
 //! legacy c2rust [`Commands`] record they replace (the raw-pointer `#[repr(C)]`
 //! struct). `file.rs` re-exports these names.
 
+use crate::content_hash::ContentHash;
 use crate::floc::Floc;
 
 bitflags::bitflags! {
@@ -24,9 +25,18 @@ bitflags::bitflags! {
     }
 }
 
+// `#[derive(ContentHash)]` can't be forwarded through `bitflags!` (it expands
+// to an internal helper struct shape the derive doesn't understand), so hash
+// the underlying bits directly instead.
+impl ContentHash for RecipeLineFlags {
+    fn hash(&self, state: &mut impl crate::content_hash::DigestUpdate) {
+        self.bits().hash(state);
+    }
+}
+
 /// One logical recipe line: its (still-unexpanded) command text with the
 /// leading `@`/`-`/`+` modifiers parsed off into [`RecipeLineFlags`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, ContentHash)]
 pub struct RecipeLine {
     pub text: Vec<u8>,
     pub flags: RecipeLineFlags,
@@ -36,7 +46,7 @@ pub struct RecipeLine {
 /// (`*mut Commands` on `File`). Holds the recipe text as written plus, once
 /// `chop_commands` has run, the per-line view that unifies `command_lines`,
 /// `lines_flags`, and `ncommand_lines`. No raw pointers, no `c_char`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, ContentHash)]
 pub struct Recipe {
     /// Source file the recipe was defined in (raw bytes; `None` if synthetic,
     /// the former null `fileinfo.filenm`).
