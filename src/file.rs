@@ -178,7 +178,7 @@ crate::id_wireformat!(FileId[HASH_SIZE] |f: String| f.as_str());
 // domain module (`crate::dep`), next to the idiomatic `DepNode` they migrate to.
 // Re-exported here so existing `crate::file::Dep` / `GoalDep` paths keep
 // resolving during the `*mut`-to-handle swap.
-pub use crate::dep::{Dep, GoalDep};
+pub use crate::dep::{Dep, GoalDep, NameSeq};
 
 /// Idiomatic Rust file node for the new dependency graph layer — the file-side
 /// counterpart of [`DepNode`]. Replaces the c2rust [`File`] once all FFI bodies
@@ -500,13 +500,6 @@ pub unsafe fn free_seq_chain<T: NextLinked>(mut n: *mut T) {
         free(n as *mut ::core::ffi::c_void);
         n = next;
     }
-}
-
-/// A simple chain of names, as produced by parse_file_seq.
-#[derive(Copy, Clone)]
-pub struct NameSeq {
-    pub next: *mut NameSeq,
-    pub name: *const ::core::ffi::c_char,
 }
 
 #[allow(non_camel_case_types)]
