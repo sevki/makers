@@ -565,10 +565,6 @@ fn find_next_argument(startparen: u8, endparen: u8, bytes: &[u8]) -> Option<usiz
     }
     None
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
 /// Glob `line` (make's `$(wildcard ...)`) and return the matched names joined
 /// by single spaces as an owned byte buffer (no trailing space or NUL).
 ///
@@ -586,17 +582,86 @@ pub unsafe fn string_glob(ctx: &crate::execctx::ExecContext, mut line: *mut ::co
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x1_i32 | 0x10_i32 | 0x8_i32,
     );
-    // Join the matched names with single spaces into an owned buffer, replacing
-    // the c2rust `static mut` scratch buffer grown in place through raw pointer
-    // arithmetic. `ParsedName::name` already carries the bytes with no NUL.
+    join_glob_names(&chain)
+}
+
+/// Join glob-matched names into an owned buffer, replacing the pre-conversion
+/// `static mut` scratch buffer that was grown in place through raw pointer
+/// arithmetic. Reproduces make's exact byte production: each name is followed by
+/// a space and the final trailing space is dropped (the C code overwrote it with
+/// the terminating NUL), so a leading empty name still yields a leading space.
+/// `ParsedName::name` already carries the observable bytes with no NUL. Split
+/// out so the behavior oracle in tests can exercise it without the filesystem.
+fn join_glob_names(chain: &[crate::read::ParsedName]) -> Vec<u8> {
     let mut names = Vec::new();
-    for pn in &chain {
-        if !names.is_empty() {
-            names.push(b' ');
-        }
+    for pn in chain {
         names.extend_from_slice(&pn.name);
+        names.push(b' ');
     }
+    names.pop();
     names
+}
+
+#[cfg(test)]
+mod string_glob_tests {
+    use super::join_glob_names;
+    use crate::read::ParsedName;
+
+    /// Behavior oracle: the pre-conversion accumulation, reproduced faithfully —
+    /// grow a scratch buffer, append each name followed by a space, then
+    /// overwrite the final space with a NUL — returning the observable bytes (up
+    /// to that NUL) that `func_wildcard` copied out. AGENTS.md: keep the original
+    /// behavior as a `#[cfg(test)]` oracle and assert the safe version agrees.
+    fn join_glob_names_unsafe_oracle(chain: &[ParsedName]) -> Vec<u8> {
+        let mut length: usize = 100;
+        let mut buf = vec![0u8; length];
+        let mut idx: usize = 0;
+        for pn in chain {
+            let len = pn.name.len();
+            if idx + len + 1 > length {
+                length += (len + 1) * 2;
+                buf.resize(length, 0);
+            }
+            buf[idx..idx + len].copy_from_slice(&pn.name);
+            idx += len;
+            buf[idx] = b' ';
+            idx += 1;
+        }
+        if idx == 0 {
+            buf[0] = 0;
+        } else {
+            buf[idx - 1] = 0;
+        }
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        buf[..end].to_vec()
+    }
+
+    fn pn(name: &[u8]) -> ParsedName {
+        ParsedName {
+            name: name.to_vec(),
+            wait: false,
+        }
+    }
+
+    #[test]
+    fn matches_unsafe_oracle() {
+        let cases: &[Vec<ParsedName>] = &[
+            vec![],
+            vec![pn(b"a")],
+            vec![pn(b"foo"), pn(b"bar"), pn(b"baz")],
+            // Long enough to force the oracle's scratch buffer to grow.
+            vec![pn(&[b'x'; 250]), pn(b"y")],
+            // Empty names exercise the leading/interior-space edge cases.
+            vec![pn(b""), pn(b"z")],
+            vec![pn(b"a"), pn(b""), pn(b"b")],
+        ];
+        for chain in cases {
+            assert_eq!(join_glob_names(chain), join_glob_names_unsafe_oracle(chain));
+        }
+        // Exact bytes for the common shapes.
+        assert_eq!(join_glob_names(&[pn(b"foo"), pn(b"bar")]), b"foo bar");
+        assert!(join_glob_names(&[]).is_empty());
+    }
 }
 unsafe fn func_patsubst(
     _ctx: &crate::execctx::ExecContext,
