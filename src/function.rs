@@ -164,10 +164,19 @@ pub struct function_table_entry {
     #[bitfield(name = "expand_args", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "alloc_fn", ty = "::core::ffi::c_uint", bits = "1..=1")]
     #[bitfield(name = "adds_command", ty = "::core::ffi::c_uint", bits = "2..=2")]
+    // Bit 3 flags a *safe* handler: one written as a pure `SafeFunc`
+    // (`fn(&[u8], &[&[u8]]) -> Vec<u8>`) rather than the raw-pointer C ABI. The
+    // dispatcher (`expand_builtin_function`) converts argv/output at the edge.
+    #[bitfield(name = "safe_fn", ty = "::core::ffi::c_uint", bits = "3..=3")]
     pub expand_args_alloc_fn_adds_command: [u8; 1],
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 4],
 }
+/// A builtin handler written in fully safe Rust: it receives the function name
+/// and its already-expanded arguments as byte slices and returns the bytes to
+/// append to the variable buffer. All raw-pointer/FFI marshalling lives in the
+/// dispatcher, never in the handler itself.
+pub type SafeFunc = fn(name: &[u8], args: &[&[u8]]) -> Vec<u8>;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub union C2RustUnnamed {
@@ -180,6 +189,7 @@ pub union C2RustUnnamed {
         ) -> *mut ::core::ffi::c_char,
     >,
     pub alloc_func_ptr: gmk_func_ptr,
+    pub safe_func_ptr: Option<SafeFunc>,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -959,32 +969,14 @@ fn notdir_suffix_result(list: &[u8], is_suffix: bool) -> Vec<u8> {
     out.pop();
     out
 }
-fn func_notdir_suffix(
-    _ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    argv: *mut *mut ::core::ffi::c_char,
-    funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+fn func_notdir_suffix(name: &[u8], args: &[&[u8]]) -> Vec<u8> {
     // Classify the list-trimming function (`notdir`/`suffix`) through the typed
     // AST layer instead of switching on the raw first byte of the name.
-    // SAFETY: `funcname`/`argv[0]` are NUL-terminated C strings from the dispatcher.
     let is_suffix = matches!(
-        crate::parser::NotdirSuffix::from_funcname(unsafe { ::std::ffi::CStr::from_ptr(funcname) }.to_bytes()),
+        crate::parser::NotdirSuffix::from_funcname(name),
         Some(crate::parser::NotdirSuffix::Suffix)
     );
-    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
-    let result = notdir_suffix_result(list, is_suffix);
-    if !result.is_empty() {
-        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
-        o = unsafe {
-            variable_buffer_output(
-                o,
-                result.as_ptr() as *const ::core::ffi::c_char,
-                result.len() as size_t,
-            )
-        };
-    }
-    o
+    notdir_suffix_result(args[0], is_suffix)
 }
 /// `$(basename ...)` / `$(dir ...)`: for each whitespace-separated word, keep
 /// the stem before the last `.` (`basename`) or the directory prefix through the
@@ -1009,34 +1001,14 @@ fn basename_dir_result(list: &[u8], is_basename: bool) -> Vec<u8> {
     out.pop();
     out
 }
-fn func_basename_dir(
-    _ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    argv: *mut *mut ::core::ffi::c_char,
-    funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+fn func_basename_dir(name: &[u8], args: &[&[u8]]) -> Vec<u8> {
     // Classify the path-component function (`basename`/`dir`) through the typed
     // AST layer instead of switching on the raw first byte of the name.
-    // SAFETY: `funcname`/`argv[0]` are NUL-terminated C strings from the dispatcher.
     let is_basename = matches!(
-        crate::parser::BasenameDir::from_funcname(
-            unsafe { ::std::ffi::CStr::from_ptr(funcname) }.to_bytes()
-        ),
+        crate::parser::BasenameDir::from_funcname(name),
         Some(crate::parser::BasenameDir::Basename)
     );
-    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
-    let result = basename_dir_result(list, is_basename);
-    if !result.is_empty() {
-        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
-        o = unsafe {
-            variable_buffer_output(
-                o,
-                result.as_ptr() as *const ::core::ffi::c_char,
-                result.len() as size_t,
-            )
-        };
-    }
-    o
+    basename_dir_result(args[0], is_basename)
 }
 /// `$(addprefix fix,list)` / `$(addsuffix fix,list)`: attach `fix` to each
 /// whitespace-separated word of `list` — on the front for `addprefix`, the back
@@ -1058,34 +1030,16 @@ fn addprefix_addsuffix_result(fix: &[u8], list: &[u8], is_addprefix: bool) -> Ve
     out
 }
 fn func_addsuffix_addprefix(
-    _ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    argv: *mut *mut ::core::ffi::c_char,
-    funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+    name: &[u8],
+    args: &[&[u8]],
+) -> Vec<u8> {
     // Classify the affix function (`addprefix`/`addsuffix`) through the typed
     // AST layer instead of switching on the raw fourth byte of the name.
-    // SAFETY: `funcname`/`argv[0..=1]` are NUL-terminated C strings from the dispatcher.
     let is_addprefix = matches!(
-        crate::parser::AddprefixAddsuffix::from_funcname(
-            unsafe { ::std::ffi::CStr::from_ptr(funcname) }.to_bytes()
-        ),
+        crate::parser::AddprefixAddsuffix::from_funcname(name),
         Some(crate::parser::AddprefixAddsuffix::Addprefix)
     );
-    let fix = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
-    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)) }.to_bytes();
-    let result = addprefix_addsuffix_result(fix, list, is_addprefix);
-    if !result.is_empty() {
-        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
-        o = unsafe {
-            variable_buffer_output(
-                o,
-                result.as_ptr() as *const ::core::ffi::c_char,
-                result.len() as size_t,
-            )
-        };
-    }
-    o
+    addprefix_addsuffix_result(args[0], args[1], is_addprefix)
 }
 unsafe fn func_subst(
     _ctx: &crate::execctx::ExecContext,
@@ -1346,7 +1300,7 @@ mod path_family_tests {
     //! output for both `notdir`/`suffix` and `basename`/`dir`.
     use super::{
         find_next_token, func_basename_dir, func_notdir_suffix, size_t, stop_set, variable_buffer_output,
-        MAP_DIRSEP, MAP_DOT, MAP_NUL,
+        SafeFunc, MAP_DIRSEP, MAP_DOT, MAP_NUL,
     };
     use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
@@ -1489,8 +1443,10 @@ mod path_family_tests {
         out
     }
 
-    fn assert_matches(safe: Handler, oracle: Handler, funcname: &[u8], arg: &[u8]) {
-        let got = unsafe { emit(safe, funcname, arg) };
+    /// Compare the safe handler — called directly, since it returns its owned
+    /// result — against the verbatim `unsafe` oracle driven through the buffer.
+    fn assert_matches(safe: SafeFunc, oracle: Handler, funcname: &[u8], arg: &[u8]) {
+        let got = safe(funcname, &[arg]);
         let want = unsafe { emit(oracle, funcname, arg) };
         assert_eq!(
             got, want,
@@ -1517,22 +1473,24 @@ mod path_family_tests {
 
     #[test]
     fn func_notdir_suffix_matches_unsafe_oracle() {
+        initialize_stopchar_map();
         for &c in CASES {
             assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"notdir", c);
             assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"suffix", c);
         }
-        assert_eq!(unsafe { emit(func_notdir_suffix, b"notdir", b"src/foo.c bar") }, b"foo.c bar");
-        assert_eq!(unsafe { emit(func_notdir_suffix, b"suffix", b"src/foo.c bar.h noext") }, b".c .h");
+        assert_eq!(func_notdir_suffix(b"notdir", &[b"src/foo.c bar"]), b"foo.c bar");
+        assert_eq!(func_notdir_suffix(b"suffix", &[b"src/foo.c bar.h noext"]), b".c .h");
     }
 
     #[test]
     fn func_basename_dir_matches_unsafe_oracle() {
+        initialize_stopchar_map();
         for &c in CASES {
             assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"basename", c);
             assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"dir", c);
         }
-        assert_eq!(unsafe { emit(func_basename_dir, b"basename", b"src/foo.c bar") }, b"src/foo bar");
-        assert_eq!(unsafe { emit(func_basename_dir, b"dir", b"src/foo.c noext") }, b"src/ ./");
+        assert_eq!(func_basename_dir(b"basename", &[b"src/foo.c bar"]), b"src/foo bar");
+        assert_eq!(func_basename_dir(b"dir", &[b"src/foo.c noext"]), b"src/ ./");
     }
 }
 #[cfg(test)]
@@ -1545,7 +1503,7 @@ mod affix_tests {
     //! driven through the real variable-output buffer alongside the converted
     //! safe handler, asserting byte-identical output for both addprefix/addsuffix.
     use super::{
-        find_next_token, func_addsuffix_addprefix, size_t, strlen, variable_buffer_output,
+        find_next_token, func_addsuffix_addprefix, size_t, strlen, variable_buffer_output, SafeFunc,
     };
     use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
@@ -1627,8 +1585,8 @@ mod affix_tests {
         out
     }
 
-    fn assert_matches(safe: Handler, oracle: Handler, funcname: &[u8], fix: &[u8], list: &[u8]) {
-        let got = unsafe { emit(safe, funcname, fix, list) };
+    fn assert_matches(safe: SafeFunc, oracle: Handler, funcname: &[u8], fix: &[u8], list: &[u8]) {
+        let got = safe(funcname, &[fix, list]);
         let want = unsafe { emit(oracle, funcname, fix, list) };
         assert_eq!(
             got, want,
@@ -1650,6 +1608,7 @@ mod affix_tests {
 
     #[test]
     fn func_addsuffix_addprefix_matches_unsafe_oracle() {
+        initialize_stopchar_map();
         for &fix in FIXES {
             for &list in LISTS {
                 assert_matches(
@@ -1669,11 +1628,11 @@ mod affix_tests {
             }
         }
         assert_eq!(
-            unsafe { emit(func_addsuffix_addprefix, b"addprefix", b"src/", b"foo.c bar.c") },
+            func_addsuffix_addprefix(b"addprefix", &[b"src/", b"foo.c bar.c"]),
             b"src/foo.c src/bar.c"
         );
         assert_eq!(
-            unsafe { emit(func_addsuffix_addprefix, b"addsuffix", b".o", b"foo bar") },
+            func_addsuffix_addprefix(b"addsuffix", &[b".o", b"foo bar"]),
             b"foo.o bar.o"
         );
     }
@@ -3908,34 +3867,22 @@ fn abspath_result(list: &[u8], starting_dir: &[u8]) -> Vec<u8> {
     out.pop();
     out
 }
-fn func_abspath(
-    _ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
-    // SAFETY: `argv[0]` and the `starting_directory` global are NUL-terminated
-    // C strings owned elsewhere; borrow them as bytes only at this FFI edge.
-    let list = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)) }.to_bytes();
-    let starting_dir: &[u8] = unsafe {
+/// Borrow the process-wide `starting_directory` global (make's recorded working
+/// directory) as bytes. Confines the one raw-pointer read to a single safe
+/// accessor so path builtins can stay fully safe.
+fn starting_directory_bytes() -> &'static [u8] {
+    // SAFETY: `starting_directory` is a process-lifetime C string set once during
+    // startup and never freed; reading it as a byte slice is sound.
+    unsafe {
         if starting_directory.is_null() {
             &[]
         } else {
             ::core::ffi::CStr::from_ptr(starting_directory).to_bytes()
         }
-    };
-    let result = abspath_result(list, starting_dir);
-    if !result.is_empty() {
-        // SAFETY: `o` is the caller's output cursor; `result` is a valid buffer.
-        o = unsafe {
-            variable_buffer_output(
-                o,
-                result.as_ptr() as *const ::core::ffi::c_char,
-                result.len() as size_t,
-            )
-        };
     }
-    o
+}
+fn func_abspath(_name: &[u8], args: &[&[u8]]) -> Vec<u8> {
+    abspath_result(args[0], starting_directory_bytes())
 }
 #[cfg(test)]
 mod func_abspath_tests {
@@ -3950,7 +3897,7 @@ mod func_abspath_tests {
     //! behavior with an explicit base.
     use super::{
         abspath_into, abspath_result, find_next_token, func_abspath, size_t, starting_directory,
-        variable_buffer_output, GET_PATH_MAX,
+        variable_buffer_output, SafeFunc, GET_PATH_MAX,
     };
     use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
@@ -4027,8 +3974,8 @@ mod func_abspath_tests {
         out
     }
 
-    fn assert_matches(safe: Handler, oracle: Handler, arg: &[u8]) {
-        let got = unsafe { emit(safe, arg) };
+    fn assert_matches(safe: SafeFunc, oracle: Handler, arg: &[u8]) {
+        let got = safe(b"abspath", &[arg]);
         let want = unsafe { emit(oracle, arg) };
         assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
     }
@@ -4050,6 +3997,7 @@ mod func_abspath_tests {
 
     #[test]
     fn func_abspath_matches_unsafe_oracle() {
+        initialize_stopchar_map();
         for &c in CASES {
             assert_matches(func_abspath, func_abspath_unsafe_oracle, c);
         }
@@ -4107,15 +4055,38 @@ const fn ft_entry(
         c2rust_padding: [0; 4],
     }
 }
+/// Like [`ft_entry`], but registers a fully-safe [`SafeFunc`] handler. Sets the
+/// `safe_fn` flag (bit 3) so the dispatcher marshals `argv`/output across the
+/// FFI edge on the handler's behalf. `expand` still populates `expand_args`
+/// (bit 0); safe builtins never set `alloc_fn`/`adds_command`.
+const fn ft_entry_safe(
+    name: &'static [u8],
+    min: ::core::ffi::c_uchar,
+    max: ::core::ffi::c_uchar,
+    expand: u8,
+    func: SafeFunc,
+) -> function_table_entry {
+    function_table_entry {
+        fptr: C2RustUnnamed {
+            safe_func_ptr: Some(func),
+        },
+        name: name.as_ptr() as *const ::core::ffi::c_char,
+        len: (name.len() - 1) as ::core::ffi::c_uchar,
+        minimum_args: min,
+        maximum_args: max,
+        expand_args_alloc_fn_adds_command: [(expand & 1) | 0b1000],
+        c2rust_padding: [0; 4],
+    }
+}
 
 static mut function_table_init: [function_table_entry; 38] = [
-    ft_entry(b"abspath\0", 0, 1, 1, func_abspath),
-    ft_entry(b"addprefix\0", 2, 2, 1, func_addsuffix_addprefix),
-    ft_entry(b"addsuffix\0", 2, 2, 1, func_addsuffix_addprefix),
+    ft_entry_safe(b"abspath\0", 0, 1, 1, func_abspath),
+    ft_entry_safe(b"addprefix\0", 2, 2, 1, func_addsuffix_addprefix),
+    ft_entry_safe(b"addsuffix\0", 2, 2, 1, func_addsuffix_addprefix),
     ft_entry(b"and\0", 1, 0, 0, func_and),
-    ft_entry(b"basename\0", 0, 1, 1, func_basename_dir),
+    ft_entry_safe(b"basename\0", 0, 1, 1, func_basename_dir),
     ft_entry(b"call\0", 1, 0, 1, func_call),
-    ft_entry(b"dir\0", 0, 1, 1, func_basename_dir),
+    ft_entry_safe(b"dir\0", 0, 1, 1, func_basename_dir),
     ft_entry(b"error\0", 0, 1, 1, func_error),
     ft_entry(b"eval\0", 0, 1, 1, func_eval),
     ft_entry(b"file\0", 1, 2, 1, func_file),
@@ -4131,7 +4102,7 @@ static mut function_table_init: [function_table_entry; 38] = [
     ft_entry(b"join\0", 2, 2, 1, func_join),
     ft_entry(b"lastword\0", 0, 1, 1, func_lastword),
     ft_entry(b"let\0", 3, 3, 0, func_let),
-    ft_entry(b"notdir\0", 0, 1, 1, func_notdir_suffix),
+    ft_entry_safe(b"notdir\0", 0, 1, 1, func_notdir_suffix),
     ft_entry(b"or\0", 1, 0, 0, func_or),
     ft_entry(b"origin\0", 0, 1, 1, func_origin),
     ft_entry(b"patsubst\0", 3, 3, 1, func_patsubst),
@@ -4140,7 +4111,7 @@ static mut function_table_init: [function_table_entry; 38] = [
     ft_entry(b"sort\0", 0, 1, 1, func_sort),
     ft_entry(b"strip\0", 0, 1, 1, func_strip),
     ft_entry(b"subst\0", 3, 3, 1, func_subst),
-    ft_entry(b"suffix\0", 0, 1, 1, func_notdir_suffix),
+    ft_entry_safe(b"suffix\0", 0, 1, 1, func_notdir_suffix),
     ft_entry(b"value\0", 0, 1, 1, func_value),
     ft_entry(b"warning\0", 0, 1, 1, func_error),
     ft_entry(b"wildcard\0", 0, 1, 1, func_wildcard),
@@ -4201,6 +4172,27 @@ unsafe fn expand_builtin_function(
     }
     if entry.adds_command() != 0 {
         crate::make_main::bump_command_count();
+    }
+    if entry.safe_fn() != 0 {
+        // Safe handler: marshal the C `argv`/name into borrowed byte slices at
+        // this FFI edge, call the pure `SafeFunc`, then append its owned result.
+        // The handler itself never touches a raw pointer.
+        let name = ::core::ffi::CStr::from_ptr(entry.name).to_bytes();
+        let args: Vec<&[u8]> = (0..argc as usize)
+            .map(|i| ::core::ffi::CStr::from_ptr(*argv.add(i)).to_bytes())
+            .collect();
+        let result = entry
+            .fptr
+            .safe_func_ptr
+            .expect("non-null function pointer")(name, &args);
+        if !result.is_empty() {
+            o = variable_buffer_output(
+                o,
+                result.as_ptr() as *const ::core::ffi::c_char,
+                result.len() as size_t,
+            );
+        }
+        return o;
     }
     if entry.alloc_fn() == 0 {
         return entry.fptr.func_ptr.expect("non-null function pointer")(
@@ -4633,10 +4625,12 @@ mod ft_init_tests {
             let exp = e.expand_args();
             let alloc = e.alloc_fn();
             let adds = e.adds_command();
-            let reconstructed = (exp & 1) | ((alloc & 1) << 1) | ((adds & 1) << 2);
+            let safe = e.safe_fn();
+            let reconstructed =
+                (exp & 1) | ((alloc & 1) << 1) | ((adds & 1) << 2) | ((safe & 1) << 3);
             assert_eq!(
                 byte as u32, reconstructed,
-                "idx {i}: byte {byte:#04x} != getters(exp={exp}, alloc={alloc}, adds={adds})"
+                "idx {i}: byte {byte:#04x} != getters(exp={exp}, alloc={alloc}, adds={adds}, safe={safe})"
             );
             assert!(
                 alloc == 0 && adds == 0,
