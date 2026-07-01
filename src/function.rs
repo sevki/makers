@@ -1471,51 +1471,60 @@ unsafe fn parse_numeric(
         }
     }
 }
-unsafe fn func_word(
+fn func_word(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
+    _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let i = parse_numeric(
-        ctx,
-        ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
-        c"invalid first argument to 'word' function",
-    );
+    // SAFETY: `argv[0]`/`argv[1]` are NUL-terminated C strings from the
+    // dispatcher; `parse_numeric`/`fatal` are the c2rust FFI-edge helpers.
+    let i = unsafe {
+        parse_numeric(
+            ctx,
+            ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
+            c"invalid first argument to 'word' function",
+        )
+    };
     if i < 1 {
-        fatal(ctx, *expanding_var, 0, c"first argument to 'word' function must be greater than 0".as_ptr(), &[]);
+        unsafe {
+            fatal(ctx, *expanding_var, 0, c"first argument to 'word' function must be greater than 0".as_ptr(), &[]);
+        }
     }
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
+    let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes() };
     // `i >= 1` here; an index too large for `usize` (only reachable on 32-bit
     // targets) scans past the end and yields the empty string, as in C make.
     if let Some(w) = usize::try_from(i - 1)
         .ok()
         .and_then(|n| tokens(bytes).nth(n))
     {
-        o = variable_buffer_output(
-            o,
-            w.as_ptr() as *const ::core::ffi::c_char,
-            w.len() as size_t,
-        );
+        o = unsafe {
+            variable_buffer_output(o, w.as_ptr() as *const ::core::ffi::c_char, w.len() as size_t)
+        };
     }
     o
 }
-unsafe fn func_wordlist(
+fn func_wordlist(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
+    _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let mut buf: [::core::ffi::c_char; 23] = [0; 23];
     let badfirst = c"invalid first argument to 'wordlist' function";
     let badsecond = c"invalid second argument to 'wordlist' function";
-    let start = parse_numeric(
-        ctx,
-        ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
-        badfirst,
-    );
+    // SAFETY: `argv[0..=2]` are NUL-terminated C strings from the dispatcher;
+    // `parse_numeric`/`fatal`/`make_lltoa`/`strlen` are the c2rust FFI helpers.
+    let start = unsafe {
+        parse_numeric(
+            ctx,
+            ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
+            badfirst,
+        )
+    };
     if start < 1 {
-        fatal(
+        unsafe {
+            fatal(
         ctx,
         *expanding_var,
         (badfirst.to_bytes().len() as size_t)
@@ -1526,14 +1535,18 @@ unsafe fn func_wordlist(
         &[FmtArg::Str((badfirst.as_ptr()) as *const ::core::ffi::c_char),
             FmtArg::Str((make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as *const ::core::ffi::c_char)],
     );
+        }
     }
-    let stop = parse_numeric(
-        ctx,
-        ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)),
-        badsecond,
-    );
+    let stop = unsafe {
+        parse_numeric(
+            ctx,
+            ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)),
+            badsecond,
+        )
+    };
     if stop < 0 {
-        fatal(
+        unsafe {
+            fatal(
         ctx,
         *expanding_var,
         (badsecond.to_bytes().len() as size_t)
@@ -1544,8 +1557,9 @@ unsafe fn func_wordlist(
         &[FmtArg::Str((badsecond.as_ptr()) as *const ::core::ffi::c_char),
             FmtArg::Str((make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as *const ::core::ffi::c_char)],
     );
+        }
     }
-    let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(2_i32 as isize)).to_bytes();
+    let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(2_i32 as isize)).to_bytes() };
     // `start >= 1` and `stop >= 0` here. An index beyond `usize` (only
     // reachable on 32-bit) falls off the end; `word_span` returns `None` when
     // `stop < start`, matching the original `count > 0` guard.
@@ -1553,28 +1567,238 @@ unsafe fn func_wordlist(
         .ok()
         .and_then(|start| word_span(bytes, start, usize::try_from(stop).unwrap_or(usize::MAX)));
     if let Some(span) = span {
-        o = variable_buffer_output(
-            o,
-            span.as_ptr() as *const ::core::ffi::c_char,
-            span.len() as size_t,
-        );
+        o = unsafe {
+            variable_buffer_output(
+                o,
+                span.as_ptr() as *const ::core::ffi::c_char,
+                span.len() as size_t,
+            )
+        };
     }
     o
 }
-unsafe fn func_findstring(
+fn func_findstring(
     _ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
+    _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    if !strstr(*argv.offset(1_i32 as isize), *argv.offset(0_i32 as isize)).is_null() {
-        o = variable_buffer_output(
-            o,
-            *argv.offset(0_i32 as isize),
-            strlen(*argv.offset(0_i32 as isize)) as size_t,
-        );
+    // A safe `fn` still coerces to the function table's `unsafe fn` pointer; the
+    // only unsafe is the FFI. SAFETY: `argv[0]`/`argv[1]` are NUL-terminated C
+    // strings from the dispatcher (`findstring` has min = max = 2).
+    unsafe {
+        if !strstr(*argv.offset(1_i32 as isize), *argv.offset(0_i32 as isize)).is_null() {
+            o = variable_buffer_output(
+                o,
+                *argv.offset(0_i32 as isize),
+                strlen(*argv.offset(0_i32 as isize)) as size_t,
+            );
+        }
     }
     o
+}
+#[cfg(test)]
+mod selection_tests {
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_findstring`,
+    //! `func_word` and `func_wordlist` are preserved verbatim below as
+    //! `*_unsafe_oracle` and driven through the real variable-output buffer
+    //! against the converted safe handlers over the non-fatal (valid-argument)
+    //! paths — the error paths call `fatal`, which aborts and cannot be unit
+    //! tested. The conversion is signature-only (moving `unsafe` from the `fn`
+    //! signature into blocks), so identical output confirms no behavioral drift.
+    use super::{
+        expanding_var, fatal, func_findstring, func_word, func_wordlist, make_lltoa, parse_numeric,
+        size_t, strlen, strstr, tokens, variable_buffer_output, word_span, FmtArg,
+    };
+    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CString};
+
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
+
+    unsafe fn func_findstring_unsafe_oracle(
+        _ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        if !strstr(*argv.offset(1_i32 as isize), *argv.offset(0_i32 as isize)).is_null() {
+            o = variable_buffer_output(
+                o,
+                *argv.offset(0_i32 as isize),
+                strlen(*argv.offset(0_i32 as isize)) as size_t,
+            );
+        }
+        o
+    }
+
+    unsafe fn func_word_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let i = parse_numeric(
+            ctx,
+            ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
+            c"invalid first argument to 'word' function",
+        );
+        if i < 1 {
+            fatal(ctx, *expanding_var, 0, c"first argument to 'word' function must be greater than 0".as_ptr(), &[]);
+        }
+        let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
+        if let Some(w) = usize::try_from(i - 1).ok().and_then(|n| tokens(bytes).nth(n)) {
+            o = variable_buffer_output(o, w.as_ptr() as *const c_char, w.len() as size_t);
+        }
+        o
+    }
+
+    unsafe fn func_wordlist_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        mut _funcname: *const c_char,
+    ) -> *mut c_char {
+        let mut buf: [c_char; 23] = [0; 23];
+        let badfirst = c"invalid first argument to 'wordlist' function";
+        let badsecond = c"invalid second argument to 'wordlist' function";
+        let start = parse_numeric(
+            ctx,
+            ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
+            badfirst,
+        );
+        if start < 1 {
+            fatal(
+                ctx,
+                *expanding_var,
+                (badfirst.to_bytes().len() as size_t).wrapping_add(
+                    strlen(make_lltoa(start, &raw mut buf as *mut c_char)) as size_t,
+                ),
+                c"%s: '%s'".as_ptr(),
+                &[
+                    FmtArg::Str((badfirst.as_ptr()) as *const c_char),
+                    FmtArg::Str((make_lltoa(start, &raw mut buf as *mut c_char)) as *const c_char),
+                ],
+            );
+        }
+        let stop = parse_numeric(
+            ctx,
+            ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)),
+            badsecond,
+        );
+        if stop < 0 {
+            fatal(
+                ctx,
+                *expanding_var,
+                (badsecond.to_bytes().len() as size_t).wrapping_add(
+                    strlen(make_lltoa(stop, &raw mut buf as *mut c_char)) as size_t,
+                ),
+                c"%s: '%s'".as_ptr(),
+                &[
+                    FmtArg::Str((badsecond.as_ptr()) as *const c_char),
+                    FmtArg::Str((make_lltoa(stop, &raw mut buf as *mut c_char)) as *const c_char),
+                ],
+            );
+        }
+        let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(2_i32 as isize)).to_bytes();
+        let span = usize::try_from(start)
+            .ok()
+            .and_then(|start| word_span(bytes, start, usize::try_from(stop).unwrap_or(usize::MAX)));
+        if let Some(span) = span {
+            o = variable_buffer_output(
+                o,
+                span.as_ptr() as *const c_char,
+                span.len() as size_t,
+            );
+        }
+        o
+    }
+
+    /// Drive `handler` with `args` through a freshly initialized variable-output
+    /// buffer and return the bytes it wrote. Measures the span from the current
+    /// `variable_buffer` base after the call (it may `xrealloc`), per #315.
+    unsafe fn emit(handler: Handler, args: &[&[u8]]) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let cstrs: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap()).collect();
+        let mut argv: Vec<*mut c_char> = cstrs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+        argv.push(::core::ptr::null_mut());
+        let name = CString::new("f").unwrap();
+        let start = initialize_variable_output();
+        let end = handler(
+            &crate::execctx::ExecContext::default(),
+            start,
+            argv.as_mut_ptr(),
+            name.as_ptr(),
+        );
+        let base = variable_buffer;
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec();
+        drop(cstrs);
+        out
+    }
+
+    fn assert_matches(safe: Handler, oracle: Handler, args: &[&[u8]]) {
+        let got = unsafe { emit(safe, args) };
+        let want = unsafe { emit(oracle, args) };
+        assert_eq!(got, want, "safe vs unsafe oracle diverged for args {args:?}");
+    }
+
+    #[test]
+    fn func_findstring_matches_unsafe_oracle() {
+        let cases: &[&[&[u8]]] = &[
+            &[b"ab", b"xaby"], // present -> echoes the needle
+            &[b"z", b"xaby"],  // absent  -> empty
+            &[b"", b"xaby"],   // empty needle is always found
+            &[b"xaby", b"xaby"],
+        ];
+        for c in cases {
+            assert_matches(func_findstring, func_findstring_unsafe_oracle, c);
+        }
+        assert_eq!(unsafe { emit(func_findstring, &[b"ab", b"xaby"]) }, b"ab");
+        assert!(unsafe { emit(func_findstring, &[b"z", b"xaby"]) }.is_empty());
+    }
+
+    #[test]
+    fn func_word_matches_unsafe_oracle() {
+        let cases: &[&[&[u8]]] = &[
+            &[b"1", b"a b c"],
+            &[b"2", b"a b c"],
+            &[b"3", b"a b c"],
+            &[b"4", b"a b c"], // past the end -> empty
+            &[b"2", b"  a   b  "],
+        ];
+        for c in cases {
+            assert_matches(func_word, func_word_unsafe_oracle, c);
+        }
+        assert_eq!(unsafe { emit(func_word, &[b"2", b"a b c"]) }, b"b");
+        assert!(unsafe { emit(func_word, &[b"9", b"a b c"]) }.is_empty());
+    }
+
+    #[test]
+    fn func_wordlist_matches_unsafe_oracle() {
+        let cases: &[&[&[u8]]] = &[
+            &[b"1", b"2", b"a b c d"],
+            &[b"2", b"3", b"a b c d"],
+            &[b"2", b"9", b"a b c d"], // stop past the end -> clamps
+            &[b"3", b"2", b"a b c d"], // stop < start -> empty
+            &[b"1", b"0", b"a b c d"], // stop 0 -> empty
+        ];
+        for c in cases {
+            assert_matches(func_wordlist, func_wordlist_unsafe_oracle, c);
+        }
+        assert_eq!(unsafe { emit(func_wordlist, &[b"2", b"3", b"a b c d"]) }, b"b c");
+        assert!(unsafe { emit(func_wordlist, &[b"3", b"2", b"a b c d"]) }.is_empty());
+    }
 }
 unsafe fn func_foreach(
     ctx: &crate::execctx::ExecContext,
