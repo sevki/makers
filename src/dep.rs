@@ -1,13 +1,15 @@
 //! Idiomatic dependency-graph edge types.
 //!
 //! [`DepNode`] (keyed by [`DepId`]) is the idiomatic replacement for the c2rust
-//! `Dep`/`GoalDep` records — no raw pointers, no `c_char`, no `#[repr(C)]`. The
-//! legacy C-ABI structs still live in `file.rs` alongside the other c2rust FFI
-//! types until the `*mut`-to-handle swap deletes them; this module is the
-//! pointer-free home the dependency graph is migrating to.
+//! [`Dep`]/[`GoalDep`] records — no raw pointers, no `c_char`, no `#[repr(C)]`.
+//! Both live here now: the legacy `#[repr(C)]` structs at the bottom of the
+//! module and the pointer-free forms the dependency graph is migrating to at the
+//! top. `file.rs` re-exports `Dep`/`GoalDep` for compatibility until the
+//! `*mut`-to-handle swap deletes them.
 
 use crate::content_hash::ContentHash;
-use crate::file::{FileId, HASH_SIZE};
+use crate::file::{File, FileId, HASH_SIZE};
+use crate::floc::Floc;
 
 /// Idiomatic Rust dep edge for the new dependency graph layer.
 /// Replaces `Dep` once all FFI bodies have been migrated.
@@ -68,4 +70,93 @@ pub struct GoalDepNode {
     pub lineno: u64,
     /// Byte offset within the line (`floc.offset`).
     pub offset: u64,
+}
+
+/// Legacy c2rust dependency-edge record: a raw-pointer linked list. The
+/// idiomatic, pointer-free replacement is [`DepNode`]; this `#[repr(C)]` struct
+/// stays only until the `*mut`-to-handle swap removes the last `*mut Dep` site.
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct Dep {
+    pub next: *mut Dep,
+    pub name: *const ::core::ffi::c_char,
+    pub file: *mut File,
+    pub shuf: *mut Dep,
+    pub stem: *const ::core::ffi::c_char,
+    pub flags: ::core::ffi::c_uint,
+    pub changed: bool,
+    pub ignore_mtime: bool,
+    pub staticpattern: bool,
+    pub need_2nd_expansion: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
+}
+impl Default for Dep {
+    fn default() -> Self {
+        Dep {
+            next: ::core::ptr::null_mut(),
+            name: ::core::ptr::null(),
+            file: ::core::ptr::null_mut(),
+            shuf: ::core::ptr::null_mut(),
+            stem: ::core::ptr::null(),
+            flags: 0,
+            changed: false,
+            ignore_mtime: false,
+            staticpattern: false,
+            need_2nd_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+        }
+    }
+}
+
+/// A goal: a top-level target make was asked to build, with error/location
+/// tracking. Legacy c2rust C-ABI record (mirrors `Dep` plus bookkeeping); kept
+/// until the `*mut`-to-handle swap removes the last `*mut GoalDep` site. The
+/// pointer-free replacement is [`GoalDepNode`].
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct GoalDep {
+    pub next: *mut GoalDep,
+    pub name: *const ::core::ffi::c_char,
+    pub file: *mut File,
+    pub shuf: *mut GoalDep,
+    pub stem: *const ::core::ffi::c_char,
+    pub flags: ::core::ffi::c_uint,
+    pub changed: bool,
+    pub ignore_mtime: bool,
+    pub staticpattern: bool,
+    pub need_2nd_expansion: bool,
+    pub ignore_automatic_vars: bool,
+    pub is_explicit: bool,
+    pub wait_here: bool,
+    pub error: ::core::ffi::c_int,
+    pub floc: Floc,
+}
+impl Default for GoalDep {
+    fn default() -> Self {
+        GoalDep {
+            next: ::core::ptr::null_mut(),
+            name: ::core::ptr::null(),
+            file: ::core::ptr::null_mut(),
+            shuf: ::core::ptr::null_mut(),
+            stem: ::core::ptr::null(),
+            flags: 0,
+            changed: false,
+            ignore_mtime: false,
+            staticpattern: false,
+            need_2nd_expansion: false,
+            ignore_automatic_vars: false,
+            is_explicit: false,
+            wait_here: false,
+            error: 0,
+            floc: Floc {
+                filenm: ::core::ptr::null(),
+                lineno: 0,
+                offset: 0,
+            },
+        }
+    }
 }
