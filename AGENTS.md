@@ -55,12 +55,27 @@ When choosing what to clean up next, prefer these, in order. Every change
 must preserve behavior and be differential-tested against the in-tree C
 oracle (`./make`).
 
+**Every fixture runs against the C oracle and is verified.** All
+integration fixtures in `tests/rs_integration.rs` execute both the Rust
+port and the in-tree C oracle (`./make`) and assert the outputs are
+byte-identical — no fixture may skip the oracle comparison or assert
+against a hand-written expectation instead. This is enforced by the
+`test (differential vs C oracle)` CI job, which builds the oracle
+independently and runs the full suite as a hard gate; a coverage or lint
+job that tolerates test failures does not count as verification. A
+fixture may only be exempted from the gate by quarantining it with
+`#[ignore = "known divergence #NNN: ..."]` pointing at an open issue
+that tracks the divergence; quarantined fixtures still run under
+`--include-ignored` in the coverage job.
+
 **Regression fixes land test-first.** When a C↔Rust output divergence is
 found, the history must prove it: first a commit adding a differential
 test that *fails* against the broken code (state that in the commit
-message), then a separate commit with the fix that turns it green. Never
-land the fix and the test in one commit — a test that has never been seen
-red proves nothing.
+message), then a separate commit with the fix that turns it green — as
+separate PRs, so CI records the red run. Never land the fix and the test
+in one commit — a test that has never been seen red proves nothing.
+Fixing a quarantined divergence works the same way: un-ignore the test
+(red), then fix (green).
 
 **Always raise coverage.** Every pass must include tests that exercise the
 code it touches — a `#[cfg(test)]` unit test for the converted function
