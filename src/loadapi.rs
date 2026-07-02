@@ -132,3 +132,34 @@ pub unsafe extern "C" fn gmk_add_function(
         define_new_function(&ctx, reading_file, name, min, max, flags, func);
     }
 }
+
+#[cfg(test)]
+mod gmk_expand_tests {
+    //! `gmk_expand` reaches `main_0`'s live context through the `CTX_PTR`
+    //! channel and falls back to a throwaway default context when none is
+    //! installed; both arms must expand to the same bytes (#461 review).
+
+    unsafe fn expand_to_string(input: &::core::ffi::CStr) -> String {
+        let p = super::gmk_expand(input.as_ptr());
+        assert!(!p.is_null());
+        let s = ::core::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+        super::gmk_free(p);
+        s
+    }
+
+    #[test]
+    fn expands_literal_without_installed_context() {
+        crate::make_main::install_default_options_for_test();
+        // No context installed on this test thread: the fallback arm runs.
+        let s = unsafe { expand_to_string(c"plugin-literal") };
+        assert_eq!(s, "plugin-literal");
+    }
+
+    #[test]
+    fn expands_literal_with_installed_context() {
+        crate::make_main::install_default_options_for_test();
+        crate::make_main::install_default_exec_context_for_test();
+        let s = unsafe { expand_to_string(c"plugin-live-ctx") };
+        assert_eq!(s, "plugin-live-ctx");
+    }
+}
