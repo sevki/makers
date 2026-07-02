@@ -149,6 +149,9 @@ mod gmk_expand_tests {
 
     #[test]
     fn expands_literal_without_installed_context() {
+        let _buf_g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::make_main::install_default_options_for_test();
         // No context installed on this test thread: the fallback arm runs.
         let s = unsafe { expand_to_string(c"plugin-literal") };
@@ -157,6 +160,9 @@ mod gmk_expand_tests {
 
     #[test]
     fn expands_literal_with_installed_context() {
+        let _buf_g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         crate::make_main::install_default_options_for_test();
         crate::make_main::install_default_exec_context_for_test();
         let s = unsafe { expand_to_string(c"plugin-live-ctx") };
