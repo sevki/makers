@@ -1952,3 +1952,57 @@ fn tree_gate_catches_mode_only_divergence() {
     std::fs::set_permissions(b.join("tool.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
     assert_tree_diff("tree-gate-mode", &a, &b);
 }
+
+/// Interrupt make while a recipe is running and compare the fatal-signal
+/// cleanup. The oracle kills the child, unlinks the partially built target,
+/// and reports `make: *** deleting file 'slow'` on stderr; the port currently
+/// leaves the file in place and prints nothing (#468). The recipe must be
+/// mid-flight when the interrupt lands, so this bypasses `run()`: it spawns
+/// make, waits for the recipe's leading `touch` to appear, sends SIGINT to
+/// the make process, and compares output plus the target file's fate.
+#[test]
+#[ignore = "known divergence #468: SIGINT mid-recipe does not delete the in-progress target"]
+fn sigint_deletes_partially_built_target() {
+    fn interrupt_run(make_bin: &Path) -> (Run, bool) {
+        let workdir = tempdir();
+        std::fs::write(workdir.join("Makefile"), "slow: ; @touch slow && sleep 5\n").unwrap();
+        let mut child = Command::new(make_bin)
+            .arg("--no-print-directory")
+            .current_dir(&workdir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn make");
+        // The recipe touches `slow` before sleeping: once the file exists the
+        // recipe is running, so the interrupt is guaranteed to land mid-recipe
+        // (and the touched target is what the oracle then deletes).
+        let target = workdir.join("slow");
+        for _ in 0..500 {
+            if target.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(target.exists(), "recipe never started under {make_bin:?}");
+        let sent = Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .expect("failed to spawn kill");
+        assert!(sent.success(), "kill -INT failed for {make_bin:?}");
+        let out = child.wait_with_output().expect("failed to wait for make");
+        let survived = target.exists();
+        (out.into(), survived)
+    }
+
+    let c = c_make();
+    let r = PathBuf::from(RUST_MAKE);
+    let (c_run, c_survived) = interrupt_run(&c);
+    let (r_run, r_survived) = interrupt_run(&r);
+    // Both die by re-raised SIGINT (`code` is None for both); the divergence
+    // shows in stderr and in whether the target survived.
+    assert_diff("sigint-cleanup", &c_run, &r_run, &c, &r);
+    assert_eq!(
+        c_survived, r_survived,
+        "target file fate differs after SIGINT (survived: C={c_survived}, Rust={r_survived})"
+    );
+}
