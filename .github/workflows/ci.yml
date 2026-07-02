@@ -269,6 +269,47 @@ jobs:
                   path: "*.diff"
 
     # ─────────────────────────────────────────────────────────────────────
+    # GATE: the full test suite, with the differential fixtures in
+    # tests/rs_integration.rs run against the INDEPENDENT C make oracle. The
+    # coverage job below runs the same suite but with `--ignore-run-fail` (it
+    # only needs the lcov data), which silently swallowed differential
+    # failures — a C↔Rust output regression could ride a green PR (#456).
+    # This job is the enforced pass/fail signal: any fixture whose output is
+    # not byte-identical to the oracle fails the PR. Known pre-existing
+    # divergences are quarantined with `#[ignore = "known divergence #NNN"]`
+    # and tracked by issue; run them with `cargo test -- --ignored`.
+    # ─────────────────────────────────────────────────────────────────────
+    test:
+        name: test (differential vs C oracle)
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Download independent C make oracle
+              uses: actions/download-artifact@v4
+              with:
+                  name: c-make-oracle-${{ github.sha }}
+                  path: make-bin
+            - name: Install C make oracle as ./make
+              run: |
+                  chmod +x make-bin/c-make-oracle
+                  cp make-bin/c-make-oracle ./make
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Run the test suite (unit + differential)
+              run: cargo test
+
+    # ─────────────────────────────────────────────────────────────────────
     # Coverage: the ONE instrumented build+test run. It generates the single
     # lcov.info that both this report and the CRAP gate (below) consume — the
     # old design ran `cargo llvm-cov` twice per PR. Generated the way crap.sh
