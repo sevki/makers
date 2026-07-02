@@ -7,9 +7,7 @@ pub use crate::ffi_types::{
     __clock_t, __off64_t, __off_t, __pid_t, __sig_atomic_t, __uid_t, pid_t, sig_atomic_t, size_t,
     uintmax_t,
 };
-use crate::file::{
-    file, us_success, NameSeq, UpdateStatus, VariableSet, VariableSetList,
-};
+use crate::file::{file, us_success, NameSeq, UpdateStatus, VariableSet, VariableSetList};
 use crate::floc::Floc;
 use crate::load::unload_all;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
@@ -21,19 +19,19 @@ use crate::strcache::strcache_add;
 use crate::strcache::{strcache_init, strcache_print_stats};
 use crate::variable::print_variable_data_base;
 use crate::vpath::{build_vpath_lists, print_vpath_data_base};
+use ::core::ptr::{addr_of, addr_of_mut};
 use c2rust_bitfields;
 use libc;
 use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use ::core::ptr::{addr_of, addr_of_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
     fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
-    fn sigaction(__sig: i32, __act: *const sigaction, __oact: *mut sigaction) -> i32;
+    fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
     fn getcwd(__buf: *mut ::core::ffi::c_char, __size: size_t) -> *mut ::core::ffi::c_char;
     static mut environ: *mut *mut ::core::ffi::c_char;
     static mut optarg: *mut ::core::ffi::c_char;
@@ -96,73 +94,73 @@ extern "C" {
 pub type __uint32_t = u32;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct __sigset_t {
+pub struct SigsetT {
     pub __val: [::core::ffi::c_ulong; 16],
 }
-pub type sigset_t = __sigset_t;
+pub type sigset_t = SigsetT;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub union sigval {
+pub union Sigval {
     pub sival_int: i32,
     pub sival_ptr: *mut ::core::ffi::c_void,
 }
-pub type __sigval_t = sigval;
+pub type __sigval_t = Sigval;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct siginfo_t {
+pub struct SiginfoT {
     pub si_signo: i32,
     pub si_errno: i32,
     pub si_code: i32,
     pub __pad0: i32,
-    pub _sifields: C2RustUnnamed,
+    pub _sifields: SiginfoFields,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub union C2RustUnnamed {
+pub union SiginfoFields {
     pub _pad: [i32; 28],
-    pub _kill: C2RustUnnamed_8,
-    pub _timer: C2RustUnnamed_7,
-    pub _rt: C2RustUnnamed_6,
-    pub _sigchld: C2RustUnnamed_5,
-    pub _sigfault: C2RustUnnamed_2,
-    pub _sigpoll: C2RustUnnamed_1,
-    pub _sigsys: C2RustUnnamed_0,
+    pub _kill: KillFields,
+    pub _timer: TimerFields,
+    pub _rt: RtFields,
+    pub _sigchld: SigChldFields,
+    pub _sigfault: SigFaultFields,
+    pub _sigpoll: SigPollFields,
+    pub _sigsys: SigSysFields,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_0 {
+pub struct SigSysFields {
     pub _call_addr: *mut ::core::ffi::c_void,
     pub _syscall: i32,
     pub _arch: ::core::ffi::c_uint,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_1 {
+pub struct SigPollFields {
     pub si_band: ::core::ffi::c_long,
     pub si_fd: i32,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_2 {
+pub struct SigFaultFields {
     pub si_addr: *mut ::core::ffi::c_void,
     pub si_addr_lsb: ::core::ffi::c_short,
-    pub _bounds: C2RustUnnamed_3,
+    pub _bounds: SigFaultBounds,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub union C2RustUnnamed_3 {
-    pub _addr_bnd: C2RustUnnamed_4,
+pub union SigFaultBounds {
+    pub _addr_bnd: SigFaultAddrBounds,
     pub _pkey: __uint32_t,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_4 {
+pub struct SigFaultAddrBounds {
     pub _lower: *mut ::core::ffi::c_void,
     pub _upper: *mut ::core::ffi::c_void,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_5 {
+pub struct SigChldFields {
     pub si_pid: __pid_t,
     pub si_uid: __uid_t,
     pub si_status: i32,
@@ -171,53 +169,53 @@ pub struct C2RustUnnamed_5 {
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_6 {
+pub struct RtFields {
     pub si_pid: __pid_t,
     pub si_uid: __uid_t,
     pub si_sigval: __sigval_t,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_7 {
+pub struct TimerFields {
     pub si_tid: i32,
     pub si_overrun: i32,
     pub si_sigval: __sigval_t,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct C2RustUnnamed_8 {
+pub struct KillFields {
     pub si_pid: __pid_t,
     pub si_uid: __uid_t,
 }
-pub type __sighandler_t = Option<unsafe extern "C" fn(i32) -> ()>;
+pub type SighandlerT = Option<unsafe extern "C" fn(i32) -> ()>;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct sigaction {
-    pub __sigaction_handler: C2RustUnnamed_9,
-    pub sa_mask: __sigset_t,
+pub struct Sigaction {
+    pub __sigaction_handler: SigactionHandler,
+    pub sa_mask: SigsetT,
     pub sa_flags: i32,
     pub sa_restorer: Option<unsafe extern "C" fn() -> ()>,
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub union C2RustUnnamed_9 {
-    pub sa_handler: __sighandler_t,
+pub union SigactionHandler {
+    pub sa_handler: SighandlerT,
     pub sa_sigaction:
-        Option<unsafe extern "C" fn(i32, *mut siginfo_t, *mut ::core::ffi::c_void) -> ()>,
+        Option<unsafe extern "C" fn(i32, *mut SiginfoT, *mut ::core::ffi::c_void) -> ()>,
 }
-pub type C2RustUnnamed_10 = ::core::ffi::c_uint;
-pub const _ISalnum: C2RustUnnamed_10 = 8;
-pub const _ISpunct: C2RustUnnamed_10 = 4;
-pub const _IScntrl: C2RustUnnamed_10 = 2;
-pub const _ISblank: C2RustUnnamed_10 = 1;
-pub const _ISgraph: C2RustUnnamed_10 = 32768;
-pub const _ISprint: C2RustUnnamed_10 = 16384;
-pub const _ISspace: C2RustUnnamed_10 = 8192;
-pub const _ISxdigit: C2RustUnnamed_10 = 4096;
-pub const _ISdigit: C2RustUnnamed_10 = 2048;
-pub const _ISalpha: C2RustUnnamed_10 = 1024;
-pub const _ISlower: C2RustUnnamed_10 = 512;
-pub const _ISupper: C2RustUnnamed_10 = 256;
+pub type CTypeMask = ::core::ffi::c_uint;
+pub const _ISalnum: CTypeMask = 8;
+pub const _ISpunct: CTypeMask = 4;
+pub const _IScntrl: CTypeMask = 2;
+pub const _ISblank: CTypeMask = 1;
+pub const _ISgraph: CTypeMask = 32768;
+pub const _ISprint: CTypeMask = 16384;
+pub const _ISspace: CTypeMask = 8192;
+pub const _ISxdigit: CTypeMask = 4096;
+pub const _ISdigit: CTypeMask = 2048;
+pub const _ISalpha: CTypeMask = 1024;
+pub const _ISlower: CTypeMask = 512;
+pub const _ISupper: CTypeMask = 256;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
 pub type hash_table = crate::hash::hash_table;
@@ -257,7 +255,7 @@ pub struct stringlist {
 #[repr(C)]
 pub struct command_switch {
     pub c: i32,
-    pub type_0: C2RustUnnamed_11,
+    pub type_0: OptionArgKind,
     pub value_ptr: *mut ::core::ffi::c_void,
     #[bitfield(name = "env", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "toenv", ty = "::core::ffi::c_uint", bits = "1..=1")]
@@ -271,15 +269,15 @@ pub struct command_switch {
     pub long_name: *const ::core::ffi::c_char,
     pub origin: *mut variable_origin,
 }
-pub type C2RustUnnamed_11 = ::core::ffi::c_uint;
-pub const ignore: C2RustUnnamed_11 = 7;
-pub const floating: C2RustUnnamed_11 = 6;
-pub const positive_int: C2RustUnnamed_11 = 5;
-pub const filename: C2RustUnnamed_11 = 4;
-pub const strlist: C2RustUnnamed_11 = 3;
-pub const string: C2RustUnnamed_11 = 2;
-pub const flag_off: C2RustUnnamed_11 = 1;
-pub const flag: C2RustUnnamed_11 = 0;
+pub type OptionArgKind = ::core::ffi::c_uint;
+pub const ignore: OptionArgKind = 7;
+pub const floating: OptionArgKind = 6;
+pub const positive_int: OptionArgKind = 5;
+pub const filename: OptionArgKind = 4;
+pub const strlist: OptionArgKind = 3;
+pub const string: OptionArgKind = 2;
+pub const flag_off: OptionArgKind = 1;
+pub const flag: OptionArgKind = 0;
 use crate::commands::{fatal_error_signal, handling_fatal_signal};
 use crate::expand::{
     expand_string_buf, expand_variable_buf, initialize_variable_output, install_variable_buffer,
@@ -287,8 +285,8 @@ use crate::expand::{
 };
 pub use crate::file::nameseq;
 use crate::file::{
-    enter_file, file_timestamp_now, file_timestamp_string, lookup_file,
-    print_file_data_base, print_targets, remove_intermediates, snap_deps, verify_file_data_base,
+    enter_file, file_timestamp_now, file_timestamp_string, lookup_file, print_file_data_base,
+    print_targets, remove_intermediates, snap_deps, verify_file_data_base,
 };
 use crate::function::hash_init_function_table;
 use crate::guile::guile_gmake_setup;
@@ -335,7 +333,7 @@ pub struct option {
     pub val: i32,
 }
 pub type bsd_signal_ret_t = Option<unsafe extern "C" fn(i32) -> ()>;
-pub const SIG_DFL: __sighandler_t = None;
+pub const SIG_DFL: SighandlerT = None;
 pub const ENOENT: i32 = 2;
 pub const EINTR: i32 = 4;
 pub const SIGCHLD: i32 = 17;
@@ -1359,7 +1357,12 @@ fn goals_is_empty() -> bool {
 }
 
 fn goals_push(goal: crate::dep::GoalDepNode) {
-    unsafe { addr_of_mut!(goals).as_mut().expect("goals missing").push(goal) }
+    unsafe {
+        addr_of_mut!(goals)
+            .as_mut()
+            .expect("goals missing")
+            .push(goal)
+    }
 }
 
 fn goals_mark_last_wait_here() {
@@ -1376,10 +1379,7 @@ fn goals_mark_last_wait_here() {
 
 /// The display name of a goal: its `dep.name` if set, else the name of its
 /// target file (raw bytes).
-fn goal_name_bytes(
-    ctx: &crate::execctx::ExecContext,
-    g: &crate::dep::GoalDepNode,
-) -> Vec<u8> {
+fn goal_name_bytes(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNode) -> Vec<u8> {
     if !g.dep.name.is_empty() {
         return g.dep.name.clone().into_bytes();
     }
@@ -1393,7 +1393,7 @@ fn goal_name_bytes(
 
 /// Materialize a goal's source location as an owned `Floc` whose `filenm` lives
 /// for the returned value's lifetime (the bytes are stored alongside it).
-fn goal_floc(g: &crate::dep::GoalDepNode) -> Option<GoalFloc > {
+fn goal_floc(g: &crate::dep::GoalDepNode) -> Option<GoalFloc> {
     g.defined_in.as_ref().map(|f| {
         let mut bytes = f.clone();
         bytes.push(0);
@@ -1533,21 +1533,21 @@ unsafe fn set_make_sync_syncout(value: ::core::ffi::c_uint) {
     let make_sync_ptr = &raw mut make_sync;
     (*make_sync_ptr).syncout[0] = ((*make_sync_ptr).syncout[0] & !1) | (value as u8 & 1);
 }
-pub static mut fatal_signal_set: sigset_t = __sigset_t { __val: [0; 16] };
+pub static mut fatal_signal_set: sigset_t = SigsetT { __val: [0; 16] };
 unsafe extern "C" fn bsd_signal(sig: i32, func: bsd_signal_ret_t) -> bsd_signal_ret_t {
-    let mut act: sigaction = sigaction {
-        __sigaction_handler: C2RustUnnamed_9 { sa_handler: None },
-        sa_mask: __sigset_t { __val: [0; 16] },
+    let mut act: Sigaction = Sigaction {
+        __sigaction_handler: SigactionHandler { sa_handler: None },
+        sa_mask: SigsetT { __val: [0; 16] },
         sa_flags: 0,
         sa_restorer: None,
     };
-    let mut oact: sigaction = sigaction {
-        __sigaction_handler: C2RustUnnamed_9 { sa_handler: None },
-        sa_mask: __sigset_t { __val: [0; 16] },
+    let mut oact: Sigaction = Sigaction {
+        __sigaction_handler: SigactionHandler { sa_handler: None },
+        sa_mask: SigsetT { __val: [0; 16] },
         sa_flags: 0,
         sa_restorer: None,
     };
-    act.__sigaction_handler.sa_handler = func as __sighandler_t;
+    act.__sigaction_handler.sa_handler = func as SighandlerT;
     act.sa_flags = SA_RESTART;
     sigemptyset(&raw mut act.sa_mask);
     sigaddset(&raw mut act.sa_mask, sig);
@@ -1665,7 +1665,13 @@ unsafe fn expand_command_line_file(
     let cp: *const ::core::ffi::c_char;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0_i32 as isize) as i32 == 0 {
-        fatal(ctx, ::core::ptr::null_mut::<Floc>(), 0, b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        fatal(
+            ctx,
+            ::core::ptr::null_mut::<Floc>(),
+            0,
+            b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     if *name.offset(0_i32 as isize) as i32 == '~' as i32 {
         expanded = tilde_expand(ctx, name);
@@ -1697,7 +1703,13 @@ mod expand_command_line_file_tests {
     /// past the end yield 0 — and returns the resulting file-name bytes (`./`
     /// when the name collapses to empty).
     fn unsafe_oracle(name: &[u8]) -> Vec<u8> {
-        let g = |i: usize| -> u8 { if i < name.len() { name[i] } else { 0 } };
+        let g = |i: usize| -> u8 {
+            if i < name.len() {
+                name[i]
+            } else {
+                0
+            }
+        };
         let mut i = 0usize;
         while g(i) == b'.' && g(i + 1) == b'/' {
             i += 2;
@@ -1852,12 +1864,12 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
             None => {
                 let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
                 fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        opt.len() as size_t,
-        b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((c.as_ptr()) as *const ::core::ffi::c_char)],
-    );
+                    ctx,
+                    ::core::ptr::null_mut::<Floc>(),
+                    opt.len() as size_t,
+                    b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[FmtArg::Str((c.as_ptr()) as *const ::core::ffi::c_char)],
+                );
             }
         }
     }
@@ -2344,7 +2356,8 @@ unsafe fn main_0(
     // is unchanged — so post-rebuild glob callbacks must read a fresh
     // provenance pointing at the new context.
     CTX_PTR.with(|p| p.set(&ctx as *const crate::execctx::ExecContext));
-    ctx.always_make_flag.set(options.always_make.get() && restarts == 0);
+    ctx.always_make_flag
+        .set(options.always_make.get() && restarts == 0);
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
@@ -2358,7 +2371,11 @@ unsafe fn main_0(
         && !strchr(*argv.offset(0_i32 as isize), '/' as i32).is_null()
     {
         let fresh41 = &mut (*argv.offset(0_i32 as isize));
-        *fresh41 = xstrdup(concat(&[&raw mut current_directory as *mut ::core::ffi::c_char, b"/\0" as *const u8 as *const ::core::ffi::c_char, *argv.offset(0_i32 as isize)]));
+        *fresh41 = xstrdup(concat(&[
+            &raw mut current_directory as *mut ::core::ffi::c_char,
+            b"/\0" as *const u8 as *const ::core::ffi::c_char,
+            *argv.offset(0_i32 as isize),
+        ]));
     }
     starting_directory = &raw mut current_directory as *mut ::core::ffi::c_char;
     if !options.directories.borrow().is_empty() {
@@ -2416,19 +2433,25 @@ unsafe fn main_0(
             if jobserver_parse_auth(&ctx, auth_c.as_ptr()) != 0 {
                 do_reset = false;
             } else {
-                error(&ctx, ::core::ptr::null_mut::<Floc>(), 0, b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
-                        as *const u8 as *const ::core::ffi::c_char, &[]);
+                error(
+                    &ctx,
+                    ::core::ptr::null_mut::<Floc>(),
+                    0,
+                    b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
+                        as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
                 options.arg_job_slots.set(Some(1));
             }
         } else if restarts == 0 && argv_slots != Some(1) {
             error(
-        &ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        INTSTR_LENGTH,
-        b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
+                &ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                INTSTR_LENGTH,
+                b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Int((argv_slots.unwrap_or(0)) as i32 as i64)],
-    );
+                &[FmtArg::Int((argv_slots.unwrap_or(0)) as i32 as i64)],
+            );
         }
         if do_reset {
             reset_jobserver(&options);
@@ -2614,7 +2637,7 @@ unsafe fn main_0(
         SIGCHLD,
         Some(child_handler as unsafe extern "C" fn(i32) -> ()),
     );
-    let mut block: sigset_t = __sigset_t { __val: [0; 16] };
+    let mut block: sigset_t = SigsetT { __val: [0; 16] };
     sigemptyset(&raw mut block);
     sigaddset(&raw mut block, SIGCHLD);
     if sigprocmask(
@@ -2766,13 +2789,15 @@ unsafe fn main_0(
     {
         if restarts == 0 {
             error(
-        &ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        INTSTR_LENGTH,
-        b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
+                &ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                INTSTR_LENGTH,
+                b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Int((options.arg_job_slots.get().unwrap_or(0)) as i32 as i64)],
-    );
+                &[FmtArg::Int(
+                    (options.arg_job_slots.get().unwrap_or(0)) as i32 as i64,
+                )],
+            );
         }
         reset_jobserver(&options);
     }
@@ -2788,13 +2813,15 @@ unsafe fn main_0(
         ::core::ptr::null_mut::<output>()
     };
     disable_builtins(&ctx, &options);
-    options.job_slots.set(if options.jobserver_auth.borrow().is_some() {
-        0
-    } else if options.arg_job_slots.get().is_none() {
-        1
-    } else {
-        options.arg_job_slots.get().unwrap()
-    });
+    options
+        .job_slots
+        .set(if options.jobserver_auth.borrow().is_some() {
+            0
+        } else if options.arg_job_slots.get().is_none() {
+            1
+        } else {
+            options.arg_job_slots.get().unwrap()
+        });
     if options.job_slots.get() > 1 {
         let style_c = options
             .jobserver_style
@@ -2805,7 +2832,12 @@ unsafe fn main_0(
             .as_ref()
             .map(|c| c.as_ptr())
             .unwrap_or(::core::ptr::null());
-        if jobserver_setup(&ctx, options.job_slots.get().wrapping_sub(1) as i32, style_ptr) != 0 {
+        if jobserver_setup(
+            &ctx,
+            options.job_slots.get().wrapping_sub(1) as i32,
+            style_ptr,
+        ) != 0
+        {
             let auth = jobserver_get_auth();
             if !auth.is_null() {
                 *options.jobserver_auth.borrow_mut() = Some(
@@ -2948,9 +2980,7 @@ unsafe fn main_0(
                         // check never applies — a plain `gen.mk:` rule with no
                         // prereqs must still be remade.
                         if !skip && guard.is_double_colon {
-                            for entry in
-                                std::iter::once(&*guard).chain(guard.double_colon.iter())
-                            {
+                            for entry in std::iter::once(&*guard).chain(guard.double_colon.iter()) {
                                 if entry.deps.is_empty() && entry.recipe.is_some() {
                                     skip = true;
                                     break;
@@ -3003,13 +3033,16 @@ unsafe fn main_0(
             let d1_name = name_bytes.as_ptr() as *const ::core::ffi::c_char;
             let floc = goal_floc(d_1);
             error(
-        &ctx,
-        floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
-        (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((d1_name) as *const ::core::ffi::c_char),
-            FmtArg::Str((err) as *const ::core::ffi::c_char)],
-    );
+                &ctx,
+                floc.as_ref()
+                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
+                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((d1_name) as *const ::core::ffi::c_char),
+                    FmtArg::Str((err) as *const ::core::ffi::c_char),
+                ],
+            );
         }
         if any_failed != 0
             && status as ::core::ffi::c_uint == us_success as i32 as ::core::ffi::c_uint
@@ -3029,7 +3062,8 @@ unsafe fn main_0(
                         let floc = goal_floc(d_2);
                         if load_file(
                             &ctx,
-                            floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                            floc.as_ref()
+                                .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
                             ::core::ptr::null_mut::<file>(),
                             0,
                         ) == 0
@@ -3037,13 +3071,13 @@ unsafe fn main_0(
                             let mut nm = goal_name_bytes(&ctx, d_2);
                             nm.push(0);
                             fatal(
-        &ctx,
-        floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
-        strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
-        b"%s: failed to load\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
-    );
+                                &ctx,
+                                floc.as_ref()
+                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
+                                b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
+                                &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
+                            );
                         }
                         if let Some(node) = ctx.filenodes.get(fid) {
                             let mut guard = node.lock().expect("file node poisoned");
@@ -3059,20 +3093,19 @@ unsafe fn main_0(
                 for (i_3, d_4) in read_files.iter().enumerate() {
                     let saved_mtime = makefile_mtimes.get(i_3).copied().unwrap_or(0);
                     let fid = d_4.dep.file;
-                    let (updated, upd_status, last_mtime, name) = match fid
-                        .and_then(|f| ctx.filenodes.get(f).map(|n| (f, n)))
-                    {
-                        Some((_f, node)) => {
-                            let guard = node.lock().expect("file node poisoned");
-                            (
-                                guard.updated,
-                                guard.update_status,
-                                guard.last_mtime,
-                                guard.name.clone(),
-                            )
-                        }
-                        None => (false, crate::file::UpdateStatus::None, 0, Vec::new()),
-                    };
+                    let (updated, upd_status, last_mtime, name) =
+                        match fid.and_then(|f| ctx.filenodes.get(f).map(|n| (f, n))) {
+                            Some((_f, node)) => {
+                                let guard = node.lock().expect("file node poisoned");
+                                (
+                                    guard.updated,
+                                    guard.update_status,
+                                    guard.last_mtime,
+                                    guard.name.clone(),
+                                )
+                            }
+                            None => (false, crate::file::UpdateStatus::None, 0, Vec::new()),
+                        };
                     if updated {
                         if upd_status == crate::file::UpdateStatus::Success {
                             let mtime = if last_mtime == UNKNOWN_MTIME as uintmax_t {
@@ -3086,13 +3119,14 @@ unsafe fn main_0(
                             nm.push(0);
                             let floc = goal_floc(d_4);
                             error(
-        &ctx,
-        floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
-        strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
-        b"failed to remake makefile '%s'\0" as *const u8
-                                as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
-    );
+                                &ctx,
+                                floc.as_ref()
+                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
+                                b"failed to remake makefile '%s'\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
+                            );
                             let mtime: uintmax_t = if last_mtime == UNKNOWN_MTIME as uintmax_t {
                                 f_mtime(&ctx, fid.unwrap(), false)
                             } else {
@@ -3112,7 +3146,8 @@ unsafe fn main_0(
                             let floc = goal_floc(d_4);
                             error(
                                 &ctx,
-                                floc.as_ref().map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                floc.as_ref()
+                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
                                 strlen(dnm) as size_t,
                                 b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
@@ -3510,7 +3545,13 @@ unsafe fn main_0(
             && !(*v_2).value.is_null()
             && *(*v_2).value.offset(0_i32 as isize) as i32 != 0
         {
-            fatal(&ctx, ::core::ptr::null_mut::<Floc>(), 0, b"No targets\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            fatal(
+                &ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                0,
+                b"No targets\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         fatal(
             &ctx,
@@ -3531,9 +3572,9 @@ unsafe fn main_0(
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
-    match unsafe {
-        update_goal_chain(&ctx, addr_of_mut!(goals).as_mut().expect("goals missing"))
-    } as ::core::ffi::c_uint {
+    match unsafe { update_goal_chain(&ctx, addr_of_mut!(goals).as_mut().expect("goals missing")) }
+        as ::core::ffi::c_uint
+    {
         2 => {
             makefile_status = MAKE_TROUBLE;
         }
@@ -3661,8 +3702,9 @@ unsafe fn handle_non_switch_argument(
         if strcmp(arg, b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
             return 1;
         }
-        let fname_bytes =
-            ::std::ffi::CStr::from_ptr(expand_command_line_file(ctx, arg)).to_bytes().to_vec();
+        let fname_bytes = ::std::ffi::CStr::from_ptr(expand_command_line_file(ctx, arg))
+            .to_bytes()
+            .to_vec();
         let f = enter_file(ctx, &fname_bytes);
         if let Some(node) = ctx.filenodes.get(f) {
             node.lock().expect("file node poisoned").cmd_target = true;
@@ -4723,13 +4765,13 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
     if jobserver_enabled() != 0 && jobserver_tokens() != 0 {
         if status != 2 {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        INTSTR_LENGTH,
-        b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                INTSTR_LENGTH,
+                b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((jobserver_tokens()) as u32 as u64)],
-    );
+                &[FmtArg::Uint((jobserver_tokens()) as u32 as u64)],
+            );
         } else {
             loop {
                 JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
@@ -4746,14 +4788,16 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
             (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all(ctx));
         if tokens != master_slots {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        INTSTR_LENGTH.wrapping_mul(2),
-        b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                INTSTR_LENGTH.wrapping_mul(2),
+                b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
                     as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Uint((tokens) as u32 as u64),
-            FmtArg::Uint((master_slots) as u32 as u64)],
-    );
+                &[
+                    FmtArg::Uint((tokens) as u32 as u64),
+                    FmtArg::Uint((master_slots) as u32 as u64),
+                ],
+            );
         }
     }
     reset_jobserver_mirror();
@@ -5811,7 +5855,9 @@ mod run_silent_tests {
 
 #[cfg(test)]
 mod export_all_variables_tests {
-    use super::{install_default_options_for_test, opt_export_all_variables, with_options, Options};
+    use super::{
+        install_default_options_for_test, opt_export_all_variables, with_options, Options,
+    };
 
     /// `Options::export_all_variables` carries the former
     /// `export_all_variables` global: false by default, toggled by
@@ -5835,7 +5881,10 @@ mod export_all_variables_tests {
         install_default_options_for_test();
 
         with_options(|o| o.export_all_variables.set(false));
-        assert!(!opt_export_all_variables(), "channel reads the cleared flag");
+        assert!(
+            !opt_export_all_variables(),
+            "channel reads the cleared flag"
+        );
 
         with_options(|o| o.export_all_variables.set(true));
         assert!(opt_export_all_variables(), "channel reads the set flag");
@@ -6021,7 +6070,9 @@ mod snapped_deps_tests {
 
 #[cfg(test)]
 mod rebuilding_makefiles_tests {
-    use super::{install_default_options_for_test, opt_rebuilding_makefiles, with_options, Options};
+    use super::{
+        install_default_options_for_test, opt_rebuilding_makefiles, with_options, Options,
+    };
 
     /// `Options::rebuilding_makefiles` carries the former `REBUILDING_MAKEFILES`
     /// global: false outside the makefile-remake pass, true while `main_0`
@@ -6043,7 +6094,10 @@ mod rebuilding_makefiles_tests {
         install_default_options_for_test();
 
         with_options(|o| o.rebuilding_makefiles.set(false));
-        assert!(!opt_rebuilding_makefiles(), "channel reads the installed value");
+        assert!(
+            !opt_rebuilding_makefiles(),
+            "channel reads the installed value"
+        );
 
         with_options(|o| o.rebuilding_makefiles.set(true));
         assert!(opt_rebuilding_makefiles(), "true through the channel");
