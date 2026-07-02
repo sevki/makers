@@ -1641,7 +1641,6 @@ unsafe fn expand_command_line_file(
     ctx: &crate::execctx::ExecContext,
     mut name: *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
-    let cp: *const ::core::ffi::c_char;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0_i32 as isize) as i32 == 0 {
         fatal(
@@ -1668,7 +1667,7 @@ unsafe fn expand_command_line_file(
     } else {
         name = name.add(off);
     }
-    cp = strcache_add(ctx, name);
+    let cp = strcache_add(ctx, name);
     free(expanded as *mut ::core::ffi::c_void);
     cp
 }
