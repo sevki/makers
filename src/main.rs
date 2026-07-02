@@ -1198,17 +1198,6 @@ pub fn set_just_print_mirror(v: bool) {
 pub fn set_ignore_errors_mirror(v: bool) {
     with_options(|o| o.ignore_errors.set(v));
 }
-pub static mut shell_var: variable = variable {
-    name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    fileinfo: Floc {
-        filenm: ::core::ptr::null::<::core::ffi::c_char>(),
-        lineno: 0,
-        offset: 0,
-    },
-    length: 0,
-    recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
-};
 /// Strcache'd name of the temporary file holding the makefile read from stdin
 /// (or null), paired with `Options::stdin_offset`. Lets `temp_stdin_unlink`
 /// run from the deep `die` path without an `&Options` borrow; the pointer is
@@ -1352,9 +1341,6 @@ fn goaldep_for_file(file: crate::file::FileId) -> crate::dep::GoalDepNode {
         offset: 0,
     }
 }
-static mut command_variables: *mut command_variable =
-    ::core::ptr::null::<command_variable>() as *mut command_variable;
-pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
 // The four special-target feature latches — `.POSIX`, `.SECONDEXPANSION`,
 // `.ONESHELL`, `.NOTPARALLEL` — each set once when make sees the corresponding
 // special target and read widely thereafter. They live on the owned per-run
@@ -2137,9 +2123,11 @@ unsafe fn main_0(
                     ) == 0)
             {
                 export = v_noexport;
-                shell_var.name = xstrdup(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char);
-                shell_var.length = 5;
-                shell_var.value = xstrdup(ep);
+                let mut sv = ctx.shell_var.0.get();
+                sv.name = xstrdup(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char);
+                sv.length = 5;
+                sv.value = xstrdup(ep);
+                ctx.shell_var.0.set(sv);
             }
             (*v).set_export(export as variable_export);
         }
@@ -2316,6 +2304,12 @@ unsafe fn main_0(
     // The program name is derived from argv[0] at startup and prefixes every
     // message for the rest of the run.
     let carried_program = ::core::mem::take(&mut ctx.program);
+    // SHELL was recorded from the environment scan above and is appended to
+    // child environments during the build; the command-variable list is built
+    // as argv/`MAKEFLAGS` switches are decoded (both before and after this
+    // rebuild) and walked for `MAKEOVERRIDES` below.
+    let carried_shell_var = ::core::mem::take(&mut ctx.shell_var);
+    let carried_command_variables = ::core::mem::take(&mut ctx.command_variables);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2325,6 +2319,8 @@ unsafe fn main_0(
         temp_stdin_name: carried_temp_stdin,
         directory_before_chdir: carried_dir_before_chdir,
         program: carried_program,
+        shell_var: carried_shell_var,
+        command_variables: carried_command_variables,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
@@ -2462,12 +2458,12 @@ unsafe fn main_0(
         (*current_variable_set_list).set,
         NILF,
     );
-    if !command_variables.is_null() {
+    if !ctx.command_variables.0.get().is_null() {
         let mut cv: *mut command_variable;
         let mut v_1: *mut variable;
         let mut len_0: size_t = 0;
         let mut p: *mut ::core::ffi::c_char;
-        cv = command_variables;
+        cv = ctx.command_variables.0.get();
         while !cv.is_null() {
             v_1 = (*cv).variable;
             len_0 = len_0.wrapping_add((2 as size_t).wrapping_mul(strlen((*v_1).name)) as size_t);
@@ -2484,7 +2480,7 @@ unsafe fn main_0(
         let mut value_buf: Vec<u8> = Vec::with_capacity(len_0 as usize);
         let value = value_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
         p = value;
-        cv = command_variables;
+        cv = ctx.command_variables.0.get();
         while !cv.is_null() {
             v_1 = (*cv).variable;
             p = quote_for_env(p, (*v_1).name);
@@ -2646,7 +2642,7 @@ unsafe fn main_0(
     (*fresh46).set_export(v_export as variable_export);
     define_default_variables(&ctx, &options);
     enter_file(&ctx, b".DEFAULT");
-    default_goal_var = define_variable_in_set(
+    ctx.default_goal_var.0.set(define_variable_in_set(
         &ctx,
         b".DEFAULT_GOAL\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
@@ -2655,7 +2651,7 @@ unsafe fn main_0(
         0,
         (*current_variable_set_list).set,
         NILF,
-    );
+    ));
     if !options.eval_strings.borrow().is_empty() {
         let eval_strings = options.eval_strings.borrow();
         let mut p_0: *mut ::core::ffi::c_char;
@@ -3473,6 +3469,7 @@ unsafe fn main_0(
     temp_stdin_unlink(&ctx);
     if options.goals.borrow().is_empty() {
         let mut p_6: *mut ::core::ffi::c_char;
+        let default_goal_var = ctx.default_goal_var.0.get();
         if (*default_goal_var).recursive() != 0 {
             p_6 = expand_string_buf(
                 &ctx,
@@ -3672,7 +3669,7 @@ unsafe fn handle_non_switch_argument(
     v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global);
     if !v.is_null() {
         let mut cv: *mut command_variable;
-        cv = command_variables;
+        cv = ctx.command_variables.0.get();
         while !cv.is_null() {
             if (*cv).variable == v {
                 break;
@@ -3683,8 +3680,8 @@ unsafe fn handle_non_switch_argument(
             cv = xmalloc(::core::mem::size_of::<command_variable>() as size_t)
                 as *mut command_variable;
             (*cv).variable = v;
-            (*cv).next = command_variables;
-            command_variables = cv;
+            (*cv).next = ctx.command_variables.0.get();
+            ctx.command_variables.0.set(cv);
         }
     } else if *arg.offset(0_i32 as isize) as i32 != 0
         && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint

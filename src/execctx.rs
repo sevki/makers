@@ -190,6 +190,34 @@ pub struct ExecContext {
     /// same "cannot enforce load limit" warning.
     pub load_lossage: LoadLossage,
 
+    /// The `SHELL` variable as it came from the environment, the former main.rs
+    /// `pub static mut shell_var` — recorded (name/length/value, via `xstrdup`)
+    /// when the startup environment scan meets `SHELL`, and appended by
+    /// `target_environment` to every child's environment when the walk did not
+    /// already export a `SHELL`. Unset (null name/value) when the environment
+    /// had no `SHELL`. Written during startup, before the `main_0` build-phase
+    /// context rebuild, and read during the build, so it is carried across the
+    /// rebuild; heap storage from `xstrdup` backs the pointers.
+    pub shell_var: ShellVar,
+
+    /// Head of the command-line variable-definition list (`V=x` arguments), the
+    /// former file-scoped main.rs `static mut command_variables` — pushed by
+    /// `handle_non_switch_argument` as switches are decoded and walked to build
+    /// `-*-command-variables-*-`/`MAKEOVERRIDES`. Switch decoding runs both
+    /// before the `main_0` build-phase context rebuild (argv, `MAKEFLAGS`) and
+    /// after it (re-reading `MAKEFLAGS` once makefiles are parsed), so the list
+    /// is carried across the rebuild. `xmalloc`ed nodes back the pointers.
+    pub command_variables: CommandVariables,
+
+    /// The `.DEFAULT_GOAL` variable record, the former main.rs `pub static mut
+    /// default_goal_var` — defined once in `main_0` (after the build-phase
+    /// context rebuild, so no carry-over) and consulted by `record_files` while
+    /// parsing (only targets seen while it is still empty become the default
+    /// goal) and by `main_0`'s goal selection. Points into the global variable
+    /// set, whose records are updated in place, so the pointer stays valid
+    /// across later `.DEFAULT_GOAL` assignments.
+    pub default_goal_var: DefaultGoalVar,
+
     /// The directory cache's name-keyed table (`struct directory` entries), the
     /// former file-scoped `static mut dir::directories`. Owned per-run so there
     /// is no process-global hash table; `find_directory` and
@@ -458,6 +486,61 @@ impl Default for LoadLossage {
     }
 }
 
+/// A `Cell<variable>` holding [`ExecContext::shell_var`]. `variable` is a
+/// `Copy` c2rust record, so sites read the whole record out, update fields,
+/// and store it back. Defaults to the unset record (null name/value, zero
+/// location) the former `static mut` initializer produced.
+#[derive(Clone)]
+pub struct ShellVar(pub ::core::cell::Cell<crate::variable::variable>);
+
+impl Default for ShellVar {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(crate::variable::variable {
+            name: ::core::ptr::null_mut(),
+            value: ::core::ptr::null_mut(),
+            fileinfo: crate::floc::Floc {
+                filenm: ::core::ptr::null(),
+                lineno: 0,
+                offset: 0,
+            },
+            length: 0,
+            recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
+                [0; 4],
+        }))
+    }
+}
+
+impl ::core::fmt::Debug for ShellVar {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        // `variable` has no `Debug`; whether SHELL was seen is the useful bit.
+        f.debug_tuple("ShellVar")
+            .field(&!self.0.get().value.is_null())
+            .finish()
+    }
+}
+
+/// A `Cell<*mut command_variable>` (list head) that defaults to null, for
+/// [`ExecContext::command_variables`] — raw pointers have no `Default`.
+#[derive(Debug, Clone)]
+pub struct CommandVariables(pub ::core::cell::Cell<*mut crate::make_main::command_variable>);
+
+impl Default for CommandVariables {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+/// A `Cell<*mut variable>` that defaults to null, for
+/// [`ExecContext::default_goal_var`].
+#[derive(Debug, Clone)]
+pub struct DefaultGoalVar(pub ::core::cell::Cell<*mut crate::variable::variable>);
+
+impl Default for DefaultGoalVar {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
 impl ExecContext {
     /// Build a context over the given immutable [`Config`]. Mutable per-run
     /// caches start at their zero defaults.
@@ -598,6 +681,55 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// The variable trio (`shell_var` / `command_variables` /
+    /// `default_goal_var`, the former main.rs statics) starts unset, and the
+    /// two members written before the `main_0` build-phase context rebuild
+    /// (`shell_var`, `command_variables`) survive the carry-over the same way
+    /// the directory cache does.
+    #[test]
+    fn variable_trio_starts_unset_and_survives_carry_over() {
+        let ctx = ExecContext::default();
+        assert!(ctx.shell_var.0.get().name.is_null());
+        assert!(ctx.shell_var.0.get().value.is_null());
+        assert_eq!(ctx.shell_var.0.get().length, 0);
+        assert!(ctx.command_variables.0.get().is_null());
+        assert!(ctx.default_goal_var.0.get().is_null());
+        // The Debug impl reports whether SHELL was seen (manual impl:
+        // `variable` itself has no `Debug`).
+        assert_eq!(format!("{:?}", ctx.shell_var), "ShellVar(false)");
+
+        // Simulate the startup environment scan recording SHELL and a `V=x`
+        // switch pushing a command variable, then the rebuild hand-off.
+        let mut populated = ExecContext::default();
+        let mut sv = populated.shell_var.0.get();
+        sv.name = c"SHELL".as_ptr() as *mut ::core::ffi::c_char;
+        sv.length = 5;
+        sv.value = c"/bin/sh".as_ptr() as *mut ::core::ffi::c_char;
+        populated.shell_var.0.set(sv);
+        populated
+            .command_variables
+            .0
+            .set(0x1 as *mut crate::make_main::command_variable);
+
+        let carried_shell_var = ::core::mem::take(&mut populated.shell_var);
+        let carried_command_variables = ::core::mem::take(&mut populated.command_variables);
+        let rebuilt = ExecContext {
+            shell_var: carried_shell_var,
+            command_variables: carried_command_variables,
+            ..ExecContext::new(Config { makelevel: 1 })
+        };
+        assert_eq!(rebuilt.shell_var.0.get().length, 5);
+        assert!(!rebuilt.shell_var.0.get().value.is_null());
+        assert_eq!(format!("{:?}", rebuilt.shell_var), "ShellVar(true)");
+        assert!(!rebuilt.command_variables.0.get().is_null());
+        // The source fields reset to unset; a fresh context inherits nothing.
+        assert!(populated.shell_var.0.get().value.is_null());
+        assert!(populated.command_variables.0.get().is_null());
+        // `default_goal_var` is only defined after the rebuild, so the rebuilt
+        // context correctly starts without one.
+        assert!(rebuilt.default_goal_var.0.get().is_null());
     }
 
     /// The `.NOTINTERMEDIATE`/`.SECONDARY` latches start unset and are per-run
