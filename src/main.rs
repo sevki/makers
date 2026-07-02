@@ -1215,78 +1215,6 @@ pub static mut shell_var: variable = variable {
 /// run from the deep `die` path without an `&Options` borrow; the pointer is
 /// into the strcache, which lives for the whole run.
 static mut temp_stdin_name: *const ::core::ffi::c_char = ::core::ptr::null();
-static mut usage: [*const ::core::ffi::c_char; 36] = [
-    b"Options:\n\0" as *const u8 as *const ::core::ffi::c_char,
-    b"  -b, -m                      Ignored for compatibility.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -B, --always-make           Unconditionally make all targets.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -C DIRECTORY, --directory=DIRECTORY\n                              Change to DIRECTORY before doing anything.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -d                          Print lots of debugging information.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --debug[=FLAGS]             Print various types of debugging information.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -e, --environment-overrides\n                              Environment variables override makefiles.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -E STRING, --eval=STRING    Evaluate STRING as a makefile statement.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -f FILE, --file=FILE, --makefile=FILE\n                              Read FILE as a makefile.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -h, --help                  Print this message and exit.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -i, --ignore-errors         Ignore errors from recipes.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -I DIRECTORY, --include-dir=DIRECTORY\n                              Search DIRECTORY for included makefiles.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -j [N], --jobs[=N]          Allow N jobs at once; infinite jobs with no arg.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --jobserver-style=STYLE     Select the style of jobserver to use.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -k, --keep-going            Keep going when some targets can't be made.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -l [N], --load-average[=N], --max-load[=N]\n                              Don't start multiple jobs unless load is below N.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -L, --check-symlink-times   Use the latest mtime between symlinks and target.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -n, --just-print, --dry-run, --recon\n                              Don't actually run any recipe; just print them.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -o FILE, --old-file=FILE, --assume-old=FILE\n                              Consider FILE to be very old and don't remake it.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -O[TYPE], --output-sync[=TYPE]\n                              Synchronize output of parallel jobs by TYPE.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -p, --print-data-base       Print make's internal database.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -q, --question              Run no recipe; exit status says if up to date.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -r, --no-builtin-rules      Disable the built-in implicit rules.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -R, --no-builtin-variables  Disable the built-in variable settings.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --shuffle[={SEED|random|reverse|none}]\n                              Perform shuffle of prerequisites and goals.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -s, --silent, --quiet       Don't echo recipes.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  --no-silent                 Echo recipes (disable --silent mode).\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -S, --no-keep-going, --stop\n                              Turns off -k.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -t, --touch                 Touch targets instead of remaking them.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --trace                     Print tracing information.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -v, --version               Print the version number of make and exit.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -w, --print-directory       Print the current directory.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  --no-print-directory        Turn off -w, even if it was turned on implicitly.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -W FILE, --what-if=FILE, --new-file=FILE, --assume-new=FILE\n                              Consider FILE to be infinitely new.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --warn[=CONTROL]            Control warnings for makefile issues.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    ::core::ptr::null::<::core::ffi::c_char>(),
-];
 pub const TEMP_STDIN_OPT: i32 = CHAR_MAX + 10;
 pub const WARN_OPT: i32 = CHAR_MAX + 13;
 static mut switches: [command_switch; 42] = [command_switch {
@@ -1300,7 +1228,7 @@ static mut switches: [command_switch; 42] = [command_switch {
     long_name: ::core::ptr::null::<::core::ffi::c_char>(),
     origin: ::core::ptr::null_mut::<variable_origin>(),
 }; 42];
-static mut long_option_aliases: [option; 9] = [
+const LONG_OPTION_ALIASES: [option; 9] = [
     option {
         name: b"quiet\0" as *const u8 as *const ::core::ffi::c_char,
         has_arg: no_argument,
@@ -1861,6 +1789,80 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i32) -> ! {
+    // The usage text, one option per line; NULL-terminated like the C table.
+    // A function-local (not a `static mut`): only this printer reads it.
+    let usage: [*const ::core::ffi::c_char; 36] = [
+    b"Options:\n\0" as *const u8 as *const ::core::ffi::c_char,
+    b"  -b, -m                      Ignored for compatibility.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  -B, --always-make           Unconditionally make all targets.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  -C DIRECTORY, --directory=DIRECTORY\n                              Change to DIRECTORY before doing anything.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -d                          Print lots of debugging information.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  --debug[=FLAGS]             Print various types of debugging information.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -e, --environment-overrides\n                              Environment variables override makefiles.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -E STRING, --eval=STRING    Evaluate STRING as a makefile statement.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -f FILE, --file=FILE, --makefile=FILE\n                              Read FILE as a makefile.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -h, --help                  Print this message and exit.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  -i, --ignore-errors         Ignore errors from recipes.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  -I DIRECTORY, --include-dir=DIRECTORY\n                              Search DIRECTORY for included makefiles.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -j [N], --jobs[=N]          Allow N jobs at once; infinite jobs with no arg.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  --jobserver-style=STYLE     Select the style of jobserver to use.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -k, --keep-going            Keep going when some targets can't be made.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -l [N], --load-average[=N], --max-load[=N]\n                              Don't start multiple jobs unless load is below N.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -L, --check-symlink-times   Use the latest mtime between symlinks and target.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -n, --just-print, --dry-run, --recon\n                              Don't actually run any recipe; just print them.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -o FILE, --old-file=FILE, --assume-old=FILE\n                              Consider FILE to be very old and don't remake it.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -O[TYPE], --output-sync[=TYPE]\n                              Synchronize output of parallel jobs by TYPE.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -p, --print-data-base       Print make's internal database.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  -q, --question              Run no recipe; exit status says if up to date.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -r, --no-builtin-rules      Disable the built-in implicit rules.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -R, --no-builtin-variables  Disable the built-in variable settings.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  --shuffle[={SEED|random|reverse|none}]\n                              Perform shuffle of prerequisites and goals.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -s, --silent, --quiet       Don't echo recipes.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  --no-silent                 Echo recipes (disable --silent mode).\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -S, --no-keep-going, --stop\n                              Turns off -k.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -t, --touch                 Touch targets instead of remaking them.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  --trace                     Print tracing information.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  -v, --version               Print the version number of make and exit.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -w, --print-directory       Print the current directory.\n\0" as *const u8
+        as *const ::core::ffi::c_char,
+    b"  --no-print-directory        Turn off -w, even if it was turned on implicitly.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  -W FILE, --what-if=FILE, --new-file=FILE, --assume-new=FILE\n                              Consider FILE to be infinitely new.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    b"  --warn[=CONTROL]            Control warnings for makefile issues.\n\0"
+        as *const u8 as *const ::core::ffi::c_char,
+    ::core::ptr::null::<::core::ffi::c_char>(),
+    ];
     let mut cpp: *const *const ::core::ffi::c_char;
     let usageto: *mut FILE;
     if options.print_version.get() {
@@ -1873,7 +1875,7 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
         b"Usage: %s [options] [target] ...\n\0" as *const u8 as *const ::core::ffi::c_char,
         program,
     );
-    cpp = &raw const usage as *const *const ::core::ffi::c_char;
+    cpp = usage.as_ptr();
     while !(*cpp).is_null() {
         fputs(*cpp, usageto);
         cpp = cpp.offset(1_i32 as isize);
@@ -3572,25 +3574,28 @@ unsafe fn main_0(
     }
     die(&ctx, makefile_status);
 }
-static mut getopt_shorts: [::core::ffi::c_char; 127] = [0; 127];
-static mut long_options: [option; 51] = [option {
-    name: ::core::ptr::null::<::core::ffi::c_char>(),
-    has_arg: 0,
-    flag: ::core::ptr::null::<i32>() as *mut i32,
-    val: 0,
-}; 51];
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn init_switches() {
+///
+/// Builds the getopt tables — the short-option string and the `option`
+/// long-option array — from the `switches` table, returning them by value.
+/// The former `static mut getopt_shorts`/`long_options` pair: the tables are
+/// a pure function of `switches`, so each `decode_switches` call builds its
+/// own copies as locals instead of lazily initializing process globals.
+unsafe fn build_getopt_tables() -> ([::core::ffi::c_char; 127], [option; 51]) {
+    let mut getopt_shorts: [::core::ffi::c_char; 127] = [0; 127];
+    let mut long_options: [option; 51] = [option {
+        name: ::core::ptr::null::<::core::ffi::c_char>(),
+        has_arg: 0,
+        flag: ::core::ptr::null_mut::<i32>(),
+        val: 0,
+    }; 51];
     let mut p: *mut ::core::ffi::c_char;
     let mut c: ::core::ffi::c_uint;
     let mut i: ::core::ffi::c_uint;
-    if getopt_shorts[0_i32 as usize] as i32 != 0 {
-        return;
-    }
-    p = &raw mut getopt_shorts as *mut ::core::ffi::c_char;
+    p = getopt_shorts.as_mut_ptr();
     let fresh24 = p;
     p = p.offset(1_i32 as isize);
     *fresh24 = '-' as i32 as ::core::ffi::c_char;
@@ -3641,10 +3646,11 @@ pub unsafe fn init_switches() {
     {
         let fresh28 = i;
         i = i.wrapping_add(1);
-        long_options[fresh28 as usize] = long_option_aliases[c as usize];
+        long_options[fresh28 as usize] = LONG_OPTION_ALIASES[c as usize];
         c = c.wrapping_add(1);
     }
     long_options[i as usize].name = ::core::ptr::null::<::core::ffi::c_char>();
+    (getopt_shorts, long_options)
 }
 unsafe fn handle_non_switch_argument(
     ctx: &crate::execctx::ExecContext,
@@ -3814,7 +3820,7 @@ unsafe fn decode_switches(
     targets.list =
         alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *const ::core::ffi::c_char;
     targets.idx = 0;
-    init_switches();
+    let (mut getopt_shorts, mut long_options) = build_getopt_tables();
     opterr = (origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint) as i32;
     optind = 0;
     while optind < argc {
@@ -3822,8 +3828,8 @@ unsafe fn decode_switches(
         c = getopt_long(
             argc,
             argv as *const *mut ::core::ffi::c_char,
-            &raw mut getopt_shorts as *mut ::core::ffi::c_char,
-            &raw mut long_options as *mut option,
+            getopt_shorts.as_mut_ptr(),
+            long_options.as_mut_ptr(),
             ::core::ptr::null_mut::<i32>(),
         );
         coptarg = optarg;
