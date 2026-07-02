@@ -92,20 +92,21 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
 /// translation; all pointer arguments must be valid for the call.
 #[no_mangle]
 pub unsafe extern "C" fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
-    // `gmk_*` plugin-ABI entry point: its C-ABI signature cannot carry the
-    // owned `ExecContext`, so reach `main_0`'s live one through the `CTX_PTR`
-    // borrow channel (installed whenever a loaded plugin runs) — the expansion
-    // may emit output whose `make[N]:`/directory-trace prefixes read
-    // `program`/`starting_directory` off the context. Fall back to a default
-    // context only when none is installed (bare unit tests).
-    match crate::make_main::try_with_exec_context(|ctx| unsafe {
+    with_live_or_default_ctx(|ctx| unsafe {
         allocated_expand_string_for_file(ctx, ref_0, ::core::ptr::null_mut::<file>())
-    }) {
-        Some(expansion) => expansion,
-        None => {
-            let ctx = crate::execctx::ExecContext::default();
-            allocated_expand_string_for_file(&ctx, ref_0, ::core::ptr::null_mut::<file>())
-        }
+    })
+}
+/// Run `f` against `main_0`'s live context, reached through the `CTX_PTR`
+/// borrow channel (installed whenever a loaded plugin runs). The `gmk_*`
+/// plugin-ABI entry points cannot carry the owned `ExecContext` in their C
+/// signatures, and what they run may emit output whose `make[N]:`/
+/// directory-trace prefixes read `program`/`starting_directory` off the
+/// context. Fall back to a throwaway default context only when none is
+/// installed (bare unit tests).
+fn with_live_or_default_ctx<R>(f: impl Fn(&crate::execctx::ExecContext) -> R) -> R {
+    match crate::make_main::try_with_exec_context(&f) {
+        Some(result) => result,
+        None => f(&crate::execctx::ExecContext::default()),
     }
 }
 /// # Safety
@@ -120,17 +121,9 @@ pub unsafe extern "C" fn gmk_add_function(
     max: ::core::ffi::c_uint,
     flags: ::core::ffi::c_uint,
 ) {
-    // `gmk_*` plugin-ABI entry point: its C-ABI signature cannot carry the
-    // owned `ExecContext`, so reach `main_0`'s live one through the `CTX_PTR`
-    // borrow channel, falling back to a default context only when none is
-    // installed (bare unit tests).
-    let defined = crate::make_main::try_with_exec_context(|ctx| unsafe {
+    with_live_or_default_ctx(|ctx| unsafe {
         define_new_function(ctx, reading_file, name, min, max, flags, func);
     });
-    if defined.is_none() {
-        let ctx = crate::execctx::ExecContext::default();
-        define_new_function(&ctx, reading_file, name, min, max, flags, func);
-    }
 }
 
 #[cfg(test)]
