@@ -71,7 +71,7 @@ use crate::hash::{
     hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
 };
 use crate::job::default_shell;
-use crate::make_main::{shell_var, stopchar_map};
+use crate::make_main::stopchar_map;
 use crate::misc::concat;
 use crate::output::fatal;
 use crate::output::msg;
@@ -1769,7 +1769,7 @@ pub unsafe fn target_environment(
     let result_0: *mut *mut ::core::ffi::c_char;
     let mut result: *mut *mut ::core::ffi::c_char;
     let mut invalid: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-    let mut added_shell: i32 = shell_var.value.is_null() as i32;
+    let mut added_shell: i32 = ctx.shell_var.0.get().value.is_null() as i32;
     let mut found_makelevel: i32 = 0;
     let mut found_mflags: i32 = 0;
     let mut found_makeflags: i32 = 0;
@@ -2006,6 +2006,7 @@ pub unsafe fn target_environment(
         v_slot = v_slot.offset(1_i32 as isize);
     }
     if added_shell == 0 {
+        let shell_var = ctx.shell_var.0.get();
         let fresh11 = result;
         result = result.offset(1_i32 as isize);
         *fresh11 = xstrdup(concat(&[shell_var.name, b"=\0" as *const u8 as *const ::core::ffi::c_char, shell_var.value]));

@@ -133,8 +133,7 @@ use crate::file::{enter_file, lookup_file};
 use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
 use crate::load::load_file;
 use crate::make_main::{
-    db_level, default_goal_var, one_shell, opt_snapped_deps, posix_pedantic, second_expansion,
-    stopchar_map,
+    db_level, one_shell, opt_snapped_deps, posix_pedantic, second_expansion, stopchar_map,
 };
 use crate::misc::concat;
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
@@ -2618,7 +2617,7 @@ pub unsafe fn check_specials(
             crate::make_main::set_second_expansion();
         } else if !one_shell() && special == Some(crate::parser::SpecialTarget::OneShell) {
             crate::make_main::set_one_shell();
-        } else if set_default != 0 && *(*default_goal_var).value.offset(0) as i32 == 0 {
+        } else if set_default != 0 && *(*ctx.default_goal_var.0.get()).value.offset(0) as i32 == 0 {
             let mut reject = false;
             // Pattern targets (containing `%`) are never the default goal.
             let nm_bytes = entry.name.as_slice();
