@@ -1963,7 +1963,11 @@ fn tree_gate_catches_mode_only_divergence() {
 #[test]
 #[ignore = "known divergence #468: SIGINT mid-recipe does not delete the in-progress target"]
 fn sigint_deletes_partially_built_target() {
-    fn interrupt_run(make_bin: &Path) -> (Run, bool) {
+    // `Run::code` is `None` for any signal death, so the re-raised signal is
+    // compared separately (Codex review): a port that cleaned up correctly but
+    // re-raised the wrong signal must still fail this fixture.
+    fn interrupt_run(make_bin: &Path) -> (Run, bool, Option<i32>) {
+        use std::os::unix::process::ExitStatusExt;
         let workdir = tempdir();
         std::fs::write(workdir.join("Makefile"), "slow: ; @touch slow && sleep 5\n").unwrap();
         let mut child = Command::new(make_bin)
@@ -1991,15 +1995,20 @@ fn sigint_deletes_partially_built_target() {
         assert!(sent.success(), "kill -INT failed for {make_bin:?}");
         let out = child.wait_with_output().expect("failed to wait for make");
         let survived = target.exists();
-        (out.into(), survived)
+        let terminating_signal = out.status.signal();
+        (out.into(), survived, terminating_signal)
     }
 
     let c = c_make();
     let r = PathBuf::from(RUST_MAKE);
-    let (c_run, c_survived) = interrupt_run(&c);
-    let (r_run, r_survived) = interrupt_run(&r);
-    // Both die by re-raised SIGINT (`code` is None for both); the divergence
-    // shows in stderr and in whether the target survived.
+    let (c_run, c_survived, c_signal) = interrupt_run(&c);
+    let (r_run, r_survived, r_signal) = interrupt_run(&r);
+    // Both must die by the re-raised SIGINT; the cleanup divergence shows in
+    // stderr and in whether the target survived.
+    assert_eq!(
+        c_signal, r_signal,
+        "terminating signal differs after SIGINT (C={c_signal:?}, Rust={r_signal:?})"
+    );
     assert_diff("sigint-cleanup", &c_run, &r_run, &c, &r);
     assert_eq!(
         c_survived, r_survived,
