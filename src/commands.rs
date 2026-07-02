@@ -495,7 +495,10 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     // (top-level) context. No converted *printer* is called with this ctx
     // (see the prefix-free `kill` failure path at the end).
     let ctx = crate::execctx::ExecContext::default();
-    temp_stdin_unlink(&ctx);
+    // The temp-stdin name lives on the *live* context (it is per-run cleanup
+    // state, not part of the default/throwaway one) — reach it through the
+    // CTX_PTR borrow channel like `remove_intermediates` below.
+    crate::make_main::with_exec_context(|live_ctx| temp_stdin_unlink(live_ctx));
     osync_clear();
     jobserver_clear();
 
