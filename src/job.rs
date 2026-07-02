@@ -3,13 +3,12 @@ pub use crate::ffi_types::{
     __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
     ssize_t, time_t, uintmax_t,
 };
-use crate::file::{FileId, FileNode, VariableSet, VariableSetList};
 use crate::file::{
-    cs_finished, cs_running, us_failed, us_question, us_success, CommandState,
-    UpdateStatus,
+    cs_finished, cs_running, us_failed, us_question, us_success, CommandState, UpdateStatus,
 };
-use crate::recipe::RecipeLineFlags;
+use crate::file::{FileId, FileNode, VariableSet, VariableSetList};
 use crate::misc::{xmalloc, xstrdup};
+use crate::recipe::RecipeLineFlags;
 use crate::stdio::FILE;
 use ::c2rust_bitfields;
 use libc::{
@@ -76,8 +75,7 @@ extern "C" {
         __newfd: i32,
     ) -> i32;
 }
-pub use crate::make_main::__sigset_t;
-pub type sigset_t = __sigset_t;
+pub type sigset_t = crate::make_main::SigsetT;
 pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;
 pub type C2RustUnnamed = ::core::ffi::c_uint;
@@ -412,7 +410,7 @@ pub unsafe fn unblock_sigs() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn unblock_all_sigs() {
-    let mut empty: sigset_t = __sigset_t { __val: [0; 16] };
+    let mut empty: sigset_t = crate::make_main::SigsetT { __val: [0; 16] };
     sigemptyset(&raw mut empty);
     sigprocmask(
         SIG_SETMASK,
@@ -659,33 +657,37 @@ unsafe fn child_error(
     show_goal_error(ctx);
     if exit_sig == 0 {
         error(
-        ctx,
-        NILF,
-        l.wrapping_add(INTSTR_LENGTH),
-        b"%s[%s: %s] Error %d%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((pre) as *const ::core::ffi::c_char),
-            FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str((f_name) as *const ::core::ffi::c_char),
-            FmtArg::Int((exit_code) as i32 as i64),
-            FmtArg::Str((post) as *const ::core::ffi::c_char),
-            FmtArg::Str(smode_or_empty(smode).as_ptr())],
-    );
+            ctx,
+            NILF,
+            l.wrapping_add(INTSTR_LENGTH),
+            b"%s[%s: %s] Error %d%s%s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                FmtArg::Str((pre) as *const ::core::ffi::c_char),
+                FmtArg::Str((nm) as *const ::core::ffi::c_char),
+                FmtArg::Str((f_name) as *const ::core::ffi::c_char),
+                FmtArg::Int((exit_code) as i32 as i64),
+                FmtArg::Str((post) as *const ::core::ffi::c_char),
+                FmtArg::Str(smode_or_empty(smode).as_ptr()),
+            ],
+        );
     } else {
         let s: *const ::core::ffi::c_char = strsignal(exit_sig);
         error(
-        ctx,
-        NILF,
-        l.wrapping_add(strlen(s) as size_t)
+            ctx,
+            NILF,
+            l.wrapping_add(strlen(s) as size_t)
                 .wrapping_add(strlen(dump) as size_t),
-        b"%s[%s: %s] %s%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((pre) as *const ::core::ffi::c_char),
-            FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str((f_name) as *const ::core::ffi::c_char),
-            FmtArg::Str((s) as *const ::core::ffi::c_char),
-            FmtArg::Str((dump) as *const ::core::ffi::c_char),
-            FmtArg::Str((post) as *const ::core::ffi::c_char),
-            FmtArg::Str(smode_or_empty(smode).as_ptr())],
-    );
+            b"%s[%s: %s] %s%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                FmtArg::Str((pre) as *const ::core::ffi::c_char),
+                FmtArg::Str((nm) as *const ::core::ffi::c_char),
+                FmtArg::Str((f_name) as *const ::core::ffi::c_char),
+                FmtArg::Str((s) as *const ::core::ffi::c_char),
+                FmtArg::Str((dump) as *const ::core::ffi::c_char),
+                FmtArg::Str((post) as *const ::core::ffi::c_char),
+                FmtArg::Str(smode_or_empty(smode).as_ptr()),
+            ],
+        );
     }
     output_context = ::core::ptr::null_mut::<output>();
 }
@@ -938,13 +940,15 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             }
             if !e.is_null() {
                 error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        (strlen((*c).cmd_name) as size_t).wrapping_add(strlen(e) as size_t),
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str(((*c).cmd_name) as *const ::core::ffi::c_char),
-            FmtArg::Str((e) as *const ::core::ffi::c_char)],
-    );
+                    ctx,
+                    ::core::ptr::null_mut::<Floc>(),
+                    (strlen((*c).cmd_name) as size_t).wrapping_add(strlen(e) as size_t),
+                    b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str(((*c).cmd_name) as *const ::core::ffi::c_char),
+                        FmtArg::Str((e) as *const ::core::ffi::c_char),
+                    ],
+                );
             }
         }
         if exit_sig == 0 && exit_code == 0 {
@@ -1042,8 +1046,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         continue;
                     }
                 }
-                if file_update_status_entry(ctx, (*c).file, (*c).entry) as i32
-                    != us_success as i32
+                if file_update_status_entry(ctx, (*c).file, (*c).entry) as i32 != us_success as i32
                 {
                     delete_child_targets(ctx, c);
                 }
@@ -1145,14 +1148,16 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
     let name = name_buf.as_ptr() as *const ::core::ffi::c_char;
     if jobserver_tokens() == 0 {
         fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
-        b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
+            ctx,
+            ::core::ptr::null_mut::<Floc>(),
+            INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
+            b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Ptr((child) as *const ::core::ffi::c_void),
-            FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+            &[
+                FmtArg::Ptr((child) as *const ::core::ffi::c_void),
+                FmtArg::Str((name) as *const ::core::ffi::c_char),
+            ],
+        );
     }
     if jobserver_enabled() != 0 && jobserver_tokens() > 1 {
         jobserver_release(ctx, 1);
@@ -1182,11 +1187,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
     {
         Some(node) => {
             let g = node.lock().expect("file node poisoned");
-            let pfx = g
-                .recipe
-                .as_ref()
-                .map(|r| r.recipe_prefix)
-                .unwrap_or(b'\t');
+            let pfx = g.recipe.as_ref().map(|r| r.recipe_prefix).unwrap_or(b'\t');
             (g.command_flags, pfx as ::core::ffi::c_char)
         }
         None => (0, b'\t' as ::core::ffi::c_char),
@@ -1290,8 +1291,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
         if !argv.is_null() {
             let os = crate::make_main::opt_output_sync();
             (*child).output.set_syncout(
-                (os != 0 && (os == OUTPUT_SYNC_RECURSE || !(flags & 1 != 0)))
-                    as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint,
+                (os != 0 && (os == OUTPUT_SYNC_RECURSE || !(flags & 1 != 0))) as i32
+                    as ::core::ffi::c_uint as ::core::ffi::c_uint,
             );
             output_context = if (*child).output.syncout() as i32 != 0 {
                 &raw mut (*child).output
@@ -1306,14 +1307,15 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 || !(flags & 2 != 0) && !crate::make_main::opt_run_silent()
             {
                 message(
-        ctx,
-        0,
-        strlen(p) as size_t,
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
-    );
+                    ctx,
+                    0,
+                    strlen(p) as size_t,
+                    b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+                );
             }
-            ctx.commands_started.set(ctx.commands_started.get().wrapping_add(1));
+            ctx.commands_started
+                .set(ctx.commands_started.get().wrapping_add(1));
             if !(*argv.offset(0_i32 as isize)).is_null()
                 && is_bourne_compatible_shell(path_from_cstr(*argv.offset(0_i32 as isize)))
                 && (!(*argv.offset(1_i32 as isize)).is_null()
@@ -1340,9 +1342,9 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 crate::output::output_start(ctx);
                 fflush(stdout);
                 fflush(stderr);
-                (*child).set_good_stdin(
-                    !ctx.good_stdin_used.get() as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint
-                );
+                (*child)
+                    .set_good_stdin(!ctx.good_stdin_used.get() as i32 as ::core::ffi::c_uint
+                        as ::core::ffi::c_uint);
                 if (*child).good_stdin() != 0 {
                     ctx.good_stdin_used.set(true);
                 }
@@ -2275,14 +2277,16 @@ pub unsafe fn child_execute_job(
     }
     if pid < 0 {
         error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        (strlen(*argv.offset(0_i32 as isize)) as size_t)
+            ctx,
+            ::core::ptr::null_mut::<Floc>(),
+            (strlen(*argv.offset(0_i32 as isize)) as size_t)
                 .wrapping_add(strlen(strerror(r)) as size_t),
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(r)) as *const ::core::ffi::c_char)],
-    );
+            b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
+                FmtArg::Str((strerror(r)) as *const ::core::ffi::c_char),
+            ],
+        );
     }
     pid
 }
@@ -2302,8 +2306,8 @@ unsafe fn spawn_child(
     let mut attr: posix_spawnattr_t = posix_spawnattr_t {
         __flags: 0,
         __pgrp: 0,
-        __sd: __sigset_t { __val: [0; 16] },
-        __ss: __sigset_t { __val: [0; 16] },
+        __sd: crate::make_main::SigsetT { __val: [0; 16] },
+        __ss: crate::make_main::SigsetT { __val: [0; 16] },
         __sp: sched_param { sched_priority: 0 },
         __policy: 0,
         __cgroup: 0,
@@ -2325,7 +2329,7 @@ unsafe fn spawn_child(
         return r;
     }
     let _fa_guard = SpawnFileActions(&raw mut fa);
-    let mut mask: sigset_t = __sigset_t { __val: [0; 16] };
+    let mut mask: sigset_t = crate::make_main::SigsetT { __val: [0; 16] };
     sigemptyset(&raw mut mask);
     r = posix_spawnattr_setsigmask(&raw mut attr, &raw mut mask);
     if r != 0 {
@@ -2471,14 +2475,16 @@ pub unsafe fn exec_command(
     match *__errno_location() {
         ENOENT => {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        (strlen(*argv.offset(0_i32 as isize)) as size_t)
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                (strlen(*argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
+                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                ],
+            );
         }
         ENOEXEC => {
             let mut shell: *const ::core::ffi::c_char;
@@ -2512,25 +2518,29 @@ pub unsafe fn exec_command(
             }
             execvp(shell, new_argv as *const *mut ::core::ffi::c_char);
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        (strlen(*new_argv.offset(0_i32 as isize)) as size_t)
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                (strlen(*new_argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*new_argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((*new_argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
+                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                ],
+            );
         }
         _ => {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        (strlen(*argv.offset(0_i32 as isize)) as size_t)
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                (strlen(*argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
+                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                ],
+            );
         }
     }
     pid
@@ -3073,16 +3083,21 @@ unsafe fn construct_command_argv_internal(
         );
     } else {
         fatal(
-        ctx,
-        NILF,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
+            ctx,
+            NILF,
+            (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
                 .wrapping_sub(1)
                 .wrapping_add(INTSTR_LENGTH),
-        b"%s (line %d) Bad shell context (!unixy && !batch_mode_shell)\n\0" as *const u8
+            b"%s (line %d) Bad shell context (!unixy && !batch_mode_shell)\n\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char) as *const ::core::ffi::c_char),
-            FmtArg::Int((3621_i32) as i32 as i64)],
-    );
+            &[
+                FmtArg::Str(
+                    (b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char)
+                        as *const ::core::ffi::c_char,
+                ),
+                FmtArg::Int((3621_i32) as i32 as i64),
+            ],
+        );
     }
     free(new_line as *mut ::core::ffi::c_void);
     new_argv
@@ -3385,10 +3400,16 @@ mod good_stdin_used_tests {
     #[test]
     fn good_stdin_used_tracks_flag() {
         let ctx = ExecContext::default();
-        assert!(!ctx.good_stdin_used.get(), "false means stdin still available");
+        assert!(
+            !ctx.good_stdin_used.get(),
+            "false means stdin still available"
+        );
 
         ctx.good_stdin_used.set(true);
-        assert!(ctx.good_stdin_used.get(), "true means stdin already claimed");
+        assert!(
+            ctx.good_stdin_used.get(),
+            "true means stdin already claimed"
+        );
 
         ctx.good_stdin_used.set(false);
         assert!(!ctx.good_stdin_used.get(), "cleared when the job is reaped");
