@@ -6340,6 +6340,67 @@ mod should_print_dir_diff_tests {
 }
 
 #[cfg(test)]
+mod clean_jobserver_tests {
+    use super::{clean_jobserver, install_default_options_for_test, with_options};
+    use crate::job::JOBSERVER_TOKENS;
+    use std::sync::atomic::Ordering;
+
+    /// The quiet end-of-run path a normal build takes: no live jobserver, no
+    /// held tokens, no master slot count. The auth mirror is still cleared
+    /// unconditionally (`reset_jobserver_mirror`).
+    #[test]
+    fn clears_auth_when_no_jobserver_and_no_master_slots() {
+        install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        let saved = JOBSERVER_TOKENS.load(Ordering::Relaxed);
+        JOBSERVER_TOKENS.store(0, Ordering::Relaxed);
+        with_options(|o| {
+            o.master_job_slots.set(0);
+            *o.jobserver_auth.borrow_mut() = Some("fifo:/tmp/x".to_string());
+        });
+
+        unsafe { clean_jobserver(&ctx, 0) };
+
+        with_options(|o| assert!(o.jobserver_auth.borrow().is_none(), "mirror reset"));
+        JOBSERVER_TOKENS.store(saved, Ordering::Relaxed);
+    }
+
+    /// The master-make token accounting: with `master_job_slots` set and no
+    /// live jobserver pipe (fds are closed sentinels), `jobserver_acquire_all`
+    /// recovers 0 tokens, so `1 + 0` reconciles against a 1-slot master
+    /// silently and mismatches a 2-slot master through the INTERNAL
+    /// diagnostic — both paths must complete and still reset the mirror.
+    #[test]
+    fn master_slot_accounting_matches_and_mismatches() {
+        install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        let saved = JOBSERVER_TOKENS.load(Ordering::Relaxed);
+        JOBSERVER_TOKENS.store(0, Ordering::Relaxed);
+
+        // 1 + acquire_all() == master slots: counts reconcile, no diagnostic.
+        with_options(|o| o.master_job_slots.set(1));
+        unsafe { clean_jobserver(&ctx, 0) };
+
+        // 1 + 0 != 2: the mismatch diagnostic runs (prints INTERNAL to
+        // stderr) and the cleanup still completes.
+        with_options(|o| {
+            o.master_job_slots.set(2);
+            *o.jobserver_auth.borrow_mut() = Some("fifo:/tmp/x".to_string());
+        });
+        unsafe { clean_jobserver(&ctx, 0) };
+
+        with_options(|o| {
+            assert!(
+                o.jobserver_auth.borrow().is_none(),
+                "mirror reset after mismatch"
+            );
+            o.master_job_slots.set(0);
+        });
+        JOBSERVER_TOKENS.store(saved, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
 mod jobserver_and_stdin_cleanup_tests {
     use super::{
         install_default_options_for_test, reset_jobserver, temp_stdin_name, temp_stdin_unlink,
