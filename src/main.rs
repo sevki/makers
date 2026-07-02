@@ -693,6 +693,12 @@ pub struct Options {
     /// `ExecContext` rebuild, which would otherwise wipe a context-owned
     /// list), and `main_0` consumes it around `update_goal_chain`.
     pub goals: ::core::cell::RefCell<Vec<crate::dep::GoalDepNode>>,
+    /// The command-line switch table — the former process-global `switches`
+    /// populated by the `.init_array` startup hook. Owned here because it is
+    /// mutable per-run state: `decode_switches` sets each entry's `specified`
+    /// bit as arguments are decoded, and `define_makeflags` reads those bits
+    /// back when rebuilding MAKEFLAGS.
+    pub switches: ::core::cell::RefCell<[command_switch; 42]>,
 }
 
 impl Options {
@@ -757,6 +763,7 @@ impl Options {
             not_parallel: ::core::cell::Cell::new(false),
             stdio_traced: ::core::cell::Cell::new(false),
             goals: ::core::cell::RefCell::new(Vec::new()),
+            switches: ::core::cell::RefCell::new(switches_template()),
         }
     }
 }
@@ -1217,17 +1224,6 @@ pub static mut shell_var: variable = variable {
 static mut temp_stdin_name: *const ::core::ffi::c_char = ::core::ptr::null();
 pub const TEMP_STDIN_OPT: i32 = CHAR_MAX + 10;
 pub const WARN_OPT: i32 = CHAR_MAX + 13;
-static mut switches: [command_switch; 42] = [command_switch {
-    c: 0,
-    type_0: flag,
-    value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
-    env_toenv_no_makefile_specified: [0; 1],
-    c2rust_padding: [0; 7],
-    noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
-    default_value: ::core::ptr::null::<::core::ffi::c_void>(),
-    long_name: ::core::ptr::null::<::core::ffi::c_char>(),
-    origin: ::core::ptr::null_mut::<variable_origin>(),
-}; 42];
 const LONG_OPTION_ALIASES: [option; 9] = [
     option {
         name: b"quiet\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3584,7 +3580,7 @@ unsafe fn main_0(
 /// The former `static mut getopt_shorts`/`long_options` pair: the tables are
 /// a pure function of `switches`, so each `decode_switches` call builds its
 /// own copies as locals instead of lazily initializing process globals.
-unsafe fn build_getopt_tables() -> ([::core::ffi::c_char; 127], [option; 51]) {
+unsafe fn build_getopt_tables(options: &Options) -> ([::core::ffi::c_char; 127], [option; 51]) {
     let mut getopt_shorts: [::core::ffi::c_char; 127] = [0; 127];
     let mut long_options: [option; 51] = [option {
         name: ::core::ptr::null::<::core::ffi::c_char>(),
@@ -3592,6 +3588,7 @@ unsafe fn build_getopt_tables() -> ([::core::ffi::c_char; 127], [option; 51]) {
         flag: ::core::ptr::null_mut::<i32>(),
         val: 0,
     }; 51];
+    let switches = options.switches.borrow();
     let mut p: *mut ::core::ffi::c_char;
     let mut c: ::core::ffi::c_uint;
     let mut i: ::core::ffi::c_uint;
@@ -3820,7 +3817,7 @@ unsafe fn decode_switches(
     targets.list =
         alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *const ::core::ffi::c_char;
     targets.idx = 0;
-    let (mut getopt_shorts, mut long_options) = build_getopt_tables();
+    let (mut getopt_shorts, mut long_options) = build_getopt_tables(options);
     opterr = (origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint) as i32;
     optind = 0;
     while optind < argc {
@@ -3844,7 +3841,8 @@ unsafe fn decode_switches(
             let fresh9 = &mut (*targets.list.offset(fresh8 as isize));
             *fresh9 = coptarg;
         } else {
-            cs = &raw mut switches as *mut command_switch;
+            let mut switches = options.switches.borrow_mut();
+            cs = switches.as_mut_ptr();
             while (*cs).c != 0 {
                 if (*cs).c == c {
                     let cs_origin = opt_origin_cell(options, (*cs).c);
@@ -4306,6 +4304,7 @@ pub unsafe fn define_makeflags(
     >(*b"-*-command-variables-*-\0");
     let evalref: [::core::ffi::c_char; 21] =
         ::core::mem::transmute::<[u8; 21], [::core::ffi::c_char; 21]>(*b" $(-*-eval-flags-*-)\0");
+    let switches = options.switches.borrow();
     let mut cs: *const command_switch;
     let mut v: *mut variable;
     let mut bufsave: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -4318,7 +4317,7 @@ pub unsafe fn define_makeflags(
         b"-\0" as *const u8 as *const ::core::ffi::c_char,
         1,
     );
-    cs = &raw mut switches as *mut command_switch;
+    cs = switches.as_ptr();
     while (*cs).c != 0 {
         if (*cs).toenv() as i32 != 0
             && (*cs).c <= CHAR_MAX
@@ -4342,7 +4341,7 @@ pub unsafe fn define_makeflags(
         b" --\0" as *const u8 as *const ::core::ffi::c_char as *const ::core::ffi::c_void,
         3,
     );
-    cs = &raw mut switches as *mut command_switch;
+    cs = switches.as_ptr();
     while (*cs).c != 0 {
         if (*cs).toenv() as i32 != 0 && (makefile == 0 || (*cs).no_makefile() == 0) {
             match (*cs).type_0 as ::core::ffi::c_uint {
@@ -4863,8 +4862,13 @@ pub fn main() {
         ) as i32)
     }
 }
-unsafe extern "C" fn run_static_initializers() {
-    switches = [
+/// The command-line switch table, freshly built with its real contents — the
+/// former `.init_array` `run_static_initializers` body that populated the
+/// process-global `switches` at startup. Each `Options` owns its own
+/// mutable copy (the `specified` bit is set during argument decoding), so two
+/// sessions in one process no longer share switch state.
+fn switches_template() -> [command_switch; 42] {
+    [
         {
             let mut init = command_switch {
                 env_toenv_no_makefile_specified: [0; 1],
@@ -5627,13 +5631,8 @@ unsafe extern "C" fn run_static_initializers() {
             init.set_specified(0);
             init
         },
-    ];
+    ]
 }
-#[used]
-#[cfg_attr(target_os = "linux", link_section = ".init_array")]
-#[cfg_attr(target_os = "windows", link_section = ".CRT$XIB")]
-#[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
-static INIT_ARRAY: [unsafe extern "C" fn(); 1] = [run_static_initializers];
 
 #[cfg(test)]
 mod default_load_average_tests {
