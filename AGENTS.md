@@ -55,6 +55,13 @@ When choosing what to clean up next, prefer these, in order. Every change
 must preserve behavior and be differential-tested against the in-tree C
 oracle (`./make`).
 
+**Regression fixes land test-first.** When a C↔Rust output divergence is
+found, the history must prove it: first a commit adding a differential
+test that *fails* against the broken code (state that in the commit
+message), then a separate commit with the fix that turns it green. Never
+land the fix and the test in one commit — a test that has never been seen
+red proves nothing.
+
 **Always raise coverage.** Every pass must include tests that exercise the
 code it touches — a `#[cfg(test)]` unit test for the converted function
 and/or an integration case in `tests/rs_integration.rs` that
