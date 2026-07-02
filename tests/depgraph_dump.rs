@@ -49,10 +49,11 @@ fn dump_graph(dump_name: &str) -> Dump {
     let fixture = manifest_dir().join("tests/fixtures/depgraph.mk");
     let workdir = tempdir();
     std::fs::copy(&fixture, workdir.join("Makefile")).expect("copy fixture");
-    // The pattern rule's sources exist, so `-n` walks the whole graph and
+    // The pattern rules' sources exist, so `-n` walks the whole graph and
     // exits 0 (commands are printed, never run).
     std::fs::write(workdir.join("main.c"), "").expect("write main.c");
     std::fs::write(workdir.join("util.c"), "").expect("write util.c");
+    std::fs::write(workdir.join("gen.y"), "").expect("write gen.y");
 
     let pre = workdir.join(dump_name);
     let post = workdir.join(format!("post-{dump_name}"));
@@ -134,16 +135,22 @@ fn post_walk_dump_shows_resolved_graph_with_provenance() {
     // The update walk ran pattern matching: sources are now real nodes...
     assert!(post.contains("([\"main.c\"])"), "resolved source: {post}");
     assert!(post.contains("([\"util.c\"])"), "resolved source: {post}");
+    assert!(post.contains("([\"gen.y\"])"), "resolved source: {post}");
     // ...the derived objects are targets with recipes...
     assert!(post.contains("[\"main.o\"]"), "derived target: {post}");
     assert!(post.contains("[\"util.o\"]"), "derived target: {post}");
-    // ...and each carries a DerivedBy provenance edge to `%.o: %.c`.
+    // ...and every derived output carries a DerivedBy provenance edge —
+    // including gen.tab.h, the multi-target rule's peer output that only the
+    // also_make loop creates (never requested directly).
+    assert!(post.contains("gen.tab.h"), "peer output present: {post}");
     assert_eq!(
         post.matches("-.->|rule|").count(),
-        2,
-        "one provenance edge per derived object: {post}"
+        4,
+        "main.o, util.o via `%.o: %.c`; gen.tab.c and its peer gen.tab.h \
+         via `%.tab.c %.tab.h: %.y`: {post}"
     );
     assert!(post.contains("[[\"%.o: %.c\"]]"), "{post}");
+    assert!(post.contains("[[\"%.tab.c %.tab.h: %.y\"]]"), "{post}");
 
     // Post-walk dump is deterministic too.
     let again = dump_graph("graph.md");
