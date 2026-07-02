@@ -685,6 +685,15 @@ pub struct Options {
     /// flushes output), so both ends must resolve to `main_0`'s real run state,
     /// not the throwaway.
     pub stdio_traced: ::core::cell::Cell<bool>,
+    /// The command-line goal targets, in order — the former `static mut goals`
+    /// (itself the pointer-free replacement for the c2rust `*mut GoalDep
+    /// goals`/`lastgoal` chain). Owned `GoalDepNode`s; the target file is
+    /// `dep.file: Option<FileId>`. Lives on `Options` because goals *are*
+    /// command-line state: `decode_switches`/`handle_non_switch_argument`
+    /// populate it during argument decoding (before the build-phase
+    /// `ExecContext` rebuild, which would otherwise wipe a context-owned
+    /// list), and `main_0` consumes it around `update_goal_chain`.
+    pub goals: ::core::cell::RefCell<Vec<crate::dep::GoalDepNode>>,
 }
 
 impl Options {
@@ -748,6 +757,7 @@ impl Options {
             one_shell: ::core::cell::Cell::new(false),
             not_parallel: ::core::cell::Cell::new(false),
             stdio_traced: ::core::cell::Cell::new(false),
+            goals: ::core::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -1347,36 +1357,6 @@ static mut long_option_aliases: [option; 9] = [
         val: 'f' as i32,
     },
 ];
-/// The command-line goal targets, in order — the pointer-free replacement for
-/// the c2rust `*mut GoalDep goals`/`lastgoal` chain. Owned `GoalDepNode`s; the
-/// target file is `dep.file: Option<FileId>`.
-static mut goals: Vec<crate::dep::GoalDepNode> = Vec::new();
-
-fn goals_is_empty() -> bool {
-    unsafe { addr_of!(goals).as_ref().expect("goals missing").is_empty() }
-}
-
-fn goals_push(goal: crate::dep::GoalDepNode) {
-    unsafe {
-        addr_of_mut!(goals)
-            .as_mut()
-            .expect("goals missing")
-            .push(goal)
-    }
-}
-
-fn goals_mark_last_wait_here() {
-    unsafe {
-        if let Some(last) = addr_of_mut!(goals)
-            .as_mut()
-            .expect("goals missing")
-            .last_mut()
-        {
-            last.dep.wait_here = true;
-        }
-    }
-}
-
 /// The display name of a goal: its `dep.name` if set, else the name of its
 /// target file (raw bytes).
 fn goal_name_bytes(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNode) -> Vec<u8> {
@@ -3486,7 +3466,7 @@ unsafe fn main_0(
         }
     }
     temp_stdin_unlink(&ctx);
-    if goals_is_empty() {
+    if options.goals.borrow().is_empty() {
         let mut p_6: *mut ::core::ffi::c_char;
         if (*default_goal_var).recursive() != 0 {
             p_6 = expand_string_buf(
@@ -3531,11 +3511,11 @@ unsafe fn main_0(
                 }
             }
             if let Some(fid) = f_6 {
-                goals_push(goaldep_for_file(fid));
+                options.goals.borrow_mut().push(goaldep_for_file(fid));
             }
         }
     }
-    if goals_is_empty() {
+    if options.goals.borrow().is_empty() {
         let v_2: *mut variable = lookup_variable(
             &ctx,
             b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3564,25 +3544,13 @@ unsafe fn main_0(
     }
     // Diagnostics tap (MAKERS_DEPGRAPH): snapshot the fully-read graph before
     // shuffling touches goal order and before the update walk mutates state.
-    unsafe {
-        crate::depgraph::dump_graph_if_requested(
-            &ctx,
-            addr_of!(goals).as_ref().expect("goals missing"),
-        );
-    }
-    unsafe {
-        crate::shuffle::shuffle_goals_recursive(
-            &ctx,
-            addr_of_mut!(goals).as_mut().expect("goals missing"),
-        );
-    }
+    crate::depgraph::dump_graph_if_requested(&ctx, &options.goals.borrow());
+    crate::shuffle::shuffle_goals_recursive(&ctx, &mut options.goals.borrow_mut());
     if 0x1_i32 & db_level() != 0 {
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
-    match unsafe { update_goal_chain(&ctx, addr_of_mut!(goals).as_mut().expect("goals missing")) }
-        as ::core::ffi::c_uint
-    {
+    match update_goal_chain(&ctx, &mut options.goals.borrow_mut()) as ::core::ffi::c_uint {
         2 => {
             makefile_status = MAKE_TROUBLE;
         }
@@ -3593,12 +3561,7 @@ unsafe fn main_0(
     }
     // Diagnostics tap (MAKERS_DEPGRAPH_POST): snapshot the resolved graph —
     // implicit rules matched, provenance recorded — now that the walk is done.
-    unsafe {
-        crate::depgraph::dump_graph_post_if_requested(
-            &ctx,
-            addr_of!(goals).as_ref().expect("goals missing"),
-        );
-    }
+    crate::depgraph::dump_graph_post_if_requested(&ctx, &options.goals.borrow());
     if ctx.clock_skew_detected.get() {
         error(
             &ctx,
@@ -3687,6 +3650,7 @@ pub unsafe fn init_switches() {
 }
 unsafe fn handle_non_switch_argument(
     ctx: &crate::execctx::ExecContext,
+    options: &Options,
     arg: *const ::core::ffi::c_char,
     origin: variable_origin,
 ) -> ::core::ffi::c_uint {
@@ -3725,7 +3689,7 @@ unsafe fn handle_non_switch_argument(
         if let Some(node) = ctx.filenodes.get(f) {
             node.lock().expect("file node poisoned").cmd_target = true;
         }
-        goals_push(goaldep_for_file(f));
+        options.goals.borrow_mut().push(goaldep_for_file(f));
         // NUL-terminated target name for the MAKECMDGOALS accumulation below.
         let mut fname_c = fname_bytes.clone();
         fname_c.push(0);
@@ -4140,9 +4104,11 @@ unsafe fn decode_switches(
     a = targets.list;
     while !(*a).is_null() {
         let prior_found_wait: i32 = found_wait as i32;
-        found_wait = handle_non_switch_argument(ctx, *a, origin);
+        found_wait = handle_non_switch_argument(ctx, options, *a, origin);
         if prior_found_wait != 0 {
-            goals_mark_last_wait_here();
+            if let Some(last) = options.goals.borrow_mut().last_mut() {
+                last.dep.wait_here = true;
+            }
         }
         a = a.offset(1_i32 as isize);
     }
