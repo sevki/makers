@@ -218,6 +218,17 @@ pub struct ExecContext {
     /// across later `.DEFAULT_GOAL` assignments.
     pub default_goal_var: DefaultGoalVar,
 
+    /// The set of fatal signals make traps, the former main.rs `pub static mut
+    /// fatal_signal_set` — built once during startup (`sigemptyset`, then one
+    /// `sigaddset` per signal `install_fatal_signal` traps) and passed to
+    /// `sigprocmask` by job.rs's `block_sigs`/`unblock_sigs` to keep child
+    /// bookkeeping atomic against the fatal-signal handler. Written before the
+    /// `main_0` build-phase context rebuild and read during the build, so it is
+    /// carried across the rebuild. `SigsetT` is a plain `Copy` record; sites
+    /// copy it out of the `Cell`, hand the local to the libc call, and (for
+    /// the setup writes) store it back.
+    pub fatal_signal_set: FatalSignalSet,
+
     /// The directory cache's name-keyed table (`struct directory` entries), the
     /// former file-scoped `static mut dir::directories`. Owned per-run so there
     /// is no process-global hash table; `find_directory` and
@@ -541,6 +552,28 @@ impl Default for DefaultGoalVar {
     }
 }
 
+/// A `Cell<SigsetT>` holding [`ExecContext::fatal_signal_set`], defaulting to
+/// the empty set the former `static mut` initializer produced.
+#[derive(Clone)]
+pub struct FatalSignalSet(pub ::core::cell::Cell<crate::make_main::SigsetT>);
+
+impl Default for FatalSignalSet {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(crate::make_main::SigsetT {
+            __val: [0; 16],
+        }))
+    }
+}
+
+impl ::core::fmt::Debug for FatalSignalSet {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        // `SigsetT` has no `Debug`; the raw mask words identify the set.
+        f.debug_tuple("FatalSignalSet")
+            .field(&self.0.get().__val)
+            .finish()
+    }
+}
+
 impl ExecContext {
     /// Build a context over the given immutable [`Config`]. Mutable per-run
     /// caches start at their zero defaults.
@@ -730,6 +763,43 @@ mod tests {
         // `default_goal_var` is only defined after the rebuild, so the rebuilt
         // context correctly starts without one.
         assert!(rebuilt.default_goal_var.0.get().is_null());
+    }
+
+    /// The fatal-signal set (the former main.rs `pub static mut
+    /// fatal_signal_set`) starts empty, holds the mask words the startup
+    /// `sigaddset` calls write, and survives the `main_0` build-phase
+    /// carry-over so `block_sigs`/`unblock_sigs` mask the real set during the
+    /// build.
+    #[test]
+    fn fatal_signal_set_starts_empty_and_survives_carry_over() {
+        let ctx = ExecContext::default();
+        assert!(ctx.fatal_signal_set.0.get().__val.iter().all(|&w| w == 0));
+        assert_eq!(
+            format!("{:?}", ctx.fatal_signal_set),
+            format!("FatalSignalSet({:?})", [0u64; 16])
+        );
+
+        // Simulate `install_fatal_signal` adding SIGINT (bit 1 of word 0, as
+        // `sigaddset(set, 2)` does on Linux), then the rebuild hand-off.
+        let mut populated = ExecContext::default();
+        let mut set = populated.fatal_signal_set.0.get();
+        set.__val[0] |= 1 << 1;
+        populated.fatal_signal_set.0.set(set);
+
+        let carried = ::core::mem::take(&mut populated.fatal_signal_set);
+        let rebuilt = ExecContext {
+            fatal_signal_set: carried,
+            ..ExecContext::new(Config { makelevel: 1 })
+        };
+        assert_eq!(rebuilt.fatal_signal_set.0.get().__val[0], 1 << 1);
+        // The source field reset to empty; a fresh context inherits nothing.
+        assert!(populated
+            .fatal_signal_set
+            .0
+            .get()
+            .__val
+            .iter()
+            .all(|&w| w == 0));
     }
 
     /// The `.NOTINTERMEDIATE`/`.SECONDARY` latches start unset and are per-run

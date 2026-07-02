@@ -267,7 +267,7 @@ use crate::file::lookup_file;
 use crate::findprog::find_in_given_path;
 use crate::function::{shell_completed, shell_function_pid};
 use crate::make_main::{
-    db_level, die, fatal_signal_set, not_parallel, one_shell, posix_pedantic, stopchar_map,
+    db_level, die, not_parallel, one_shell, posix_pedantic, stopchar_map,
 };
 use crate::output::{
     error, fatal, message, output_context, perror_with_name, pfatal_with_name, FmtArg,
@@ -387,10 +387,11 @@ unsafe fn path_from_cstr<'a>(ptr: *const ::core::ffi::c_char) -> &'a ::std::path
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn block_sigs() {
+pub unsafe fn block_sigs(ctx: &crate::execctx::ExecContext) {
+    let set = ctx.fatal_signal_set.0.get();
     sigprocmask(
         SIG_BLOCK,
-        &raw mut fatal_signal_set,
+        &raw const set,
         ::core::ptr::null_mut::<sigset_t>(),
     );
 }
@@ -398,10 +399,11 @@ pub unsafe fn block_sigs() {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn unblock_sigs() {
+pub unsafe fn unblock_sigs(ctx: &crate::execctx::ExecContext) {
+    let set = ctx.fatal_signal_set.0.get();
     sigprocmask(
         SIG_UNBLOCK,
-        &raw mut fatal_signal_set,
+        &raw const set,
         ::core::ptr::null_mut::<sigset_t>(),
     );
 }
@@ -1039,7 +1041,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                             as ::core::ffi::c_uint,
                     );
                     start_job_command(ctx, c);
-                    unblock_sigs();
+                    unblock_sigs(ctx);
                     if file_command_state_entry(ctx, (*c).file, (*c).entry) as i32
                         == cs_running as i32
                     {
@@ -1058,7 +1060,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         if handling_fatal_signal == 0 {
             notice_finished_file(ctx, (*c).file, (*c).entry);
         }
-        block_sigs();
+        block_sigs(ctx);
         if (*c).pid > 0 && 0x4_i32 & db_level() != 0 {
             printf(
                 b"Removing child %p PID %s%s from chain.\n\0" as *const u8
@@ -1085,7 +1087,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             children = (*c).next;
         }
         free_child(ctx, c);
-        unblock_sigs();
+        unblock_sigs(ctx);
         if err == 0
             && child_failed != 0
             && dontcare == 0
@@ -1395,7 +1397,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     }
                 }
                 if run_local {
-                    block_sigs();
+                    block_sigs(ctx);
                     (*child).set_remote(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                     jobserver_pre_child((flags & 1 != 0) as i32);
                     (*child).pid = child_execute_job(
@@ -1480,7 +1482,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
                 (*c).set_jobslot(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             }
             children = c;
-            unblock_sigs();
+            unblock_sigs(ctx);
         }
         0 => {
             set_file_update_status_entry(ctx, f, e, UpdateStatus::Success);
