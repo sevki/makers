@@ -4765,13 +4765,13 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
     if jobserver_enabled() != 0 && jobserver_tokens() != 0 {
         if status != 2 {
             error(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                INTSTR_LENGTH,
-                b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        INTSTR_LENGTH,
+        b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
                     as *const ::core::ffi::c_char,
-                &[FmtArg::Uint((jobserver_tokens()) as u32 as u64)],
-            );
+        &[FmtArg::Uint((jobserver_tokens()) as u32 as u64)],
+    );
         } else {
             loop {
                 JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
@@ -4788,16 +4788,14 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
             (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all(ctx));
         if tokens != master_slots {
             error(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                INTSTR_LENGTH.wrapping_mul(2),
-                b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
+        ctx,
+        ::core::ptr::null_mut::<Floc>(),
+        INTSTR_LENGTH.wrapping_mul(2),
+        b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
                     as *const u8 as *const ::core::ffi::c_char,
-                &[
-                    FmtArg::Uint((tokens) as u32 as u64),
-                    FmtArg::Uint((master_slots) as u32 as u64),
-                ],
-            );
+        &[FmtArg::Uint((tokens) as u32 as u64),
+            FmtArg::Uint((master_slots) as u32 as u64)],
+    );
         }
     }
     reset_jobserver_mirror();
