@@ -339,8 +339,7 @@ pub fn pattern_search(
     let mut cname = name.clone();
     cname.push(0);
     // SAFETY: NUL-terminated.
-    let is_ar =
-        unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast())) };
+    let is_ar = unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast())) };
     let pathlen: usize = if archive != 0 || is_ar {
         0
     } else {
@@ -426,7 +425,16 @@ pub fn pattern_search(
     }
 
     if tryrules.is_empty() {
-        return finish_no_rule(ctx, depth, &full_name, found_compat_rule, file, archive, recursions, allow_compat_rules);
+        return finish_no_rule(
+            ctx,
+            depth,
+            &full_name,
+            found_compat_rule,
+            file,
+            archive,
+            recursions,
+            allow_compat_rules,
+        );
     }
 
     // Shortest-stem (most specific) candidates first, stable by order.
@@ -740,7 +748,16 @@ pub fn pattern_search(
     }
 
     if !matched {
-        return finish_no_rule(ctx, depth, &full_name, found_compat_rule, file, archive, recursions, allow_compat_rules);
+        return finish_no_rule(
+            ctx,
+            depth,
+            &full_name,
+            found_compat_rule,
+            file,
+            archive,
+            recursions,
+            allow_compat_rules,
+        );
     }
 
     let found = found_rule_idx.expect("matched implies a found rule");
@@ -783,9 +800,7 @@ pub fn pattern_search(
             // keep the name only.
             nd.file = None;
         } else {
-            nd.file = Some(
-                lookup_file(ctx, &pe.name).unwrap_or_else(|| enter_file(ctx, &pe.name)),
-            );
+            nd.file = Some(lookup_file(ctx, &pe.name).unwrap_or_else(|| enter_file(ctx, &pe.name)));
         }
         let rule_terminal = with_pattern_rules(|r| r[found].terminal);
         if pe.file.is_none() && rule_terminal {
@@ -820,13 +835,16 @@ pub fn pattern_search(
     }
     let stem_string = Some(String::from_utf8_lossy(&stem_bytes).into_owned());
 
-    // Attach the recipe and stem, mark target.
+    // Attach the recipe and stem, mark target, and record which rule won
+    // (semantic id, so `in_use` search scratch doesn't perturb it).
     let found_recipe: Option<Recipe> = with_pattern_rules(|r| r[found].cmds.clone());
+    let found_rule_id = with_pattern_rules(|r| crate::rule::RuleId::from(&r[found]));
     if let Some(node) = ctx.filenodes.get(file) {
         let mut n = node.lock().expect("file node lock poisoned");
         n.stem = stem_string.clone();
         n.recipe = found_recipe;
         n.is_target = true;
+        n.matched_rule = Some(found_rule_id);
     }
 
     // Inherit .PRECIOUS / .NOTINTERMEDIATE from the target pattern file.
@@ -939,7 +957,8 @@ fn merge_intermediate(ctx: &crate::execctx::ExecContext, id: FileId, pe: &PatDep
         }
         if let Some(node) = ctx.filenodes.get(fid) {
             let mut fn_ = node.lock().expect("file node lock poisoned");
-            fn_.tried_implicit = fn_.tried_implicit || changed_flags.get(i).copied().unwrap_or(false);
+            fn_.tried_implicit =
+                fn_.tried_implicit || changed_flags.get(i).copied().unwrap_or(false);
         }
     }
 }
@@ -1074,7 +1093,10 @@ fn second_expansion_deps(
         // expanding. BOUNDARY: the variable layer is still pointer-based.
         if !*file_vars_initialized {
             let stem_slice: &[u8] = {
-                let nul = stem_str.iter().position(|&b| b == 0).unwrap_or(stem_str.len());
+                let nul = stem_str
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(stem_str.len());
                 &stem_str[..nul]
             };
             crate::variable::initialize_file_variables(ctx, file, 0);
