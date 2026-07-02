@@ -7,8 +7,13 @@
 //! [`FileNode`]/[`DepNode`]/[`GoalDepNode`]:
 //!
 //! * **Nodes** are files (keyed by the same name-derived [`FileId`] the arena
-//!   `ExecContext::filenodes` interns under) plus one synthetic
-//!   [`NodeId::Root`] standing for "the command line".
+//!   `ExecContext::filenodes` interns under), pattern rules (keyed by
+//!   semantic [`RuleId`], with [`EdgeKind::DerivedBy`] provenance edges
+//!   linking each matched target to the rule that produced it), plus one
+//!   synthetic [`NodeId::Root`] standing for "the command line". Recipes are
+//!   deliberately *payload*, not nodes: a recipe has no identity apart from
+//!   its target(s), and the one structural fact it implies — several targets
+//!   sharing one invocation — is the [`EdgeKind::AlsoMake`] edge.
 //! * **Edges** are typed ([`EdgeKind`]): a prerequisite or `also_make` edge
 //!   carries its [`DepId`] so the full [`DepNode`] payload (flags, stem,
 //!   order-only, `.WAIT`) stays reachable; a goal edge from [`NodeId::Root`]
@@ -33,7 +38,9 @@
 //! order ([`DepGraph::topo_order`]), reverse direction
 //! ([`DepGraph::affected_by`], [`DepGraph::dependents`]), cycle reporting
 //! ([`DepGraph::find_cycle`], the graph-level form of make's "Circular X <- Y
-//! dependency dropped"), and Graphviz output ([`DepGraph::to_dot`]).
+//! dependency dropped"), and rendering — Graphviz ([`DepGraph::to_dot`]) and
+//! Mermaid ([`DepGraph::to_mermaid`], which GitHub renders natively in PRs;
+//! `docs/depgraph-sample.md` is a test-maintained snapshot of it).
 //!
 //! # salsa integration
 //!
@@ -59,6 +66,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::dep::{DepId, DepNode, GoalDepId, GoalDepNode};
 use crate::execctx::ExecContext;
 use crate::file::{FileId, FileNode};
+use crate::rule::{Rule, RuleId};
 
 /// A node in the dependency graph: a file, or the synthetic root standing for
 /// "the command line" (whose out-edges are the goals, in command-line order).
@@ -72,6 +80,9 @@ pub enum NodeId {
     /// A file/target node, keyed exactly as the `ExecContext::filenodes` arena
     /// keys it (name-derived `FileId`).
     File(FileId),
+    /// A pattern (implicit) rule from the rule database, keyed by its
+    /// semantic content hash (see the `ContentHash` impl in `rule.rs`).
+    Rule(RuleId),
 }
 
 /// What a graph edge *is*. Prerequisite/also-make edges carry the [`DepId`] of
@@ -92,6 +103,12 @@ pub enum EdgeKind {
     Renamed,
     /// `intermediate -> parent` in an implicit-rule chain.
     Parent,
+    /// `file -> rule`: provenance — this target's deps/recipe came from
+    /// matching that pattern rule (`pattern_search`).
+    DerivedBy(RuleId),
+    /// `rule -> pattern dep`: the rule-database view of a rule's own
+    /// prerequisite patterns (e.g. `%.o: %.c` — target `%.c`).
+    RulePrerequisite(DepId),
 }
 
 /// A directed edge to `to`. The source is the key the edge is stored under in
@@ -129,6 +146,12 @@ pub struct DepGraph {
     deps: FxHashMap<DepId, DepNode>,
     /// Interned goal payloads.
     goals: FxHashMap<GoalDepId, GoalDepNode>,
+    /// Pattern-rule payloads, keyed by semantic content hash.
+    rules: FxHashMap<RuleId, Rule>,
+    /// Display names learned from dep edges for targets never added as file
+    /// nodes (pattern prerequisites like `%.c`, not-yet-entered files) —
+    /// diagnostics fallback only, never identity.
+    names: FxHashMap<FileId, Vec<u8>>,
     /// Forward adjacency. Order within a `Vec` is prerequisite order and is
     /// semantic; do not sort.
     edges: FxHashMap<NodeId, Vec<Edge>>,
@@ -223,6 +246,7 @@ impl DepGraph {
     pub fn add_goal(&mut self, goal: GoalDepNode) -> GoalDepId {
         let id = GoalDepId::from(&goal);
         let target = Self::dep_target(&goal.dep);
+        self.learn_name(target, &goal.dep);
         self.goals.insert(id, goal);
         self.add_edge(
             NodeId::Root,
@@ -253,6 +277,50 @@ impl DepGraph {
         id
     }
 
+    /// Insert a pattern rule and wire its [`EdgeKind::RulePrerequisite`]
+    /// edges (targets are the rule's own dep patterns, e.g. `%.c`, resolved
+    /// by name hash like any other dep). The rule's printable definition is
+    /// computed eagerly so [`DepGraph::display_name`] can label the node
+    /// without mutation. Re-adding a rule (same semantic content = same
+    /// [`RuleId`]) replaces its payload and out-edges. Which *files* a rule
+    /// produced is separate provenance — see
+    /// [`DepGraph::record_rule_match`].
+    pub fn add_rule(&mut self, mut rule: Rule) -> RuleId {
+        let id = RuleId::from(&rule);
+        let _ = rule.rule_defn();
+        let from = NodeId::Rule(id);
+        self.remove_out_edges(from);
+        self.edges.entry(from).or_default();
+        for dep in rule.deps.clone() {
+            let target = Self::dep_target(&dep);
+            self.learn_name(target, &dep);
+            let dep_id = self.intern_dep(&dep);
+            self.add_edge(
+                from,
+                Edge {
+                    to: NodeId::File(target),
+                    kind: EdgeKind::RulePrerequisite(dep_id),
+                },
+            );
+        }
+        self.rules.insert(id, rule);
+        id
+    }
+
+    /// Record that `file`'s implicit-rule match resolved to `rule`
+    /// (provenance from `pattern_search`): wires a [`EdgeKind::DerivedBy`]
+    /// edge, so "which rule built this" and "which files did this rule
+    /// build" are both plain adjacency queries.
+    pub fn record_rule_match(&mut self, file: FileId, rule: RuleId) {
+        self.add_edge(
+            NodeId::File(file),
+            Edge {
+                to: NodeId::Rule(rule),
+                kind: EdgeKind::DerivedBy(rule),
+            },
+        );
+    }
+
     /// A dep edge's target file id: the resolved `dep.file` when the reader
     /// bound one, else derived from the dep's name — the same name-hash the
     /// arena would intern that file under, so the edge and a later
@@ -260,6 +328,16 @@ impl DepGraph {
     fn dep_target(dep: &DepNode) -> FileId {
         dep.file
             .unwrap_or_else(|| FileId::from_bytes(dep.name.as_bytes()))
+    }
+
+    /// Remember a dep-derived display name for a target that may never be
+    /// added as a file node (see the `names` field).
+    fn learn_name(&mut self, target: FileId, dep: &DepNode) {
+        if !dep.name.is_empty() {
+            self.names
+                .entry(target)
+                .or_insert_with(|| dep.name.as_bytes().to_vec());
+        }
     }
 
     fn intern_dep(&mut self, dep: &DepNode) -> DepId {
@@ -270,6 +348,7 @@ impl DepGraph {
 
     fn wire_dep(&mut self, from: NodeId, dep: &DepNode, also_make: bool) {
         let target = Self::dep_target(dep);
+        self.learn_name(target, dep);
         let id = self.intern_dep(dep);
         let kind = if also_make {
             EdgeKind::AlsoMake(id)
@@ -316,6 +395,41 @@ impl DepGraph {
 
     pub fn goal(&self, id: GoalDepId) -> Option<&GoalDepNode> {
         self.goals.get(&id)
+    }
+
+    pub fn rule(&self, id: RuleId) -> Option<&Rule> {
+        self.rules.get(&id)
+    }
+
+    pub fn rules(&self) -> impl Iterator<Item = (RuleId, &Rule)> {
+        self.rules.iter().map(|(&id, rule)| (id, rule))
+    }
+
+    /// The rule `f` was derived from, if provenance was recorded
+    /// ([`DepGraph::record_rule_match`]).
+    pub fn rule_for(&self, f: FileId) -> Option<RuleId> {
+        self.edges_from(NodeId::File(f)).iter().find_map(|edge| {
+            let EdgeKind::DerivedBy(id) = edge.kind else {
+                return None;
+            };
+            Some(id)
+        })
+    }
+
+    /// Every file recorded as derived from `rule`, deduplicated, first-seen
+    /// order — "what did this pattern rule actually build".
+    pub fn files_derived_by(&self, rule: RuleId) -> Vec<FileId> {
+        let mut seen = FxHashSet::default();
+        self.redges
+            .get(&NodeId::Rule(rule))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|&source| match source {
+                NodeId::File(id) if seen.insert(id) => Some(id),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn files(&self) -> impl Iterator<Item = (FileId, &FileNode)> {
@@ -399,15 +513,23 @@ impl DepGraph {
             .collect()
     }
 
-    /// Human-readable node name for diagnostics/DOT: the file's name as
-    /// written, `<root>` for the root, or the id when the file was never
-    /// added.
+    /// Human-readable node name for diagnostics/DOT/Mermaid: the file's name
+    /// as written (falling back to a dep-learned name for targets never
+    /// added, then to the id), `<root>` for the root, and the printable
+    /// definition (`%.o: %.c`) for rules.
     pub fn display_name(&self, n: NodeId) -> String {
         match n {
             NodeId::Root => "<root>".to_string(),
             NodeId::File(id) => match self.files.get(&id) {
                 Some(node) => String::from_utf8_lossy(&node.name).into_owned(),
-                None => format!("<file {id}>"),
+                None => match self.names.get(&id) {
+                    Some(name) => String::from_utf8_lossy(name).into_owned(),
+                    None => format!("<file {id}>"),
+                },
+            },
+            NodeId::Rule(id) => match self.rules.get(&id).and_then(|rule| rule.defn.as_ref()) {
+                Some(defn) => String::from_utf8_lossy(defn).into_owned(),
+                None => format!("<rule {id}>"),
             },
         }
     }
@@ -611,6 +733,7 @@ impl DepGraph {
                     }
                     None => " [shape=ellipse, color=gray]".to_string(),
                 },
+                NodeId::Rule(_) => " [shape=component, color=blue]".to_string(),
             };
             out.push_str(&format!("  \"{name}\"{attrs};\n"));
         }
@@ -630,12 +753,99 @@ impl DepGraph {
                     EdgeKind::AlsoMake(_) => " [style=dotted, label=\"also\"]",
                     EdgeKind::Renamed => " [color=gray, label=\"renamed\"]",
                     EdgeKind::Parent => " [color=gray, label=\"parent\"]",
+                    EdgeKind::DerivedBy(_) => " [color=blue, style=dashed, label=\"rule\"]",
+                    EdgeKind::RulePrerequisite(_) => " [color=blue, style=dotted]",
                 };
                 out.push_str(&format!("  \"{from_name}\" -> \"{to_name}\"{attrs};\n"));
             }
         }
         out.push_str("}\n");
         out
+    }
+
+    /// Mermaid `flowchart` rendering of the whole graph, deterministic across
+    /// runs. GitHub renders Mermaid natively in Markdown (PR descriptions,
+    /// comments, and `.md` files), so this is the "paste the build graph into
+    /// the PR" format. Same visual vocabulary as [`DepGraph::to_dot`]: goal
+    /// edges thick, order-only/`also_make` dotted with labels, rule
+    /// provenance dotted; the root is a rhombus, recipe-bearing targets are
+    /// rectangles, plain files are stadiums, rules are subroutine boxes, and
+    /// phony targets get a dashed class.
+    pub fn to_mermaid(&self) -> String {
+        // Mermaid quoted labels: only `"` is problematic; `#quot;` is the
+        // documented escape.
+        fn escape(name: &str) -> String {
+            name.replace('"', "#quot;")
+        }
+
+        let ids: Vec<NodeId> = self.node_ids().into_iter().collect();
+        let key = |n: NodeId| {
+            let idx = ids.binary_search(&n).expect("node listed");
+            format!("n{idx}")
+        };
+
+        let mut out = String::from("flowchart LR\n");
+        let mut phony: Vec<String> = Vec::new();
+        let mut rules: Vec<String> = Vec::new();
+        for &n in &ids {
+            let name = escape(&self.display_name(n));
+            let shape = match n {
+                NodeId::Root => format!("{{\"{name}\"}}"),
+                NodeId::File(id) => match self.files.get(&id) {
+                    Some(node) => {
+                        if node.phony {
+                            phony.push(key(n));
+                        }
+                        if node.recipe.is_some() {
+                            format!("[\"{name}\"]")
+                        } else {
+                            format!("([\"{name}\"])")
+                        }
+                    }
+                    None => format!("([\"{name}\"])"),
+                },
+                NodeId::Rule(_) => {
+                    rules.push(key(n));
+                    format!("[[\"{name}\"]]")
+                }
+            };
+            out.push_str(&format!("  {}{shape}\n", key(n)));
+        }
+        for &from in &ids {
+            for edge in self.edges_from(from) {
+                let arrow = match edge.kind {
+                    EdgeKind::Goal(_) => "==>".to_string(),
+                    EdgeKind::Prerequisite(id) => {
+                        if self.deps.get(&id).is_some_and(|d| d.ignore_mtime) {
+                            "-.->|order-only|".to_string()
+                        } else {
+                            "-->".to_string()
+                        }
+                    }
+                    EdgeKind::AlsoMake(_) => "-.->|also|".to_string(),
+                    EdgeKind::Renamed => "-->|renamed|".to_string(),
+                    EdgeKind::Parent => "-->|parent|".to_string(),
+                    EdgeKind::DerivedBy(_) => "-.->|rule|".to_string(),
+                    EdgeKind::RulePrerequisite(_) => "-.->".to_string(),
+                };
+                out.push_str(&format!("  {} {arrow} {}\n", key(from), key(edge.to)));
+            }
+        }
+        if !phony.is_empty() {
+            out.push_str("  classDef phony stroke-dasharray:5 5;\n");
+            out.push_str(&format!("  class {} phony;\n", phony.join(",")));
+        }
+        if !rules.is_empty() {
+            out.push_str("  classDef rule stroke:#36c,stroke-dasharray:3 3;\n");
+            out.push_str(&format!("  class {} rule;\n", rules.join(",")));
+        }
+        out
+    }
+
+    /// [`DepGraph::to_mermaid`] wrapped in a fenced ```mermaid Markdown block,
+    /// ready to drop into a PR description, comment, or committed `.md` file.
+    pub fn to_mermaid_markdown(&self) -> String {
+        format!("```mermaid\n{}```\n", self.to_mermaid())
     }
 }
 
@@ -743,6 +953,11 @@ fn dot_query(db: &dyn salsa::Database, input: GraphInput) -> String {
     input.graph(db).to_dot()
 }
 
+#[salsa::tracked]
+fn mermaid_query(db: &dyn salsa::Database, input: GraphInput) -> String {
+    input.graph(db).to_mermaid()
+}
+
 /// A [`DepGraph`] snapshot plus its memoized analysis queries. Queries run at
 /// most once per graph revision; [`DepGraphDb::set_graph`] starts the next
 /// revision.
@@ -802,6 +1017,10 @@ impl DepGraphDb {
 
     pub fn to_dot(&self) -> String {
         dot_query(&self.db, self.input)
+    }
+
+    pub fn to_mermaid(&self) -> String {
+        mermaid_query(&self.db, self.input)
     }
 }
 
@@ -1073,6 +1292,181 @@ mod tests {
             graph.dependents(main_c),
             Vec::<NodeId>::new(),
             "the stale reverse edge is gone"
+        );
+    }
+
+    /// The `%.o: %.c` pattern rule as an owned [`Rule`].
+    fn object_rule() -> Rule {
+        Rule {
+            targets: vec![b"%.o".to_vec()],
+            suffixes: vec![1],
+            lens: vec![3],
+            deps: vec![DepNode {
+                name: "%.c".to_string(),
+                ..Default::default()
+            }],
+            cmds: Some(Default::default()),
+            defn: None,
+            num: 1,
+            terminal: false,
+            in_use: false,
+        }
+    }
+
+    /// [`sample_graph`] extended to exercise every node/edge flavor: a phony
+    /// order-only prerequisite, an `also_make` sibling, and the `%.o: %.c`
+    /// pattern rule with provenance recorded for both objects. This is the
+    /// graph rendered into `docs/depgraph-sample.md`.
+    fn showcase_graph() -> DepGraph {
+        let (mut graph, [_, _, main_o, util_o, prog]) = sample_graph();
+
+        let mut outdir = FileNode::new(b"outdir".to_vec());
+        outdir.phony = true;
+        let outdir = graph.add_file(outdir);
+        graph.add_dep(
+            prog,
+            DepNode {
+                name: "outdir".to_string(),
+                file: Some(outdir),
+                ignore_mtime: true,
+                ..Default::default()
+            },
+        );
+
+        let mut util_d = FileNode::new(b"util.d".to_vec());
+        util_d.also_make.push(DepNode {
+            name: "util.o".to_string(),
+            file: Some(util_o),
+            ..Default::default()
+        });
+        graph.add_file(util_d);
+
+        let rule = graph.add_rule(object_rule());
+        graph.record_rule_match(main_o, rule);
+        graph.record_rule_match(util_o, rule);
+
+        graph
+    }
+
+    #[test]
+    fn rule_nodes_carry_provenance() {
+        let (mut graph, [main_c, _, main_o, util_o, _]) = sample_graph();
+        let rule = graph.add_rule(object_rule());
+        graph.record_rule_match(main_o, rule);
+        graph.record_rule_match(util_o, rule);
+
+        // The rule id is semantic: matching scratch and the lazily-computed
+        // printable definition don't change identity.
+        let mut recomputed = object_rule();
+        recomputed.in_use = true;
+        let _ = recomputed.rule_defn();
+        assert_eq!(rule, RuleId::from(&recomputed));
+
+        assert_eq!(graph.display_name(NodeId::Rule(rule)), "%.o: %.c");
+        assert_eq!(graph.rule_for(main_o), Some(rule));
+        assert_eq!(graph.rule_for(main_c), None, "sources match no rule");
+        assert_eq!(graph.files_derived_by(rule), vec![main_o, util_o]);
+
+        // The rule's own pattern prerequisite is a (name-learned) phantom
+        // node reachable from the rule.
+        let pattern_c = FileId::from_bytes(b"%.c");
+        assert_eq!(graph.display_name(NodeId::File(pattern_c)), "%.c");
+        assert_eq!(
+            graph.edges_from(NodeId::Rule(rule)),
+            &[Edge {
+                to: NodeId::File(pattern_c),
+                kind: EdgeKind::RulePrerequisite(DepId::from(&object_rule().deps[0])),
+            }]
+        );
+
+        // Provenance edges make used rules goal-reachable; an unused rule
+        // stays outside the build slice.
+        assert!(graph.reachable_from_goals().contains(&NodeId::Rule(rule)));
+        let unused = graph.add_rule(Rule {
+            targets: vec![b"%.tab.c".to_vec()],
+            suffixes: vec![1],
+            lens: vec![7],
+            deps: vec![DepNode {
+                name: "%.y".to_string(),
+                ..Default::default()
+            }],
+            cmds: None,
+            defn: None,
+            num: 1,
+            terminal: false,
+            in_use: false,
+        });
+        assert!(!graph.reachable_from_goals().contains(&NodeId::Rule(unused)));
+
+        // Rules take part in topo order: a file comes after the rule that
+        // derives it (the rule is a build-order prerequisite of its product).
+        let order = graph.topo_order().expect("acyclic");
+        let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
+        assert!(pos(NodeId::Rule(rule)) < pos(NodeId::File(main_o)));
+    }
+
+    #[test]
+    fn mermaid_renders_every_edge_flavor() {
+        let graph = showcase_graph();
+        let mermaid = graph.to_mermaid();
+
+        assert!(mermaid.starts_with("flowchart LR\n"));
+        assert!(mermaid.contains("{\"<root>\"}"), "root rhombus");
+        assert!(mermaid.contains("[\"prog\"]"), "recipe target rectangle");
+        assert!(mermaid.contains("([\"main.c\"])"), "source stadium");
+        assert!(mermaid.contains("[[\"%.o: %.c\"]]"), "rule subroutine box");
+        assert!(mermaid.contains(" ==> "), "goal edge is thick");
+        assert!(mermaid.contains(" -.->|order-only| "));
+        assert!(mermaid.contains(" -.->|also| "));
+        assert!(mermaid.contains(" -.->|rule| "));
+        assert!(mermaid.contains("classDef phony"));
+        assert!(mermaid.contains("classDef rule"));
+        assert_eq!(mermaid, showcase_graph().to_mermaid(), "deterministic");
+
+        let markdown = graph.to_mermaid_markdown();
+        assert!(markdown.starts_with("```mermaid\nflowchart LR\n"));
+        assert!(markdown.ends_with("```\n"));
+    }
+
+    /// The committed sample visualization. The graph rendering is
+    /// deterministic, so the doc is a snapshot: this test regenerates it and
+    /// fails if `docs/depgraph-sample.md` is stale. Refresh with
+    /// `UPDATE_SNAPSHOTS=1 cargo test --lib depgraph`. The regenerated copy
+    /// is also written to `target/depgraph-sample.md` as a build artifact
+    /// (e.g. for CI to attach or post on a PR).
+    #[test]
+    fn mermaid_snapshot_doc_is_current() {
+        let doc = format!(
+            "# Dependency graph — sample visualization\n\
+             \n\
+             <!-- Generated by the `depgraph::tests::mermaid_snapshot_doc_is_current` test. -->\n\
+             <!-- Regenerate with: UPDATE_SNAPSHOTS=1 cargo test --lib depgraph -->\n\
+             \n\
+             The showcase graph from `src/depgraph.rs`: `prog` linked from two\n\
+             objects, each derived from its source by the `%.o: %.c` pattern rule\n\
+             (dotted `rule` edges are provenance), with a phony order-only\n\
+             `outdir` prerequisite and a `util.d` sibling produced by the same\n\
+             recipe as `util.o` (`also` edge).\n\
+             \n\
+             {}",
+            showcase_graph().to_mermaid_markdown()
+        );
+
+        let snapshot = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/depgraph-sample.md");
+        // Best-effort artifact for CI; the assertion below is the real check.
+        let _ = std::fs::write(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/target/depgraph-sample.md"),
+            &doc,
+        );
+        if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
+            std::fs::write(snapshot, &doc).expect("write snapshot");
+            return;
+        }
+        let committed = std::fs::read_to_string(snapshot)
+            .expect("docs/depgraph-sample.md exists (UPDATE_SNAPSHOTS=1 to create)");
+        assert_eq!(
+            committed, doc,
+            "docs/depgraph-sample.md is stale; regenerate with UPDATE_SNAPSHOTS=1"
         );
     }
 

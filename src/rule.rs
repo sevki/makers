@@ -12,11 +12,11 @@
 //! statics — the `.SUFFIXES` file is looked up by name through
 //! `lookup_file`/`enter_file` (matching `read.rs::is_suffix_file`).
 
-pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::dep::DepNode;
-use crate::recipe::Recipe;
+pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::posix_pedantic;
+use crate::recipe::Recipe;
 
 use crate::dir::dir_file_exists_p;
 use crate::file::lookup_file;
@@ -51,6 +51,27 @@ pub struct Rule {
     pub terminal: bool,
     pub in_use: bool,
 }
+
+/// Semantic content hash for [`Rule`], the basis of [`RuleId`]. Only the
+/// fields that define what the rule *is* participate: target patterns, deps,
+/// recipe, and terminal-ness. Excluded: `defn` (a lazily computed print
+/// cache), `in_use` (`pattern_search` recursion scratch), and
+/// `suffixes`/`lens`/`num` (all derived from `targets`) — so a rule's id is
+/// stable across matching and printing.
+impl crate::content_hash::ContentHash for Rule {
+    fn hash(&self, state: &mut impl crate::content_hash::DigestUpdate) {
+        self.targets.hash(state);
+        self.deps.hash(state);
+        self.cmds.hash(state);
+        self.terminal.hash(state);
+    }
+}
+
+// Stable identity for a pattern rule: content-hash of its semantic fields (see
+// the `ContentHash` impl above). Extends the blake3 identity family
+// (`FileId`/`DepId`/`GoalDepId`) to the rule database; `depgraph` keys rule
+// nodes by it.
+crate::id_wireformat!(RuleId[crate::file::HASH_SIZE] <- Rule);
 
 impl Rule {
     fn new() -> Self {
@@ -187,9 +208,7 @@ pub fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
                 // Directory part containing '%': mark "changed" if the directory
                 // prefix does not exist.
                 let slash = dname.iter().rposition(|&b| b == b'/');
-                let has_pct_in_dir = slash
-                    .map(|s| dname[s..].contains(&b'%'))
-                    .unwrap_or(false);
+                let has_pct_in_dir = slash.map(|s| dname[s..].contains(&b'%')).unwrap_or(false);
                 if has_pct_in_dir {
                     let mut p = slash.expect("slash present");
                     if p == 0 {
@@ -567,16 +586,8 @@ fn parse_dep_names(ctx: &crate::execctx::ExecContext, dep: &[u8]) -> Vec<DepNode
     let mut p: *mut ::core::ffi::c_char = buf.as_mut_ptr().cast();
     // SAFETY: `parse_file_seq` reads through `p` until the NUL; `buf` is
     // NUL-terminated and lives for the call. MAP_NUL=1, PARSEFS_NONE=0.
-    let parsed = unsafe {
-        crate::read::parse_file_seq(
-            ctx,
-            &raw mut p,
-            0,
-            0x1,
-            ::core::ptr::null(),
-            0,
-        )
-    };
+    let parsed =
+        unsafe { crate::read::parse_file_seq(ctx, &raw mut p, 0, 0x1, ::core::ptr::null(), 0) };
     parsed
         .into_iter()
         .map(|pn| {
