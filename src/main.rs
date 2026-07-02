@@ -1184,14 +1184,11 @@ pub fn opt_max_load_average() -> f64 {
 
 /// `should_print_dir` for callers outside the `Options` borrow chain
 /// (`output.rs`), reading the owned `Options` through the borrow channel.
+/// Delegates to [`should_print_dir`] — a hand-copied version of the logic
+/// here once dropped the `-C` clause and silently lost the top-level
+/// `Entering directory` lines (#456), so keep this a pure delegation.
 pub fn should_print_dir_mirror(ctx: &crate::execctx::ExecContext) -> i32 {
-    with_options(|o| match o.print_directory.get() {
-        Some(v) => v as i32,
-        None => {
-            let ml = ctx.makelevel();
-            (!o.silent.get() && ml > 0) as i32
-        }
-    })
+    with_options(|o| should_print_dir(ctx, o) as i32)
 }
 
 pub fn set_touch_mirror(v: bool) {
