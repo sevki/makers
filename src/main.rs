@@ -1221,7 +1221,6 @@ pub static mut shell_var: variable = variable {
 /// (or null), paired with `Options::stdin_offset`. Lets `temp_stdin_unlink`
 /// run from the deep `die` path without an `&Options` borrow; the pointer is
 /// into the strcache, which lives for the whole run.
-static mut temp_stdin_name: *const ::core::ffi::c_char = ::core::ptr::null();
 pub const TEMP_STDIN_OPT: i32 = CHAR_MAX + 10;
 pub const WARN_OPT: i32 = CHAR_MAX + 13;
 const LONG_OPTION_ALIASES: [option; 9] = [
@@ -1364,8 +1363,6 @@ fn goaldep_for_file(file: crate::file::FileId) -> crate::dep::GoalDepNode {
 static mut command_variables: *mut command_variable =
     ::core::ptr::null::<command_variable>() as *mut command_variable;
 pub static mut program: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-pub static mut directory_before_chdir: *mut ::core::ffi::c_char =
-    ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 pub static mut starting_directory: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
@@ -1917,8 +1914,8 @@ pub unsafe fn reset_jobserver_mirror() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
-    if opt_stdin_offset() >= 0 && !temp_stdin_name.is_null() {
-        let nm: *const ::core::ffi::c_char = temp_stdin_name;
+    if opt_stdin_offset() >= 0 && !ctx.temp_stdin_name.0.get().is_null() {
+        let nm: *const ::core::ffi::c_char = ctx.temp_stdin_name.0.get();
         let mut r: i32;
         with_options(|o| o.stdin_offset.set(-1));
         loop {
@@ -2012,9 +2009,13 @@ unsafe fn main_0(
             b"\0" as *const u8 as *const ::core::ffi::c_char,
         );
         current_directory[0_i32 as usize] = 0;
-        directory_before_chdir = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        ctx.directory_before_chdir
+            .0
+            .set(::core::ptr::null_mut::<::core::ffi::c_char>());
     } else {
-        directory_before_chdir = xstrdup(&raw mut current_directory as *mut ::core::ffi::c_char);
+        ctx.directory_before_chdir.0.set(xstrdup(
+            &raw mut current_directory as *mut ::core::ffi::c_char,
+        ));
     }
     let fresh34 = &mut (*define_variable_in_set(
         &ctx,
@@ -2316,12 +2317,17 @@ unsafe fn main_0(
     // build, so carry it across the rebuild just like the directory cache;
     // otherwise every file entered while reading makefiles would be lost.
     let carried_files = ::core::mem::take(&mut ctx.filenodes);
+    // Cleanup state recorded before the rebuild (`die`/re-exec read it after).
+    let carried_temp_stdin = ::core::mem::take(&mut ctx.temp_stdin_name);
+    let carried_dir_before_chdir = ::core::mem::take(&mut ctx.directory_before_chdir);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
         read_dirstream_buf: carried_read_dirstream_buf,
         read_dirstream_bufsz: carried_read_dirstream_bufsz,
         filenodes: carried_files,
+        temp_stdin_name: carried_temp_stdin,
+        directory_before_chdir: carried_dir_before_chdir,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
@@ -2583,7 +2589,7 @@ unsafe fn main_0(
                 options.makefiles.borrow_mut()[i_1] =
                     ::core::ffi::CStr::from_ptr(cached).to_owned();
                 options.stdin_offset.set(i_1 as i32);
-                temp_stdin_name = cached;
+                ctx.temp_stdin_name.0.set(cached);
                 free(newnm as *mut ::core::ffi::c_void);
             }
             i_1 = i_1.wrapping_add(1);
@@ -3330,8 +3336,8 @@ unsafe fn main_0(
             }
             if !options.directories.borrow().is_empty() {
                 let mut bad: i32 = 1;
-                if !directory_before_chdir.is_null() {
-                    if chdir(directory_before_chdir) < 0 {
+                if !ctx.directory_before_chdir.0.get().is_null() {
+                    if chdir(ctx.directory_before_chdir.0.get()) < 0 {
                         perror_with_name(
                             &ctx,
                             b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3987,7 +3993,7 @@ unsafe fn decode_switches(
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
                                                 let cached = strcache_add(ctx, coptarg);
-                                                temp_stdin_name = cached;
+                                                ctx.temp_stdin_name.0.set(cached);
                                                 ::core::ffi::CStr::from_ptr(cached).to_owned()
                                             } else {
                                                 ::core::ffi::CStr::from_ptr(
@@ -4822,9 +4828,9 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
         }
         crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
         osync_clear();
-        if !directory_before_chdir.is_null() {
+        if !ctx.directory_before_chdir.0.get().is_null() {
             let mut _x: i32 = 0;
-            _x = chdir(directory_before_chdir);
+            _x = chdir(ctx.directory_before_chdir.0.get());
         }
     }
     exit(status);
@@ -6372,8 +6378,7 @@ mod clean_jobserver_tests {
 #[cfg(test)]
 mod jobserver_and_stdin_cleanup_tests {
     use super::{
-        install_default_options_for_test, reset_jobserver, temp_stdin_name, temp_stdin_unlink,
-        with_options, Options,
+        install_default_options_for_test, reset_jobserver, temp_stdin_unlink, with_options, Options,
     };
 
     /// `reset_jobserver` clears the auth field and tears down the (absent)
@@ -6399,7 +6404,7 @@ mod jobserver_and_stdin_cleanup_tests {
         let ctx = crate::execctx::ExecContext::default();
         unsafe {
             with_options(|o| o.stdin_offset.set(-1));
-            temp_stdin_name = ::core::ptr::null();
+            ctx.temp_stdin_name.0.set(::core::ptr::null());
             temp_stdin_unlink(&ctx);
         }
 
@@ -6411,10 +6416,10 @@ mod jobserver_and_stdin_cleanup_tests {
         let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
         unsafe {
             with_options(|o| o.stdin_offset.set(0));
-            temp_stdin_name = cpath.as_ptr();
+            ctx.temp_stdin_name.0.set(cpath.as_ptr());
             temp_stdin_unlink(&ctx);
             // Restore globals before `cpath` is dropped to avoid a dangling ptr.
-            temp_stdin_name = ::core::ptr::null();
+            ctx.temp_stdin_name.0.set(::core::ptr::null());
             with_options(|o| o.stdin_offset.set(-1));
         }
         assert!(!path.exists(), "temp stdin file should have been unlinked");

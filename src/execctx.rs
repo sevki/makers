@@ -154,6 +154,22 @@ pub struct ExecContext {
     /// build-phase context (job scheduling), so the startup context
     /// re-initialization never discards an open fd.
     pub load_proc_fd: LoadProcFd,
+
+    /// Path of the temporary file holding piped-in stdin makefile text, the
+    /// former main.rs `static mut temp_stdin_name`. Written during argument
+    /// decoding (`--temp-stdin`, or when `-f -` spools stdin to a temp file)
+    /// and read by `temp_stdin_unlink` on the `die`/fatal-signal paths, which
+    /// carry only `&ExecContext`. Carried across the `main_0` build-phase
+    /// context rebuild: the name is recorded before the rebuild and must
+    /// survive until cleanup. Interned or 'static storage backs the pointer.
+    pub temp_stdin_name: PtrCell,
+
+    /// The working directory before any `-C` chdir, the former main.rs
+    /// `pub static mut directory_before_chdir` — restored on re-exec and in
+    /// `die`, both of which carry only `&ExecContext`. Set once during
+    /// startup (before the build-phase context rebuild), so it is carried
+    /// across it. Heap storage from `xstrdup` backs the pointer.
+    pub directory_before_chdir: MutPtrCell,
     /// `load_too_high`'s last-reported `getloadavg` failure errno (the former
     /// function-local `static mut lossage`), used to suppress repeating the
     /// same "cannot enforce load limit" warning.
@@ -388,6 +404,27 @@ impl FileArena {
 /// initial value while `ExecContext` keeps deriving `Default`.
 #[derive(Debug, Clone)]
 pub struct LoadProcFd(pub ::core::cell::Cell<i32>);
+
+/// A `Cell<*const c_char>` that defaults to null — raw pointers have no
+/// `Default`, so `ExecContext`'s derive needs the wrapper.
+#[derive(Debug, Clone)]
+pub struct PtrCell(pub ::core::cell::Cell<*const ::core::ffi::c_char>);
+
+impl Default for PtrCell {
+    fn default() -> Self {
+        PtrCell(::core::cell::Cell::new(::core::ptr::null()))
+    }
+}
+
+/// A `Cell<*mut c_char>` that defaults to null, for the same reason.
+#[derive(Debug, Clone)]
+pub struct MutPtrCell(pub ::core::cell::Cell<*mut ::core::ffi::c_char>);
+
+impl Default for MutPtrCell {
+    fn default() -> Self {
+        MutPtrCell(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
 
 impl Default for LoadProcFd {
     fn default() -> Self {
