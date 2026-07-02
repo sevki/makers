@@ -27,6 +27,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
+use ::core::ptr::{addr_of, addr_of_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
@@ -1352,6 +1353,26 @@ static mut long_option_aliases: [option; 9] = [
 /// the c2rust `*mut GoalDep goals`/`lastgoal` chain. Owned `GoalDepNode`s; the
 /// target file is `dep.file: Option<FileId>`.
 static mut goals: Vec<crate::dep::GoalDepNode> = Vec::new();
+
+fn goals_is_empty() -> bool {
+    unsafe { addr_of!(goals).as_ref().expect("goals missing").is_empty() }
+}
+
+fn goals_push(goal: crate::dep::GoalDepNode) {
+    unsafe { addr_of_mut!(goals).as_mut().expect("goals missing").push(goal) }
+}
+
+fn goals_mark_last_wait_here() {
+    unsafe {
+        if let Some(last) = addr_of_mut!(goals)
+            .as_mut()
+            .expect("goals missing")
+            .last_mut()
+        {
+            last.dep.wait_here = true;
+        }
+    }
+}
 
 /// The display name of a goal: its `dep.name` if set, else the name of its
 /// target file (raw bytes).
@@ -3430,7 +3451,7 @@ unsafe fn main_0(
         }
     }
     temp_stdin_unlink(&ctx);
-    if goals.is_empty() {
+    if goals_is_empty() {
         let mut p_6: *mut ::core::ffi::c_char;
         if (*default_goal_var).recursive() != 0 {
             p_6 = expand_string_buf(
@@ -3475,11 +3496,11 @@ unsafe fn main_0(
                 }
             }
             if let Some(fid) = f_6 {
-                goals.push(goaldep_for_file(fid));
+                goals_push(goaldep_for_file(fid));
             }
         }
     }
-    if goals.is_empty() {
+    if goals_is_empty() {
         let v_2: *mut variable = lookup_variable(
             &ctx,
             b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3500,12 +3521,19 @@ unsafe fn main_0(
             &[],
         );
     }
-    crate::shuffle::shuffle_goals_recursive(&ctx, &mut goals);
+    unsafe {
+        crate::shuffle::shuffle_goals_recursive(
+            &ctx,
+            addr_of_mut!(goals).as_mut().expect("goals missing"),
+        );
+    }
     if 0x1_i32 & db_level() != 0 {
         printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
         fflush(stdout);
     }
-    match update_goal_chain(&ctx, &mut goals) as ::core::ffi::c_uint {
+    match unsafe {
+        update_goal_chain(&ctx, addr_of_mut!(goals).as_mut().expect("goals missing"))
+    } as ::core::ffi::c_uint {
         2 => {
             makefile_status = MAKE_TROUBLE;
         }
@@ -3639,7 +3667,7 @@ unsafe fn handle_non_switch_argument(
         if let Some(node) = ctx.filenodes.get(f) {
             node.lock().expect("file node poisoned").cmd_target = true;
         }
-        goals.push(goaldep_for_file(f));
+        goals_push(goaldep_for_file(f));
         // NUL-terminated target name for the MAKECMDGOALS accumulation below.
         let mut fname_c = fname_bytes.clone();
         fname_c.push(0);
@@ -4056,9 +4084,7 @@ unsafe fn decode_switches(
         let prior_found_wait: i32 = found_wait as i32;
         found_wait = handle_non_switch_argument(ctx, *a, origin);
         if prior_found_wait != 0 {
-            if let Some(last) = goals.last_mut() {
-                last.dep.wait_here = true;
-            }
+            goals_mark_last_wait_here();
         }
         a = a.offset(1_i32 as isize);
     }
