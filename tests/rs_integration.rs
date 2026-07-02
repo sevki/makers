@@ -62,24 +62,29 @@ fn run(make_bin: &Path, fixture: &Path, target: &str, extra: &[&str]) -> (Run, P
 }
 
 /// Snapshot of a working tree for the divergence gate: every entry keyed by
-/// its relative path, mapped to its content (file bytes, symlink target, or a
-/// directory marker). Metadata that legitimately differs between two runs
-/// (mtimes, inode-level detail) is deliberately not part of the snapshot.
-fn tree_snapshot(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
-    fn walk(root: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+/// its relative path, mapped to its Unix permission bits and content (file
+/// bytes, symlink target, or a directory marker). Permission bits are part of
+/// the snapshot — a recipe that `chmod`s its artifact in only one
+/// implementation is a real divergence — but metadata that legitimately
+/// differs between two runs (mtimes, inode-level detail) is deliberately not.
+fn tree_snapshot(root: &Path) -> std::collections::BTreeMap<String, (u32, Vec<u8>)> {
+    use std::os::unix::fs::PermissionsExt;
+    fn walk(root: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, (u32, Vec<u8>)>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let p = entry.unwrap().path();
             let rel = p.strip_prefix(root).unwrap().to_string_lossy().into_owned();
-            let ft = std::fs::symlink_metadata(&p).unwrap().file_type();
+            let meta = std::fs::symlink_metadata(&p).unwrap();
+            let mode = meta.permissions().mode() & 0o7777;
+            let ft = meta.file_type();
             if ft.is_symlink() {
                 let mut v = b"symlink -> ".to_vec();
                 v.extend_from_slice(std::fs::read_link(&p).unwrap().to_string_lossy().as_bytes());
-                out.insert(rel, v);
+                out.insert(rel, (mode, v));
             } else if ft.is_dir() {
-                out.insert(format!("{rel}/"), b"<dir>".to_vec());
+                out.insert(format!("{rel}/"), (mode, b"<dir>".to_vec()));
                 walk(root, &p, out);
             } else {
-                out.insert(rel, std::fs::read(&p).unwrap());
+                out.insert(rel, (mode, std::fs::read(&p).unwrap()));
             }
         }
     }
@@ -108,17 +113,28 @@ fn assert_tree_diff(name: &str, c_dir: &Path, r_dir: &Path) {
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
     let report = if report.is_empty() {
-        // No diffoscope available (or it produced nothing): summarize from
-        // the snapshots so the gate still explains itself.
+        // No diffoscope available — or it produced nothing, which happens for
+        // permission-only divergences since its report excludes directory
+        // metadata: summarize from the snapshots so the gate still explains
+        // itself.
         let mut lines = Vec::new();
         for key in c_tree.keys().chain(r_tree.keys()).collect::<std::collections::BTreeSet<_>>() {
             match (c_tree.get(key), r_tree.get(key)) {
                 (Some(c), Some(r)) if c == r => {}
-                (Some(c), Some(r)) => lines.push(format!(
-                    "  {key}: content differs (C {} bytes, Rust {} bytes)",
-                    c.len(),
-                    r.len()
-                )),
+                (Some((c_mode, c_bytes)), Some((r_mode, r_bytes))) => {
+                    if c_mode != r_mode {
+                        lines.push(format!(
+                            "  {key}: mode differs (C {c_mode:04o}, Rust {r_mode:04o})"
+                        ));
+                    }
+                    if c_bytes != r_bytes {
+                        lines.push(format!(
+                            "  {key}: content differs (C {} bytes, Rust {} bytes)",
+                            c_bytes.len(),
+                            r_bytes.len()
+                        ));
+                    }
+                }
                 (Some(_), None) => lines.push(format!("  {key}: only in C tree")),
                 (None, Some(_)) => lines.push(format!("  {key}: only in Rust tree")),
                 (None, None) => unreachable!(),
@@ -1919,4 +1935,20 @@ fn print_dir_silent_suppresses() {
 fn print_dir_explicit_w() {
     // Explicit `-w` prints the traces even under `-s`.
     check_print_dir("print-dir-sw", &["-s", "-w", "-C", "sub", "x"]);
+}
+
+#[test]
+#[should_panic(expected = "working-tree divergence")]
+fn tree_gate_catches_mode_only_divergence() {
+    // Codex review on the gate: a recipe that `chmod +x`es its artifact in
+    // only one implementation must not slip through just because the bytes
+    // match — permission bits are part of the snapshot.
+    use std::os::unix::fs::PermissionsExt;
+    let a = tempdir();
+    let b = tempdir();
+    std::fs::write(a.join("tool.sh"), "#!/bin/sh\n").unwrap();
+    std::fs::write(b.join("tool.sh"), "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(a.join("tool.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(b.join("tool.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_tree_diff("tree-gate-mode", &a, &b);
 }
