@@ -18,7 +18,7 @@ use libc::{
 use crate::execctx::ExecContext;
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
-use crate::make_main::{die, program, starting_directory};
+use crate::make_main::die;
 use crate::misc::{open_anon_tmpfd, writebuf, xrealloc};
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
@@ -114,6 +114,8 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
 /// Must run single-threaded: reads make globals and a static buffer.
 pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     let makelevel = ctx.makelevel();
+    let program = ctx.program.0.get();
+    let starting_directory = ctx.starting_directory.0.get();
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     static mut len: size_t = 0;
@@ -602,7 +604,13 @@ fn push_cstr(out: &mut Vec<u8>, s: Option<&::core::ffi::CStr>) {
     }
 }
 
-unsafe fn push_program_prefix(out: &mut Vec<u8>, makelevel: u32, fatal_marker: bool) {
+unsafe fn push_program_prefix(
+    ctx: &ExecContext,
+    out: &mut Vec<u8>,
+    makelevel: u32,
+    fatal_marker: bool,
+) {
+    let program = ctx.program.0.get();
     push_cstr(out, (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)));
     if makelevel == 0 {
         out.extend_from_slice(b": ");
@@ -617,6 +625,7 @@ unsafe fn push_program_prefix(out: &mut Vec<u8>, makelevel: u32, fatal_marker: b
 }
 
 unsafe fn push_error_prefix(
+    ctx: &ExecContext,
     out: &mut Vec<u8>,
     flocp: *const Floc,
     makelevel: u32,
@@ -637,7 +646,7 @@ unsafe fn push_error_prefix(
             out.extend_from_slice(b"*** ");
         }
     } else {
-        push_program_prefix(out, makelevel, fatal_marker);
+        push_program_prefix(ctx, out, makelevel, fatal_marker);
     }
 }
 
@@ -656,7 +665,7 @@ pub unsafe fn message(
     let makelevel = ctx.makelevel();
     let mut out: Vec<u8> = Vec::new();
     if prefix != 0 {
-        push_program_prefix(&mut out, makelevel, false);
+        push_program_prefix(ctx, &mut out, makelevel, false);
     }
     vformat_into(&mut out, fmt, args);
     out.push(b'\n');
@@ -680,7 +689,7 @@ pub unsafe fn error(
 ) {
     let makelevel = ctx.makelevel();
     let mut out: Vec<u8> = Vec::new();
-    push_error_prefix(&mut out, flocp, makelevel, false);
+    push_error_prefix(ctx, &mut out, flocp, makelevel, false);
     vformat_into(&mut out, fmt, args);
     out.push(b'\n');
     out.push(0);
@@ -703,7 +712,7 @@ pub unsafe fn fatal(
 ) -> ! {
     let makelevel = ctx.makelevel();
     let mut out: Vec<u8> = Vec::new();
-    push_error_prefix(&mut out, flocp, makelevel, true);
+    push_error_prefix(ctx, &mut out, flocp, makelevel, true);
     vformat_into(&mut out, fmt, args);
     out.extend_from_slice(b".  Stop.\n");
     out.push(0);
@@ -779,9 +788,11 @@ pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_ch
 /// `MAKE_FAILURE`.
 pub fn out_of_memory() -> ! {
     use std::io::Write;
-    // The program-name read is the one unavoidable C-global access; it is
-    // already encapsulated (with its SAFETY note) in `msg::program_name`.
-    let prog = msg::program_name();
+    // Allocation failure carries no `&ExecContext`, so reach the live one
+    // through the borrow channel; this can fire before startup installs a
+    // context, in which case fall back to the plain program name.
+    let prog = crate::make_main::try_with_exec_context(msg::program_name)
+        .unwrap_or_else(|| "make".to_string());
     let mut out = std::io::stdout().lock();
     #[allow(clippy::write_with_newline)]
     let _ = write!(out, "{prog}: *** virtual memory exhausted\n");
@@ -797,16 +808,24 @@ pub fn out_of_memory() -> ! {
 /// Compatibility note: the variadic extern "C" versions still live above
 /// for legacy call sites; both produce identical output formats.
 pub mod msg {
-    use super::{die, outputs, program, MAKE_FAILURE};
+    use super::{die, outputs, MAKE_FAILURE};
     use crate::execctx::ExecContext;
     use crate::floc::Floc;
 
-    pub(crate) fn program_name() -> String {
-        // SAFETY: `program` is set during make startup and lives for the
-        // process lifetime; we read it as a NUL-terminated C string.
-        unsafe { ::core::ffi::CStr::from_ptr(program) }
-            .to_string_lossy()
-            .into_owned()
+    pub(crate) fn program_name(ctx: &ExecContext) -> String {
+        let p = ctx.program.0.get();
+        if p.is_null() {
+            // Startup derives the name from argv[0] before anything can
+            // print; a null only occurs pre-startup or on a bare test
+            // context, where the plain name is the right prefix.
+            "make".to_string()
+        } else {
+            // SAFETY: a non-null `program` is a NUL-terminated C string that
+            // outlives the run (argv or 'static storage backs it).
+            unsafe { ::core::ffi::CStr::from_ptr(p) }
+                .to_string_lossy()
+                .into_owned()
+        }
     }
 
     fn build_prefix(ctx: &ExecContext, loc: Option<&Floc>, fatal_marker: bool) -> String {
@@ -820,7 +839,7 @@ pub mod msg {
                 }
                 _ => {
                     let lvl = ctx.makelevel();
-                    let prog = program_name();
+                    let prog = program_name(ctx);
                     if lvl == 0 {
                         format!("{prog}: {marker}")
                     } else {

@@ -3164,20 +3164,19 @@ mod tests {
     }
 
     /// Serializes the tests that drive the real `error()` output path, which
-    /// reads the process-global `program`/`makelevel`.
+    /// reads shared output state.
     static TIMESTAMP_ERR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// A stamp below the encodable range (`s <= OLD_MTIME`) drives the
     /// out-of-range substitution branch: it formats the clamped timestamp and
     /// calls `error()` ("timestamp out of range: substituting"), then returns
-    /// the substituted value `ORDINARY_MTIME_MIN`. Driving this requires a
-    /// valid `program` name so `error()` does not dereference a null pointer.
+    /// the substituted value `ORDINARY_MTIME_MIN`. The default context's null
+    /// `program` name falls back to the plain "make" prefix.
     #[test]
     fn file_timestamp_cons_low_out_of_range_substitutes() {
         let _g = TIMESTAMP_ERR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             crate::make_main::install_default_options_for_test();
-            crate::make_main::install_program_name_for_test();
             let ctx = crate::execctx::ExecContext::default();
             // s = 0 <= OLD_MTIME (2): below the encodable range.
             let ts = file_timestamp_cons(&ctx, c"too_old".as_ptr(), system_time_from_unix(0, 0));
@@ -3197,7 +3196,6 @@ mod tests {
         let _g = TIMESTAMP_ERR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             crate::make_main::install_default_options_for_test();
-            crate::make_main::install_program_name_for_test();
             // A stamp near time_t::MAX overflows the 30-bit left shift, so it
             // is above the encodable range and clamps to the upper bound.
             let ctx = crate::execctx::ExecContext::default();

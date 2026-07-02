@@ -1024,6 +1024,21 @@ pub fn with_exec_context<R>(f: impl FnOnce(&crate::execctx::ExecContext) -> R) -
     f(unsafe { installed_exec_context() })
 }
 
+/// Like [`with_exec_context`], but returns `None` when no context is installed
+/// instead of dereferencing a null channel. For callers that can legitimately
+/// run outside `main_0`'s dynamic extent: allocation failure before startup
+/// finishes, or bare unit tests.
+pub fn try_with_exec_context<R>(f: impl FnOnce(&crate::execctx::ExecContext) -> R) -> Option<R> {
+    let p = CTX_PTR.with(|c| c.get());
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: a non-null `CTX_PTR` always points at `main_0`'s live
+        // context (installed for its dynamic extent).
+        Some(f(unsafe { &*p }))
+    }
+}
+
 /// Test-only: install a leaked default `ExecContext` on the current thread's
 /// `CTX_PTR` borrow channel so the glob callback path can run inside
 /// `#[cfg(test)]` unit tests below `main_0`. The context is leaked so the
@@ -1053,26 +1068,6 @@ pub fn install_default_options_for_test() {
             p.set(leaked as *const Options);
         }
     });
-}
-
-/// Test-only: install a valid `program` name and reset `makelevel` to 0 so
-/// the real `error()` / `message()` / `warning()` output paths can run inside
-/// `#[cfg(test)]` unit tests without dereferencing the otherwise-null
-/// `program` pointer (which segfaults outside full make init). The name is a
-/// leaked `CString` so the installed pointer stays valid for the test
-/// binary's lifetime. This only affects test builds and never changes
-/// shipping behavior.
-///
-/// # Safety
-/// Writes the `program` process global; callers must serialize against other
-/// code touching that global (e.g. via the relevant test mutex).
-#[cfg(test)]
-pub unsafe fn install_program_name_for_test() {
-    if program.is_null() {
-        let leaked: &'static std::ffi::CStr =
-            Box::leak(Box::new(std::ffi::CString::new("make").unwrap())).as_c_str();
-        program = leaked.as_ptr();
-    }
 }
 
 pub fn env_overrides() -> bool {
@@ -1359,9 +1354,6 @@ fn goaldep_for_file(file: crate::file::FileId) -> crate::dep::GoalDepNode {
 }
 static mut command_variables: *mut command_variable =
     ::core::ptr::null::<command_variable>() as *mut command_variable;
-pub static mut program: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
-pub static mut starting_directory: *mut ::core::ffi::c_char =
-    ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 pub static mut default_goal_var: *mut variable = ::core::ptr::null::<variable>() as *mut variable;
 // The four special-target feature latches — `.POSIX`, `.SECONDEXPANSION`,
 // `.ONESHELL`, `.NOTPARALLEL` — each set once when make sees the corresponding
@@ -1863,7 +1855,7 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
     fprintf(
         usageto,
         b"Usage: %s [options] [target] ...\n\0" as *const u8 as *const ::core::ffi::c_char,
-        program,
+        ctx.program.0.get(),
     );
     cpp = usage.as_ptr();
     while !(*cpp).is_null() {
@@ -1983,14 +1975,18 @@ unsafe fn main_0(
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
     }
     if *(*argv.offset(0_i32 as isize)).offset(0_i32 as isize) as i32 == 0 {
-        program = b"make\0" as *const u8 as *const ::core::ffi::c_char;
+        ctx.program
+            .0
+            .set(b"make\0" as *const u8 as *const ::core::ffi::c_char);
     } else {
-        program = strrchr(*argv.offset(0_i32 as isize), '/' as i32);
-        if program.is_null() {
-            program = *argv.offset(0_i32 as isize);
+        let mut prog: *const ::core::ffi::c_char =
+            strrchr(*argv.offset(0_i32 as isize), '/' as i32);
+        if prog.is_null() {
+            prog = *argv.offset(0_i32 as isize);
         } else {
-            program = program.offset(1_i32 as isize);
+            prog = prog.offset(1_i32 as isize);
         }
+        ctx.program.0.set(prog);
     }
     initialize_global_hash_tables(&ctx);
     get_tmpdir(&ctx);
@@ -2317,6 +2313,9 @@ unsafe fn main_0(
     // Cleanup state recorded before the rebuild (`die`/re-exec read it after).
     let carried_temp_stdin = ::core::mem::take(&mut ctx.temp_stdin_name);
     let carried_dir_before_chdir = ::core::mem::take(&mut ctx.directory_before_chdir);
+    // The program name is derived from argv[0] at startup and prefixes every
+    // message for the rest of the run.
+    let carried_program = ::core::mem::take(&mut ctx.program);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2325,6 +2324,7 @@ unsafe fn main_0(
         filenodes: carried_files,
         temp_stdin_name: carried_temp_stdin,
         directory_before_chdir: carried_dir_before_chdir,
+        program: carried_program,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
@@ -2356,7 +2356,9 @@ unsafe fn main_0(
             *argv.offset(0_i32 as isize),
         ]));
     }
-    starting_directory = &raw mut current_directory as *mut ::core::ffi::c_char;
+    ctx.starting_directory
+        .0
+        .set(&raw mut current_directory as *mut ::core::ffi::c_char);
     if !options.directories.borrow().is_empty() {
         for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
@@ -2377,9 +2379,13 @@ unsafe fn main_0(
                 b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
                 b"\0" as *const u8 as *const ::core::ffi::c_char,
             );
-            starting_directory = ::core::ptr::null_mut::<::core::ffi::c_char>();
+            ctx.starting_directory
+                .0
+                .set(::core::ptr::null_mut::<::core::ffi::c_char>());
         } else {
-            starting_directory = &raw mut current_directory as *mut ::core::ffi::c_char;
+            ctx.starting_directory
+                .0
+                .set(&raw mut current_directory as *mut ::core::ffi::c_char);
         }
     }
     define_variable_in_set(
