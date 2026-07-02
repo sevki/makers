@@ -19,7 +19,6 @@ use crate::strcache::strcache_add;
 use crate::strcache::{strcache_init, strcache_print_stats};
 use crate::variable::print_variable_data_base;
 use crate::vpath::{build_vpath_lists, print_vpath_data_base};
-use ::core::ptr::{addr_of, addr_of_mut};
 use c2rust_bitfields;
 use libc;
 use libc::{
