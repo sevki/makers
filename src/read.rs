@@ -2409,9 +2409,8 @@ unsafe fn record_target_var(
         let mut name_buf = entry.name.clone();
         name_buf.push(0);
         let mut name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
-        let percent: *const ::core::ffi::c_char;
         let p: *mut pattern_var;
-        percent = find_percent_cached(ctx, &raw mut name);
+        let percent: *const ::core::ffi::c_char = find_percent_cached(ctx, &raw mut name);
         if !percent.is_null() {
             // `create_pattern_var` stores the `target`/`suffix` pointers
             // verbatim (it does not copy), so they must point into persistent
@@ -2939,11 +2938,13 @@ unsafe fn record_files(
                 ::std::ffi::CStr::from_ptr(depstr).to_bytes(),
             )
         {
-            let mut d = crate::dep::DepNode::default();
-            d.name =
-                String::from_utf8_lossy(::std::ffi::CStr::from_ptr(depstr).to_bytes()).into_owned();
-            d.needs_second_expansion = true;
-            d.static_pattern = !pattern.is_null();
+            let d = crate::dep::DepNode {
+                name: String::from_utf8_lossy(::std::ffi::CStr::from_ptr(depstr).to_bytes())
+                    .into_owned(),
+                needs_second_expansion: true,
+                static_pattern: !pattern.is_null(),
+                ..Default::default()
+            };
             deps.push(d);
             free(depstr as *mut ::core::ffi::c_void);
         } else {
