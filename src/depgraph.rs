@@ -849,6 +849,47 @@ impl DepGraph {
     }
 }
 
+/// Debug hook for the real make binary: when the `MAKERS_DEPGRAPH`
+/// environment variable is set, snapshot the live build graph — the whole
+/// `filenodes` arena, the goal list, and the pattern-rule database — and
+/// write it to that path. Called from `main_0` after makefiles are read,
+/// deps snapped, and rules installed, right before goal shuffling/updating,
+/// so the dump is the deterministic "what make knows before building" view.
+///
+/// The format follows the extension: `.dot` Graphviz, `.mmd` raw Mermaid,
+/// anything else (canonically `.md`) a fenced Mermaid Markdown block that
+/// GitHub renders. Rule provenance (`DerivedBy`) is not wired here yet —
+/// `pattern_search` runs during the build, after this snapshot; wiring
+/// `record_rule_match` into it is the documented follow-up.
+///
+/// Failures to write are reported on stderr but never fail the build: this
+/// is a diagnostics tap, not a build step.
+pub fn dump_graph_if_requested(ctx: &ExecContext, goals: &[GoalDepNode]) {
+    let Some(path) = std::env::var_os("MAKERS_DEPGRAPH") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+
+    let mut graph = DepGraph::from_context(ctx, goals);
+    crate::rule::with_pattern_rules(|rules| {
+        for rule in rules {
+            graph.add_rule(rule.clone());
+        }
+    });
+
+    let out = match path.extension().and_then(|ext| ext.to_str()) {
+        Some("dot") => graph.to_dot(),
+        Some("mmd") => graph.to_mermaid(),
+        _ => graph.to_mermaid_markdown(),
+    };
+    if let Err(err) = std::fs::write(&path, out) {
+        eprintln!(
+            "make: cannot write dependency graph to {}: {err}",
+            path.display()
+        );
+    }
+}
+
 /// Preorder DFS iterator over forward edges; see [`DepGraph::dfs`].
 pub struct Dfs<'g> {
     graph: &'g DepGraph,
