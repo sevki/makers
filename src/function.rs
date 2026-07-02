@@ -4793,7 +4793,7 @@ pub unsafe fn define_new_function(
     }
     ent = xmalloc(::core::mem::size_of::<function_table_entry>() as size_t)
         as *mut function_table_entry;
-    (*ent).name = strcache_add(name);
+    (*ent).name = strcache_add(ctx, name);
     (*ent).len = len as ::core::ffi::c_uchar;
     (*ent).minimum_args = min as ::core::ffi::c_uchar;
     (*ent).maximum_args = max as ::core::ffi::c_uchar;

@@ -99,7 +99,7 @@ pub fn construct_include_path(ctx: &crate::execctx::ExecContext, arg_dirs: &[std
     for dir in &dirs {
         // Intern the path bytes to obtain a canonical, cache-owned pointer for
         // the C variable machinery; no CString/manual NUL constructed here.
-        let value = crate::strcache::strcache_add_bytes(dir.as_os_str().as_bytes());
+        let value = crate::strcache::strcache_add_bytes(ctx, dir.as_os_str().as_bytes());
         // SAFETY: FFI boundary. The name is a static C string and `value` is a
         // strcache-interned, NUL-terminated C string valid for the call.
         unsafe {

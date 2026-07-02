@@ -31,6 +31,14 @@ pub struct ExecContext {
     /// Read-only process configuration.
     pub config: Config,
 
+    /// The session salsa database ([`crate::makedb::MakeDb`]) — hosts the
+    /// string interner, the parser's interned AST nodes, and dependency-graph
+    /// inputs in one database with shared revisions. Owned here (not in
+    /// `OnceLock` statics) so two sessions in one process never share
+    /// interner state. Interning and input creation need only `&MakeDb`, so
+    /// no interior-mutability wrapper is required.
+    pub db: crate::makedb::MakeDb,
+
     /// `f_mtime`'s future-timestamp cache: the most recently sampled "adjusted
     /// now" (`file_timestamp_now` plus the timestamp resolution slack). When a
     /// file's mtime is at or before this value it is known not to be in the
@@ -206,9 +214,7 @@ pub struct ExecContext {
 /// heap block it owns. `RefCell` gives the interior mutability the former
 /// `Cell<hash_table>` provided on the shared `&ExecContext`.
 pub struct DirNameTable(
-    pub  ::core::cell::RefCell<
-        rustc_hash::FxHashMap<Box<[u8]>, Box<crate::dir::directory>>,
-    >,
+    pub ::core::cell::RefCell<rustc_hash::FxHashMap<Box<[u8]>, Box<crate::dir::directory>>>,
 );
 
 impl Default for DirNameTable {
@@ -279,7 +285,6 @@ impl ::core::fmt::Debug for DirContentsTable {
             .finish()
     }
 }
-
 
 /// make's central file table, idiomatic edition: a
 /// [`FileId`](crate::file::FileId)-keyed `FxHashMap` of `Arc<Mutex<FileNode>>`,
@@ -415,7 +420,6 @@ impl ExecContext {
     pub fn makelevel(&self) -> u32 {
         self.config.makelevel
     }
-
 }
 
 #[cfg(test)]
@@ -628,7 +632,8 @@ mod tests {
         assert_eq!(ctx.considered.get(), 0);
 
         // The bump idiom `update_goal_chain` / `start_job_command` use.
-        ctx.commands_started.set(ctx.commands_started.get().wrapping_add(1));
+        ctx.commands_started
+            .set(ctx.commands_started.get().wrapping_add(1));
         ctx.considered.set(ctx.considered.get().wrapping_add(1));
         assert_eq!(ctx.commands_started.get(), 1);
         assert_eq!(ctx.considered.get(), 1);
@@ -655,7 +660,12 @@ mod tests {
         assert_eq!(arena.len(), 1);
         assert_eq!(id, FileNode::new(b"foo.o".to_vec()).id());
         assert_eq!(
-            arena.get(id).expect("interned node present").lock().unwrap().name,
+            arena
+                .get(id)
+                .expect("interned node present")
+                .lock()
+                .unwrap()
+                .name,
             b"foo.o"
         );
 

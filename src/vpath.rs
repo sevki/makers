@@ -240,7 +240,8 @@ pub unsafe fn construct_vpath_list(
         }
         // Skip "." entries: searching "." is implicit.
         if len > 1 || bytes[start] != b'.' {
-            let cached = strcache_add_len(bytes[start..].as_ptr() as *const c_char, len as size_t);
+            let cached =
+                strcache_add_len(ctx, bytes[start..].as_ptr() as *const c_char, len as size_t);
             entries.push(dir_name(ctx, cached));
             if len as size_t > maxvpath {
                 maxvpath = len as size_t;
@@ -272,7 +273,7 @@ pub unsafe fn construct_vpath_list(
     (*path).maxlen = maxvpath;
     (*path).next = vpaths;
     vpaths = path;
-    (*path).pattern = strcache_add(pattern);
+    (*path).pattern = strcache_add(ctx, pattern);
     (*path).patlen = strlen(pattern);
     // `find_percent` already unquoted `pattern` in place, and the cached copy
     // is byte-identical, so the `%` sits at the same offset. Reuse that
@@ -563,7 +564,7 @@ unsafe fn selective_vpath_search(
             if let Some(slot) = path_index.as_mut() {
                 *slot = i as c_uint;
             }
-            return strcache_add_len(name, (p + 1 + flen) as size_t);
+            return strcache_add_len(ctx, name, (p + 1 + flen) as size_t);
         }
     }
 

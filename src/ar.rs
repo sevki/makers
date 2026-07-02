@@ -48,6 +48,11 @@ use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ArGlobState<T: SeqNode> {
+    /// The session context, for interning matched member names. Raw pointer
+    /// because this state crosses the C-shaped `ar_scan` callback protocol;
+    /// it points at `ar_glob`'s caller-borrowed context and never outlives
+    /// the `ar_scan` call.
+    pub ctx: *const crate::execctx::ExecContext,
     pub arname: *const ::core::ffi::c_char,
     pub pattern: *const ::core::ffi::c_char,
     pub chain: *mut T,
@@ -353,11 +358,13 @@ unsafe fn ar_glob_match<T: SeqNode>(
     arg: *const ::core::ffi::c_void,
 ) -> intmax_t {
     let state: *mut ArGlobState<T> = arg as *mut ArGlobState<T>;
+    // SAFETY: set by `ar_glob` from its borrowed context; live for the scan.
+    let ctx = &*(*state).ctx;
     if fnmatch((*state).pattern, mem, FNM_PATHNAME | FNM_PERIOD) == 0 {
         let new: *mut T = T::alloc();
         T::set_name(
             new,
-            strcache_add(concat(&[
+            strcache_add(ctx, concat(&[
                 (*state).arname,
                 b"(\0" as *const u8 as *const ::core::ffi::c_char,
                 mem,
@@ -431,6 +438,7 @@ pub unsafe fn ar_glob<T: SeqNode>(
     member_pattern: *const ::core::ffi::c_char,
 ) -> *mut T {
     let mut state: ArGlobState<T> = ArGlobState {
+        ctx,
         arname: ::core::ptr::null::<::core::ffi::c_char>(),
         pattern: ::core::ptr::null::<::core::ffi::c_char>(),
         chain: ::core::ptr::null_mut::<T>(),

@@ -2612,7 +2612,7 @@ unsafe extern "C" fn library_search(
                 if !mtime_ptr.is_null() {
                     *mtime_ptr = mtime;
                 }
-                file = strcache_add(libbuf);
+                file = strcache_add(ctx, libbuf);
                 break;
             } else {
                 let mut vpath_index: ::core::ffi::c_uint = 0;
@@ -2674,7 +2674,7 @@ unsafe extern "C" fn library_search(
                     if mtime != NONEXISTENT_MTIME as uintmax_t
                         && (file.is_null() || vpath_index_0 < best_vpath)
                     {
-                        file = strcache_add(buf);
+                        file = strcache_add(ctx, buf);
                         best_vpath = vpath_index_0;
                         if !mtime_ptr.is_null() {
                             *mtime_ptr = mtime;

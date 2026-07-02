@@ -175,7 +175,7 @@ pub unsafe fn find_directory(
             // SAFETY: a zeroed `directory` is a valid (inert) entry — null
             // `contents`, zero `counter`; we set its interned name immediately.
             let mut new: Box<directory> = Box::new(::core::mem::zeroed());
-            new.name = strcache_add_len(name, len);
+            new.name = strcache_add_len(ctx, name, len);
             let boxed = table.entry(key).or_insert(new);
             (&mut **boxed) as *mut directory
         }

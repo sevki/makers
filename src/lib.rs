@@ -33,6 +33,7 @@ pub mod load;
 pub mod loadapi;
 #[path = "main.rs"]
 pub mod make_main;
+pub mod makedb;
 pub mod misc;
 pub mod output;
 pub mod parser;
