@@ -1758,3 +1758,82 @@ fn origin_environment_variable() {
     let r_run = run_with_env(&r);
     assert_diff("origin-environment", &c_run, &r_run, &c, &r);
 }
+
+/// Differential check for the `Entering/Leaving directory` traces, which the
+/// main harness can never see: [`run`] passes `--no-print-directory` on every
+/// invocation to keep tempdir paths out of the compared output. That blind
+/// spot let a port bug ship where top-level `-C` stopped printing the traces
+/// (#456), so these tests run *without* that flag and instead normalize the
+/// per-binary workdir path to `<WORK>`.
+///
+/// Each binary gets its own workdir containing `sub/Makefile`; `args` runs
+/// against that workdir (no `-f`, no implicit flags).
+fn check_print_dir(name: &str, args: &[&str]) {
+    let sub_makefile = "x:\n\t@echo in-sub\n";
+    let run_one = |make_bin: &Path| -> (Run, PathBuf) {
+        let workdir = tempdir();
+        std::fs::create_dir_all(workdir.join("sub")).unwrap();
+        std::fs::write(workdir.join("sub/Makefile"), sub_makefile).unwrap();
+        let out = Command::new(make_bin)
+            .args(args)
+            .current_dir(&workdir)
+            .output()
+            .expect("failed to spawn make");
+        (out.into(), workdir)
+    };
+    let strip_workdir = |bytes: &[u8], workdir: &Path, bin: &Path| -> Vec<u8> {
+        let s = String::from_utf8_lossy(&normalize(bytes, bin)).into_owned();
+        // The traces print the *resolved* directory, so map both the tempdir
+        // path and its symlink-resolved form (macOS `/tmp` -> `/private/tmp`).
+        let resolved = workdir.canonicalize().unwrap_or_else(|_| workdir.into());
+        s.replace(&resolved.to_string_lossy().into_owned(), "<WORK>")
+            .replace(&workdir.to_string_lossy().into_owned(), "<WORK>")
+            .into_bytes()
+    };
+    let c = c_make();
+    let r = PathBuf::from(RUST_MAKE);
+    let (c_run, c_dir) = run_one(&c);
+    let (r_run, r_dir) = run_one(&r);
+    let c_norm = Run {
+        stdout: strip_workdir(&c_run.stdout, &c_dir, &c),
+        stderr: strip_workdir(&c_run.stderr, &c_dir, &c),
+        code: c_run.code,
+    };
+    let r_norm = Run {
+        stdout: strip_workdir(&r_run.stdout, &r_dir, &r),
+        stderr: strip_workdir(&r_run.stderr, &r_dir, &r),
+        code: r_run.code,
+    };
+    // Paths are already normalized; pass a neutral binary path so
+    // `assert_diff`'s own normalization is a no-op.
+    let neutral = Path::new("make");
+    assert_diff(name, &c_norm, &r_norm, neutral, neutral);
+}
+
+#[test]
+fn print_dir_c_flag_prints_enter_leave() {
+    // Top-level `-C` must print `Entering directory '<dir>'` and the matching
+    // `Leaving directory` line even without `-w` — the regression tracked as
+    // #456 (the `should_print_dir` borrow-channel mirror dropped the `-C`
+    // clause, so only sub-makes printed the traces).
+    check_print_dir("print-dir-C", &["-C", "sub", "x"]);
+}
+
+#[test]
+fn print_dir_no_print_directory_suppresses() {
+    // `--no-print-directory` beats the implicit `-C`-enables-`-w` rule.
+    check_print_dir("print-dir-C-suppressed", &["--no-print-directory", "-C", "sub", "x"]);
+}
+
+#[test]
+fn print_dir_silent_suppresses() {
+    // `-s` suppresses the implicit traces (but an explicit `-w` would win;
+    // see `print_dir_explicit_w`).
+    check_print_dir("print-dir-C-silent", &["-s", "-C", "sub", "x"]);
+}
+
+#[test]
+fn print_dir_explicit_w() {
+    // Explicit `-w` prints the traces even under `-s`.
+    check_print_dir("print-dir-sw", &["-s", "-w", "-C", "sub", "x"]);
+}
