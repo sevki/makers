@@ -2928,7 +2928,7 @@ unsafe fn record_files(
             percents.push(ip.offset_from(np) as usize);
         }
         let n = targets.len() as u16;
-        create_pattern_rule(targets, percents, n, two_colon != 0, deps, recipe, true);
+        create_pattern_rule(ctx, targets, percents, n, two_colon != 0, deps, recipe, true);
         return;
     }
 

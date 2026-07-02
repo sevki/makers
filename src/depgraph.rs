@@ -890,7 +890,7 @@ fn dump_graph_env(ctx: &ExecContext, goals: &[GoalDepNode], var: &str) {
     let path = std::path::PathBuf::from(path);
 
     let mut graph = DepGraph::from_context(ctx, goals);
-    crate::rule::with_pattern_rules(|rules| {
+    crate::rule::with_pattern_rules(ctx, |rules| {
         for rule in rules {
             graph.add_rule(rule.clone());
         }

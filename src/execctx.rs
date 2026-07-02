@@ -95,6 +95,16 @@ pub struct ExecContext {
     pub max_pattern_deps: ::core::cell::Cell<::core::ffi::c_uint>,
     pub max_pattern_dep_length: ::core::cell::Cell<crate::ffi_types::size_t>,
 
+    /// The pattern-rule database itself — owned rules in definition order, the
+    /// former `rule::PATTERN_RULES` `thread_local!`. Populated after the
+    /// build-phase context rebuild in `main_0` (makefile reading, suffix-rule
+    /// conversion, and builtin-rule installation all run later), so it needs no
+    /// carry-over there. Accessed through `rule::with_pattern_rules{,_mut}`,
+    /// which now borrow from the caller's `&ExecContext` — a server hosting
+    /// concurrent sessions gets one rule DB per session context instead of one
+    /// per thread.
+    pub rules: ::core::cell::RefCell<Vec<crate::rule::Rule>>,
+
     /// The goal-chain walk's per-pass tracking counters, the former `static`
     /// atomics `COMMANDS_STARTED` / `CONSIDERED`. `commands_started` counts
     /// recipes launched so far — bumped by `start_job_command` and the

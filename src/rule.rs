@@ -1,12 +1,13 @@
-//! Pattern (implicit) rule database: the global list of `%`-pattern rules,
-//! conversion of old-style suffix rules into pattern rules, and the
+//! Pattern (implicit) rule database: the context-owned list of `%`-pattern
+//! rules, conversion of old-style suffix rules into pattern rules, and the
 //! `print_rule_data_base` report.
 //!
 //! Port of `rule.c`.
 //!
 //! Slice 5 (`*mut`-to-handle): the rule database is now an owned, pointer-free
 //! structure. The global `pattern_rules`/`last_pattern_rule` `*mut rule` linked
-//! list became a `thread_local!` `RefCell<Vec<Rule>>`; each [`Rule`] owns its
+//! list became a `RefCell<Vec<Rule>>` on the execution context
+//! ([`crate::execctx::ExecContext::rules`]); each [`Rule`] owns its
 //! target patterns (`Vec<Vec<u8>>`), prerequisites (`Vec<DepNode>`) and recipe
 //! (`Option<Recipe>`). `suffix_file`/`default_file` are no longer `*mut File`
 //! statics — the `.SUFFIXES` file is looked up by name through
@@ -29,8 +30,9 @@ pub const RECIPEPREFIX_DEFAULT: u8 = b'\t';
 /// `*mut Commands cmds` and a `*mut rule next` link. Here a rule owns its data:
 /// targets are raw-byte patterns, `suffixes[i]` is the byte index just past the
 /// `%` in `targets[i]`, deps are owned [`DepNode`]s and the recipe is an owned
-/// [`Recipe`]. The whole database lives in [`PATTERN_RULES`] as a `Vec<Rule>`,
-/// so there is no `next` pointer and no `#[repr(C)]`/`Copy`.
+/// [`Recipe`]. The whole database lives on the execution context
+/// ([`crate::execctx::ExecContext::rules`]) as a `Vec<Rule>`, so there is no
+/// `next` pointer and no `#[repr(C)]`/`Copy`.
 #[derive(Debug, Clone)]
 pub struct Rule {
     /// Target patterns (raw bytes, no NUL), one per `num`.
@@ -137,27 +139,27 @@ impl Rule {
     }
 }
 
-thread_local! {
-    /// The pattern-rule database — the idiomatic replacement for the c2rust
-    /// `pattern_rules`/`last_pattern_rule` `*mut rule` linked list. Owned rules
-    /// in definition order; matching code indexes into this Vec.
-    pub static PATTERN_RULES: ::core::cell::RefCell<Vec<Rule>> =
-        const { ::core::cell::RefCell::new(Vec::new()) };
+/// Run `f` with a shared borrow of the pattern-rule database
+/// ([`crate::execctx::ExecContext::rules`]).
+pub fn with_pattern_rules<R>(
+    ctx: &crate::execctx::ExecContext,
+    f: impl FnOnce(&[Rule]) -> R,
+) -> R {
+    f(&ctx.rules.borrow())
 }
 
-/// Run `f` with a shared borrow of the pattern-rule database.
-pub fn with_pattern_rules<R>(f: impl FnOnce(&[Rule]) -> R) -> R {
-    PATTERN_RULES.with(|rules| f(&rules.borrow()))
-}
-
-/// Run `f` with a mutable borrow of the pattern-rule database.
-pub fn with_pattern_rules_mut<R>(f: impl FnOnce(&mut Vec<Rule>) -> R) -> R {
-    PATTERN_RULES.with(|rules| f(&mut rules.borrow_mut()))
+/// Run `f` with a mutable borrow of the pattern-rule database
+/// ([`crate::execctx::ExecContext::rules`]).
+pub fn with_pattern_rules_mut<R>(
+    ctx: &crate::execctx::ExecContext,
+    f: impl FnOnce(&mut Vec<Rule>) -> R,
+) -> R {
+    f(&mut ctx.rules.borrow_mut())
 }
 
 /// The number of pattern rules currently installed.
-pub fn num_rules() -> usize {
-    PATTERN_RULES.with(|r| r.borrow().len())
+pub fn num_rules(ctx: &crate::execctx::ExecContext) -> usize {
+    ctx.rules.borrow().len()
 }
 
 /// Byte-for-byte equality of two byte slices (the C `streq` macro on names).
@@ -190,7 +192,7 @@ pub fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
     ctx.max_pattern_targets.set(0);
     ctx.max_pattern_deps.set(0);
 
-    with_pattern_rules_mut(|rules| {
+    with_pattern_rules_mut(ctx, |rules| {
         for rr in rules.iter_mut() {
             let mut ndeps: ::core::ffi::c_uint = pre_ndeps;
             ctx.num_pattern_rules
@@ -246,12 +248,17 @@ fn percent_prefixed(s: &[u8]) -> Vec<u8> {
 ///
 /// `target`/`source` are the suffixes (without `%`); `None` means "absent".
 /// A `None` target builds the archive-member pattern `(%.o)`.
-fn convert_suffix_rule(target: Option<&[u8]>, source: Option<&[u8]>, cmds: Option<Recipe>) {
+fn convert_suffix_rule(
+    ctx: &crate::execctx::ExecContext,
+    target: Option<&[u8]>,
+    source: Option<&[u8]>,
+    cmds: Option<Recipe>,
+) {
     let (name, percent) = suffix_rule_target(target);
     let deps = suffix_rule_source_deps(source);
     let targets = vec![name];
     let percents = vec![percent];
-    create_pattern_rule(targets, percents, 1, false, deps, cmds, false);
+    create_pattern_rule(ctx, targets, percents, 1, false, deps, cmds, false);
 }
 
 /// The pattern target name and `%` offset for a suffix rule. `None` is the
@@ -354,10 +361,10 @@ pub fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
 
     for d in &suffixes {
         // A suffix by itself (".c") describes a rule making "%" from "%.c".
-        convert_suffix_rule(Some(&d.name), None, None);
+        convert_suffix_rule(ctx, Some(&d.name), None, None);
         if let Some(cmds) = &d.cmds {
             // The suffix's own commands make "%" from "%.<suffix>".
-            convert_suffix_rule(None, Some(&d.name), Some(cmds.clone()));
+            convert_suffix_rule(ctx, None, Some(&d.name), Some(cmds.clone()));
         }
         // Single-suffix file ".c": if it exists with commands, mark suffix.
         apply_suffix_mark(ctx, &d.name);
@@ -390,9 +397,9 @@ pub fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
                     mark_suffix(ctx, &rulename);
                     // ".X.a" also describes "(%.o): %.X".
                     if d2.name.len() == 2 && d2.name[0] == b'.' && d2.name[1] == b'a' {
-                        convert_suffix_rule(None, Some(&d.name), Some(rec.clone()));
+                        convert_suffix_rule(ctx, None, Some(&d.name), Some(rec.clone()));
                     }
-                    convert_suffix_rule(Some(&d2.name), Some(&d.name), Some(rec));
+                    convert_suffix_rule(ctx, Some(&d2.name), Some(&d.name), Some(rec));
                 }
             }
         }
@@ -457,10 +464,10 @@ fn percent_index(target: &[u8]) -> usize {
 /// Install `rule` into the pattern-rule database, replacing any rule with
 /// identical targets and deps when `override_0` is set. Returns `true` if the
 /// rule was installed, `false` if discarded as a non-overriding duplicate.
-fn new_pattern_rule(mut rule: Rule, override_0: bool) -> bool {
+fn new_pattern_rule(ctx: &crate::execctx::ExecContext, mut rule: Rule, override_0: bool) -> bool {
     rule.in_use = false;
     rule.terminal = false;
-    let dup = with_pattern_rules(|rules| {
+    let dup = with_pattern_rules(ctx, |rules| {
         for (idx, rr) in rules.iter().enumerate() {
             for i in 0..rule.num as usize {
                 // Compare the i-th new target against every existing target.
@@ -490,7 +497,7 @@ fn new_pattern_rule(mut rule: Rule, override_0: bool) -> bool {
     match dup {
         Some(idx) => {
             if override_0 {
-                with_pattern_rules_mut(|rules| {
+                with_pattern_rules_mut(ctx, |rules| {
                     rules.remove(idx);
                     rules.push(rule);
                 });
@@ -500,7 +507,7 @@ fn new_pattern_rule(mut rule: Rule, override_0: bool) -> bool {
             }
         }
         None => {
-            with_pattern_rules_mut(|rules| rules.push(rule));
+            with_pattern_rules_mut(ctx, |rules| rules.push(rule));
             true
         }
     }
@@ -530,7 +537,7 @@ pub fn install_pattern_rule(
     rule.deps = parse_dep_names(ctx, dep);
 
     let installed = {
-        let dup = with_pattern_rules(|rules| {
+        let dup = with_pattern_rules(ctx, |rules| {
             // Mirror new_pattern_rule's duplicate detection without consuming.
             rules.iter().enumerate().find_map(|(idx, rr)| {
                 for i in 0..rule.num as usize {
@@ -568,7 +575,7 @@ pub fn install_pattern_rule(
             recipe_prefix: RECIPEPREFIX_DEFAULT,
             any_recurse: false,
         });
-        with_pattern_rules_mut(|rules| rules.push(rule));
+        with_pattern_rules_mut(ctx, |rules| rules.push(rule));
     }
 }
 
@@ -604,6 +611,7 @@ fn parse_dep_names(ctx: &crate::execctx::ExecContext, dep: &[u8]) -> Vec<DepNode
 /// is the byte index of the `%` in `targets[i]`, `deps`/`commands` are owned.
 /// Ownership transfers to the rule database.
 pub fn create_pattern_rule(
+    ctx: &crate::execctx::ExecContext,
     targets: Vec<Vec<u8>>,
     percents: Vec<usize>,
     n: u16,
@@ -625,9 +633,9 @@ pub fn create_pattern_rule(
         debug_assert!(t.contains(&b'%'), "pattern rule target must contain a '%'");
     }
     let want_terminal = terminal;
-    if new_pattern_rule(rule, override_0) {
+    if new_pattern_rule(ctx, rule, override_0) {
         // `new_pattern_rule` clears `terminal`; set it on the installed rule.
-        with_pattern_rules_mut(|rules| {
+        with_pattern_rules_mut(ctx, |rules| {
             if let Some(last) = rules.last_mut() {
                 last.terminal = want_terminal;
             }
@@ -654,7 +662,7 @@ pub fn print_rule_data_base(ctx: &crate::execctx::ExecContext) {
     use std::io::Write;
     let mut buf: Vec<u8> = Vec::new();
     buf.extend_from_slice(b"\n# Implicit Rules\n");
-    let (rules_count, terminal) = with_pattern_rules_mut(|rules| {
+    let (rules_count, terminal) = with_pattern_rules_mut(ctx, |rules| {
         let mut terminal: u32 = 0;
         for r in rules.iter_mut() {
             buf.push(b'\n');
