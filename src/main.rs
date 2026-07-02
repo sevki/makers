@@ -1408,7 +1408,6 @@ unsafe fn set_make_sync_syncout(value: ::core::ffi::c_uint) {
     let make_sync_ptr = &raw mut make_sync;
     (*make_sync_ptr).syncout[0] = ((*make_sync_ptr).syncout[0] & !1) | (value as u8 & 1);
 }
-pub static mut fatal_signal_set: sigset_t = SigsetT { __val: [0; 16] };
 unsafe extern "C" fn bsd_signal(sig: i32, func: bsd_signal_ret_t) -> bsd_signal_ret_t {
     let mut act: Sigaction = Sigaction {
         __sigaction_handler: SigactionHandler { sa_handler: None },
@@ -1441,7 +1440,7 @@ unsafe fn sig_ign_handler() -> bsd_signal_ret_t {
     ::core::mem::transmute::<::libc::intptr_t, bsd_signal_ret_t>(1_i32 as ::libc::intptr_t)
 }
 
-unsafe fn install_fatal_signal(sig: i32) {
+unsafe fn install_fatal_signal(ctx: &crate::execctx::ExecContext, sig: i32) {
     let old_handler = bsd_signal(
         sig,
         Some(fatal_error_signal as unsafe extern "C" fn(i32) -> ()),
@@ -1449,7 +1448,9 @@ unsafe fn install_fatal_signal(sig: i32) {
     if signal_handler_addr(old_handler) == 1 {
         bsd_signal(sig, sig_ign_handler());
     } else {
-        sigaddset(&raw mut fatal_signal_set, sig);
+        let mut set = ctx.fatal_signal_set.0.get();
+        sigaddset(&raw mut set, sig);
+        ctx.fatal_signal_set.0.set(set);
     }
 }
 /// # Safety
@@ -1946,14 +1947,16 @@ unsafe fn main_0(
     crate::warning::init();
     options.verify.set(true);
     setlocale(LC_ALL, b"\0" as *const u8 as *const ::core::ffi::c_char);
-    sigemptyset(&raw mut fatal_signal_set);
-    install_fatal_signal(1);
-    install_fatal_signal(3);
-    install_fatal_signal(13);
-    install_fatal_signal(2);
-    install_fatal_signal(15);
-    install_fatal_signal(24);
-    install_fatal_signal(25);
+    let mut fatal_sigs = ctx.fatal_signal_set.0.get();
+    sigemptyset(&raw mut fatal_sigs);
+    ctx.fatal_signal_set.0.set(fatal_sigs);
+    install_fatal_signal(&ctx, 1);
+    install_fatal_signal(&ctx, 3);
+    install_fatal_signal(&ctx, 13);
+    install_fatal_signal(&ctx, 2);
+    install_fatal_signal(&ctx, 15);
+    install_fatal_signal(&ctx, 24);
+    install_fatal_signal(&ctx, 25);
     bsd_signal(SIGCHLD, SIG_DFL);
     crate::output::output_init(::core::ptr::null_mut::<output>());
     if (*argv.offset(0_i32 as isize)).is_null() {
@@ -2310,6 +2313,9 @@ unsafe fn main_0(
     // rebuild) and walked for `MAKEOVERRIDES` below.
     let carried_shell_var = ::core::mem::take(&mut ctx.shell_var);
     let carried_command_variables = ::core::mem::take(&mut ctx.command_variables);
+    // The fatal-signal set was built by the `install_fatal_signal` calls above
+    // and is what `block_sigs`/`unblock_sigs` mask around child bookkeeping.
+    let carried_fatal_signal_set = ::core::mem::take(&mut ctx.fatal_signal_set);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2321,6 +2327,7 @@ unsafe fn main_0(
         program: carried_program,
         shell_var: carried_shell_var,
         command_variables: carried_command_variables,
+        fatal_signal_set: carried_fatal_signal_set,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
