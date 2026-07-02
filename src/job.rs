@@ -665,7 +665,7 @@ unsafe fn child_error(
                 FmtArg::Str((pre) as *const ::core::ffi::c_char),
                 FmtArg::Str((nm) as *const ::core::ffi::c_char),
                 FmtArg::Str((f_name) as *const ::core::ffi::c_char),
-                FmtArg::Int((exit_code) as i32 as i64),
+                FmtArg::Int((exit_code) as i64),
                 FmtArg::Str((post) as *const ::core::ffi::c_char),
                 FmtArg::Str(smode_or_empty(smode).as_ptr()),
             ],
@@ -3095,7 +3095,7 @@ unsafe fn construct_command_argv_internal(
                     (b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char)
                         as *const ::core::ffi::c_char,
                 ),
-                FmtArg::Int((3621_i32) as i32 as i64),
+                FmtArg::Int((3621_i32) as i64),
             ],
         );
     }
