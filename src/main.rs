@@ -3562,6 +3562,14 @@ unsafe fn main_0(
             &[],
         );
     }
+    // Diagnostics tap (MAKERS_DEPGRAPH): snapshot the fully-read graph before
+    // shuffling touches goal order and before the update walk mutates state.
+    unsafe {
+        crate::depgraph::dump_graph_if_requested(
+            &ctx,
+            addr_of!(goals).as_ref().expect("goals missing"),
+        );
+    }
     unsafe {
         crate::shuffle::shuffle_goals_recursive(
             &ctx,
