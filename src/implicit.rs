@@ -5,7 +5,7 @@
 //! Port of `implicit.c`.
 //!
 //! Slice 5 (`*mut`-to-handle): the search operates on [`FileId`] handles and the
-//! owned [`Rule`] database ([`crate::rule::PATTERN_RULES`]). Targets are
+//! owned [`Rule`] database ([`crate::execctx::ExecContext::rules`]). Targets are
 //! identified by `FileId`, prerequisites are built as owned [`DepNode`]s on the
 //! [`FileNode`], and candidate rules are referenced by index into the database
 //! rather than by `*mut Rule`. No `*mut File`/`*mut Dep`/`*mut Commands`.
@@ -257,8 +257,8 @@ struct RuleTarget {
 }
 
 /// Snapshot the i-th target of database rule `ri`.
-fn rule_target(ri: usize, ti: usize) -> RuleTarget {
-    with_pattern_rules(|rules| {
+fn rule_target(ctx: &crate::execctx::ExecContext, ri: usize, ti: usize) -> RuleTarget {
+    with_pattern_rules(ctx, |rules| {
         let r = &rules[ri];
         let bytes = r.targets[ti].clone();
         let percent = bytes
@@ -350,9 +350,9 @@ pub fn pattern_search(
     };
 
     // First pass: collect every pattern rule whose target matches the name.
-    let nrules = with_pattern_rules(|r| r.len());
+    let nrules = with_pattern_rules(ctx, |r| r.len());
     for rule_idx in 0..nrules {
-        let (has_deps_no_cmds, in_use, rnum, terminal, defn) = with_pattern_rules(|rules| {
+        let (has_deps_no_cmds, in_use, rnum, terminal, defn) = with_pattern_rules(ctx, |rules| {
             let r = &rules[rule_idx];
             (
                 !r.deps.is_empty() && r.cmds.is_none(),
@@ -368,7 +368,7 @@ pub fn pattern_search(
             continue;
         }
         if in_use {
-            let defn = rule_defn_of(rule_idx);
+            let defn = rule_defn_of(ctx, rule_idx);
             let mut msg = b"Avoiding implicit rule recursion for rule '".to_vec();
             msg.extend_from_slice(&defn);
             msg.extend_from_slice(b"'.\n");
@@ -376,7 +376,7 @@ pub fn pattern_search(
             continue;
         }
         for ti in 0..rnum as usize {
-            let tgt = rule_target(rule_idx, ti);
+            let tgt = rule_target(ctx, rule_idx, ti);
             let target = &tgt.bytes;
             let percent = tgt.percent;
             if recursions > 0 && target.len() == 1 && !terminal || target.len() > namelen {
@@ -407,7 +407,7 @@ pub fn pattern_search(
             // `if (rule->deps == 0 && rule->cmds == 0) continue;`). It must not
             // be recorded as a usable candidate, or it would shadow the chained
             // intermediate rule (e.g. a bare `%.out:` blocking `%.out: %.mid`).
-            let deps_and_cmds_empty = with_pattern_rules(|rules| {
+            let deps_and_cmds_empty = with_pattern_rules(ctx, |rules| {
                 let r = &rules[rule_idx];
                 r.deps.is_empty() && r.cmds.is_none()
             });
@@ -443,7 +443,7 @@ pub fn pattern_search(
     if specific_rule_matched {
         for tr in &mut tryrules {
             if let Some(idx) = tr.rule {
-                let (terminal, has_one) = with_pattern_rules(|rules| {
+                let (terminal, has_one) = with_pattern_rules(ctx, |rules| {
                     let r = &rules[idx];
                     (r.terminal, r.lens.contains(&1))
                 });
@@ -473,7 +473,7 @@ pub fn pattern_search(
                     continue;
                 }
             };
-            let rule_terminal = with_pattern_rules(|r| r[rule_idx].terminal);
+            let rule_terminal = with_pattern_rules(ctx, |r| r[rule_idx].terminal);
             if intermed_ok != 0 && rule_terminal {
                 ri += 1;
                 continue;
@@ -482,7 +482,7 @@ pub fn pattern_search(
             let mut deps_found: u32 = 0;
             let mut order_only = false;
 
-            let tgt = rule_target(rule_idx, tr.matches as usize);
+            let tgt = rule_target(ctx, rule_idx, tr.matches as usize);
             let target = &tgt.bytes;
             let percent = tgt.percent;
             stem_off = percent;
@@ -497,7 +497,7 @@ pub fn pattern_search(
                 }
             }
             {
-                let defn = rule_defn_of(rule_idx);
+                let defn = rule_defn_of(ctx, rule_idx);
                 let mut msg = b"Trying pattern rule '".to_vec();
                 msg.extend_from_slice(&defn);
                 msg.extend_from_slice(b"' with stem '");
@@ -520,18 +520,18 @@ pub fn pattern_search(
                     .copy_from_slice(&name[stem_off..stem_off + stemlen]);
                 stem_str[pathlen + stemlen] = 0;
             }
-            let no_deps = with_pattern_rules(|r| r[rule_idx].deps.is_empty());
+            let no_deps = with_pattern_rules(ctx, |r| r[rule_idx].deps.is_empty());
             if no_deps {
                 // A matching rule without prerequisites wins immediately.
                 matched = true;
                 found_rule_idx = Some(rule_idx);
                 break 'outer;
             }
-            with_pattern_rules_mut(|r| r[rule_idx].in_use = true);
+            with_pattern_rules_mut(ctx, |r| r[rule_idx].in_use = true);
             deplist.clear();
 
             // Snapshot the rule's deps for iteration (names + flags).
-            let rule_deps = with_pattern_rules(|r| r[rule_idx].deps.clone());
+            let rule_deps = with_pattern_rules(ctx, |r| r[rule_idx].deps.clone());
 
             'deps: for dep in &rule_deps {
                 let dep_name_bytes = dep.name.clone().into_bytes();
@@ -602,7 +602,7 @@ pub fn pattern_search(
                     let dr_name = dr.name.clone().into_bytes();
                     let is_rule = dr.name.as_bytes() == dep_name_bytes.as_slice();
                     if is_impossible(ctx, &dr_name) {
-                        let defn = rule_defn_of(rule_idx);
+                        let defn = rule_defn_of(ctx, rule_idx);
                         let mut msg = b"Rejecting rule '".to_vec();
                         msg.extend_from_slice(&defn);
                         msg.extend_from_slice(b"' due to impossible prerequisite '");
@@ -736,7 +736,7 @@ pub fn pattern_search(
                     }
                 }
             }
-            with_pattern_rules_mut(|r| r[rule_idx].in_use = false);
+            with_pattern_rules_mut(ctx, |r| r[rule_idx].in_use = false);
             if !failed {
                 matched = true;
                 found_rule_idx = Some(rule_idx);
@@ -764,7 +764,7 @@ pub fn pattern_search(
     let found_tr = tryrules[ri];
 
     // Recompute stem for the found rule (ri/found are aligned).
-    let tgt = rule_target(found, found_tr.matches as usize);
+    let tgt = rule_target(ctx, found, found_tr.matches as usize);
     let target = &tgt.bytes;
     let percent = tgt.percent;
     stem_off = percent;
@@ -777,7 +777,7 @@ pub fn pattern_search(
 
     // When recursing, give the file the matched target pattern as its name.
     if recursions > 0 {
-        let pat = with_pattern_rules(|r| r[found].targets[found_tr.matches as usize].clone());
+        let pat = with_pattern_rules(ctx, |r| r[found].targets[found_tr.matches as usize].clone());
         if let Some(node) = ctx.filenodes.get(file) {
             node.lock().expect("file node lock poisoned").name = pat;
         }
@@ -802,7 +802,7 @@ pub fn pattern_search(
         } else {
             nd.file = Some(lookup_file(ctx, &pe.name).unwrap_or_else(|| enter_file(ctx, &pe.name)));
         }
-        let rule_terminal = with_pattern_rules(|r| r[found].terminal);
+        let rule_terminal = with_pattern_rules(ctx, |r| r[found].terminal);
         if pe.file.is_none() && rule_terminal {
             // A terminal rule's non-intermediate prerequisites must exist as-is.
             match nd.file {
@@ -837,8 +837,8 @@ pub fn pattern_search(
 
     // Attach the recipe and stem, mark target, and record which rule won
     // (semantic id, so `in_use` search scratch doesn't perturb it).
-    let found_recipe: Option<Recipe> = with_pattern_rules(|r| r[found].cmds.clone());
-    let found_rule_id = with_pattern_rules(|r| crate::rule::RuleId::from(&r[found]));
+    let found_recipe: Option<Recipe> = with_pattern_rules(ctx, |r| r[found].cmds.clone());
+    let found_rule_id = with_pattern_rules(ctx, |r| crate::rule::RuleId::from(&r[found]));
     if let Some(node) = ctx.filenodes.get(file) {
         let mut n = node.lock().expect("file node lock poisoned");
         n.stem = stem_string.clone();
@@ -848,7 +848,7 @@ pub fn pattern_search(
     }
 
     // Inherit .PRECIOUS / .NOTINTERMEDIATE from the target pattern file.
-    let found_target = with_pattern_rules(|r| r[found].targets[found_tr.matches as usize].clone());
+    let found_target = with_pattern_rules(ctx, |r| r[found].targets[found_tr.matches as usize].clone());
     let (pat_precious, pat_notint) = lookup_flags(ctx, &found_target);
     if let Some(node) = ctx.filenodes.get(file) {
         let mut n = node.lock().expect("file node lock poisoned");
@@ -861,13 +861,13 @@ pub fn pattern_search(
     }
 
     // A multi-target rule also makes the other targets.
-    let rnum = with_pattern_rules(|r| r[found].num);
+    let rnum = with_pattern_rules(ctx, |r| r[found].num);
     if rnum > 1 {
         for ti in 0..rnum as usize {
             if ti == found_tr.matches as usize {
                 continue;
             }
-            let tgt = rule_target(found, ti);
+            let tgt = rule_target(ctx, found, ti);
             let mut nm: Vec<u8> = Vec::new();
             nm.extend_from_slice(&tgt.bytes[..tgt.percent]);
             nm.extend_from_slice(&stem_bytes);
@@ -900,7 +900,7 @@ pub fn pattern_search(
     }
 
     depth = depth.wrapping_sub(1);
-    let defn = rule_defn_of(found);
+    let defn = rule_defn_of(ctx, found);
     let mut msg = b"Found implicit rule '".to_vec();
     msg.extend_from_slice(&defn);
     msg.extend_from_slice(b"' for '");
@@ -978,8 +978,8 @@ fn lookup_flags(ctx: &crate::execctx::ExecContext, name: &[u8]) -> (bool, bool) 
 }
 
 /// The cached printable definition of database rule `idx`.
-fn rule_defn_of(idx: usize) -> Vec<u8> {
-    with_pattern_rules_mut(|rules| rules[idx].rule_defn().to_vec())
+fn rule_defn_of(ctx: &crate::execctx::ExecContext, idx: usize) -> Vec<u8> {
+    with_pattern_rules_mut(ctx, |rules| rules[idx].rule_defn().to_vec())
 }
 
 /// Emit the "no rule found" trace, retrying once for a compatibility rule.
