@@ -144,7 +144,7 @@ use crate::hash::{hash_find_item, hash_init, hash_insert, hash_load, jhash};
 use rustc_hash::FxHashMap;
 pub use crate::job::childbase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
-use crate::make_main::{db_level, starting_directory, stopchar_map};
+use crate::make_main::{db_level, stopchar_map};
 pub use crate::output::output;
 use crate::output::{error, fatal, out_of_memory, output_context, outputs};
 use crate::posixos::fd_noinherit;
@@ -4097,22 +4097,26 @@ fn abspath_result(list: &[u8], starting_dir: &[u8]) -> Vec<u8> {
     out.pop();
     out
 }
-/// Borrow the process-wide `starting_directory` global (make's recorded working
-/// directory) as bytes. Confines the one raw-pointer read to a single safe
-/// accessor so path builtins can stay fully safe.
-fn starting_directory_bytes() -> &'static [u8] {
-    // SAFETY: `starting_directory` is a process-lifetime C string set once during
-    // startup and never freed; reading it as a byte slice is sound.
-    unsafe {
-        if starting_directory.is_null() {
-            &[]
+/// Make's recorded working directory as owned bytes (empty when unknown),
+/// read from `ExecContext::starting_directory` through the borrow channel:
+/// `$(abspath)` dispatch goes through the pure `SafeFunc` table, which
+/// carries no context parameter. Confines the one raw-pointer read to a
+/// single accessor so the path builtins stay fully safe.
+fn starting_directory_bytes() -> Vec<u8> {
+    crate::make_main::try_with_exec_context(|ctx| {
+        let p = ctx.starting_directory.0.get();
+        if p.is_null() {
+            Vec::new()
         } else {
-            ::core::ffi::CStr::from_ptr(starting_directory).to_bytes()
+            // SAFETY: a non-null `starting_directory` is a NUL-terminated C
+            // string in `main_0`'s frame, live for the whole run.
+            unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes().to_vec()
         }
-    }
+    })
+    .unwrap_or_default()
 }
 fn func_abspath(_name: &[u8], args: &[&[u8]]) -> Vec<u8> {
-    abspath_result(args[0], starting_directory_bytes())
+    abspath_result(args[0], &starting_directory_bytes())
 }
 #[cfg(test)]
 mod func_abspath_tests {
@@ -4122,12 +4126,13 @@ mod func_abspath_tests {
     //! a trailing-space-then-`o -= 1` fixup — is preserved verbatim below as
     //! `func_abspath_unsafe_oracle` and driven through the real variable-output
     //! buffer alongside the converted safe handler, asserting byte-identical
-    //! output. Both read the same `starting_directory` global, so they agree
-    //! regardless of its value; the direct assertions pin the pure helper's
-    //! behavior with an explicit base.
+    //! output. Both read the same `starting_directory` context field (via
+    //! `starting_directory_bytes`), so they agree regardless of its value;
+    //! the direct assertions pin the pure helper's behavior with an explicit
+    //! base.
     use super::{
-        abspath_into, abspath_result, find_next_token, func_abspath, size_t, starting_directory,
-        variable_buffer_output, SafeFunc, GET_PATH_MAX,
+        abspath_into, abspath_result, find_next_token, func_abspath, size_t,
+        starting_directory_bytes, variable_buffer_output, SafeFunc, GET_PATH_MAX,
     };
     use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
@@ -4150,11 +4155,8 @@ mod func_abspath_tests {
         let mut path: *const c_char;
         let mut doneany: i32 = 0;
         let mut len: size_t = 0;
-        let starting_dir: &[u8] = if starting_directory.is_null() {
-            &[]
-        } else {
-            ::core::ffi::CStr::from_ptr(starting_directory).to_bytes()
-        };
+        let starting_dir_owned = starting_directory_bytes();
+        let starting_dir: &[u8] = &starting_dir_owned;
         loop {
             path = find_next_token(&raw mut p, &raw mut len);
             if path.is_null() {

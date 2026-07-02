@@ -2818,7 +2818,6 @@ mod f_mtime_tests {
             .unwrap()
             .as_secs() as i64;
         unsafe {
-            crate::make_main::install_program_name_for_test();
             let times = [
                 libc::timespec {
                     tv_sec: future_secs,

@@ -170,6 +170,21 @@ pub struct ExecContext {
     /// startup (before the build-phase context rebuild), so it is carried
     /// across it. Heap storage from `xstrdup` backs the pointer.
     pub directory_before_chdir: MutPtrCell,
+
+    /// The program name — `basename(argv[0])`, or `"make"` when argv[0] is
+    /// empty — the former main.rs `pub static mut program`. Prefixes every
+    /// message/error line and the usage text. Set once at startup (before the
+    /// build-phase context rebuild, so it is carried across it); argv or
+    /// 'static storage backs the pointer.
+    pub program: PtrCell,
+
+    /// Make's recorded starting working directory (after any `-C` chdirs), the
+    /// former main.rs `pub static mut starting_directory` — read by the
+    /// `Entering/Leaving directory` lines and `$(abspath)`. Null when `getcwd`
+    /// failed. Set after the build-phase context rebuild, into `main_0`'s
+    /// `current_directory` buffer, which outlives the run.
+    pub starting_directory: MutPtrCell,
+
     /// `load_too_high`'s last-reported `getloadavg` failure errno (the former
     /// function-local `static mut lossage`), used to suppress repeating the
     /// same "cannot enforce load limit" warning.
