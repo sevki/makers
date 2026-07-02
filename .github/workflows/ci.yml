@@ -366,9 +366,13 @@ jobs:
             # spawned `make` binary, so coverage reflects real recipe execution.
             # --ignore-run-fail: still emit coverage even if a flaky test fails,
             # so the CRAP gate always has data to score (matches scripts/crap.sh).
+            # --include-ignored: quarantined known-divergence tests (skipped by
+            # the enforced `test` gate above) still execute here — this job
+            # tolerates their failures, and dropping them would shrink coverage
+            # of the code they exercise and destabilize the CRAP baseline.
             - name: Run tests under coverage
               run: |
-                  cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info
+                  cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info -- --include-ignored
                   cargo llvm-cov report --summary-only | tee coverage-summary.txt
 
             - name: Write coverage to job summary
