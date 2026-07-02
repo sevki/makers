@@ -244,6 +244,7 @@ unsafe fn floc_owned(flocp: *const Floc) -> (Option<Vec<u8>>, u64, u64) {
 /// Count the nodes in a `NameSeq` chain, starting from its head node (or
 /// `None` for an empty chain). Retained as a pure, tested helper; the makefile
 /// reader no longer threads `NameSeq` chains (it uses owned `Vec<ParsedName>`).
+#[cfg(test)]
 fn name_seq_len(head: Option<&NameSeq>) -> usize {
     let mut len: usize = 0;
     let mut cur = head;
@@ -2378,7 +2379,6 @@ unsafe fn record_target_var(
             let percent_off = percent.offset_from(name);
             let cached_name = strcache_add(name);
             let cached_percent = cached_name.offset(percent_off);
-            name = cached_name;
             p = create_pattern_var(cached_name, cached_percent);
             (*p).variable.fileinfo = *flocp;
             v = assign_variable_definition(ctx, &raw mut (*p).variable, defn);

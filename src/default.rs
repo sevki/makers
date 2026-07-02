@@ -5,7 +5,7 @@
 //! still C-shaped APIs shared across modules.
 
 use ::core::ffi::{c_char, CStr};
-use ::core::ptr::null;
+use ::core::ptr::{addr_of, addr_of_mut, null};
 
 use crate::dep::DepNode;
 use crate::ffi_types::size_t;
@@ -297,7 +297,7 @@ unsafe fn install_builtin_suffixes(
     ctx: &crate::execctx::ExecContext,
     suffix_file: crate::file::FileId,
 ) {
-    let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
+    let mut p = addr_of_mut!(default_suffixes).cast::<u8>() as *mut c_char;
     let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE);
     let deps: Vec<DepNode> = parsed
         .into_iter()
@@ -320,7 +320,7 @@ unsafe fn install_builtin_suffixes(
         ctx,
         c"SUFFIXES".as_ptr(),
         8,
-        default_suffixes.as_ptr() as *const c_char,
+        addr_of!(default_suffixes).cast::<u8>() as *const c_char,
         o_default,
         0,
         (*current_variable_set_list).set,

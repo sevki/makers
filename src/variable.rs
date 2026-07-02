@@ -13,6 +13,7 @@ extern "C" {
         __src: *const ::core::ffi::c_void,
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
+    #[cfg(test)]
     fn memcmp(
         __s1: *const ::core::ffi::c_void,
         __s2: *const ::core::ffi::c_void,
@@ -2707,12 +2708,6 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
 unsafe fn print_auto_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
     let v: *const variable = item as *const variable;
     if (*v).origin() as i32 == o_automatic as i32 {
-        print_variable(item, arg);
-    }
-}
-unsafe fn print_noauto_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
-    let v: *const variable = item as *const variable;
-    if (*v).origin() as i32 != o_automatic as i32 {
         print_variable(item, arg);
     }
 }

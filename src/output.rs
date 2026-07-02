@@ -30,11 +30,9 @@ extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(stream: *mut FILE) -> i32;
-    fn vsprintf(s: *mut c_char, format: *const c_char, arg: ::core::ffi::VaList) -> i32;
     fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
     fn fwrite(ptr: *const c_void, size: size_t, n: size_t, s: *mut FILE) -> ::core::ffi::c_ulong;
     fn fileno(stream: *mut FILE) -> i32;
-    fn mempcpy(dest: *mut c_void, src: *const c_void, n: size_t) -> *mut c_void;
 }
 
 /// Per-target output state: temp-file descriptors for stdout/stderr while
