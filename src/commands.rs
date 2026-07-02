@@ -490,11 +490,22 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     signal(sig, SIG_DFL);
     // This is a kernel-invoked signal handler: it cannot be passed the owned
     // `ExecContext`, and there is deliberately no global to read it from. The
-    // only use of `ctx` in the cleanup paths below is the `make[N]:` message
-    // prefix, which is cosmetic here, so we hand the cleanup helpers a default
-    // (top-level) context. No converted *printer* is called with this ctx
-    // (see the prefix-free `kill` failure path at the end).
+    // cleanup helpers below get a default (top-level) context — its only uses
+    // are the cosmetic `make[N]:` message prefix and the fatal-signal mask. No
+    // converted *printer* is called with this ctx (see the prefix-free `kill`
+    // failure path at the end).
     let ctx = crate::execctx::ExecContext::default();
+    // The mask is NOT cosmetic: `reap_children` blocks the trapped fatal
+    // signals around its child-list mutations, and a default context's empty
+    // set would block nothing (Codex review on #467). Copy the live mask —
+    // built by `install_fatal_signal` during startup — through the `CTX_PTR`
+    // borrow channel, like the temp-stdin/intermediates cleanup below; in
+    // bare unit tests with no installed context the empty set stands.
+    if let Some(mask) =
+        crate::make_main::try_with_exec_context(|live_ctx| live_ctx.fatal_signal_set.0.get())
+    {
+        ctx.fatal_signal_set.0.set(mask);
+    }
     // The temp-stdin name lives on the *live* context (it is per-run cleanup
     // state, not part of the default/throwaway one) — reach it through the
     // CTX_PTR borrow channel like `remove_intermediates` below.
