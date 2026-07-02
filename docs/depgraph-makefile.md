@@ -10,12 +10,16 @@ from this makefile (`tests/fixtures/depgraph.mk`):
 ```make
 # Fixture for the MAKERS_DEPGRAPH end-to-end test (tests/depgraph_dump.rs):
 # a real makefile exercising an explicit link rule, a user-defined pattern
-# rule, and an order-only prerequisite on a phony target.
-prog: main.o util.o | outdir
+# rule, a multi-target (grouped) pattern rule, and an order-only
+# prerequisite on a phony target.
+prog: main.o util.o gen.tab.c | outdir
 	cc -o $@ main.o util.o
 
 %.o: %.c
 	cc -c -o $@ $<
+
+%.tab.c %.tab.h: %.y
+	bison -d -o $*.tab.c $<
 
 .PHONY: outdir
 outdir:
@@ -33,23 +37,28 @@ flowchart LR
   n1(["main.o"])
   n2(["Makefile"])
   n3(["%.c"])
-  n4(["util.o"])
-  n5([".SUFFIXES"])
-  n6([".PHONY"])
-  n7([".DEFAULT"])
-  n8["prog"]
-  n9["outdir"]
-  n10[["%.o: %.c"]]
-  n0 ==> n8
-  n6 --> n9
-  n8 --> n1
-  n8 --> n4
-  n8 -.->|order-only| n9
-  n10 -.-> n3
+  n4(["gen.tab.c"])
+  n5(["%.y"])
+  n6(["util.o"])
+  n7([".SUFFIXES"])
+  n8([".PHONY"])
+  n9([".DEFAULT"])
+  n10["prog"]
+  n11["outdir"]
+  n12[["%.tab.c %.tab.h: %.y"]]
+  n13[["%.o: %.c"]]
+  n0 ==> n10
+  n8 --> n11
+  n10 --> n1
+  n10 --> n6
+  n10 --> n4
+  n10 -.->|order-only| n11
+  n12 -.-> n5
+  n13 -.-> n3
   classDef phony stroke-dasharray:5 5;
-  class n9 phony;
+  class n11 phony;
   classDef rule stroke:#36c,stroke-dasharray:3 3;
-  class n10 rule;
+  class n12,n13 rule;
 ```
 
 ## After the update walk
@@ -61,35 +70,48 @@ their sources, and each object carries a `rule` provenance edge to the
 ```mermaid
 flowchart LR
   n0{"<root>"}
-  n1["main.o"]
-  n2(["util.c"])
-  n3(["Makefile"])
-  n4(["%.c"])
-  n5["util.o"]
-  n6([".SUFFIXES"])
-  n7(["main.c"])
-  n8([".PHONY"])
-  n9([".DEFAULT"])
-  n10["prog"]
-  n11["outdir"]
-  n12[["%.o: %.c"]]
-  n0 ==> n10
-  n1 --> n7
-  n1 -->|parent| n10
-  n1 -.->|rule| n12
-  n2 -->|parent| n5
-  n5 --> n2
-  n5 -->|parent| n10
-  n5 -.->|rule| n12
-  n7 -->|parent| n1
-  n8 --> n11
-  n10 --> n1
-  n10 --> n5
-  n10 -.->|order-only| n11
-  n11 -->|parent| n10
-  n12 -.-> n4
+  n1(["gen.y"])
+  n2["main.o"]
+  n3(["util.c"])
+  n4(["Makefile"])
+  n5(["%.c"])
+  n6["gen.tab.c"]
+  n7(["%.y"])
+  n8["util.o"]
+  n9([".SUFFIXES"])
+  n10(["main.c"])
+  n11(["gen.tab.h"])
+  n12([".PHONY"])
+  n13([".DEFAULT"])
+  n14["prog"]
+  n15["outdir"]
+  n16[["%.tab.c %.tab.h: %.y"]]
+  n17[["%.o: %.c"]]
+  n0 ==> n14
+  n1 -->|parent| n6
+  n2 --> n10
+  n2 -->|parent| n14
+  n2 -.->|rule| n17
+  n3 -->|parent| n8
+  n6 --> n1
+  n6 -.->|also| n11
+  n6 -->|parent| n14
+  n6 -.->|rule| n16
+  n8 --> n3
+  n8 -->|parent| n14
+  n8 -.->|rule| n17
+  n10 -->|parent| n2
+  n11 -.->|rule| n16
+  n12 --> n15
+  n14 --> n2
+  n14 --> n8
+  n14 --> n6
+  n14 -.->|order-only| n15
+  n15 -->|parent| n14
+  n16 -.-> n7
+  n17 -.-> n5
   classDef phony stroke-dasharray:5 5;
-  class n11 phony;
+  class n15 phony;
   classDef rule stroke:#36c,stroke-dasharray:3 3;
-  class n12 rule;
+  class n16,n17 rule;
 ```

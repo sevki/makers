@@ -883,6 +883,9 @@ pub fn pattern_search(
                     n.notintermediate = true;
                 }
                 n.is_target = true;
+                // The same match produced this peer output — provenance
+                // applies to every target of a multi-target rule.
+                n.matched_rule = Some(found_rule_id);
             }
             // Prepend to also_make.
             let mut nd = dep_with_name(nm);
