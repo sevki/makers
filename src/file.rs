@@ -229,6 +229,12 @@ pub struct FileNode {
     pub renamed: Option<FileId>,
     /// Parent for an intermediate file produced by a chain of implicit rules.
     pub parent: Option<FileId>,
+    /// Provenance: the pattern rule whose match supplied this target's
+    /// deps/recipe (set by `pattern_search` when it commits a match; `None`
+    /// for explicit targets). Keyed by the rule's semantic content hash, so
+    /// it stays valid across rule-database reordering. `depgraph` turns this
+    /// into a `DerivedBy` edge.
+    pub matched_rule: Option<crate::rule::RuleId>,
     /// Last-known modification time (packed make timestamp).
     pub last_mtime: u64,
     /// Modification time captured before an update began.
@@ -284,6 +290,7 @@ impl FileNode {
             double_colon: Vec::new(),
             renamed: None,
             parent: None,
+            matched_rule: None,
             last_mtime: 0,
             mtime_before_update: 0,
             considered: 0,
@@ -332,21 +339,18 @@ impl FileNode {
 // (`crate::recipe`), next to the idiomatic `Recipe` that replaces it.
 // Re-exported here so existing `crate::file::Commands` paths — and the
 // `pub type commands = Commands` alias below — keep resolving.
-pub use crate::recipe::Commands;
 use crate::commands::{print_commands, set_file_variables};
 use crate::expand::{
     expand_string_buf, expand_string_for_file, variable_buffer, variable_buffer_output,
 };
 use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
-use crate::make_main::{
-    db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP,
-};
+use crate::make_main::{db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP};
 use crate::output::{error, fatal, perror_with_name, FmtArg};
 use crate::read::{find_percent, parse_file_seq};
+pub use crate::recipe::Commands;
 use crate::variable::{
-    initialize_file_variables, lookup_variable,
-    print_file_variables, print_target_variables,
+    initialize_file_variables, lookup_variable, print_file_variables, print_target_variables,
 };
 
 pub type variable_set_list = VariableSetList;
@@ -1246,7 +1250,16 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
     for node in nodes {
         // Copy out the flags and name under the node lock, then drop the guard so
         // the FFI calls below never run while holding it.
-        let (intermediate, dontcare, precious, secondary, notintermediate, cmd_target, status_none, name) = {
+        let (
+            intermediate,
+            dontcare,
+            precious,
+            secondary,
+            notintermediate,
+            cmd_target,
+            status_none,
+            name,
+        ) = {
             let n = node.lock().expect("file node lock poisoned");
             (
                 n.intermediate,
@@ -1259,11 +1272,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                 n.name.clone(),
             )
         };
-        if intermediate
-            && (dontcare || !precious)
-            && !secondary
-            && !notintermediate
-            && !cmd_target
+        if intermediate && (dontcare || !precious) && !secondary && !notintermediate && !cmd_target
         {
             let status: i32;
             if status_none {
@@ -1301,10 +1310,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                         }
                         if !crate::make_main::opt_run_silent() {
                             if doneany == 0 {
-                                fputs(
-                                    b"rm \0" as *const u8 as *const ::core::ffi::c_char,
-                                    stdout,
-                                );
+                                fputs(b"rm \0" as *const u8 as *const ::core::ffi::c_char, stdout);
                                 doneany = 1;
                             } else {
                                 putchar(' ' as i32);
@@ -1467,8 +1473,7 @@ pub unsafe fn enter_prereqs(
     for d in deps.iter_mut() {
         if !d.needs_second_expansion {
             let name_bytes = d.name.clone().into_bytes();
-            let fid =
-                lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
+            let fid = lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
             d.file = Some(fid);
             d.static_pattern = false;
             // The c2rust graph nulled `name` once `file` was resolved; we keep
@@ -3025,8 +3030,11 @@ mod tests {
         let b = crate::execctx::ExecContext::default();
 
         let f = enter_file(&a, b"per_ctx_probe_target");
-        assert_eq!(lookup_file(&a, b"per_ctx_probe_target"), Some(f),
-            "and found again in context a");
+        assert_eq!(
+            lookup_file(&a, b"per_ctx_probe_target"),
+            Some(f),
+            "and found again in context a"
+        );
         assert!(
             lookup_file(&b, b"per_ctx_probe_target").is_none(),
             "an independent context shares no global file table"
@@ -3490,10 +3498,7 @@ mod tests {
             FileId::from_bytes(&[0xff, 0x01]),
             FileId::from_bytes(&[0xff, 0x02])
         );
-        assert_eq!(
-            FileId::from_bytes(b"foo.o"),
-            FileId::from_bytes(b"foo.o")
-        );
+        assert_eq!(FileId::from_bytes(b"foo.o"), FileId::from_bytes(b"foo.o"));
     }
 
     /// `FileId::from(&FileNode)` (the `id_wireformat!` `<-` form) content-hashes

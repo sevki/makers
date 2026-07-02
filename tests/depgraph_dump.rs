@@ -1,9 +1,10 @@
 //! End-to-end dependency-graph dump: run the real `make` binary on a real
-//! makefile with `MAKERS_DEPGRAPH` set and verify the Mermaid graph it
-//! writes (the snapshot `main_0` takes after reading makefiles, snapping
-//! deps, and installing rules — right before the update walk).
+//! makefile with `MAKERS_DEPGRAPH` / `MAKERS_DEPGRAPH_POST` set and verify
+//! the Mermaid graphs it writes — the pre-walk snapshot ("what make plans")
+//! and the post-walk snapshot ("what make discovered": implicit-rule
+//! resolution and `DerivedBy` provenance).
 //!
-//! The dumped graph doubles as the committed sample in
+//! The dumped graphs double as the committed sample in
 //! `docs/depgraph-makefile.md`; regenerate it with
 //! `UPDATE_SNAPSHOTS=1 cargo test --test depgraph_dump`.
 
@@ -30,12 +31,21 @@ fn tempdir() -> PathBuf {
     dir
 }
 
+struct Dump {
+    /// Pre-walk snapshot (`MAKERS_DEPGRAPH`).
+    pre: String,
+    /// Post-walk snapshot (`MAKERS_DEPGRAPH_POST`).
+    post: String,
+    status: std::process::ExitStatus,
+}
+
 /// Run the just-built `make` on the depgraph fixture in a scratch dir with
-/// `MAKERS_DEPGRAPH` pointing at `dump_name`, and return the dumped graph.
-/// `-r` keeps builtin rules out of the graph, `-n` keeps the run
-/// side-effect-free; MAKEFLAGS-style env is scrubbed so the snapshot is
-/// hermetic.
-fn dump_graph(dump_name: &str) -> (String, std::process::ExitStatus) {
+/// both dump variables pointing at `dump_name` / `post-<dump_name>`, and
+/// return the dumped graphs. `-r` keeps builtin rules out of the graph,
+/// `-n` keeps the run side-effect-free (but still walks the whole graph, so
+/// implicit rules resolve); MAKEFLAGS-style env is scrubbed so the snapshots
+/// are hermetic.
+fn dump_graph(dump_name: &str) -> Dump {
     let fixture = manifest_dir().join("tests/fixtures/depgraph.mk");
     let workdir = tempdir();
     std::fs::copy(&fixture, workdir.join("Makefile")).expect("copy fixture");
@@ -44,25 +54,37 @@ fn dump_graph(dump_name: &str) -> (String, std::process::ExitStatus) {
     std::fs::write(workdir.join("main.c"), "").expect("write main.c");
     std::fs::write(workdir.join("util.c"), "").expect("write util.c");
 
-    let dump = workdir.join(dump_name);
+    let pre = workdir.join(dump_name);
+    let post = workdir.join(format!("post-{dump_name}"));
     let status = Command::new(RUST_MAKE)
         .args(["--no-print-directory", "-r", "-n", "-f", "Makefile"])
-        .env("MAKERS_DEPGRAPH", &dump)
+        .env("MAKERS_DEPGRAPH", &pre)
+        .env("MAKERS_DEPGRAPH_POST", &post)
         .env_remove("MAKEFLAGS")
         .env_remove("GNUMAKEFLAGS")
         .env_remove("MAKEFILES")
         .current_dir(&workdir)
         .status()
         .expect("spawn make");
-    let graph = std::fs::read_to_string(&dump)
-        .unwrap_or_else(|err| panic!("dump not written to {}: {err}", dump.display()));
-    (graph, status)
+    let read = |p: &PathBuf| {
+        std::fs::read_to_string(p)
+            .unwrap_or_else(|err| panic!("dump not written to {}: {err}", p.display()))
+    };
+    Dump {
+        pre: read(&pre),
+        post: read(&post),
+        status,
+    }
 }
 
 #[test]
 fn real_makefile_dumps_a_mermaid_graph() {
-    let (graph, status) = dump_graph("graph.md");
-    assert!(status.success(), "make -rn on the fixture should succeed");
+    let dump = dump_graph("graph.md");
+    let graph = &dump.pre;
+    assert!(
+        dump.status.success(),
+        "make -rn on the fixture should succeed"
+    );
 
     assert!(
         graph.starts_with("```mermaid\nflowchart LR\n"),
@@ -89,27 +111,73 @@ fn real_makefile_dumps_a_mermaid_graph() {
     // and keep their dep-learned labels.
     assert!(graph.contains("([\"main.o\"])"), "{graph}");
     assert!(graph.contains("([\"util.o\"])"), "{graph}");
+    // Pre-walk, implicit matching has not run: no sources, no provenance.
+    assert!(
+        !graph.contains("([\"main.c\"])"),
+        "pre-walk has no resolved sources: {graph}"
+    );
+    assert!(
+        !graph.contains("-.->|rule|"),
+        "pre-walk has no provenance: {graph}"
+    );
 
     // The same run must be byte-for-byte reproducible.
-    let (again, _) = dump_graph("graph.md");
-    assert_eq!(graph, again, "dump is deterministic across runs");
+    let again = dump_graph("graph.md");
+    assert_eq!(graph, &again.pre, "dump is deterministic across runs");
+}
+
+#[test]
+fn post_walk_dump_shows_resolved_graph_with_provenance() {
+    let dump = dump_graph("graph.md");
+    let post = &dump.post;
+
+    // The update walk ran pattern matching: sources are now real nodes...
+    assert!(post.contains("([\"main.c\"])"), "resolved source: {post}");
+    assert!(post.contains("([\"util.c\"])"), "resolved source: {post}");
+    // ...the derived objects are targets with recipes...
+    assert!(post.contains("[\"main.o\"]"), "derived target: {post}");
+    assert!(post.contains("[\"util.o\"]"), "derived target: {post}");
+    // ...and each carries a DerivedBy provenance edge to `%.o: %.c`.
+    assert_eq!(
+        post.matches("-.->|rule|").count(),
+        2,
+        "one provenance edge per derived object: {post}"
+    );
+    assert!(post.contains("[[\"%.o: %.c\"]]"), "{post}");
+
+    // Post-walk dump is deterministic too.
+    let again = dump_graph("graph.md");
+    assert_eq!(post, &again.post, "post dump is deterministic across runs");
 }
 
 #[test]
 fn dump_format_follows_extension() {
-    let (mmd, _) = dump_graph("graph.mmd");
-    assert!(mmd.starts_with("flowchart LR\n"), "raw mermaid: {mmd}");
+    let dump = dump_graph("graph.mmd");
+    assert!(
+        dump.pre.starts_with("flowchart LR\n"),
+        "raw mermaid: {}",
+        dump.pre
+    );
+    assert!(
+        dump.post.starts_with("flowchart LR\n"),
+        "raw mermaid: {}",
+        dump.post
+    );
 
-    let (dot, _) = dump_graph("graph.dot");
-    assert!(dot.starts_with("digraph deps {"), "graphviz: {dot}");
-    assert!(dot.contains("\"prog\""), "{dot}");
+    let dot = dump_graph("graph.dot");
+    assert!(
+        dot.pre.starts_with("digraph deps {"),
+        "graphviz: {}",
+        dot.pre
+    );
+    assert!(dot.pre.contains("\"prog\""), "{}", dot.pre);
 }
 
-/// Committed visualization of the fixture's dump. Fails when stale;
+/// Committed visualization of the fixture's dumps. Fails when stale;
 /// regenerate with `UPDATE_SNAPSHOTS=1 cargo test --test depgraph_dump`.
 #[test]
 fn makefile_snapshot_doc_is_current() {
-    let (graph, _) = dump_graph("graph.md");
+    let dump = dump_graph("graph.md");
     let fixture = std::fs::read_to_string(manifest_dir().join("tests/fixtures/depgraph.mk"))
         .expect("fixture readable");
 
@@ -119,13 +187,27 @@ fn makefile_snapshot_doc_is_current() {
          <!-- Generated by tests/depgraph_dump.rs (makefile_snapshot_doc_is_current). -->\n\
          <!-- Regenerate with: UPDATE_SNAPSHOTS=1 cargo test --test depgraph_dump -->\n\
          \n\
-         What the real `make` binary knows right before the update walk, dumped\n\
-         via `MAKERS_DEPGRAPH=graph.md make -rn` from this makefile\n\
-         (`tests/fixtures/depgraph.mk`):\n\
+         Dumped by the real `make` binary via\n\
+         `MAKERS_DEPGRAPH=graph.md MAKERS_DEPGRAPH_POST=post.md make -rn`\n\
+         from this makefile (`tests/fixtures/depgraph.mk`):\n\
          \n\
          ```make\n{fixture}```\n\
          \n\
-         {graph}"
+         ## Before the update walk\n\
+         \n\
+         What make knows after reading makefiles — plain prerequisites and the\n\
+         rule database; implicit-rule matching has not run yet:\n\
+         \n\
+         {pre}\n\
+         ## After the update walk\n\
+         \n\
+         The resolved graph: pattern matching derived `main.o`/`util.o` from\n\
+         their sources, and each object carries a `rule` provenance edge to the\n\
+         `%.o: %.c` rule that built it:\n\
+         \n\
+         {post}",
+        pre = dump.pre,
+        post = dump.post,
     );
 
     let snapshot = manifest_dir().join("docs/depgraph-makefile.md");

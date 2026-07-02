@@ -181,7 +181,13 @@ impl DepGraph {
 
         let mut graph = DepGraph::new();
         for node in nodes {
-            graph.add_file(node);
+            let matched_rule = node.matched_rule;
+            let id = graph.add_file(node);
+            // Build-time provenance recorded by `pattern_search`
+            // (`FileNode::matched_rule`) becomes a `DerivedBy` edge.
+            if let Some(rule) = matched_rule {
+                graph.record_rule_match(id, rule);
+            }
         }
         for goal in goals {
             graph.add_goal(goal.clone());
@@ -858,14 +864,27 @@ impl DepGraph {
 ///
 /// The format follows the extension: `.dot` Graphviz, `.mmd` raw Mermaid,
 /// anything else (canonically `.md`) a fenced Mermaid Markdown block that
-/// GitHub renders. Rule provenance (`DerivedBy`) is not wired here yet —
-/// `pattern_search` runs during the build, after this snapshot; wiring
-/// `record_rule_match` into it is the documented follow-up.
+/// GitHub renders.
 ///
 /// Failures to write are reported on stderr but never fail the build: this
 /// is a diagnostics tap, not a build step.
 pub fn dump_graph_if_requested(ctx: &ExecContext, goals: &[GoalDepNode]) {
-    let Some(path) = std::env::var_os("MAKERS_DEPGRAPH") else {
+    dump_graph_env(ctx, goals, "MAKERS_DEPGRAPH");
+}
+
+/// The post-walk counterpart of [`dump_graph_if_requested`]: when
+/// `MAKERS_DEPGRAPH_POST` is set, snapshot the graph again after
+/// `update_goal_chain` finishes — the *resolved* view, where implicit-rule
+/// matching has run, so pattern-derived prerequisites (`main.o -> main.c`),
+/// stems, intermediate `parent` chains, and `DerivedBy` rule-provenance
+/// edges (from `FileNode::matched_rule`) are all present. Same path/format
+/// conventions; setting both variables yields a planned-vs-discovered pair.
+pub fn dump_graph_post_if_requested(ctx: &ExecContext, goals: &[GoalDepNode]) {
+    dump_graph_env(ctx, goals, "MAKERS_DEPGRAPH_POST");
+}
+
+fn dump_graph_env(ctx: &ExecContext, goals: &[GoalDepNode], var: &str) {
+    let Some(path) = std::env::var_os(var) else {
         return;
     };
     let path = std::path::PathBuf::from(path);
@@ -1550,7 +1569,11 @@ mod tests {
     #[test]
     fn from_context_snapshots_the_arena() {
         let ctx = ExecContext::default();
-        let node = FileNode::new(b"snap.o".to_vec());
+        let mut node = FileNode::new(b"snap.o".to_vec());
+        // Simulate `pattern_search` having committed a rule match: the
+        // snapshot must surface it as a `DerivedBy` provenance edge.
+        let rule_id = RuleId::from(&object_rule());
+        node.matched_rule = Some(rule_id);
         let id = node.id();
         ctx.filenodes
             .0
@@ -1571,6 +1594,12 @@ mod tests {
         assert!(graph.file(id).is_some());
         assert_eq!(graph.goals().count(), 1);
         assert!(graph.reachable_from_goals().contains(&NodeId::File(id)));
+        assert_eq!(
+            graph.rule_for(id),
+            Some(rule_id),
+            "provenance survives the snapshot"
+        );
+        assert_eq!(graph.files_derived_by(rule_id), vec![id]);
     }
 
     // ------------------------------------------------------------------ //
