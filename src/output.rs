@@ -648,8 +648,7 @@ unsafe fn push_error_prefix(
 /// # Safety
 /// `fmt` must be a valid NUL-terminated format string. The format
 /// specifiers must match `args`.
-#[no_mangle]
-pub unsafe extern "C" fn message(
+pub unsafe fn message(
     ctx: &ExecContext,
     prefix: i32,
     _len: size_t,
@@ -674,8 +673,7 @@ pub unsafe extern "C" fn message(
 /// # Safety
 /// `flocp` must be null or valid. `fmt` must be a valid NUL-terminated
 /// format string and the format specifiers must match `args`.
-#[no_mangle]
-pub unsafe extern "C" fn error(
+pub unsafe fn error(
     ctx: &ExecContext,
     flocp: *const Floc,
     _len: size_t,
@@ -698,7 +696,7 @@ pub unsafe extern "C" fn error(
 ///
 /// # Safety
 /// Same contract as [`error`].
-pub unsafe extern "C" fn fatal(
+pub unsafe fn fatal(
     ctx: &ExecContext,
     flocp: *const Floc,
     _len: size_t,
@@ -722,8 +720,7 @@ pub unsafe extern "C" fn fatal(
 /// # Safety
 /// `prefix` may be null. `fmt` must be a valid NUL-terminated format string
 /// and the format specifiers must match `args`. The returned buffer is shared.
-#[no_mangle]
-pub unsafe extern "C" fn format(
+pub unsafe fn format(
     prefix: *const ::core::ffi::c_char,
     fmt: *const ::core::ffi::c_char,
     args: &[FmtArg],
