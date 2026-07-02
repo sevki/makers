@@ -3334,7 +3334,8 @@ mod file_context_coverage_tests {
             // The saved-out list is whatever was active before the swap.
             assert_eq!(oldlist, saved_list);
             restore_file_context(oldlist, oldfloc);
-            assert_eq!(current_variable_set_list, saved_list);
+            let current_list = current_variable_set_list;
+            assert_eq!(current_list, saved_list);
 
             // Fully restore the globals regardless of intermediate state.
             current_variable_set_list = saved_list;
