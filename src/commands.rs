@@ -478,6 +478,22 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
 /// must not re-enter (e.g. output sync teardown).
 pub static mut handling_fatal_signal: sig_atomic_t = 0;
 
+/// Copy the live context's fatal-signal mask onto `ctx`, the throwaway
+/// context `fatal_error_signal` hands its cleanup helpers. The mask is NOT
+/// cosmetic: `reap_children` blocks the trapped fatal signals around its
+/// child-list mutations, and a default context's empty set would block
+/// nothing (Codex review on #467). The live mask — built by
+/// `install_fatal_signal` during startup — is reached through the `CTX_PTR`
+/// borrow channel, like the handler's temp-stdin and intermediates cleanup;
+/// in bare unit tests with no installed context the empty set stands.
+fn adopt_live_fatal_signal_mask(ctx: &ExecContext) {
+    if let Some(mask) =
+        crate::make_main::try_with_exec_context(|live_ctx| live_ctx.fatal_signal_set.0.get())
+    {
+        ctx.fatal_signal_set.0.set(mask);
+    }
+}
+
 /// Handle a fatal signal: kill children, delete half-built targets, then
 /// re-raise the signal with the default disposition.
 ///
@@ -495,17 +511,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     // converted *printer* is called with this ctx (see the prefix-free `kill`
     // failure path at the end).
     let ctx = crate::execctx::ExecContext::default();
-    // The mask is NOT cosmetic: `reap_children` blocks the trapped fatal
-    // signals around its child-list mutations, and a default context's empty
-    // set would block nothing (Codex review on #467). Copy the live mask —
-    // built by `install_fatal_signal` during startup — through the `CTX_PTR`
-    // borrow channel, like the temp-stdin/intermediates cleanup below; in
-    // bare unit tests with no installed context the empty set stands.
-    if let Some(mask) =
-        crate::make_main::try_with_exec_context(|live_ctx| live_ctx.fatal_signal_set.0.get())
-    {
-        ctx.fatal_signal_set.0.set(mask);
-    }
+    adopt_live_fatal_signal_mask(&ctx);
     // The temp-stdin name lives on the *live* context (it is per-run cleanup
     // state, not part of the default/throwaway one) — reach it through the
     // CTX_PTR borrow channel like `remove_intermediates` below.
@@ -770,6 +776,40 @@ fn print_recipe_lines(bytes: &[u8], prefix: u8) {
 }
 
 pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
+
+#[cfg(test)]
+mod adopt_live_fatal_signal_mask_tests {
+    //! `fatal_error_signal`'s throwaway context must carry the *live* fatal
+    //! mask so `reap_children`'s block/unblock calls mask the real set during
+    //! fatal cleanup (#467 review). Both arms: live context installed (mask
+    //! copied) and absent (empty set stands).
+
+    #[test]
+    fn copies_live_mask_when_context_installed() {
+        crate::make_main::install_default_options_for_test();
+        crate::make_main::install_default_exec_context_for_test();
+        // Simulate `install_fatal_signal` adding SIGINT (bit 1 of word 0, as
+        // `sigaddset(set, 2)` does on Linux) to the live context's mask.
+        crate::make_main::with_exec_context(|live_ctx| {
+            let mut set = live_ctx.fatal_signal_set.0.get();
+            set.__val[0] |= 1 << 1;
+            live_ctx.fatal_signal_set.0.set(set);
+        });
+
+        let ctx = crate::execctx::ExecContext::default();
+        super::adopt_live_fatal_signal_mask(&ctx);
+        assert_eq!(ctx.fatal_signal_set.0.get().__val[0] & (1 << 1), 1 << 1);
+    }
+
+    #[test]
+    fn keeps_empty_mask_without_installed_context() {
+        // No context installed on this test thread: the fallback arm runs and
+        // the throwaway context keeps its empty set.
+        let ctx = crate::execctx::ExecContext::default();
+        super::adopt_live_fatal_signal_mask(&ctx);
+        assert!(ctx.fatal_signal_set.0.get().__val.iter().all(|&w| w == 0));
+    }
+}
 
 #[cfg(test)]
 mod finish_list_unsafe_oracle {
