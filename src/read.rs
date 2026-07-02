@@ -24,6 +24,7 @@ use c2rust_bitfields;
 use libc::{
     __errno_location, free, getenv, getlogin, printf, puts, strchr, strcpy, strerror, strpbrk,
 };
+use ::core::ptr::{addr_of, addr_of_mut, replace};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fclose(__stream: *mut FILE) -> i32;
@@ -276,6 +277,18 @@ pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
 /// and name; new goals are appended (the c2rust list pushed onto the front, so
 /// callers that want makefile order read it reversed — see `read_all_makefiles`).
 static mut read_files: Vec<crate::dep::GoalDepNode> = Vec::new();
+
+fn read_files_len() -> usize {
+    unsafe { addr_of!(read_files).as_ref().expect("read_files missing").len() }
+}
+
+fn read_files_push(goal: crate::dep::GoalDepNode) {
+    unsafe { addr_of_mut!(read_files).as_mut().expect("read_files missing").push(goal) }
+}
+
+fn read_files_take() -> Vec<crate::dep::GoalDepNode> {
+    unsafe { replace(addr_of_mut!(read_files), Vec::new()) }
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -376,14 +389,14 @@ pub unsafe fn read_all_makefiles(
                 let fid = enter_file(ctx, CStr::from_ptr(*p_0).to_bytes());
                 d_0.dep.file = Some(fid);
                 d_0.dep.flags = crate::dep::DepFlags::DONTCARE;
-                read_files.push(d_0);
+                read_files_push(d_0);
                 p_0 = p_0.offset(1_i32 as isize);
             }
         }
     }
     // The c2rust list pushed each new goal onto the *front*; we appended, so
     // return the goals in reverse-push order to preserve the observable order.
-    let mut goals = ::core::mem::take(&mut read_files);
+    let mut goals = read_files_take();
     goals.reverse();
     goals
 }
@@ -434,8 +447,8 @@ unsafe fn eval_makefile(
     };
     let curfile: *const Floc;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    deps_idx = read_files.len();
-    read_files.push(crate::dep::GoalDepNode::default());
+    deps_idx = read_files_len();
+    read_files_push(crate::dep::GoalDepNode::default());
     ebuf.floc.filenm = filename;
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
@@ -1444,7 +1457,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 g.lineno = lineno;
                                 g.offset = offset;
                                 g.dep.file = Some(f);
-                                read_files.push(g);
+                                read_files_push(g);
                             }
                         }
                     } else {
