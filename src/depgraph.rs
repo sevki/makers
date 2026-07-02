@@ -113,11 +113,7 @@ impl Cycle {
     /// Render the cycle with file names, e.g. `a -> b -> c -> a` — the
     /// graph-level counterpart of make's "Circular b <- a dependency" message.
     pub fn describe(&self, graph: &DepGraph) -> String {
-        let names: Vec<String> = self
-            .path
-            .iter()
-            .map(|&n| graph.display_name(n))
-            .collect();
+        let names: Vec<String> = self.path.iter().map(|&n| graph.display_name(n)).collect();
         format!("{} -> {}", names.join(" -> "), names[0])
     }
 }
@@ -341,8 +337,7 @@ impl DepGraph {
     /// exists), and any edge target never added as a file. Sorted (`BTreeSet`)
     /// so analyses over "all nodes" are deterministic.
     pub fn node_ids(&self) -> BTreeSet<NodeId> {
-        let mut ids: BTreeSet<NodeId> =
-            self.files.keys().map(|&id| NodeId::File(id)).collect();
+        let mut ids: BTreeSet<NodeId> = self.files.keys().map(|&id| NodeId::File(id)).collect();
         for (&from, edges) in &self.edges {
             ids.insert(from);
             for edge in edges {
@@ -538,10 +533,7 @@ impl DepGraph {
     /// node is emitted only after everything it points at). A gray node
     /// re-entered while still on the active path is a back-edge; the path
     /// suffix from its first occurrence is the cycle.
-    fn dfs_postorder(
-        &self,
-        roots: impl IntoIterator<Item = NodeId>,
-    ) -> Result<Vec<NodeId>, Cycle> {
+    fn dfs_postorder(&self, roots: impl IntoIterator<Item = NodeId>) -> Result<Vec<NodeId>, Cycle> {
         enum Frame {
             Enter(NodeId),
             Exit(NodeId),
@@ -609,7 +601,11 @@ impl DepGraph {
                 NodeId::Root => " [shape=diamond]".to_string(),
                 NodeId::File(id) => match self.files.get(&id) {
                     Some(node) => {
-                        let shape = if node.recipe.is_some() { "box" } else { "ellipse" };
+                        let shape = if node.recipe.is_some() {
+                            "box"
+                        } else {
+                            "ellipse"
+                        };
                         let style = if node.phony { ", style=dashed" } else { "" };
                         format!(" [shape={shape}{style}]")
                     }
@@ -733,7 +729,11 @@ fn reachable_from_goals_query(db: &dyn salsa::Database, input: GraphInput) -> Ve
 /// so the result is memoized per changed file.
 #[salsa::tracked]
 fn affected_by_query(db: &dyn salsa::Database, input: GraphInput, changed: FileId) -> Vec<FileId> {
-    let mut files: Vec<FileId> = input.graph(db).affected_by(&[changed]).into_iter().collect();
+    let mut files: Vec<FileId> = input
+        .graph(db)
+        .affected_by(&[changed])
+        .into_iter()
+        .collect();
     files.sort_unstable();
     files
 }
@@ -900,18 +900,19 @@ mod tests {
     fn adjacency_and_payloads() {
         let (graph, [main_c, util_c, main_o, util_o, prog]) = sample_graph();
 
-        let prereqs: Vec<FileId> =
-            graph.prerequisites(prog).map(|(to, _)| to).collect();
+        let prereqs: Vec<FileId> = graph.prerequisites(prog).map(|(to, _)| to).collect();
         assert_eq!(prereqs, vec![main_o, util_o], "prerequisite order is kept");
 
         // util.o's dep had no resolved `file`; the name hash must land on
         // the interned util.c node.
-        let util_prereqs: Vec<FileId> =
-            graph.prerequisites(util_o).map(|(to, _)| to).collect();
+        let util_prereqs: Vec<FileId> = graph.prerequisites(util_o).map(|(to, _)| to).collect();
         assert_eq!(util_prereqs, vec![util_c]);
 
         // Payloads are reachable through the edge.
-        let (_, dep) = graph.prerequisites(main_o).next().expect("main.o has a dep");
+        let (_, dep) = graph
+            .prerequisites(main_o)
+            .next()
+            .expect("main.o has a dep");
         assert_eq!(dep.name, "main.c");
         assert!(dep.is_explicit);
 
@@ -933,7 +934,10 @@ mod tests {
         let pos = |n: NodeId| order.iter().position(|&x| x == n).expect("in order");
         assert!(pos(NodeId::File(main_c)) < pos(NodeId::File(main_o)));
         assert!(pos(NodeId::File(main_o)) < pos(NodeId::File(prog)));
-        assert!(pos(NodeId::File(prog)) < pos(NodeId::Root), "goals come last");
+        assert!(
+            pos(NodeId::File(prog)) < pos(NodeId::Root),
+            "goals come last"
+        );
         assert_eq!(order.len(), 6, "five files plus the root");
 
         // Deterministic across identically-built graphs.
@@ -1063,8 +1067,7 @@ mod tests {
         });
         let main_o = graph.add_file(node);
 
-        let prereqs: Vec<FileId> =
-            graph.prerequisites(main_o).map(|(to, _)| to).collect();
+        let prereqs: Vec<FileId> = graph.prerequisites(main_o).map(|(to, _)| to).collect();
         assert_eq!(prereqs, vec![util_c]);
         assert_eq!(
             graph.dependents(main_c),
@@ -1102,9 +1105,7 @@ mod tests {
         assert!(dot.starts_with("digraph deps {"));
         assert!(dot.contains("\"prog\" -> \"main.o\";"));
         assert!(dot.contains("\"<root>\" -> \"prog\" [style=bold];"));
-        assert!(dot.contains(
-            "\"prog\" -> \"outdir\" [style=dashed, label=\"order-only\"];"
-        ));
+        assert!(dot.contains("\"prog\" -> \"outdir\" [style=dashed, label=\"order-only\"];"));
         assert!(dot.contains("\"util.d\" -> \"util.o\" [style=dotted, label=\"also\"];"));
         assert!(dot.contains("\"outdir\" [shape=ellipse, style=dashed];"));
         assert!(dot.contains("\"prog\" [shape=box];"));
