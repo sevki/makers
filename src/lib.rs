@@ -13,6 +13,7 @@ pub mod commands;
 pub mod content_hash;
 pub mod default;
 pub mod dep;
+pub mod depgraph;
 pub mod dir;
 pub mod execctx;
 pub mod expand;
