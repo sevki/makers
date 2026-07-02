@@ -1668,7 +1668,7 @@ unsafe fn expand_command_line_file(
     } else {
         name = name.add(off);
     }
-    cp = strcache_add(name);
+    cp = strcache_add(ctx, name);
     free(expanded as *mut ::core::ffi::c_void);
     cp
 }
@@ -2582,7 +2582,7 @@ unsafe fn main_0(
                     }
                 }
                 fclose(outfile);
-                let cached = strcache_add(newnm);
+                let cached = strcache_add(&ctx, newnm);
                 options.makefiles.borrow_mut()[i_1] =
                     ::core::ffi::CStr::from_ptr(cached).to_owned();
                 options.stdin_offset.set(i_1 as i32);
@@ -2712,7 +2712,7 @@ unsafe fn main_0(
         .makefiles
         .borrow()
         .iter()
-        .map(|s| strcache_add(s.as_ptr()))
+        .map(|s| strcache_add(&ctx, s.as_ptr()))
         .collect();
     let makefiles_empty = options.makefiles.borrow().is_empty();
     read_files = read_all_makefiles(
@@ -3983,7 +3983,7 @@ unsafe fn decode_switches(
                                                                     as *const u8 as *const ::core::ffi::c_char, &[]);
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
-                                                let cached = strcache_add(coptarg);
+                                                let cached = strcache_add(ctx, coptarg);
                                                 temp_stdin_name = cached;
                                                 ::core::ffi::CStr::from_ptr(cached).to_owned()
                                             } else {

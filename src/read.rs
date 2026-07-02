@@ -9,11 +9,8 @@ pub use include_path::{construct_include_path, tilde_expand};
 
 /// Raw makefile line reading from an `ebuffer` (split out of this file).
 mod lines;
-pub use lines::{readline, readstring};
 use crate::file::{dep, file, FileId, NameSeq};
-use crate::file::{
-    CommandState, Commands, Dep, File, UpdateStatus, VariableSet, VariableSetList,
-};
+use crate::file::{CommandState, Commands, Dep, File, UpdateStatus, VariableSet, VariableSetList};
 use crate::misc::{
     collapse_continuations, find_next_token, next_token, xmalloc, xrealloc, xstrdup, xstrndup,
 };
@@ -24,6 +21,7 @@ use c2rust_bitfields;
 use libc::{
     __errno_location, free, getenv, getlogin, printf, puts, strchr, strcpy, strerror, strpbrk,
 };
+pub use lines::{readline, readstring};
 extern "C" {
     static mut stdout: *mut FILE;
     fn fclose(__stream: *mut FILE) -> i32;
@@ -135,8 +133,8 @@ use crate::file::{enter_file, lookup_file};
 use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
 use crate::load::load_file;
 use crate::make_main::{
-    db_level, default_goal_var, one_shell, opt_snapped_deps, posix_pedantic,
-    second_expansion, stopchar_map,
+    db_level, default_goal_var, one_shell, opt_snapped_deps, posix_pedantic, second_expansion,
+    stopchar_map,
 };
 use crate::misc::concat;
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
@@ -324,7 +322,7 @@ pub unsafe fn read_all_makefiles(
         }
         eval_makefile(
             ctx,
-            strcache_add(name),
+            strcache_add(ctx, name),
             (RM_NO_DEFAULT_GOAL | RM_INCLUDED | RM_DONTCARE) as ::core::ffi::c_ushort,
         );
     }
@@ -339,11 +337,14 @@ pub unsafe fn read_all_makefiles(
             // former `(*(*d).file)->name`). Re-intern its bytes as a cached C
             // string for the caller's `*mref` slot.
             let name_ptr: *const ::core::ffi::c_char = if !read_files[d].dep.name.is_empty() {
-                strcache_add_bytes(read_files[d].dep.name.as_bytes())
+                strcache_add_bytes(ctx, read_files[d].dep.name.as_bytes())
             } else if let Some(fid) = read_files[d].dep.file {
-                let node = ctx.filenodes.get(fid).expect("read_all_makefiles: missing file");
+                let node = ctx
+                    .filenodes
+                    .get(fid)
+                    .expect("read_all_makefiles: missing file");
                 let nm = node.lock().expect("file node lock poisoned").name.clone();
-                strcache_add_bytes(&nm)
+                strcache_add_bytes(ctx, &nm)
             } else {
                 ::core::ptr::null::<::core::ffi::c_char>()
             };
@@ -477,12 +478,12 @@ unsafe fn eval_makefile(
         EMFILE | ENFILE | ENOMEM => {
             let err: *const ::core::ffi::c_char = strerror(read_files[deps_idx].error);
             fatal(
-        ctx,
-        reading_file,
-        strlen(err) as size_t,
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((err) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                reading_file,
+                strlen(err) as size_t,
+                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((err) as *const ::core::ffi::c_char)],
+            );
         }
         _ => {}
     }
@@ -528,14 +529,16 @@ unsafe fn eval_makefile(
                         b"r\0" as *const u8 as *const ::core::ffi::c_char,
                     ) as *mut FILE;
                     filename =
-                        crate::strcache::strcache_add_bytes(candidate.as_os_str().as_bytes());
+                        crate::strcache::strcache_add_bytes(ctx, candidate.as_os_str().as_bytes());
                     break;
                 }
                 Err(e) => {
                     let errno = e.raw_os_error().unwrap_or(ENOENT);
                     if errno != ENOENT {
-                        filename =
-                            crate::strcache::strcache_add_bytes(candidate.as_os_str().as_bytes());
+                        filename = crate::strcache::strcache_add_bytes(
+                            ctx,
+                            candidate.as_os_str().as_bytes(),
+                        );
                         read_files[deps_idx].error = errno;
                         break;
                     }
@@ -543,13 +546,12 @@ unsafe fn eval_makefile(
             }
         }
     }
-    filename = strcache_add(filename);
+    filename = strcache_add(ctx, filename);
     let filename_bytes = CStr::from_ptr(filename).to_bytes();
     let file_id =
         lookup_file(ctx, filename_bytes).unwrap_or_else(|| enter_file(ctx, filename_bytes));
     read_files[deps_idx].dep.file = Some(file_id);
-    read_files[deps_idx].dep.flags =
-        crate::dep::DepFlags::from_bits_truncate(flags as u32);
+    read_files[deps_idx].dep.flags = crate::dep::DepFlags::from_bits_truncate(flags as u32);
     // Resolved name (canonical hname) and `is_explicit` mark, under the node lock.
     let resolved_name: Vec<u8> = {
         let node = ctx
@@ -561,17 +563,23 @@ unsafe fn eval_makefile(
         n.name.clone()
     };
     // Re-intern the resolved name as a cached C string for the C variable layer.
-    filename = crate::strcache::strcache_add_bytes(&resolved_name);
+    filename = crate::strcache::strcache_add_bytes(ctx, &resolved_name);
     free(expanded as *mut ::core::ffi::c_void);
     if ebuf.fp.is_null() {
         *__errno_location() = read_files[deps_idx].error;
-        let node = ctx.filenodes.get(file_id).expect("eval_makefile: missing file");
+        let node = ctx
+            .filenodes
+            .get(file_id)
+            .expect("eval_makefile: missing file");
         node.lock().expect("file node lock poisoned").last_mtime = NONEXISTENT_MTIME as u64;
         return deps_idx;
     }
     read_files[deps_idx].error = 0;
     {
-        let node = ctx.filenodes.get(file_id).expect("eval_makefile: missing file");
+        let node = ctx
+            .filenodes
+            .get(file_id)
+            .expect("eval_makefile: missing file");
         let mut n = node.lock().expect("file node lock poisoned");
         if n.last_mtime == NONEXISTENT_MTIME as u64 {
             n.last_mtime = 0;
@@ -689,8 +697,14 @@ unsafe fn parse_var_assignment(
     (*vmod).set_define_v(scan.mods.define.into());
     (*vmod).set_undefine_v(scan.mods.undefine.into());
     if scan.had_modifier && !flocp.is_null() {
-        error(ctx, flocp, 0, b"warning: directive lines cannot start with TAB\0" as *const u8
-                as *const ::core::ffi::c_char, &[]);
+        error(
+            ctx,
+            flocp,
+            0,
+            b"warning: directive lines cannot start with TAB\0" as *const u8
+                as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     if scan.assign {
         (*vmod).set_assign_v(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -983,6 +997,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                     // assigning — a distinction `classify_line` deliberately
                     // leaves to the modifier scan).
                     let line_class = crate::parser::classify_line(
+                        &ctx.db,
                         ::std::ffi::CStr::from_ptr(p).to_bytes(),
                         false,
                     );
@@ -1189,7 +1204,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 } else {
                                     b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
                                 })],
-    );
+                            );
                         }
                         if filenames.is_some() {
                             fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1384,7 +1399,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         ..Default::default()
                                     };
                                     init.update_status = UpdateStatus::Success;
-                                    init.command_state = CommandState :: NotStarted;
+                                    init.command_state = CommandState::NotStarted;
                                     init.builtin = false;
                                     init.precious = false;
                                     init.loaded = false;
@@ -1818,9 +1833,9 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 // Intern the single pattern target name so
                                                 // `pattern`/`pattern_percent` remain stable
                                                 // `*const c_char` for the rest of `eval`.
-                                                pattern = strcache_add_bytes(&target[0].name);
+                                                pattern = strcache_add_bytes(ctx, &target[0].name);
                                                 pattern_percent =
-                                                    find_percent_cached(&raw mut pattern);
+                                                    find_percent_cached(ctx, &raw mut pattern);
                                                 if pattern_percent.is_null() {
                                                     fatal(
                                                         ctx,
@@ -1891,7 +1906,13 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
         }
     }
     if (*conditionals).if_cmds != 0 {
-        fatal(ctx, fstart, 0, b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        fatal(
+            ctx,
+            fstart,
+            0,
+            b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     if filenames.is_some() {
         fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1937,7 +1958,13 @@ unsafe fn do_undefine(
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
         Some(s) => s,
-        None => fatal(ctx, &raw mut (*ebuf).floc, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char, &[]),
+        None => fatal(
+            ctx,
+            &raw mut (*ebuf).floc,
+            0,
+            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        ),
     };
     name = var.add(span.start);
     *var.add(span.end) = 0;
@@ -1982,7 +2009,7 @@ unsafe fn do_define(
     let mut p: *mut ::core::ffi::c_char;
     let n: *mut ::core::ffi::c_char;
     defstart = (*ebuf).floc;
-    p = parse_variable_definition(name, &raw mut var);
+    p = parse_variable_definition(ctx, name, &raw mut var);
     if p.is_null() {
         var.set_flavor(f_recursive as variable_flavor);
         var.set_conditional(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2004,7 +2031,13 @@ unsafe fn do_define(
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(n).to_bytes()) {
         Some(s) => s,
-        None => fatal(ctx, &raw mut defstart, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char, &[]),
+        None => fatal(
+            ctx,
+            &raw mut defstart,
+            0,
+            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        ),
     };
     name = n.add(span.start);
     *n.add(span.end) = 0;
@@ -2042,8 +2075,14 @@ unsafe fn do_define(
                     p = p.add(word_end);
                     remove_comments(p);
                     if !crate::parser::rest_is_blank(::std::ffi::CStr::from_ptr(p).to_bytes()) {
-                        error(ctx, &raw mut (*ebuf).floc, 0, b"extraneous text after 'endef' directive\0" as *const u8
-                                as *const ::core::ffi::c_char, &[]);
+                        error(
+                            ctx,
+                            &raw mut (*ebuf).floc,
+                            0,
+                            b"extraneous text after 'endef' directive\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
                     }
                     nlevels -= 1;
                     if nlevels == 0 {
@@ -2153,28 +2192,34 @@ unsafe fn conditional_line(
         }
         if (*conditionals).if_cmds == 0 {
             fatal(
-        ctx,
-        flocp,
-        strlen(cmdname) as size_t,
-        b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                flocp,
+                strlen(cmdname) as size_t,
+                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+            );
         }
         (*conditionals).if_cmds = (*conditionals).if_cmds.wrapping_sub(1);
     } else if cmdtype as ::core::ffi::c_uint == c_else as i32 as ::core::ffi::c_uint {
         let mut p: *const ::core::ffi::c_char;
         if (*conditionals).if_cmds == 0 {
             fatal(
-        ctx,
-        flocp,
-        strlen(cmdname) as size_t,
-        b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                flocp,
+                strlen(cmdname) as size_t,
+                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+            );
         }
         o = (*conditionals).if_cmds.wrapping_sub(1);
         if *(*conditionals).seen_else.offset(o as isize) != 0 {
-            fatal(ctx, flocp, 0, b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            fatal(
+                ctx,
+                flocp,
+                0,
+                b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         match *(*conditionals).ignoring.offset(o as isize) as i32 {
             0 => {
@@ -2312,13 +2357,13 @@ unsafe fn conditional_line(
                 } => {
                     if trailing_text {
                         error(
-        ctx,
-        flocp,
-        strlen(cmdname) as size_t,
-        b"extraneous text after '%s' directive\0" as *const u8
+                            ctx,
+                            flocp,
+                            strlen(cmdname) as size_t,
+                            b"extraneous text after '%s' directive\0" as *const u8
                                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
-    );
+                            &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+                        );
                     }
                     // Expand the first argument to an owned string before
                     // expanding the second (they share one scratch buffer).
@@ -2363,11 +2408,10 @@ unsafe fn record_target_var(
         let v: *mut variable;
         let mut name_buf = entry.name.clone();
         name_buf.push(0);
-        let mut name: *const ::core::ffi::c_char =
-            name_buf.as_ptr() as *const ::core::ffi::c_char;
+        let mut name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
         let percent: *const ::core::ffi::c_char;
         let p: *mut pattern_var;
-        percent = find_percent_cached(&raw mut name);
+        percent = find_percent_cached(ctx, &raw mut name);
         if !percent.is_null() {
             // `create_pattern_var` stores the `target`/`suffix` pointers
             // verbatim (it does not copy), so they must point into persistent
@@ -2377,7 +2421,7 @@ unsafe fn record_target_var(
             // recompute the `%` offset into the cached copy so the stored
             // pattern survives until the build-phase lookup.
             let percent_off = percent.offset_from(name);
-            let cached_name = strcache_add(name);
+            let cached_name = strcache_add(ctx, name);
             let cached_percent = cached_name.offset(percent_off);
             p = create_pattern_var(cached_name, cached_percent);
             (*p).variable.fileinfo = *flocp;
@@ -2658,11 +2702,23 @@ pub unsafe fn check_special_file(
         static WPRE: AtomicBool = AtomicBool::new(false);
         static WCMD: AtomicBool = AtomicBool::new(false);
         if !WPRE.load(Ordering::Relaxed) && has_deps {
-            error(ctx, flocp, 0, b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            error(
+                ctx,
+                flocp,
+                0,
+                b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
             WPRE.store(true, Ordering::Relaxed);
         }
         if !WCMD.load(Ordering::Relaxed) && has_recipe {
-            error(ctx, flocp, 0, b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            error(
+                ctx,
+                flocp,
+                0,
+                b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
             WCMD.store(true, Ordering::Relaxed);
         }
     }
@@ -2798,8 +2854,7 @@ unsafe fn enter_prereqs_vec(
     for d in deps.iter_mut() {
         if !d.needs_second_expansion {
             let name_bytes = d.name.clone().into_bytes();
-            let fid = lookup_file(ctx, &name_bytes)
-                .unwrap_or_else(|| enter_file(ctx, &name_bytes));
+            let fid = lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
             d.file = Some(fid);
             d.static_pattern = false;
             // The c2rust graph nulled `name` once `file` was resolved; we keep
@@ -2847,7 +2902,7 @@ unsafe fn record_files(
         v
     };
     let mut name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
-    let implicit_percent: *const ::core::ffi::c_char = find_percent_cached(&raw mut name);
+    let implicit_percent: *const ::core::ffi::c_char = find_percent_cached(ctx, &raw mut name);
 
     // Build the recipe (the former `*mut Commands`) as an idiomatic `Recipe`.
     let recipe: Option<crate::recipe::Recipe> = if commands_idx > 0 {
@@ -2863,7 +2918,13 @@ unsafe fn record_files(
             any_recurse: false,
         })
     } else if are_also_makes != 0 {
-        fatal(ctx, flocp, 0, b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char, &[])
+        fatal(
+            ctx,
+            flocp,
+            0,
+            b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        )
     } else {
         None
     };
@@ -2879,8 +2940,8 @@ unsafe fn record_files(
             )
         {
             let mut d = crate::dep::DepNode::default();
-            d.name = String::from_utf8_lossy(::std::ffi::CStr::from_ptr(depstr).to_bytes())
-                .into_owned();
+            d.name =
+                String::from_utf8_lossy(::std::ffi::CStr::from_ptr(depstr).to_bytes()).into_owned();
             d.needs_second_expansion = true;
             d.static_pattern = !pattern.is_null();
             deps.push(d);
@@ -2919,16 +2980,31 @@ unsafe fn record_files(
             let mut nb = entry.name.clone();
             nb.push(0);
             let mut np: *const ::core::ffi::c_char =
-                strcache_add(nb.as_ptr() as *const ::core::ffi::c_char);
-            let ip = find_percent_cached(&raw mut np);
+                strcache_add(ctx, nb.as_ptr() as *const ::core::ffi::c_char);
+            let ip = find_percent_cached(ctx, &raw mut np);
             if ip.is_null() {
-                fatal(ctx, flocp, 0, b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+                fatal(
+                    ctx,
+                    flocp,
+                    0,
+                    b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[],
+                );
             }
             targets.push(::std::ffi::CStr::from_ptr(np).to_bytes().to_vec());
             percents.push(ip.offset_from(np) as usize);
         }
         let n = targets.len() as u16;
-        create_pattern_rule(ctx, targets, percents, n, two_colon != 0, deps, recipe, true);
+        create_pattern_rule(
+            ctx,
+            targets,
+            percents,
+            n,
+            two_colon != 0,
+            deps,
+            recipe,
+            true,
+        );
         return;
     }
 
@@ -2939,27 +3015,26 @@ unsafe fn record_files(
     loop {
         let is_last = idx + 1 >= filenames.len();
         // `this` is the per-target prerequisite list (cloned for all but the last).
-        let mut this: Vec<crate::dep::DepNode> = if !pattern.is_null()
-            && pattern_matches(pattern, pattern_percent, name) == 0
-        {
-            error(
-                ctx,
-                flocp,
-                strlen(name) as size_t,
-                b"target '%s' doesn't match the target pattern\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-            );
-            Vec::new()
-        } else if !deps.is_empty() {
-            if is_last {
-                ::core::mem::take(&mut deps)
+        let mut this: Vec<crate::dep::DepNode> =
+            if !pattern.is_null() && pattern_matches(pattern, pattern_percent, name) == 0 {
+                error(
+                    ctx,
+                    flocp,
+                    strlen(name) as size_t,
+                    b"target '%s' doesn't match the target pattern\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+                );
+                Vec::new()
+            } else if !deps.is_empty() {
+                if is_last {
+                    ::core::mem::take(&mut deps)
+                } else {
+                    deps.clone()
+                }
             } else {
-                deps.clone()
-            }
-        } else {
-            Vec::new()
-        };
+                Vec::new()
+            };
 
         let name_bytes = ::std::ffi::CStr::from_ptr(name).to_bytes().to_vec();
         let f: FileId;
@@ -2985,13 +3060,13 @@ unsafe fn record_files(
                         b"target file '%s' has both : and :: entries\0" as *const u8
                             as *const ::core::ffi::c_char,
                         &[FmtArg::Str(
-                            strcache_add_bytes(&nm) as *const ::core::ffi::c_char
+                            strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
                         )],
                     );
                 }
                 if have_cmds && n.recipe.is_some() && n.is_target {
                     let nm = n.name.clone();
-                    let nptr = strcache_add_bytes(&nm) as *const ::core::ffi::c_char;
+                    let nptr = strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char;
                     drop(n);
                     let l = nm.len() as size_t;
                     error(
@@ -3027,7 +3102,10 @@ unsafe fn record_files(
         } else {
             // Double-colon.
             if let Some(existing) = lookup_file(ctx, &name_bytes) {
-                let node = ctx.filenodes.get(existing).expect("record_files: missing dcolon");
+                let node = ctx
+                    .filenodes
+                    .get(existing)
+                    .expect("record_files: missing dcolon");
                 let n = node.lock().expect("file node lock poisoned");
                 if n.is_target && !n.is_double_colon {
                     let nm = n.name.clone();
@@ -3039,7 +3117,7 @@ unsafe fn record_files(
                         b"target file '%s' has both : and :: entries\0" as *const u8
                             as *const ::core::ffi::c_char,
                         &[FmtArg::Str(
-                            strcache_add_bytes(&nm) as *const ::core::ffi::c_char
+                            strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
                         )],
                     );
                 }
@@ -3165,7 +3243,7 @@ unsafe fn record_files(
             v
         };
         name = name_buf.as_ptr() as *const ::core::ffi::c_char;
-        if !find_percent_cached(&raw mut name).is_null() {
+        if !find_percent_cached(ctx, &raw mut name).is_null() {
             error(
                 ctx,
                 flocp,
@@ -3195,7 +3273,10 @@ unsafe fn record_files(
                 d
             })
             .collect();
-        let node = ctx.filenodes.get(fid).expect("record_files: missing group target");
+        let node = ctx
+            .filenodes
+            .get(fid)
+            .expect("record_files: missing group target");
         let mut n = node.lock().expect("file node lock poisoned");
         if !n.also_make.is_empty() {
             let nm = n.name.clone();
@@ -3206,7 +3287,9 @@ unsafe fn record_files(
                 nm.len() as size_t,
                 b"warning: overriding group membership for target '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-                &[FmtArg::Str(strcache_add_bytes(&nm) as *const ::core::ffi::c_char)],
+                &[FmtArg::Str(
+                    strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
+                )],
             );
             n = node.lock().expect("file node lock poisoned");
             n.also_make.clear();
@@ -3294,6 +3377,7 @@ pub unsafe fn find_percent(pattern: *mut ::core::ffi::c_char) -> *mut ::core::ff
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn find_percent_cached(
+    ctx: &crate::execctx::ExecContext,
     string: *mut *const ::core::ffi::c_char,
 ) -> *const ::core::ffi::c_char {
     let s = ::std::ffi::CStr::from_ptr(*string).to_bytes();
@@ -3308,7 +3392,7 @@ pub unsafe fn find_percent_cached(
         // Escaped `%`: intern the collapsed copy, update the caller's pointer,
         // and map the percent index back into the interned string.
         crate::parser::FindPercentCached::Collapsed { buf, idx } => {
-            let cached = strcache_add(buf.as_ptr() as *const ::core::ffi::c_char);
+            let cached = strcache_add(ctx, buf.as_ptr() as *const ::core::ffi::c_char);
             *string = cached;
             match idx {
                 Some(i) => {

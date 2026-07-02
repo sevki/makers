@@ -44,8 +44,9 @@
 //!
 //! # salsa integration
 //!
-//! [`DepGraphDb`] wraps the snapshot in a salsa database, mirroring the
-//! `strcache.rs`/`parser.rs` pattern of a module-local `#[salsa::db]`. The
+//! [`DepGraphDb`] wraps the snapshot in the session salsa database type
+//! ([`crate::makedb::MakeDb`], shared with the string interner and the
+//! parser's AST nodes). The
 //! whole [`DepGraph`] is a single `#[salsa::input]` and each analysis is a
 //! `#[salsa::tracked]` query: results are memoized, re-queries are free, and
 //! [`DepGraphDb::set_graph`] bumps the revision so downstream queries
@@ -58,8 +59,6 @@
 //! `*mut File` graph is gone.
 
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -939,34 +938,6 @@ impl Iterator for Dfs<'_> {
 // salsa front-end                                                         //
 // ---------------------------------------------------------------------- //
 
-/// The graph-analysis salsa database. Counts query executions (salsa
-/// `WillExecute` events) per instance so memoization and invalidation are
-/// observable — the depgraph analogue of the strcache hit-rate stats.
-#[salsa::db]
-#[derive(Clone)]
-struct GraphDb {
-    storage: salsa::Storage<Self>,
-    executions: Arc<AtomicU64>,
-}
-
-impl Default for GraphDb {
-    fn default() -> Self {
-        let executions = Arc::new(AtomicU64::new(0));
-        let counter = Arc::clone(&executions);
-        GraphDb {
-            storage: salsa::Storage::new(Some(Box::new(move |event| {
-                if matches!(event.kind, salsa::EventKind::WillExecute { .. }) {
-                    counter.fetch_add(1, Ordering::Relaxed);
-                }
-            }))),
-            executions,
-        }
-    }
-}
-
-#[salsa::db]
-impl salsa::Database for GraphDb {}
-
 /// The whole graph snapshot as a single (coarse-grained, see module docs)
 /// salsa input. Replacing it via its setter bumps the salsa revision and
 /// invalidates every tracked query below.
@@ -1022,13 +993,13 @@ fn mermaid_query(db: &dyn salsa::Database, input: GraphInput) -> String {
 /// most once per graph revision; [`DepGraphDb::set_graph`] starts the next
 /// revision.
 pub struct DepGraphDb {
-    db: GraphDb,
+    db: crate::makedb::MakeDb,
     input: GraphInput,
 }
 
 impl DepGraphDb {
     pub fn new(graph: DepGraph) -> Self {
-        let db = GraphDb::default();
+        let db = crate::makedb::MakeDb::default();
         let input = GraphInput::new(&db, graph);
         DepGraphDb { db, input }
     }
@@ -1048,7 +1019,7 @@ impl DepGraphDb {
     /// How many tracked queries have actually executed (as opposed to being
     /// answered from cache) over this database's lifetime.
     pub fn executions(&self) -> u64 {
-        self.db.executions.load(Ordering::Relaxed)
+        self.db.executions()
     }
 
     pub fn topo_order(&self) -> Result<Vec<NodeId>, Cycle> {

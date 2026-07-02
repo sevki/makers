@@ -1193,7 +1193,7 @@ unsafe fn populate_set_from_targets(
         if let Some(ref f) = tv.defined_in {
             let mut b = f.clone();
             b.push(0);
-            floc_storage.filenm = strcache_add(b.as_ptr() as *const ::core::ffi::c_char);
+            floc_storage.filenm = strcache_add(ctx, b.as_ptr() as *const ::core::ffi::c_char);
             floc_storage.lineno = tv.defined_lineno;
             file_buf = Some(b);
         }
@@ -1336,7 +1336,7 @@ pub unsafe fn install_file_context_id(
         });
         if let Some((mut fname, lineno)) = recipe_floc {
             fname.push(0);
-            let filenm = strcache_add(fname.as_ptr() as *const ::core::ffi::c_char);
+            let filenm = strcache_add(ctx, fname.as_ptr() as *const ::core::ffi::c_char);
             RECIPE_READING_FLOC.with(|cell| {
                 *cell.borrow_mut() = Floc {
                     filenm,
@@ -2322,6 +2322,7 @@ pub unsafe fn do_variable_definition(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn parse_variable_definition(
+    ctx: &crate::execctx::ExecContext,
     str: *const ::core::ffi::c_char,
     var: *mut variable,
 ) -> *mut ::core::ffi::c_char {
@@ -2331,7 +2332,7 @@ pub unsafe fn parse_variable_definition(
     // name points into the original buffer (it is not copied or terminated),
     // and the returned pointer is the address just past the operator.
     let bytes = ::core::ffi::CStr::from_ptr(str).to_bytes();
-    match crate::parser::assignment_ast(bytes) {
+    match crate::parser::assignment_ast(&ctx.db, bytes) {
         None => ::core::ptr::null_mut::<::core::ffi::c_char>(),
         Some(a) => {
             (*var).name = str.add(a.name_start) as *mut ::core::ffi::c_char;
@@ -2354,7 +2355,7 @@ pub unsafe fn assign_variable_definition(
 ) -> *mut variable {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let name: *mut ::core::ffi::c_char;
-    if parse_variable_definition(line, v).is_null() {
+    if parse_variable_definition(ctx, line, v).is_null() {
         return ::core::ptr::null_mut::<variable>();
     }
     alloca_allocations.push(::std::vec::from_elem(

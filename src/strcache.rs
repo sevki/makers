@@ -6,10 +6,18 @@
 //! reproduced by the c2rust port — hand-rolled a linked list of fixed-size
 //! buffers plus a separate open-addressed `hash_table`.
 //!
-//! This implementation uses a small [`salsa`] interning database for UTF-8
-//! strings and a byte-oriented fallback set for non-UTF-8 names. For both paths,
-//! the C-facing canonical pointers are backed by leaked, NUL-terminated,
+//! This implementation interns UTF-8 strings through the session salsa
+//! database ([`crate::makedb::MakeDb`], owned by the `ExecContext`) and keeps
+//! a byte-oriented fallback set for non-UTF-8 names. For both paths, the
+//! C-facing canonical pointers are backed by leaked, NUL-terminated,
 //! address-stable storage for the lifetime of the process.
+//!
+//! BOUNDARY: the pointer-compatibility layer (the leaked byte storage, the
+//! [`strcache_iscached`] address set, and the stats counter) stays
+//! process-global until the last `*const c_char` consumer is gone — canonical
+//! pointers must stay valid across the `main_0` context rebuild, and sharing
+//! leaked bytes between sessions is semantically harmless (interning is
+//! idempotent). The salsa side is per-session.
 //!
 //! Two things are handled explicitly:
 //!
@@ -28,15 +36,6 @@ use core::ffi::{c_char, CStr};
 
 use crate::ffi_types::size_t;
 
-#[salsa::db]
-#[derive(Clone, Default)]
-struct StrCacheDb {
-    storage: salsa::Storage<Self>,
-}
-
-#[salsa::db]
-impl salsa::Database for StrCacheDb {}
-
 #[salsa::interned]
 struct Utf8String<'db> {
     #[returns(ref)]
@@ -51,7 +50,7 @@ struct Utf8String<'db> {
 /// `non_utf8` faithfully interns byte strings that aren't valid UTF-8 and so
 /// can't be represented as Rust `String`.
 fn intern_into(
-    db: &mut StrCacheDb,
+    db: &crate::makedb::MakeDb,
     addrs: &mut HashSet<usize>,
     utf8: &mut HashSet<&'static [u8]>,
     non_utf8: &mut HashSet<&'static [u8]>,
@@ -68,7 +67,7 @@ fn intern_into(
 /// UTF-8 path: dedupe the string through salsa, then return the canonical
 /// NUL-terminated pointer from leaked byte storage.
 fn intern_utf8(
-    db: &mut StrCacheDb,
+    db: &crate::makedb::MakeDb,
     set: &mut HashSet<&'static [u8]>,
     value: &str,
 ) -> *const c_char {
@@ -94,16 +93,11 @@ fn intern_bytes(set: &mut HashSet<&'static [u8]>, bytes: &[u8]) -> *const c_char
     key.as_ptr().cast()
 }
 
-static DB: OnceLock<Mutex<StrCacheDb>> = OnceLock::new();
 static ADDRS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static UTF8: OnceLock<Mutex<HashSet<&'static [u8]>>> = OnceLock::new();
 static NON_UTF8: OnceLock<Mutex<HashSet<&'static [u8]>>> = OnceLock::new();
 /// Total interning requests (hits + misses) — the hit-rate numerator.
 static ADDS: AtomicU64 = AtomicU64::new(0);
-
-fn db() -> &'static Mutex<StrCacheDb> {
-    DB.get_or_init(|| Mutex::new(StrCacheDb::default()))
-}
 
 fn addrs() -> &'static Mutex<HashSet<usize>> {
     ADDRS.get_or_init(|| Mutex::new(HashSet::new()))
@@ -117,13 +111,12 @@ fn non_utf8() -> &'static Mutex<HashSet<&'static [u8]>> {
     NON_UTF8.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn intern(bytes: &[u8]) -> *const c_char {
+fn intern(ctx: &crate::execctx::ExecContext, bytes: &[u8]) -> *const c_char {
     ADDS.fetch_add(1, Ordering::Relaxed);
-    let mut db = db().lock().unwrap_or_else(|e| e.into_inner());
     let mut addrs = addrs().lock().unwrap_or_else(|e| e.into_inner());
     let mut utf8 = utf8().lock().unwrap_or_else(|e| e.into_inner());
     let mut non_utf8 = non_utf8().lock().unwrap_or_else(|e| e.into_inner());
-    intern_into(&mut db, &mut addrs, &mut utf8, &mut non_utf8, bytes)
+    intern_into(&ctx.db, &mut addrs, &mut utf8, &mut non_utf8, bytes)
 }
 
 /// Nothing to set up — interners initialize lazily on first use.
@@ -134,8 +127,8 @@ pub fn strcache_init() {}
 /// # Safety
 ///
 /// `str` must point to a valid NUL-terminated C string.
-pub unsafe fn strcache_add(str: *const c_char) -> *const c_char {
-    intern(CStr::from_ptr(str).to_bytes())
+pub unsafe fn strcache_add(ctx: &crate::execctx::ExecContext, str: *const c_char) -> *const c_char {
+    intern(ctx, CStr::from_ptr(str).to_bytes())
 }
 
 /// Intern the first `len` bytes of `str` and return the canonical pointer. The
@@ -144,8 +137,12 @@ pub unsafe fn strcache_add(str: *const c_char) -> *const c_char {
 /// # Safety
 ///
 /// `str` must be valid for reads of `len` bytes.
-pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char {
-    intern(::core::slice::from_raw_parts(str.cast::<u8>(), len))
+pub unsafe fn strcache_add_len(
+    ctx: &crate::execctx::ExecContext,
+    str: *const c_char,
+    len: size_t,
+) -> *const c_char {
+    intern(ctx, ::core::slice::from_raw_parts(str.cast::<u8>(), len))
 }
 
 /// Intern an arbitrary byte slice and return the canonical, NUL-terminated
@@ -153,8 +150,8 @@ pub unsafe fn strcache_add_len(str: *const c_char, len: size_t) -> *const c_char
 /// types (e.g. `&[u8]` derived from a `PathBuf`) and must not fabricate a
 /// `CString`/`*const c_char` themselves. The cache stores its own copy and
 /// appends the trailing NUL internally.
-pub fn strcache_add_bytes(bytes: &[u8]) -> *const c_char {
-    intern(bytes)
+pub fn strcache_add_bytes(ctx: &crate::execctx::ExecContext, bytes: &[u8]) -> *const c_char {
+    intern(ctx, bytes)
 }
 
 /// Returns nonzero if `str` is a pointer previously handed out by the cache.
@@ -205,13 +202,13 @@ mod tests {
     use super::*;
 
     fn fresh() -> (
-        StrCacheDb,
+        crate::makedb::MakeDb,
         HashSet<usize>,
         HashSet<&'static [u8]>,
         HashSet<&'static [u8]>,
     ) {
         (
-            StrCacheDb::default(),
+            crate::makedb::MakeDb::default(),
             HashSet::new(),
             HashSet::new(),
             HashSet::new(),
@@ -220,12 +217,12 @@ mod tests {
 
     #[test]
     fn interns_equal_strings_to_one_pointer() {
-        let (mut db, mut a, mut u, mut n) = fresh();
-        let p = intern_into(&mut db, &mut a, &mut u, &mut n, b"strcache-test-foo");
-        let q = intern_into(&mut db, &mut a, &mut u, &mut n, b"strcache-test-foo");
+        let (db, mut a, mut u, mut n) = fresh();
+        let p = intern_into(&db, &mut a, &mut u, &mut n, b"strcache-test-foo");
+        let q = intern_into(&db, &mut a, &mut u, &mut n, b"strcache-test-foo");
         assert_eq!(p, q, "equal strings must share a pointer");
 
-        let r = intern_into(&mut db, &mut a, &mut u, &mut n, b"strcache-test-bar");
+        let r = intern_into(&db, &mut a, &mut u, &mut n, b"strcache-test-bar");
         assert_ne!(p, r, "distinct strings get distinct pointers");
 
         unsafe {
@@ -237,22 +234,22 @@ mod tests {
 
     #[test]
     fn add_len_ignores_trailing_bytes() {
-        let (mut db, mut a, mut u, mut n) = fresh();
+        let (db, mut a, mut u, mut n) = fresh();
         // Intern only the first 3 bytes of a longer, non-terminated buffer.
-        let p = intern_into(&mut db, &mut a, &mut u, &mut n, &b"foobar"[..3]);
+        let p = intern_into(&db, &mut a, &mut u, &mut n, &b"foobar"[..3]);
         unsafe {
             assert_eq!(CStr::from_ptr(p).to_bytes(), b"foo");
         }
-        assert_eq!(p, intern_into(&mut db, &mut a, &mut u, &mut n, b"foo"));
+        assert_eq!(p, intern_into(&db, &mut a, &mut u, &mut n, b"foo"));
     }
 
     #[test]
     fn non_utf8_is_interned_faithfully() {
         // The whole reason for the byte fallback: ustr's C constructor would
         // lossily mangle these bytes into U+FFFD. We must store them verbatim.
-        let (mut db, mut a, mut u, mut n) = fresh();
+        let (db, mut a, mut u, mut n) = fresh();
         let raw: &[u8] = b"bad\xff\xfename";
-        let p = intern_into(&mut db, &mut a, &mut u, &mut n, raw);
+        let p = intern_into(&db, &mut a, &mut u, &mut n, raw);
         unsafe {
             assert_eq!(
                 CStr::from_ptr(p).to_bytes(),
@@ -261,26 +258,27 @@ mod tests {
             );
         }
         // Identity and membership hold for the non-UTF-8 path too.
-        assert_eq!(p, intern_into(&mut db, &mut a, &mut u, &mut n, raw));
+        assert_eq!(p, intern_into(&db, &mut a, &mut u, &mut n, raw));
         assert!(a.contains(&(p as usize)));
         assert!(!a.contains(&(b"other".as_ptr() as usize)));
     }
 
     #[test]
     fn empty_string_round_trips() {
-        let (mut db, mut a, mut u, mut n) = fresh();
-        let e = intern_into(&mut db, &mut a, &mut u, &mut n, b"");
+        let (db, mut a, mut u, mut n) = fresh();
+        let e = intern_into(&db, &mut a, &mut u, &mut n, b"");
         unsafe {
             assert_eq!(CStr::from_ptr(e).to_bytes(), b"");
         }
-        assert_eq!(e, intern_into(&mut db, &mut a, &mut u, &mut n, b""));
+        assert_eq!(e, intern_into(&db, &mut a, &mut u, &mut n, b""));
     }
 
     #[test]
     fn iscached_tracks_the_global_cache() {
         // A pointer handed out by the global `strcache_add_bytes` is reported as
         // cached; an unrelated pointer is not.
-        let p = strcache_add_bytes(b"strcache-iscached-probe");
+        let ctx = crate::execctx::ExecContext::default();
+        let p = strcache_add_bytes(&ctx, b"strcache-iscached-probe");
         assert_eq!(strcache_iscached(p), 1, "interned pointer must be cached");
         let bogus = 0xdead_beef_usize as *const c_char;
         assert_eq!(strcache_iscached(bogus), 0, "foreign pointer is not cached");

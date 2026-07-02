@@ -19,7 +19,6 @@
 //! so the AST agrees with the C reader byte-for-byte, locale and all.
 
 use std::ops::Range;
-use std::sync::{Mutex, OnceLock};
 
 use crate::make_main::{stopchar_map, MAP_BLANK, MAP_COMMENT, MAP_NEWLINE, MAP_NUL, MAP_VARSEP};
 use crate::variable::{f_append, f_expand, f_recursive, f_shell, f_simple, variable_flavor};
@@ -1367,15 +1366,6 @@ pub fn parse_conditional_args(bytes: &[u8]) -> ConditionalArgs {
 
 // --- salsa front-end -------------------------------------------------------
 
-#[salsa::db]
-#[derive(Clone, Default)]
-struct ParserDb {
-    storage: salsa::Storage<Self>,
-}
-
-#[salsa::db]
-impl salsa::Database for ParserDb {}
-
 /// An assignment AST node interned in the parser database. Interning is keyed by
 /// the node's offsets/flavor — not the source bytes — so the database holds at
 /// most one entry per distinct assignment shape and never retains a per-line
@@ -1411,12 +1401,6 @@ struct VarDefNode<'db> {
     rest: usize,
 }
 
-static DB: OnceLock<Mutex<ParserDb>> = OnceLock::new();
-
-fn db() -> &'static Mutex<ParserDb> {
-    DB.get_or_init(|| Mutex::new(ParserDb::default()))
-}
-
 /// Parse `bytes` as a variable assignment, returning the typed [`Assignment`] or
 /// `None`.
 ///
@@ -1427,11 +1411,10 @@ fn db() -> &'static Mutex<ParserDb> {
 /// storage retained until process exit. Only lines that actually parse as
 /// assignments are interned, which both bounds memory and routes genuine AST
 /// nodes through salsa.
-pub fn assignment_ast(bytes: &[u8]) -> Option<Assignment> {
+pub fn assignment_ast(db: &crate::makedb::MakeDb, bytes: &[u8]) -> Option<Assignment> {
     let parsed = parse_assignment(bytes)?;
-    let db = db().lock().unwrap_or_else(|e| e.into_inner());
     let node = AssignmentNode::new(
-        &*db,
+        db,
         parsed.name_start,
         parsed.name_len,
         parsed.flavor,
@@ -1440,12 +1423,12 @@ pub fn assignment_ast(bytes: &[u8]) -> Option<Assignment> {
         parsed.value_start,
     );
     Some(Assignment {
-        name_start: node.name_start(&*db),
-        name_len: node.name_len(&*db),
-        flavor: node.flavor(&*db),
-        conditional: node.conditional(&*db),
-        op_end: node.op_end(&*db),
-        value_start: node.value_start(&*db),
+        name_start: node.name_start(db),
+        name_len: node.name_len(db),
+        flavor: node.flavor(db),
+        conditional: node.conditional(db),
+        op_end: node.op_end(db),
+        value_start: node.value_start(db),
     })
 }
 
@@ -1469,12 +1452,12 @@ pub fn assignment_ast(bytes: &[u8]) -> Option<Assignment> {
 ///
 /// `targvar` is true in a target-specific variable context, where `define` /
 /// `undefine` are plain names rather than modifiers (see [`scan_var_modifiers`]).
-pub fn classify_line(bytes: &[u8], targvar: bool) -> LineClass {
+pub fn classify_line(db: &crate::makedb::MakeDb, bytes: &[u8], targvar: bool) -> LineClass {
     // make's `eval` probes for a variable definition before any directive
     // dispatch, so a genuine assignment wins even when its name is a keyword.
     let scan = scan_var_modifiers(bytes, targvar);
     if scan.assign {
-        return var_def(scan);
+        return var_def(db, scan);
     }
     // Not an assignment: the directive arms run, keyed off the leading word.
     let i = next_token_off(bytes, 0);
@@ -1489,17 +1472,16 @@ pub fn classify_line(bytes: &[u8], targvar: bool) -> LineClass {
     // A modifier keyword was consumed but the remainder is not a definition
     // (bare `export`, `override foo: bar`): still a variable-definition line.
     if scan.had_modifier {
-        return var_def(scan);
+        return var_def(db, scan);
     }
     LineClass::Plain
 }
 
 /// Intern a variable-definition [`VarModScan`] as a [`VarDefNode`] and return the
 /// owned [`LineClass::VarDef`] for it.
-fn var_def(scan: VarModScan) -> LineClass {
-    let db = db().lock().unwrap_or_else(|e| e.into_inner());
+fn var_def(db: &crate::makedb::MakeDb, scan: VarModScan) -> LineClass {
     let node = VarDefNode::new(
-        &*db,
+        db,
         scan.mods.export,
         scan.mods.over,
         scan.mods.private,
@@ -1511,15 +1493,15 @@ fn var_def(scan: VarModScan) -> LineClass {
     );
     LineClass::VarDef(VarLine {
         mods: VarModifiers {
-            export: node.export(&*db),
-            over: node.over(&*db),
-            private: node.private(&*db),
-            define: node.define(&*db),
-            undefine: node.undefine(&*db),
+            export: node.export(db),
+            over: node.over(db),
+            private: node.private(db),
+            define: node.define(db),
+            undefine: node.undefine(db),
         },
-        had_modifier: node.had_modifier(&*db),
-        assign: node.assign(&*db),
-        rest: node.rest(&*db),
+        had_modifier: node.had_modifier(db),
+        assign: node.assign(db),
+        rest: node.rest(db),
     })
 }
 
@@ -1660,9 +1642,10 @@ mod tests {
     #[test]
     fn salsa_query_matches_pure_parser() {
         ensure_map();
+        let db = crate::makedb::MakeDb::default();
         for line in ["A = 1", "B := 2", "C ?= 3", "not a def", "# x"] {
             assert_eq!(
-                assignment_ast(line.as_bytes()),
+                assignment_ast(&db, line.as_bytes()),
                 parse_assignment(line.as_bytes()),
                 "salsa query and pure parser disagree on {line:?}"
             );
@@ -2077,7 +2060,7 @@ mod tests {
 
     fn classify(s: &str) -> LineClass {
         ensure_map();
-        classify_line(s.as_bytes(), false)
+        classify_line(&crate::makedb::MakeDb::default(), s.as_bytes(), false)
     }
 
     #[test]
