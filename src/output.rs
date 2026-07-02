@@ -114,7 +114,12 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
 /// Must run single-threaded: reads make globals and a static buffer.
 pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     let makelevel = ctx.makelevel();
+    // `program` is null only on context-less paths handed a throwaway
+    // `ExecContext` (plugin ABI); the C original could not get here with a
+    // null `program` global. Fall back to the plain name like
+    // `msg::program_name` rather than passing null to `strlen`/`sprintf`.
     let program = ctx.program.0.get();
+    let program = if program.is_null() { c"make".as_ptr() } else { program };
     let starting_directory = ctx.starting_directory.0.get();
     static mut buf: *mut ::core::ffi::c_char =
         ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
@@ -909,6 +914,23 @@ macro_rules! fatal {
     ($ctx:expr, $loc:expr, $($arg:tt)*) => {
         $crate::output::msg::fatal($ctx, $loc, &::std::format!($($arg)*))
     };
+}
+
+#[cfg(test)]
+mod log_working_directory_tests {
+    //! #461 review: the plugin ABI can reach `log_working_directory` with a
+    //! throwaway `ExecContext` whose `program` is null; the trace must fall
+    //! back to the plain "make" name instead of handing null to `strlen`.
+
+    #[test]
+    fn tolerates_null_program_context() {
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        assert!(ctx.program.0.get().is_null());
+        // SAFETY: single-threaded test; the options channel is installed above.
+        let traced = unsafe { super::log_working_directory(&ctx, 1) };
+        assert_eq!(traced, 1);
+    }
 }
 
 #[cfg(test)]

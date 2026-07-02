@@ -93,11 +93,20 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
 #[no_mangle]
 pub unsafe extern "C" fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     // `gmk_*` plugin-ABI entry point: its C-ABI signature cannot carry the
-    // owned `ExecContext` and there is deliberately no global for it. Hand the
-    // callee a default (top-level) context (only the cosmetic `make[N]:` prefix
-    // depends on it).
-    let ctx = crate::execctx::ExecContext::default();
-    allocated_expand_string_for_file(&ctx, ref_0, ::core::ptr::null_mut::<file>())
+    // owned `ExecContext`, so reach `main_0`'s live one through the `CTX_PTR`
+    // borrow channel (installed whenever a loaded plugin runs) — the expansion
+    // may emit output whose `make[N]:`/directory-trace prefixes read
+    // `program`/`starting_directory` off the context. Fall back to a default
+    // context only when none is installed (bare unit tests).
+    match crate::make_main::try_with_exec_context(|ctx| unsafe {
+        allocated_expand_string_for_file(ctx, ref_0, ::core::ptr::null_mut::<file>())
+    }) {
+        Some(expansion) => expansion,
+        None => {
+            let ctx = crate::execctx::ExecContext::default();
+            allocated_expand_string_for_file(&ctx, ref_0, ::core::ptr::null_mut::<file>())
+        }
+    }
 }
 /// # Safety
 ///
@@ -112,9 +121,14 @@ pub unsafe extern "C" fn gmk_add_function(
     flags: ::core::ffi::c_uint,
 ) {
     // `gmk_*` plugin-ABI entry point: its C-ABI signature cannot carry the
-    // owned `ExecContext` and there is deliberately no global for it. Hand the
-    // callee a default (top-level) context (only the cosmetic `make[N]:` prefix
-    // depends on it).
-    let ctx = crate::execctx::ExecContext::default();
-    define_new_function(&ctx, reading_file, name, min, max, flags, func);
+    // owned `ExecContext`, so reach `main_0`'s live one through the `CTX_PTR`
+    // borrow channel, falling back to a default context only when none is
+    // installed (bare unit tests).
+    let defined = crate::make_main::try_with_exec_context(|ctx| unsafe {
+        define_new_function(ctx, reading_file, name, min, max, flags, func);
+    });
+    if defined.is_none() {
+        let ctx = crate::execctx::ExecContext::default();
+        define_new_function(&ctx, reading_file, name, min, max, flags, func);
+    }
 }
