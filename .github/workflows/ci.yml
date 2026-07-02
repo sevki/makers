@@ -297,6 +297,11 @@ jobs:
                   chmod +x make-bin/c-make-oracle
                   cp make-bin/c-make-oracle ./make
 
+            # Renders the report when the working-tree gate in
+            # tests/rs_integration.rs finds a C↔Rust artifact divergence.
+            - name: Install diffoscope
+              run: sudo apt-get update && sudo apt-get install -y --no-install-recommends diffoscope-minimal
+
             - name: Cache cargo registry
               uses: actions/cache@v4
               with:

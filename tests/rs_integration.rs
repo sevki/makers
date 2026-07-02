@@ -43,9 +43,11 @@ impl From<Output> for Run {
     }
 }
 
-fn run(make_bin: &Path, fixture: &Path, target: &str, extra: &[&str]) -> Run {
+fn run(make_bin: &Path, fixture: &Path, target: &str, extra: &[&str]) -> (Run, PathBuf) {
     // Each invocation gets a tempdir cwd so fixtures that touch files don't
-    // collide between runs. We pass the fixture by absolute path.
+    // collide between runs — and so the side effects each binary left behind
+    // can be compared tree-against-tree afterwards. We pass the fixture by
+    // absolute path.
     let workdir = tempdir();
     let out = Command::new(make_bin)
         .arg("--no-print-directory")
@@ -56,7 +58,80 @@ fn run(make_bin: &Path, fixture: &Path, target: &str, extra: &[&str]) -> Run {
         .current_dir(&workdir)
         .output()
         .expect("failed to spawn make");
-    out.into()
+    (out.into(), workdir)
+}
+
+/// Snapshot of a working tree for the divergence gate: every entry keyed by
+/// its relative path, mapped to its content (file bytes, symlink target, or a
+/// directory marker). Metadata that legitimately differs between two runs
+/// (mtimes, inode-level detail) is deliberately not part of the snapshot.
+fn tree_snapshot(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(root: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let p = entry.unwrap().path();
+            let rel = p.strip_prefix(root).unwrap().to_string_lossy().into_owned();
+            let ft = std::fs::symlink_metadata(&p).unwrap().file_type();
+            if ft.is_symlink() {
+                let mut v = b"symlink -> ".to_vec();
+                v.extend_from_slice(std::fs::read_link(&p).unwrap().to_string_lossy().as_bytes());
+                out.insert(rel, v);
+            } else if ft.is_dir() {
+                out.insert(format!("{rel}/"), b"<dir>".to_vec());
+                walk(root, &p, out);
+            } else {
+                out.insert(rel, std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(root, root, &mut out);
+    out
+}
+
+/// Compare the side effects the two runs left in their working trees. The
+/// stdout/stderr diff can be byte-identical while the *artifacts* diverge —
+/// a target built with the wrong content, a missing or stray file — so the
+/// trees are gated too. A structural walk ([`tree_snapshot`]) decides;
+/// diffoscope renders the human-readable report when they diverge (install
+/// `diffoscope-minimal` locally for the full rendering — CI has it).
+fn assert_tree_diff(name: &str, c_dir: &Path, r_dir: &Path) {
+    let c_tree = tree_snapshot(c_dir);
+    let r_tree = tree_snapshot(r_dir);
+    if c_tree == r_tree {
+        return;
+    }
+    let report = Command::new("diffoscope")
+        .args(["--no-progress", "--exclude-directory-metadata=recursive"])
+        .arg(c_dir)
+        .arg(r_dir)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let report = if report.is_empty() {
+        // No diffoscope available (or it produced nothing): summarize from
+        // the snapshots so the gate still explains itself.
+        let mut lines = Vec::new();
+        for key in c_tree.keys().chain(r_tree.keys()).collect::<std::collections::BTreeSet<_>>() {
+            match (c_tree.get(key), r_tree.get(key)) {
+                (Some(c), Some(r)) if c == r => {}
+                (Some(c), Some(r)) => lines.push(format!(
+                    "  {key}: content differs (C {} bytes, Rust {} bytes)",
+                    c.len(),
+                    r.len()
+                )),
+                (Some(_), None) => lines.push(format!("  {key}: only in C tree")),
+                (None, Some(_)) => lines.push(format!("  {key}: only in Rust tree")),
+                (None, None) => unreachable!(),
+            }
+        }
+        lines.join("\n")
+    } else {
+        report
+    };
+    panic!(
+        "[{name}] working-tree divergence between C and Rust make\n\
+         (C tree: {c_dir:?}, Rust tree: {r_dir:?}):\n{report}"
+    );
 }
 
 fn tempdir() -> PathBuf {
@@ -119,9 +194,10 @@ fn check(name: &str, fixture: &str, target: &str, extra: &[&str]) {
     let fixture = fixtures_dir().join(fixture);
     let c = c_make();
     let r = PathBuf::from(RUST_MAKE);
-    let c_run = run(&c, &fixture, target, extra);
-    let r_run = run(&r, &fixture, target, extra);
+    let (c_run, c_dir) = run(&c, &fixture, target, extra);
+    let (r_run, r_dir) = run(&r, &fixture, target, extra);
     assert_diff(name, &c_run, &r_run, &c, &r);
+    assert_tree_diff(name, &c_dir, &r_dir);
 }
 
 /// Like [`check`], but compares stdout/stderr as a *sorted multiset of lines*
@@ -139,14 +215,15 @@ fn check_unordered(name: &str, fixture: &str, target: &str, extra: &[&str]) {
     let fixture = fixtures_dir().join(fixture);
     let c = c_make();
     let r = PathBuf::from(RUST_MAKE);
-    let c_run = run(&c, &fixture, target, extra);
-    let r_run = run(&r, &fixture, target, extra);
+    let (c_run, c_dir) = run(&c, &fixture, target, extra);
+    let (r_run, r_dir) = run(&r, &fixture, target, extra);
 
     assert_eq!(
         c_run.code, r_run.code,
         "[{name}] exit code: C={:?} Rust={:?}",
         c_run.code, r_run.code
     );
+    assert_tree_diff(name, &c_dir, &r_dir);
 
     let assert_sorted = |stream: &str, c_bytes: &[u8], r_bytes: &[u8]| {
         let cn = normalize(c_bytes, &c);
@@ -812,9 +889,10 @@ fn jobserver_parallel() {
     let fixture = fixtures_dir().join("10_jobs.mk");
     let c = c_make();
     let r = std::path::PathBuf::from(RUST_MAKE);
-    let c_out = run(&c, &fixture, "all", &["-j", "4"]);
-    let r_out = run(&r, &fixture, "all", &["-j", "4"]);
+    let (c_out, c_dir) = run(&c, &fixture, "all", &["-j", "4"]);
+    let (r_out, r_dir) = run(&r, &fixture, "all", &["-j", "4"]);
     assert_eq!(c_out.code, r_out.code, "exit code mismatch");
+    assert_tree_diff("jobserver_parallel", &c_dir, &r_dir);
     let mut c_lines: Vec<_> = c_out.stdout.split(|&b| b == b'\n').collect();
     let mut r_lines: Vec<_> = r_out.stdout.split(|&b| b == b'\n').collect();
     c_lines.sort();
@@ -831,9 +909,10 @@ fn job_slots_capped_parallel() {
     let fixture = fixtures_dir().join("20_job_slots.mk");
     let c = c_make();
     let r = std::path::PathBuf::from(RUST_MAKE);
-    let c_out = run(&c, &fixture, "all", &["-j", "3"]);
-    let r_out = run(&r, &fixture, "all", &["-j", "3"]);
+    let (c_out, c_dir) = run(&c, &fixture, "all", &["-j", "3"]);
+    let (r_out, r_dir) = run(&r, &fixture, "all", &["-j", "3"]);
     assert_eq!(c_out.code, r_out.code, "exit code mismatch");
+    assert_tree_diff("job_slots_capped_parallel", &c_dir, &r_dir);
     let mut c_lines: Vec<_> = c_out.stdout.split(|&b| b == b'\n').collect();
     let mut r_lines: Vec<_> = r_out.stdout.split(|&b| b == b'\n').collect();
     c_lines.sort();
@@ -1811,6 +1890,7 @@ fn check_print_dir(name: &str, args: &[&str]) {
     // `assert_diff`'s own normalization is a no-op.
     let neutral = Path::new("make");
     assert_diff(name, &c_norm, &r_norm, neutral, neutral);
+    assert_tree_diff(name, &c_dir, &r_dir);
 }
 
 #[test]
