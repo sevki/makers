@@ -2324,10 +2324,10 @@ unsafe fn spawn_child(
 /// `execve` in a `pre_exec` hook so the child sees make's argv and `envp`
 /// byte-identically — `Command`'s own env handling stores variables in a
 /// sorted map, which would reorder (and dedupe) the child's `environ`
-/// relative to the C oracle. `Command` empties the child's signal mask
-/// before the hook runs, matching the former `POSIX_SPAWN_SETSIGMASK`
-/// setup. Returns the spawn `errno` (0 on success) and writes the new pid
-/// into `*pid`.
+/// relative to the C oracle. The hook also clears the child's signal mask
+/// (the former `POSIX_SPAWN_SETSIGMASK` setup) — the parent spawns with
+/// `block_sigs`' mask held. Returns the spawn `errno` (0 on success) and
+/// writes the new pid into `*pid`.
 ///
 /// The returned [`std::process::Child`] handle is dropped without waiting:
 /// reaping stays centralized in `reap_children`'s `wait`/`waitpid(-1)`,
