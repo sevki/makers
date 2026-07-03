@@ -516,14 +516,8 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     // state, not part of the default/throwaway one) — reach it through the
     // CTX_PTR borrow channel like `remove_intermediates` below.
     crate::make_main::with_exec_context(|live_ctx| temp_stdin_unlink(live_ctx));
-    // `job_fds`/`fifo_name`/`osync_tmpfile` are per-run `ExecContext` state
-    // too (like `temp_stdin_name` above): reach the *live* context through
-    // the same borrow channel rather than the throwaway `ctx`, whose fields
-    // are all still at their empty defaults.
-    crate::make_main::with_exec_context(|live_ctx| {
-        osync_clear(live_ctx);
-        jobserver_clear(live_ctx);
-    });
+    osync_clear();
+    jobserver_clear();
 
     let live_children = crate::make_main::with_exec_context(|live_ctx| live_ctx.children.0.get());
 

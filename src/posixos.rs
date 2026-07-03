@@ -398,7 +398,7 @@ pub unsafe fn jobserver_parse_auth(
         if *__errno_location() != EBADF {
             pfatal_with_name(ctx, c"jobserver readfd".as_ptr());
         }
-        jobserver_clear(ctx);
+        jobserver_clear();
         return 0;
     }
 
@@ -414,18 +414,21 @@ pub unsafe fn jobserver_parse_auth(
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_get_auth(ctx: &crate::execctx::ExecContext) -> *mut c_char {
-    if js_type_get() == JsType::Fifo {
-        let fifo_name = ctx.fifo_name.0.get();
-        let auth = xmalloc(strlen(fifo_name) + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
-        sprintf(auth, c"fifo:%s".as_ptr(), fifo_name);
-        auth
-    } else {
-        let fds = ctx.job_fds.0.get();
-        let auth = xmalloc(INTSTR_LENGTH * 2 + 2) as *mut c_char;
-        sprintf(auth, c"%d,%d".as_ptr(), fds[0], fds[1]);
-        auth
-    }
+pub unsafe fn jobserver_get_auth() -> *mut c_char {
+    crate::make_main::with_exec_context(|ctx| {
+        if js_type_get() == JsType::Fifo {
+            let fifo_name = ctx.fifo_name.0.get();
+            let auth =
+                xmalloc(strlen(fifo_name) + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
+            sprintf(auth, c"fifo:%s".as_ptr(), fifo_name);
+            auth
+        } else {
+            let fds = ctx.job_fds.0.get();
+            let auth = xmalloc(INTSTR_LENGTH * 2 + 2) as *mut c_char;
+            sprintf(auth, c"%d,%d".as_ptr(), fds[0], fds[1]);
+            auth
+        }
+    })
 }
 
 /// The auth value handed to non-recursive children so they detect — and
@@ -446,39 +449,47 @@ pub fn jobserver_enabled() -> c_uint {
 /// Close down the jobserver, unlinking the fifo if we created it.
 ///
 /// # Safety
-/// Must run single-threaded (also called from the fatal-signal path, where
-/// it avoids freeing).
-pub unsafe fn jobserver_clear(ctx: &crate::execctx::ExecContext) {
-    let fds = ctx.job_fds.0.get();
-    if fds[0] >= 0 {
-        close(fds[0]);
-    }
-    if fds[1] >= 0 {
-        close(fds[1]);
-    }
+/// Must run single-threaded. Also called from the fatal-signal path (where
+/// it avoids freeing), so it reaches `main_0`'s live context through the
+/// `CTX_PTR` borrow channel rather than taking `&ExecContext` — and, since
+/// bare unit tests (and the fallback allocator path) may run with no
+/// context installed at all, `try_with_exec_context` treats that as "no
+/// fds/fifo to clear" rather than panicking, matching the former statics'
+/// all-default behavior outside `main_0`.
+pub unsafe fn jobserver_clear() {
+    crate::make_main::try_with_exec_context(|ctx| {
+        let fds = ctx.job_fds.0.get();
+        if fds[0] >= 0 {
+            close(fds[0]);
+        }
+        if fds[1] >= 0 {
+            close(fds[1]);
+        }
+        ctx.job_fds.0.set([-1, -1]);
+
+        let fifo_name = ctx.fifo_name.0.get();
+        if !fifo_name.is_null() {
+            if JOB_ROOT.load(Ordering::Relaxed) {
+                let mut r: i32;
+                loop {
+                    r = unlink(fifo_name);
+                    if !(r == -1 && *__errno_location() == EINTR) {
+                        break;
+                    }
+                }
+            }
+            if handling_fatal_signal == 0 {
+                free(fifo_name as *mut c_void);
+                ctx.fifo_name.0.set(null_mut());
+            }
+        }
+    });
+
     let rfd = job_rfd();
     if rfd >= 0 {
         close(rfd);
     }
-    ctx.job_fds.0.set([-1, -1]);
     JOB_RFD.store(-1, Ordering::Relaxed);
-
-    let fifo_name = ctx.fifo_name.0.get();
-    if !fifo_name.is_null() {
-        if JOB_ROOT.load(Ordering::Relaxed) {
-            let mut r: i32;
-            loop {
-                r = unlink(fifo_name);
-                if !(r == -1 && *__errno_location() == EINTR) {
-                    break;
-                }
-            }
-        }
-        if handling_fatal_signal == 0 {
-            free(fifo_name as *mut c_void);
-            ctx.fifo_name.0.set(null_mut());
-        }
-    }
 
     js_type_set(JsType::None);
 }
@@ -541,7 +552,7 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
         fflush(stdout);
     }
 
-    jobserver_clear(ctx);
+    jobserver_clear();
     tokens
 }
 
@@ -550,9 +561,9 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-pub unsafe fn jobserver_pre_child(ctx: &crate::execctx::ExecContext, recursive: i32) {
+pub unsafe fn jobserver_pre_child(recursive: i32) {
     if recursive != 0 && js_type_get() == JsType::Pipe {
-        let fds = ctx.job_fds.0.get();
+        let fds = crate::make_main::with_exec_context(|ctx| ctx.job_fds.0.get());
         fd_inherit(fds[0]);
         fd_inherit(fds[1]);
     }
@@ -562,9 +573,9 @@ pub unsafe fn jobserver_pre_child(ctx: &crate::execctx::ExecContext, recursive: 
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-pub unsafe fn jobserver_post_child(ctx: &crate::execctx::ExecContext, recursive: i32) {
+pub unsafe fn jobserver_post_child(recursive: i32) {
     if recursive != 0 && js_type_get() == JsType::Pipe {
-        let fds = ctx.job_fds.0.get();
+        let fds = crate::make_main::with_exec_context(|ctx| ctx.job_fds.0.get());
         fd_noinherit(fds[0]);
         fd_noinherit(fds[1]);
     }
@@ -613,8 +624,8 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
         specp = &mut spec;
     }
 
+    let rfd = ctx.job_fds.0.get()[0];
     loop {
-        let rfd = ctx.job_fds.0.get()[0];
         let mut readfds: libc::fd_set = ::core::mem::zeroed();
         FD_ZERO(&mut readfds);
         FD_SET(rfd, &mut readfds);
@@ -684,14 +695,17 @@ pub unsafe fn osync_setup(ctx: &crate::execctx::ExecContext) {
 ///
 /// # Safety
 /// Must run single-threaded.
-pub unsafe fn osync_get_mutex(ctx: &crate::execctx::ExecContext) -> *mut c_char {
+pub unsafe fn osync_get_mutex() -> *mut c_char {
     if osync_enabled() == 0 {
         return null_mut();
     }
-    let osync_tmpfile = ctx.osync_tmpfile.0.get();
-    let mutex = xmalloc(strlen(osync_tmpfile) + MUTEX_PREFIX.to_bytes().len() + 1) as *mut c_char;
-    sprintf(mutex, c"fnm:%s".as_ptr(), osync_tmpfile);
-    mutex
+    crate::make_main::with_exec_context(|ctx| {
+        let osync_tmpfile = ctx.osync_tmpfile.0.get();
+        let mutex =
+            xmalloc(strlen(osync_tmpfile) + MUTEX_PREFIX.to_bytes().len() + 1) as *mut c_char;
+        sprintf(mutex, c"fnm:%s".as_ptr(), osync_tmpfile);
+        mutex
+    })
 }
 
 /// Adopt the output-sync mutex described by an inherited `--sync-mutex`
@@ -742,25 +756,31 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
 /// Close the output-sync mutex, unlinking the file if we created it.
 ///
 /// # Safety
-/// Must run single-threaded.
-pub unsafe fn osync_clear(ctx: &crate::execctx::ExecContext) {
+/// Must run single-threaded. Also called from the fatal-signal path, so it
+/// reaches `main_0`'s live context through the `CTX_PTR` borrow channel
+/// rather than taking `&ExecContext` — and, since bare unit tests may run
+/// with no context installed, `try_with_exec_context` treats that as "no
+/// tmpfile to clear" rather than panicking.
+pub unsafe fn osync_clear() {
     let h = OSYNC_HANDLE.load(Ordering::Relaxed);
     if h >= 0 {
         close(h);
         OSYNC_HANDLE.store(-1, Ordering::Relaxed);
     }
-    let osync_tmpfile = ctx.osync_tmpfile.0.get();
-    if SYNC_ROOT.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
-        let mut r: i32;
-        loop {
-            r = unlink(osync_tmpfile);
-            if !(r == -1 && *__errno_location() == EINTR) {
-                break;
+    crate::make_main::try_with_exec_context(|ctx| {
+        let osync_tmpfile = ctx.osync_tmpfile.0.get();
+        if SYNC_ROOT.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
+            let mut r: i32;
+            loop {
+                r = unlink(osync_tmpfile);
+                if !(r == -1 && *__errno_location() == EINTR) {
+                    break;
+                }
             }
+            free(osync_tmpfile as *mut c_void);
+            ctx.osync_tmpfile.0.set(null_mut());
         }
-        free(osync_tmpfile as *mut c_void);
-        ctx.osync_tmpfile.0.set(null_mut());
-    }
+    });
 }
 
 /// Take the output-sync lock (a write lock on the first byte). Returns 0
@@ -1080,12 +1100,13 @@ mod tests {
     #[test]
     fn pre_post_child_toggle_cloexec_only_for_recursive_pipe() {
         let _guard = JS_TYPE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::make_main::install_default_exec_context_for_test();
         let saved_js_type = JS_TYPE.load(Ordering::Relaxed);
-        let ctx = crate::execctx::ExecContext::default();
+        let saved_fds = crate::make_main::with_exec_context(|ctx| ctx.job_fds.0.get());
 
         let mut fds = [-1i32; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-        ctx.job_fds.0.set(fds);
+        crate::make_main::with_exec_context(|ctx| ctx.job_fds.0.set(fds));
         unsafe {
             fd_noinherit(fds[0]);
             fd_noinherit(fds[1]);
@@ -1094,22 +1115,22 @@ mod tests {
 
         // recursive == 0: no-op regardless of style.
         js_type_set(JsType::Pipe);
-        unsafe { jobserver_pre_child(&ctx, 0) };
+        unsafe { jobserver_pre_child(0) };
         assert_eq!(cloexec(fds[0]), FD_CLOEXEC, "non-recursive is a no-op");
 
         // recursive != 0 but fifo-style: no-op.
         js_type_set(JsType::Fifo);
-        unsafe { jobserver_pre_child(&ctx, 1) };
+        unsafe { jobserver_pre_child(1) };
         assert_eq!(cloexec(fds[0]), FD_CLOEXEC, "fifo style is a no-op");
 
         // recursive != 0 and pipe-style: actually clears FD_CLOEXEC.
         js_type_set(JsType::Pipe);
-        unsafe { jobserver_pre_child(&ctx, 1) };
+        unsafe { jobserver_pre_child(1) };
         assert_eq!(cloexec(fds[0]), 0, "pre_child inherits both fds");
         assert_eq!(cloexec(fds[1]), 0, "pre_child inherits both fds");
 
         // jobserver_post_child undoes it under the same conditions.
-        unsafe { jobserver_post_child(&ctx, 1) };
+        unsafe { jobserver_post_child(1) };
         assert_eq!(cloexec(fds[0]), FD_CLOEXEC, "post_child restores cloexec");
         assert_eq!(cloexec(fds[1]), FD_CLOEXEC, "post_child restores cloexec");
 
@@ -1117,6 +1138,7 @@ mod tests {
             close(fds[0]);
             close(fds[1]);
         }
+        crate::make_main::with_exec_context(|ctx| ctx.job_fds.0.set(saved_fds));
         JS_TYPE.store(saved_js_type, Ordering::Relaxed);
     }
 }
