@@ -12,7 +12,7 @@ use crate::file::{
     FileId, FileNode, UpdateStatus, VarOrigin, NONEXISTENT_MTIME, ORDINARY_MTIME_MIN,
 };
 use crate::floc::Floc;
-use crate::job::{child, children, job_slots_used, new_job, reap_children};
+use crate::job::{child, job_slots_used, new_job, reap_children};
 use crate::load::unload_file;
 use crate::make_main::{one_shell, stopchar_map, temp_stdin_unlink};
 use crate::misc::make_pid;
@@ -505,11 +505,11 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     ::core::ptr::write_volatile(&raw mut handling_fatal_signal, 1);
     signal(sig, SIG_DFL);
     // This is a kernel-invoked signal handler: it cannot be passed the owned
-    // `ExecContext`, and there is deliberately no global to read it from. The
-    // cleanup helpers below get a default (top-level) context — its only uses
-    // are the cosmetic `make[N]:` message prefix and the fatal-signal mask. No
-    // converted *printer* is called with this ctx (see the prefix-free `kill`
-    // failure path at the end).
+    // `ExecContext`, so every stateful step below — the children chain, the
+    // file table the target cleanup consults, temp-stdin, reaping — reaches
+    // `main_0`'s live context through the `CTX_PTR` borrow channel. The
+    // default (throwaway) context built here serves only the prefix-free
+    // `kill` failure printer at the end; its own tables are empty (#468).
     let ctx = crate::execctx::ExecContext::default();
     adopt_live_fatal_signal_mask(&ctx);
     // The temp-stdin name lives on the *live* context (it is per-run cleanup
@@ -519,36 +519,43 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     osync_clear();
     jobserver_clear();
 
+    let live_children = crate::make_main::with_exec_context(|live_ctx| live_ctx.children.0.get());
+
     if sig == SIGTERM {
         // Pass SIGTERM on to children right away so they die with us.
-        let c = children;
+        let mut c = live_children;
         while !c.is_null() {
             if (*c).remote() == 0 && (*c).pid > 0 {
                 kill((*c).pid, SIGTERM);
             }
+            c = (*c).next;
         }
     }
 
     if sig == SIGTERM || sig == SIGINT || sig == SIGHUP || sig == SIGQUIT {
-        let mut c = children;
+        let mut c = live_children;
         while !c.is_null() {
             if (*c).remote() != 0 && (*c).pid > 0 {
                 crate::remote_stub::remote_kill((*c).pid, sig);
             }
             c = (*c).next;
         }
-        let mut c = children;
+        // Delete the partially built targets on the *live* context: its file
+        // table is the one the interrupted children were recorded in, so
+        // `delete_child_targets` sees real mtimes to compare (#468).
+        let mut c = live_children;
         while !c.is_null() {
-            delete_child_targets(&ctx, c);
+            crate::make_main::with_exec_context(|live_ctx| delete_child_targets(live_ctx, c));
             c = (*c).next;
         }
-        // Wait for them all to die before cleaning up.
+        // Wait for them all to die before cleaning up. Reaping walks the live
+        // children chain, so it too runs on the live context.
         while job_slots_used() > 0 {
-            reap_children(&ctx, 1, 0);
+            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 0));
         }
     } else {
         while job_slots_used() > 0 {
-            reap_children(&ctx, 1, 1);
+            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 1));
         }
     }
 
@@ -576,7 +583,10 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         let mut bytes = msg.into_bytes();
         bytes.push(0);
         crate::output::outputs(&ctx, 1, bytes.as_ptr() as *const ::core::ffi::c_char);
-        crate::make_main::die(&ctx, MAKE_TROUBLE);
+        // `die` reaps the children chain and unwinds run state, so it must run
+        // on the live context (the throwaway one has an empty chain and would
+        // spin waiting for job slots that never free).
+        crate::make_main::with_exec_context(|live_ctx| crate::make_main::die(live_ctx, MAKE_TROUBLE));
     }
 }
 
