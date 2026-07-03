@@ -5,9 +5,18 @@ name: CI
 # oracle) used to be repeated independently by ci.yml, coverage.yml,
 # change-risk.yml and mutants.yml — four times per PR. Here it runs ONCE in the
 # `build` job, which publishes the rust make and C make binaries as artifacts;
-# every downstream job (kernel diff, coverage, CRAP gate, mutants) consumes
-# those artifacts via `needs:` instead of rebuilding. cargo-geiger folds in as
-# an independent source-scan job in the same graph.
+# every downstream job (kernel diff, fixtures diff, coverage, CRAP gate,
+# mutants) consumes those artifacts via `needs:` instead of rebuilding.
+# cargo-geiger folds in as an independent source-scan job in the same graph.
+#
+# Differential correctness (proving the Rust make behaves exactly like the C
+# make) is enforced by running each implementation independently, in
+# parallel: fixtures-run-rust/fixtures-run-c mirror kernel-build-rust/
+# kernel-build-c — each pipes stdout/stderr to files and snapshots the
+# resulting working tree, uploads them as artifacts, and a diff job
+# (fixtures-diff / kernel-diff) downloads both and diffoscopes them, ignoring
+# mtimes. `cargo test` (the `test` job) no longer does this comparison
+# in-process; it only smoke-tests the Rust make and runs unit tests.
 #
 # rust-clippy stays in its own file: it uploads a code-scanning SARIF whose
 # configuration identity is the workflow path + job id, so moving it here would
@@ -247,6 +256,8 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+            - name: Install diffoscope
+              run: sudo apt-get update && sudo apt-get install -y --no-install-recommends diffoscope-minimal
             - name: Download rust make kernel logs
               uses: actions/download-artifact@v4
               with:
@@ -269,38 +280,123 @@ jobs:
                   path: "*.diff"
 
     # ─────────────────────────────────────────────────────────────────────
-    # GATE: the full test suite, with the differential fixtures in
-    # tests/rs_integration.rs run against the INDEPENDENT C make oracle. The
-    # coverage job below runs the same suite but with `--ignore-run-fail` (it
-    # only needs the lcov data), which silently swallowed differential
-    # failures — a C↔Rust output regression could ride a green PR (#456).
-    # This job is the enforced pass/fail signal: any fixture whose output is
-    # not byte-identical to the oracle fails the PR. Known pre-existing
-    # divergences are quarantined with `#[ignore = "known divergence #NNN"]`
-    # and tracked by issue; run them with `cargo test -- --ignored`.
+    # Fixture suite, run independently by each make in its own parallel job
+    # (rather than in-process inside one `cargo test`), so the Rust make and
+    # the C make oracle never share a process and each leaves its own
+    # artifact trail. `scripts/run-fixtures.sh` drives every fixture in
+    # `scripts/fixtures-manifest.tsv` through ONE binary, piping stdout/stderr
+    # to files and snapshotting the resulting working tree; `fixtures-diff`
+    # below is the enforced pass/fail signal, diffoscoping the two artifact
+    # sets (ignoring mtimes). Known pre-existing divergences are quarantined
+    # via the manifest's `skip` column and tracked by issue.
     # ─────────────────────────────────────────────────────────────────────
-    test:
-        name: test (differential vs C oracle)
+    fixtures-run-rust:
+        name: run fixtures (rust make)
         needs: build
         if: github.event_name != 'schedule'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+            - name: Download rust make artifact
+              uses: actions/download-artifact@v4
+              with:
+                  name: rust-make-${{ github.sha }}
+                  path: make-bin
+            - name: Put rust make first on PATH as `make`
+              run: |
+                  chmod +x make-bin/make
+                  mkdir -p "$HOME/.local/bin"
+                  ln -sf "$PWD/make-bin/make" "$HOME/.local/bin/make"
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            - name: Run fixtures
+              run: ./scripts/run-fixtures.sh "$(command -v make)" fixtures-out
+            - name: Upload rust make fixture outputs
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: fixtures-logs-rust-${{ github.sha }}
+                  path: fixtures-out
+                  if-no-files-found: error
+                  retention-days: 7
 
+    # Uses the INDEPENDENT C make oracle (built by build.sh's sh+cc bootstrap,
+    # not by the rust make), matching the rest of the graph — the fixture
+    # comparison scores the rust make against an oracle the candidate did not
+    # build.
+    fixtures-run-c:
+        name: run fixtures (C make oracle)
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
             - name: Download independent C make oracle
               uses: actions/download-artifact@v4
               with:
                   name: c-make-oracle-${{ github.sha }}
                   path: make-bin
-            - name: Install C make oracle as ./make
+            - name: Put C make oracle first on PATH as `make`
               run: |
                   chmod +x make-bin/c-make-oracle
-                  cp make-bin/c-make-oracle ./make
+                  mkdir -p "$HOME/.local/bin"
+                  ln -sf "$PWD/make-bin/c-make-oracle" "$HOME/.local/bin/make"
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            - name: Run fixtures
+              run: ./scripts/run-fixtures.sh "$(command -v make)" fixtures-out
+            - name: Upload C make fixture outputs
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: fixtures-logs-c-${{ github.sha }}
+                  path: fixtures-out
+                  if-no-files-found: error
+                  retention-days: 7
 
-            # Renders the report when the working-tree gate in
-            # tests/rs_integration.rs finds a C↔Rust artifact divergence.
+    fixtures-diff:
+        name: diff fixtures (rust make vs C make)
+        needs: [fixtures-run-rust, fixtures-run-c]
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
             - name: Install diffoscope
               run: sudo apt-get update && sudo apt-get install -y --no-install-recommends diffoscope-minimal
+
+            - name: Download rust make fixture outputs
+              uses: actions/download-artifact@v4
+              with:
+                  name: fixtures-logs-rust-${{ github.sha }}
+                  path: rust-fixtures
+            - name: Download C make fixture outputs
+              uses: actions/download-artifact@v4
+              with:
+                  name: fixtures-logs-c-${{ github.sha }}
+                  path: c-fixtures
+
+            - name: Compare fixture outputs
+              run: ./scripts/fixtures-diff.sh c-fixtures rust-fixtures
+
+            - name: Upload fixture diffs
+              if: always() && hashFiles('fixtures-*.diff') != ''
+              uses: actions/upload-artifact@v4
+              with:
+                  name: fixtures-diff-${{ github.sha }}
+                  path: "fixtures-*.diff"
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Unit tests + the fixture smoke tests in tests/rs_integration.rs (each
+    # just runs the Rust make and asserts it completes without crashing —
+    # the differential comparison against the C oracle happens above, in
+    # fixtures-run-rust / fixtures-run-c / fixtures-diff, not here).
+    # ─────────────────────────────────────────────────────────────────────
+    test:
+        name: test (unit + fixture smoke)
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
             - name: Cache cargo registry
               uses: actions/cache@v4
@@ -311,7 +407,7 @@ jobs:
                   key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
                   restore-keys: cargo-${{ runner.os }}-
 
-            - name: Run the test suite (unit + differential)
+            - name: Run the test suite (unit + fixture smoke)
               run: cargo test
 
     # ─────────────────────────────────────────────────────────────────────
@@ -338,19 +434,6 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            # Reuse the INDEPENDENT C make oracle built once in `build` (sh+cc,
-            # not by the rust make) instead of re-bootstrapping it — no apt deps
-            # / autoconf / build.sh needed here.
-            - name: Download independent C make oracle
-              uses: actions/download-artifact@v4
-              with:
-                  name: c-make-oracle-${{ github.sha }}
-                  path: make-bin
-            - name: Install C make oracle as ./make
-              run: |
-                  chmod +x make-bin/c-make-oracle
-                  cp make-bin/c-make-oracle ./make
-
             - name: Cache cargo registry
               uses: actions/cache@v4
               with:
@@ -371,10 +454,11 @@ jobs:
             # spawned `make` binary, so coverage reflects real recipe execution.
             # --ignore-run-fail: still emit coverage even if a flaky test fails,
             # so the CRAP gate always has data to score (matches scripts/crap.sh).
-            # --include-ignored: quarantined known-divergence tests (skipped by
-            # the enforced `test` gate above) still execute here — this job
-            # tolerates their failures, and dropping them would shrink coverage
-            # of the code they exercise and destabilize the CRAP baseline.
+            # --include-ignored: quarantined known-divergence tests still
+            # execute here — this job tolerates their failures, and dropping
+            # them would shrink coverage of the code they exercise and
+            # destabilize the CRAP baseline. No C make oracle is needed here:
+            # cargo test no longer compares against it (see fixtures-diff).
             - name: Run tests under coverage
               run: |
                   cargo llvm-cov --ignore-run-fail --lcov --output-path lcov.info -- --include-ignored
@@ -538,18 +622,6 @@ jobs:
                   # Need history back to the PR base so `git diff base...HEAD`
                   # (for --in-diff) can find the merge base.
                   fetch-depth: 0
-
-            # Independent oracle (sh+cc, not built by the rust make), same as the
-            # coverage job — so mutation runs score against a trustworthy oracle.
-            - name: Download independent C make oracle
-              uses: actions/download-artifact@v4
-              with:
-                  name: c-make-oracle-${{ github.sha }}
-                  path: make-bin
-            - name: Install C make oracle as ./make
-              run: |
-                  chmod +x make-bin/c-make-oracle
-                  cp make-bin/c-make-oracle ./make
 
             - name: Cache cargo registry
               uses: actions/cache@v4

@@ -1,0 +1,117 @@
+name	mode	fixture	target	args	skip
+basic	ordered	01_basic.mk	all		
+makelevel_recursive	ordered	63_makelevel.mk	all		
+verify_flag_database	unordered	65_verify_flag.mk	all		
+notintermediate_keeps_intermediates	ordered	66_notintermediate.mk	all		
+always_make_plain	ordered	67_always_make.mk	all		
+always_make_forced	ordered	67_always_make.mk	all	-B	
+eval_flags	ordered	01_basic.mk	all	--eval=EV := from_eval--eval=$(info eval-info $(EV))	
+rule_target_separators	unordered	43_rule_target_separators.mk	all		
+escaped_percent_target	ordered	44_escaped_percent_target.mk	all		
+intermediate_pattern_prereq	ordered	90_intermediate_pattern_prereq.mk	all		
+pattern_specific_variables	ordered	89_pattern_specific_var.mk	all		
+escaped_colon_prereq	ordered	45_escaped_colon_prereq.mk	all		
+log-functions	ordered	60_log_functions.mk	all		
+log-functions-error	ordered	60_log_functions.mk	all	BOOM=1	
+notdir-suffix	ordered	61_notdir_suffix.mk	all		
+basename-dir	ordered	62_basename_dir.mk	all		
+vars	ordered	02_vars.mk	all	FROMCMD=cli	
+pattern	unordered	03_pattern.mk	all		
+cond-release	ordered	04_cond.mk	all		
+cond-debug	ordered	04_cond.mk	all	MODE=debugVERBOSE=1	
+debug-basic-trace	unordered	91_debug_basic.mk	all	--debug=b-n	
+cond-chain-default	ordered	15_cond_chain.mk	all		
+cond-chain-release	ordered	15_cond_chain.mk	all	MODE=release	
+cond-chain-fallback	ordered	15_cond_chain.mk	all	FALLBACK=xHIDE=1	
+recursive-substref	ordered	46_recursive_substref.mk	all		
+abspath-alloc	ordered	47_abspath_alloc.mk	all		
+define-undefine	ordered	33_define_undefine.mk	all		
+tilde-user	ordered	34_tilde_user.mk	all		
+pattern-default-goal	ordered	42_pattern_default_goal.mk	show		
+second-expansion	ordered	41_second_expansion.mk	all		
+suffix-rule-default-goal	ordered	39_suffix_rule_default_goal.mk	show		
+default-goal-normal	ordered	40_default_goal_normal.mk	show		
+wait-special-file	ordered	38_wait_special_file.mk	all		
+wait-dotslash	ordered	36_wait_dotslash.mk	all		
+eight-space-indent	ordered	37_eight_space_indent.mk	all		
+ifeq-no-separator	ordered	35_ifeq_no_separator.mk	all		
+ifdef-token	ordered	32_ifdef_token.mk	all		
+ifeq-forms	ordered	31_ifeq_forms.mk	all		
+varmod	ordered	16_varmod.mk	all		
+call-args	ordered	26_call_args.mk	all		
+recipe-prefix	unordered	22_recipeprefix.mk	all		
+second-expansion_2	ordered	24_secondexpansion.mk	all		
+posix	ordered	25_posix.mk	all		
+remake-include	ordered	23_remake_include.mk	all		
+varmod-override	ordered	16_varmod.mk	all	OVR=from-cmdline	
+define-nested	ordered	21_define_nested.mk	all		
+shell	ordered	19_shell.mk	all		
+directives	ordered	17_directives.mk	all		
+filedir-export	ordered	30_filedir_export.mk	all		
+include-missing	ordered	18_include_missing.mk	all		
+funcs	ordered	05_funcs.mk	all		
+patsubst	ordered	16_patsubst.mk	all		
+subst	ordered	15_subst.mk	all		
+abspath	ordered	13_abspath.mk	all		
+recipe-all	unordered	06_recipe.mk	all		
+recipe-lines	ordered	06_recipe.mk	lines		
+error	ordered	07_error.mk	all		
+shuffle-reverse	unordered	08_shuffle.mk	all	--shuffle=reverse	
+shuffle-random-42	unordered	08_shuffle.mk	all	--shuffle=42	
+shuffle-identity	unordered	08_shuffle.mk	all	--shuffle=identity	
+shuffle-invalid	ordered	08_shuffle.mk	all	--shuffle=bogus	
+warn-undefined-var	ordered	09_warn.mk	all	--warn=undefined-var	
+warn-invalid-ref	ordered	48_invalid_var_ref.mk	all	--warn=invalid-ref	
+warn-error	ordered	09_warn.mk	all	--warn=error,undefined-var	
+jobs-1	ordered	10_jobs.mk	all	-j1	
+jobserver-tokens	unordered	20_job_slots.mk	all	-j2	
+notparallel	unordered	49_notparallel.mk	all	-j4	
+special-vars	ordered	50_special_variables.mk	all		
+delete-on-error	ordered	51_delete_on_error.mk	out		
+waiting-for-jobs	unordered	52_waiting_for_jobs.mk	all	-j2	
+considered-diamond	unordered	53_considered_diamond.mk	all		
+changenum-staged	ordered	54_changenum_staged.mk	all		
+output-sync	unordered	55_output_sync.mk	all	-j3-O	
+job-counter	unordered	56_job_counter.mk	all	-j2	
+output-init	ordered	57_output_init.mk	all		
+decode-switches	ordered	58_decode_switches.mk	all	-s-eFOO=cli	
+silent-makeflags	ordered	64_silent_makeflags.mk	all	-s	
+run_silent_echo	ordered	68_run_silent.mk	all		
+run_silent_dash_s	ordered	68_run_silent.mk	all	-s	
+dot_silent_target	ordered	69_dot_silent.mk	all		
+export_directive	ordered	70_export_all.mk	all		
+export_all_target	ordered	71_export_all_target.mk	all		
+recipeprefix	ordered	72_recipeprefix.mk	all		
+output_sync_plain	ordered	73_output_sync.mk	all		
+output_sync_line	ordered	73_output_sync.mk	all	--output-sync=line	
+output_sync_target	ordered	73_output_sync.mk	all	--output-sync=target	
+load_avg_default	ordered	74_load_average.mk	all		
+load_avg_noarg	ordered	74_load_average.mk	all	-l	
+load_limit	ordered	83_load_limit.mk	all	-j2-l1000	
+jobs_default	ordered	75_jobs.mk	all		
+jobs_serial	ordered	75_jobs.mk	all	-j1	
+jobs_parallel	ordered	75_jobs.mk	all	-j2	
+pattern_dep_length	ordered	76_pattern_dep_length.mk	widget.out		
+pattern-rule	ordered	59_pattern_rule.mk	all		
+pattern_stats	unordered	78_pattern_stats.mk	widget.out		
+func-arity	ordered	79_func_arity.mk	all		
+double-colon	ordered	80_double_colon.mk	all		
+wildcard-probe	ordered	81_wildcard_probe.mk	all		
+wildcard-dirs	ordered	82_wildcard_dirs.mk	all		
+wildcard-phases	ordered	84_wildcard_phases.mk	all		
+autovar-lists	ordered	86_autovar_lists.mk	all		
+filter-hashing	ordered	88_filter_hashing.mk	all		
+autovar-dedup-promote	ordered	87_autovar_dedup_promote.mk	all		
+wildcard-long-names	ordered	85_wildcard_long_names.mk	all		
+warn-unknown	ordered	09_warn.mk	all	--warn=no-such-warning	
+realpath	ordered	14_realpath.mk	all		
+wordfuncs	ordered	12_wordfuncs.mk	all		
+word-zero	ordered	12_wordfuncs.mk	badzero		
+word-nan	ordered	12_wordfuncs.mk	badnan		
+wait-special	ordered	27_wait_special.mk	all		
+nothing-todo	ordered	28_nothing_todo.mk	noop		
+recipe-runs	ordered	28_nothing_todo.mk	done		
+oneshell	ordered	29_oneshell.mk	all		
+origin-flavor	ordered	92_origin_flavor.mk	all	CMDLINE_VAR=cli-value	known divergence #459: $(flavor) of automatic variables is 'recursive', oracle says 'simple'
+jobserver_parallel	unordered_stdout_only	10_jobs.mk	all	-j4	
+job_slots_capped_parallel	unordered_stdout_only	20_job_slots.mk	all	-j3	

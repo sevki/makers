@@ -55,18 +55,25 @@ When choosing what to clean up next, prefer these, in order. Every change
 must preserve behavior and be differential-tested against the in-tree C
 oracle (`./make`).
 
-**Every fixture runs against the C oracle and is verified.** All
-integration fixtures in `tests/rs_integration.rs` execute both the Rust
-port and the in-tree C oracle (`./make`) and assert the outputs are
+**Every fixture runs against the C oracle and is verified.** Every fixture
+listed in `scripts/fixtures-manifest.tsv` is executed against BOTH the Rust
+port and the in-tree C oracle and their outputs are asserted
 byte-identical — no fixture may skip the oracle comparison or assert
-against a hand-written expectation instead. This is enforced by the
-`test (differential vs C oracle)` CI job, which builds the oracle
-independently and runs the full suite as a hard gate; a coverage or lint
-job that tolerates test failures does not count as verification. A
-fixture may only be exempted from the gate by quarantining it with
-`#[ignore = "known divergence #NNN: ..."]` pointing at an open issue
-that tracks the divergence; quarantined fixtures still run under
-`--include-ignored` in the coverage job.
+against a hand-written expectation instead. This now runs as three CI
+jobs rather than in-process in `cargo test`: `fixtures-run-rust` and
+`fixtures-run-c` each independently run every manifest fixture through one
+binary (piping stdout/stderr to files and snapshotting the resulting
+working tree), and `fixtures-diff` downloads both artifact sets and
+diffoscopes them (ignoring mtimes) as the hard gate; a coverage or lint job
+that tolerates failures does not count as verification. `tests/rs_integration.rs`
+itself only smoke-tests the Rust make (asserts it runs without crashing) —
+it is fast local signal, not the enforcement point. A fixture may only be
+exempted from the gate by quarantining it: the `skip` column in
+`scripts/fixtures-manifest.tsv` (`fixtures-diff` reports it but does not
+fail), mirrored by `#[ignore = "known divergence #NNN: ..."]` on the
+corresponding `tests/rs_integration.rs` test, pointing at an open issue that
+tracks the divergence. Keep the fixture's manifest row in sync with its test
+(fixture file, target, args) when either changes.
 
 **Regression fixes land test-first.** When a C↔Rust output divergence is
 found, the history must prove it: first a commit adding a differential
@@ -79,8 +86,9 @@ Fixing a quarantined divergence works the same way: un-ignore the test
 
 **Always raise coverage.** Every pass must include tests that exercise the
 code it touches — a `#[cfg(test)]` unit test for the converted function
-and/or an integration case in `tests/rs_integration.rs` that
-differential-checks the relevant `make` behavior against the C oracle. The
+and/or a fixture added to `scripts/fixtures-manifest.tsv` (plus its matching
+`tests/rs_integration.rs` case) that differential-checks the relevant
+`make` behavior against the C oracle in the `fixtures-diff` CI job. The
 `cargo-llvm-cov` coverage delta for a pass must be `>= 0`; never merge a
 change that lowers coverage. Prefer targets that are currently untested so
 the conversion also closes a coverage gap. Measure the delta before pushing
