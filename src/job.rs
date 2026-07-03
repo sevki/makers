@@ -2360,6 +2360,18 @@ unsafe fn spawn_via_std(
         // former posix_spawn file actions did, then exec. On any failure the
         // errno reaches the parent through Command's report pipe and
         // `spawn()` returns it.
+        //
+        // The parent holds `block_sigs`' fatal-signal mask across the spawn,
+        // and recipes must start with an empty mask (the former
+        // `POSIX_SPAWN_SETSIGMASK` contract) or they would ignore the
+        // SIGTERM/SIGINT make passes on. std already clears the child's mask
+        // before running these hooks, but that is an implementation detail,
+        // not a documented `pre_exec` guarantee — clear it explicitly.
+        let mut empty: sigset_t = crate::make_main::SigsetT { __val: [0; 16] };
+        sigemptyset(&raw mut empty);
+        if sigprocmask(SIG_SETMASK, &raw const empty, ::core::ptr::null_mut::<sigset_t>()) < 0 {
+            return Err(::std::io::Error::last_os_error());
+        }
         if fdin >= 0 && fdin != stdin_fd && libc::dup2(fdin, stdin_fd) < 0 {
             return Err(::std::io::Error::last_os_error());
         }
@@ -3664,6 +3676,72 @@ mod spawn_via_std_tests {
         assert_eq!(
             out, "Z_LATE=first\nA_EARLY=second\n",
             "child env must be make's envp verbatim, in order"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `start_job_command` holds `block_sigs`' fatal-signal mask across the
+    /// spawn, but the recipe child must start with an empty mask (the former
+    /// `POSIX_SPAWN_SETSIGMASK` contract) — otherwise interrupted builds
+    /// leave children ignoring the SIGTERM/SIGINT make passes on (#472
+    /// review). Block the fatal signals on this thread, spawn a child that
+    /// prints its own blocked-mask line, and require all zeros.
+    #[test]
+    fn clears_inherited_signal_mask() {
+        let dir = std::env::temp_dir().join(format!(
+            "spawn-mask-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out_path = dir.join("mask.txt");
+        let out_c = CString::new(out_path.to_str().unwrap()).unwrap();
+        // SAFETY: signal-mask bookkeeping on this test thread (restored
+        // below) and file plumbing on paths this test owns.
+        unsafe {
+            let mut blocked: libc::sigset_t = ::core::mem::zeroed();
+            libc::sigemptyset(&mut blocked);
+            libc::sigaddset(&mut blocked, libc::SIGTERM);
+            libc::sigaddset(&mut blocked, libc::SIGINT);
+            libc::sigaddset(&mut blocked, libc::SIGCHLD);
+            let mut saved: libc::sigset_t = ::core::mem::zeroed();
+            assert_eq!(
+                libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut saved),
+                0
+            );
+
+            let fd = libc::open(
+                out_c.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+                0o600,
+            );
+            assert!(fd >= 0, "open temp stdout");
+            let (_argv_own, mut argv) =
+                c_array(&["sh", "-c", "grep SigBlk /proc/self/status"]);
+            let (_envp_own, mut envp) = c_array(&["PATH=/usr/bin:/bin"]);
+            let file = CString::new("/bin/sh").unwrap();
+            let mut pid: pid_t = -1;
+            let r = spawn_via_std(
+                file.as_ptr(),
+                argv.as_mut_ptr(),
+                envp.as_mut_ptr(),
+                -1,
+                fd,
+                libc::STDERR_FILENO,
+                &raw mut pid,
+            );
+            let restored = libc::pthread_sigmask(libc::SIG_SETMASK, &saved, ::core::ptr::null_mut());
+            assert_eq!(r, 0, "spawn failed: errno {r}");
+            assert_eq!(restored, 0);
+            let status = wait_status(pid);
+            assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
+            libc::close(fd);
+        }
+        let out = std::fs::read_to_string(&out_path).expect("read child mask");
+        assert_eq!(
+            out.trim(),
+            "SigBlk:\t0000000000000000",
+            "recipe child must start with an empty signal mask"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
