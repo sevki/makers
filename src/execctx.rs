@@ -386,11 +386,11 @@ pub struct ExecContext {
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
 /// `ExecContext`'s derive needs one `Default` impl per field and this is a
-/// single cohesive cache: `buf` is scratch (sized to `libdir_maxlen + buflen
-/// + 2`, contents overwritten every lookup), `buflen` the longest library
-/// basename seen so far (distinct from `buf.len()`, which pads for the
-/// directory prefix too), `libdir_maxlen`/`std_dirs` a one-time summary of
-/// the fixed search-directory table.
+/// single cohesive cache. `buf` is scratch space sized to `libdir_maxlen +
+/// buflen + 2`, its contents overwritten on every lookup. `buflen` tracks
+/// the longest library basename seen so far, which is distinct from
+/// `buf.len()` since `buf` also pads for the directory prefix. `libdir_maxlen`
+/// and `std_dirs` are a one-time summary of the fixed search-directory table.
 #[derive(Debug, Clone, Default)]
 pub struct LibrarySearchCache {
     pub buf: Vec<u8>,
