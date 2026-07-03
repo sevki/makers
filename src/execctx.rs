@@ -313,6 +313,15 @@ pub struct ExecContext {
     /// single block serves the whole run, exactly as the former static did.
     pub read_dirstream_buf: ::core::cell::Cell<*mut ::core::ffi::c_char>,
     pub read_dirstream_bufsz: ::core::cell::Cell<crate::ffi_types::size_t>,
+
+    /// `parse_file_seq`'s reused unquoting scratch buffer (the former
+    /// function-local `static mut tmpbuf`/`tmpbuf_len`) — grown with `xrealloc`
+    /// to fit the longest name seen so far and reused on every call, exactly as
+    /// the former statics were. Called from both the parse phase and the build
+    /// phase (`function.rs`, `implicit.rs`), so `main_0` carries it across the
+    /// context rebuild like [`Self::read_dirstream_buf`].
+    pub file_seq_tmpbuf: ::core::cell::Cell<*mut ::core::ffi::c_char>,
+    pub file_seq_tmpbuf_len: ::core::cell::Cell<crate::ffi_types::size_t>,
 }
 
 /// The directory cache's name-keyed table: an idiomatic Rust
@@ -929,6 +938,40 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// `parse_file_seq`'s reused scratch buffer (the former function-local
+    /// `static mut tmpbuf`/`tmpbuf_len`) starts empty and survives the
+    /// `main_0` carry-over the same way [`read_dirstream_buffer_starts_empty_and_survives_carry_over`]
+    /// verifies for `read_dirstream_buf`.
+    #[test]
+    fn file_seq_tmpbuf_starts_empty_and_survives_carry_over() {
+        let ctx = ExecContext::default();
+        assert!(ctx.file_seq_tmpbuf.get().is_null());
+        assert_eq!(ctx.file_seq_tmpbuf_len.get(), 0);
+
+        let mut populated = ExecContext::default();
+        populated.file_seq_tmpbuf.set(0x1 as *mut ::core::ffi::c_char);
+        populated.file_seq_tmpbuf_len.set(64);
+
+        let carried_buf = ::core::mem::take(&mut populated.file_seq_tmpbuf);
+        let carried_len = ::core::mem::take(&mut populated.file_seq_tmpbuf_len);
+        let rebuilt = ExecContext {
+            file_seq_tmpbuf: carried_buf,
+            file_seq_tmpbuf_len: carried_len,
+            ..ExecContext::new(Config { makelevel: 1 })
+        };
+        assert_eq!(
+            rebuilt.file_seq_tmpbuf.get(),
+            0x1 as *mut ::core::ffi::c_char
+        );
+        assert_eq!(rebuilt.file_seq_tmpbuf_len.get(), 64);
+        assert!(populated.file_seq_tmpbuf.get().is_null());
+        assert_eq!(populated.file_seq_tmpbuf_len.get(), 0);
+        assert_eq!(rebuilt.makelevel(), 1);
+
+        assert!(ExecContext::default().file_seq_tmpbuf.get().is_null());
+        assert_eq!(ExecContext::default().file_seq_tmpbuf_len.get(), 0);
     }
 
     /// The variable trio (`shell_var` / `command_variables` /
