@@ -1356,14 +1356,14 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 if run_local {
                     block_sigs(ctx);
                     (*child).set_remote(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                    jobserver_pre_child((flags & 1 != 0) as i32);
+                    jobserver_pre_child(ctx, (flags & 1 != 0) as i32);
                     (*child).pid = child_execute_job(
                         ctx,
                         child as *mut childbase,
                         (*child).good_stdin() as i32,
                         argv,
                     );
-                    jobserver_post_child((flags & 1 != 0) as i32);
+                    jobserver_post_child(ctx, (flags & 1 != 0) as i32);
                 }
                 if (*child).pid >= 0 {
                     JOB_COUNTER.fetch_add(1, Ordering::Relaxed);

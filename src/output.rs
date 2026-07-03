@@ -292,7 +292,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     );
     output_close(ctx, out);
     crate::make_main::with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
-    osync_clear();
+    osync_clear(ctx);
     IN_SETUP.store(false, Ordering::Relaxed);
 }
 /// Dump any captured output under the output-sync lock and truncate the
@@ -315,7 +315,7 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
                 c"warning: cannot acquire output lock: disabling output sync".as_ptr(),
                 &[],
             );
-            osync_clear();
+            osync_clear(ctx);
         }
         if crate::make_main::opt_output_sync() != OUTPUT_SYNC_RECURSE
             && crate::make_main::should_print_dir_mirror(ctx) != 0

@@ -1873,16 +1873,16 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn reset_jobserver(options: &Options) {
-    jobserver_clear();
+pub unsafe fn reset_jobserver(ctx: &crate::execctx::ExecContext, options: &Options) {
+    jobserver_clear(ctx);
     *options.jobserver_auth.borrow_mut() = None;
 }
 
 /// Jobserver reset for the end-of-run `clean_jobserver`/`die` path, which has
 /// no `&Options` borrow. Reaches the owned `Options` through the borrow channel
 /// (still installed for the dynamic extent of `main_0`).
-pub unsafe fn reset_jobserver_mirror() {
-    jobserver_clear();
+pub unsafe fn reset_jobserver_mirror(ctx: &crate::execctx::ExecContext) {
+    jobserver_clear(ctx);
     with_options(|o| *o.jobserver_auth.borrow_mut() = None);
 }
 /// # Safety
@@ -2456,7 +2456,7 @@ unsafe fn main_0(
             );
         }
         if do_reset {
-            reset_jobserver(&options);
+            reset_jobserver(&ctx, &options);
         }
     }
     define_variable_in_set(
@@ -2801,7 +2801,7 @@ unsafe fn main_0(
                 )],
             );
         }
-        reset_jobserver(&options);
+        reset_jobserver(&ctx, &options);
     }
     syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
@@ -2840,7 +2840,7 @@ unsafe fn main_0(
             style_ptr,
         ) != 0
         {
-            let auth = jobserver_get_auth();
+            let auth = jobserver_get_auth(&ctx);
             if !auth.is_null() {
                 *options.jobserver_auth.borrow_mut() = Some(
                     ::core::ffi::CStr::from_ptr(auth)
@@ -2863,7 +2863,7 @@ unsafe fn main_0(
         let has_mutex = options.sync_mutex.borrow().is_some();
         if !has_mutex {
             osync_setup(&ctx);
-            let m = osync_get_mutex();
+            let m = osync_get_mutex(&ctx);
             if !m.is_null() {
                 *options.sync_mutex.borrow_mut() = Some(
                     ::core::ffi::CStr::from_ptr(m)
@@ -2876,7 +2876,7 @@ unsafe fn main_0(
             let mtx = options.sync_mutex.borrow().clone().unwrap();
             let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
             if osync_parse_mutex(&ctx, mtx_c.as_ptr()) == 0 {
-                osync_clear();
+                osync_clear(&ctx);
                 *options.sync_mutex.borrow_mut() = None;
             }
         }
@@ -3463,10 +3463,10 @@ unsafe fn main_0(
             }
             fflush(stdout);
             fflush(stderr);
-            osync_clear();
-            jobserver_pre_child(1);
+            osync_clear(&ctx);
+            jobserver_pre_child(&ctx, 1);
             exec_command(&ctx, nargv as *mut *mut ::core::ffi::c_char, environ);
-            jobserver_post_child(1);
+            jobserver_post_child(&ctx, 1);
             temp_stdin_unlink(&ctx);
             _exit(127);
         }
@@ -4812,7 +4812,7 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
             );
         }
     }
-    reset_jobserver_mirror();
+    reset_jobserver_mirror(ctx);
 }
 /// # Safety
 ///
@@ -4852,7 +4852,7 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
             set_output_context(::core::ptr::null_mut::<output>());
         }
         crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
-        osync_clear();
+        osync_clear(ctx);
         if !ctx.directory_before_chdir.0.get().is_null() {
             let mut _x: i32 = 0;
             _x = chdir(ctx.directory_before_chdir.0.get());
@@ -6411,9 +6411,10 @@ mod jobserver_and_stdin_cleanup_tests {
     /// so this is safe to drive directly.
     #[test]
     fn reset_jobserver_clears_auth() {
+        let ctx = crate::execctx::ExecContext::default();
         let o = Options::new();
         *o.jobserver_auth.borrow_mut() = Some("fifo:/tmp/x".to_string());
-        unsafe { reset_jobserver(&o) };
+        unsafe { reset_jobserver(&ctx, &o) };
         assert!(o.jobserver_auth.borrow().is_none());
     }
 

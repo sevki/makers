@@ -346,6 +346,44 @@ pub struct ExecContext {
     /// Never needs to survive the `main_0` rebuild: every makefile read
     /// balances its own `if`/`endif` nesting before `eval` returns.
     pub conditionals: ::core::cell::RefCell<ConditionalsFrame>,
+
+    /// The jobserver token pipe/fifo's `[read end, write end]` fds, the
+    /// former posixos.rs `static mut job_fds`, defaulting to `[-1, -1]` (no
+    /// fds open) like the original static's initializer. `jobserver_clear`
+    /// runs synchronously from `fatal_error_signal` (a real signal handler),
+    /// so — like [`Self::children`] — this stays a `Cell`, not a `RefCell`:
+    /// a signal that interrupts a held `RefCell` borrow would panic
+    /// mid-handler. Reached through the `CTX_PTR` borrow channel from that
+    /// path, and through the ordinary `&ExecContext` parameter everywhere
+    /// else.
+    pub job_fds: JobFds,
+
+    /// The fifo jobserver's path, the former posixos.rs `static mut
+    /// fifo_name`. `xmalloc`/`xstrdup`'d and `free`'d exactly as the
+    /// original static was — signal-reachable (`jobserver_clear` runs from
+    /// `fatal_error_signal`), so like [`Self::temp_stdin_name`] it stays a
+    /// raw-pointer `Cell` rather than an owned `RefCell<Vec<u8>>`, for the
+    /// same panic-in-signal-handler reason as [`Self::job_fds`].
+    pub fifo_name: MutPtrCell,
+
+    /// The output-sync lock file's path, the former posixos.rs `static mut
+    /// osync_tmpfile`. Same signal-reachability rationale as
+    /// [`Self::fifo_name`] (`osync_clear` also runs from
+    /// `fatal_error_signal`).
+    pub osync_tmpfile: MutPtrCell,
+}
+
+/// A `Cell<[i32; 2]>` that defaults to `[-1, -1]` (the jobserver's "no fds
+/// open" sentinel), for the same reason [`PtrCell`]/[`MutPtrCell`] exist:
+/// `ExecContext`'s derive needs a `Default` impl, and the sentinel isn't
+/// `[i32; 2]`'s own `Default`.
+#[derive(Debug, Clone)]
+pub struct JobFds(pub ::core::cell::Cell<[i32; 2]>);
+
+impl Default for JobFds {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new([-1, -1]))
+    }
 }
 
 /// One frame of the `ifdef`/`ifeq` conditional-nesting stack (the former C

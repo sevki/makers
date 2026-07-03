@@ -119,17 +119,16 @@ fn js_type_set(t: JsType) {
 
 /// True in the process that created the jobserver (and so owns the fifo).
 static JOB_ROOT: AtomicBool = AtomicBool::new(false);
-/// The token pipe/fifo: `[read end, write end]`.
-static mut job_fds: [i32; 2] = [-1, -1];
 /// A private dup of the read side (closed by a fatal signal to wake us).
 static JOB_RFD: AtomicI32 = AtomicI32::new(-1);
 
 fn job_rfd() -> i32 {
     JOB_RFD.load(Ordering::Relaxed)
 }
-/// The token character written for each available job slot.
-static mut token: c_char = b'+' as c_char;
-static mut fifo_name: *mut c_char = null_mut();
+/// The token character written for each available job slot. Never
+/// reassigned after this initializer, so unlike `job_fds`/`fifo_name` it
+/// needs no `ExecContext` slot at all.
+const token: c_char = b'+' as c_char;
 
 /// On POSIX with pselect there is no need for a separate read dup; the
 /// blocking read is interruptible already.
@@ -190,7 +189,7 @@ pub unsafe fn jobserver_setup(
 
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
         let tmpdir = get_tmpdir(ctx);
-        fifo_name = xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
+        let fifo_name = xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
             as *mut c_char;
         sprintf(
             fifo_name,
@@ -198,6 +197,7 @@ pub unsafe fn jobserver_setup(
             tmpdir,
             make_pid() as c_longlong,
         );
+        ctx.fifo_name.0.set(fifo_name);
 
         loop {
             r = mkfifo(fifo_name, 0o600);
@@ -208,15 +208,17 @@ pub unsafe fn jobserver_setup(
         if r < 0 {
             perror_with_name(ctx, c"jobserver mkfifo: ".as_ptr(), fifo_name);
             free(fifo_name as *mut c_void);
-            fifo_name = null_mut();
+            ctx.fifo_name.0.set(null_mut());
         } else {
+            let mut fds = ctx.job_fds.0.get();
             loop {
-                job_fds[0] = open(fifo_name, O_NONBLOCK);
-                if !(job_fds[0] == -1 && *__errno_location() == EINTR) {
+                fds[0] = open(fifo_name, O_NONBLOCK);
+                if !(fds[0] == -1 && *__errno_location() == EINTR) {
                     break;
                 }
             }
-            if job_fds[0] < 0 {
+            ctx.job_fds.0.set(fds);
+            if fds[0] < 0 {
                 fatal(
                     ctx,
                     null::<Floc>(),
@@ -229,12 +231,13 @@ pub unsafe fn jobserver_setup(
                 );
             }
             loop {
-                job_fds[1] = open(fifo_name, O_WRONLY);
-                if !(job_fds[1] == -1 && *__errno_location() == EINTR) {
+                fds[1] = open(fifo_name, O_WRONLY);
+                if !(fds[1] == -1 && *__errno_location() == EINTR) {
                     break;
                 }
             }
-            if job_fds[0] < 0 {
+            ctx.job_fds.0.set(fds);
+            if fds[0] < 0 {
                 fatal(
                     ctx,
                     null::<Floc>(),
@@ -260,30 +263,34 @@ pub unsafe fn jobserver_setup(
                 &[FmtArg::Str(style)],
             );
         }
+        let mut fds = ctx.job_fds.0.get();
         loop {
-            r = pipe(&raw mut job_fds as *mut i32);
+            r = pipe(fds.as_mut_ptr());
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
         }
+        ctx.job_fds.0.set(fds);
         if r < 0 {
             pfatal_with_name(ctx, c"creating jobs pipe".as_ptr());
         }
         js_type_set(JsType::Pipe);
     }
 
-    fd_noinherit(job_fds[0]);
-    fd_noinherit(job_fds[1]);
+    let fds = ctx.job_fds.0.get();
+    fd_noinherit(fds[0]);
+    fd_noinherit(fds[1]);
     if make_job_rfd() < 0 {
         pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
     }
 
     // Fill the pipe with tokens, one per slot, without blocking so we can
     // detect when the requested job count exceeds the pipe capacity.
-    set_blocking(ctx, job_fds[1], false);
+    set_blocking(ctx, fds[1], false);
+    let token_byte: c_char = token;
     for k in 0..slots {
         loop {
-            r = write(job_fds[1], &raw const token as *const c_void, 1) as i32;
+            r = write(fds[1], &raw const token_byte as *const c_void, 1) as i32;
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -301,8 +308,8 @@ pub unsafe fn jobserver_setup(
             );
         }
     }
-    set_blocking(ctx, job_fds[1], true);
-    set_blocking(ctx, job_fds[0], false);
+    set_blocking(ctx, fds[1], true);
+    set_blocking(ctx, fds[0], false);
 
     1
 }
@@ -322,14 +329,17 @@ pub unsafe fn jobserver_parse_auth(
     let mut wfd: i32 = 0;
 
     if strncmp(auth, FIFO_PREFIX.as_ptr(), FIFO_PREFIX.to_bytes().len()) == 0 {
-        fifo_name = xstrdup(auth.add(FIFO_PREFIX.to_bytes().len()));
+        let fifo_name = xstrdup(auth.add(FIFO_PREFIX.to_bytes().len()));
+        ctx.fifo_name.0.set(fifo_name);
+        let mut fds = ctx.job_fds.0.get();
         loop {
-            job_fds[0] = open(fifo_name, O_RDONLY);
-            if !(job_fds[0] == -1 && *__errno_location() == EINTR) {
+            fds[0] = open(fifo_name, O_RDONLY);
+            if !(fds[0] == -1 && *__errno_location() == EINTR) {
                 break;
             }
         }
-        if job_fds[0] < 0 {
+        ctx.job_fds.0.set(fds);
+        if fds[0] < 0 {
             error(
                 ctx,
                 null::<Floc>(),
@@ -343,12 +353,13 @@ pub unsafe fn jobserver_parse_auth(
             return 0;
         }
         loop {
-            job_fds[1] = open(fifo_name, O_WRONLY);
-            if !(job_fds[1] == -1 && *__errno_location() == EINTR) {
+            fds[1] = open(fifo_name, O_WRONLY);
+            if !(fds[1] == -1 && *__errno_location() == EINTR) {
                 break;
             }
         }
-        if job_fds[1] < 0 {
+        ctx.job_fds.0.set(fds);
+        if fds[1] < 0 {
             error(
                 ctx,
                 null::<Floc>(),
@@ -370,8 +381,7 @@ pub unsafe fn jobserver_parse_auth(
         if fcntl(rfd, F_GETFD) == -1 || fcntl(wfd, F_GETFD) == -1 {
             return 0;
         }
-        job_fds[0] = rfd;
-        job_fds[1] = wfd;
+        ctx.job_fds.0.set([rfd, wfd]);
         js_type_set(JsType::Pipe);
     } else {
         error(
@@ -388,13 +398,14 @@ pub unsafe fn jobserver_parse_auth(
         if *__errno_location() != EBADF {
             pfatal_with_name(ctx, c"jobserver readfd".as_ptr());
         }
-        jobserver_clear();
+        jobserver_clear(ctx);
         return 0;
     }
 
-    set_blocking(ctx, job_fds[0], false);
-    fd_noinherit(job_fds[0]);
-    fd_noinherit(job_fds[1]);
+    let fds = ctx.job_fds.0.get();
+    set_blocking(ctx, fds[0], false);
+    fd_noinherit(fds[0]);
+    fd_noinherit(fds[1]);
     1
 }
 
@@ -403,14 +414,16 @@ pub unsafe fn jobserver_parse_auth(
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_get_auth() -> *mut c_char {
+pub unsafe fn jobserver_get_auth(ctx: &crate::execctx::ExecContext) -> *mut c_char {
     if js_type_get() == JsType::Fifo {
+        let fifo_name = ctx.fifo_name.0.get();
         let auth = xmalloc(strlen(fifo_name) + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
         sprintf(auth, c"fifo:%s".as_ptr(), fifo_name);
         auth
     } else {
+        let fds = ctx.job_fds.0.get();
         let auth = xmalloc(INTSTR_LENGTH * 2 + 2) as *mut c_char;
-        sprintf(auth, c"%d,%d".as_ptr(), job_fds[0], job_fds[1]);
+        sprintf(auth, c"%d,%d".as_ptr(), fds[0], fds[1]);
         auth
     }
 }
@@ -435,20 +448,22 @@ pub fn jobserver_enabled() -> c_uint {
 /// # Safety
 /// Must run single-threaded (also called from the fatal-signal path, where
 /// it avoids freeing).
-pub unsafe fn jobserver_clear() {
-    if job_fds[0] >= 0 {
-        close(job_fds[0]);
+pub unsafe fn jobserver_clear(ctx: &crate::execctx::ExecContext) {
+    let fds = ctx.job_fds.0.get();
+    if fds[0] >= 0 {
+        close(fds[0]);
     }
-    if job_fds[1] >= 0 {
-        close(job_fds[1]);
+    if fds[1] >= 0 {
+        close(fds[1]);
     }
     let rfd = job_rfd();
     if rfd >= 0 {
         close(rfd);
     }
-    job_fds = [-1, -1];
+    ctx.job_fds.0.set([-1, -1]);
     JOB_RFD.store(-1, Ordering::Relaxed);
 
+    let fifo_name = ctx.fifo_name.0.get();
     if !fifo_name.is_null() {
         if JOB_ROOT.load(Ordering::Relaxed) {
             let mut r: i32;
@@ -461,7 +476,7 @@ pub unsafe fn jobserver_clear() {
         }
         if handling_fatal_signal == 0 {
             free(fifo_name as *mut c_void);
-            fifo_name = null_mut();
+            ctx.fifo_name.0.set(null_mut());
         }
     }
 
@@ -475,8 +490,10 @@ pub unsafe fn jobserver_clear() {
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_release(ctx: &crate::execctx::ExecContext, is_fatal: i32) {
     let mut r: i32;
+    let wfd = ctx.job_fds.0.get()[1];
+    let token_byte: c_char = token;
     loop {
-        r = write(job_fds[1], &raw const token as *const c_void, 1) as i32;
+        r = write(wfd, &raw const token_byte as *const c_void, 1) as i32;
         if !(r == -1 && *__errno_location() == EINTR) {
             break;
         }
@@ -498,15 +515,17 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
     let mut tokens: c_uint = 0;
 
     // Close the write side so the read below sees EOF once the pipe drains.
-    set_blocking(ctx, job_fds[0], true);
-    close(job_fds[1]);
-    job_fds[1] = -1;
+    let mut fds = ctx.job_fds.0.get();
+    set_blocking(ctx, fds[0], true);
+    close(fds[1]);
+    fds[1] = -1;
+    ctx.job_fds.0.set(fds);
 
     loop {
         let mut intake: c_char = 0;
         let mut r: i32;
         loop {
-            r = read(job_fds[0], &mut intake as *mut c_char as *mut c_void, 1) as i32;
+            r = read(fds[0], &mut intake as *mut c_char as *mut c_void, 1) as i32;
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -522,7 +541,7 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
         fflush(stdout);
     }
 
-    jobserver_clear();
+    jobserver_clear(ctx);
     tokens
 }
 
@@ -531,10 +550,11 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-pub unsafe fn jobserver_pre_child(recursive: i32) {
+pub unsafe fn jobserver_pre_child(ctx: &crate::execctx::ExecContext, recursive: i32) {
     if recursive != 0 && js_type_get() == JsType::Pipe {
-        fd_inherit(job_fds[0]);
-        fd_inherit(job_fds[1]);
+        let fds = ctx.job_fds.0.get();
+        fd_inherit(fds[0]);
+        fd_inherit(fds[1]);
     }
 }
 
@@ -542,10 +562,11 @@ pub unsafe fn jobserver_pre_child(recursive: i32) {
 ///
 /// # Safety
 /// Must run single-threaded around fork/exec.
-pub unsafe fn jobserver_post_child(recursive: i32) {
+pub unsafe fn jobserver_post_child(ctx: &crate::execctx::ExecContext, recursive: i32) {
     if recursive != 0 && js_type_get() == JsType::Pipe {
-        fd_noinherit(job_fds[0]);
-        fd_noinherit(job_fds[1]);
+        let fds = ctx.job_fds.0.get();
+        fd_noinherit(fds[0]);
+        fd_noinherit(fds[1]);
     }
 }
 
@@ -566,7 +587,7 @@ pub fn jobserver_signal() {
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_pre_acquire(ctx: &crate::execctx::ExecContext) {
-    if job_rfd() < 0 && job_fds[0] >= 0 && make_job_rfd() < 0 {
+    if job_rfd() < 0 && ctx.job_fds.0.get()[0] >= 0 && make_job_rfd() < 0 {
         pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
     }
 }
@@ -593,18 +614,12 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
     }
 
     loop {
+        let rfd = ctx.job_fds.0.get()[0];
         let mut readfds: libc::fd_set = ::core::mem::zeroed();
         FD_ZERO(&mut readfds);
-        FD_SET(job_fds[0], &mut readfds);
+        FD_SET(rfd, &mut readfds);
 
-        let mut r = pselect(
-            job_fds[0] + 1,
-            &mut readfds,
-            null_mut(),
-            null_mut(),
-            specp,
-            &empty,
-        );
+        let mut r = pselect(rfd + 1, &mut readfds, null_mut(), null_mut(), specp, &empty);
         if r < 0 {
             match *__errno_location() {
                 EINTR => return 0,
@@ -621,7 +636,7 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
 
         let mut intake: c_char = 0;
         loop {
-            r = read(job_fds[0], &mut intake as *mut c_char as *mut c_void, 1) as i32;
+            r = read(rfd, &mut intake as *mut c_char as *mut c_void, 1) as i32;
             if !(r == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -644,7 +659,6 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
 const MUTEX_PREFIX: &CStr = c"fnm:";
 
 static OSYNC_HANDLE: AtomicI32 = AtomicI32::new(-1);
-static mut osync_tmpfile: *mut c_char = null_mut();
 /// True in the process that created the lock file (and so unlinks it).
 static SYNC_ROOT: AtomicBool = AtomicBool::new(false);
 
@@ -659,7 +673,7 @@ pub fn osync_enabled() -> c_uint {
 /// Must run single-threaded during startup.
 pub unsafe fn osync_setup(ctx: &crate::execctx::ExecContext) {
     let (h, nm) = open_named_tmpfd(ctx);
-    osync_tmpfile = nm;
+    ctx.osync_tmpfile.0.set(nm);
     OSYNC_HANDLE.store(h, Ordering::Relaxed);
     fd_noinherit(h);
     SYNC_ROOT.store(true, Ordering::Relaxed);
@@ -670,10 +684,11 @@ pub unsafe fn osync_setup(ctx: &crate::execctx::ExecContext) {
 ///
 /// # Safety
 /// Must run single-threaded.
-pub unsafe fn osync_get_mutex() -> *mut c_char {
+pub unsafe fn osync_get_mutex(ctx: &crate::execctx::ExecContext) -> *mut c_char {
     if osync_enabled() == 0 {
         return null_mut();
     }
+    let osync_tmpfile = ctx.osync_tmpfile.0.get();
     let mutex = xmalloc(strlen(osync_tmpfile) + MUTEX_PREFIX.to_bytes().len() + 1) as *mut c_char;
     sprintf(mutex, c"fnm:%s".as_ptr(), osync_tmpfile);
     mutex
@@ -697,8 +712,9 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
         return 0;
     }
 
-    free(osync_tmpfile as *mut c_void);
-    osync_tmpfile = xstrdup(mutex.add(MUTEX_PREFIX.to_bytes().len()));
+    free(ctx.osync_tmpfile.0.get() as *mut c_void);
+    let osync_tmpfile = xstrdup(mutex.add(MUTEX_PREFIX.to_bytes().len()));
+    ctx.osync_tmpfile.0.set(osync_tmpfile);
 
     loop {
         let h = open(osync_tmpfile, O_WRONLY);
@@ -727,12 +743,13 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
 ///
 /// # Safety
 /// Must run single-threaded.
-pub unsafe fn osync_clear() {
+pub unsafe fn osync_clear(ctx: &crate::execctx::ExecContext) {
     let h = OSYNC_HANDLE.load(Ordering::Relaxed);
     if h >= 0 {
         close(h);
         OSYNC_HANDLE.store(-1, Ordering::Relaxed);
     }
+    let osync_tmpfile = ctx.osync_tmpfile.0.get();
     if SYNC_ROOT.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
         let mut r: i32;
         loop {
@@ -742,7 +759,7 @@ pub unsafe fn osync_clear() {
             }
         }
         free(osync_tmpfile as *mut c_void);
-        osync_tmpfile = null_mut();
+        ctx.osync_tmpfile.0.set(null_mut());
     }
 }
 
