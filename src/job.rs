@@ -1704,7 +1704,6 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
         }
     } else if jobserver_enabled() != 0 {
         loop {
-            let got_token: i32;
             if 0x4_i32 & db_level() != 0 {
                 printf(
                     b"Need a job token; we %shave children\n\0" as *const u8
@@ -1736,7 +1735,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                     &[],
                 );
             }
-            got_token = jobserver_acquire(
+            let got_token: i32 = jobserver_acquire(
                 ctx,
                 (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32,
             ) as i32;
