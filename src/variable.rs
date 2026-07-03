@@ -2436,21 +2436,74 @@ pub unsafe fn try_variable_definition(
     free(v.name as *mut ::core::ffi::c_void);
     vp
 }
-static mut defined_vars: [defined_vars; 13] = [defined_vars {
-    name: ::core::ptr::null::<::core::ffi::c_char>(),
-    len: 0,
-}; 13];
+// Read-only table (populated once by a c2rust `.init_array` ctor and never
+// mutated afterward): `const` avoids the `Sync` bound a `static` would need
+// for the raw-pointer `name` fields, and drops the ctor machinery entirely —
+// same treatment as job.rs's `default_shell`/`sh_chars`/`sh_cmds`.
+const defined_vars: [defined_vars; 13] = [
+    defined_vars {
+        name: b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"MAKE_RESTARTS\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"MAKEOVERRIDES\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"-*-command-variables-*-\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"-*-eval-flags-*-\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 17]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"VPATH\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"GPATH\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
+        len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+    },
+    defined_vars {
+        name: ::core::ptr::null::<::core::ffi::c_char>(),
+        len: 0,
+    },
+];
 /// Emit a "reference to undefined variable" warning for `name`, unless `name`
 /// is one of the built-in always-defined variables in the `defined_vars`
 /// table, or the warning is inactive.
 pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
     if warning::is_active(Type::UndefinedVar) {
-        // SAFETY: `defined_vars` is a process-wide, NUL-terminated table of
-        // built-in variable names, populated once during startup and never
-        // mutated afterwards. We only read it here, walking until the
-        // sentinel null `name`, and compare each entry's bytes against `name`.
+        // SAFETY: `defined_vars` is a NUL-terminated table of built-in
+        // variable names. We only read it here, walking until the sentinel
+        // null `name`, and compare each entry's bytes against `name`.
         let is_builtin = unsafe {
-            let mut dp = &raw const defined_vars as *const defined_vars;
+            let mut dp = defined_vars.as_ptr();
             let mut found = false;
             while !(*dp).name.is_null() {
                 if (*dp).len == name.len()
@@ -2493,7 +2546,7 @@ mod warn_undefined_unsafe_oracle {
     ) {
         if warning::is_active(Type::UndefinedVar) {
             let mut dp: *const defined_vars;
-            dp = &raw const defined_vars as *const defined_vars;
+            dp = defined_vars.as_ptr();
             while !(*dp).name.is_null() {
                 if (*dp).len == len
                     && memcmp(
@@ -2523,7 +2576,7 @@ mod warn_undefined_unsafe_oracle {
         // SAFETY: read-only walk of the process-wide built-in table; see
         // `warn_undefined`.
         unsafe {
-            let mut dp = &raw const defined_vars as *const defined_vars;
+            let mut dp = defined_vars.as_ptr();
             while !(*dp).name.is_null() {
                 if (*dp).len == name.len()
                     && ::core::slice::from_raw_parts((*dp).name as *const u8, (*dp).len) == name
@@ -2540,7 +2593,7 @@ mod warn_undefined_unsafe_oracle {
     fn is_builtin_oracle(name: *const ::core::ffi::c_char, len: size_t) -> bool {
         // SAFETY: read-only walk of the process-wide built-in table.
         unsafe {
-            let mut dp = &raw const defined_vars as *const defined_vars;
+            let mut dp = defined_vars.as_ptr();
             while !(*dp).name.is_null() {
                 if (*dp).len == len
                     && memcmp(
@@ -2831,67 +2884,6 @@ pub fn print_target_variables(ctx: &ExecContext, file: FileId) {
             }
         });
 }
-unsafe extern "C" fn run_static_initializers() {
-    defined_vars = [
-        defined_vars {
-            name: b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"MAKE_RESTARTS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"MAKEOVERRIDES\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"-*-command-variables-*-\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"-*-eval-flags-*-\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 17]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"VPATH\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"GPATH\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-            len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        },
-        defined_vars {
-            name: ::core::ptr::null::<::core::ffi::c_char>(),
-            len: 0,
-        },
-    ];
-}
-#[used]
-#[cfg_attr(target_os = "linux", link_section = ".init_array")]
-#[cfg_attr(target_os = "windows", link_section = ".CRT$XIB")]
-#[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
-static INIT_ARRAY: [unsafe extern "C" fn(); 1] = [run_static_initializers];
 
 #[cfg(test)]
 mod should_export_tests {
