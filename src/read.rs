@@ -427,7 +427,6 @@ unsafe fn eval_makefile(
     mut filename: *const ::core::ffi::c_char,
     flags: ::core::ffi::c_ushort,
 ) -> usize {
-    let deps_idx: usize;
     let mut ebuf: ebuffer = ebuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -442,7 +441,7 @@ unsafe fn eval_makefile(
     };
     let curfile: *const Floc;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    deps_idx = {
+    let deps_idx: usize = {
         let mut rf = ctx.read_files.borrow_mut();
         let idx = rf.len();
         rf.push(crate::dep::GoalDepNode::default());
