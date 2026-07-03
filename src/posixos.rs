@@ -1070,4 +1070,53 @@ mod tests {
 
         JOB_RFD.store(saved, Ordering::Relaxed);
     }
+
+    /// `jobserver_pre_child`/`jobserver_post_child` only touch the fds when
+    /// both `recursive` is set and the active style is `Pipe` — the other
+    /// two conditions (non-recursive, or recursive but fifo-style) must
+    /// short-circuit as no-ops. Drives a real pipe through all three
+    /// branches so the `FD_CLOEXEC` toggle is actually observed via
+    /// `fcntl`, not just inferred from the guard logic.
+    #[test]
+    fn pre_post_child_toggle_cloexec_only_for_recursive_pipe() {
+        let _guard = JS_TYPE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_js_type = JS_TYPE.load(Ordering::Relaxed);
+        let ctx = crate::execctx::ExecContext::default();
+
+        let mut fds = [-1i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        ctx.job_fds.0.set(fds);
+        unsafe {
+            fd_noinherit(fds[0]);
+            fd_noinherit(fds[1]);
+        }
+        let cloexec = |fd: i32| unsafe { fcntl_retry(fd, F_GETFD) } & FD_CLOEXEC;
+
+        // recursive == 0: no-op regardless of style.
+        js_type_set(JsType::Pipe);
+        unsafe { jobserver_pre_child(&ctx, 0) };
+        assert_eq!(cloexec(fds[0]), FD_CLOEXEC, "non-recursive is a no-op");
+
+        // recursive != 0 but fifo-style: no-op.
+        js_type_set(JsType::Fifo);
+        unsafe { jobserver_pre_child(&ctx, 1) };
+        assert_eq!(cloexec(fds[0]), FD_CLOEXEC, "fifo style is a no-op");
+
+        // recursive != 0 and pipe-style: actually clears FD_CLOEXEC.
+        js_type_set(JsType::Pipe);
+        unsafe { jobserver_pre_child(&ctx, 1) };
+        assert_eq!(cloexec(fds[0]), 0, "pre_child inherits both fds");
+        assert_eq!(cloexec(fds[1]), 0, "pre_child inherits both fds");
+
+        // jobserver_post_child undoes it under the same conditions.
+        unsafe { jobserver_post_child(&ctx, 1) };
+        assert_eq!(cloexec(fds[0]), FD_CLOEXEC, "post_child restores cloexec");
+        assert_eq!(cloexec(fds[1]), FD_CLOEXEC, "post_child restores cloexec");
+
+        unsafe {
+            close(fds[0]);
+            close(fds[1]);
+        }
+        JS_TYPE.store(saved_js_type, Ordering::Relaxed);
+    }
 }
