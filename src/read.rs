@@ -157,14 +157,6 @@ pub struct ebuffer {
     pub fp: *mut FILE,
     pub floc: Floc,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct conditionals {
-    pub if_cmds: ::core::ffi::c_uint,
-    pub allocated: ::core::ffi::c_uint,
-    pub ignoring: *mut ::core::ffi::c_char,
-    pub seen_else: *mut ::core::ffi::c_char,
-}
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct vmodifiers {
@@ -255,13 +247,6 @@ fn name_seq_len(head: Option<&NameSeq>) -> usize {
     len
 }
 pub const NONEXISTENT_MTIME: i32 = 1;
-static mut toplevel_conditionals: conditionals = conditionals {
-    if_cmds: 0,
-    allocated: 0,
-    ignoring: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-    seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-};
-static mut conditionals: *mut conditionals = &raw const toplevel_conditionals as *mut conditionals;
 /// Default system include directories searched when `-I` does not disable them.
 /// Genuine Rust byte slices (no NUL terminators, no `*const c_char`).
 static DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] =
@@ -395,28 +380,22 @@ pub unsafe fn read_all_makefiles(
     goals.reverse();
     goals
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn install_conditionals(new: *mut conditionals) -> *mut conditionals {
-    let save: *mut conditionals = conditionals;
-    memset(
-        new as *mut ::core::ffi::c_void,
-        0,
-        ::core::mem::size_of::<conditionals>() as size_t,
-    );
-    conditionals = new;
-    save
+/// Install a fresh, empty conditionals frame for a nested makefile-reading
+/// scope (`include`, `eval_buffer`), returning the frame it replaced so the
+/// caller can hand it back to [`restore_conditionals`] once the nested
+/// scope's `if`/`endif` nesting is done. The former `install_conditionals`
+/// pointer swap, now a plain `RefCell::replace` — no `unsafe` needed.
+pub fn install_conditionals(
+    ctx: &crate::execctx::ExecContext,
+) -> crate::execctx::ConditionalsFrame {
+    ctx.conditionals
+        .replace(crate::execctx::ConditionalsFrame::default())
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn restore_conditionals(saved: *mut conditionals) {
-    free((*conditionals).ignoring as *mut ::core::ffi::c_void);
-    free((*conditionals).seen_else as *mut ::core::ffi::c_void);
-    conditionals = saved;
+/// Restore a conditionals frame saved by [`install_conditionals`]. The
+/// nested scope's frame this replaces is dropped, freeing its `Vec`s — the
+/// former manual `free(ignoring)`/`free(seen_else)`.
+pub fn restore_conditionals(ctx: &crate::execctx::ExecContext, saved: crate::execctx::ConditionalsFrame) {
+    ctx.conditionals.replace(saved);
 }
 /// Read makefile `filename` and record a goal for it. Returns the index of the
 /// goal it pushed onto `ctx.read_files` (the pointer-free replacement for
@@ -648,13 +627,6 @@ pub unsafe fn eval_buffer(
             offset: 0,
         },
     };
-    let saved: *mut conditionals;
-    let mut new: conditionals = conditionals {
-        if_cmds: 0,
-        allocated: 0,
-        ignoring: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-    };
     let curfile: *const Floc;
     ebuf.size = strlen(buffer) as size_t;
     ebuf.bufstart = buffer;
@@ -672,9 +644,9 @@ pub unsafe fn eval_buffer(
     }
     curfile = reading_file;
     reading_file = &raw mut ebuf.floc;
-    saved = install_conditionals(&raw mut new);
+    let saved = install_conditionals(ctx);
     eval(ctx, &raw mut ebuf, 1);
-    restore_conditionals(saved);
+    restore_conditionals(ctx, saved);
     reading_file = curfile;
 }
 unsafe fn parse_var_assignment(
@@ -1189,13 +1161,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 | crate::parser::FileDirective::IncludeOpt
                         )
                     ) {
-                        let save: *mut conditionals;
-                        let mut new_conditionals: conditionals = conditionals {
-                            if_cmds: 0,
-                            allocated: 0,
-                            ignoring: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                            seen_else: ::core::ptr::null_mut::<::core::ffi::c_char>(),
-                        };
+                        let save: crate::execctx::ConditionalsFrame;
                         let files: Vec<ParsedName>;
                         let noerror: i32 = (*p.offset(0_i32 as isize) as i32 != 'i' as i32) as i32;
                         if initial_tab != 0 {
@@ -1261,7 +1227,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 0x2_i32,
                             );
                             free(p as *mut ::core::ffi::c_void);
-                            save = install_conditionals(&raw mut new_conditionals);
+                            save = install_conditionals(ctx);
                             if filenames.is_some() {
                                 fi.lineno = tgts_started as ::core::ffi::c_ulong;
                                 fi.offset = 0;
@@ -1312,7 +1278,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     rf[d].offset = offset;
                                 }
                             }
-                            restore_conditionals(save);
+                            restore_conditionals(ctx, save);
                         }
                     } else if matches!(
                         line_class,
@@ -1922,7 +1888,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
             }
         }
     }
-    if (*conditionals).if_cmds != 0 {
+    if !ctx.conditionals.borrow().ignoring.is_empty() {
         fatal(
             ctx,
             fstart,
@@ -2165,8 +2131,6 @@ unsafe fn conditional_line(
 ) -> i32 {
     let cmdname: *const ::core::ffi::c_char;
     let cmdtype: C2RustUnnamed;
-    let mut i: ::core::ffi::c_uint;
-    let o: ::core::ffi::c_uint;
     // Classify the directive keyword (the line's first `len` bytes) via the
     // typed AST layer instead of a wall of `strncmp`/`size_of` comparisons.
     let directive =
@@ -2207,7 +2171,7 @@ unsafe fn conditional_line(
                 &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
             );
         }
-        if (*conditionals).if_cmds == 0 {
+        if ctx.conditionals.borrow().ignoring.is_empty() {
             fatal(
                 ctx,
                 flocp,
@@ -2216,10 +2180,12 @@ unsafe fn conditional_line(
                 &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
             );
         }
-        (*conditionals).if_cmds = (*conditionals).if_cmds.wrapping_sub(1);
+        let mut cf = ctx.conditionals.borrow_mut();
+        cf.ignoring.pop();
+        cf.seen_else.pop();
     } else if cmdtype as ::core::ffi::c_uint == c_else as i32 as ::core::ffi::c_uint {
         let mut p: *const ::core::ffi::c_char;
-        if (*conditionals).if_cmds == 0 {
+        if ctx.conditionals.borrow().ignoring.is_empty() {
             fatal(
                 ctx,
                 flocp,
@@ -2228,8 +2194,8 @@ unsafe fn conditional_line(
                 &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
             );
         }
-        o = (*conditionals).if_cmds.wrapping_sub(1);
-        if *(*conditionals).seen_else.offset(o as isize) != 0 {
+        let o: usize = ctx.conditionals.borrow().ignoring.len() - 1;
+        if ctx.conditionals.borrow().seen_else[o] != 0 {
             fatal(
                 ctx,
                 flocp,
@@ -2238,17 +2204,16 @@ unsafe fn conditional_line(
                 &[],
             );
         }
-        match *(*conditionals).ignoring.offset(o as isize) as i32 {
-            0 => {
-                *(*conditionals).ignoring.offset(o as isize) = 2;
+        {
+            let mut cf = ctx.conditionals.borrow_mut();
+            match cf.ignoring[o] {
+                0 => cf.ignoring[o] = 2,
+                1 => cf.ignoring[o] = 0,
+                _ => {}
             }
-            1 => {
-                *(*conditionals).ignoring.offset(o as isize) = 0;
-            }
-            _ => {}
         }
         if *line as i32 == 0 {
-            *(*conditionals).seen_else.offset(o as isize) = 1;
+            ctx.conditionals.borrow_mut().seen_else[o] = 1;
         } else {
             p = line.offset(1_i32 as isize);
             while !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
@@ -2266,6 +2231,10 @@ unsafe fn conditional_line(
                 line as *const u8,
                 len,
             ));
+            // No `ctx.conditionals` borrow is held across this recursive call:
+            // on the "open a new conditional" path it pushes its own frame
+            // entry (at index `o + 1`), which the success arm below folds
+            // back into `o` and pops — mirroring the former `if_cmds -= 1`.
             if matches!(
                 next,
                 Some(crate::parser::Directive::Else | crate::parser::Directive::Endif)
@@ -2280,43 +2249,29 @@ unsafe fn conditional_line(
                     &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
                 );
             } else {
-                if (*(*conditionals).ignoring.offset(o as isize) as i32) < 2 {
-                    *(*conditionals).ignoring.offset(o as isize) =
-                        *(*conditionals).ignoring.offset(o.wrapping_add(1) as isize);
+                let mut cf = ctx.conditionals.borrow_mut();
+                if cf.ignoring[o] < 2 {
+                    cf.ignoring[o] = cf.ignoring[o + 1];
                 }
-                (*conditionals).if_cmds = (*conditionals).if_cmds.wrapping_sub(1);
+                cf.ignoring.pop();
+                cf.seen_else.pop();
             }
         }
     } else {
-        if (*conditionals).allocated == 0 {
-            (*conditionals).allocated = 5;
-            (*conditionals).ignoring =
-                xmalloc((*conditionals).allocated as size_t) as *mut ::core::ffi::c_char;
-            (*conditionals).seen_else =
-                xmalloc((*conditionals).allocated as size_t) as *mut ::core::ffi::c_char;
-        }
-        let fresh26 = (*conditionals).if_cmds;
-        (*conditionals).if_cmds = (*conditionals).if_cmds.wrapping_add(1);
-        o = fresh26;
-        if (*conditionals).if_cmds > (*conditionals).allocated {
-            (*conditionals).allocated = (*conditionals).allocated.wrapping_add(5);
-            (*conditionals).ignoring = xrealloc(
-                (*conditionals).ignoring as *mut ::core::ffi::c_void,
-                (*conditionals).allocated as size_t,
-            ) as *mut ::core::ffi::c_char;
-            (*conditionals).seen_else = xrealloc(
-                (*conditionals).seen_else as *mut ::core::ffi::c_void,
-                (*conditionals).allocated as size_t,
-            ) as *mut ::core::ffi::c_char;
-        }
-        *(*conditionals).seen_else.offset(o as isize) = 0;
-        i = 0;
-        while i < o {
-            if *(*conditionals).ignoring.offset(i as isize) != 0 {
-                *(*conditionals).ignoring.offset(o as isize) = 1;
-                return 1;
-            }
-            i = i.wrapping_add(1);
+        // Pushing a fresh entry replaces the manual `allocated`/`xmalloc`/
+        // `xrealloc`-by-fives growth: `Vec::push` grows on demand, and
+        // `o == ignoring.len() - 1 == seen_else.len() - 1` after the push
+        // (the former `if_cmds` is simply this `Vec`'s length).
+        let o: usize = {
+            let mut cf = ctx.conditionals.borrow_mut();
+            let o = cf.ignoring.len();
+            cf.ignoring.push(0);
+            cf.seen_else.push(0);
+            o
+        };
+        if ctx.conditionals.borrow().ignoring[..o].iter().any(|&x| x != 0) {
+            ctx.conditionals.borrow_mut().ignoring[o] = 1;
+            return 1;
         }
         if cmdtype as ::core::ffi::c_uint == c_ifdef as i32 as ::core::ffi::c_uint
             || cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint
@@ -2334,10 +2289,10 @@ unsafe fn conditional_line(
                 };
             *var.add(l) = 0;
             v = lookup_variable(ctx, var, l);
-            *(*conditionals).ignoring.offset(o as isize) =
+            ctx.conditionals.borrow_mut().ignoring[o] =
                 ((!v.is_null() && *(*v).value as i32 != 0) as i32
                     == (cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint)
-                        as i32) as i32 as ::core::ffi::c_char;
+                        as i32) as u8;
             free(var as *mut ::core::ffi::c_void);
         } else {
             // The `ifeq`/`ifneq` argument forms — `(a,b)`, `"a" "b"`, `'a' 'b'`
@@ -2386,21 +2341,16 @@ unsafe fn conditional_line(
                     // expanding the second (they share one scratch buffer).
                     let a1 = expand_arg(arg1);
                     let a2 = expand_arg(arg2);
-                    *(*conditionals).ignoring.offset(o as isize) = ((a1 == a2)
+                    ctx.conditionals.borrow_mut().ignoring[o] = ((a1 == a2)
                         == (cmdtype as ::core::ffi::c_uint
                             == c_ifneq as i32 as ::core::ffi::c_uint))
-                        as i32
-                        as ::core::ffi::c_char;
+                        as u8;
                 }
             }
         }
     }
-    i = 0;
-    while i < (*conditionals).if_cmds {
-        if *(*conditionals).ignoring.offset(i as isize) != 0 {
-            return 1;
-        }
-        i = i.wrapping_add(1);
+    if ctx.conditionals.borrow().ignoring.iter().any(|&x| x != 0) {
+        return 1;
     }
     0
 }
