@@ -2298,6 +2298,11 @@ unsafe fn main_0(
     let carried_directory_contents = ::core::mem::take(&mut ctx.directory_contents);
     let carried_read_dirstream_buf = ::core::mem::take(&mut ctx.read_dirstream_buf);
     let carried_read_dirstream_bufsz = ::core::mem::take(&mut ctx.read_dirstream_bufsz);
+    // `parse_file_seq`'s scratch buffer is populated during parsing
+    // ($(wildcard), prerequisite lists) and reused during the build
+    // (function.rs, implicit.rs), so it rides along for the same reason.
+    let carried_file_seq_tmpbuf = ::core::mem::take(&mut ctx.file_seq_tmpbuf);
+    let carried_file_seq_tmpbuf_len = ::core::mem::take(&mut ctx.file_seq_tmpbuf_len);
     // The file table is populated during parsing and consulted throughout the
     // build, so carry it across the rebuild just like the directory cache;
     // otherwise every file entered while reading makefiles would be lost.
@@ -2328,6 +2333,8 @@ unsafe fn main_0(
         directory_contents: carried_directory_contents,
         read_dirstream_buf: carried_read_dirstream_buf,
         read_dirstream_bufsz: carried_read_dirstream_bufsz,
+        file_seq_tmpbuf: carried_file_seq_tmpbuf,
+        file_seq_tmpbuf_len: carried_file_seq_tmpbuf_len,
         filenodes: carried_files,
         temp_stdin_name: carried_temp_stdin,
         directory_before_chdir: carried_dir_before_chdir,

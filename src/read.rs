@@ -353,14 +353,20 @@ pub unsafe fn read_all_makefiles(
         }
     }
     if num_makefiles == 0 {
-        static mut default_makefiles: [*const ::core::ffi::c_char; 4] = [
+        // Read-only table (never reassigned): `const` avoids the `Sync` bound a
+        // `static` would need for raw-pointer elements — the same treatment as
+        // job.rs's `default_shell`/`sh_chars`/`sh_cmds`.
+        const default_makefiles: [*const ::core::ffi::c_char; 4] = [
             b"GNUmakefile\0" as *const u8 as *const ::core::ffi::c_char,
             b"makefile\0" as *const u8 as *const ::core::ffi::c_char,
             b"Makefile\0" as *const u8 as *const ::core::ffi::c_char,
             ::core::ptr::null::<::core::ffi::c_char>(),
         ];
+        // `const` values aren't addressable in place; bind a local so `&raw
+        // const` has somewhere to point.
+        let default_makefiles_table = default_makefiles;
         let mut p_0: *const *const ::core::ffi::c_char =
-            &raw const default_makefiles as *const *const ::core::ffi::c_char;
+            &raw const default_makefiles_table as *const *const ::core::ffi::c_char;
         while !(*p_0).is_null() && file_exists_p(ctx, *p_0) == 0 {
             p_0 = p_0.offset(1_i32 as isize);
         }
@@ -370,7 +376,7 @@ pub unsafe fn read_all_makefiles(
                 perror_with_name(ctx, b"\0" as *const u8 as *const ::core::ffi::c_char, *p_0);
             }
         } else {
-            p_0 = &raw const default_makefiles as *const *const ::core::ffi::c_char;
+            p_0 = &raw const default_makefiles_table as *const *const ::core::ffi::c_char;
             while !(*p_0).is_null() {
                 let mut d_0 = crate::dep::GoalDepNode::default();
                 let fid = enter_file(ctx, CStr::from_ptr(*p_0).to_bytes());
@@ -3472,8 +3478,6 @@ pub unsafe fn parse_file_seq(
     prefix: *const ::core::ffi::c_char,
     flags: i32,
 ) -> Vec<ParsedName> {
-    static mut tmpbuf: *mut ::core::ffi::c_char =
-        ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
     let cachep: i32 = !(flags & 0x10_i32 != 0) as i32;
     let _ = cachep;
     // Collected results, owned, replacing the `*mut T` intrusive chain.
@@ -3514,13 +3518,20 @@ pub unsafe fn parse_file_seq(
         // nominal types until the duplicate struct is unified.
         dir_setup_glob((&raw mut gl).cast());
     }
-    static mut tmpbuf_len: size_t = 0;
     let l: size_t = (strlen(*stringp.as_ref().expect("parse_file_seq: null stringp")) as size_t)
         .wrapping_add(1);
-    if l > tmpbuf_len {
-        tmpbuf = xrealloc(tmpbuf as *mut ::core::ffi::c_void, l) as *mut ::core::ffi::c_char;
-        tmpbuf_len = l;
-    }
+    // Reused unquoting scratch buffer (the former `static mut tmpbuf`/
+    // `tmpbuf_len`), now owned by the per-run context so it survives the
+    // `main_0` rebuild the same way `read_dirstream_buf` does.
+    let tmpbuf: *mut ::core::ffi::c_char = if l > ctx.file_seq_tmpbuf_len.get() {
+        let grown =
+            xrealloc(ctx.file_seq_tmpbuf.get() as *mut ::core::ffi::c_void, l) as *mut ::core::ffi::c_char;
+        ctx.file_seq_tmpbuf.set(grown);
+        ctx.file_seq_tmpbuf_len.set(l);
+        grown
+    } else {
+        ctx.file_seq_tmpbuf.get()
+    };
     tp = tmpbuf;
     p = *stringp.as_ref().expect("parse_file_seq: null stringp");
     loop {
