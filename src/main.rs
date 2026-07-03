@@ -1881,6 +1881,11 @@ pub unsafe fn reset_jobserver(options: &Options) {
 /// Jobserver reset for the end-of-run `clean_jobserver`/`die` path, which has
 /// no `&Options` borrow. Reaches the owned `Options` through the borrow channel
 /// (still installed for the dynamic extent of `main_0`).
+///
+/// # Safety
+///
+/// Calls `jobserver_clear`, which closes and resets the live jobserver fds;
+/// must run single-threaded.
 pub unsafe fn reset_jobserver_mirror() {
     jobserver_clear();
     with_options(|o| *o.jobserver_auth.borrow_mut() = None);
