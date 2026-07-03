@@ -325,6 +325,16 @@ pub struct ExecContext {
     /// so `main_0` carries it across the context rebuild like
     /// [`Self::read_dirstream_buf`].
     pub file_seq_tmpbuf: ::core::cell::RefCell<Vec<u8>>,
+
+    /// Goals accumulated while reading makefiles (the former `static mut
+    /// read_files` linked-list replacement) — the pointer-free `Vec` that
+    /// `read_all_makefiles`/`eval_makefile`/`eval` push onto as each
+    /// (possibly nested, via `include`) makefile is read. Fully drained by
+    /// `read_all_makefiles` (via `RefCell::take`, mirroring the former
+    /// `mem::take(&mut read_files)`) before it returns, so unlike
+    /// [`Self::file_seq_tmpbuf`] this never needs to survive the `main_0`
+    /// context rebuild — it starts and ends each call empty.
+    pub read_files: ::core::cell::RefCell<Vec<crate::dep::GoalDepNode>>,
 }
 
 /// The directory cache's name-keyed table: an idiomatic Rust
