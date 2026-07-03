@@ -371,6 +371,32 @@ pub struct ExecContext {
     /// [`Self::fifo_name`] (`osync_clear` also runs from
     /// `fatal_error_signal`).
     pub osync_tmpfile: MutPtrCell,
+
+    /// `library_search`'s `-l` directory-search cache — the former
+    /// `remake.rs` function-local `static mut buf`/`buflen`/
+    /// `libdir_maxlen`/`std_dirs`. Populated on first use per run and reused
+    /// across every `-lfoo` prerequisite lookup within it (`libdir_maxlen`/
+    /// `std_dirs` never change after the first pattern; `buf`/`buflen` only
+    /// grow to fit the longest library basename seen so far). `f_mtime`
+    /// (`library_search`'s sole caller) only runs during the build phase,
+    /// so — like [`Self::read_files`] — this never needs to survive the
+    /// `main_0` build-phase context rebuild.
+    pub library_search_cache: ::core::cell::RefCell<LibrarySearchCache>,
+}
+
+/// [`ExecContext::library_search_cache`]'s fields, split out only because
+/// `ExecContext`'s derive needs one `Default` impl per field and this is a
+/// single cohesive cache: `buf` is scratch (sized to `libdir_maxlen + buflen
+/// + 2`, contents overwritten every lookup), `buflen` the longest library
+/// basename seen so far (distinct from `buf.len()`, which pads for the
+/// directory prefix too), `libdir_maxlen`/`std_dirs` a one-time summary of
+/// the fixed search-directory table.
+#[derive(Debug, Clone, Default)]
+pub struct LibrarySearchCache {
+    pub buf: Vec<u8>,
+    pub buflen: usize,
+    pub libdir_maxlen: usize,
+    pub std_dirs: u32,
 }
 
 /// A `Cell<[i32; 2]>` that defaults to `[-1, -1]` (the jobserver's "no fds
