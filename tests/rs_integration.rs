@@ -1955,13 +1955,12 @@ fn tree_gate_catches_mode_only_divergence() {
 
 /// Interrupt make while a recipe is running and compare the fatal-signal
 /// cleanup. The oracle kills the child, unlinks the partially built target,
-/// and reports `make: *** deleting file 'slow'` on stderr; the port currently
-/// leaves the file in place and prints nothing (#468). The recipe must be
+/// and reports `make: *** deleting file 'slow'` on stderr; the port must do
+/// the same (#468). The recipe must be
 /// mid-flight when the interrupt lands, so this bypasses `run()`: it spawns
 /// make, waits for the recipe's leading `touch` to appear, sends SIGINT to
 /// the make process, and compares output plus the target file's fate.
 #[test]
-#[ignore = "known divergence #468: SIGINT mid-recipe does not delete the in-progress target"]
 fn sigint_deletes_partially_built_target() {
     // `Run::code` is `None` for any signal death, so the re-raised signal is
     // compared separately (Codex review): a port that cleaned up correctly but
