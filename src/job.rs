@@ -271,7 +271,7 @@ pub unsafe fn pid2str(
     ctx: &crate::execctx::ExecContext,
     pid: pid_t,
 ) -> *const ::core::ffi::c_char {
-    let buf = ctx.pidstring.0.as_ptr() as *mut ::core::ffi::c_char;
+    let buf = ctx.pid_string.0.as_ptr() as *mut ::core::ffi::c_char;
     sprintf(
         buf,
         b"%lu\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3477,7 +3477,7 @@ mod batch_mode_shell_tests {
 #[cfg(test)]
 mod pid2str_tests {
     //! `pid2str`'s scratch buffer moved from a `static mut` to
-    //! `ctx.pidstring`; these lock in the two contract points a caller
+    //! `ctx.pid_string`; these lock in the two contract points a caller
     //! relies on: correct digits, and a fresh call overwriting the same
     //! buffer (the address stability that made the former static safe to
     //! return a pointer into).
