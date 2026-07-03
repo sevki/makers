@@ -11,15 +11,15 @@ use ::core::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libc::{
-    __errno_location, close, ftruncate, lseek, perror, read, sprintf, strerror, strlen,
-    EINTR, SEEK_END, SEEK_SET,
+    __errno_location, close, ftruncate, lseek, perror, read, strerror, strlen, EINTR, SEEK_END,
+    SEEK_SET,
 };
 
 use crate::execctx::ExecContext;
 use crate::ffi_types::{__off_t, size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::die;
-use crate::misc::{open_anon_tmpfd, writebuf, xrealloc};
+use crate::misc::{open_anon_tmpfd, writebuf};
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
     osync_release,
@@ -46,14 +46,6 @@ pub struct output {
     pub syncout: [u8; 1],
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 3],
-}
-
-/// The shared, growing buffer used by the printf-style printers.
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct fmtstring {
-    buffer: *mut c_char,
-    size: size_t,
 }
 
 /// Bytes needed to print an integer of type `uintmax_t`: digits (53/22
@@ -130,29 +122,18 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
 /// Print an entering/leaving-directory line (returns 1).
 ///
 /// # Safety
-/// Must run single-threaded: reads make globals and a static buffer.
+/// `ctx.program`/`ctx.starting_directory` must be null or valid
+/// NUL-terminated strings (the c2rust pointer contract they always carry).
 pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     let makelevel = ctx.makelevel();
     // `program` is null only on context-less paths handed a throwaway
     // `ExecContext` (plugin ABI); the C original could not get here with a
     // null `program` global. Fall back to the plain name like
-    // `msg::program_name` rather than passing null to `strlen`/`sprintf`.
+    // `msg::program_name` rather than passing null to the formatter.
     let program = ctx.program.0.get();
     let program = if program.is_null() { c"make".as_ptr() } else { program };
     let starting_directory = ctx.starting_directory.0.get();
-    static mut buf: *mut ::core::ffi::c_char =
-        ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-    static mut len: size_t = 0;
-    let mut need: size_t;
     let fmt: *const ::core::ffi::c_char;
-    let mut p: *mut ::core::ffi::c_char;
-    need = strlen(program)
-        .wrapping_add(INTSTR_LENGTH)
-        .wrapping_add(2)
-        .wrapping_add(1) as size_t;
-    if !starting_directory.is_null() {
-        need = need.wrapping_add(strlen(starting_directory) as size_t);
-    }
     if makelevel == 0 {
         if starting_directory.is_null() {
             if entering != 0 {
@@ -176,32 +157,28 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     } else {
         fmt = c"%s[%u]: Leaving directory '%s'\n".as_ptr();
     }
-    need = need.wrapping_add(strlen(fmt) as size_t);
-    if need > len {
-        buf = xrealloc(buf as *mut ::core::ffi::c_void, need) as *mut ::core::ffi::c_char;
-        len = need;
-    }
-    p = buf;
+    // The line is built in an owned buffer per call (the former grow-only
+    // `static mut buf`/`len` pair); `_outputs` copies the bytes before
+    // returning, so the local's lifetime is enough.
+    let mut line: Vec<u8> = Vec::new();
     if crate::make_main::opt_print_data_base() {
-        let fresh0 = p;
-        p = p.add(1);
-        *fresh0 = '#' as i32 as ::core::ffi::c_char;
-        let fresh1 = p;
-        p = p.add(1);
-        *fresh1 = ' ' as i32 as ::core::ffi::c_char;
+        line.extend_from_slice(b"# ");
     }
-    if makelevel == 0 {
-        if starting_directory.is_null() {
-            sprintf(p, fmt, program);
-        } else {
-            sprintf(p, fmt, program, starting_directory);
-        }
-    } else if starting_directory.is_null() {
-        sprintf(p, fmt, program, makelevel);
+    // The `%u` slot only exists in the `makelevel != 0` formats and the `%s`
+    // directory slot only when `starting_directory` is non-null; extra args
+    // are ignored by the formatter, matching the sprintf call ladder.
+    let args: &[FmtArg] = if makelevel == 0 {
+        &[FmtArg::Str(program), FmtArg::Str(starting_directory)]
     } else {
-        sprintf(p, fmt, program, makelevel, starting_directory);
-    }
-    _outputs(null_mut(), 0, buf);
+        &[
+            FmtArg::Str(program),
+            FmtArg::Uint(makelevel as u64),
+            FmtArg::Str(starting_directory),
+        ]
+    };
+    vformat_into(&mut line, fmt, args);
+    line.push(0);
+    _outputs(null_mut(), 0, line.as_ptr() as *const ::core::ffi::c_char);
     1
 }
 /// Copy everything from fd `from` to stream `to`, from the beginning.
@@ -210,7 +187,9 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
 /// `from` must be an open, seekable fd and `to` an open stream; uses a
 /// static buffer, so must run single-threaded.
 pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
-    static mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
+    // Plain per-call scratch (the former `static mut buffer`): nothing reads
+    // it across calls, the static only existed to keep the C frame small.
+    let mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
     if lseek(from, 0, SEEK_SET) == -1 as __off_t {
         perror(c"lseek()".as_ptr());
     }
@@ -219,7 +198,7 @@ pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
         loop {
             len = read(
                 from,
-                &raw mut buffer as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
+                buffer.as_mut_ptr() as *mut ::core::ffi::c_void,
                 ::core::mem::size_of::<[::core::ffi::c_char; 8192]>() as size_t,
             ) as i32;
             if !(len == -1 && *__errno_location() == EINTR) {
@@ -233,7 +212,7 @@ pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
             break;
         }
         if fwrite(
-            &raw mut buffer as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
+            buffer.as_ptr() as *const ::core::ffi::c_void,
             len as size_t,
             1,
             to,
@@ -456,23 +435,10 @@ pub unsafe fn outputs(ctx: &ExecContext, is_err: i32, msg: *const ::core::ffi::c
     output_start(ctx);
     _outputs(output_context(), is_err, msg);
 }
-static mut fmtbuf: fmtstring = fmtstring {
-    buffer: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
-    size: 0,
-};
-/// Return the shared format buffer, grown to at least `need` bytes.
-///
-/// # Safety
-/// Must run single-threaded; the buffer is shared between calls.
-pub unsafe fn get_buffer(need: size_t) -> *mut ::core::ffi::c_char {
-    if need > fmtbuf.size {
-        fmtbuf.size = fmtbuf.size.wrapping_add(need.wrapping_mul(2));
-        fmtbuf.buffer = xrealloc(fmtbuf.buffer as *mut ::core::ffi::c_void, fmtbuf.size)
-            as *mut ::core::ffi::c_char;
-    }
-    *fmtbuf.buffer.add(need - 1) = 0;
-    fmtbuf.buffer
-}
+// The former shared, growing printer buffer (`static mut fmtbuf` and its
+// `get_buffer` accessor) is gone: each printer builds its line in an owned
+// `Vec<u8>` and hands `outputs` a pointer into it — `outputs` copies the
+// bytes before returning, so no allocation outlives its call.
 /// One argument to the printf-subset formatter that replaced C varargs.
 #[derive(Copy, Clone)]
 pub enum FmtArg {
@@ -695,9 +661,7 @@ pub unsafe fn message(
     vformat_into(&mut out, fmt, args);
     out.push(b'\n');
     out.push(0);
-    let start: *mut ::core::ffi::c_char = get_buffer(out.len() as size_t);
-    ::core::ptr::copy_nonoverlapping(out.as_ptr(), start as *mut u8, out.len());
-    outputs(ctx, 0, start);
+    outputs(ctx, 0, out.as_ptr() as *const ::core::ffi::c_char);
 }
 
 /// printf-subset error to stderr with a file:line or program prefix.
@@ -718,9 +682,7 @@ pub unsafe fn error(
     vformat_into(&mut out, fmt, args);
     out.push(b'\n');
     out.push(0);
-    let start: *mut ::core::ffi::c_char = get_buffer(out.len() as size_t);
-    ::core::ptr::copy_nonoverlapping(out.as_ptr(), start as *mut u8, out.len());
-    outputs(ctx, 1, start);
+    outputs(ctx, 1, out.as_ptr() as *const ::core::ffi::c_char);
 }
 
 /// Like [`error`] but adds the `*** ` marker and `.  Stop.` suffix, then
@@ -741,42 +703,10 @@ pub unsafe fn fatal(
     vformat_into(&mut out, fmt, args);
     out.extend_from_slice(b".  Stop.\n");
     out.push(0);
-    let start: *mut ::core::ffi::c_char = get_buffer(out.len() as size_t);
-    ::core::ptr::copy_nonoverlapping(out.as_ptr(), start as *mut u8, out.len());
-    outputs(ctx, 1, start);
+    outputs(ctx, 1, out.as_ptr() as *const ::core::ffi::c_char);
     die(ctx, MAKE_FAILURE);
 }
 
-/// Format into the shared buffer with an optional prefix and return it.
-///
-/// # Safety
-/// `prefix` may be null. `fmt` must be a valid NUL-terminated format string
-/// and the format specifiers must match `args`. The returned buffer is shared.
-pub unsafe fn format(
-    prefix: *const ::core::ffi::c_char,
-    fmt: *const ::core::ffi::c_char,
-    args: &[FmtArg],
-) -> *mut ::core::ffi::c_char {
-    let mut out = Vec::new();
-    push_cstr(&mut out, (!prefix.is_null()).then(|| ::core::ffi::CStr::from_ptr(prefix)));
-    vformat_into(&mut out, fmt, args);
-    out.push(0);
-    let buf = get_buffer(out.len() as size_t);
-    ::core::ptr::copy_nonoverlapping(out.as_ptr(), buf as *mut u8, out.len());
-    buf
-}
-
-/// Backwards-compatible name for callers migrated from the old printf helper.
-///
-/// # Safety
-/// Same contract as [`format`].
-pub unsafe fn format_message(
-    prefix: *const ::core::ffi::c_char,
-    fmt: *const ::core::ffi::c_char,
-    args: &[FmtArg],
-) -> *mut ::core::ffi::c_char {
-    format(prefix, fmt, args)
-}
 /// Report `str``name`: strerror(errno) via [`error`].
 ///
 /// # Safety
