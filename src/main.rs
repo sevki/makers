@@ -296,7 +296,8 @@ use crate::load::load_file;
 use crate::misc::concat;
 pub use crate::output::output;
 use crate::output::{
-    error, fatal, output_context, perror_with_name, pfatal_with_name, set_stdio_traced,
+    error, fatal, output_context, perror_with_name, pfatal_with_name, set_output_context,
+    set_stdio_traced,
     stdio_traced, FmtArg,
 };
 use crate::posixos::{
@@ -1394,19 +1395,18 @@ pub fn stopchar_map() -> &'static [::core::ffi::c_ushort; 256] {
     static ZERO: [::core::ffi::c_ushort; 256] = [0; 256];
     STOPCHAR_MAP.get().unwrap_or(&ZERO)
 }
-pub static mut make_sync: output = output {
-    out: 0,
-    err: 0,
-    syncout: [0; 1],
-    c2rust_padding: [0; 3],
-};
-unsafe fn make_sync_syncout() -> ::core::ffi::c_uint {
-    ((*(&raw const make_sync)).syncout[0] & 1) as ::core::ffi::c_uint
+// The run's own output-sync record (former `static mut make_sync`) now lives
+// on the owned per-run context: `ctx.make_sync` (see
+// `crate::execctx::MakeSync`), Boxed so its address survives the build-phase
+// context rebuild for the `output_context` identity uses below.
+fn make_sync_syncout(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_uint {
+    (ctx.make_sync.0.get().syncout[0] & 1) as ::core::ffi::c_uint
 }
 
-unsafe fn set_make_sync_syncout(value: ::core::ffi::c_uint) {
-    let make_sync_ptr = &raw mut make_sync;
-    (*make_sync_ptr).syncout[0] = ((*make_sync_ptr).syncout[0] & !1) | (value as u8 & 1);
+fn set_make_sync_syncout(ctx: &crate::execctx::ExecContext, value: ::core::ffi::c_uint) {
+    let mut ms = ctx.make_sync.0.get();
+    ms.syncout[0] = (ms.syncout[0] & !1) | (value as u8 & 1);
+    ctx.make_sync.0.set(ms);
 }
 unsafe extern "C" fn bsd_signal(sig: i32, func: bsd_signal_ret_t) -> bsd_signal_ret_t {
     let mut act: Sigaction = Sigaction {
@@ -1942,7 +1942,7 @@ unsafe fn main_0(
     if check_io_state() & 0x8 as ::core::ffi::c_uint != 0 {
         atexit(Some(close_stdout as unsafe extern "C" fn() -> ()));
     }
-    crate::output::output_init(&raw mut make_sync);
+    crate::output::output_init(ctx.make_sync.as_ptr());
     initialize_stopchar_map();
     crate::warning::init();
     options.verify.set(true);
@@ -2169,14 +2169,15 @@ unsafe fn main_0(
         o_command,
     );
     set_make_sync_syncout(
+        &ctx,
         (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET) as i32
             as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
-    output_context = if make_sync_syncout() as i32 != 0 {
-        &raw mut make_sync
+    set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
+        ctx.make_sync.as_ptr()
     } else {
         ::core::ptr::null_mut::<output>()
-    };
+    });
     let env_slots: Option<u32> = options.arg_job_slots.get();
     options.arg_job_slots.set(None);
     decode_switches(
@@ -2262,15 +2263,15 @@ unsafe fn main_0(
     }
     syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
-    if make_sync_syncout() as i32 != 0 && syncing == 0 {
-        crate::output::output_close(&ctx, &raw mut make_sync);
+    if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
+        crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     }
-    set_make_sync_syncout(syncing as ::core::ffi::c_uint);
-    output_context = if make_sync_syncout() as i32 != 0 {
-        &raw mut make_sync
+    set_make_sync_syncout(&ctx, syncing as ::core::ffi::c_uint);
+    set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
+        ctx.make_sync.as_ptr()
     } else {
         ::core::ptr::null_mut::<output>()
-    };
+    });
     let v_0: *mut variable = lookup_variable(
         &ctx,
         b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2316,6 +2317,12 @@ unsafe fn main_0(
     // The fatal-signal set was built by the `install_fatal_signal` calls above
     // and is what `block_sigs`/`unblock_sigs` mask around child bookkeeping.
     let carried_fatal_signal_set = ::core::mem::take(&mut ctx.fatal_signal_set);
+    // The output-sync record was configured by `output_init` at startup and
+    // `output_context` may already hold its address (set when `MAKEFLAGS`
+    // enabled `-O` above); carrying the Box keeps that address valid, and the
+    // pointer rides along with it.
+    let carried_make_sync = ::core::mem::take(&mut ctx.make_sync);
+    let carried_output_context = ::core::mem::take(&mut ctx.output_context);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2328,6 +2335,8 @@ unsafe fn main_0(
         shell_var: carried_shell_var,
         command_variables: carried_command_variables,
         fatal_signal_set: carried_fatal_signal_set,
+        make_sync: carried_make_sync,
+        output_context: carried_output_context,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
@@ -2791,15 +2800,15 @@ unsafe fn main_0(
     }
     syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
-    if make_sync_syncout() as i32 != 0 && syncing == 0 {
-        crate::output::output_close(&ctx, &raw mut make_sync);
+    if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
+        crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     }
-    set_make_sync_syncout(syncing as ::core::ffi::c_uint);
-    output_context = if make_sync_syncout() as i32 != 0 {
-        &raw mut make_sync
+    set_make_sync_syncout(&ctx, syncing as ::core::ffi::c_uint);
+    set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
+        ctx.make_sync.as_ptr()
     } else {
         ::core::ptr::null_mut::<output>()
-    };
+    });
     disable_builtins(&ctx, &options);
     options
         .job_slots
@@ -2840,8 +2849,8 @@ unsafe fn main_0(
         }
     }
     if syncing != 0 && options.job_slots.get() == 1 {
-        output_context = ::core::ptr::null_mut::<output>();
-        crate::output::output_close(&ctx, &raw mut make_sync);
+        set_output_context(::core::ptr::null_mut::<output>());
+        crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
         syncing = 0;
         options.output_sync.set(OUTPUT_SYNC_NONE);
     }
@@ -2922,8 +2931,8 @@ unsafe fn main_0(
         }
     }
     remote_setup();
-    output_context = ::core::ptr::null_mut::<output>();
-    crate::output::output_close(&ctx, &raw mut make_sync);
+    set_output_context(::core::ptr::null_mut::<output>());
+    crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level() != 0 {
         let sm = options.shuffle_mode.borrow().clone().unwrap();
         let sm_c = ::std::ffi::CString::new(sm.as_bytes()).unwrap_or_default();
@@ -4826,12 +4835,16 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
         }
         unload_all();
         clean_jobserver(ctx, status);
-        if !output_context.is_null() {
-            crate::output::output_close(ctx, output_context);
-            if output_context != &raw mut make_sync {
-                crate::output::output_close(ctx, &raw mut make_sync);
+        // `die` is always reached with the live run's context (the signal
+        // handler routes here through the CTX_PTR channel), so `ctx.make_sync`
+        // is the record `output_context` may be pointing at.
+        let osync = output_context();
+        if !osync.is_null() {
+            crate::output::output_close(ctx, osync);
+            if osync != ctx.make_sync.as_ptr() {
+                crate::output::output_close(ctx, ctx.make_sync.as_ptr());
             }
-            output_context = ::core::ptr::null_mut::<output>();
+            set_output_context(::core::ptr::null_mut::<output>());
         }
         crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
         osync_clear();

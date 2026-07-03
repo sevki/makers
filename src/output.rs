@@ -69,7 +69,26 @@ const IO_COMBINED_OUTERR: c_uint = 0x0002;
 const IO_STDOUT_OK: c_uint = 0x0008;
 const IO_STDERR_OK: c_uint = 0x0010;
 
-pub static mut output_context: *mut output = ::core::ptr::null::<output>() as *mut output;
+/// The active output-sync target (the former `static mut output_context`),
+/// now owned per-run on `ExecContext`. Reads resolve the *live* context
+/// through the `CTX_PTR` borrow channel rather than the `&ExecContext` a
+/// printer was handed: the printers are reachable with a throwaway context
+/// (plugin ABI, the fatal-signal handler's prefix-free path) and must still
+/// route through the real run's sync state, exactly as the process global
+/// did. Null (straight-to-stdio) when no context is installed — startup
+/// before `main_0` and bare unit tests, where the former global was null
+/// too.
+pub fn output_context() -> *mut output {
+    crate::make_main::try_with_exec_context(|c| c.output_context.0.get())
+        .unwrap_or(::core::ptr::null_mut())
+}
+
+/// Set the active output-sync target on the live run (see
+/// [`output_context`]). A no-op when no context is installed, mirroring the
+/// null-global steady state outside `main_0`'s extent.
+pub fn set_output_context(value: *mut output) {
+    let _ = crate::make_main::try_with_exec_context(|c| c.output_context.0.set(value));
+}
 /// Whether the working-directory "Entering directory" trace has been emitted.
 ///
 /// This is a one-shot latch — set once make logs the trace, so the matching
@@ -410,11 +429,12 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
 /// # Safety
 /// Must run single-threaded: touches output and trace globals.
 pub unsafe fn output_start(ctx: &ExecContext) {
-    if !output_context.is_null()
-        && (*output_context).syncout() as i32 != 0
-        && !((*output_context).out >= 0 || (*output_context).err >= 0)
+    let osync = output_context();
+    if !osync.is_null()
+        && (*osync).syncout() as i32 != 0
+        && !((*osync).out >= 0 || (*osync).err >= 0)
     {
-        setup_tmpfile(ctx, output_context);
+        setup_tmpfile(ctx, osync);
     }
     if (crate::make_main::opt_output_sync() == OUTPUT_SYNC_NONE
         || crate::make_main::opt_output_sync() == OUTPUT_SYNC_RECURSE)
@@ -434,7 +454,7 @@ pub unsafe fn outputs(ctx: &ExecContext, is_err: i32, msg: *const ::core::ffi::c
         return;
     }
     output_start(ctx);
-    _outputs(output_context, is_err, msg);
+    _outputs(output_context(), is_err, msg);
 }
 static mut fmtbuf: fmtstring = fmtstring {
     buffer: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -930,6 +950,32 @@ mod log_working_directory_tests {
         // SAFETY: single-threaded test; the options channel is installed above.
         let traced = unsafe { super::log_working_directory(&ctx, 1) };
         assert_eq!(traced, 1);
+    }
+}
+
+#[cfg(test)]
+mod output_context_tests {
+    //! The former `static mut output_context` is per-run state reached over
+    //! the `CTX_PTR` borrow channel; the accessors must round-trip through
+    //! the installed context so every printer — including ones handed a
+    //! throwaway `ExecContext` — sees the same sync target.
+
+    #[test]
+    fn accessors_round_trip_through_the_live_context() {
+        crate::make_main::install_default_exec_context_for_test();
+        let mut record = super::output {
+            out: 7,
+            err: 8,
+            syncout: [1; 1],
+            c2rust_padding: [0; 3],
+        };
+        super::set_output_context(&raw mut record);
+        assert_eq!(super::output_context(), &raw mut record);
+        // The throwaway-context printers read the same live value: the getter
+        // takes no `&ExecContext` at all, so there is nothing else it could
+        // consult.
+        super::set_output_context(::core::ptr::null_mut());
+        assert!(super::output_context().is_null());
     }
 }
 

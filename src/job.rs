@@ -217,7 +217,7 @@ use crate::make_main::{
     db_level, die, not_parallel, one_shell, posix_pedantic, stopchar_map,
 };
 use crate::output::{
-    error, fatal, message, output_context, perror_with_name, pfatal_with_name, FmtArg,
+    error, fatal, message, perror_with_name, pfatal_with_name, set_output_context, FmtArg,
 };
 use crate::posixos::{
     fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
@@ -599,11 +599,11 @@ unsafe fn child_error(
                 .expect("shuffle label is NUL-terminated with no interior NUL"),
         );
     }
-    output_context = if (*child).output.syncout() as i32 != 0 {
+    set_output_context(if (*child).output.syncout() as i32 != 0 {
         &raw mut (*child).output
     } else {
         ::core::ptr::null_mut::<output>()
-    };
+    });
     show_goal_error(ctx);
     if exit_sig == 0 {
         error(
@@ -639,7 +639,7 @@ unsafe fn child_error(
             ],
         );
     }
-    output_context = ::core::ptr::null_mut::<output>();
+    set_output_context(::core::ptr::null_mut::<output>());
 }
 /// Count of children reaped by the `SIGCHLD` handler and not yet processed
 /// by the reap loop. Written from the signal handler and read on the main
@@ -1246,11 +1246,11 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 (os != 0 && (os == OUTPUT_SYNC_RECURSE || !(flags & 1 != 0))) as i32
                     as ::core::ffi::c_uint as ::core::ffi::c_uint,
             );
-            output_context = if (*child).output.syncout() as i32 != 0 {
+            set_output_context(if (*child).output.syncout() as i32 != 0 {
                 &raw mut (*child).output
             } else {
                 ::core::ptr::null_mut::<output>()
-            };
+            });
             if (*child).output.syncout() == 0 {
                 crate::output::output_dump(ctx, &raw mut (*child).output);
             }
@@ -1371,7 +1371,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                     free(argv as *mut ::core::ffi::c_void);
                 }
-                output_context = ::core::ptr::null_mut::<output>();
+                set_output_context(::core::ptr::null_mut::<output>());
                 return;
             }
         }
@@ -1383,7 +1383,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
         set_file_update_status_entry(ctx, (*child).file, (*child).entry, us_success);
         notice_finished_file(ctx, (*child).file, (*child).entry);
     }
-    output_context = ::core::ptr::null_mut::<output>();
+    set_output_context(::core::ptr::null_mut::<output>());
 }
 /// # Safety
 ///
@@ -1663,11 +1663,11 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
     });
     crate::output::output_init(&raw mut boxed.output);
     boxed.set_dontcare(dontcare as ::core::ffi::c_uint);
-    output_context = if boxed.output.syncout() as i32 != 0 {
+    set_output_context(if boxed.output.syncout() as i32 != 0 {
         &raw mut boxed.output
     } else {
         ::core::ptr::null_mut::<output>()
-    };
+    });
 
     // Expand each chopped recipe line for this file, collapsing `$`-reference
     // continuations first (the former in-place `collapse_dollar_refs`). Each
@@ -1908,7 +1908,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             reap_children(ctx, 1, 0);
         }
     }
-    output_context = ::core::ptr::null_mut::<output>();
+    set_output_context(::core::ptr::null_mut::<output>());
 }
 /// # Safety
 ///
