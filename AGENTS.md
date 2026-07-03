@@ -124,6 +124,17 @@ runtime — so none of these need to survive. Treat each as a defect to remove:
   with `String` / `&str` / `&[u8]` / `&CStr` / `Vec<u8>`; null-pointer
   sentinels with `Option<T>`; raw `*const` / `*mut` parameters with
   `&` / `&mut` references whenever every caller is Rust.
+- **Never store a char pointer.** This applies even when the function body
+  around it stays raw-pointer-heavy (unavoidable c2rust FFI-adjacent code):
+  the type you *own* — a struct field, an `ExecContext` member, anything with
+  a lifetime longer than one call — must be `String`, `Vec<u8>`, `CString`,
+  or (borrowed) `CStr`, never `*mut c_char` / `*const c_char`. Cast to a raw
+  char pointer only at the instant you hand it to an actual libc/FFI call
+  (`buf.as_mut_ptr() as *mut c_char` right at the call site), then let the
+  cast expire — don't let it leak back into the stored type. See the
+  `PidString` (#475) and `file_seq_tmpbuf` (#476) fixes for the pattern: an
+  owned `Vec<u8>`/fixed-size buffer on the context, cast to `*mut c_char`
+  only at the single FFI boundary that needs it.
 - **`#[repr(C)]` is bad.** Drop it; let structs use the default Rust layout.
   Keep it only for a type genuinely passed across a real FFI call you are
   keeping (e.g. a libc syscall struct).
@@ -144,6 +155,9 @@ The only things that still gate a type change:
   runtime values must be unchanged.
 
 ## Forbidden Patterns
+- storing `*mut c_char` / `*const c_char` in a struct field or other owned
+  state — use `String` / `Vec<u8>` / `CString` / `CStr` and cast to a raw
+  char pointer only at the instant of an actual libc/FFI call
 - libc malloc/free ownership in Rust-facing APIs
 - raw pointer arithmetic outside ffi/
 - C-style out parameters
