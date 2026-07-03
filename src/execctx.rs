@@ -335,6 +335,36 @@ pub struct ExecContext {
     /// [`Self::file_seq_tmpbuf`] this never needs to survive the `main_0`
     /// context rebuild — it starts and ends each call empty.
     pub read_files: ::core::cell::RefCell<Vec<crate::dep::GoalDepNode>>,
+
+    /// The active `ifdef`/`ifeq`/`else`/`endif` nesting stack (the former
+    /// module-scope `static mut toplevel_conditionals`/`conditionals` pair) —
+    /// one [`ConditionalsFrame`] per makefile-reading scope. `eval_buffer` and
+    /// `eval`'s `include` handling install a fresh empty frame for the nested
+    /// scope and restore the enclosing one afterward (`RefCell::replace`
+    /// mirrors the former `install_conditionals`/`restore_conditionals`
+    /// pointer swap; dropping the old frame is the former manual `free`).
+    /// Never needs to survive the `main_0` rebuild: every makefile read
+    /// balances its own `if`/`endif` nesting before `eval` returns.
+    pub conditionals: ::core::cell::RefCell<ConditionalsFrame>,
+}
+
+/// One frame of the `ifdef`/`ifeq` conditional-nesting stack (the former C
+/// `struct conditionals`'s `ignoring`/`seen_else` parallel arrays, sized by a
+/// separate `if_cmds`/`allocated` pair). Here `if_cmds` is simply
+/// `ignoring.len()` (`== seen_else.len()`, the two always grow and shrink in
+/// lockstep) — genuine `Vec::push`/`pop` replaces the manual
+/// `xmalloc`/`xrealloc`-by-fives growth, so there is no separate capacity
+/// field to track.
+///
+/// `ignoring[i]`: `0` = this level's lines are active, `1` = ignoring because
+/// this level's condition was false, `2` = ignoring because an enclosing
+/// level is ignoring (or this level's `if`/`else` branch already ran).
+/// `seen_else[i]`: whether this level has already seen its one allowed
+/// `else`.
+#[derive(Debug, Clone, Default)]
+pub struct ConditionalsFrame {
+    pub ignoring: Vec<u8>,
+    pub seen_else: Vec<u8>,
 }
 
 /// The directory cache's name-keyed table: an idiomatic Rust
@@ -744,7 +774,7 @@ impl ExecContext {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ExecContext, FileArena};
+    use super::{Config, ConditionalsFrame, ExecContext, FileArena};
 
     #[test]
     fn context_exposes_makelevel() {
@@ -1197,5 +1227,36 @@ mod tests {
             arena.get(id).unwrap().lock().unwrap().phony,
             "mutation through the clone is visible through the original — a genuine shared clone"
         );
+    }
+
+    /// `ctx.conditionals` starts empty (no open `if`/`ifdef`), and
+    /// `RefCell::replace` gives exactly the former `install_conditionals`/
+    /// `restore_conditionals` swap: installing a fresh frame for a nested
+    /// scope (e.g. `include`) returns the enclosing frame, and replacing it
+    /// back drops the nested frame's `Vec`s.
+    #[test]
+    fn conditionals_frame_install_and_restore_round_trips() {
+        let ctx = ExecContext::default();
+        assert!(ctx.conditionals.borrow().ignoring.is_empty());
+        assert!(ctx.conditionals.borrow().seen_else.is_empty());
+
+        // Simulate an open `ifeq` (mid-file) before a nested `include`.
+        ctx.conditionals.borrow_mut().ignoring.push(0);
+        ctx.conditionals.borrow_mut().seen_else.push(0);
+
+        let enclosing = ctx
+            .conditionals
+            .replace(ConditionalsFrame::default());
+        assert_eq!(enclosing.ignoring, vec![0]);
+        assert!(
+            ctx.conditionals.borrow().ignoring.is_empty(),
+            "the nested scope starts with its own independent, empty frame"
+        );
+
+        // The nested scope opens (and properly closes) its own conditional;
+        // restoring hands the enclosing frame back untouched.
+        ctx.conditionals.borrow_mut().ignoring.push(1);
+        ctx.conditionals.replace(enclosing);
+        assert_eq!(ctx.conditionals.borrow().ignoring, vec![0]);
     }
 }
