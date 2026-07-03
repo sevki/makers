@@ -247,7 +247,11 @@ pub const OUTPUT_SYNC_RECURSE: i32 = 3;
 pub const MAKE_SUCCESS: i32 = 0;
 pub const MAKE_TROUBLE: i32 = 1;
 pub const MAKE_FAILURE: i32 = 2;
-pub static mut default_shell: *const ::core::ffi::c_char =
+/// The only writers in the C original are W32/DOS-specific (this is a POSIX
+/// port), so the value is fixed. `const` rather than `static`: a raw pointer
+/// isn't `Sync`, so a `static` would need an `unsafe`-to-read wrapper for a
+/// value nothing ever mutates — `const` just inlines the pointer at each use.
+pub const default_shell: *const ::core::ffi::c_char =
     b"/bin/sh\0" as *const u8 as *const ::core::ffi::c_char;
 /// Batch-mode shell is a W32/DOS feature: the only writers in the C original
 /// are platform-specific, so the value is fixed at 0 in this POSIX port.
@@ -263,14 +267,17 @@ pub const NONEXISTENT_MTIME: i32 = 1;
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn pid2str(pid: pid_t) -> *const ::core::ffi::c_char {
-    static mut pidstring: [::core::ffi::c_char; 100] = [0; 100];
+pub unsafe fn pid2str(
+    ctx: &crate::execctx::ExecContext,
+    pid: pid_t,
+) -> *const ::core::ffi::c_char {
+    let buf = ctx.pidstring.0.as_ptr() as *mut ::core::ffi::c_char;
     sprintf(
-        &raw mut pidstring as *mut ::core::ffi::c_char,
+        buf,
         b"%lu\0" as *const u8 as *const ::core::ffi::c_char,
         pid as ::core::ffi::c_ulong,
     );
-    &raw mut pidstring as *mut ::core::ffi::c_char
+    buf
 }
 // The live-children chain head (former `static mut children`) and the
 // load-limited postponed-jobs chain head (former `static mut waiting_jobs`)
@@ -725,7 +732,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                             as *const ::core::ffi::c_char,
                         c,
                         file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
-                        pid2str((*c).pid),
+                        pid2str(ctx, (*c).pid),
                         if (*c).remote() as i32 != 0 {
                             b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
                         } else {
@@ -832,7 +839,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                                 as *const ::core::ffi::c_char
                         },
                         c,
-                        pid2str((*c).pid),
+                        pid2str(ctx, (*c).pid),
                         if (*c).remote() as i32 != 0 {
                             b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
                         } else {
@@ -1016,7 +1023,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 b"Removing child %p PID %s%s from chain.\n\0" as *const u8
                     as *const ::core::ffi::c_char,
                 c,
-                pid2str((*c).pid),
+                pid2str(ctx, (*c).pid),
                 if (*c).remote() as i32 != 0 {
                     b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
                 } else {
@@ -1415,7 +1422,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
                             as *const ::core::ffi::c_char,
                         c,
                         file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
-                        pid2str((*c).pid),
+                        pid2str(ctx, (*c).pid),
                         if (*c).remote() as i32 != 0 {
                             b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
                         } else {
@@ -2503,9 +2510,12 @@ unsafe fn construct_command_argv_internal(
     mut _batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    static mut sh_chars: *const ::core::ffi::c_char =
+    // Read-only tables (never reassigned): `const` avoids the `Sync` bound a
+    // `static` would need for these raw-pointer elements (each use site gets
+    // its own inlined copy — fine for tables this small that never mutate).
+    const sh_chars: *const ::core::ffi::c_char =
         b"#;\"*?[]&|<>(){}$`^~!\0" as *const u8 as *const ::core::ffi::c_char;
-    static mut sh_cmds: [*const ::core::ffi::c_char; 38] = [
+    const sh_cmds: [*const ::core::ffi::c_char; 38] = [
         b".\0" as *const u8 as *const ::core::ffi::c_char,
         b":\0" as *const u8 as *const ::core::ffi::c_char,
         b"alias\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3461,6 +3471,40 @@ mod batch_mode_shell_tests {
     #[test]
     fn batch_mode_shell_is_zero() {
         assert_eq!(batch_mode_shell, 0);
+    }
+}
+
+#[cfg(test)]
+mod pid2str_tests {
+    //! `pid2str`'s scratch buffer moved from a `static mut` to
+    //! `ctx.pidstring`; these lock in the two contract points a caller
+    //! relies on: correct digits, and a fresh call overwriting the same
+    //! buffer (the address stability that made the former static safe to
+    //! return a pointer into).
+
+    use super::pid2str;
+    use crate::execctx::{Config, ExecContext};
+
+    #[test]
+    fn formats_the_pid_as_decimal() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        // SAFETY: single-threaded test; ctx.pidstring is freshly owned.
+        let s = unsafe { core::ffi::CStr::from_ptr(pid2str(&ctx, 12345)) };
+        assert_eq!(s.to_bytes(), b"12345");
+    }
+
+    #[test]
+    fn a_later_call_overwrites_the_same_buffer() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        // SAFETY: single-threaded test; each pointer is read before the next
+        // call, matching every real call site (arg to a printf-family call).
+        unsafe {
+            let first = pid2str(&ctx, 1);
+            assert_eq!(core::ffi::CStr::from_ptr(first).to_bytes(), b"1");
+            let second = pid2str(&ctx, 22);
+            assert_eq!(first, second, "same backing buffer, per the former static's contract");
+            assert_eq!(core::ffi::CStr::from_ptr(second).to_bytes(), b"22");
+        }
     }
 }
 
