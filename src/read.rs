@@ -267,12 +267,6 @@ static mut conditionals: *mut conditionals = &raw const toplevel_conditionals as
 static DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] =
     [b"/usr/gnu/include", b"/usr/local/include", b"/usr/include"];
 pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
-/// The goals make has been asked to read/remake, accumulated in makefile order —
-/// the pointer-free replacement for the c2rust `*mut goaldep` `read_files`
-/// linked list. Each [`GoalDepNode`] owns its target (`dep.file: Option<FileId>`)
-/// and name; new goals are appended (the c2rust list pushed onto the front, so
-/// callers that want makefile order read it reversed — see `read_all_makefiles`).
-static mut read_files: Vec<crate::dep::GoalDepNode> = Vec::new();
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -335,9 +329,16 @@ pub unsafe fn read_all_makefiles(
             // The goal carries no `name`; report the resolved file's name (the
             // former `(*(*d).file)->name`). Re-intern its bytes as a cached C
             // string for the caller's `*mref` slot.
-            let name_ptr: *const ::core::ffi::c_char = if !read_files[d].dep.name.is_empty() {
-                strcache_add_bytes(ctx, read_files[d].dep.name.as_bytes())
-            } else if let Some(fid) = read_files[d].dep.file {
+            // Snapshot the two fields we need out of the `RefCell` before any
+            // further calls (`strcache_add_bytes`, file-arena lookups) so no
+            // borrow is held across them.
+            let (goal_name, goal_file) = {
+                let rf = ctx.read_files.borrow();
+                (rf[d].dep.name.clone(), rf[d].dep.file)
+            };
+            let name_ptr: *const ::core::ffi::c_char = if !goal_name.is_empty() {
+                strcache_add_bytes(ctx, goal_name.as_bytes())
+            } else if let Some(fid) = goal_file {
                 let node = ctx
                     .filenodes
                     .get(fid)
@@ -382,14 +383,15 @@ pub unsafe fn read_all_makefiles(
                 let fid = enter_file(ctx, CStr::from_ptr(*p_0).to_bytes());
                 d_0.dep.file = Some(fid);
                 d_0.dep.flags = crate::dep::DepFlags::DONTCARE;
-                read_files.push(d_0);
+                ctx.read_files.borrow_mut().push(d_0);
                 p_0 = p_0.offset(1_i32 as isize);
             }
         }
     }
     // The c2rust list pushed each new goal onto the *front*; we appended, so
     // return the goals in reverse-push order to preserve the observable order.
-    let mut goals = ::core::mem::take(&mut read_files);
+    // `RefCell::take` mirrors the former `mem::take(&mut read_files)` exactly.
+    let mut goals = ctx.read_files.take();
     goals.reverse();
     goals
 }
@@ -417,9 +419,9 @@ pub unsafe fn restore_conditionals(saved: *mut conditionals) {
     conditionals = saved;
 }
 /// Read makefile `filename` and record a goal for it. Returns the index of the
-/// goal it pushed onto `read_files` (the pointer-free replacement for returning
-/// the `*mut goaldep` node). The goal is pushed *before* reading, so any goals
-/// the nested `eval` records land after it in `read_files`.
+/// goal it pushed onto `ctx.read_files` (the pointer-free replacement for
+/// returning the `*mut goaldep` node). The goal is pushed *before* reading, so
+/// any goals the nested `eval` records land after it in `ctx.read_files`.
 unsafe fn eval_makefile(
     ctx: &crate::execctx::ExecContext,
     mut filename: *const ::core::ffi::c_char,
@@ -440,8 +442,12 @@ unsafe fn eval_makefile(
     };
     let curfile: *const Floc;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    deps_idx = read_files.len();
-    read_files.push(crate::dep::GoalDepNode::default());
+    deps_idx = {
+        let mut rf = ctx.read_files.borrow_mut();
+        let idx = rf.len();
+        rf.push(crate::dep::GoalDepNode::default());
+        idx
+    };
     ebuf.floc.filenm = filename;
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
@@ -478,10 +484,11 @@ unsafe fn eval_makefile(
             break;
         }
     }
-    read_files[deps_idx].error = *__errno_location();
-    match read_files[deps_idx].error {
+    ctx.read_files.borrow_mut()[deps_idx].error = *__errno_location();
+    let open_error = ctx.read_files.borrow()[deps_idx].error;
+    match open_error {
         EMFILE | ENFILE | ENOMEM => {
-            let err: *const ::core::ffi::c_char = strerror(read_files[deps_idx].error);
+            let err: *const ::core::ffi::c_char = strerror(open_error);
             fatal(
                 ctx,
                 reading_file,
@@ -493,7 +500,7 @@ unsafe fn eval_makefile(
         _ => {}
     }
     if ebuf.fp.is_null()
-        && read_files[deps_idx].error == ENOENT
+        && ctx.read_files.borrow()[deps_idx].error == ENOENT
         && flags as i32 & (1) << 1 != 0
         && !(*(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*filename.as_ref().expect("eval_makefile: null filename")
@@ -544,7 +551,7 @@ unsafe fn eval_makefile(
                             ctx,
                             candidate.as_os_str().as_bytes(),
                         );
-                        read_files[deps_idx].error = errno;
+                        ctx.read_files.borrow_mut()[deps_idx].error = errno;
                         break;
                     }
                 }
@@ -555,8 +562,11 @@ unsafe fn eval_makefile(
     let filename_bytes = CStr::from_ptr(filename).to_bytes();
     let file_id =
         lookup_file(ctx, filename_bytes).unwrap_or_else(|| enter_file(ctx, filename_bytes));
-    read_files[deps_idx].dep.file = Some(file_id);
-    read_files[deps_idx].dep.flags = crate::dep::DepFlags::from_bits_truncate(flags as u32);
+    {
+        let mut rf = ctx.read_files.borrow_mut();
+        rf[deps_idx].dep.file = Some(file_id);
+        rf[deps_idx].dep.flags = crate::dep::DepFlags::from_bits_truncate(flags as u32);
+    }
     // Resolved name (canonical hname) and `is_explicit` mark, under the node lock.
     let resolved_name: Vec<u8> = {
         let node = ctx
@@ -571,7 +581,7 @@ unsafe fn eval_makefile(
     filename = crate::strcache::strcache_add_bytes(ctx, &resolved_name);
     free(expanded as *mut ::core::ffi::c_void);
     if ebuf.fp.is_null() {
-        *__errno_location() = read_files[deps_idx].error;
+        *__errno_location() = ctx.read_files.borrow()[deps_idx].error;
         let node = ctx
             .filenodes
             .get(file_id)
@@ -579,7 +589,7 @@ unsafe fn eval_makefile(
         node.lock().expect("file node lock poisoned").last_mtime = NONEXISTENT_MTIME as u64;
         return deps_idx;
     }
-    read_files[deps_idx].error = 0;
+    ctx.read_files.borrow_mut()[deps_idx].error = 0;
     {
         let node = ctx
             .filenodes
@@ -1296,9 +1306,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 // Record the goal's source location (the former
                                 // `(*d)->floc = *fstart`).
                                 let (defined_in, lineno, offset) = floc_owned(fstart);
-                                read_files[d].defined_in = defined_in;
-                                read_files[d].lineno = lineno;
-                                read_files[d].offset = offset;
+                                {
+                                    let mut rf = ctx.read_files.borrow_mut();
+                                    rf[d].defined_in = defined_in;
+                                    rf[d].lineno = lineno;
+                                    rf[d].offset = offset;
+                                }
                             }
                             restore_conditionals(save);
                         }
@@ -1464,7 +1477,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 g.lineno = lineno;
                                 g.offset = offset;
                                 g.dep.file = Some(f);
-                                read_files.push(g);
+                                ctx.read_files.borrow_mut().push(g);
                             }
                         }
                     } else {
