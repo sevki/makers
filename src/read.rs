@@ -3521,16 +3521,18 @@ pub unsafe fn parse_file_seq(
     let l: size_t = (strlen(*stringp.as_ref().expect("parse_file_seq: null stringp")) as size_t)
         .wrapping_add(1);
     // Reused unquoting scratch buffer (the former `static mut tmpbuf`/
-    // `tmpbuf_len`), now owned by the per-run context so it survives the
-    // `main_0` rebuild the same way `read_dirstream_buf` does.
-    let tmpbuf: *mut ::core::ffi::c_char = if l > ctx.file_seq_tmpbuf_len.get() {
-        let grown =
-            xrealloc(ctx.file_seq_tmpbuf.get() as *mut ::core::ffi::c_void, l) as *mut ::core::ffi::c_char;
-        ctx.file_seq_tmpbuf.set(grown);
-        ctx.file_seq_tmpbuf_len.set(l);
-        grown
-    } else {
-        ctx.file_seq_tmpbuf.get()
+    // `tmpbuf_len`), now an owned `Vec<u8>` on the per-run context so it
+    // survives the `main_0` rebuild the same way `read_dirstream_buf` does.
+    // The borrow is scoped to just the grow-and-take-pointer step; the raw
+    // pointer it hands back is the sole FFI-typed value the rest of this
+    // (already raw-pointer-heavy) function works with, matching the
+    // `PidString`/`pid2str` treatment.
+    let tmpbuf: *mut ::core::ffi::c_char = {
+        let mut buf = ctx.file_seq_tmpbuf.borrow_mut();
+        if buf.len() < l as usize {
+            buf.resize(l as usize, 0);
+        }
+        buf.as_mut_ptr() as *mut ::core::ffi::c_char
     };
     tp = tmpbuf;
     p = *stringp.as_ref().expect("parse_file_seq: null stringp");
