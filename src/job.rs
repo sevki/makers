@@ -290,7 +290,7 @@ pub unsafe fn pid2str(
 static JOB_SLOTS_USED: AtomicU32 = AtomicU32::new(0);
 
 /// Number of job slots currently in use.
-pub fn job_slots_used() -> ::core::ffi::c_uint {
+pub fn job_slots_used() -> u32 {
     JOB_SLOTS_USED.load(Ordering::Relaxed)
 }
 /// The shell is always "unixy" in this POSIX port: the only writers in the C
@@ -310,7 +310,7 @@ static JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub static JOBSERVER_TOKENS: AtomicU32 = AtomicU32::new(0);
 
 /// Number of jobserver tokens currently held.
-pub fn jobserver_tokens() -> ::core::ffi::c_uint {
+pub fn jobserver_tokens() -> u32 {
     JOBSERVER_TOKENS.load(Ordering::Relaxed)
 }
 /// Safe port of make's `is_bourne_compatible_shell`: is the program named by
@@ -654,7 +654,7 @@ unsafe fn child_error(
 /// would be a data race); `Relaxed` suffices as it only gates a retry.
 static DEAD_CHILDREN: AtomicU32 = AtomicU32::new(0);
 
-fn dead_children() -> ::core::ffi::c_uint {
+fn dead_children() -> u32 {
     DEAD_CHILDREN.load(Ordering::Relaxed)
 }
 /// `SIGCHLD` handler: record a reaped child and wake any blocked jobserver
