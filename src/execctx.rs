@@ -255,7 +255,7 @@ pub struct ExecContext {
     /// `pid2str` call overwrites it — exactly the former static's contract,
     /// now with a stable address on the owned context instead of process
     /// memory. `Cell::as_ptr` hands out that address directly.
-    pub pidstring: PidString,
+    pub pid_string: PidString,
 
     /// Head of the live-children chain (`struct child` list), the former
     /// job.rs `static mut children`. Every launched recipe child is pushed
@@ -669,11 +669,12 @@ impl Default for OutputContext {
     }
 }
 
-/// Box-free `Cell<[c_char; 100]>` holding [`ExecContext::pidstring`]. Plain
+/// Box-free `Cell<[u8; 100]>` holding [`ExecContext::pid_string`]. Plain byte
 /// array, not a pointer: `Cell::as_ptr` gives `pid2str` a stable address to
-/// `sprintf` into and return, without the indirection `PtrCell` would need.
+/// `sprintf` into and return (cast to `*mut c_char` only at that FFI
+/// boundary), without the indirection `PtrCell` would need.
 #[derive(Clone)]
-pub struct PidString(pub ::core::cell::Cell<[::core::ffi::c_char; 100]>);
+pub struct PidString(pub ::core::cell::Cell<[u8; 100]>);
 
 impl Default for PidString {
     fn default() -> Self {
@@ -683,14 +684,10 @@ impl Default for PidString {
 
 impl ::core::fmt::Debug for PidString {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        let chars = self.0.get();
-        let bytes: Vec<u8> = chars
-            .iter()
-            .take_while(|&&c| c != 0)
-            .map(|&c| c as u8)
-            .collect();
+        let bytes = self.0.get();
+        let nul = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         f.debug_tuple("PidString")
-            .field(&::core::str::from_utf8(&bytes).unwrap_or("<invalid>"))
+            .field(&::core::str::from_utf8(&bytes[..nul]).unwrap_or("<invalid>"))
             .finish()
     }
 }
@@ -789,19 +786,19 @@ mod tests {
     /// address; the wrapper must round-trip bytes and keep the address
     /// stable across gets (the former static's address never moved either).
     #[test]
-    fn pidstring_round_trips_and_has_a_stable_address() {
+    fn pid_string_round_trips_and_has_a_stable_address() {
         let ctx = ExecContext::new(Config { makelevel: 0 });
-        assert_eq!(ctx.pidstring.0.get()[0], 0, "starts empty");
-        let addr = ctx.pidstring.0.as_ptr();
+        assert_eq!(ctx.pid_string.0.get()[0], 0, "starts empty");
+        let addr = ctx.pid_string.0.as_ptr();
 
-        let mut buf = ctx.pidstring.0.get();
-        buf[0] = b'4' as ::core::ffi::c_char;
-        buf[1] = b'2' as ::core::ffi::c_char;
-        ctx.pidstring.0.set(buf);
+        let mut buf = ctx.pid_string.0.get();
+        buf[0] = b'4';
+        buf[1] = b'2';
+        ctx.pid_string.0.set(buf);
 
-        assert_eq!(ctx.pidstring.0.as_ptr(), addr, "address is stable");
-        assert_eq!(ctx.pidstring.0.get()[0], b'4' as ::core::ffi::c_char);
-        assert_eq!(ctx.pidstring.0.get()[1], b'2' as ::core::ffi::c_char);
+        assert_eq!(ctx.pid_string.0.as_ptr(), addr, "address is stable");
+        assert_eq!(ctx.pid_string.0.get()[0], b'4');
+        assert_eq!(ctx.pid_string.0.get()[1], b'2');
     }
 
     /// The children and postponed-jobs chains (former job.rs `static mut
