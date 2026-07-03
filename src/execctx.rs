@@ -229,6 +229,19 @@ pub struct ExecContext {
     /// the setup writes) store it back.
     pub fatal_signal_set: FatalSignalSet,
 
+    /// Head of the live-children chain (`struct child` list), the former
+    /// job.rs `static mut children`. Every launched recipe child is pushed
+    /// here and popped by `reap_children`; the fatal-signal handler reaches
+    /// the chain through the `CTX_PTR` borrow channel (it cannot take an
+    /// `&ExecContext`), so killing and partially-built-target cleanup walk
+    /// the *live* run's children rather than a throwaway context's (#468).
+    /// Jobs only start after the `main_0` build-phase rebuild, so the chain
+    /// is empty at rebuild time and needs no carry.
+    pub children: ChildChain,
+    /// Head of the load-limited postponed-jobs chain, the former job.rs
+    /// `static mut waiting_jobs`. Shares [`Self::children`]'s lifecycle.
+    pub waiting_jobs: ChildChain,
+
     /// The directory cache's name-keyed table (`struct directory` entries), the
     /// former file-scoped `static mut dir::directories`. Owned per-run so there
     /// is no process-global hash table; `find_directory` and
@@ -574,6 +587,18 @@ impl ::core::fmt::Debug for FatalSignalSet {
     }
 }
 
+/// A `Cell<*mut child>` list head that defaults to null (an empty chain), for
+/// [`ExecContext::children`] and [`ExecContext::waiting_jobs`] — raw pointers
+/// have no `Default`.
+#[derive(Debug, Clone)]
+pub struct ChildChain(pub ::core::cell::Cell<*mut crate::job::child>);
+
+impl Default for ChildChain {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
 impl ExecContext {
     /// Build a context over the given immutable [`Config`]. Mutable per-run
     /// caches start at their zero defaults.
@@ -605,6 +630,27 @@ mod tests {
     #[test]
     fn default_makelevel_is_zero() {
         assert_eq!(ExecContext::default().makelevel(), 0);
+    }
+
+    /// The children and postponed-jobs chains (former job.rs `static mut
+    /// children`/`waiting_jobs`) start empty and are per-run mutable state:
+    /// pushing a head is observable through the shared `&ExecContext`, which
+    /// is how `start_waiting_job`/`reap_children` and the fatal-signal
+    /// handler (via the `CTX_PTR` channel) all see one chain.
+    #[test]
+    fn child_chains_start_empty_and_mutate_in_place() {
+        let ctx = ExecContext::new(Config { makelevel: 0 });
+        assert!(ctx.children.0.get().is_null());
+        assert!(ctx.waiting_jobs.0.get().is_null());
+
+        let head = 0x1000usize as *mut crate::job::child;
+        ctx.children.0.set(head);
+        ctx.waiting_jobs.0.set(head);
+        assert_eq!(ctx.children.0.get(), head);
+        assert_eq!(ctx.waiting_jobs.0.get(), head);
+        // A fresh context (a sub-build or a test double) starts with its own
+        // empty chains, not the process-wide list the statics used to share.
+        assert!(ExecContext::default().children.0.get().is_null());
     }
 
     #[test]
