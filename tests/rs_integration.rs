@@ -1962,10 +1962,26 @@ fn tree_gate_catches_mode_only_divergence() {
 /// the make process, and compares output plus the target file's fate.
 #[test]
 fn sigint_deletes_partially_built_target() {
+    compare_fatal_signal_cleanup("INT", "sigint-cleanup");
+}
+
+/// SIGTERM variant of the fatal-signal cleanup comparison. Besides the target
+/// deletion it exercises the handler's kill-the-children walk (SIGTERM is
+/// passed straight on to every live child before the delete pass), which the
+/// port used to enter without ever advancing to the next child.
+#[test]
+fn sigterm_kills_children_and_deletes_target() {
+    compare_fatal_signal_cleanup("TERM", "sigterm-cleanup");
+}
+
+/// Run both makes, interrupt each mid-recipe with `sig`, and require an
+/// identical outcome: same re-raised terminating signal, same stdout/stderr,
+/// same target-file fate.
+fn compare_fatal_signal_cleanup(sig: &str, label: &str) {
     // `Run::code` is `None` for any signal death, so the re-raised signal is
     // compared separately (Codex review): a port that cleaned up correctly but
     // re-raised the wrong signal must still fail this fixture.
-    fn interrupt_run(make_bin: &Path) -> (Run, bool, Option<i32>) {
+    fn interrupt_run(make_bin: &Path, sig: &str) -> (Run, bool, Option<i32>) {
         use std::os::unix::process::ExitStatusExt;
         let workdir = tempdir();
         std::fs::write(workdir.join("Makefile"), "slow: ; @touch slow && sleep 5\n").unwrap();
@@ -1988,10 +2004,10 @@ fn sigint_deletes_partially_built_target() {
         }
         assert!(target.exists(), "recipe never started under {make_bin:?}");
         let sent = Command::new("kill")
-            .args(["-INT", &child.id().to_string()])
+            .args([&format!("-{sig}"), &child.id().to_string()])
             .status()
             .expect("failed to spawn kill");
-        assert!(sent.success(), "kill -INT failed for {make_bin:?}");
+        assert!(sent.success(), "kill -{sig} failed for {make_bin:?}");
         let out = child.wait_with_output().expect("failed to wait for make");
         let survived = target.exists();
         let terminating_signal = out.status.signal();
@@ -2000,17 +2016,17 @@ fn sigint_deletes_partially_built_target() {
 
     let c = c_make();
     let r = PathBuf::from(RUST_MAKE);
-    let (c_run, c_survived, c_signal) = interrupt_run(&c);
-    let (r_run, r_survived, r_signal) = interrupt_run(&r);
-    // Both must die by the re-raised SIGINT; the cleanup divergence shows in
+    let (c_run, c_survived, c_signal) = interrupt_run(&c, sig);
+    let (r_run, r_survived, r_signal) = interrupt_run(&r, sig);
+    // Both must die by the re-raised signal; a cleanup divergence shows in
     // stderr and in whether the target survived.
     assert_eq!(
         c_signal, r_signal,
-        "terminating signal differs after SIGINT (C={c_signal:?}, Rust={r_signal:?})"
+        "terminating signal differs after SIG{sig} (C={c_signal:?}, Rust={r_signal:?})"
     );
-    assert_diff("sigint-cleanup", &c_run, &r_run, &c, &r);
+    assert_diff(label, &c_run, &r_run, &c, &r);
     assert_eq!(
         c_survived, r_survived,
-        "target file fate differs after SIGINT (survived: C={c_survived}, Rust={r_survived})"
+        "target file fate differs after SIG{sig} (survived: C={c_survived}, Rust={r_survived})"
     );
 }

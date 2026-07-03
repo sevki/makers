@@ -49,31 +49,6 @@ extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
     fn wait(__stat_loc: *mut i32) -> __pid_t;
     fn waitpid(__pid: __pid_t, __stat_loc: *mut i32, __options: i32) -> __pid_t;
-    fn posix_spawn(
-        __pid: *mut pid_t,
-        __path: *const ::core::ffi::c_char,
-        __file_actions: *const posix_spawn_file_actions_t,
-        __attrp: *const posix_spawnattr_t,
-        __argv: *const *mut ::core::ffi::c_char,
-        __envp: *const *mut ::core::ffi::c_char,
-    ) -> i32;
-    fn posix_spawnattr_init(__attr: *mut posix_spawnattr_t) -> i32;
-    fn posix_spawnattr_destroy(__attr: *mut posix_spawnattr_t) -> i32;
-    fn posix_spawnattr_setsigmask(
-        __attr: *mut posix_spawnattr_t,
-        __sigmask: *const sigset_t,
-    ) -> i32;
-    fn posix_spawnattr_setflags(
-        _attr: *mut posix_spawnattr_t,
-        __flags: ::core::ffi::c_short,
-    ) -> i32;
-    fn posix_spawn_file_actions_init(__file_actions: *mut posix_spawn_file_actions_t) -> i32;
-    fn posix_spawn_file_actions_destroy(__file_actions: *mut posix_spawn_file_actions_t) -> i32;
-    fn posix_spawn_file_actions_adddup2(
-        __file_actions: *mut posix_spawn_file_actions_t,
-        __fd: i32,
-        __newfd: i32,
-    ) -> i32;
 }
 pub type sigset_t = crate::make_main::SigsetT;
 pub use crate::sys_stat::stat;
@@ -234,34 +209,6 @@ impl crate::file::NextLinked for child {
         (*this).next
     }
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct posix_spawnattr_t {
-    pub __flags: ::core::ffi::c_short,
-    pub __pgrp: pid_t,
-    pub __sd: sigset_t,
-    pub __ss: sigset_t,
-    pub __sp: sched_param,
-    pub __policy: i32,
-    pub __cgroup: i32,
-    pub __pad: [i32; 15],
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct sched_param {
-    pub sched_priority: i32,
-}
-#[allow(non_camel_case_types)]
-pub type __spawn_action = ::core::ffi::c_void;
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct posix_spawn_file_actions_t {
-    pub __allocated: i32,
-    pub __used: i32,
-    pub __actions: *mut __spawn_action,
-    pub __pad: [i32; 16],
-}
 use crate::commands::{chop_commands, delete_child_targets, handling_fatal_signal};
 use crate::file::lookup_file;
 use crate::findprog::find_in_given_path;
@@ -309,8 +256,6 @@ pub static mut default_shell: *const ::core::ffi::c_char =
 pub static batch_mode_shell: i32 = 0;
 pub const S_IXUSR: i32 = __S_IEXEC;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const POSIX_SPAWN_SETSIGMASK: i32 = 0x8_i32;
-pub const POSIX_SPAWN_USEVFORK: i32 = 0x40_i32;
 pub const COMMANDS_RECURSE: i32 = 1;
 pub const COMMANDS_SILENT: i32 = 2;
 pub const NONEXISTENT_MTIME: i32 = 1;
@@ -327,7 +272,11 @@ pub unsafe fn pid2str(pid: pid_t) -> *const ::core::ffi::c_char {
     );
     &raw mut pidstring as *mut ::core::ffi::c_char
 }
-pub static mut children: *mut child = ::core::ptr::null::<child>() as *mut child;
+// The live-children chain head (former `static mut children`) and the
+// load-limited postponed-jobs chain head (former `static mut waiting_jobs`)
+// now live on the owned per-run context: `ctx.children` / `ctx.waiting_jobs`
+// (see `crate::execctx::ChildChain`). The fatal-signal handler reaches them
+// through the `CTX_PTR` borrow channel.
 /// Count of job slots currently in use. Stored in an atomic so its reads are
 /// plain safe operations; all access is single-threaded, so `Relaxed`
 /// preserves the original program order.
@@ -337,7 +286,6 @@ static JOB_SLOTS_USED: AtomicU32 = AtomicU32::new(0);
 pub fn job_slots_used() -> ::core::ffi::c_uint {
     JOB_SLOTS_USED.load(Ordering::Relaxed)
 }
-static mut waiting_jobs: *mut child = ::core::ptr::null::<child>() as *mut child;
 /// The shell is always "unixy" in this POSIX port: the only writers in the C
 /// original are W32/DOS-specific, so the value is fixed at 1 here. Keeping it
 /// an immutable `static` lets the read sites access it from safe code.
@@ -716,7 +664,9 @@ pub extern "C" fn child_handler(mut _sig: i32) {
 pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, err: i32) {
     let mut status: i32 = 0;
     let mut reap_more: i32 = 1;
-    while (!children.is_null() || shell_function_pid() != 0) && (block != 0 || reap_more != 0) {
+    while (!ctx.children.0.get().is_null() || shell_function_pid() != 0)
+        && (block != 0 || reap_more != 0)
+    {
         let mut remote: ::core::ffi::c_uint = 0;
         let mut pid: pid_t;
         let mut exit_code: i32 = 0;
@@ -752,7 +702,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         any_remote = 0;
         any_local = (shell_function_pid() != 0) as i32;
         lastc = ::core::ptr::null_mut::<child>();
-        c = children;
+        c = ctx.children.0.get();
         // Set when we find a child that already failed to launch (pid < 0);
         // otherwise we walk to the end of the list and must wait() for one.
         let mut found_bad: i32 = 0;
@@ -861,7 +811,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 break;
             } else {
                 lastc = ::core::ptr::null_mut::<child>();
-                c = children;
+                c = ctx.children.0.get();
                 while !c.is_null() {
                     if (*c).pid == pid && (*c).remote() == remote {
                         break;
@@ -1084,7 +1034,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         if let Some(lastcr) = lastc.as_mut() {
             lastcr.next = (*c).next;
         } else {
-            children = (*c).next;
+            ctx.children.0.set((*c).next);
         }
         free_child(ctx, c);
         unblock_sigs(ctx);
@@ -1447,8 +1397,8 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     );
     if (*c).remote() == 0 && (job_slots_used() > 0 && load_too_high(ctx) != 0) {
         set_file_command_state_entry(ctx, f, e, cs_running);
-        (*c).next = waiting_jobs;
-        waiting_jobs = c;
+        (*c).next = ctx.waiting_jobs.0.get();
+        ctx.waiting_jobs.0.set(c);
         return 0;
     }
     start_job_command(ctx, c);
@@ -1457,7 +1407,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     let mut finish = false;
     match file_command_state_entry(ctx, f, e) as i32 {
         2 => {
-            (*c).next = children;
+            (*c).next = ctx.children.0.get();
             if (*c).pid > 0 {
                 if 0x4_i32 & db_level() != 0 {
                     printf(
@@ -1481,7 +1431,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
                 };
                 (*c).set_jobslot(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
             }
-            children = c;
+            ctx.children.0.set(c);
             unblock_sigs(ctx);
         }
         0 => {
@@ -1759,7 +1709,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                 printf(
                     b"Need a job token; we %shave children\n\0" as *const u8
                         as *const ::core::ffi::c_char,
-                    if !children.is_null() {
+                    if !ctx.children.0.get().is_null() {
                         b"\0" as *const u8 as *const ::core::ffi::c_char
                     } else {
                         b"don't \0" as *const u8 as *const ::core::ffi::c_char
@@ -1776,7 +1726,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             if jobserver_tokens() == 0 {
                 break;
             }
-            if children.is_null() {
+            if ctx.children.0.get().is_null() {
                 fatal(
                     ctx,
                     ::core::ptr::null_mut::<Floc>(),
@@ -1786,7 +1736,10 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                     &[],
                 );
             }
-            got_token = jobserver_acquire(ctx, (waiting_jobs != NULL as *mut child) as i32) as i32;
+            got_token = jobserver_acquire(
+                ctx,
+                (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32,
+            ) as i32;
             if !(got_token == 1) {
                 continue;
             }
@@ -2204,37 +2157,15 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn start_waiting_jobs(ctx: &crate::execctx::ExecContext) {
     let mut job: *mut child;
-    if waiting_jobs.is_null() {
+    if ctx.waiting_jobs.0.get().is_null() {
         return;
     }
     loop {
         reap_children(ctx, 0, 0);
-        job = waiting_jobs;
-        waiting_jobs = (*job).next;
-        if !(start_waiting_job(ctx, job) != 0 && !waiting_jobs.is_null()) {
+        job = ctx.waiting_jobs.0.get();
+        ctx.waiting_jobs.0.set((*job).next);
+        if !(start_waiting_job(ctx, job) != 0 && !ctx.waiting_jobs.0.get().is_null()) {
             break;
-        }
-    }
-}
-/// RAII guard that runs `posix_spawnattr_destroy` on drop. Created only after a
-/// successful `posix_spawnattr_init`, so cleanup happens automatically on every
-/// exit path (replacing the C `goto`-to-cleanup dance).
-struct SpawnAttr(*mut posix_spawnattr_t);
-impl Drop for SpawnAttr {
-    fn drop(&mut self) {
-        unsafe {
-            posix_spawnattr_destroy(self.0);
-        }
-    }
-}
-/// RAII guard that runs `posix_spawn_file_actions_destroy` on drop. Declared
-/// after `SpawnAttr` so it drops first, matching the C cleanup order (file
-/// actions before attributes).
-struct SpawnFileActions(*mut posix_spawn_file_actions_t);
-impl Drop for SpawnFileActions {
-    fn drop(&mut self) {
-        unsafe {
-            posix_spawn_file_actions_destroy(self.0);
         }
     }
 }
@@ -2292,10 +2223,11 @@ pub unsafe fn child_execute_job(
     }
     pid
 }
-/// Configure a `posix_spawn` and launch `argv[0]`, looking it up on the child's
-/// PATH. Returns the spawn `errno` (0 on success) and writes the new pid into
-/// `*pid`. The attribute and file-action objects are released automatically by
-/// their RAII guards on every return path.
+/// Launch `argv[0]` via [`std::process::Command`], looking it up on the
+/// child's PATH. Returns the spawn `errno` (0 on success) and writes the new
+/// pid into `*pid`. A command that exists but is not directly executable
+/// (`ENOEXEC`) is retried as an argument to the default shell, exactly as
+/// the former `posix_spawn` version did.
 unsafe fn spawn_child(
     child: *mut childbase,
     argv: *mut *mut ::core::ffi::c_char,
@@ -2305,62 +2237,6 @@ unsafe fn spawn_child(
     pid: *mut pid_t,
     alloca_allocations: &mut Vec<Vec<u8>>,
 ) -> i32 {
-    let mut attr: posix_spawnattr_t = posix_spawnattr_t {
-        __flags: 0,
-        __pgrp: 0,
-        __sd: crate::make_main::SigsetT { __val: [0; 16] },
-        __ss: crate::make_main::SigsetT { __val: [0; 16] },
-        __sp: sched_param { sched_priority: 0 },
-        __policy: 0,
-        __cgroup: 0,
-        __pad: [0; 15],
-    };
-    let mut r = posix_spawnattr_init(&raw mut attr);
-    if r != 0 {
-        return r;
-    }
-    let _attr_guard = SpawnAttr(&raw mut attr);
-    let mut fa: posix_spawn_file_actions_t = posix_spawn_file_actions_t {
-        __allocated: 0,
-        __used: 0,
-        __actions: ::core::ptr::null_mut::<__spawn_action>(),
-        __pad: [0; 16],
-    };
-    r = posix_spawn_file_actions_init(&raw mut fa);
-    if r != 0 {
-        return r;
-    }
-    let _fa_guard = SpawnFileActions(&raw mut fa);
-    let mut mask: sigset_t = crate::make_main::SigsetT { __val: [0; 16] };
-    sigemptyset(&raw mut mask);
-    r = posix_spawnattr_setsigmask(&raw mut attr, &raw mut mask);
-    if r != 0 {
-        return r;
-    }
-    let flags: ::core::ffi::c_short =
-        (POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_USEVFORK) as ::core::ffi::c_short;
-    if fdin >= 0 && fdin != fileno(stdin) {
-        r = posix_spawn_file_actions_adddup2(&raw mut fa, fdin, fileno(stdin));
-        if r != 0 {
-            return r;
-        }
-    }
-    if fdout != fileno(stdout) {
-        r = posix_spawn_file_actions_adddup2(&raw mut fa, fdout, fileno(stdout));
-        if r != 0 {
-            return r;
-        }
-    }
-    if fderr != fileno(stderr) {
-        r = posix_spawn_file_actions_adddup2(&raw mut fa, fderr, fileno(stderr));
-        if r != 0 {
-            return r;
-        }
-    }
-    r = posix_spawnattr_setflags(&raw mut attr, flags);
-    if r != 0 {
-        return r;
-    }
     // Find PATH in the child's environment (falling back to confstr), then
     // resolve and spawn argv[0].
     let mut p: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -2400,19 +2276,7 @@ unsafe fn spawn_child(
     if cmd.is_null() {
         return *__errno_location();
     }
-    loop {
-        r = posix_spawn(
-            pid,
-            cmd,
-            &raw mut fa,
-            &raw mut attr,
-            argv,
-            (*child).environment,
-        );
-        if r != EINTR {
-            break;
-        }
-    }
+    let mut r = spawn_via_std(cmd, argv, (*child).environment, fdin, fdout, fderr, pid);
     if r == ENOEXEC {
         // Not a directly executable file: retry it as an argument to the shell.
         let mut l_0: size_t = 0;
@@ -2433,19 +2297,15 @@ unsafe fn spawn_child(
             (::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t)
                 .wrapping_mul(l_0 as size_t),
         );
-        loop {
-            r = posix_spawn(
-                pid,
-                *nargv.offset(0),
-                &raw mut fa,
-                &raw mut attr,
-                nargv,
-                (*child).environment,
-            );
-            if r != EINTR {
-                break;
-            }
-        }
+        r = spawn_via_std(
+            *nargv.offset(0),
+            nargv,
+            (*child).environment,
+            fdin,
+            fdout,
+            fderr,
+            pid,
+        );
         free(nargv as *mut ::core::ffi::c_void);
     }
     if r == 0 {
@@ -2457,6 +2317,79 @@ unsafe fn spawn_child(
         };
     }
     r
+}
+
+/// Fork and exec `file` through [`std::process::Command`], which owns the
+/// fork and the spawn-error reporting pipe. The exec itself is a verbatim
+/// `execve` in a `pre_exec` hook so the child sees make's argv and `envp`
+/// byte-identically — `Command`'s own env handling stores variables in a
+/// sorted map, which would reorder (and dedupe) the child's `environ`
+/// relative to the C oracle. `Command` empties the child's signal mask
+/// before the hook runs, matching the former `POSIX_SPAWN_SETSIGMASK`
+/// setup. Returns the spawn `errno` (0 on success) and writes the new pid
+/// into `*pid`.
+///
+/// The returned [`std::process::Child`] handle is dropped without waiting:
+/// reaping stays centralized in `reap_children`'s `wait`/`waitpid(-1)`,
+/// which is shared with `$(shell)` and remote children.
+unsafe fn spawn_via_std(
+    file: *const ::core::ffi::c_char,
+    argv: *mut *mut ::core::ffi::c_char,
+    envp: *mut *mut ::core::ffi::c_char,
+    fdin: i32,
+    fdout: i32,
+    fderr: i32,
+    pid: *mut pid_t,
+) -> i32 {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::process::CommandExt;
+    // Raw pointers are not `Send`/`Sync`, which `pre_exec`'s closure must be;
+    // they cross the fork as plain addresses (valid in the child's copied
+    // address space) and are only dereferenced there.
+    let file_addr = file as usize;
+    let argv_addr = argv as usize;
+    let envp_addr = envp as usize;
+    let stdin_fd = fileno(stdin);
+    let stdout_fd = fileno(stdout);
+    let stderr_fd = fileno(stderr);
+    let program =
+        ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(file).to_bytes());
+    let mut command = std::process::Command::new(program);
+    command.pre_exec(move || {
+        // Runs in the forked child. Route the job's stdio exactly as the
+        // former posix_spawn file actions did, then exec. On any failure the
+        // errno reaches the parent through Command's report pipe and
+        // `spawn()` returns it.
+        if fdin >= 0 && fdin != stdin_fd && libc::dup2(fdin, stdin_fd) < 0 {
+            return Err(::std::io::Error::last_os_error());
+        }
+        if fdout != stdout_fd && libc::dup2(fdout, stdout_fd) < 0 {
+            return Err(::std::io::Error::last_os_error());
+        }
+        if fderr != stderr_fd && libc::dup2(fderr, stderr_fd) < 0 {
+            return Err(::std::io::Error::last_os_error());
+        }
+        libc::execve(
+            file_addr as *const ::core::ffi::c_char,
+            argv_addr as *const *const ::core::ffi::c_char,
+            envp_addr as *const *const ::core::ffi::c_char,
+        );
+        Err(::std::io::Error::last_os_error())
+    });
+    loop {
+        match command.spawn() {
+            Ok(spawned) => {
+                *pid = spawned.id() as pid_t;
+                return 0;
+            }
+            Err(e) => {
+                let errno = e.raw_os_error().unwrap_or(libc::EINVAL);
+                if errno != EINTR {
+                    return errno;
+                }
+            }
+        }
+    }
 }
 /// # Safety
 ///
@@ -3643,5 +3576,121 @@ mod child_error_helper_tests {
         let label = unsafe { CStr::from_ptr(label) };
         assert_eq!(label.to_bytes(), b"Makefile:12");
         assert_eq!(allocations.len(), 1, "formatted label owns one buffer");
+    }
+}
+
+#[cfg(test)]
+mod spawn_via_std_tests {
+    //! The `std::process::Command` spawn path must hand the child make's argv
+    //! and `envp` verbatim (order included) plus the requested stdio routing —
+    //! that is what keeps recipe children byte-identical to the C oracle's
+    //! `posix_spawn` behavior.
+
+    use super::spawn_via_std;
+    use crate::ffi_types::pid_t;
+    use std::ffi::CString;
+
+    /// Build a NULL-terminated `char *[]` from `strings`, returning the owning
+    /// `CString`s alongside the raw array.
+    fn c_array(strings: &[&str]) -> (Vec<CString>, Vec<*mut ::core::ffi::c_char>) {
+        let owned: Vec<CString> = strings.iter().map(|s| CString::new(*s).unwrap()).collect();
+        let mut raw: Vec<*mut ::core::ffi::c_char> = owned
+            .iter()
+            .map(|c| c.as_ptr() as *mut ::core::ffi::c_char)
+            .collect();
+        raw.push(::core::ptr::null_mut());
+        (owned, raw)
+    }
+
+    /// Reap `pid` and return its exit status, retrying on EINTR.
+    fn wait_status(pid: pid_t) -> i32 {
+        let mut status: i32 = 0;
+        loop {
+            // SAFETY: plain waitpid on a child this test spawned.
+            let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if r == pid {
+                return status;
+            }
+            assert_eq!(
+                unsafe { *libc::__errno_location() },
+                libc::EINTR,
+                "waitpid failed"
+            );
+        }
+    }
+
+    /// Spawn `/usr/bin/env` with a deliberately non-sorted two-variable
+    /// environment and stdout routed to a temp file: the child must see the
+    /// variables in make's order (a sorted env map would flip them) and the
+    /// `fdout` dup2 must route its output.
+    #[test]
+    fn passes_argv_env_verbatim_and_routes_stdout() {
+        let dir = std::env::temp_dir().join(format!(
+            "spawn-via-std-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out_path = dir.join("out.txt");
+        let out_c = CString::new(out_path.to_str().unwrap()).unwrap();
+        // SAFETY: single-purpose libc/file plumbing on paths this test owns.
+        unsafe {
+            let fd = libc::open(
+                out_c.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+                0o600,
+            );
+            assert!(fd >= 0, "open temp stdout");
+            let (_argv_own, mut argv) = c_array(&["env"]);
+            let (_envp_own, mut envp) = c_array(&["Z_LATE=first", "A_EARLY=second"]);
+            let file = CString::new("/usr/bin/env").unwrap();
+            let mut pid: pid_t = -1;
+            let r = spawn_via_std(
+                file.as_ptr(),
+                argv.as_mut_ptr(),
+                envp.as_mut_ptr(),
+                -1,
+                fd,
+                libc::STDERR_FILENO,
+                &raw mut pid,
+            );
+            assert_eq!(r, 0, "spawn failed: errno {r}");
+            assert!(pid > 0, "no pid recorded");
+            let status = wait_status(pid);
+            assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
+            libc::close(fd);
+        }
+        let out = std::fs::read_to_string(&out_path).expect("read child stdout");
+        assert_eq!(
+            out, "Z_LATE=first\nA_EARLY=second\n",
+            "child env must be make's envp verbatim, in order"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A missing executable reports its errno to the caller (the parent then
+    /// prints `argv[0]: strerror(r)` and the reap path turns it into the
+    /// exit-127 handling), and the pid stays unset.
+    #[test]
+    fn reports_spawn_errno_for_missing_file() {
+        let (_argv_own, mut argv) = c_array(&["definitely-not-here"]);
+        let (_envp_own, mut envp) = c_array(&[]);
+        let file = CString::new("/nonexistent/definitely-not-here").unwrap();
+        let mut pid: pid_t = -1;
+        // SAFETY: all pointers live for the call; the spawn fails before any
+        // child outlives it.
+        let r = unsafe {
+            spawn_via_std(
+                file.as_ptr(),
+                argv.as_mut_ptr(),
+                envp.as_mut_ptr(),
+                -1,
+                libc::STDOUT_FILENO,
+                libc::STDERR_FILENO,
+                &raw mut pid,
+            )
+        };
+        assert_eq!(r, libc::ENOENT, "expected ENOENT from execve");
+        assert_eq!(pid, -1, "pid must stay unset on spawn failure");
     }
 }
