@@ -229,6 +229,27 @@ pub struct ExecContext {
     /// the setup writes) store it back.
     pub fatal_signal_set: FatalSignalSet,
 
+    /// The run's own output-sync context (the former main.rs `static mut
+    /// make_sync`): the `output` record that captures make's *own* messages
+    /// into temp files while `-O` output sync is active. Boxed so its heap
+    /// address is stable — [`Self::output_context`] captures the address
+    /// before the `main_0` build-phase context rebuild and `die` compares
+    /// against it after, so `main_0` carries the same allocation across the
+    /// rebuild rather than letting a fresh default reset it.
+    pub make_sync: MakeSync,
+
+    /// The active output-sync target (the former output.rs `static mut
+    /// output_context`): null when writes go straight to stdio, otherwise
+    /// pointing at [`Self::make_sync`] or at a running child's `output`
+    /// record. Readers and writers reach it through
+    /// [`crate::output::output_context`]/[`crate::output::set_output_context`],
+    /// which resolve the *live* context over the `CTX_PTR` borrow channel —
+    /// the printers can be handed a throwaway `ExecContext` (plugin ABI,
+    /// signal handler) and must still see the real run's sync state.
+    /// Written before the `main_0` rebuild and read after, so it is carried
+    /// across alongside [`Self::make_sync`].
+    pub output_context: OutputContext,
+
     /// Head of the live-children chain (`struct child` list), the former
     /// job.rs `static mut children`. Every launched recipe child is pushed
     /// here and popped by `reap_children`; the fatal-signal handler reaches
@@ -587,6 +608,60 @@ impl ::core::fmt::Debug for FatalSignalSet {
     }
 }
 
+/// Box-owned `Cell<output>` holding [`ExecContext::make_sync`]. The `Cell`
+/// gives the same interior mutability the other context fields use; the `Box`
+/// pins the record's address for the pointer-identity uses
+/// (`output_context == make_sync`). Defaults to the zeroed record the former
+/// `static mut` initializer produced (`output_init` configures it at
+/// startup). `Clone` allocates a fresh box — a cloned context is a new run
+/// with its own sync record, never an alias of the original's.
+#[derive(Clone)]
+pub struct MakeSync(pub Box<::core::cell::Cell<crate::output::output>>);
+
+impl MakeSync {
+    /// The stable address of the owned `output` record, for the pointer-based
+    /// `output_init`/`output_close` calls and the `output_context` identity
+    /// compare.
+    pub fn as_ptr(&self) -> *mut crate::output::output {
+        self.0.as_ptr()
+    }
+}
+
+impl Default for MakeSync {
+    fn default() -> Self {
+        Self(Box::new(::core::cell::Cell::new(crate::output::output {
+            out: 0,
+            err: 0,
+            syncout: [0; 1],
+            c2rust_padding: [0; 3],
+        })))
+    }
+}
+
+impl ::core::fmt::Debug for MakeSync {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        // `output` has no `Debug`; the descriptors and the syncout bit are
+        // the useful state.
+        let o = self.0.get();
+        f.debug_struct("MakeSync")
+            .field("out", &o.out)
+            .field("err", &o.err)
+            .field("syncout", &(o.syncout[0] & 1))
+            .finish()
+    }
+}
+
+/// A `Cell<*mut output>` that defaults to null (no active sync target), for
+/// [`ExecContext::output_context`] — raw pointers have no `Default`.
+#[derive(Debug, Clone)]
+pub struct OutputContext(pub ::core::cell::Cell<*mut crate::output::output>);
+
+impl Default for OutputContext {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
 /// A `Cell<*mut child>` list head that defaults to null (an empty chain), for
 /// [`ExecContext::children`] and [`ExecContext::waiting_jobs`] — raw pointers
 /// have no `Default`.
@@ -630,6 +705,51 @@ mod tests {
     #[test]
     fn default_makelevel_is_zero() {
         assert_eq!(ExecContext::default().makelevel(), 0);
+    }
+
+    /// `make_sync`'s address is captured by `output_context` before the
+    /// `main_0` build-phase rebuild and identity-compared after, so the
+    /// carried Box must keep pointing at the same heap record through the
+    /// `mem::take` + struct-update dance the rebuild performs. A clone, by
+    /// contrast, is a new run and must get its own record.
+    #[test]
+    fn make_sync_address_survives_the_rebuild_carry() {
+        let mut ctx = ExecContext::new(Config { makelevel: 0 });
+        let addr = ctx.make_sync.as_ptr();
+        ctx.output_context.0.set(addr);
+
+        // Mirror main_0's rebuild: take the carried fields, move them into a
+        // rebuilt context.
+        let carried_make_sync = ::core::mem::take(&mut ctx.make_sync);
+        let carried_output_context = ::core::mem::take(&mut ctx.output_context);
+        let ctx = ExecContext {
+            make_sync: carried_make_sync,
+            output_context: carried_output_context,
+            ..ExecContext::new(Config { makelevel: 2 })
+        };
+        assert_eq!(ctx.make_sync.as_ptr(), addr, "carry must not move the record");
+        assert_eq!(
+            ctx.output_context.0.get(),
+            ctx.make_sync.as_ptr(),
+            "the captured pointer still identifies the carried record"
+        );
+
+        assert_ne!(
+            ctx.clone().make_sync.as_ptr(),
+            addr,
+            "a cloned context owns a fresh record, never an alias"
+        );
+    }
+
+    /// The sync record starts as the zeroed struct the former `static mut`
+    /// initializer produced (startup's `output_init` configures it), and the
+    /// sync target starts unset.
+    #[test]
+    fn output_sync_state_starts_like_the_former_statics() {
+        let ctx = ExecContext::default();
+        let ms = ctx.make_sync.0.get();
+        assert_eq!((ms.out, ms.err, ms.syncout[0]), (0, 0, 0));
+        assert!(ctx.output_context.0.get().is_null());
     }
 
     /// The children and postponed-jobs chains (former job.rs `static mut

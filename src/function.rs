@@ -3654,8 +3654,9 @@ pub unsafe fn func_shell_base(
         return o;
     }
     crate::output::output_start(ctx);
-    errfd = if !output_context.is_null() && (*output_context).err >= 0 {
-        (*output_context).err
+    let osync = output_context();
+    errfd = if !osync.is_null() && (*osync).err >= 0 {
+        (*osync).err
     } else {
         fileno(stderr)
     };
