@@ -1485,11 +1485,11 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         &raw mut buf as *mut ::core::ffi::c_char,
         b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
         crate::version::version_string(),
-        match remote_description() {
+        match remote_description(ctx) {
             None => b"\0" as *const u8 as *const ::core::ffi::c_char,
             Some(_) => b"-\0" as *const u8 as *const ::core::ffi::c_char,
         },
-        match remote_description() {
+        match remote_description(ctx) {
             None => b"\0" as *const u8 as *const ::core::ffi::c_char,
             Some(desc) => desc.as_ptr(),
         },

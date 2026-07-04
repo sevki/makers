@@ -1833,7 +1833,7 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
     let mut cpp: *const *const ::core::ffi::c_char;
     let usageto: *mut FILE;
     if options.print_version.get() {
-        print_version();
+        print_version(ctx);
         fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
     }
     usageto = if bad != 0 { stderr } else { stdout };
@@ -1847,7 +1847,7 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
         fputs(*cpp, usageto);
         cpp = cpp.offset(1_i32 as isize);
     }
-    match remote_description() {
+    match remote_description(ctx) {
         None => {
             fprintf(
                 usageto,
@@ -2201,7 +2201,7 @@ unsafe fn main_0(
         print_usage(&ctx, &options, 0);
     }
     if options.print_version.get() {
-        print_version();
+        print_version(&ctx);
         die(&ctx, MAKE_SUCCESS);
     }
     setvbuf(
@@ -2370,7 +2370,7 @@ unsafe fn main_0(
         options.no_builtin_rules.set(true);
     }
     if 0x1_i32 & db_level() != 0 {
-        print_version();
+        print_version(&ctx);
         fflush(stdout);
     }
     if current_directory[0_i32 as usize] as i32 != 0
@@ -2947,7 +2947,7 @@ unsafe fn main_0(
             }
         }
     }
-    remote_setup();
+    remote_setup(&ctx);
     set_output_context(::core::ptr::null_mut::<output>());
     crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level() != 0 {
@@ -4714,7 +4714,7 @@ pub fn should_print_dir(ctx: &crate::execctx::ExecContext, options: &Options) ->
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_version() {
+pub unsafe fn print_version(ctx: &crate::execctx::ExecContext) {
     static PRINTED_VERSION: AtomicBool = AtomicBool::new(false);
     let precede: *const ::core::ffi::c_char = if opt_print_data_base() {
         b"# \0" as *const u8 as *const ::core::ffi::c_char
@@ -4729,7 +4729,7 @@ pub unsafe fn print_version() {
         precede,
         crate::version::version_string(),
     );
-    match remote_description() {
+    match remote_description(ctx) {
         None => {
             printf(
                 b"%sBuilt for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4766,7 +4766,7 @@ pub unsafe fn print_version() {
 pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx).0))
         .expect("formatted timestamp never contains an interior NUL");
-    print_version();
+    print_version(ctx);
     printf(
         b"\n# Make data base, printed on %s\n\0" as *const u8 as *const ::core::ffi::c_char,
         stamp.as_ptr(),
@@ -4838,14 +4838,14 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
     if !DYING.swap(true, Ordering::Relaxed) {
         let err: i32;
         if opt_print_version() {
-            print_version();
+            print_version(ctx);
         }
         temp_stdin_unlink(ctx);
         err = (status != 0) as i32;
         while job_slots_used(ctx) > 0 {
             reap_children(ctx, 1, err);
         }
-        remote_cleanup();
+        remote_cleanup(ctx);
         remove_intermediates(ctx, 0);
         if opt_print_data_base() {
             print_data_base(ctx);

@@ -67,25 +67,26 @@ impl RemoteBackend for StubRemote {
     }
 }
 
-static REMOTE: StubRemote = StubRemote;
+type Ctx = crate::execctx::ExecContext;
 
-pub fn remote_setup() {
-    REMOTE.setup();
+pub fn remote_setup(ctx: &Ctx) {
+    ctx.remote_backend.0.setup();
 }
 
-pub fn remote_cleanup() {
-    REMOTE.cleanup();
+pub fn remote_cleanup(ctx: &Ctx) {
+    ctx.remote_backend.0.cleanup();
 }
 
-pub fn remote_description() -> Option<&'static ::core::ffi::CStr> {
-    REMOTE.description()
+pub fn remote_description(ctx: &Ctx) -> Option<&'static ::core::ffi::CStr> {
+    ctx.remote_backend.0.description()
 }
 
-pub fn start_remote_job_p(first_p: i32) -> i32 {
-    REMOTE.can_start_job(first_p != 0) as i32
+pub fn start_remote_job_p(ctx: &Ctx, first_p: i32) -> i32 {
+    ctx.remote_backend.0.can_start_job(first_p != 0) as i32
 }
 
 pub fn start_remote_job(
+    ctx: &Ctx,
     argv: *mut *mut ::core::ffi::c_char,
     envp: *mut *mut ::core::ffi::c_char,
     stdin_fd: i32,
@@ -93,21 +94,29 @@ pub fn start_remote_job(
     id_ptr: *mut pid_t,
     used_stdin: *mut i32,
 ) -> i32 {
-    REMOTE.start_job(argv, envp, stdin_fd, is_remote, id_ptr, used_stdin)
+    ctx.remote_backend
+        .0
+        .start_job(argv, envp, stdin_fd, is_remote, id_ptr, used_stdin)
 }
 
-pub fn remote_status(exit_code: *mut i32, signal: *mut i32, coredump: *mut i32, block: i32) -> i32 {
-    REMOTE.status(exit_code, signal, coredump, block != 0)
+pub fn remote_status(
+    ctx: &Ctx,
+    exit_code: *mut i32,
+    signal: *mut i32,
+    coredump: *mut i32,
+    block: i32,
+) -> i32 {
+    ctx.remote_backend.0.status(exit_code, signal, coredump, block != 0)
 }
 
-pub fn block_remote_children() {
-    REMOTE.block_children();
+pub fn block_remote_children(ctx: &Ctx) {
+    ctx.remote_backend.0.block_children();
 }
 
-pub fn unblock_remote_children() {
-    REMOTE.unblock_children();
+pub fn unblock_remote_children(ctx: &Ctx) {
+    ctx.remote_backend.0.unblock_children();
 }
 
-pub fn remote_kill(id: pid_t, sig: i32) -> i32 {
-    REMOTE.kill(id, sig)
+pub fn remote_kill(ctx: &Ctx, id: pid_t, sig: i32) -> i32 {
+    ctx.remote_backend.0.kill(id, sig)
 }

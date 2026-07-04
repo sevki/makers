@@ -187,6 +187,14 @@ pub struct ExecContext {
     /// (never freed, matching the former static's lifetime).
     pub tmpdir: PtrCell,
 
+    /// The remote-execution backend (the former `remote_stub.rs` `static
+    /// REMOTE: StubRemote` singleton). Owned per-context instead of a process
+    /// global so a future multi-tenant host can run different backends (or
+    /// differently configured ones) per session. Defaults to the
+    /// never-remote [`crate::remote_stub::StubRemote`]; cheap to clone (an
+    /// `Arc` bump) since [`ExecContext`] itself derives `Clone`.
+    pub remote_backend: RemoteBackendCell,
+
     /// Make's recorded starting working directory (after any `-C` chdirs), the
     /// former main.rs `pub static mut starting_directory` — read by the
     /// `Entering/Leaving directory` lines and `$(abspath)`. Null when `getcwd`
@@ -702,6 +710,28 @@ pub struct MutPtrCell(pub ::core::cell::Cell<*mut ::core::ffi::c_char>);
 impl Default for MutPtrCell {
     fn default() -> Self {
         MutPtrCell(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+/// An `Arc<dyn RemoteBackend>` that defaults to the stub backend — trait
+/// objects have no `Default`, so `ExecContext`'s derive needs the wrapper.
+/// `Arc` (rather than `Box`) so cloning `ExecContext` is a cheap refcount
+/// bump instead of requiring `RemoteBackend: Clone` (which trait objects
+/// can't derive).
+#[derive(Clone)]
+pub struct RemoteBackendCell(
+    pub ::std::sync::Arc<dyn crate::remote_stub::RemoteBackend + Send + Sync>,
+);
+
+impl Default for RemoteBackendCell {
+    fn default() -> Self {
+        Self(::std::sync::Arc::new(crate::remote_stub::StubRemote))
+    }
+}
+
+impl ::core::fmt::Debug for RemoteBackendCell {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("RemoteBackendCell").finish_non_exhaustive()
     }
 }
 

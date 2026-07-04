@@ -736,6 +736,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         if found_bad == 0 {
             if any_remote != 0 {
                 pid = crate::remote_stub::remote_status(
+                    ctx,
                     &raw mut exit_code,
                     &raw mut exit_sig,
                     &raw mut coredump,
@@ -783,6 +784,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         break;
                     }
                     pid = crate::remote_stub::remote_status(
+                        ctx,
                         &raw mut exit_code,
                         &raw mut exit_sig,
                         &raw mut coredump,
@@ -982,7 +984,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         crate::output::output_dump(ctx, &raw mut (*c).output);
                     }
                     (*c).set_remote(
-                        crate::remote_stub::start_remote_job_p(0) as ::core::ffi::c_uint
+                        crate::remote_stub::start_remote_job_p(ctx, 0) as ::core::ffi::c_uint
                             as ::core::ffi::c_uint,
                     );
                     start_job_command(ctx, c);
@@ -1318,6 +1320,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     let mut used_stdin: i32 = 0;
                     let mut id: pid_t = 0;
                     if crate::remote_stub::start_remote_job(
+                        ctx,
                         argv,
                         (*child).environment,
                         if (*child).good_stdin() as i32 != 0 {
@@ -1388,7 +1391,8 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     let f: FileId = (*c).file;
     let e: usize = (*c).entry;
     (*c).set_remote(
-        crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
+        crate::remote_stub::start_remote_job_p(ctx, 1) as ::core::ffi::c_uint
+            as ::core::ffi::c_uint,
     );
     if (*c).remote() == 0 && (job_slots_used(ctx) > 0 && load_too_high(ctx) != 0) {
         set_file_command_state_entry(ctx, f, e, cs_running);
