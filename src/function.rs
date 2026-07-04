@@ -11,7 +11,7 @@ use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
 use libc::{__errno_location, abort, close, free, pipe, printf, remove, sprintf, strerror, strstr};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
     static mut stdout: *mut FILE;
@@ -3405,71 +3405,52 @@ unsafe fn fold_newlines(buffer: *mut ::core::ffi::c_char, length: *mut size_t, t
     buf[new_len] = 0;
     *length = new_len as size_t;
 }
-/// PID of the running `$(shell)` child, or `0` when none. Written in the
-/// `$(shell)` path and by the `shell_completed` reaper callback, and read by
-/// `reap_children` (reached from the `SIGCHLD` handler), so it is shared with a
-/// signal-adjacent reader — an atomic gives that sharing defined semantics.
-pub static SHELL_FUNCTION_PID: AtomicI32 = AtomicI32::new(0);
-
 /// Read the running `$(shell)` child's PID (`0` when none).
-pub fn shell_function_pid() -> pid_t {
-    SHELL_FUNCTION_PID.load(Ordering::Relaxed)
+pub fn shell_function_pid(ctx: &crate::execctx::ExecContext) -> pid_t {
+    ctx.shell_function_pid.0.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
 mod shell_function_pid_tests {
     use super::*;
 
-    /// `shell_function_pid()` reflects the `SHELL_FUNCTION_PID` atomic: `0` when
-    /// no `$(shell)` child is running, the PID while one is. Restores the prior
-    /// value so the global stays isolated from other tests.
+    /// `shell_function_pid()` reflects `ExecContext::shell_function_pid`: `0`
+    /// when no `$(shell)` child is running, the PID while one is.
     #[test]
     fn accessor_tracks_atomic() {
-        let saved = SHELL_FUNCTION_PID.load(Ordering::Relaxed);
+        let ctx = crate::execctx::ExecContext::default();
 
-        SHELL_FUNCTION_PID.store(0, Ordering::Relaxed);
-        assert_eq!(shell_function_pid(), 0, "no child running");
+        assert_eq!(shell_function_pid(&ctx), 0, "no child running");
 
-        SHELL_FUNCTION_PID.store(4242, Ordering::Relaxed);
-        assert_eq!(shell_function_pid(), 4242, "reflects the running PID");
-
-        SHELL_FUNCTION_PID.store(saved, Ordering::Relaxed);
+        ctx.shell_function_pid.0.store(4242, Ordering::Relaxed);
+        assert_eq!(shell_function_pid(&ctx), 4242, "reflects the running PID");
     }
 }
-/// Set by the `$(shell)` child's reaper callback ([`shell_completed`], which is
-/// also reached from the `SIGCHLD` handler) and spin-waited on by `func_shell`,
-/// so it is shared between a signal-adjacent writer and the main flow. An atomic
-/// gives that sharing defined semantics (and keeps the spin-loop's load from
-/// being hoisted) — the original `static mut` had neither.
-static SHELL_FUNCTION_COMPLETED: AtomicI32 = AtomicI32::new(0);
 
 /// Read the `$(shell)` completion flag: `0` while the child is still running,
 /// `1` on success, `-1` when the shell could not be started.
-fn shell_function_completed() -> i32 {
-    SHELL_FUNCTION_COMPLETED.load(Ordering::Relaxed)
+fn shell_function_completed(ctx: &crate::execctx::ExecContext) -> i32 {
+    ctx.shell_function_completed.0.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
 mod shell_function_completed_tests {
     use super::*;
 
-    /// `shell_function_completed()` reflects the `SHELL_FUNCTION_COMPLETED`
-    /// atomic across the three states the reaper callback can leave it in.
-    /// Restores the prior value so the global stays isolated from other tests.
+    /// `shell_function_completed()` reflects
+    /// `ExecContext::shell_function_completed` across the three states the
+    /// reaper callback can leave it in.
     #[test]
     fn accessor_tracks_atomic() {
-        let saved = SHELL_FUNCTION_COMPLETED.load(Ordering::Relaxed);
+        let ctx = crate::execctx::ExecContext::default();
 
-        SHELL_FUNCTION_COMPLETED.store(0, Ordering::Relaxed);
-        assert_eq!(shell_function_completed(), 0, "pending");
+        assert_eq!(shell_function_completed(&ctx), 0, "pending");
 
-        SHELL_FUNCTION_COMPLETED.store(1, Ordering::Relaxed);
-        assert_eq!(shell_function_completed(), 1, "completed ok");
+        ctx.shell_function_completed.0.store(1, Ordering::Relaxed);
+        assert_eq!(shell_function_completed(&ctx), 1, "completed ok");
 
-        SHELL_FUNCTION_COMPLETED.store(-1, Ordering::Relaxed);
-        assert_eq!(shell_function_completed(), -1, "failed to start");
-
-        SHELL_FUNCTION_COMPLETED.store(saved, Ordering::Relaxed);
+        ctx.shell_function_completed.0.store(-1, Ordering::Relaxed);
+        assert_eq!(shell_function_completed(&ctx), -1, "failed to start");
     }
 }
 /// # Safety
@@ -3482,11 +3463,11 @@ pub unsafe fn shell_completed(
     exit_sig: i32,
 ) {
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
-    SHELL_FUNCTION_PID.store(0, Ordering::Relaxed);
+    ctx.shell_function_pid.0.store(0, Ordering::Relaxed);
     if exit_sig == 0 && exit_code == 127 {
-        SHELL_FUNCTION_COMPLETED.store(-1_i32, Ordering::Relaxed);
+        ctx.shell_function_completed.0.store(-1_i32, Ordering::Relaxed);
     } else {
-        SHELL_FUNCTION_COMPLETED.store(1, Ordering::Relaxed);
+        ctx.shell_function_completed.0.store(1, Ordering::Relaxed);
     }
     if exit_code == 0 && exit_sig > 0 {
         exit_code = 128 + exit_sig;
@@ -3681,14 +3662,14 @@ pub unsafe fn func_shell_base(
         if pid < 0 {
             shell_completed(ctx, 127, 0);
         } else {
-            SHELL_FUNCTION_PID.store(pid, Ordering::Relaxed);
-            SHELL_FUNCTION_COMPLETED.store(0, Ordering::Relaxed);
+            ctx.shell_function_pid.0.store(pid, Ordering::Relaxed);
+            ctx.shell_function_completed.0.store(0, Ordering::Relaxed);
             if pipedes[1_i32 as usize] >= 0 {
                 close(pipedes[1_i32 as usize]);
             }
             let (mut buffer, mut i) = read_all_pipe(pipedes[0_i32 as usize]);
             close(pipedes[0_i32 as usize]);
-            while shell_function_completed() == 0 {
+            while shell_function_completed(ctx) == 0 {
                 reap_children(ctx, 1, 0);
             }
             if !batch_filename.is_null() {
@@ -3703,7 +3684,7 @@ pub unsafe fn func_shell_base(
                 remove(batch_filename);
                 free(batch_filename as *mut ::core::ffi::c_void);
             }
-            SHELL_FUNCTION_PID.store(0, Ordering::Relaxed);
+            ctx.shell_function_pid.0.store(0, Ordering::Relaxed);
             fold_newlines(
                 buffer.as_mut_ptr() as *mut ::core::ffi::c_char,
                 &raw mut i,

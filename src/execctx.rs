@@ -445,6 +445,23 @@ pub struct ExecContext {
     /// several sessions must not have one session's fatal signal look like
     /// another's.
     pub handling_fatal_signal: AtomicBoolCell,
+
+    /// PID of the running `$(shell)` child, or `0` when none, the former
+    /// `function.rs` `static SHELL_FUNCTION_PID` atomic. Written by
+    /// `func_shell_base` and by the `shell_completed` reaper callback, and
+    /// read by `reap_children`, both of which run from `fatal_error_signal`
+    /// as well as the ordinary build loop — same signal-reentrancy rationale
+    /// as [`Self::dead_children`], and same multi-tenant isolation rationale
+    /// as [`Self::handling_fatal_signal`].
+    pub shell_function_pid: AtomicI32Cell,
+
+    /// The `$(shell)` completion flag: `0` while the child is still running,
+    /// `1` on success, `-1` when the shell could not be started, the former
+    /// `function.rs` `static SHELL_FUNCTION_COMPLETED` atomic. Set by
+    /// `shell_completed` and spin-waited on by `func_shell_base`. Same
+    /// signal-reentrancy and multi-tenant isolation rationale as
+    /// [`Self::shell_function_pid`].
+    pub shell_function_completed: AtomicI32Cell,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -513,6 +530,19 @@ pub struct AtomicBoolCell(pub ::core::sync::atomic::AtomicBool);
 impl Clone for AtomicBoolCell {
     fn clone(&self) -> Self {
         Self(::core::sync::atomic::AtomicBool::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// The signed-`i32` counterpart of [`AtomicU32Cell`], for values like a PID
+/// or a tri-state completion flag that are naturally signed.
+#[derive(Debug, Default)]
+pub struct AtomicI32Cell(pub ::core::sync::atomic::AtomicI32);
+
+impl Clone for AtomicI32Cell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicI32::new(
             self.0.load(::core::sync::atomic::Ordering::Relaxed),
         ))
     }
