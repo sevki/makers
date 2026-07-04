@@ -659,7 +659,7 @@ pub extern "C" fn child_handler(mut _sig: i32) {
 pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, err: i32) {
     let mut status: i32 = 0;
     let mut reap_more: i32 = 1;
-    while (!ctx.children.0.get().is_null() || shell_function_pid() != 0)
+    while (!ctx.children.0.get().is_null() || shell_function_pid(ctx) != 0)
         && (block != 0 || reap_more != 0)
     {
         let mut remote: ::core::ffi::c_uint = 0;
@@ -695,7 +695,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             ctx.dead_children.0.fetch_sub(1, Ordering::Relaxed);
         }
         any_remote = 0;
-        any_local = (shell_function_pid() != 0) as i32;
+        any_local = (shell_function_pid(ctx) != 0) as i32;
         lastc = ::core::ptr::null_mut::<child>();
         c = ctx.children.0.get();
         // Set when we find a child that already failed to launch (pid < 0);
@@ -803,7 +803,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 }
             }
             crate::make_main::bump_command_count();
-            if remote == 0 && pid == shell_function_pid() {
+            if remote == 0 && pid == shell_function_pid(ctx) {
                 shell_completed(ctx, exit_code, exit_sig);
                 break;
             } else {
