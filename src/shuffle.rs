@@ -81,16 +81,19 @@ fn make_seed(ctx: &crate::execctx::ExecContext, seed: u32) {
     ctx.shuffle.set(cfg);
 }
 
+/// Combine a timestamp and PID into an initial PRNG seed. Pulled out of
+/// `make_rand` so the XOR mixing can be pinned by a test with fixed inputs
+/// (the real call site reads the live clock/PID, which can't be pinned).
+fn initial_seed(time: libc::time_t, pid: libc::time_t) -> u32 {
+    ((time ^ pid) as u32).wrapping_add(1)
+}
+
 /// Return the next value from the xorshift PRNG, self-seeding from the time
 /// and PID on first use.
 fn make_rand(ctx: &crate::execctx::ExecContext) -> u32 {
     let mut cfg = ctx.shuffle.get();
     let mut next = if cfg.prng == 0 {
-        unsafe {
-            ((libc::time(::core::ptr::null_mut()) ^ crate::misc::make_pid() as libc::time_t)
-                as u32)
-                .wrapping_add(1)
-        }
+        unsafe { initial_seed(libc::time(::core::ptr::null_mut()), crate::misc::make_pid() as libc::time_t) }
     } else {
         cfg.prng
     };
@@ -291,6 +294,14 @@ mod tests {
         assert_eq!(make_rand(&ctx), 3336926330);
         assert_eq!(make_rand(&ctx), 1697253807);
         assert_eq!(make_rand(&ctx), 2816511904);
+    }
+
+    /// Pins the exact XOR mixing of time/PID into the self-seed, so
+    /// replacing `^` with `|` or `&` (which still yields *some* seed, just
+    /// the wrong one) is caught.
+    #[test]
+    fn initial_seed_mixes_time_and_pid_with_xor() {
+        assert_eq!(initial_seed(0x1234_5678, 0x0000_00ff), 0x1234_5688);
     }
 
     /// Pins `random_shuffle`'s exact permutation for a known seed, so
