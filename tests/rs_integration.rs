@@ -1695,6 +1695,20 @@ fn origin_environment_variable() {
     );
 }
 
+#[test]
+#[ignore = "known divergence #484: $< for a resolved -lNAME prerequisite stays unresolved"]
+fn library_search_lpatterns_and_fallback_dirs() {
+    // `-lNAME` prerequisite resolution (`library_search`): `prog`'s `-lfoo`
+    // resolves via the plain relative name (`libfoo.a`, created at parse
+    // time), while `missing`'s `-l...` prerequisite is never found anywhere
+    // and falls through to the fixed system directories — the branch that
+    // populates and grows the search-path cache (formerly function-local
+    // `static mut buf`/`buflen`/`libdir_maxlen`/`std_dirs`, now owned on
+    // `ExecContext`). Exercising both in one run also grows the cache's
+    // buffer between calls (a longer library name the second time).
+    check("library-search", "93_library_search.mk", "all", &[]);
+}
+
 /// Pins the `Entering/Leaving directory` traces, which the main harness
 /// (`run`/`check`) can never see: it passes `--no-print-directory` on every
 /// invocation to keep tempdir paths out of the compared output. That blind

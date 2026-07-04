@@ -6,7 +6,7 @@ use crate::file::{
     cs_deps_running, cs_finished, cs_not_started, cs_running, us_failed, us_none, us_question,
     us_success, CommandState, UpdateStatus, VariableSet, VariableSetList,
 };
-use crate::misc::{find_next_token, print_spaces, xmalloc, xrealloc};
+use crate::misc::{find_next_token, print_spaces};
 use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
@@ -2543,7 +2543,7 @@ unsafe extern "C" fn library_search(
     mut lib: *const ::core::ffi::c_char,
     mtime_ptr: *mut uintmax_t,
 ) -> *const ::core::ffi::c_char {
-    static mut dirs: [*const ::core::ffi::c_char; 4] = [
+    const dirs: [*const ::core::ffi::c_char; 4] = [
         b"/lib\0" as *const u8 as *const ::core::ffi::c_char,
         b"/usr/lib\0" as *const u8 as *const ::core::ffi::c_char,
         LIBDIR.as_ptr(),
@@ -2572,11 +2572,6 @@ unsafe extern "C" fn library_search(
         if p.is_null() {
             break;
         }
-        static mut buf: *mut ::core::ffi::c_char =
-            ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
-        static mut buflen: size_t = 0;
-        static mut libdir_maxlen: size_t = 0;
-        static mut std_dirs: ::core::ffi::c_uint = 0;
         let libbuf: *mut ::core::ffi::c_char;
         let c: ::core::ffi::c_char = *p.offset(len as isize);
         let p3: *mut ::core::ffi::c_char;
@@ -2640,29 +2635,29 @@ unsafe extern "C" fn library_search(
                         *mtime_ptr = mtime;
                     }
                 }
-                if buflen == 0 {
-                    dp = &raw const dirs as *const *const ::core::ffi::c_char;
+                let mut cache = ctx.library_search_cache.borrow_mut();
+                if cache.buflen == 0 {
+                    dp = dirs.as_ptr();
                     while !(*dp).is_null() {
                         let l: size_t = strlen(*dp) as size_t;
-                        if l > libdir_maxlen {
-                            libdir_maxlen = l;
+                        if l > cache.libdir_maxlen {
+                            cache.libdir_maxlen = l;
                         }
-                        std_dirs = std_dirs.wrapping_add(1);
+                        cache.std_dirs = cache.std_dirs.wrapping_add(1);
                         dp = dp.offset(1_i32 as isize);
                     }
-                    buflen = strlen(libbuf) as size_t;
-                    buf = xmalloc(libdir_maxlen.wrapping_add(buflen).wrapping_add(2))
-                        as *mut ::core::ffi::c_char;
-                } else if buflen < strlen(libbuf) {
-                    buflen = strlen(libbuf) as size_t;
-                    buf = xrealloc(
-                        buf as *mut ::core::ffi::c_void,
-                        libdir_maxlen.wrapping_add(buflen).wrapping_add(2),
-                    ) as *mut ::core::ffi::c_char;
+                    cache.buflen = strlen(libbuf) as size_t;
+                    let want = cache.libdir_maxlen.wrapping_add(cache.buflen).wrapping_add(2);
+                    cache.buf.resize(want, 0);
+                } else if cache.buflen < strlen(libbuf) {
+                    cache.buflen = strlen(libbuf) as size_t;
+                    let want = cache.libdir_maxlen.wrapping_add(cache.buflen).wrapping_add(2);
+                    cache.buf.resize(want, 0);
                 }
+                let buf = cache.buf.as_mut_ptr() as *mut ::core::ffi::c_char;
                 let mut vpath_index_0: ::core::ffi::c_uint =
-                    (!(0_i32 as ::core::ffi::c_uint)).wrapping_sub(std_dirs);
-                dp = &raw const dirs as *const *const ::core::ffi::c_char;
+                    (!(0_i32 as ::core::ffi::c_uint)).wrapping_sub(cache.std_dirs);
+                dp = dirs.as_ptr();
                 while !(*dp).is_null() {
                     sprintf(
                         buf,
@@ -2683,6 +2678,7 @@ unsafe extern "C" fn library_search(
                     vpath_index_0 = vpath_index_0.wrapping_add(1);
                     dp = dp.offset(1_i32 as isize);
                 }
+                drop(cache);
             }
         }
     }

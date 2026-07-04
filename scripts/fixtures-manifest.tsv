@@ -115,3 +115,4 @@ oneshell	ordered	29_oneshell.mk	all
 origin-flavor	ordered	92_origin_flavor.mk	all	CMDLINE_VAR=cli-value	known divergence #459: $(flavor) of automatic variables is 'recursive', oracle says 'simple'
 jobserver_parallel	unordered_stdout_only	10_jobs.mk	all	-j4	
 job_slots_capped_parallel	unordered_stdout_only	20_job_slots.mk	all	-j3	
+library-search	ordered	93_library_search.mk	all		known divergence #484: $< for a resolved -lNAME prerequisite stays unresolved

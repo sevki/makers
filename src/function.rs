@@ -4312,7 +4312,7 @@ const fn ft_entry_safe(
     }
 }
 
-static mut function_table_init: [function_table_entry; 38] = [
+const function_table_init: [function_table_entry; 38] = [
     ft_entry_safe(b"abspath\0", 0, 1, 1, func_abspath),
     ft_entry_safe(b"addprefix\0", 2, 2, 1, func_addsuffix_addprefix),
     ft_entry_safe(b"addsuffix\0", 2, 2, 1, func_addsuffix_addprefix),
@@ -4830,7 +4830,7 @@ pub unsafe fn hash_init_function_table() {
     );
     hash_load(
         &raw mut function_table,
-        &raw const function_table_init as *const function_table_entry as *const ::core::ffi::c_void,
+        function_table_init.as_ptr() as *const ::core::ffi::c_void,
         (::core::mem::size_of::<[function_table_entry; 38]>() as ::core::ffi::c_ulong)
             .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong),
         ::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong,
@@ -4847,12 +4847,7 @@ mod ft_init_tests {
     /// crate's expected encoding.
     #[test]
     fn bitfield_byte_matches_getters() {
-        let entries = unsafe {
-            std::slice::from_raw_parts(
-                (&raw const function_table_init).cast::<function_table_entry>(),
-                38,
-            )
-        };
+        let entries = unsafe { std::slice::from_raw_parts(function_table_init.as_ptr(), 38) };
         for (i, e) in entries.iter().enumerate() {
             let byte = e.expand_args_alloc_fn_adds_command[0];
             let exp = e.expand_args();
