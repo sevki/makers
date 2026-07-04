@@ -289,9 +289,7 @@ use crate::file::{
 };
 use crate::function::hash_init_function_table;
 use crate::guile::guile_gmake_setup;
-use crate::job::{
-    child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children, JOBSERVER_TOKENS,
-};
+use crate::job::{child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children};
 use crate::load::load_file;
 use crate::misc::concat;
 pub use crate::output::output;
@@ -2317,6 +2315,11 @@ unsafe fn main_0(
     // The program name is derived from argv[0] at startup and prefixes every
     // message for the rest of the run.
     let carried_program = ::core::mem::take(&mut ctx.program);
+    // Computed once at startup by the unconditional `get_tmpdir` call above;
+    // carrying it avoids re-probing the environment (and re-warning about an
+    // invalid MAKE_TMPDIR/TMPDIR) for temp-file users that run after this
+    // rebuild (get_tmpfile for `-f -`, jobserver_setup, output sync).
+    let carried_tmpdir = ::core::mem::take(&mut ctx.tmpdir);
     // SHELL was recorded from the environment scan above and is appended to
     // child environments during the build; the command-variable list is built
     // as argv/`MAKEFLAGS` switches are decoded (both before and after this
@@ -2342,6 +2345,7 @@ unsafe fn main_0(
         temp_stdin_name: carried_temp_stdin,
         directory_before_chdir: carried_dir_before_chdir,
         program: carried_program,
+        tmpdir: carried_tmpdir,
         shell_var: carried_shell_var,
         command_variables: carried_command_variables,
         fatal_signal_set: carried_fatal_signal_set,
@@ -4779,7 +4783,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
-    if jobserver_enabled() != 0 && jobserver_tokens() != 0 {
+    if jobserver_enabled() != 0 && jobserver_tokens(ctx) != 0 {
         if status != 2 {
             error(
                 ctx,
@@ -4787,12 +4791,12 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
                 INTSTR_LENGTH,
                 b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
                     as *const ::core::ffi::c_char,
-                &[FmtArg::Uint((jobserver_tokens()) as u32 as u64)],
+                &[FmtArg::Uint(jobserver_tokens(ctx) as u64)],
             );
         } else {
             loop {
-                JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
-                if jobserver_tokens() == 0 {
+                ctx.jobserver_tokens.0.fetch_sub(1, Ordering::Relaxed);
+                if jobserver_tokens(ctx) == 0 {
                     break;
                 }
                 jobserver_release(ctx, 0);
@@ -4832,7 +4836,7 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
         }
         temp_stdin_unlink(ctx);
         err = (status != 0) as i32;
-        while job_slots_used() > 0 {
+        while job_slots_used(ctx) > 0 {
             reap_children(ctx, 1, err);
         }
         remote_cleanup();
@@ -6347,8 +6351,6 @@ mod should_print_dir_diff_tests {
 #[cfg(test)]
 mod clean_jobserver_tests {
     use super::{clean_jobserver, install_default_options_for_test, with_options};
-    use crate::job::JOBSERVER_TOKENS;
-    use std::sync::atomic::Ordering;
 
     /// The quiet end-of-run path a normal build takes: no live jobserver, no
     /// held tokens, no master slot count. The auth mirror is still cleared
@@ -6356,9 +6358,9 @@ mod clean_jobserver_tests {
     #[test]
     fn clears_auth_when_no_jobserver_and_no_master_slots() {
         install_default_options_for_test();
+        // A fresh `ExecContext` starts with zero jobserver tokens, so unlike
+        // the former global counter there is nothing to reset up front.
         let ctx = crate::execctx::ExecContext::default();
-        let saved = JOBSERVER_TOKENS.load(Ordering::Relaxed);
-        JOBSERVER_TOKENS.store(0, Ordering::Relaxed);
         with_options(|o| {
             o.master_job_slots.set(0);
             *o.jobserver_auth.borrow_mut() = Some("fifo:/tmp/x".to_string());
@@ -6367,7 +6369,6 @@ mod clean_jobserver_tests {
         unsafe { clean_jobserver(&ctx, 0) };
 
         with_options(|o| assert!(o.jobserver_auth.borrow().is_none(), "mirror reset"));
-        JOBSERVER_TOKENS.store(saved, Ordering::Relaxed);
     }
 
     /// The master-make token accounting: with `master_job_slots` set and no
@@ -6379,8 +6380,6 @@ mod clean_jobserver_tests {
     fn master_slot_accounting_matches_and_mismatches() {
         install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
-        let saved = JOBSERVER_TOKENS.load(Ordering::Relaxed);
-        JOBSERVER_TOKENS.store(0, Ordering::Relaxed);
 
         // 1 + acquire_all() == master slots: counts reconcile, no diagnostic.
         with_options(|o| o.master_job_slots.set(1));
@@ -6401,7 +6400,6 @@ mod clean_jobserver_tests {
             );
             o.master_job_slots.set(0);
         });
-        JOBSERVER_TOKENS.store(saved, Ordering::Relaxed);
     }
 }
 

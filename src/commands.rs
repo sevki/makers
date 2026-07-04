@@ -550,11 +550,11 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         }
         // Wait for them all to die before cleaning up. Reaping walks the live
         // children chain, so it too runs on the live context.
-        while job_slots_used() > 0 {
+        while crate::make_main::with_exec_context(job_slots_used) > 0 {
             crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 0));
         }
     } else {
-        while job_slots_used() > 0 {
+        while crate::make_main::with_exec_context(job_slots_used) > 0 {
             crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 1));
         }
     }

@@ -178,6 +178,15 @@ pub struct ExecContext {
     /// 'static storage backs the pointer.
     pub program: PtrCell,
 
+    /// The temporary-file directory (`$MAKE_TMPDIR`, `$TMPDIR`, or the
+    /// default), the former `misc.rs` function-local `static mut tmpdir` in
+    /// `get_tmpdir`. Computed once at startup (before the build-phase context
+    /// rebuild) and cached; carried across the rebuild so later temp-file
+    /// users don't re-probe the environment and re-warn about an invalid
+    /// value. Interned, `'static`, or `xstrdup`'d storage backs the pointer
+    /// (never freed, matching the former static's lifetime).
+    pub tmpdir: PtrCell,
+
     /// Make's recorded starting working directory (after any `-C` chdirs), the
     /// former main.rs `pub static mut starting_directory` — read by the
     /// `Entering/Leaving directory` lines and `$(abspath)`. Null when `getcwd`
@@ -382,6 +391,35 @@ pub struct ExecContext {
     /// so — like [`Self::read_files`] — this never needs to survive the
     /// `main_0` build-phase context rebuild.
     pub library_search_cache: ::core::cell::RefCell<LibrarySearchCache>,
+
+    /// Count of job slots currently in use, the former job.rs `static
+    /// JOB_SLOTS_USED` atomic. `reap_children` (which decrements this) runs
+    /// from `fatal_error_signal` (a real signal handler) as well as the
+    /// ordinary build loop, so — like [`Self::job_fds`] — this must stay
+    /// interrupt-safe; unlike `job_fds`'s plain set/get, the updates here are
+    /// a genuine read-modify-write, so only [`AtomicU32Cell`] (not a `Cell`)
+    /// avoids a torn increment under a concurrent signal.
+    pub job_slots_used: AtomicU32Cell,
+
+    /// Jobs started since the load average was last sampled, the former
+    /// job.rs `static JOB_COUNTER` atomic. Same signal-reentrancy rationale
+    /// as [`Self::job_slots_used`] (`reap_children` decrements it).
+    pub job_counter: AtomicU64Cell,
+
+    /// Jobserver tokens this make instance currently holds, the former
+    /// job.rs `static JOBSERVER_TOKENS` atomic. `pub` because `main.rs`'s
+    /// `clean_jobserver` drains it directly on exit. Same signal-reentrancy
+    /// rationale as [`Self::job_slots_used`].
+    pub jobserver_tokens: AtomicU32Cell,
+
+    /// Children reaped by the `SIGCHLD` handler and not yet processed by the
+    /// reap loop, the former job.rs `static DEAD_CHILDREN` atomic.
+    /// `child_handler` — the real `SIGCHLD` handler — increments this
+    /// directly, so unlike every other signal-reachable `ExecContext` field
+    /// this is written from genuinely asynchronous signal delivery, not just
+    /// from a normal call path a fatal-signal handler also happens to invoke;
+    /// only an atomic (not a `Cell`) avoids a torn read-modify-write.
+    pub dead_children: AtomicU32Cell,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -409,6 +447,36 @@ pub struct JobFds(pub ::core::cell::Cell<[i32; 2]>);
 impl Default for JobFds {
     fn default() -> Self {
         Self(::core::cell::Cell::new([-1, -1]))
+    }
+}
+
+/// An owned `AtomicU32` for counters a real signal handler updates
+/// concurrently with the main path. Unlike a plain `Cell`, whose
+/// non-atomic read-modify-write (`set(get() + 1)`) could tear if a signal
+/// interrupts it mid-update and lose an increment, an atomic `fetch_add`/
+/// `fetch_sub` is safe under that interruption. `ExecContext` clones
+/// snapshot the current value rather than sharing the same atomic cell,
+/// since each clone is an independent runtime state, not an alias.
+#[derive(Debug, Default)]
+pub struct AtomicU32Cell(pub ::core::sync::atomic::AtomicU32);
+
+impl Clone for AtomicU32Cell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicU32::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// The `u64` counterpart of [`AtomicU32Cell`].
+#[derive(Debug, Default)]
+pub struct AtomicU64Cell(pub ::core::sync::atomic::AtomicU64);
+
+impl Clone for AtomicU64Cell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicU64::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
     }
 }
 

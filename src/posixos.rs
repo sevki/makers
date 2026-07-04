@@ -1141,4 +1141,78 @@ mod tests {
         crate::make_main::with_exec_context(|ctx| ctx.job_fds.0.set(saved_fds));
         JS_TYPE.store(saved_js_type, Ordering::Relaxed);
     }
+
+    /// `jobserver_acquire` reads a token byte off `ctx.job_fds`'s read end. A
+    /// byte already sitting in the pipe makes `pselect` return immediately
+    /// readable, and the following `read` picks it up: a token was
+    /// acquired. Drives the read pipe directly (no integration harness),
+    /// so this branch has direct, deterministic coverage instead of relying
+    /// on indirect exercise from parallel-build integration tests.
+    #[test]
+    fn acquire_reads_a_pending_token_byte() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut fds = [-1i32; 2];
+        assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+        ctx.job_fds.0.set(fds);
+
+        let token_byte = b'+' as c_char;
+        assert_eq!(
+            unsafe { write(fds[1], &token_byte as *const c_char as *const c_void, 1) },
+            1
+        );
+
+        assert_eq!(unsafe { jobserver_acquire(&ctx, 0) }, 1, "token was read");
+
+        unsafe {
+            close(fds[0]);
+            close(fds[1]);
+        }
+    }
+
+    /// When the write end is closed with nothing pending, the read end
+    /// hits EOF: `pselect` still reports it readable, but `read` returns 0
+    /// bytes, so `jobserver_acquire` reports no token acquired (`0`) rather
+    /// than treating EOF as a token.
+    #[test]
+    fn acquire_reports_no_token_on_pipe_eof() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut fds = [-1i32; 2];
+        assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+        ctx.job_fds.0.set(fds);
+        unsafe { close(fds[1]) };
+
+        assert_eq!(unsafe { jobserver_acquire(&ctx, 0) }, 0, "EOF is not a token");
+
+        unsafe { close(fds[0]) };
+    }
+
+    /// A nonzero `timeout` arms `pselect`'s own 1-second timer (the
+    /// `Alarms don't interrupt pselect` branch) instead of blocking
+    /// indefinitely. With a token already pending, `pselect` still returns
+    /// readable immediately, so this exercises the timer-arming branch
+    /// without actually waiting out the timeout.
+    #[test]
+    fn acquire_with_nonzero_timeout_still_reads_a_pending_token() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut fds = [-1i32; 2];
+        assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+        ctx.job_fds.0.set(fds);
+
+        let token_byte = b'+' as c_char;
+        assert_eq!(
+            unsafe { write(fds[1], &token_byte as *const c_char as *const c_void, 1) },
+            1
+        );
+
+        assert_eq!(
+            unsafe { jobserver_acquire(&ctx, 1) },
+            1,
+            "token was read under the armed timeout"
+        );
+
+        unsafe {
+            close(fds[0]);
+            close(fds[1]);
+        }
+    }
 }
