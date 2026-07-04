@@ -8,15 +8,13 @@
 use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
 use ::core::ptr::{null, null_mut};
 
-use std::sync::atomic::{AtomicU32, Ordering};
-
 use libc::{
     __errno_location, calloc, free, getenv, getpid, malloc, memcpy, mkstemp, putchar, read,
     realloc, sleep, sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask,
     unlink, write, EINTR,
 };
 
-use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t, time_t};
+use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
 use crate::file::nameseq;
 use crate::floc::Floc;
 use crate::make_main::{posix_pedantic, stopchar_map};
@@ -33,7 +31,6 @@ extern "C" {
     fn fopen(filename: *const c_char, modes: *const c_char) -> *mut FILE;
     fn fdopen(fd: i32, modes: *const c_char) -> *mut FILE;
     fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> i32;
-    fn time(timer: *mut time_t) -> time_t;
 }
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
@@ -129,36 +126,6 @@ pub unsafe fn make_lltoa(val: c_longlong, buf: *mut c_char) -> *mut c_char {
 pub unsafe fn make_ulltoa(val: c_ulonglong, buf: *mut c_char) -> *mut c_char {
     sprintf(buf, c"%llu".as_ptr(), val);
     buf
-}
-
-static MK_STATE: AtomicU32 = AtomicU32::new(0);
-
-/// Seed the xorshift PRNG used by `--shuffle`.
-pub fn make_seed(seed: c_uint) {
-    MK_STATE.store(seed, Ordering::Relaxed);
-}
-
-/// Return the next value from the xorshift PRNG, self-seeding from the time
-/// and PID on first use.
-/// # Safety
-/// Always safe; unsafe only for C-API signature compatibility.
-pub unsafe fn make_rand() -> c_uint {
-    let mut state = MK_STATE.load(Ordering::Relaxed);
-    loop {
-        let mut next = if state == 0 {
-            ((time(null_mut()) ^ make_pid() as time_t) as c_uint).wrapping_add(1)
-        } else {
-            state
-        };
-        next ^= next << 13;
-        next ^= next >> 17;
-        next ^= next << 5;
-
-        match MK_STATE.compare_exchange_weak(state, next, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => return next,
-            Err(observed) => state = observed,
-        }
-    }
 }
 
 /// Order two strings the way make's `alpha_compare` does: by the signed

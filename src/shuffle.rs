@@ -1,12 +1,10 @@
 use crate::dep::DepNode;
 use crate::file::FileId;
-use std::sync::{Mutex, OnceLock};
 
 use crate::fatal;
 use crate::make_main::not_parallel;
-use crate::misc::{make_rand, make_seed};
 
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
 pub enum Mode {
     #[default]
     None,
@@ -15,34 +13,28 @@ pub enum Mode {
     Identity,
 }
 
-struct Config {
+/// `--shuffle` mode/seed plus the xorshift PRNG state it drives, the former
+/// shuffle.rs `static CONFIG: OnceLock<Mutex<Config>>` and misc.rs
+/// `static MK_STATE: AtomicU32`. Genuinely per-run configuration (each build
+/// may pass a different `--shuffle=` value), so it lives on `ExecContext`
+/// (see [`crate::execctx::ExecContext::shuffle`]) instead of a process-wide
+/// singleton shared across sessions.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct ShuffleState {
     mode: Mode,
     seed: u32,
+    prng: u32,
 }
 
-impl Config {
-    fn new() -> Self {
-        Self {
-            mode: Mode::None,
-            seed: 0,
-        }
-    }
-}
-
-static CONFIG: OnceLock<Mutex<Config>> = OnceLock::new();
-
-fn config() -> std::sync::MutexGuard<'static, Config> {
-    CONFIG
-        .get_or_init(|| Mutex::new(Config::new()))
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
+fn config(ctx: &crate::execctx::ExecContext) -> ShuffleState {
+    ctx.shuffle.get()
 }
 
 /// Returns the canonical label for the active shuffle mode (e.g. `"reverse"`,
 /// or the seed as a decimal string for `random`), or `None` when shuffling is
 /// disabled.
-pub fn get_mode() -> Option<String> {
-    let cfg = config();
+pub fn get_mode(ctx: &crate::execctx::ExecContext) -> Option<String> {
+    let cfg = config(ctx);
     match cfg.mode {
         Mode::None => None,
         Mode::Random => Some(cfg.seed.to_string()),
@@ -55,7 +47,7 @@ pub fn get_mode() -> Option<String> {
 /// the `--shuffle=` command-line flag). Aborts via `fatal` on a malformed
 /// numeric seed, matching the original C behavior.
 pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
-    let mut cfg = config();
+    let mut cfg = ctx.shuffle.get();
     if arg.eq_ignore_ascii_case("reverse") {
         cfg.mode = Mode::Reverse;
     } else if arg.eq_ignore_ascii_case("identity") {
@@ -64,7 +56,12 @@ pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
         cfg.mode = Mode::None;
     } else {
         let seed = if arg.eq_ignore_ascii_case("random") {
-            unsafe { make_rand() }
+            let s = make_rand(ctx);
+            // make_rand just wrote the advanced PRNG state to ctx.shuffle;
+            // re-fetch so the `cfg` snapshot taken above doesn't clobber it
+            // with the pre-advance value when set below.
+            cfg = ctx.shuffle.get();
+            s
         } else {
             match arg.parse::<u32>() {
                 Ok(n) => n,
@@ -74,15 +71,47 @@ pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
         cfg.mode = Mode::Random;
         cfg.seed = seed;
     }
+    ctx.shuffle.set(cfg);
 }
 
-fn random_shuffle<T>(slice: &mut [T]) {
+/// Seed the xorshift PRNG used by `--shuffle`.
+fn make_seed(ctx: &crate::execctx::ExecContext, seed: u32) {
+    let mut cfg = ctx.shuffle.get();
+    cfg.prng = seed;
+    ctx.shuffle.set(cfg);
+}
+
+/// Combine a timestamp and PID into an initial PRNG seed. Pulled out of
+/// `make_rand` so the XOR mixing can be pinned by a test with fixed inputs
+/// (the real call site reads the live clock/PID, which can't be pinned).
+fn initial_seed(time: libc::time_t, pid: libc::time_t) -> u32 {
+    ((time ^ pid) as u32).wrapping_add(1)
+}
+
+/// Return the next value from the xorshift PRNG, self-seeding from the time
+/// and PID on first use.
+fn make_rand(ctx: &crate::execctx::ExecContext) -> u32 {
+    let mut cfg = ctx.shuffle.get();
+    let mut next = if cfg.prng == 0 {
+        unsafe { initial_seed(libc::time(::core::ptr::null_mut()), crate::misc::make_pid() as libc::time_t) }
+    } else {
+        cfg.prng
+    };
+    next ^= next << 13;
+    next ^= next >> 17;
+    next ^= next << 5;
+    cfg.prng = next;
+    ctx.shuffle.set(cfg);
+    next
+}
+
+fn random_shuffle<T>(ctx: &crate::execctx::ExecContext, slice: &mut [T]) {
     let len = slice.len();
     if len <= 1 {
         return;
     }
     for i in (1..len).rev() {
-        let j = (unsafe { make_rand() } as usize) % (i + 1);
+        let j = (make_rand(ctx) as usize) % (i + 1);
         if i != j {
             slice.swap(i, j);
         }
@@ -106,13 +135,13 @@ fn identity_shuffle<T>(_: &mut [T]) {}
 /// in a separate `->shuf` link), the idiomatic updater iterates the `deps`
 /// vector directly, so the reorder is applied to the vector in place — the same
 /// observable build order.
-fn shuffle_deps(deps: &mut [DepNode]) {
+fn shuffle_deps(ctx: &crate::execctx::ExecContext, deps: &mut [DepNode]) {
     if deps.is_empty() || deps.iter().any(|d| d.wait_here) {
         return;
     }
-    match config().mode {
+    match config(ctx).mode {
         Mode::None => {}
-        Mode::Random => random_shuffle(deps),
+        Mode::Random => random_shuffle(ctx, deps),
         Mode::Reverse => reverse_shuffle(deps),
         Mode::Identity => identity_shuffle(deps),
     }
@@ -130,7 +159,7 @@ fn shuffle_file_deps_recursive(ctx: &crate::execctx::ExecContext, f: FileId) {
             return;
         }
         guard.was_shuffled = true;
-        shuffle_deps(&mut guard.deps);
+        shuffle_deps(ctx, &mut guard.deps);
         guard.deps.iter().filter_map(|d| d.file).collect()
     };
     for child in children {
@@ -142,14 +171,14 @@ fn shuffle_file_deps_recursive(ctx: &crate::execctx::ExecContext, f: FileId) {
 /// Safe to call when shuffling is disabled (no-op).
 pub fn shuffle_deps_recursive(ctx: &crate::execctx::ExecContext, file: FileId) {
     let (mode, seed) = {
-        let cfg = config();
+        let cfg = config(ctx);
         (cfg.mode, cfg.seed)
     };
     if mode == Mode::None || not_parallel() {
         return;
     }
     if mode == Mode::Random {
-        make_seed(seed);
+        make_seed(ctx, seed);
     }
     shuffle_file_deps_recursive(ctx, file);
 }
@@ -163,20 +192,20 @@ pub fn shuffle_goals_recursive(
     goals: &mut [crate::dep::GoalDepNode],
 ) {
     let (mode, seed) = {
-        let cfg = config();
+        let cfg = config(ctx);
         (cfg.mode, cfg.seed)
     };
     if mode == Mode::None || not_parallel() {
         return;
     }
     if mode == Mode::Random {
-        make_seed(seed);
+        make_seed(ctx, seed);
     }
     // A `wait_here` marker on any goal disables shuffling for the list.
     if !goals.iter().any(|g| g.dep.wait_here) {
         match mode {
             Mode::None => {}
-            Mode::Random => random_shuffle(goals),
+            Mode::Random => random_shuffle(ctx, goals),
             Mode::Reverse => reverse_shuffle(goals),
             Mode::Identity => identity_shuffle(goals),
         }
@@ -190,60 +219,104 @@ pub fn shuffle_goals_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    static MODE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn lock_mode_tests() -> std::sync::MutexGuard<'static, ()> {
-        MODE_TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("mode test lock must not be poisoned")
-    }
 
     #[test]
     fn set_mode_reverse_is_reported_by_get_mode() {
-        let _guard = lock_mode_tests();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "none");
         set_mode(&ctx, "reverse");
-        assert_eq!(get_mode().as_deref(), Some("reverse"));
+        assert_eq!(get_mode(&ctx).as_deref(), Some("reverse"));
     }
 
     #[test]
     fn set_mode_identity_is_reported_by_get_mode() {
-        let _guard = lock_mode_tests();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "none");
         set_mode(&ctx, "identity");
-        assert_eq!(get_mode().as_deref(), Some("identity"));
+        assert_eq!(get_mode(&ctx).as_deref(), Some("identity"));
     }
 
     #[test]
     fn set_mode_none_clears_mode() {
-        let _guard = lock_mode_tests();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
         set_mode(&ctx, "none");
-        assert_eq!(get_mode(), None);
+        assert_eq!(get_mode(&ctx), None);
     }
 
     #[test]
     fn set_mode_numeric_seed_is_reported_by_get_mode() {
-        let _guard = lock_mode_tests();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "none");
         set_mode(&ctx, "1234");
-        assert_eq!(get_mode().as_deref(), Some("1234"));
+        assert_eq!(get_mode(&ctx).as_deref(), Some("1234"));
     }
 
     #[test]
     fn set_mode_random_produces_active_mode_label() {
-        let _guard = lock_mode_tests();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "none");
         set_mode(&ctx, "random");
-        assert!(get_mode().is_some());
+        assert!(get_mode(&ctx).is_some());
+    }
+
+    /// Regression test for a lost-update bug: `set_mode`'s `cfg` snapshot was
+    /// taken before `make_rand` advanced the PRNG, so the final `set` clobbered
+    /// that advance and every `--shuffle=random` call reused the same seed.
+    #[test]
+    fn set_mode_random_advances_prng_across_calls() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut cfg = ctx.shuffle.get();
+        cfg.prng = 12345;
+        ctx.shuffle.set(cfg);
+
+        set_mode(&ctx, "random");
+        let first_seed = ctx.shuffle.get().seed;
+        set_mode(&ctx, "random");
+        let second_seed = ctx.shuffle.get().seed;
+
+        assert_ne!(
+            first_seed, second_seed,
+            "each --shuffle=random call must advance the PRNG, not reuse the same seed"
+        );
+    }
+
+    /// Pins the xorshift math to known values from a known seed so mutating
+    /// any operator in `make_rand` (the shifts, the XORs, or the self-seed
+    /// check) is caught, not just masked by reproducibility-only assertions.
+    #[test]
+    fn make_rand_applies_xorshift_from_known_seed() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut cfg = ctx.shuffle.get();
+        cfg.prng = 12345;
+        ctx.shuffle.set(cfg);
+
+        assert_eq!(make_rand(&ctx), 3336926330);
+        assert_eq!(make_rand(&ctx), 1697253807);
+        assert_eq!(make_rand(&ctx), 2816511904);
+    }
+
+    /// Pins the exact XOR mixing of time/PID into the self-seed, so
+    /// replacing `^` with `|` or `&` (which still yields *some* seed, just
+    /// the wrong one) is caught.
+    #[test]
+    fn initial_seed_mixes_time_and_pid_with_xor() {
+        assert_eq!(initial_seed(0x1234_5678, 0x0000_00ff), 0x1234_5688);
+    }
+
+    /// Pins `random_shuffle`'s exact permutation for a known seed, so
+    /// replacing it with a no-op (or corrupting the `i + 1` modulus) is
+    /// caught even though it doesn't change the *set* of elements.
+    #[test]
+    fn random_shuffle_produces_expected_permutation_for_known_seed() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut cfg = ctx.shuffle.get();
+        cfg.prng = 999;
+        ctx.shuffle.set(cfg);
+
+        let mut items = vec!["a", "b", "c", "d", "e"];
+        random_shuffle(&ctx, &mut items);
+        assert_eq!(items, vec!["e", "b", "d", "c", "a"]);
     }
 
     // --- behavioral tests for the dep/goal reordering machinery ---
@@ -288,11 +361,10 @@ mod tests {
     /// `reverse` mode must actually reverse a dep list in place.
     #[test]
     fn shuffle_deps_reverse_reorders_in_place() {
-        let _guard = lock_mode_tests();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
         let mut deps = vec![dep_named("a"), dep_named("b"), dep_named("c"), dep_named("d")];
-        shuffle_deps(&mut deps);
+        shuffle_deps(&ctx, &mut deps);
         assert_eq!(dep_names(&deps), vec!["d", "c", "b", "a"]);
         set_mode(&ctx, "none");
     }
@@ -301,13 +373,12 @@ mod tests {
     /// for that list (guards the `is_empty() || any(wait_here)` short-circuit).
     #[test]
     fn shuffle_deps_wait_here_marker_disables_shuffle() {
-        let _guard = lock_mode_tests();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
         let mut b = dep_named("b");
         b.wait_here = true;
         let mut deps = vec![dep_named("a"), b, dep_named("c")];
-        shuffle_deps(&mut deps);
+        shuffle_deps(&ctx, &mut deps);
         // Order is preserved because the wait marker disables shuffling.
         assert_eq!(dep_names(&deps), vec!["a", "b", "c"]);
         set_mode(&ctx, "none");
@@ -317,7 +388,6 @@ mod tests {
     /// each prerequisite file, reordering its deps too.
     #[test]
     fn shuffle_deps_recursive_reorders_target_and_children() {
-        let _guard = lock_mode_tests();
         crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
@@ -360,7 +430,6 @@ mod tests {
     /// `was_shuffled` (guards the `mode == None || not_parallel()` short-circuit).
     #[test]
     fn shuffle_deps_recursive_none_mode_is_a_noop() {
-        let _guard = lock_mode_tests();
         crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "none");
@@ -383,7 +452,6 @@ mod tests {
     /// what makes runs reproducible; without it the second shuffle would diverge.
     #[test]
     fn shuffle_random_reseeds_for_reproducible_order() {
-        let _guard = lock_mode_tests();
         crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "424242");
@@ -412,7 +480,6 @@ mod tests {
     /// `wait_here` marker is present.
     #[test]
     fn shuffle_goals_recursive_reverse_reorders() {
-        let _guard = lock_mode_tests();
         crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
@@ -421,6 +488,32 @@ mod tests {
         shuffle_goals_recursive(&ctx, &mut goals);
         let names: Vec<String> = goals.iter().map(|g| g.dep.name.clone()).collect();
         assert_eq!(names, vec!["c", "b", "a"]);
+        set_mode(&ctx, "none");
+    }
+
+    /// `random` mode must re-seed on every `shuffle_goals_recursive` entry
+    /// (mirroring `shuffle_random_reseeds_for_reproducible_order` for the
+    /// goal-list entry point), so two independent goal lists with the same
+    /// contents shuffle to the same order.
+    #[test]
+    fn shuffle_goals_recursive_random_reseeds_for_reproducible_order() {
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "424242");
+
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        let mut goals1: Vec<_> = names.iter().map(|n| goal_named(n)).collect();
+        let mut goals2: Vec<_> = names.iter().map(|n| goal_named(n)).collect();
+
+        shuffle_goals_recursive(&ctx, &mut goals1);
+        shuffle_goals_recursive(&ctx, &mut goals2);
+
+        let order1: Vec<String> = goals1.iter().map(|g| g.dep.name.clone()).collect();
+        let order2: Vec<String> = goals2.iter().map(|g| g.dep.name.clone()).collect();
+        assert_eq!(
+            order1, order2,
+            "re-seeding must make the two goal-list shuffles reproduce the same order"
+        );
         set_mode(&ctx, "none");
     }
 }
