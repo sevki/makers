@@ -478,7 +478,7 @@ pub unsafe fn jobserver_clear() {
                     }
                 }
             }
-            if handling_fatal_signal == 0 {
+            if !handling_fatal_signal(ctx) {
                 free(fifo_name as *mut c_void);
                 ctx.fifo_name.0.set(null_mut());
             }
