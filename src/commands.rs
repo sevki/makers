@@ -536,7 +536,9 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         let mut c = live_children;
         while !c.is_null() {
             if (*c).remote() != 0 && (*c).pid > 0 {
-                crate::remote_stub::remote_kill((*c).pid, sig);
+                crate::make_main::with_exec_context(|live_ctx| {
+                    crate::remote_stub::remote_kill(live_ctx, (*c).pid, sig)
+                });
             }
             c = (*c).next;
         }
