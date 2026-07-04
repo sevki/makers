@@ -1185,4 +1185,34 @@ mod tests {
 
         unsafe { close(fds[0]) };
     }
+
+    /// A nonzero `timeout` arms `pselect`'s own 1-second timer (the
+    /// `Alarms don't interrupt pselect` branch) instead of blocking
+    /// indefinitely. With a token already pending, `pselect` still returns
+    /// readable immediately, so this exercises the timer-arming branch
+    /// without actually waiting out the timeout.
+    #[test]
+    fn acquire_with_nonzero_timeout_still_reads_a_pending_token() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut fds = [-1i32; 2];
+        assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+        ctx.job_fds.0.set(fds);
+
+        let token_byte = b'+' as c_char;
+        assert_eq!(
+            unsafe { write(fds[1], &token_byte as *const c_char as *const c_void, 1) },
+            1
+        );
+
+        assert_eq!(
+            unsafe { jobserver_acquire(&ctx, 1) },
+            1,
+            "token was read under the armed timeout"
+        );
+
+        unsafe {
+            close(fds[0]);
+            close(fds[1]);
+        }
+    }
 }
