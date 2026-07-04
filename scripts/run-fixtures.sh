@@ -25,6 +25,10 @@ SEP=$'\x1f'
 
 MAKE_BIN="$(cd "$(dirname "$MAKE_BIN")" && pwd)/$(basename "$MAKE_BIN")"
 mkdir -p "$OUT_DIR"
+# Resolve to an absolute path: each fixture's make runs in a tempdir (`cd
+# "$workdir"` below), so a relative $OUT_DIR would have its stdout/stderr
+# redirects resolve against that tempdir instead of the caller's cwd.
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
 echo "Running $(($(wc -l <"$MANIFEST") - 1)) fixtures with $MAKE_BIN"
 
