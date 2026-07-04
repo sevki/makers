@@ -15,7 +15,7 @@ use libc::{
     __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
     strchr, strcmp, strerror, strsignal,
 };
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
@@ -284,14 +284,10 @@ pub unsafe fn pid2str(
 // now live on the owned per-run context: `ctx.children` / `ctx.waiting_jobs`
 // (see `crate::execctx::ChildChain`). The fatal-signal handler reaches them
 // through the `CTX_PTR` borrow channel.
-/// Count of job slots currently in use. Stored in an atomic so its reads are
-/// plain safe operations; all access is single-threaded, so `Relaxed`
-/// preserves the original program order.
-static JOB_SLOTS_USED: AtomicU32 = AtomicU32::new(0);
-
-/// Number of job slots currently in use.
-pub fn job_slots_used() -> u32 {
-    JOB_SLOTS_USED.load(Ordering::Relaxed)
+/// Number of job slots currently in use. See
+/// [`crate::execctx::ExecContext::job_slots_used`].
+pub fn job_slots_used(ctx: &crate::execctx::ExecContext) -> u32 {
+    ctx.job_slots_used.0.load(Ordering::Relaxed)
 }
 /// The shell is always "unixy" in this POSIX port: the only writers in the C
 /// original are W32/DOS-specific, so the value is fixed at 1 here. Keeping it
@@ -301,17 +297,10 @@ pub static unixy_shell: i32 = 1;
 /// `load_too_high` to estimate the incremental load each new job adds. Atomic
 /// so its reads/writes are plain safe ops; job bookkeeping is single-threaded,
 /// so `Relaxed` preserves the original program order.
-static JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
-/// Count of jobserver tokens this make instance currently holds (the implicit
-/// token for its own slot plus one per running child). Stored in an atomic so
-/// its reads are plain safe operations; all access is single-threaded, so
-/// `Relaxed` preserves the original program order. `pub` because `main`'s
-/// `clean_jobserver` drains it on exit.
-pub static JOBSERVER_TOKENS: AtomicU32 = AtomicU32::new(0);
-
-/// Number of jobserver tokens currently held.
-pub fn jobserver_tokens() -> u32 {
-    JOBSERVER_TOKENS.load(Ordering::Relaxed)
+/// Number of jobserver tokens currently held. See
+/// [`crate::execctx::ExecContext::jobserver_tokens`].
+pub fn jobserver_tokens(ctx: &crate::execctx::ExecContext) -> u32 {
+    ctx.jobserver_tokens.0.load(Ordering::Relaxed)
 }
 /// Safe port of make's `is_bourne_compatible_shell`: is the program named by
 /// `path` one of the known Bourne-compatible shells, compared by its file stem
@@ -648,20 +637,19 @@ unsafe fn child_error(
     }
     set_output_context(::core::ptr::null_mut::<output>());
 }
-/// Count of children reaped by the `SIGCHLD` handler and not yet processed
-/// by the reap loop. Written from the signal handler and read on the main
-/// path, so it must be an atomic rather than a `static mut` (a plain global
-/// would be a data race); `Relaxed` suffices as it only gates a retry.
-static DEAD_CHILDREN: AtomicU32 = AtomicU32::new(0);
-
-fn dead_children() -> u32 {
-    DEAD_CHILDREN.load(Ordering::Relaxed)
+/// Number of children reaped by the `SIGCHLD` handler and not yet processed
+/// by the reap loop. See [`crate::execctx::ExecContext::dead_children`].
+fn dead_children(ctx: &crate::execctx::ExecContext) -> u32 {
+    ctx.dead_children.0.load(Ordering::Relaxed)
 }
 /// `SIGCHLD` handler: record a reaped child and wake any blocked jobserver
 /// acquire. Async-signal-safe (an atomic increment plus `jobserver_signal`'s
-/// `close`).
+/// `close`). Reaches `ExecContext` through the `CTX_PTR` borrow channel since
+/// a real signal handler cannot carry an extra parameter.
 pub extern "C" fn child_handler(mut _sig: i32) {
-    DEAD_CHILDREN.fetch_add(1, Ordering::Relaxed);
+    crate::make_main::try_with_exec_context(|ctx| {
+        ctx.dead_children.0.fetch_add(1, Ordering::Relaxed);
+    });
     jobserver_signal();
 }
 /// # Safety
@@ -703,8 +691,8 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             }
             PRINTED.store(true, Ordering::Relaxed);
         }
-        if dead_children() > 0 {
-            DEAD_CHILDREN.fetch_sub(1, Ordering::Relaxed);
+        if dead_children(ctx) > 0 {
+            ctx.dead_children.0.fetch_sub(1, Ordering::Relaxed);
         }
         any_remote = 0;
         any_local = (shell_function_pid() != 0) as i32;
@@ -848,8 +836,8 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     );
                     fflush(stdout);
                 }
-                if JOB_COUNTER.load(Ordering::Relaxed) != 0 {
-                    JOB_COUNTER.fetch_sub(1, Ordering::Relaxed);
+                if ctx.job_counter.0.load(Ordering::Relaxed) != 0 {
+                    ctx.job_counter.0.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         }
@@ -1032,9 +1020,9 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             );
             fflush(stdout);
         }
-        if job_slots_used() > 0 {
-            JOB_SLOTS_USED.store(
-                job_slots_used().wrapping_sub((*c).jobslot()),
+        if job_slots_used(ctx) > 0 {
+            ctx.job_slots_used.0.store(
+                job_slots_used(ctx).wrapping_sub((*c).jobslot()),
                 Ordering::Relaxed,
             );
         }
@@ -1105,7 +1093,7 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
 unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut child) {
     let name_buf = file_name_cstr(ctx, (*child).file);
     let name = name_buf.as_ptr() as *const ::core::ffi::c_char;
-    if jobserver_tokens() == 0 {
+    if jobserver_tokens(ctx) == 0 {
         fatal(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
@@ -1118,7 +1106,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
             ],
         );
     }
-    if jobserver_enabled() != 0 && jobserver_tokens() > 1 {
+    if jobserver_enabled() != 0 && jobserver_tokens(ctx) > 1 {
         jobserver_release(ctx, 1);
         if 0x4_i32 & db_level() != 0 {
             printf(
@@ -1129,7 +1117,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
             fflush(stdout);
         }
     }
-    JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
+    ctx.jobserver_tokens.0.fetch_sub(1, Ordering::Relaxed);
 }
 
 /// # Safety
@@ -1366,7 +1354,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     jobserver_post_child((flags & 1 != 0) as i32);
                 }
                 if (*child).pid >= 0 {
-                    JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    ctx.job_counter.0.fetch_add(1, Ordering::Relaxed);
                 }
                 set_file_command_state_entry(
                     ctx,
@@ -1402,7 +1390,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     (*c).set_remote(
         crate::remote_stub::start_remote_job_p(1) as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
-    if (*c).remote() == 0 && (job_slots_used() > 0 && load_too_high(ctx) != 0) {
+    if (*c).remote() == 0 && (job_slots_used(ctx) > 0 && load_too_high(ctx) != 0) {
         set_file_command_state_entry(ctx, f, e, cs_running);
         (*c).next = ctx.waiting_jobs.0.get();
         ctx.waiting_jobs.0.set(c);
@@ -1431,7 +1419,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
                     );
                     fflush(stdout);
                 }
-                JOB_SLOTS_USED.fetch_add(1, Ordering::Relaxed);
+                ctx.job_slots_used.0.fetch_add(1, Ordering::Relaxed);
                 if (*c).jobslot() as i32 == 0 {
                 } else {
                     panic!("assertion failed: c->jobslot == 0");
@@ -1706,7 +1694,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
     // snapshot it once rather than reading the borrow channel each spin.
     let slots = crate::make_main::opt_job_slots();
     if slots != 0 {
-        while job_slots_used() == slots {
+        while job_slots_used(ctx) == slots {
             reap_children(ctx, 1, 0);
         }
     } else if jobserver_enabled() != 0 {
@@ -1723,13 +1711,13 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                 );
                 fflush(stdout);
             }
-            if jobserver_tokens() == 0 {
+            if jobserver_tokens(ctx) == 0 {
                 break;
             }
             jobserver_pre_acquire(ctx);
             reap_children(ctx, 0, 0);
             start_waiting_jobs(ctx);
-            if jobserver_tokens() == 0 {
+            if jobserver_tokens(ctx) == 0 {
                 break;
             }
             if ctx.children.0.get().is_null() {
@@ -1761,7 +1749,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             break;
         }
     }
-    JOBSERVER_TOKENS.fetch_add(1, Ordering::Relaxed);
+    ctx.jobserver_tokens.0.fetch_add(1, Ordering::Relaxed);
     if 0x20_i32 & db_level() != 0 {
         // Build the "update target '...' due to: ..." diagnostic from the arena
         // (the former pointer walk over `cmds.fileinfo`/`also_make`/`deps`).
@@ -1969,10 +1957,10 @@ fn loadavg_running_jobs(contents: &[u8]) -> Option<u32> {
 /// the running job counter resets, and the cached second advances. It then
 /// returns the updated cache triple plus the smoothed load `guess` (the actual
 /// `load` plus weight A times the live job count and the carried weight). The
-/// caller writes the returned `sample_second`/`prev_weight` back into the
-/// `ExecContext` cells and the job counter back into `JOB_COUNTER`; this matches
-/// the original, where `JOB_COUNTER` was reset inside the per-second branch and
-/// re-read when forming the guess.
+/// caller writes the returned `sample_second`/`prev_weight`/job counter back
+/// into the `ExecContext` cells (`load_sample_second`/`load_prev_weight`/
+/// `job_counter`); this matches the original, where the job counter was reset
+/// inside the per-second branch and re-read when forming the guess.
 fn load_sample_fold(
     sample_second: time_t,
     prev_weight: ::core::ffi::c_double,
@@ -2080,7 +2068,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                                 as *const u8
                                 as *const ::core::ffi::c_char,
                             cnt,
-                            job_slots_used(),
+                            job_slots_used(ctx),
                             crate::make_main::opt_max_load_average(),
                         );
                         fflush(stdout);
@@ -2138,13 +2126,13 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     let (next_sample_second, next_prev_weight, next_job_counter, guess) = load_sample_fold(
         ctx.load_sample_second.get(),
         ctx.load_prev_weight.get(),
-        JOB_COUNTER.load(Ordering::Relaxed),
+        ctx.job_counter.0.load(Ordering::Relaxed),
         now,
         load,
     );
     ctx.load_sample_second.set(next_sample_second);
     ctx.load_prev_weight.set(next_prev_weight);
-    JOB_COUNTER.store(next_job_counter, Ordering::Relaxed);
+    ctx.job_counter.0.store(next_job_counter, Ordering::Relaxed);
     if 0x4_i32 & db_level() != 0 {
         printf(
             b"Estimated system load = %f (actual = %f) (max requested = %f)\n\0" as *const u8
@@ -3374,79 +3362,75 @@ mod good_stdin_used_tests {
 
 #[cfg(test)]
 mod dead_children_tests {
-    use super::{dead_children, DEAD_CHILDREN};
+    use super::dead_children;
+    use crate::execctx::ExecContext;
     use std::sync::atomic::Ordering;
 
-    /// `dead_children()` reflects the `DEAD_CHILDREN` counter and the atomic
-    /// add/sub used by the signal handler and reap loop round-trip. Restores
-    /// the prior value so it stays isolated from other tests.
+    /// `dead_children(ctx)` reflects `ctx.dead_children`, and the atomic
+    /// add/sub used by the signal handler and reap loop round-trip. Each test
+    /// gets its own `ExecContext`, so unlike the former global counter there
+    /// is nothing to restore for isolation from other tests.
     #[test]
     fn dead_children_counts_round_trip() {
-        let saved = DEAD_CHILDREN.load(Ordering::Relaxed);
+        let ctx = ExecContext::default();
+        assert_eq!(dead_children(&ctx), 0);
 
-        DEAD_CHILDREN.store(0, Ordering::Relaxed);
-        assert_eq!(dead_children(), 0);
+        ctx.dead_children.0.fetch_add(1, Ordering::Relaxed);
+        ctx.dead_children.0.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(dead_children(&ctx), 2, "two reaped children pending");
 
-        DEAD_CHILDREN.fetch_add(1, Ordering::Relaxed);
-        DEAD_CHILDREN.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(dead_children(), 2, "two reaped children pending");
-
-        DEAD_CHILDREN.fetch_sub(1, Ordering::Relaxed);
-        assert_eq!(dead_children(), 1, "one processed");
-
-        DEAD_CHILDREN.store(saved, Ordering::Relaxed);
+        ctx.dead_children.0.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(dead_children(&ctx), 1, "one processed");
     }
 }
 
 #[cfg(test)]
 mod job_slots_used_tests {
-    use super::{job_slots_used, JOB_SLOTS_USED};
+    use super::job_slots_used;
+    use crate::execctx::ExecContext;
     use std::sync::atomic::Ordering;
 
-    /// `job_slots_used()` reflects the `JOB_SLOTS_USED` counter, and the
-    /// add/sub used by the start/reap paths round-trip through it. Restores the
-    /// prior value so it stays isolated from other tests.
+    /// `job_slots_used(ctx)` reflects `ctx.job_slots_used`, and the add/sub
+    /// used by the start/reap paths round-trip through it. Each test gets its
+    /// own `ExecContext`, so unlike the former global counter there is
+    /// nothing to restore for isolation from other tests.
     #[test]
     fn job_slots_used_counts_round_trip() {
-        let saved = JOB_SLOTS_USED.load(Ordering::Relaxed);
+        let ctx = ExecContext::default();
+        assert_eq!(job_slots_used(&ctx), 0);
 
-        JOB_SLOTS_USED.store(0, Ordering::Relaxed);
-        assert_eq!(job_slots_used(), 0);
+        ctx.job_slots_used.0.fetch_add(1, Ordering::Relaxed);
+        ctx.job_slots_used.0.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(job_slots_used(&ctx), 2, "two slots in use");
 
-        JOB_SLOTS_USED.fetch_add(1, Ordering::Relaxed);
-        JOB_SLOTS_USED.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(job_slots_used(), 2, "two slots in use");
-
-        JOB_SLOTS_USED.store(job_slots_used().wrapping_sub(1), Ordering::Relaxed);
-        assert_eq!(job_slots_used(), 1, "one slot freed");
-
-        JOB_SLOTS_USED.store(saved, Ordering::Relaxed);
+        ctx.job_slots_used
+            .0
+            .store(job_slots_used(&ctx).wrapping_sub(1), Ordering::Relaxed);
+        assert_eq!(job_slots_used(&ctx), 1, "one slot freed");
     }
 }
 
 #[cfg(test)]
 mod jobserver_tokens_tests {
-    use super::{jobserver_tokens, JOBSERVER_TOKENS};
+    use super::jobserver_tokens;
+    use crate::execctx::ExecContext;
     use std::sync::atomic::Ordering;
 
-    /// `jobserver_tokens()` reflects the `JOBSERVER_TOKENS` counter, and the
-    /// add/sub used by the acquire/free paths round-trip through it. Restores
-    /// the prior value so it stays isolated from other tests.
+    /// `jobserver_tokens(ctx)` reflects `ctx.jobserver_tokens`, and the
+    /// add/sub used by the acquire/free paths round-trip through it. Each
+    /// test gets its own `ExecContext`, so unlike the former global counter
+    /// there is nothing to restore for isolation from other tests.
     #[test]
     fn jobserver_tokens_counts_round_trip() {
-        let saved = JOBSERVER_TOKENS.load(Ordering::Relaxed);
+        let ctx = ExecContext::default();
+        assert_eq!(jobserver_tokens(&ctx), 0);
 
-        JOBSERVER_TOKENS.store(0, Ordering::Relaxed);
-        assert_eq!(jobserver_tokens(), 0);
+        ctx.jobserver_tokens.0.fetch_add(1, Ordering::Relaxed);
+        ctx.jobserver_tokens.0.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(jobserver_tokens(&ctx), 2, "two tokens held");
 
-        JOBSERVER_TOKENS.fetch_add(1, Ordering::Relaxed);
-        JOBSERVER_TOKENS.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(jobserver_tokens(), 2, "two tokens held");
-
-        JOBSERVER_TOKENS.fetch_sub(1, Ordering::Relaxed);
-        assert_eq!(jobserver_tokens(), 1, "one released");
-
-        JOBSERVER_TOKENS.store(saved, Ordering::Relaxed);
+        ctx.jobserver_tokens.0.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(jobserver_tokens(&ctx), 1, "one released");
     }
 }
 
