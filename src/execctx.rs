@@ -180,9 +180,11 @@ pub struct ExecContext {
 
     /// The temporary-file directory (`$MAKE_TMPDIR`, `$TMPDIR`, or the
     /// default), the former `misc.rs` function-local `static mut tmpdir` in
-    /// `get_tmpdir`. Computed once per run and cached; interned, `'static`,
-    /// or `xstrdup`'d storage backs the pointer (never freed, matching the
-    /// former static's lifetime).
+    /// `get_tmpdir`. Computed once at startup (before the build-phase context
+    /// rebuild) and cached; carried across the rebuild so later temp-file
+    /// users don't re-probe the environment and re-warn about an invalid
+    /// value. Interned, `'static`, or `xstrdup`'d storage backs the pointer
+    /// (never freed, matching the former static's lifetime).
     pub tmpdir: PtrCell,
 
     /// Make's recorded starting working directory (after any `-C` chdirs), the

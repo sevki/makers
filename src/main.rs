@@ -2315,6 +2315,11 @@ unsafe fn main_0(
     // The program name is derived from argv[0] at startup and prefixes every
     // message for the rest of the run.
     let carried_program = ::core::mem::take(&mut ctx.program);
+    // Computed once at startup by the unconditional `get_tmpdir` call above;
+    // carrying it avoids re-probing the environment (and re-warning about an
+    // invalid MAKE_TMPDIR/TMPDIR) for temp-file users that run after this
+    // rebuild (get_tmpfile for `-f -`, jobserver_setup, output sync).
+    let carried_tmpdir = ::core::mem::take(&mut ctx.tmpdir);
     // SHELL was recorded from the environment scan above and is appended to
     // child environments during the build; the command-variable list is built
     // as argv/`MAKEFLAGS` switches are decoded (both before and after this
@@ -2340,6 +2345,7 @@ unsafe fn main_0(
         temp_stdin_name: carried_temp_stdin,
         directory_before_chdir: carried_dir_before_chdir,
         program: carried_program,
+        tmpdir: carried_tmpdir,
         shell_var: carried_shell_var,
         command_variables: carried_command_variables,
         fatal_signal_set: carried_fatal_signal_set,
