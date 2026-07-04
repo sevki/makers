@@ -462,6 +462,54 @@ pub struct ExecContext {
     /// signal-reentrancy and multi-tenant isolation rationale as
     /// [`Self::shell_function_pid`].
     pub shell_function_completed: AtomicI32Cell,
+
+    /// The active jobserver style, the former `posixos.rs` `static JS_TYPE`
+    /// atomic. `jobserver_clear` — reached from `fatal_error_signal` through
+    /// the `CTX_PTR` borrow channel — resets this, so it needs the same
+    /// per-context-atomic treatment as [`Self::handling_fatal_signal`].
+    pub js_type: AtomicU8Cell,
+
+    /// True in the process that created the jobserver (and so owns the
+    /// fifo), the former `posixos.rs` `static JOB_ROOT` atomic. Read by
+    /// `jobserver_clear`, same fatal-signal-reachability rationale as
+    /// [`Self::js_type`].
+    pub job_root: AtomicBoolCell,
+
+    /// A private dup of the jobserver's read side, closed by a fatal signal
+    /// to wake a blocked acquire — the former `posixos.rs` `static JOB_RFD`
+    /// atomic. `jobserver_signal` (the real `SIGCHLD` handler's helper,
+    /// reached directly with no `&ExecContext` parameter) and
+    /// `jobserver_clear` (reached from `fatal_error_signal`) both touch this
+    /// through the `CTX_PTR` borrow channel, so — like [`Self::dead_children`]
+    /// — only an atomic avoids a torn update under a concurrent signal.
+    pub job_rfd: FdSentinelCell,
+
+    /// The output-sync mutex's fd, or `-1` when output sync is off, the
+    /// former `posixos.rs` `static OSYNC_HANDLE` atomic. `osync_clear` —
+    /// reached from `fatal_error_signal` — resets this, same rationale as
+    /// [`Self::job_rfd`].
+    pub osync_handle: FdSentinelCell,
+
+    /// True in the process that created the output-sync lock file (and so
+    /// unlinks it), the former `posixos.rs` `static SYNC_ROOT` atomic. Read
+    /// by `osync_clear`, same fatal-signal-reachability rationale as
+    /// [`Self::osync_handle`].
+    pub sync_root: AtomicBoolCell,
+
+    /// A read fd that always reports EOF, handed to non-interactive children
+    /// as stdin and cached after the first creation — the former
+    /// `posixos.rs` `get_bad_stdin` function-local `static BAD_STDIN`
+    /// atomic. Not signal-reachable; the atomic is only for the
+    /// compare-exchange race between concurrent first-callers within a
+    /// session (see `get_bad_stdin`), same as the original.
+    pub bad_stdin: FdSentinelCell,
+
+    /// Whether `O_TMPFILE` has been observed to work in this session's temp
+    /// dir, the former `posixos.rs` `os_anontmp` function-local `static
+    /// TMPFILE_WORKS` atomic (defaults to `true`; `os_anontmp` clears it
+    /// after the first `O_TMPFILE` failure so later calls skip straight to
+    /// the `tmpfile()` fallback). Not signal-reachable.
+    pub tmpfile_works: TrueAtomicBoolCell,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -543,6 +591,58 @@ pub struct AtomicI32Cell(pub ::core::sync::atomic::AtomicI32);
 impl Clone for AtomicI32Cell {
     fn clone(&self) -> Self {
         Self(::core::sync::atomic::AtomicI32::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// The `u8` counterpart of [`AtomicU32Cell`], for small enums stored as a
+/// byte (e.g. the jobserver style) that a fatal-signal handler resets.
+#[derive(Debug, Default)]
+pub struct AtomicU8Cell(pub ::core::sync::atomic::AtomicU8);
+
+impl Clone for AtomicU8Cell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicU8::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// An `AtomicI32` defaulting to `-1` (the "no fd" sentinel), for the same
+/// reason [`JobFds`] exists: `ExecContext`'s derive needs a `Default` impl,
+/// and `-1` isn't `AtomicI32`'s own default.
+#[derive(Debug)]
+pub struct FdSentinelCell(pub ::core::sync::atomic::AtomicI32);
+
+impl Default for FdSentinelCell {
+    fn default() -> Self {
+        Self(::core::sync::atomic::AtomicI32::new(-1))
+    }
+}
+
+impl Clone for FdSentinelCell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicI32::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// The `bool` counterpart of [`FdSentinelCell`]: an `AtomicBool` defaulting
+/// to `true` rather than `AtomicBool`'s own `false` default.
+#[derive(Debug)]
+pub struct TrueAtomicBoolCell(pub ::core::sync::atomic::AtomicBool);
+
+impl Default for TrueAtomicBoolCell {
+    fn default() -> Self {
+        Self(::core::sync::atomic::AtomicBool::new(true))
+    }
+}
+
+impl Clone for TrueAtomicBoolCell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicBool::new(
             self.0.load(::core::sync::atomic::Ordering::Relaxed),
         ))
     }

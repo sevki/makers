@@ -1775,7 +1775,7 @@ pub unsafe fn target_environment(
         ENV_RECURSION.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     if recursive == 0 && crate::make_main::opt_jobserver_auth_present() {
-        invalid = jobserver_get_invalid_auth();
+        invalid = jobserver_get_invalid_auth(ctx);
     }
     if file.is_some() {
         set_list = owned_list;

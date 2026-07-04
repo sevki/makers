@@ -307,7 +307,7 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
         ((*out).err != OUTPUT_NONE && lseek((*out).err, 0, SEEK_END) > 0) as i32;
     if outfd_not_empty != 0 || errfd_not_empty != 0 {
         let mut traced: i32 = 0;
-        if osync_acquire() == 0 {
+        if osync_acquire(ctx) == 0 {
             error(
                 ctx,
                 null::<Floc>(),
@@ -331,7 +331,7 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
         if traced != 0 {
             log_working_directory(ctx, 0);
         }
-        osync_release();
+        osync_release(ctx);
         if (*out).out != OUTPUT_NONE {
             let mut e: i32;
             lseek((*out).out, 0, SEEK_SET);

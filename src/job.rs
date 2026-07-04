@@ -1108,7 +1108,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
             ],
         );
     }
-    if jobserver_enabled() != 0 && jobserver_tokens(ctx) > 1 {
+    if jobserver_enabled(ctx) != 0 && jobserver_tokens(ctx) > 1 {
         jobserver_release(ctx, 1);
         if 0x4_i32 & db_level() != 0 {
             printf(
@@ -1326,7 +1326,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                         if (*child).good_stdin() as i32 != 0 {
                             0
                         } else {
-                            get_bad_stdin()
+                            get_bad_stdin(ctx)
                         },
                         &raw mut is_remote,
                         &raw mut id,
@@ -1347,14 +1347,14 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 if run_local {
                     block_sigs(ctx);
                     (*child).set_remote(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-                    jobserver_pre_child((flags & 1 != 0) as i32);
+                    jobserver_pre_child(ctx, (flags & 1 != 0) as i32);
                     (*child).pid = child_execute_job(
                         ctx,
                         child as *mut childbase,
                         (*child).good_stdin() as i32,
                         argv,
                     );
-                    jobserver_post_child((flags & 1 != 0) as i32);
+                    jobserver_post_child(ctx, (flags & 1 != 0) as i32);
                 }
                 if (*child).pid >= 0 {
                     ctx.job_counter.0.fetch_add(1, Ordering::Relaxed);
@@ -1701,7 +1701,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
         while job_slots_used(ctx) == slots {
             reap_children(ctx, 1, 0);
         }
-    } else if jobserver_enabled() != 0 {
+    } else if jobserver_enabled(ctx) != 0 {
         loop {
             if 0x4_i32 & db_level() != 0 {
                 printf(
@@ -2181,7 +2181,7 @@ pub unsafe fn child_execute_job(
     let fdin: i32 = if good_stdin != 0 {
         fileno(stdin)
     } else {
-        get_bad_stdin()
+        get_bad_stdin(ctx)
     };
     let mut fdout: i32 = fileno(stdout);
     let mut fderr: i32 = fileno(stderr);
