@@ -56,7 +56,12 @@ pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
         cfg.mode = Mode::None;
     } else {
         let seed = if arg.eq_ignore_ascii_case("random") {
-            make_rand(ctx)
+            let s = make_rand(ctx);
+            // make_rand just wrote the advanced PRNG state to ctx.shuffle;
+            // re-fetch so the `cfg` snapshot taken above doesn't clobber it
+            // with the pre-advance value when set below.
+            cfg = ctx.shuffle.get();
+            s
         } else {
             match arg.parse::<u32>() {
                 Ok(n) => n,
@@ -252,6 +257,57 @@ mod tests {
         assert!(get_mode(&ctx).is_some());
     }
 
+    /// Regression test for a lost-update bug: `set_mode`'s `cfg` snapshot was
+    /// taken before `make_rand` advanced the PRNG, so the final `set` clobbered
+    /// that advance and every `--shuffle=random` call reused the same seed.
+    #[test]
+    fn set_mode_random_advances_prng_across_calls() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut cfg = ctx.shuffle.get();
+        cfg.prng = 12345;
+        ctx.shuffle.set(cfg);
+
+        set_mode(&ctx, "random");
+        let first_seed = ctx.shuffle.get().seed;
+        set_mode(&ctx, "random");
+        let second_seed = ctx.shuffle.get().seed;
+
+        assert_ne!(
+            first_seed, second_seed,
+            "each --shuffle=random call must advance the PRNG, not reuse the same seed"
+        );
+    }
+
+    /// Pins the xorshift math to known values from a known seed so mutating
+    /// any operator in `make_rand` (the shifts, the XORs, or the self-seed
+    /// check) is caught, not just masked by reproducibility-only assertions.
+    #[test]
+    fn make_rand_applies_xorshift_from_known_seed() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut cfg = ctx.shuffle.get();
+        cfg.prng = 12345;
+        ctx.shuffle.set(cfg);
+
+        assert_eq!(make_rand(&ctx), 3336926330);
+        assert_eq!(make_rand(&ctx), 1697253807);
+        assert_eq!(make_rand(&ctx), 2816511904);
+    }
+
+    /// Pins `random_shuffle`'s exact permutation for a known seed, so
+    /// replacing it with a no-op (or corrupting the `i + 1` modulus) is
+    /// caught even though it doesn't change the *set* of elements.
+    #[test]
+    fn random_shuffle_produces_expected_permutation_for_known_seed() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut cfg = ctx.shuffle.get();
+        cfg.prng = 999;
+        ctx.shuffle.set(cfg);
+
+        let mut items = vec!["a", "b", "c", "d", "e"];
+        random_shuffle(&ctx, &mut items);
+        assert_eq!(items, vec!["e", "b", "d", "c", "a"]);
+    }
+
     // --- behavioral tests for the dep/goal reordering machinery ---
 
     fn dep_named(name: &str) -> DepNode {
@@ -421,6 +477,32 @@ mod tests {
         shuffle_goals_recursive(&ctx, &mut goals);
         let names: Vec<String> = goals.iter().map(|g| g.dep.name.clone()).collect();
         assert_eq!(names, vec!["c", "b", "a"]);
+        set_mode(&ctx, "none");
+    }
+
+    /// `random` mode must re-seed on every `shuffle_goals_recursive` entry
+    /// (mirroring `shuffle_random_reseeds_for_reproducible_order` for the
+    /// goal-list entry point), so two independent goal lists with the same
+    /// contents shuffle to the same order.
+    #[test]
+    fn shuffle_goals_recursive_random_reseeds_for_reproducible_order() {
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "424242");
+
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        let mut goals1: Vec<_> = names.iter().map(|n| goal_named(n)).collect();
+        let mut goals2: Vec<_> = names.iter().map(|n| goal_named(n)).collect();
+
+        shuffle_goals_recursive(&ctx, &mut goals1);
+        shuffle_goals_recursive(&ctx, &mut goals2);
+
+        let order1: Vec<String> = goals1.iter().map(|g| g.dep.name.clone()).collect();
+        let order2: Vec<String> = goals2.iter().map(|g| g.dep.name.clone()).collect();
+        assert_eq!(
+            order1, order2,
+            "re-seeding must make the two goal-list shuffles reproduce the same order"
+        );
         set_mode(&ctx, "none");
     }
 }
