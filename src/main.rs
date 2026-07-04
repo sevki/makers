@@ -1847,19 +1847,22 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
         fputs(*cpp, usageto);
         cpp = cpp.offset(1_i32 as isize);
     }
-    if remote_description.is_null() || *remote_description as i32 == 0 {
-        fprintf(
-            usageto,
-            b"\nThis program built for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            crate::version::make_host(),
-        );
-    } else {
-        fprintf(
-            usageto,
-            b"\nThis program built for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
-            crate::version::make_host(),
-            remote_description,
-        );
+    match remote_description {
+        None => {
+            fprintf(
+                usageto,
+                b"\nThis program built for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
+                crate::version::make_host(),
+            );
+        }
+        Some(desc) => {
+            fprintf(
+                usageto,
+                b"\nThis program built for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
+                crate::version::make_host(),
+                desc.as_ptr(),
+            );
+        }
     }
     fprintf(
         usageto,
@@ -4726,19 +4729,22 @@ pub unsafe fn print_version() {
         precede,
         crate::version::version_string(),
     );
-    if remote_description.is_null() || *remote_description as i32 == 0 {
-        printf(
-            b"%sBuilt for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            precede,
-            crate::version::make_host(),
-        );
-    } else {
-        printf(
-            b"%sBuilt for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
-            precede,
-            crate::version::make_host(),
-            remote_description,
-        );
+    match remote_description {
+        None => {
+            printf(
+                b"%sBuilt for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
+                precede,
+                crate::version::make_host(),
+            );
+        }
+        Some(desc) => {
+            printf(
+                b"%sBuilt for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
+                precede,
+                crate::version::make_host(),
+                desc.as_ptr(),
+            );
+        }
     }
     printf(
         b"%sCopyright (C) 1988-2025 Free Software Foundation, Inc.\n\0" as *const u8

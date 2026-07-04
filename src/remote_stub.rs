@@ -5,9 +5,9 @@ pub use crate::ffi_types::pid_t;
 pub const ECHILD: i32 = 10;
 /// The remote-execution backend's description string, printed by `-v`. The
 /// stub backend never sets one (only a real `RemoteBackend` would), so this
-/// is a fixed null sentinel rather than mutable state.
-pub const remote_description: *mut ::core::ffi::c_char =
-    ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
+/// is a fixed `None` rather than mutable state. Callers convert to a raw
+/// pointer only at the FFI boundary (e.g. as a `printf`/`fprintf` vararg).
+pub const remote_description: Option<&'static ::core::ffi::CStr> = None;
 
 pub trait RemoteBackend {
     fn setup(&self) {}
