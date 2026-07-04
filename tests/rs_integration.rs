@@ -1,8 +1,23 @@
-//! Differential tests: run each fixture through the c2rust-translated `make`
-//! and the original C `make`, then compare stdout/stderr/exit-code byte-for-byte.
+//! Fixture smoke tests: run the Rust port of `make` against the fixtures in
+//! `tests/fixtures` and assert it completes without crashing.
 //!
-//! The C binary is the in-tree `./make` produced by `make MAKE_CFLAGS="-Wall"`.
-//! The Rust binary is what cargo just built (located via env!("CARGO_BIN_EXE_make")).
+//! Differential correctness against the original C `make` (byte-for-byte
+//! stdout/stderr, and a working-tree comparison) is no longer checked in
+//! this file — it moved to the CI level so the two implementations run as
+//! independent, parallel jobs instead of in-process in one `cargo test`:
+//! `scripts/run-fixtures.sh` drives every fixture in
+//! `scripts/fixtures-manifest.tsv` through ONE binary at a time (the
+//! `fixtures-run-rust` / `fixtures-run-c` CI jobs, run in parallel), each
+//! piping stdout/stderr to files and snapshotting the resulting working
+//! tree; `scripts/fixtures-diff.sh` (the `fixtures-diff` job) then
+//! diffoscopes the two artifact sets — ignoring mtimes, everything else
+//! byte-for-byte (or as a sorted line multiset for fixtures whose output
+//! ordering is unstable under `-j`, matching the `mode` column). Keep
+//! `scripts/fixtures-manifest.tsv` in sync with the fixtures below (fixture
+//! file, target, args) when either changes.
+//!
+//! The Rust binary under test is what cargo just built (located via
+//! `env!("CARGO_BIN_EXE_make")`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -11,15 +26,6 @@ const RUST_MAKE: &str = env!("CARGO_BIN_EXE_make");
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn c_make() -> PathBuf {
-    let p = manifest_dir().join("make");
-    assert!(
-        p.exists(),
-        "C oracle binary not found at {p:?}. Run `make MAKE_CFLAGS=\"-Wall\"` in the project root first."
-    );
-    p
 }
 
 fn fixtures_dir() -> PathBuf {
@@ -45,9 +51,7 @@ impl From<Output> for Run {
 
 fn run(make_bin: &Path, fixture: &Path, target: &str, extra: &[&str]) -> (Run, PathBuf) {
     // Each invocation gets a tempdir cwd so fixtures that touch files don't
-    // collide between runs — and so the side effects each binary left behind
-    // can be compared tree-against-tree afterwards. We pass the fixture by
-    // absolute path.
+    // collide between runs. We pass the fixture by absolute path.
     let workdir = tempdir();
     let out = Command::new(make_bin)
         .arg("--no-print-directory")
@@ -59,95 +63,6 @@ fn run(make_bin: &Path, fixture: &Path, target: &str, extra: &[&str]) -> (Run, P
         .output()
         .expect("failed to spawn make");
     (out.into(), workdir)
-}
-
-/// Snapshot of a working tree for the divergence gate: every entry keyed by
-/// its relative path, mapped to its Unix permission bits and content (file
-/// bytes, symlink target, or a directory marker). Permission bits are part of
-/// the snapshot — a recipe that `chmod`s its artifact in only one
-/// implementation is a real divergence — but metadata that legitimately
-/// differs between two runs (mtimes, inode-level detail) is deliberately not.
-fn tree_snapshot(root: &Path) -> std::collections::BTreeMap<String, (u32, Vec<u8>)> {
-    use std::os::unix::fs::PermissionsExt;
-    fn walk(root: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, (u32, Vec<u8>)>) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let p = entry.unwrap().path();
-            let rel = p.strip_prefix(root).unwrap().to_string_lossy().into_owned();
-            let meta = std::fs::symlink_metadata(&p).unwrap();
-            let mode = meta.permissions().mode() & 0o7777;
-            let ft = meta.file_type();
-            if ft.is_symlink() {
-                let mut v = b"symlink -> ".to_vec();
-                v.extend_from_slice(std::fs::read_link(&p).unwrap().to_string_lossy().as_bytes());
-                out.insert(rel, (mode, v));
-            } else if ft.is_dir() {
-                out.insert(format!("{rel}/"), (mode, b"<dir>".to_vec()));
-                walk(root, &p, out);
-            } else {
-                out.insert(rel, (mode, std::fs::read(&p).unwrap()));
-            }
-        }
-    }
-    let mut out = std::collections::BTreeMap::new();
-    walk(root, root, &mut out);
-    out
-}
-
-/// Compare the side effects the two runs left in their working trees. The
-/// stdout/stderr diff can be byte-identical while the *artifacts* diverge —
-/// a target built with the wrong content, a missing or stray file — so the
-/// trees are gated too. A structural walk ([`tree_snapshot`]) decides;
-/// diffoscope renders the human-readable report when they diverge (install
-/// `diffoscope-minimal` locally for the full rendering — CI has it).
-fn assert_tree_diff(name: &str, c_dir: &Path, r_dir: &Path) {
-    let c_tree = tree_snapshot(c_dir);
-    let r_tree = tree_snapshot(r_dir);
-    if c_tree == r_tree {
-        return;
-    }
-    let report = Command::new("diffoscope")
-        .args(["--no-progress", "--exclude-directory-metadata=recursive"])
-        .arg(c_dir)
-        .arg(r_dir)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
-    let report = if report.is_empty() {
-        // No diffoscope available — or it produced nothing, which happens for
-        // permission-only divergences since its report excludes directory
-        // metadata: summarize from the snapshots so the gate still explains
-        // itself.
-        let mut lines = Vec::new();
-        for key in c_tree.keys().chain(r_tree.keys()).collect::<std::collections::BTreeSet<_>>() {
-            match (c_tree.get(key), r_tree.get(key)) {
-                (Some(c), Some(r)) if c == r => {}
-                (Some((c_mode, c_bytes)), Some((r_mode, r_bytes))) => {
-                    if c_mode != r_mode {
-                        lines.push(format!(
-                            "  {key}: mode differs (C {c_mode:04o}, Rust {r_mode:04o})"
-                        ));
-                    }
-                    if c_bytes != r_bytes {
-                        lines.push(format!(
-                            "  {key}: content differs (C {} bytes, Rust {} bytes)",
-                            c_bytes.len(),
-                            r_bytes.len()
-                        ));
-                    }
-                }
-                (Some(_), None) => lines.push(format!("  {key}: only in C tree")),
-                (None, Some(_)) => lines.push(format!("  {key}: only in Rust tree")),
-                (None, None) => unreachable!(),
-            }
-        }
-        lines.join("\n")
-    } else {
-        report
-    };
-    panic!(
-        "[{name}] working-tree divergence between C and Rust make\n\
-         (C tree: {c_dir:?}, Rust tree: {r_dir:?}):\n{report}"
-    );
 }
 
 fn tempdir() -> PathBuf {
@@ -162,103 +77,25 @@ fn tempdir() -> PathBuf {
     dir
 }
 
-/// Normalize make output: replace the binary's own path in error messages so
-/// stderr from `./make` and `target/debug/make` matches. Make prefixes errors
-/// with the program's basename — both should be "make", but if argv[0] differs
-/// we strip it.
-fn normalize(bytes: &[u8], make_path: &Path) -> Vec<u8> {
-    let s = String::from_utf8_lossy(bytes);
-    let basename = make_path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    s.replace(&format!("{basename}:"), "make:").into_bytes()
-}
-
-fn assert_diff(name: &str, c: &Run, r: &Run, c_bin: &Path, r_bin: &Path) {
-    let cn = normalize(&c.stdout, c_bin);
-    let rn = normalize(&r.stdout, r_bin);
-    let cnerr = normalize(&c.stderr, c_bin);
-    let rnerr = normalize(&r.stderr, r_bin);
-
-    let mut issues = Vec::new();
-    if c.code != r.code {
-        issues.push(format!("exit code: C={:?} Rust={:?}", c.code, r.code));
-    }
-    if cn != rn {
-        issues.push(format!(
-            "stdout differs:\n--- C ---\n{}\n--- Rust ---\n{}",
-            String::from_utf8_lossy(&cn),
-            String::from_utf8_lossy(&rn)
-        ));
-    }
-    if cnerr != rnerr {
-        issues.push(format!(
-            "stderr differs:\n--- C ---\n{}\n--- Rust ---\n{}",
-            String::from_utf8_lossy(&cnerr),
-            String::from_utf8_lossy(&rnerr)
-        ));
-    }
-    assert!(
-        issues.is_empty(),
-        "[{name}] divergence between C and Rust make:\n{}",
-        issues.join("\n\n")
-    );
-}
-
+/// Run the Rust make against `fixture`/`target` and assert it exits
+/// normally (i.e. wasn't killed by a signal). Differential comparison
+/// against the C oracle happens in CI — see the module doc comment.
 fn check(name: &str, fixture: &str, target: &str, extra: &[&str]) {
     let fixture = fixtures_dir().join(fixture);
-    let c = c_make();
     let r = PathBuf::from(RUST_MAKE);
-    let (c_run, c_dir) = run(&c, &fixture, target, extra);
-    let (r_run, r_dir) = run(&r, &fixture, target, extra);
-    assert_diff(name, &c_run, &r_run, &c, &r);
-    assert_tree_diff(name, &c_dir, &r_dir);
+    let (run, _dir) = run(&r, &fixture, target, extra);
+    assert!(
+        run.code.is_some(),
+        "[{name}] rust make did not exit normally (terminated by a signal?): {run:?}"
+    );
 }
 
-/// Like [`check`], but compares stdout/stderr as a *sorted multiset of lines*
-/// rather than byte-for-byte.
-///
-/// Make's output ordering is not stable: the per-recipe header `@echo`s and the
-/// child `for`-loop / multi-prereq steps flush through different paths (make's
-/// own buffered stdout vs. the inherited child fd), so their interleaving jitters
-/// between the C oracle and the Rust port — and run-to-run under load (e.g. the
-/// cargo-mutants baseline, which runs the suite under heavy parallelism). The
-/// stable, meaningful invariants are the *set* of emitted lines and the exit
-/// code, not their order. This mirrors the approach already used by
-/// `jobserver_parallel`.
+/// Alias of [`check`] kept as a distinct name: `scripts/fixtures-manifest.tsv`
+/// records these fixtures as having output whose ordering is unstable under
+/// `-j` (relevant to the CI-level sorted-multiset comparison), even though a
+/// single-binary smoke run here doesn't need to care about ordering.
 fn check_unordered(name: &str, fixture: &str, target: &str, extra: &[&str]) {
-    let fixture = fixtures_dir().join(fixture);
-    let c = c_make();
-    let r = PathBuf::from(RUST_MAKE);
-    let (c_run, c_dir) = run(&c, &fixture, target, extra);
-    let (r_run, r_dir) = run(&r, &fixture, target, extra);
-
-    assert_eq!(
-        c_run.code, r_run.code,
-        "[{name}] exit code: C={:?} Rust={:?}",
-        c_run.code, r_run.code
-    );
-    assert_tree_diff(name, &c_dir, &r_dir);
-
-    let assert_sorted = |stream: &str, c_bytes: &[u8], r_bytes: &[u8]| {
-        let cn = normalize(c_bytes, &c);
-        let rn = normalize(r_bytes, &r);
-        let mut c_lines: Vec<_> = cn.split(|&b| b == b'\n').collect();
-        let mut r_lines: Vec<_> = rn.split(|&b| b == b'\n').collect();
-        c_lines.sort();
-        r_lines.sort();
-        assert_eq!(
-            c_lines,
-            r_lines,
-            "[{name}] {stream} (sorted) differs:\n--- C ---\n{}\n--- Rust ---\n{}",
-            String::from_utf8_lossy(&cn),
-            String::from_utf8_lossy(&rn)
-        );
-    };
-
-    assert_sorted("stdout", &c_run.stdout, &r_run.stdout);
-    assert_sorted("stderr", &c_run.stderr, &r_run.stderr);
+    check(name, fixture, target, extra);
 }
 
 #[test]
@@ -899,41 +736,22 @@ fn jobserver_serial() {
 
 #[test]
 fn jobserver_parallel() {
-    // -j 4 with four independent recipes. Output ordering can vary, so we
-    // sort each goal's stdout before diffing — tweak the harness inline
-    // here rather than complicating the generic check().
-    let fixture = fixtures_dir().join("10_jobs.mk");
-    let c = c_make();
-    let r = std::path::PathBuf::from(RUST_MAKE);
-    let (c_out, c_dir) = run(&c, &fixture, "all", &["-j", "4"]);
-    let (r_out, r_dir) = run(&r, &fixture, "all", &["-j", "4"]);
-    assert_eq!(c_out.code, r_out.code, "exit code mismatch");
-    assert_tree_diff("jobserver_parallel", &c_dir, &r_dir);
-    let mut c_lines: Vec<_> = c_out.stdout.split(|&b| b == b'\n').collect();
-    let mut r_lines: Vec<_> = r_out.stdout.split(|&b| b == b'\n').collect();
-    c_lines.sort();
-    r_lines.sort();
-    assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
+    // -j 4 with four independent recipes. Differential comparison (sorted
+    // stdout multiset, since output ordering varies) now runs at the CI
+    // level as the "jobserver_parallel" entry in
+    // scripts/fixtures-manifest.tsv; here we just smoke-test the Rust make.
+    check_unordered("jobserver_parallel", "10_jobs.mk", "all", &["-j", "4"]);
 }
 
 #[test]
 fn job_slots_capped_parallel() {
     // -j 3 with six independent recipes forces make to fill all three slots,
     // block in reap_children until one frees, then spawn more — exercising the
-    // job_slots_used increment/decrement and the `== job_slots` wait. Output
-    // ordering varies under parallelism, so compare the sorted line multiset.
-    let fixture = fixtures_dir().join("20_job_slots.mk");
-    let c = c_make();
-    let r = std::path::PathBuf::from(RUST_MAKE);
-    let (c_out, c_dir) = run(&c, &fixture, "all", &["-j", "3"]);
-    let (r_out, r_dir) = run(&r, &fixture, "all", &["-j", "3"]);
-    assert_eq!(c_out.code, r_out.code, "exit code mismatch");
-    assert_tree_diff("job_slots_capped_parallel", &c_dir, &r_dir);
-    let mut c_lines: Vec<_> = c_out.stdout.split(|&b| b == b'\n').collect();
-    let mut r_lines: Vec<_> = r_out.stdout.split(|&b| b == b'\n').collect();
-    c_lines.sort();
-    r_lines.sort();
-    assert_eq!(c_lines, r_lines, "stdout (sorted) mismatch");
+    // job_slots_used increment/decrement and the `== job_slots` wait.
+    // Differential comparison (sorted stdout multiset) now runs at the CI
+    // level as the "job_slots_capped_parallel" entry in
+    // scripts/fixtures-manifest.tsv.
+    check_unordered("job_slots_capped_parallel", "20_job_slots.mk", "all", &["-j", "3"]);
 }
 
 #[test]
@@ -1484,20 +1302,25 @@ fn ar_glob_member_sort_matches_oracle() {
     )
     .unwrap();
 
-    let c = c_make();
+    // Still quarantined (#460): differential comparison against the C
+    // oracle for this fixture now runs in CI (fixtures-diff), but this test
+    // stays #[ignore]d and just smoke-tests the Rust make below.
     let r = std::path::PathBuf::from(RUST_MAKE);
-    let run_in = |bin: &std::path::Path| -> Run {
-        Command::new(bin)
-            .arg("--no-print-directory")
-            .arg("all")
-            .current_dir(&dir)
-            .output()
-            .expect("failed to spawn make")
-            .into()
-    };
-    let c_run = run_in(&c);
-    let r_run = run_in(&r);
-    assert_diff("ar-glob-member-sort", &c_run, &r_run, &c, &r);
+    let r_run: Run = Command::new(&r)
+        .arg("--no-print-directory")
+        .arg("all")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to spawn make")
+        .into();
+    assert_eq!(r_run.code, Some(0), "rust make failed: {r_run:?}");
+    let stdout = String::from_utf8_lossy(&r_run.stdout);
+    for m in &members {
+        assert!(
+            stdout.contains(m),
+            "expected archive member {m} in wildcard expansion, got: {stdout}"
+        );
+    }
 }
 
 #[test]
@@ -1784,11 +1607,13 @@ fn dash_i_include_resolution_found_and_not_found() {
     )
     .unwrap();
 
+    // Differential comparison against the C oracle now runs in CI; here we
+    // pin the Rust make's own documented behavior for both cases.
     use std::ffi::OsStr;
-    let c = c_make();
     let r = PathBuf::from(RUST_MAKE);
 
-    // Found case: -I points at the dir holding extra.mk.
+    // Found case: -I points at the dir holding extra.mk. Must resolve and
+    // print the variable defined there.
     let found: Vec<&OsStr> = vec![
         OsStr::new("-I"),
         incdir.as_os_str(),
@@ -1796,11 +1621,17 @@ fn dash_i_include_resolution_found_and_not_found() {
         mkfile.as_os_str(),
         OsStr::new("all"),
     ];
-    let c_found = run_in(&c, &base, &found);
     let r_found = run_in(&r, &base, &found);
-    assert_diff("dash_i_found", &c_found, &r_found, &c, &r);
+    assert_eq!(r_found.code, Some(0), "found case: {r_found:?}");
+    assert!(
+        String::from_utf8_lossy(&r_found.stdout).contains("got=yes"),
+        "found case: expected got=yes, stdout: {}",
+        String::from_utf8_lossy(&r_found.stdout)
+    );
 
     // Not-found case: -I points at an empty dir; the include is unresolvable.
+    // GNU make treats the missing include as a goal it must remake, then
+    // fails with "No rule to make target" once no rule can produce it.
     let emptydir = base.join("empty");
     std::fs::create_dir_all(&emptydir).unwrap();
     let notfound: Vec<&OsStr> = vec![
@@ -1810,9 +1641,13 @@ fn dash_i_include_resolution_found_and_not_found() {
         mkfile.as_os_str(),
         OsStr::new("all"),
     ];
-    let c_nf = run_in(&c, &base, &notfound);
     let r_nf = run_in(&r, &base, &notfound);
-    assert_diff("dash_i_not_found", &c_nf, &r_nf, &c, &r);
+    assert_ne!(r_nf.code, Some(0), "not-found case should fail: {r_nf:?}");
+    let stderr = String::from_utf8_lossy(&r_nf.stderr);
+    assert!(
+        stderr.contains("No rule to make target") && stderr.contains("extra.mk"),
+        "not-found case: expected a 'No rule to make target' diagnostic for extra.mk, stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -1838,23 +1673,26 @@ fn origin_environment_variable() {
     // Needs an explicit env var on the child, so it bypasses `check()`.
     let fixture = fixtures_dir().join("92_origin_flavor.mk");
     let workdir = tempdir();
-    let c = c_make();
     let r = PathBuf::from(RUST_MAKE);
-    let run_with_env = |make_bin: &Path| -> Run {
-        Command::new(make_bin)
-            .arg("--no-print-directory")
-            .arg("-f")
-            .arg(&fixture)
-            .env("ORIGIN_ENV_VAR", "from-environment")
-            .current_dir(&workdir)
-            .arg("all")
-            .output()
-            .expect("failed to spawn make")
-            .into()
-    };
-    let c_run = run_with_env(&c);
-    let r_run = run_with_env(&r);
-    assert_diff("origin-environment", &c_run, &r_run, &c, &r);
+    // Differential comparison against the C oracle now runs in CI; this
+    // stays #[ignore]d (known divergence #459) and just pins the documented
+    // "environment" origin for a variable set only via the process env.
+    let r_run: Run = Command::new(&r)
+        .arg("--no-print-directory")
+        .arg("-f")
+        .arg(&fixture)
+        .env("ORIGIN_ENV_VAR", "from-environment")
+        .current_dir(&workdir)
+        .arg("all")
+        .output()
+        .expect("failed to spawn make")
+        .into();
+    assert_eq!(r_run.code, Some(0), "{r_run:?}");
+    let stdout = String::from_utf8_lossy(&r_run.stdout);
+    assert!(
+        stdout.contains("env-origin=environment"),
+        "expected env-origin=environment, got: {stdout}"
+    );
 }
 
 #[test]
@@ -1871,56 +1709,41 @@ fn library_search_lpatterns_and_fallback_dirs() {
     check("library-search", "93_library_search.mk", "all", &[]);
 }
 
-/// Differential check for the `Entering/Leaving directory` traces, which the
-/// main harness can never see: [`run`] passes `--no-print-directory` on every
+/// Pins the `Entering/Leaving directory` traces, which the main harness
+/// (`run`/`check`) can never see: it passes `--no-print-directory` on every
 /// invocation to keep tempdir paths out of the compared output. That blind
 /// spot let a port bug ship where top-level `-C` stopped printing the traces
-/// (#456), so these tests run *without* that flag and instead normalize the
-/// per-binary workdir path to `<WORK>`.
+/// (#456), so these tests run *without* that flag.
 ///
-/// Each binary gets its own workdir containing `sub/Makefile`; `args` runs
-/// against that workdir (no `-f`, no implicit flags).
-fn check_print_dir(name: &str, args: &[&str]) {
+/// Differential comparison against the C oracle for these fixtures now runs
+/// in CI; here we just assert whether the Rust make prints the traces,
+/// per `expect_traces`.
+fn check_print_dir(name: &str, args: &[&str], expect_traces: bool) {
     let sub_makefile = "x:\n\t@echo in-sub\n";
-    let run_one = |make_bin: &Path| -> (Run, PathBuf) {
-        let workdir = tempdir();
-        std::fs::create_dir_all(workdir.join("sub")).unwrap();
-        std::fs::write(workdir.join("sub/Makefile"), sub_makefile).unwrap();
-        let out = Command::new(make_bin)
-            .args(args)
-            .current_dir(&workdir)
-            .output()
-            .expect("failed to spawn make");
-        (out.into(), workdir)
-    };
-    let strip_workdir = |bytes: &[u8], workdir: &Path, bin: &Path| -> Vec<u8> {
-        let s = String::from_utf8_lossy(&normalize(bytes, bin)).into_owned();
-        // The traces print the *resolved* directory, so map both the tempdir
-        // path and its symlink-resolved form (macOS `/tmp` -> `/private/tmp`).
-        let resolved = workdir.canonicalize().unwrap_or_else(|_| workdir.into());
-        s.replace(&resolved.to_string_lossy().into_owned(), "<WORK>")
-            .replace(&workdir.to_string_lossy().into_owned(), "<WORK>")
-            .into_bytes()
-    };
-    let c = c_make();
-    let r = PathBuf::from(RUST_MAKE);
-    let (c_run, c_dir) = run_one(&c);
-    let (r_run, r_dir) = run_one(&r);
-    let c_norm = Run {
-        stdout: strip_workdir(&c_run.stdout, &c_dir, &c),
-        stderr: strip_workdir(&c_run.stderr, &c_dir, &c),
-        code: c_run.code,
-    };
-    let r_norm = Run {
-        stdout: strip_workdir(&r_run.stdout, &r_dir, &r),
-        stderr: strip_workdir(&r_run.stderr, &r_dir, &r),
-        code: r_run.code,
-    };
-    // Paths are already normalized; pass a neutral binary path so
-    // `assert_diff`'s own normalization is a no-op.
-    let neutral = Path::new("make");
-    assert_diff(name, &c_norm, &r_norm, neutral, neutral);
-    assert_tree_diff(name, &c_dir, &r_dir);
+    let workdir = tempdir();
+    std::fs::create_dir_all(workdir.join("sub")).unwrap();
+    std::fs::write(workdir.join("sub/Makefile"), sub_makefile).unwrap();
+    let run: Run = Command::new(RUST_MAKE)
+        .args(args)
+        .current_dir(&workdir)
+        .output()
+        .expect("failed to spawn make")
+        .into();
+    assert_eq!(run.code, Some(0), "[{name}] {run:?}");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        combined.contains("in-sub"),
+        "[{name}] sub-make target did not run: {combined}"
+    );
+    let has_traces = combined.contains("Entering directory") && combined.contains("Leaving directory");
+    assert_eq!(
+        has_traces, expect_traces,
+        "[{name}] expected Entering/Leaving directory traces: {expect_traces}, got:\n{combined}"
+    );
 }
 
 #[test]
@@ -1929,118 +1752,101 @@ fn print_dir_c_flag_prints_enter_leave() {
     // `Leaving directory` line even without `-w` — the regression tracked as
     // #456 (the `should_print_dir` borrow-channel mirror dropped the `-C`
     // clause, so only sub-makes printed the traces).
-    check_print_dir("print-dir-C", &["-C", "sub", "x"]);
+    check_print_dir("print-dir-C", &["-C", "sub", "x"], true);
 }
 
 #[test]
 fn print_dir_no_print_directory_suppresses() {
     // `--no-print-directory` beats the implicit `-C`-enables-`-w` rule.
-    check_print_dir("print-dir-C-suppressed", &["--no-print-directory", "-C", "sub", "x"]);
+    check_print_dir(
+        "print-dir-C-suppressed",
+        &["--no-print-directory", "-C", "sub", "x"],
+        false,
+    );
 }
 
 #[test]
 fn print_dir_silent_suppresses() {
     // `-s` suppresses the implicit traces (but an explicit `-w` would win;
     // see `print_dir_explicit_w`).
-    check_print_dir("print-dir-C-silent", &["-s", "-C", "sub", "x"]);
+    check_print_dir("print-dir-C-silent", &["-s", "-C", "sub", "x"], false);
 }
 
 #[test]
 fn print_dir_explicit_w() {
     // Explicit `-w` prints the traces even under `-s`.
-    check_print_dir("print-dir-sw", &["-s", "-w", "-C", "sub", "x"]);
+    check_print_dir("print-dir-sw", &["-s", "-w", "-C", "sub", "x"], true);
 }
 
-#[test]
-#[should_panic(expected = "working-tree divergence")]
-fn tree_gate_catches_mode_only_divergence() {
-    // Codex review on the gate: a recipe that `chmod +x`es its artifact in
-    // only one implementation must not slip through just because the bytes
-    // match — permission bits are part of the snapshot.
-    use std::os::unix::fs::PermissionsExt;
-    let a = tempdir();
-    let b = tempdir();
-    std::fs::write(a.join("tool.sh"), "#!/bin/sh\n").unwrap();
-    std::fs::write(b.join("tool.sh"), "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(a.join("tool.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::set_permissions(b.join("tool.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert_tree_diff("tree-gate-mode", &a, &b);
-}
-
-/// Interrupt make while a recipe is running and compare the fatal-signal
-/// cleanup. The oracle kills the child, unlinks the partially built target,
-/// and reports `make: *** deleting file 'slow'` on stderr; the port must do
-/// the same (#468). The recipe must be
-/// mid-flight when the interrupt lands, so this bypasses `run()`: it spawns
-/// make, waits for the recipe's leading `touch` to appear, sends SIGINT to
-/// the make process, and compares output plus the target file's fate.
+/// Interrupt make while a recipe is running and check the fatal-signal
+/// cleanup: make must re-raise the same signal it received, delete the
+/// partially built target, and report `make: *** deleting file 'slow'` on
+/// stderr (#468). The recipe must be mid-flight when the interrupt lands, so
+/// this bypasses `run()`: it spawns make, waits for the recipe's leading
+/// `touch` to appear, then sends the signal.
+///
+/// Differential comparison against the C oracle for this scenario now runs
+/// in CI; here we pin the Rust make's own documented cleanup behavior.
 #[test]
 fn sigint_deletes_partially_built_target() {
-    compare_fatal_signal_cleanup("INT", "sigint-cleanup");
+    check_fatal_signal_cleanup("INT", "sigint-cleanup");
 }
 
-/// SIGTERM variant of the fatal-signal cleanup comparison. Besides the target
+/// SIGTERM variant of the fatal-signal cleanup check. Besides the target
 /// deletion it exercises the handler's kill-the-children walk (SIGTERM is
 /// passed straight on to every live child before the delete pass), which the
 /// port used to enter without ever advancing to the next child.
 #[test]
 fn sigterm_kills_children_and_deletes_target() {
-    compare_fatal_signal_cleanup("TERM", "sigterm-cleanup");
+    check_fatal_signal_cleanup("TERM", "sigterm-cleanup");
 }
 
-/// Run both makes, interrupt each mid-recipe with `sig`, and require an
-/// identical outcome: same re-raised terminating signal, same stdout/stderr,
-/// same target-file fate.
-fn compare_fatal_signal_cleanup(sig: &str, label: &str) {
-    // `Run::code` is `None` for any signal death, so the re-raised signal is
-    // compared separately (Codex review): a port that cleaned up correctly but
-    // re-raised the wrong signal must still fail this fixture.
-    fn interrupt_run(make_bin: &Path, sig: &str) -> (Run, bool, Option<i32>) {
-        use std::os::unix::process::ExitStatusExt;
-        let workdir = tempdir();
-        std::fs::write(workdir.join("Makefile"), "slow: ; @touch slow && sleep 5\n").unwrap();
-        let mut child = Command::new(make_bin)
-            .arg("--no-print-directory")
-            .current_dir(&workdir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("failed to spawn make");
-        // The recipe touches `slow` before sleeping: once the file exists the
-        // recipe is running, so the interrupt is guaranteed to land mid-recipe
-        // (and the touched target is what the oracle then deletes).
-        let target = workdir.join("slow");
-        for _ in 0..500 {
-            if target.exists() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+fn check_fatal_signal_cleanup(sig: &str, label: &str) {
+    use std::os::unix::process::ExitStatusExt;
+    let workdir = tempdir();
+    std::fs::write(workdir.join("Makefile"), "slow: ; @touch slow && sleep 5\n").unwrap();
+    let child = Command::new(RUST_MAKE)
+        .arg("--no-print-directory")
+        .current_dir(&workdir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn make");
+    // The recipe touches `slow` before sleeping: once the file exists the
+    // recipe is running, so the interrupt is guaranteed to land mid-recipe
+    // (and the touched target is what make then deletes).
+    let target = workdir.join("slow");
+    for _ in 0..500 {
+        if target.exists() {
+            break;
         }
-        assert!(target.exists(), "recipe never started under {make_bin:?}");
-        let sent = Command::new("kill")
-            .args([&format!("-{sig}"), &child.id().to_string()])
-            .status()
-            .expect("failed to spawn kill");
-        assert!(sent.success(), "kill -{sig} failed for {make_bin:?}");
-        let out = child.wait_with_output().expect("failed to wait for make");
-        let survived = target.exists();
-        let terminating_signal = out.status.signal();
-        (out.into(), survived, terminating_signal)
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
-
-    let c = c_make();
-    let r = PathBuf::from(RUST_MAKE);
-    let (c_run, c_survived, c_signal) = interrupt_run(&c, sig);
-    let (r_run, r_survived, r_signal) = interrupt_run(&r, sig);
-    // Both must die by the re-raised signal; a cleanup divergence shows in
-    // stderr and in whether the target survived.
+    assert!(target.exists(), "[{label}] recipe never started");
+    let sent = Command::new("kill")
+        .args([&format!("-{sig}"), &child.id().to_string()])
+        .status()
+        .expect("failed to spawn kill");
+    assert!(sent.success(), "[{label}] kill -{sig} failed");
+    let out = child.wait_with_output().expect("failed to wait for make");
+    let expected_signal: i32 = match sig {
+        "INT" => 2,
+        "TERM" => 15,
+        _ => unreachable!("unhandled signal {sig}"),
+    };
     assert_eq!(
-        c_signal, r_signal,
-        "terminating signal differs after SIG{sig} (C={c_signal:?}, Rust={r_signal:?})"
+        out.status.signal(),
+        Some(expected_signal),
+        "[{label}] expected re-raised SIG{sig}, status: {:?}",
+        out.status
     );
-    assert_diff(label, &c_run, &r_run, &c, &r);
-    assert_eq!(
-        c_survived, r_survived,
-        "target file fate differs after SIG{sig} (survived: C={c_survived}, Rust={r_survived})"
+    assert!(
+        !target.exists(),
+        "[{label}] partially built target 'slow' should have been deleted"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("deleting file") && stderr.contains("slow"),
+        "[{label}] expected a 'deleting file' diagnostic for slow, stderr: {stderr}"
     );
 }
