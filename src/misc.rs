@@ -708,28 +708,27 @@ unsafe fn eval_tmpdir_var(
 
 /// Return the directory for temporary files: `$MAKE_TMPDIR`, `$TMPDIR`, or
 /// the default, in that order, warning about set-but-unusable values. The
-/// result is computed once and cached.
+/// result is computed once per run and cached on `ctx.tmpdir`.
 ///
 /// # Safety
-/// Must run single-threaded: it caches its result in a static and reads the
-/// environment.
+/// Reads the environment; the caller's `ExecContext` must not be shared
+/// across concurrent callers without synchronization.
 pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
-    static mut tmpdir: *const c_char = null();
-
-    if tmpdir.is_null() {
+    if ctx.tmpdir.0.get().is_null() {
         let mut found = false;
         for var in [c"MAKE_TMPDIR", c"TMPDIR"] {
             match eval_tmpdir_var(ctx, var) {
                 TmpdirCandidate::Unset => {}
                 TmpdirCandidate::Usable(val) => {
-                    tmpdir = val;
-                    return tmpdir;
+                    ctx.tmpdir.0.set(val);
+                    return val;
                 }
                 TmpdirCandidate::Invalid => found = true,
             }
         }
 
-        tmpdir = DEFAULT_TMPDIR.as_ptr();
+        let tmpdir = DEFAULT_TMPDIR.as_ptr();
+        ctx.tmpdir.0.set(tmpdir);
         if found {
             error(
                 ctx,
@@ -740,7 +739,7 @@ pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
             );
         }
     }
-    tmpdir
+    ctx.tmpdir.0.get()
 }
 
 /// Build an `xmalloc`'d mkstemp template `<tmpdir>/GmXXXXXX`.
