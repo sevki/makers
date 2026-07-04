@@ -187,6 +187,14 @@ pub struct ExecContext {
     /// (never freed, matching the former static's lifetime).
     pub tmpdir: PtrCell,
 
+    /// `--shuffle` mode/seed and the PRNG state it drives (see
+    /// [`crate::shuffle::ShuffleState`]) — the former shuffle.rs `static
+    /// CONFIG` and misc.rs `static MK_STATE`. Configured once from the
+    /// command line before the build-phase context rebuild (`main_0`'s
+    /// `decode_switches`/`set_mode` call), so it is carried across it like
+    /// `program`/`tmpdir`; every later shuffle call reads and re-seeds it.
+    pub shuffle: ::core::cell::Cell<crate::shuffle::ShuffleState>,
+
     /// The remote-execution backend (the former `remote_stub.rs` `static
     /// REMOTE: StubRemote` singleton). Owned per-context instead of a process
     /// global so a future multi-tenant host can run different backends (or

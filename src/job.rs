@@ -586,7 +586,7 @@ unsafe fn child_error(
         .wrapping_add(strlen(nm))
         .wrapping_add(strlen(f_name))
         .wrapping_add(strlen(post)) as size_t;
-    if let Some(label) = crate::shuffle::get_mode() {
+    if let Some(label) = crate::shuffle::get_mode(ctx) {
         let mut buf = format!(" shuffle={}", label).into_bytes();
         buf.push(0);
         alloca_allocations.push(buf);

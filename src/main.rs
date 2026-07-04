@@ -2214,7 +2214,7 @@ unsafe fn main_0(
         let shuffle = options.shuffle_mode.borrow().clone();
         if let Some(arg) = shuffle {
             crate::shuffle::set_mode(&ctx, &arg);
-            *options.shuffle_mode.borrow_mut() = crate::shuffle::get_mode();
+            *options.shuffle_mode.borrow_mut() = crate::shuffle::get_mode(&ctx);
         }
     }
     if isatty(fileno(stdout)) != 0
@@ -2323,6 +2323,11 @@ unsafe fn main_0(
     // invalid MAKE_TMPDIR/TMPDIR) for temp-file users that run after this
     // rebuild (get_tmpfile for `-f -`, jobserver_setup, output sync).
     let carried_tmpdir = ::core::mem::take(&mut ctx.tmpdir);
+    // `--shuffle=` is decoded from argv/MAKEFLAGS before this rebuild (see the
+    // `set_mode` call above); carrying it keeps the configured mode/seed (and
+    // any PRNG advancement) alive for the shuffling that happens during and
+    // after this rebuild.
+    let carried_shuffle = ::core::mem::take(&mut ctx.shuffle);
     // SHELL was recorded from the environment scan above and is appended to
     // child environments during the build; the command-variable list is built
     // as argv/`MAKEFLAGS` switches are decoded (both before and after this
@@ -2349,6 +2354,7 @@ unsafe fn main_0(
         directory_before_chdir: carried_dir_before_chdir,
         program: carried_program,
         tmpdir: carried_tmpdir,
+        shuffle: carried_shuffle,
         shell_var: carried_shell_var,
         command_variables: carried_command_variables,
         fatal_signal_set: carried_fatal_signal_set,
