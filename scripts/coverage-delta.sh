@@ -5,11 +5,11 @@
 #
 # It runs the instrumented test suite twice — once against the base (in a
 # throwaway git worktree, so your checkout is never touched) and once against
-# the working tree — and reports `current - base` line coverage. The
-# differential tests that compare the Rust port against the in-tree C oracle
-# (`./make`) are included automatically when that binary is present; the
-# existing oracle is copied into the base worktree so both sides exercise the
-# same paths.
+# the working tree — and reports `current - base` line coverage. `cargo test`
+# only smoke-tests the Rust make itself (tests/rs_integration.rs); the
+# differential comparison against the C oracle runs separately, in CI, via
+# scripts/run-fixtures.sh + scripts/fixtures-diff.sh (see
+# scripts/fixtures-manifest.tsv), not as part of this measurement.
 #
 # Usage:
 #   ./scripts/coverage-delta.sh                 # report-only vs origin/main
@@ -66,23 +66,6 @@ fi
 BASE_REF="$(git merge-base HEAD "$BASE" 2>/dev/null || git rev-parse --verify "$BASE")"
 BASE_SHORT="$(git rev-parse --short "$BASE_REF")"
 
-if [ ! -x "$ROOT/make" ]; then
-    # Without ./make the differential tests in tests/rs_integration.rs do not
-    # skip — `c_make()` asserts the binary exists, so they fail. Under
-    # --ignore-run-fail coverage is still emitted, but it omits the recipe
-    # paths those tests drive, so the delta is not representative. Refuse to
-    # gate on that in --enforce mode; only warn in report-only mode.
-    msg_build='Build the C oracle first:
-        make MAKE_CFLAGS="-Wall"      # or ./build.sh'
-    if [ "$ENFORCE" -eq 1 ]; then
-        echo "error: C oracle ./make not found; the differential tests would fail" >&2
-        echo "       and the coverage delta would be non-representative. $msg_build" >&2
-        exit 1
-    fi
-    echo "note: C oracle ./make not found; the differential tests will FAIL on" >&2
-    echo "      both sides, so this delta is not representative. $msg_build" >&2
-fi
-
 # Run the instrumented suite in $1 and print its total line-coverage percent.
 measure() {
     _dir="$1"
@@ -107,9 +90,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 git worktree add --detach "$WT" "$BASE_REF" >/dev/null 2>&1
-# Reuse the already-built C oracle so the base side runs the differential tests
-# too (the C sources are a differential oracle, identical across the branches).
-[ -x "$ROOT/make" ] && cp "$ROOT/make" "$WT/make"
 BASE_PCT="$(measure "$WT")"
 
 echo "Measuring working-tree coverage ..." >&2
