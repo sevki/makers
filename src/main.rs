@@ -1906,7 +1906,7 @@ pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
                 break;
             }
         }
-        if r < 0 && *__errno_location() != ENOENT && handling_fatal_signal == 0 {
+        if r < 0 && *__errno_location() != ENOENT && !handling_fatal_signal() {
             perror_with_name(
                 ctx,
                 b"unlink (temporary file): \0" as *const u8 as *const ::core::ffi::c_char,
