@@ -7,12 +7,18 @@
 #
 # Usage: run-fixtures.sh <make-bin> <output-dir>
 #
-# Manifest columns (tab-separated): name, mode, fixture, target, args, skip
+# Manifest columns (tab-separated): name, mode, fixture, target, args, skip, kind
 #   - args is a list of argv entries joined with \x1f (some entries, e.g.
 #     `--eval=EV := from_eval`, contain literal spaces, so plain
 #     space-joining would misparse them back into argv).
 #   - mode/skip are not needed here (they drive comparison, not execution)
 #     but are carried through so the two scripts share one manifest.
+#   - kind selects the runner: this script only handles "simple" rows (a
+#     fixture file run via `-f`/target/args); every other kind needs
+#     bespoke setup (custom directory layout, signal delivery, archive
+#     pre-creation, no --no-print-directory) and is handled by the
+#     companion scripts/run-bespoke-fixtures.sh instead. Run both scripts
+#     against the same $OUT_DIR to cover the full manifest.
 set -euo pipefail
 
 MAKE_BIN="${1:?usage: run-fixtures.sh <make-bin> <output-dir>}"
@@ -22,6 +28,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO_ROOT/scripts/fixtures-manifest.tsv"
 FIXTURES_DIR="$REPO_ROOT/tests/fixtures"
 SEP=$'\x1f'
+# Bash's `read` treats tab as "IFS whitespace" even when IFS is set to
+# exactly $'\t' -- consecutive delimiters collapse and leading/trailing ones
+# are stripped, silently merging empty columns (e.g. args="", skip="").
+# Translate tabs to a non-whitespace byte first so every column, empty or
+# not, survives the split.
+FIELD_SEP=$'\x01'
 
 MAKE_BIN="$(cd "$(dirname "$MAKE_BIN")" && pwd)/$(basename "$MAKE_BIN")"
 mkdir -p "$OUT_DIR"
@@ -30,9 +42,11 @@ mkdir -p "$OUT_DIR"
 # redirects resolve against that tempdir instead of the caller's cwd.
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
-echo "Running $(($(wc -l <"$MANIFEST") - 1)) fixtures with $MAKE_BIN"
+echo "Running $(tail -n +2 "$MANIFEST" | awk -F'\t' '$7 == "simple"' | wc -l) fixtures with $MAKE_BIN"
 
-tail -n +2 "$MANIFEST" | while IFS=$'\t' read -r name mode fixture target args skip; do
+tail -n +2 "$MANIFEST" | tr '\t' "$FIELD_SEP" | while IFS="$FIELD_SEP" read -r name mode fixture target args skip kind; do
+    [ -n "$name" ] || continue
+    [ "$kind" = "simple" ] || continue
     fixture_dir="$OUT_DIR/$name"
     mkdir -p "$fixture_dir"
     workdir="$(mktemp -d)"

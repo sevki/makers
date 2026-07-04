@@ -65,7 +65,13 @@ jobs rather than in-process in `cargo test`: `fixtures-run-rust` and
 binary (piping stdout/stderr to files and snapshotting the resulting
 working tree), and `fixtures-diff` downloads both artifact sets and
 diffoscopes them (ignoring mtimes) as the hard gate; a coverage or lint job
-that tolerates failures does not count as verification. `tests/rs_integration.rs`
+that tolerates failures does not count as verification. Most fixtures are
+`kind=simple` (a fixture file run via `-f`/target/args, handled by
+`scripts/run-fixtures.sh`); cases that need custom setup instead of that
+shape (print-directory tracing, `-I` resolution, signal delivery, archive
+pre-creation) get a different `kind` and are handled by
+`scripts/run-bespoke-fixtures.sh` — every kind still lands in the same
+output layout, so `fixtures-diff` compares them identically. `tests/rs_integration.rs`
 itself only smoke-tests the Rust make (asserts it runs without crashing) —
 it is fast local signal, not the enforcement point. A fixture may only be
 exempted from the gate by quarantining it: the `skip` column in

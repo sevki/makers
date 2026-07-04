@@ -283,12 +283,16 @@ jobs:
     # Fixture suite, run independently by each make in its own parallel job
     # (rather than in-process inside one `cargo test`), so the Rust make and
     # the C make oracle never share a process and each leaves its own
-    # artifact trail. `scripts/run-fixtures.sh` drives every fixture in
-    # `scripts/fixtures-manifest.tsv` through ONE binary, piping stdout/stderr
-    # to files and snapshotting the resulting working tree; `fixtures-diff`
-    # below is the enforced pass/fail signal, diffoscoping the two artifact
-    # sets (ignoring mtimes). Known pre-existing divergences are quarantined
-    # via the manifest's `skip` column and tracked by issue.
+    # artifact trail. `scripts/run-fixtures.sh` drives every `kind=simple`
+    # row in `scripts/fixtures-manifest.tsv` through ONE binary (a fixture
+    # file run via -f/target/args); `scripts/run-bespoke-fixtures.sh` handles
+    # every other kind -- cases that need custom setup (print-directory
+    # tracing, -I resolution, signal delivery, archive pre-creation) that
+    # doesn't fit that shape. Both write into the same output dir (stdout/
+    # stderr piped to files, working tree snapshotted); `fixtures-diff` below
+    # is the enforced pass/fail signal, diffoscoping the two artifact sets
+    # (ignoring mtimes). Known pre-existing divergences are quarantined via
+    # the manifest's `skip` column and tracked by issue.
     # ─────────────────────────────────────────────────────────────────────
     fixtures-run-rust:
         name: run fixtures (rust make)
@@ -310,6 +314,8 @@ jobs:
                   echo "$HOME/.local/bin" >> "$GITHUB_PATH"
             - name: Run fixtures
               run: ./scripts/run-fixtures.sh "$(command -v make)" fixtures-out
+            - name: Run bespoke fixtures
+              run: ./scripts/run-bespoke-fixtures.sh "$(command -v make)" fixtures-out
             - name: Upload rust make fixture outputs
               if: always()
               uses: actions/upload-artifact@v4
@@ -343,6 +349,8 @@ jobs:
                   echo "$HOME/.local/bin" >> "$GITHUB_PATH"
             - name: Run fixtures
               run: ./scripts/run-fixtures.sh "$(command -v make)" fixtures-out
+            - name: Run bespoke fixtures
+              run: ./scripts/run-bespoke-fixtures.sh "$(command -v make)" fixtures-out
             - name: Upload C make fixture outputs
               if: always()
               uses: actions/upload-artifact@v4

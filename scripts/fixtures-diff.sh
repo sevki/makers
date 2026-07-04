@@ -29,6 +29,11 @@ RUST_DIR="${2:?usage: fixtures-diff.sh <c-dir> <rust-dir>}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO_ROOT/scripts/fixtures-manifest.tsv"
 SEP=$'\x1f'
+# Bash's `read` treats tab as "IFS whitespace" even when IFS is set to
+# exactly $'\t' -- consecutive delimiters collapse and leading/trailing ones
+# are stripped, silently merging empty columns (e.g. args="", skip="").
+# Translate tabs to a non-whitespace byte first so every column survives.
+FIELD_SEP=$'\x01'
 
 fail=0
 skipped=0
@@ -46,7 +51,7 @@ tree_modes() {
     done)
 }
 
-while IFS=$'\t' read -r name mode fixture target args skip; do
+while IFS="$FIELD_SEP" read -r name mode fixture target args skip kind; do
     [ -n "$name" ] || continue
     if [ -n "$skip" ]; then
         echo "SKIP  $name ($skip)"
@@ -117,7 +122,7 @@ while IFS=$'\t' read -r name mode fixture target args skip; do
     fi
 
     rm -rf "$cmp_c" "$cmp_r"
-done < <(tail -n +2 "$MANIFEST")
+done < <(tail -n +2 "$MANIFEST" | tr '\t' "$FIELD_SEP")
 
 echo ""
 echo "fixtures-diff: $checked checked, $skipped skipped (known divergence)"
