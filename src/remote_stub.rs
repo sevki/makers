@@ -3,7 +3,10 @@ use libc::__errno_location;
 pub use crate::ffi_types::pid_t;
 
 pub const ECHILD: i32 = 10;
-pub static mut remote_description: *mut ::core::ffi::c_char =
+/// The remote-execution backend's description string, printed by `-v`. The
+/// stub backend never sets one (only a real `RemoteBackend` would), so this
+/// is a fixed null sentinel rather than mutable state.
+pub const remote_description: *mut ::core::ffi::c_char =
     ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char;
 
 pub trait RemoteBackend {
