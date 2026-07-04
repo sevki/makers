@@ -3,15 +3,16 @@ use libc::__errno_location;
 pub use crate::ffi_types::pid_t;
 
 pub const ECHILD: i32 = 10;
-/// The remote-execution backend's description string, printed by `-v`. The
-/// stub backend never sets one (only a real `RemoteBackend` would), so this
-/// is a fixed `None` rather than mutable state. Callers convert to a raw
-/// pointer only at the FFI boundary (e.g. as a `printf`/`fprintf` vararg).
-pub const remote_description: Option<&'static ::core::ffi::CStr> = None;
 
 pub trait RemoteBackend {
     fn setup(&self) {}
     fn cleanup(&self) {}
+    /// The backend's description string, printed by `-v`. Callers convert
+    /// to a raw pointer only at the FFI boundary (e.g. as a
+    /// `printf`/`fprintf` vararg).
+    fn description(&self) -> Option<&'static ::core::ffi::CStr> {
+        None
+    }
     fn can_start_job(&self, first: bool) -> bool;
     fn start_job(
         &self,
@@ -74,6 +75,10 @@ pub fn remote_setup() {
 
 pub fn remote_cleanup() {
     REMOTE.cleanup();
+}
+
+pub fn remote_description() -> Option<&'static ::core::ffi::CStr> {
+    REMOTE.description()
 }
 
 pub fn start_remote_job_p(first_p: i32) -> i32 {

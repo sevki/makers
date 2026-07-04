@@ -1847,7 +1847,7 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
         fputs(*cpp, usageto);
         cpp = cpp.offset(1_i32 as isize);
     }
-    match remote_description {
+    match remote_description() {
         None => {
             fprintf(
                 usageto,
@@ -4729,7 +4729,7 @@ pub unsafe fn print_version() {
         precede,
         crate::version::version_string(),
     );
-    match remote_description {
+    match remote_description() {
         None => {
             printf(
                 b"%sBuilt for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
