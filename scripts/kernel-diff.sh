@@ -47,9 +47,25 @@ normalize() {
 
 for stream in stdout stderr; do
     echo "=== ${stream}: C make vs Rust make (after normalization) ==="
-    if diff -u \
-        <(normalize "$c_dir/kernel-${stream}.log") \
-        <(normalize "$rust_dir/kernel-${stream}.log") >"${stream}.diff"; then
+    c_norm="$(mktemp)"
+    r_norm="$(mktemp)"
+    normalize "$c_dir/kernel-${stream}.log" >"$c_norm"
+    normalize "$rust_dir/kernel-${stream}.log" >"$r_norm"
+
+    # diffoscope renders the human-readable report (install diffoscope-minimal
+    # locally for it; CI has it) and its exit code is meaningful (0 = no
+    # differences, 1 = differences found); fall back to plain diff if it's
+    # unavailable.
+    if command -v diffoscope >/dev/null 2>&1; then
+        diffoscope --no-progress "$c_norm" "$r_norm" >"${stream}.diff"
+        rc=$?
+    else
+        diff -u "$c_norm" "$r_norm" >"${stream}.diff"
+        rc=$?
+    fi
+    rm -f "$c_norm" "$r_norm"
+
+    if [ "$rc" -eq 0 ]; then
         echo "${stream}: identical"
     else
         echo "::error::kernel build ${stream} differs between C make and Rust make"

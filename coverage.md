@@ -3,8 +3,9 @@
 [AGENTS.md](AGENTS.md) requires every cleanup pass to **raise or preserve
 coverage**: the `cargo-llvm-cov` line-coverage delta against the base branch
 must be `>= 0`, and any code a pass touches needs a `#[cfg(test)]` unit test
-and/or a differential integration case in `tests/rs_integration.rs` that
-checks `make` behavior byte-for-byte against the in-tree C oracle.
+and/or a fixture in `scripts/fixtures-manifest.tsv` (plus its matching
+`tests/rs_integration.rs` case) that checks `make` behavior byte-for-byte
+against the in-tree C oracle in the `fixtures-diff` CI job.
 
 This document describes how to measure that delta locally before opening a PR.
 
@@ -36,22 +37,16 @@ rustup component add llvm-tools-preview
 # python3 and git are also required (both are already needed by the repo).
 ```
 
-### Build the C oracle first
+### No C oracle needed locally
 
-The differential tests in `tests/rs_integration.rs` compare the Rust port
-against the in-tree C `make` at `./make`. Build it once so those tests — and
-the recipe-execution coverage they drive — are included on **both** sides of
-the comparison:
-
-```sh
-make MAKE_CFLAGS="-Wall"   # or: ./build.sh
-```
-
-`coverage-delta.sh` copies the existing `./make` into the base worktree, so
-the C oracle is built only once. If `./make` is missing, the differential
-tests do not skip — they fail (`c_make()` asserts the binary exists) — so the
-delta would omit the recipe paths they drive. `--enforce` therefore refuses
-to run without the oracle; report-only mode warns and continues.
+`cargo test` (what `coverage-delta.sh` measures) only smoke-tests the Rust
+make itself — it no longer builds or shells out to the C oracle. The
+differential comparison against the C oracle runs separately in CI:
+`scripts/run-fixtures.sh` drives every fixture in
+`scripts/fixtures-manifest.tsv` through one binary at a time (the
+`fixtures-run-rust` / `fixtures-run-c` jobs), and `scripts/fixtures-diff.sh`
+(the `fixtures-diff` job) diffoscopes the two resulting artifact sets. So
+measuring a local coverage delta needs nothing beyond the requirements above.
 
 ## CI mode: report-only (for now)
 

@@ -1,11 +1,12 @@
 # Refactor Checklist
 
 ## Per-pass gate (every cleanup PR)
-- [ ] Touched code has a `#[cfg(test)]` unit test and/or a differential case in
-      `tests/rs_integration.rs` (compared byte-for-byte against the C oracle).
-- [ ] Coverage delta is `>= 0`: `./scripts/coverage-delta.sh --enforce` passes
-      (build the C oracle first with `make MAKE_CFLAGS="-Wall"`). See
-      [coverage.md](coverage.md).
+- [ ] Touched code has a `#[cfg(test)]` unit test and/or a fixture in
+      `scripts/fixtures-manifest.tsv` (plus its matching
+      `tests/rs_integration.rs` case) compared byte-for-byte against the C
+      oracle in the `fixtures-diff` CI job.
+- [ ] Coverage delta is `>= 0`: `./scripts/coverage-delta.sh --enforce` passes.
+      See [coverage.md](coverage.md).
 
 ## Shared FILE / `_IO_FILE` cleanup
 - [x] Replace local `_IO_FILE` clones / `FILE` aliases with `crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE}` in:

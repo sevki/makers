@@ -1,0 +1,127 @@
+name	mode	fixture	target	args	skip	kind
+basic	ordered	01_basic.mk	all			simple
+makelevel_recursive	ordered	63_makelevel.mk	all			simple
+verify_flag_database	unordered	65_verify_flag.mk	all			simple
+notintermediate_keeps_intermediates	ordered	66_notintermediate.mk	all			simple
+always_make_plain	ordered	67_always_make.mk	all			simple
+always_make_forced	ordered	67_always_make.mk	all	-B		simple
+eval_flags	ordered	01_basic.mk	all	--eval=EV := from_eval--eval=$(info eval-info $(EV))		simple
+rule_target_separators	unordered	43_rule_target_separators.mk	all			simple
+escaped_percent_target	ordered	44_escaped_percent_target.mk	all			simple
+intermediate_pattern_prereq	ordered	90_intermediate_pattern_prereq.mk	all			simple
+pattern_specific_variables	ordered	89_pattern_specific_var.mk	all			simple
+escaped_colon_prereq	ordered	45_escaped_colon_prereq.mk	all			simple
+log-functions	ordered	60_log_functions.mk	all			simple
+log-functions-error	ordered	60_log_functions.mk	all	BOOM=1		simple
+notdir-suffix	ordered	61_notdir_suffix.mk	all			simple
+basename-dir	ordered	62_basename_dir.mk	all			simple
+vars	ordered	02_vars.mk	all	FROMCMD=cli		simple
+pattern	unordered	03_pattern.mk	all			simple
+cond-release	ordered	04_cond.mk	all			simple
+cond-debug	ordered	04_cond.mk	all	MODE=debugVERBOSE=1		simple
+debug-basic-trace	unordered	91_debug_basic.mk	all	--debug=b-n		simple
+cond-chain-default	ordered	15_cond_chain.mk	all			simple
+cond-chain-release	ordered	15_cond_chain.mk	all	MODE=release		simple
+cond-chain-fallback	ordered	15_cond_chain.mk	all	FALLBACK=xHIDE=1		simple
+recursive-substref	ordered	46_recursive_substref.mk	all			simple
+abspath-alloc	ordered	47_abspath_alloc.mk	all			simple
+define-undefine	ordered	33_define_undefine.mk	all			simple
+tilde-user	ordered	34_tilde_user.mk	all			simple
+pattern-default-goal	ordered	42_pattern_default_goal.mk	show			simple
+second-expansion	ordered	41_second_expansion.mk	all			simple
+suffix-rule-default-goal	ordered	39_suffix_rule_default_goal.mk	show			simple
+default-goal-normal	ordered	40_default_goal_normal.mk	show			simple
+wait-special-file	ordered	38_wait_special_file.mk	all			simple
+wait-dotslash	ordered	36_wait_dotslash.mk	all			simple
+eight-space-indent	ordered	37_eight_space_indent.mk	all			simple
+ifeq-no-separator	ordered	35_ifeq_no_separator.mk	all			simple
+ifdef-token	ordered	32_ifdef_token.mk	all			simple
+ifeq-forms	ordered	31_ifeq_forms.mk	all			simple
+varmod	ordered	16_varmod.mk	all			simple
+call-args	ordered	26_call_args.mk	all			simple
+recipe-prefix	unordered	22_recipeprefix.mk	all			simple
+second-expansion_2	ordered	24_secondexpansion.mk	all			simple
+posix	ordered	25_posix.mk	all			simple
+remake-include	ordered	23_remake_include.mk	all			simple
+varmod-override	ordered	16_varmod.mk	all	OVR=from-cmdline		simple
+define-nested	ordered	21_define_nested.mk	all			simple
+shell	ordered	19_shell.mk	all			simple
+directives	ordered	17_directives.mk	all			simple
+filedir-export	ordered	30_filedir_export.mk	all			simple
+include-missing	ordered	18_include_missing.mk	all			simple
+funcs	ordered	05_funcs.mk	all			simple
+patsubst	ordered	16_patsubst.mk	all			simple
+subst	ordered	15_subst.mk	all			simple
+abspath	ordered	13_abspath.mk	all			simple
+recipe-all	unordered	06_recipe.mk	all			simple
+recipe-lines	ordered	06_recipe.mk	lines			simple
+error	ordered	07_error.mk	all			simple
+shuffle-reverse	unordered	08_shuffle.mk	all	--shuffle=reverse		simple
+shuffle-random-42	unordered	08_shuffle.mk	all	--shuffle=42		simple
+shuffle-identity	unordered	08_shuffle.mk	all	--shuffle=identity		simple
+shuffle-invalid	ordered	08_shuffle.mk	all	--shuffle=bogus		simple
+warn-undefined-var	ordered	09_warn.mk	all	--warn=undefined-var		simple
+warn-invalid-ref	ordered	48_invalid_var_ref.mk	all	--warn=invalid-ref		simple
+warn-error	ordered	09_warn.mk	all	--warn=error,undefined-var		simple
+jobs-1	ordered	10_jobs.mk	all	-j1		simple
+jobserver-tokens	unordered	20_job_slots.mk	all	-j2		simple
+notparallel	unordered	49_notparallel.mk	all	-j4		simple
+special-vars	ordered	50_special_variables.mk	all			simple
+delete-on-error	ordered	51_delete_on_error.mk	out			simple
+waiting-for-jobs	unordered	52_waiting_for_jobs.mk	all	-j2		simple
+considered-diamond	unordered	53_considered_diamond.mk	all			simple
+changenum-staged	ordered	54_changenum_staged.mk	all			simple
+output-sync	unordered	55_output_sync.mk	all	-j3-O		simple
+job-counter	unordered	56_job_counter.mk	all	-j2		simple
+output-init	ordered	57_output_init.mk	all			simple
+decode-switches	ordered	58_decode_switches.mk	all	-s-eFOO=cli		simple
+silent-makeflags	ordered	64_silent_makeflags.mk	all	-s		simple
+run_silent_echo	ordered	68_run_silent.mk	all			simple
+run_silent_dash_s	ordered	68_run_silent.mk	all	-s		simple
+dot_silent_target	ordered	69_dot_silent.mk	all			simple
+export_directive	ordered	70_export_all.mk	all			simple
+export_all_target	ordered	71_export_all_target.mk	all			simple
+recipeprefix	ordered	72_recipeprefix.mk	all			simple
+output_sync_plain	ordered	73_output_sync.mk	all			simple
+output_sync_line	ordered	73_output_sync.mk	all	--output-sync=line		simple
+output_sync_target	ordered	73_output_sync.mk	all	--output-sync=target		simple
+load_avg_default	ordered	74_load_average.mk	all			simple
+load_avg_noarg	ordered	74_load_average.mk	all	-l		simple
+load_limit	ordered	83_load_limit.mk	all	-j2-l1000		simple
+jobs_default	ordered	75_jobs.mk	all			simple
+jobs_serial	ordered	75_jobs.mk	all	-j1		simple
+jobs_parallel	ordered	75_jobs.mk	all	-j2		simple
+pattern_dep_length	ordered	76_pattern_dep_length.mk	widget.out			simple
+pattern-rule	ordered	59_pattern_rule.mk	all			simple
+pattern_stats	unordered	78_pattern_stats.mk	widget.out			simple
+func-arity	ordered	79_func_arity.mk	all			simple
+double-colon	ordered	80_double_colon.mk	all			simple
+wildcard-probe	ordered	81_wildcard_probe.mk	all			simple
+wildcard-dirs	ordered	82_wildcard_dirs.mk	all			simple
+wildcard-phases	ordered	84_wildcard_phases.mk	all			simple
+autovar-lists	ordered	86_autovar_lists.mk	all			simple
+filter-hashing	ordered	88_filter_hashing.mk	all			simple
+autovar-dedup-promote	ordered	87_autovar_dedup_promote.mk	all			simple
+wildcard-long-names	ordered	85_wildcard_long_names.mk	all			simple
+warn-unknown	ordered	09_warn.mk	all	--warn=no-such-warning		simple
+realpath	ordered	14_realpath.mk	all			simple
+wordfuncs	ordered	12_wordfuncs.mk	all			simple
+word-zero	ordered	12_wordfuncs.mk	badzero			simple
+word-nan	ordered	12_wordfuncs.mk	badnan			simple
+wait-special	ordered	27_wait_special.mk	all			simple
+nothing-todo	ordered	28_nothing_todo.mk	noop			simple
+recipe-runs	ordered	28_nothing_todo.mk	done			simple
+oneshell	ordered	29_oneshell.mk	all			simple
+origin-flavor	ordered	92_origin_flavor.mk	all	CMDLINE_VAR=cli-value	known divergence #459: $(flavor) of automatic variables is 'recursive', oracle says 'simple'	simple
+jobserver_parallel	unordered_stdout_only	10_jobs.mk	all	-j4		simple
+job_slots_capped_parallel	unordered_stdout_only	20_job_slots.mk	all	-j3		simple
+library-search	ordered	93_library_search.mk	all		known divergence #484: $< for a resolved -lNAME prerequisite stays unresolved	simple
+print-dir-C	ordered	-	-	-Csubx		print_dir
+print-dir-C-suppressed	ordered	-	-	--no-print-directory-Csubx		print_dir
+print-dir-C-silent	ordered	-	-	-s-Csubx		print_dir
+print-dir-sw	ordered	-	-	-s-w-Csubx		print_dir
+dash_i_found	ordered	-	found			dash_i
+dash_i_not_found	ordered	-	notfound			dash_i
+sigint-cleanup	ordered	-	INT			signal
+sigterm-cleanup	ordered	-	TERM			signal
+ar-glob-member-sort	ordered	-	-		known divergence #460: $(wildcard lib.a(*.o)) name form differs from the C oracle	ar_glob
