@@ -428,6 +428,15 @@ pub struct ExecContext {
     /// from a normal call path a fatal-signal handler also happens to invoke;
     /// only an atomic (not a `Cell`) avoids a torn read-modify-write.
     pub dead_children: AtomicU32Cell,
+
+    /// Set while a fatal signal is being handled, the former `commands.rs`
+    /// `static HANDLING_FATAL_SIGNAL` atomic. `fatal_error_signal` — the real
+    /// fatal-signal handler — sets this through the `CTX_PTR` borrow channel
+    /// (like [`Self::dead_children`]), so it stays a per-context atomic
+    /// rather than a process-wide one: a future multi-tenant host running
+    /// several sessions must not have one session's fatal signal look like
+    /// another's.
+    pub handling_fatal_signal: AtomicBoolCell,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -483,6 +492,19 @@ pub struct AtomicU64Cell(pub ::core::sync::atomic::AtomicU64);
 impl Clone for AtomicU64Cell {
     fn clone(&self) -> Self {
         Self(::core::sync::atomic::AtomicU64::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// The `bool` counterpart of [`AtomicU32Cell`], for flags a real signal
+/// handler sets (rather than counters it increments).
+#[derive(Debug, Default)]
+pub struct AtomicBoolCell(pub ::core::sync::atomic::AtomicBool);
+
+impl Clone for AtomicBoolCell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicBool::new(
             self.0.load(::core::sync::atomic::Ordering::Relaxed),
         ))
     }

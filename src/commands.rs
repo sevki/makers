@@ -30,7 +30,7 @@ use ::std::collections::hash_map::Entry;
 
 use rustc_hash::FxHashMap;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 use libc::{
     __errno_location, exit, kill, printf, puts, signal, unlink, EINTR, ENOENT, SIGHUP, SIGINT,
@@ -476,18 +476,17 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
     }
 }
 
-/// Set while a fatal signal is being handled; checked by code that must not
-/// re-enter (e.g. output sync teardown). Was a c2rust `static mut
-/// sig_atomic_t`; now an atomic behind a safe accessor — `Relaxed` matches
-/// the original ordering (one write from the signal handler, plain reads
-/// elsewhere, never reset since the process is about to die) with no
-/// synchronization cost.
-static HANDLING_FATAL_SIGNAL: AtomicBool = AtomicBool::new(false);
-
-/// Read whether a fatal signal is currently being handled.
+/// Read whether a fatal signal is currently being handled; checked by code
+/// that must not re-enter (e.g. output sync teardown). Was a c2rust
+/// `static mut sig_atomic_t`, then a process-wide atomic; now lives on
+/// `ExecContext` (see [`crate::execctx::ExecContext::handling_fatal_signal`])
+/// so a future multi-tenant host keeps each session's fatal-signal state
+/// separate. `Relaxed` matches the original ordering (one write from the
+/// signal handler, plain reads elsewhere, never reset since the process is
+/// about to die) with no synchronization cost.
 #[inline]
-pub fn handling_fatal_signal() -> bool {
-    HANDLING_FATAL_SIGNAL.load(Ordering::Relaxed)
+pub fn handling_fatal_signal(ctx: &ExecContext) -> bool {
+    ctx.handling_fatal_signal.0.load(Ordering::Relaxed)
 }
 
 /// Copy the live context's fatal-signal mask onto `ctx`, the throwaway
@@ -514,7 +513,12 @@ fn adopt_live_fatal_signal_mask(ctx: &ExecContext) {
 /// Only callable as a signal handler (or from one); touches global job
 /// state.
 pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
-    HANDLING_FATAL_SIGNAL.store(true, Ordering::Relaxed);
+    crate::make_main::try_with_exec_context(|live_ctx| {
+        live_ctx
+            .handling_fatal_signal
+            .0
+            .store(true, Ordering::Relaxed)
+    });
     signal(sig, SIG_DFL);
     // This is a kernel-invoked signal handler: it cannot be passed the owned
     // `ExecContext`, so every stateful step below — the children chain, the

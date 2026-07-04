@@ -977,7 +977,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 child_failed = 0;
             }
             if job_next_command(c) != 0 {
-                if handling_fatal_signal() {
+                if handling_fatal_signal(ctx) {
                     set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_failed);
                 } else {
                     if crate::make_main::opt_output_sync() == OUTPUT_SYNC_LINE {
@@ -1004,7 +1004,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             }
         }
         crate::output::output_dump(ctx, &raw mut (*c).output);
-        if !handling_fatal_signal() {
+        if !handling_fatal_signal(ctx) {
             notice_finished_file(ctx, (*c).file, (*c).entry);
         }
         block_sigs(ctx);
@@ -1039,7 +1039,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             && child_failed != 0
             && dontcare == 0
             && !crate::make_main::opt_keep_going()
-            && !handling_fatal_signal()
+            && !handling_fatal_signal(ctx)
         {
             die(ctx, child_failed);
         }
@@ -1069,7 +1069,7 @@ pub unsafe fn free_childbase(child: *mut childbase) {
 pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
     crate::output::output_close(ctx, &raw mut (*child).output);
     release_jobserver_token(ctx, child);
-    if handling_fatal_signal() {
+    if handling_fatal_signal(ctx) {
         return;
     }
     // Free the c2rust-allocated `childbase` members (cmd_name/environment) the
