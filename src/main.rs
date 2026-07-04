@@ -4785,7 +4785,7 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
                 INTSTR_LENGTH,
                 b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
                     as *const ::core::ffi::c_char,
-                &[FmtArg::Uint((jobserver_tokens(ctx)) as u32 as u64)],
+                &[FmtArg::Uint(jobserver_tokens(ctx) as u64)],
             );
         } else {
             loop {
