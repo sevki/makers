@@ -585,6 +585,18 @@ pub struct ExecContext {
     /// `create_pattern_var`'s per-target-length fast-insert cache, the
     /// former `variable.rs` `static mut last_pattern_vars` array.
     pub last_pattern_vars: LastPatternVarsCell,
+
+    /// The makefile-remaking goal set consulted by `show_goal_error`, the
+    /// former `remake.rs` thread-local `GOAL_LIST`. Populated fresh at the
+    /// start of each `update_goal_chain` call, so unlike
+    /// [`Self::pattern_vars`] this never needs to survive the `main_0`
+    /// context rebuild.
+    pub goal_list: ::core::cell::RefCell<Vec<crate::dep::GoalDepNode>>,
+
+    /// The goal currently being processed in `update_goal_chain` (target
+    /// `FileId` and resolution flags), the former `remake.rs` thread-local
+    /// `GOAL_DEP`.
+    pub goal_dep: ::core::cell::Cell<Option<(Option<crate::file::FileId>, crate::dep::DepFlags)>>,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
