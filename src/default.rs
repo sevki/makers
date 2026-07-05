@@ -14,9 +14,7 @@ use crate::floc::Floc;
 use crate::read::{parse_file_seq, MAP_NUL, PARSEFS_NONE};
 use crate::recipe::Recipe;
 use crate::rule::install_pattern_rule;
-use crate::variable::{
-    current_variable_set_list, define_variable_in_set, o_default, undefine_variable_in_set,
-};
+use crate::variable::{define_variable_in_set, o_default, undefine_variable_in_set};
 
 const RECIPEPREFIX_DEFAULT: c_char = b'\t' as c_char;
 
@@ -280,7 +278,7 @@ unsafe fn populate_suffixes(
             c"".as_ptr(),
             o_default,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             null::<Floc>(),
         );
     } else {
@@ -326,7 +324,7 @@ unsafe fn install_builtin_suffixes(
         default_suffixes.as_ptr() as *const c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         null::<Floc>(),
     );
 }
@@ -446,7 +444,7 @@ pub unsafe fn define_default_variables(
             value.as_ptr(),
             o_default,
             1,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             null::<Floc>(),
         );
     }

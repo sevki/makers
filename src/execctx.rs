@@ -693,6 +693,15 @@ pub struct ExecContext {
     /// makefiles..." trace (both gated on `db_level`) silently see a
     /// reset-to-0 value instead of what was just decoded.
     pub db_level: ::core::cell::Cell<i32>,
+
+    /// The former `variable.rs` `static mut global_variable_set` /
+    /// `global_setlist` / `current_variable_set_list` trio (see
+    /// [`VariableGlobals`]). Populated by `init_hash_global_variable_set`
+    /// and `define_variable_in_set` before the `main_0` context rebuild
+    /// (`MAKEFLAGS`, `.VARIABLES`, every inherited environment variable,
+    /// `SHELL`, ...), so like [`Self::function_table`] it must be carried
+    /// across that rebuild.
+    pub variable_globals: VariableGlobals,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1384,6 +1393,137 @@ impl ::core::fmt::Debug for FunctionTableCell {
     }
 }
 
+/// Box-owned `Cell<VariableSet>` — the former `static mut global_variable_set`
+/// (the root variable scope every target-/pattern-specific scope's chain
+/// ultimately terminates at). `VariableSet` is a `Copy` c2rust record, the
+/// same shape [`FunctionTableCell`] wraps; the `Box` (not a bare `Cell`)
+/// exists because `variable.rs`'s scope machinery compares this record's own
+/// *address* — not a field inside it — against `*mut VariableSet` pointers to
+/// detect "is this the global scope" (`define_variable_in_set`,
+/// `merge_variable_sets`, `target_environment`, ...). A bare `Cell` would
+/// move if `ExecContext` itself moves; the `Box` pins it, the same trick
+/// [`MakeSync`] uses for `output_context`'s identity compare.
+pub struct GlobalVariableSet(pub Box<::core::cell::Cell<crate::variable::VariableSet>>);
+
+impl GlobalVariableSet {
+    /// The stable address every `== &global_variable_set`-style
+    /// pointer-identity check in `variable.rs` compares against.
+    pub fn as_ptr(&self) -> *mut crate::variable::VariableSet {
+        self.0.as_ptr()
+    }
+}
+
+impl Default for GlobalVariableSet {
+    fn default() -> Self {
+        Self(Box::new(::core::cell::Cell::new(crate::variable::VariableSet {
+            table: crate::hash::hash_table {
+                ht_vec: ::core::ptr::null_mut(),
+                ht_hash_1: None,
+                ht_hash_2: None,
+                ht_compare: None,
+                ht_size: 0,
+                ht_capacity: 0,
+                ht_fill: 0,
+                ht_empty_slots: 0,
+                ht_collisions: 0,
+                ht_lookups: 0,
+                ht_rehashes: 0,
+                ht_in_map: [0; 1],
+                c2rust_padding: [0; 3],
+            },
+        })))
+    }
+}
+
+impl Clone for GlobalVariableSet {
+    fn clone(&self) -> Self {
+        // A cloned context is a new run with its own global variable table,
+        // never an alias of the original's (same rationale as `MakeSync`).
+        Self::default()
+    }
+}
+
+impl ::core::fmt::Debug for GlobalVariableSet {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        // `VariableSet` has no `Debug`; the table's fill count is the useful bit.
+        f.debug_tuple("GlobalVariableSet")
+            .field(&self.0.get().table.ht_fill)
+            .finish()
+    }
+}
+
+/// Box-owned `Cell<VariableSetList>` — the former `static mut global_setlist`,
+/// the sentinel/base scope-list node every push/pop pair and
+/// `build_file_setlist`/`free_file_setlist`/`merge_variable_set_lists` walk up
+/// to and stop at. Boxed for the same address-identity reason as
+/// [`GlobalVariableSet`]. No `Default` of its own: `.set` must point at the
+/// sibling [`GlobalVariableSet`]'s address, which only [`VariableGlobals`]
+/// can wire up (it owns both).
+pub struct GlobalSetlist(pub Box<::core::cell::Cell<crate::variable::VariableSetList>>);
+
+impl GlobalSetlist {
+    /// The stable address every `== &global_setlist`-style pointer-identity
+    /// check in `variable.rs` compares against.
+    pub fn as_ptr(&self) -> *mut crate::variable::VariableSetList {
+        self.0.as_ptr()
+    }
+}
+
+impl ::core::fmt::Debug for GlobalSetlist {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("GlobalSetlist")
+            .field("next_is_parent", &self.0.get().next_is_parent)
+            .finish()
+    }
+}
+
+/// The former `variable.rs` `static mut global_variable_set` /
+/// `static mut global_setlist` / `pub static mut current_variable_set_list`
+/// trio, bundled together because their construction is self-referential:
+/// `global_setlist.set` must point at `global_variable_set`'s address, and
+/// `current_variable_set_list` starts out pointing at `global_setlist`'s
+/// address — wiring a trio of independently-defaulted fields can't express.
+#[derive(Debug)]
+pub struct VariableGlobals {
+    pub global_variable_set: GlobalVariableSet,
+    pub global_setlist: GlobalSetlist,
+    /// The active scope: starts at [`Self::global_setlist`]'s address and
+    /// moves as `push_new_variable_scope`/`pop_variable_scope` and the
+    /// `install_file_context*`/`restore_file_context*` pairs save and
+    /// restore it.
+    pub current_variable_set_list: ::core::cell::Cell<*mut crate::variable::VariableSetList>,
+}
+
+impl Default for VariableGlobals {
+    fn default() -> Self {
+        let global_variable_set = GlobalVariableSet::default();
+        let global_setlist = GlobalSetlist(Box::new(::core::cell::Cell::new(
+            crate::variable::VariableSetList {
+                next: ::core::ptr::null_mut(),
+                set: global_variable_set.as_ptr(),
+                next_is_parent: 0,
+            },
+        )));
+        let current_variable_set_list = ::core::cell::Cell::new(global_setlist.as_ptr());
+        Self {
+            global_variable_set,
+            global_setlist,
+            current_variable_set_list,
+        }
+    }
+}
+
+impl Clone for VariableGlobals {
+    fn clone(&self) -> Self {
+        // A cloned context is a new run with its own variable globals, never
+        // an alias of the original's (same rationale as `MakeSync`); a plain
+        // derived `Clone` would also copy `current_variable_set_list`'s raw
+        // pointer value verbatim, leaving it dangling at the *original*
+        // `global_setlist`'s address instead of the freshly cloned one.
+        Self::default()
+    }
+}
+
 impl ExecContext {
     /// Build a context over the given immutable [`Config`]. Mutable per-run
     /// caches start at their zero defaults.
@@ -1459,6 +1599,67 @@ mod tests {
             ctx.clone().make_sync.as_ptr(),
             addr,
             "a cloned context owns a fresh record, never an alias"
+        );
+    }
+
+    /// `variable_globals.global_setlist.set` and
+    /// `variable_globals.current_variable_set_list` are captured by
+    /// `variable.rs`'s pointer-identity checks and the scope-list chain
+    /// before the `main_0` rebuild, so the carried boxes must keep pointing
+    /// at the same heap records through the `mem::take` + struct-update
+    /// dance — and the self-referential wiring (`global_setlist.set ==
+    /// global_variable_set`'s address) must still hold afterward. A clone,
+    /// by contrast, is a new run and must get its own fresh, independently
+    /// wired records.
+    #[test]
+    fn variable_globals_addresses_survive_the_rebuild_carry() {
+        let mut ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let gvs_addr = ctx.variable_globals.global_variable_set.as_ptr();
+        let setlist_addr = ctx.variable_globals.global_setlist.as_ptr();
+        assert_eq!(
+            ctx.variable_globals.current_variable_set_list.get(),
+            setlist_addr,
+            "current_variable_set_list starts out at global_setlist's address"
+        );
+
+        // Mirror main_0's rebuild: take the carried field, move it into a
+        // rebuilt context.
+        let carried_variable_globals = ::core::mem::take(&mut ctx.variable_globals);
+        let ctx = ExecContext {
+            variable_globals: carried_variable_globals,
+            ..ExecContext::new(Config { makelevel: 2, ..Default::default() })
+        };
+        assert_eq!(
+            ctx.variable_globals.global_variable_set.as_ptr(),
+            gvs_addr,
+            "carry must not move global_variable_set"
+        );
+        assert_eq!(
+            ctx.variable_globals.global_setlist.as_ptr(),
+            setlist_addr,
+            "carry must not move global_setlist"
+        );
+        assert_eq!(
+            ctx.variable_globals.current_variable_set_list.get(),
+            setlist_addr,
+            "current_variable_set_list still points at the carried global_setlist"
+        );
+
+        let cloned = ctx.clone();
+        assert_ne!(
+            cloned.variable_globals.global_variable_set.as_ptr(),
+            gvs_addr,
+            "a cloned context owns a fresh global_variable_set, never an alias"
+        );
+        assert_eq!(
+            cloned.variable_globals.global_setlist.as_ptr(),
+            cloned.variable_globals.current_variable_set_list.get(),
+            "the clone's current_variable_set_list points at its own global_setlist"
+        );
+        assert_ne!(
+            cloned.variable_globals.global_setlist.as_ptr(),
+            setlist_addr,
+            "a cloned context owns a fresh global_setlist, never an alias"
         );
     }
 

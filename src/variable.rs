@@ -472,30 +472,10 @@ unsafe fn variable_hash_cmp(xv: *const ::core::ffi::c_void, yv: *const ::core::f
 pub const VARIABLE_BUCKETS: i32 = 523;
 pub const PERFILE_VARIABLE_BUCKETS: i32 = 23;
 pub const SMALL_SCOPE_VARIABLE_BUCKETS: i32 = 13;
-static mut global_variable_set: variable_set = variable_set {
-    table: hash_table {
-        ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
-        ht_hash_1: None,
-        ht_hash_2: None,
-        ht_compare: None,
-        ht_size: 0,
-        ht_capacity: 0,
-        ht_fill: 0,
-        ht_empty_slots: 0,
-        ht_collisions: 0,
-        ht_lookups: 0,
-        ht_rehashes: 0,
-        ht_in_map: [0; 1],
-        c2rust_padding: [0; 3],
-    },
-};
-static mut global_setlist: variable_set_list = variable_set_list {
-    next: ::core::ptr::null::<variable_set_list>() as *mut variable_set_list,
-    set: &raw const global_variable_set as *mut variable_set,
-    next_is_parent: 0,
-};
-pub static mut current_variable_set_list: *mut variable_set_list =
-    &raw const global_setlist as *mut variable_set_list;
+// The former `static mut global_variable_set`/`global_setlist`/
+// `current_variable_set_list` trio now lives on `ExecContext` as
+// `ctx.variable_globals` (see `execctx::VariableGlobals`); every use below
+// takes the address off that owned field instead of a process-wide static.
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
 const MAP_BLANK: i32 = 0x2;
 const MAP_NEWLINE: i32 = 0x4;
@@ -559,9 +539,9 @@ unsafe fn check_valid_name(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn init_hash_global_variable_set() {
+pub unsafe fn init_hash_global_variable_set(ctx: &crate::execctx::ExecContext) {
     hash_init(
-        &raw mut global_variable_set.table,
+        &raw mut (*ctx.variable_globals.global_variable_set.as_ptr()).table,
         VARIABLE_BUCKETS as ::core::ffi::c_ulong,
         Some(variable_hash_1),
         Some(variable_hash_2),
@@ -599,7 +579,7 @@ pub unsafe fn define_variable_in_set(
     check_valid_name(ctx, flocp, name, length);
     // Route SET through a checked reference; null means the global set.
     let set = if set.is_null() {
-        &raw mut global_variable_set
+        ctx.variable_globals.global_variable_set.as_ptr()
     } else {
         set
     };
@@ -658,7 +638,10 @@ pub unsafe fn define_variable_in_set(
         v as *const ::core::ffi::c_void,
         var_slot as *const ::core::ffi::c_void,
     );
-    if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
+    if ::core::ptr::eq(
+        &raw const *set,
+        ctx.variable_globals.global_variable_set.as_ptr() as *const variable_set,
+    ) {
         ctx.variable_changenum
             .0
             .fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
@@ -748,7 +731,7 @@ pub unsafe fn undefine_variable_in_set(
     check_valid_name(ctx, flocp, name, length);
     // Route SET through a checked reference; null means the global set.
     let set = if set.is_null() {
-        &raw mut global_variable_set
+        ctx.variable_globals.global_variable_set.as_ptr()
     } else {
         set
     };
@@ -777,7 +760,10 @@ pub unsafe fn undefine_variable_in_set(
             hash_delete_at(&raw mut set.table, var_slot as *const ::core::ffi::c_void);
             free_variable_name_and_value(v as *const ::core::ffi::c_void);
             free(v as *mut ::core::ffi::c_void);
-            if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
+            if ::core::ptr::eq(
+                &raw const *set,
+                ctx.variable_globals.global_variable_set.as_ptr() as *const variable_set,
+            ) {
                 ctx.variable_changenum
                     .0
                     .fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
@@ -810,9 +796,9 @@ pub unsafe fn lookup_special_var(ctx: &ExecContext, var: *mut variable) -> *mut 
             .wrapping_mul(500);
         let mut len: size_t;
         let mut p: *mut ::core::ffi::c_char;
-        let mut vp: *mut *mut variable = global_variable_set.table.ht_vec as *mut *mut variable;
-        let end: *mut *mut variable =
-            vp.offset(global_variable_set.table.ht_size as isize) as *mut *mut variable;
+        let gvs = ctx.variable_globals.global_variable_set.as_ptr();
+        let mut vp: *mut *mut variable = (*gvs).table.ht_vec as *mut *mut variable;
+        let end: *mut *mut variable = vp.offset((*gvs).table.ht_size as isize) as *mut *mut variable;
         (*var).value =
             xrealloc((*var).value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
         p = (*var).value;
@@ -901,7 +887,7 @@ pub unsafe fn lookup_variable(
     check_variable_reference(ctx, name, length);
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
-    setlist = current_variable_set_list;
+    setlist = ctx.variable_globals.current_variable_set_list.get();
     while !setlist.is_null() {
         let set: *const variable_set = (*setlist).set;
         let v: *mut variable;
@@ -1004,9 +990,10 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
             // Expand the matched pattern values inside a throwaway scope so the
             // legacy expanders behave exactly as before, then snapshot each
             // resulting `variable` into an owned `TargetVariable`.
-            let global: *mut variable_set_list = current_variable_set_list;
-            let scope = create_new_variable_set();
-            current_variable_set_list = scope;
+            let global: *mut variable_set_list =
+                ctx.variable_globals.current_variable_set_list.get();
+            let scope = create_new_variable_set(ctx);
+            ctx.variable_globals.current_variable_set_list.set(scope);
             loop {
                 let v = if (*p).variable.flavor() as i32 == f_simple as i32 {
                     let v = define_variable_in_set(
@@ -1016,7 +1003,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
                         (*p).variable.value,
                         (*p).variable.origin(),
                         0,
-                        (*current_variable_set_list).set,
+                        (*ctx.variable_globals.current_variable_set_list.get()).set,
                         &raw mut (*p).variable.fileinfo,
                     )
                     .as_mut()
@@ -1047,8 +1034,8 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
                 }
             }
             // Tear the throwaway scope back down: we own the snapshots now.
-            pop_variable_scope();
-            current_variable_set_list = global;
+            pop_variable_scope(ctx);
+            ctx.variable_globals.current_variable_set_list.set(global);
         }
     }
 
@@ -1063,7 +1050,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn create_new_variable_set() -> *mut variable_set_list {
+pub unsafe fn create_new_variable_set(ctx: &crate::execctx::ExecContext) -> *mut variable_set_list {
     let setlist: *mut variable_set_list;
     let set: *mut variable_set;
     set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
@@ -1077,7 +1064,7 @@ pub unsafe fn create_new_variable_set() -> *mut variable_set_list {
     setlist =
         xmalloc(::core::mem::size_of::<variable_set_list>() as size_t) as *mut variable_set_list;
     (*setlist).set = set;
-    (*setlist).next = current_variable_set_list;
+    (*setlist).next = ctx.variable_globals.current_variable_set_list.get();
     (*setlist).next_is_parent = 0;
     setlist
 }
@@ -1085,40 +1072,49 @@ pub unsafe fn create_new_variable_set() -> *mut variable_set_list {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn push_new_variable_scope() -> *mut variable_set_list {
-    current_variable_set_list = create_new_variable_set();
-    if (*current_variable_set_list).next == &raw mut global_setlist {
-        std::ptr::swap(
-            &raw mut (*current_variable_set_list).set,
-            &raw mut global_setlist.set,
-        );
-        (*current_variable_set_list).next = global_setlist.next;
-        global_setlist.next = current_variable_set_list;
-        current_variable_set_list = &raw mut global_setlist;
+pub unsafe fn push_new_variable_scope(
+    ctx: &crate::execctx::ExecContext,
+) -> *mut variable_set_list {
+    ctx.variable_globals
+        .current_variable_set_list
+        .set(create_new_variable_set(ctx));
+    let global_setlist_ptr = ctx.variable_globals.global_setlist.as_ptr();
+    let cur = ctx.variable_globals.current_variable_set_list.get();
+    if (*cur).next == global_setlist_ptr {
+        std::ptr::swap(&raw mut (*cur).set, &raw mut (*global_setlist_ptr).set);
+        (*cur).next = (*global_setlist_ptr).next;
+        (*global_setlist_ptr).next = cur;
+        ctx.variable_globals
+            .current_variable_set_list
+            .set(global_setlist_ptr);
     }
-    current_variable_set_list
+    ctx.variable_globals.current_variable_set_list.get()
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn pop_variable_scope() {
+pub unsafe fn pop_variable_scope(ctx: &crate::execctx::ExecContext) {
     let setlist: *mut variable_set_list;
     let set: *mut variable_set;
-    if !(*current_variable_set_list).next.is_null() {
+    let global_setlist_ptr = ctx.variable_globals.global_setlist.as_ptr();
+    let cur = ctx.variable_globals.current_variable_set_list.get();
+    if !(*cur).next.is_null() {
     } else {
         panic!("assertion failed: current_variable_set_list->next != NULL");
     };
-    if current_variable_set_list != &raw mut global_setlist {
-        setlist = current_variable_set_list;
+    if cur != global_setlist_ptr {
+        setlist = cur;
         set = (*setlist).set;
-        current_variable_set_list = (*setlist).next;
+        ctx.variable_globals
+            .current_variable_set_list
+            .set((*setlist).next);
     } else {
-        setlist = global_setlist.next;
-        set = global_setlist.set;
-        global_setlist.set = (*setlist).set;
-        global_setlist.next = (*setlist).next;
-        global_setlist.next_is_parent = (*setlist).next_is_parent;
+        setlist = (*global_setlist_ptr).next;
+        set = (*global_setlist_ptr).set;
+        (*global_setlist_ptr).set = (*setlist).set;
+        (*global_setlist_ptr).next = (*setlist).next;
+        (*global_setlist_ptr).next_is_parent = (*setlist).next_is_parent;
     }
     free(setlist as *mut ::core::ffi::c_void);
     hash_map(&raw mut (*set).table, Some(free_variable_name_and_value));
@@ -1130,12 +1126,15 @@ pub unsafe fn pop_variable_scope() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn install_file_context(
+    ctx: &crate::execctx::ExecContext,
     file: *mut file,
     oldlist: *mut *mut variable_set_list,
     oldfloc: *mut *const Floc,
 ) {
-    *oldlist = current_variable_set_list;
-    current_variable_set_list = (*file).variables;
+    *oldlist = ctx.variable_globals.current_variable_set_list.get();
+    ctx.variable_globals
+        .current_variable_set_list
+        .set((*file).variables);
     if !oldfloc.is_null() {
         *oldfloc = reading_file;
         reading_file = file_recipe_floc(file);
@@ -1159,8 +1158,12 @@ unsafe fn file_recipe_floc(file: *mut file) -> *const Floc {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn restore_file_context(oldlist: *mut variable_set_list, oldfloc: *const Floc) {
-    current_variable_set_list = oldlist;
+pub unsafe fn restore_file_context(
+    ctx: &crate::execctx::ExecContext,
+    oldlist: *mut variable_set_list,
+    oldfloc: *const Floc,
+) {
+    ctx.variable_globals.current_variable_set_list.set(oldlist);
     if !oldfloc.is_null() {
         reading_file = oldfloc;
     }
@@ -1242,7 +1245,7 @@ pub unsafe fn build_file_setlist(
     let next: *mut variable_set_list;
     let (variables, pat_variables, parent) = {
         let Some(node) = ctx.filenodes.get(file) else {
-            return &raw mut global_setlist;
+            return ctx.variable_globals.global_setlist.as_ptr();
         };
         let guard = node.lock().expect("file node poisoned");
         (
@@ -1254,7 +1257,7 @@ pub unsafe fn build_file_setlist(
     if let Some(parent_id) = parent {
         next = build_file_setlist(ctx, parent_id);
     } else {
-        next = &raw mut global_setlist;
+        next = ctx.variable_globals.global_setlist.as_ptr();
     }
 
     let set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
@@ -1301,9 +1304,10 @@ pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVaria
 }
 
 /// Release a chain built by [`build_file_setlist`], stopping at the shared
-/// `global_setlist` (which is process-wide and never freed).
-pub unsafe fn free_file_setlist(mut list: *mut variable_set_list) {
-    while !list.is_null() && list != &raw mut global_setlist {
+/// `global_setlist` (owned by `ctx`, never freed).
+pub unsafe fn free_file_setlist(ctx: &crate::execctx::ExecContext, mut list: *mut variable_set_list) {
+    let global_setlist_ptr = ctx.variable_globals.global_setlist.as_ptr();
+    while !list.is_null() && list != global_setlist_ptr {
         // SAFETY: `list` was just checked non-null; read `next` through a
         // checked reference before freeing the node.
         let next = list.as_ref().expect("list node is non-null").next;
@@ -1322,8 +1326,10 @@ pub unsafe fn install_file_context_id(
     oldlist: *mut *mut variable_set_list,
     oldfloc: *mut *const Floc,
 ) {
-    *oldlist = current_variable_set_list;
-    current_variable_set_list = build_file_setlist(ctx, file);
+    *oldlist = ctx.variable_globals.current_variable_set_list.get();
+    ctx.variable_globals
+        .current_variable_set_list
+        .set(build_file_setlist(ctx, file));
     if !oldfloc.is_null() {
         *oldfloc = reading_file;
         let recipe_floc: Option<(Vec<u8>, u64)> = ctx.filenodes.get(file).and_then(|node| {
@@ -1365,12 +1371,13 @@ thread_local! {
 /// FileId-based form of [`restore_file_context`] that also frees the transient
 /// set list built by [`install_file_context_id`].
 pub unsafe fn restore_file_context_id(
+    ctx: &crate::execctx::ExecContext,
     cur: *mut variable_set_list,
     oldlist: *mut variable_set_list,
     oldfloc: *const Floc,
 ) {
-    free_file_setlist(cur);
-    current_variable_set_list = oldlist;
+    free_file_setlist(ctx, cur);
+    ctx.variable_globals.current_variable_set_list.set(oldlist);
     if !oldfloc.is_null() {
         reading_file = oldfloc;
     }
@@ -1386,7 +1393,7 @@ unsafe extern "C" fn merge_variable_sets(
     let mut from_var_slot: *mut *mut variable = from_set_ref.table.ht_vec as *mut *mut variable;
     let from_var_end: *mut *mut variable =
         from_var_slot.offset(from_set_ref.table.ht_size as isize);
-    let inc: i32 = if to_set == &raw mut global_variable_set {
+    let inc: i32 = if to_set == ctx.variable_globals.global_variable_set.as_ptr() {
         1
     } else {
         0
@@ -1433,18 +1440,19 @@ pub unsafe fn merge_variable_set_lists(
 ) {
     let mut to: *mut variable_set_list = *setlist0;
     let mut last0: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    if setlist1.is_null() || setlist1 == &raw mut global_setlist {
+    let global_setlist_ptr = ctx.variable_globals.global_setlist.as_ptr();
+    if setlist1.is_null() || setlist1 == global_setlist_ptr {
         return;
     }
     if !to.is_null() {
-        while to != &raw mut global_setlist {
+        while to != global_setlist_ptr {
             if to == setlist1 {
                 return;
             }
             to = (*to).next;
         }
         to = *setlist0;
-        while setlist1 != &raw mut global_setlist && to != &raw mut global_setlist {
+        while setlist1 != global_setlist_ptr && to != global_setlist_ptr {
             // Both pointers are non-null inside this loop: `setlist1` was
             // null-checked at the top, and `to` came through the `!to.is_null()`
             // guard. Read them via checked references (keeps CodeQL satisfied)
@@ -1457,7 +1465,7 @@ pub unsafe fn merge_variable_set_lists(
             to = tor.next;
         }
     }
-    if setlist1 != &raw mut global_setlist {
+    if setlist1 != global_setlist_ptr {
         if let Some(last0r) = last0.as_mut() {
             last0r.next = setlist1;
         } else {
@@ -1484,7 +1492,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         &raw mut buf as *mut ::core::ffi::c_char,
         o_env,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     sprintf(
@@ -1507,7 +1515,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         &raw mut buf as *mut ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1517,7 +1525,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         crate::version::make_host(),
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     v = define_variable_in_set(
@@ -1527,7 +1535,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         default_shell,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     if *(*v).value as i32 == 0
@@ -1545,7 +1553,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     (*v).set_export(v_ifset as variable_export);
@@ -1556,7 +1564,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(patsubst %/,%,$(dir $@))\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1566,7 +1574,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(patsubst %/,%,$(dir $%))\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1576,7 +1584,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(patsubst %/,%,$(dir $*))\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1586,7 +1594,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(patsubst %/,%,$(dir $<))\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1596,7 +1604,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(patsubst %/,%,$(dir $?))\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1606,7 +1614,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(patsubst %/,%,$(dir $^))\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1616,7 +1624,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(patsubst %/,%,$(dir $+))\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1626,7 +1634,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(notdir $@)\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1636,7 +1644,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(notdir $%)\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1646,7 +1654,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(notdir $*)\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1656,7 +1664,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(notdir $<)\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1666,7 +1674,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(notdir $?)\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1676,7 +1684,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(notdir $^)\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -1686,7 +1694,7 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         b"$(notdir $+)\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
 }
@@ -1747,10 +1755,11 @@ pub unsafe fn target_environment(
     // (which expand in `current_variable_set_list`) see the file's scope. The
     // chain is freed before returning.
     let mut owned_list: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
-    let saved_current: *mut variable_set_list = current_variable_set_list;
+    let saved_current: *mut variable_set_list =
+        ctx.variable_globals.current_variable_set_list.get();
     if let Some(f) = file {
         owned_list = build_file_setlist(ctx, f);
-        current_variable_set_list = owned_list;
+        ctx.variable_globals.current_variable_set_list.set(owned_list);
     }
     let mut s: *mut variable_set_list;
     let mut table: hash_table = hash_table {
@@ -1788,7 +1797,7 @@ pub unsafe fn target_environment(
     if file.is_some() {
         set_list = owned_list;
     } else {
-        set_list = current_variable_set_list;
+        set_list = ctx.variable_globals.current_variable_set_list.get();
     }
     hash_init(
         &raw mut table,
@@ -1804,7 +1813,7 @@ pub unsafe fn target_environment(
         let sr = s.as_ref().expect("set-list node is non-null");
         let set: *mut variable_set = sr.set;
         let islocal: i32 = (s == set_list) as i32;
-        let isglobal: i32 = (set == &raw mut global_variable_set) as i32;
+        let isglobal: i32 = (set == ctx.variable_globals.global_variable_set.as_ptr()) as i32;
         // SAFETY: `set` came from a valid set-list node; read the table fields
         // through a checked reference.
         let set_ref = set.as_ref().expect("variable_set is non-null");
@@ -2049,8 +2058,10 @@ pub unsafe fn target_environment(
             .fetch_sub(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     if !owned_list.is_null() {
-        current_variable_set_list = saved_current;
-        free_file_setlist(owned_list);
+        ctx.variable_globals
+            .current_variable_set_list
+            .set(saved_current);
+        free_file_setlist(ctx, owned_list);
     }
     result_0
 }
@@ -2205,7 +2216,7 @@ pub unsafe fn do_variable_definition(
                     ctx,
                     varname,
                     strlen(varname) as size_t,
-                    (*current_variable_set_list).set,
+                    (*ctx.variable_globals.current_variable_set_list.get()).set,
                 );
                 if let Some(vr) = v.as_ref() {
                     if vr.append() == 0 {
@@ -2318,7 +2329,7 @@ pub unsafe fn do_variable_definition(
             if scope as ::core::ffi::c_uint == s_global as i32 as ::core::ffi::c_uint {
                 ::core::ptr::null_mut::<variable_set>()
             } else {
-                (*current_variable_set_list).set
+                (*ctx.variable_globals.current_variable_set_list.get()).set
             },
             flocp,
         );
@@ -2683,9 +2694,9 @@ unsafe fn set_env_override(item: *const ::core::ffi::c_void, mut _arg: *mut ::co
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn reset_env_override() {
+pub unsafe fn reset_env_override(ctx: &crate::execctx::ExecContext) {
     hash_map_arg(
-        &raw mut global_variable_set.table,
+        &raw mut (*ctx.variable_globals.global_variable_set.as_ptr()).table,
         Some(set_env_override),
         NULL,
     );
@@ -2815,7 +2826,7 @@ unsafe extern "C" fn print_variable_set(
 pub unsafe fn print_variable_data_base(ctx: &ExecContext) {
     puts(b"\n# Variables\n\0" as *const u8 as *const ::core::ffi::c_char);
     print_variable_set(
-        &raw mut global_variable_set,
+        ctx.variable_globals.global_variable_set.as_ptr(),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         0,
     );
@@ -3326,35 +3337,38 @@ mod file_context_coverage_tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
-    // `current_variable_set_list`/`reading_file` are process globals; serialize
-    // this test against itself and save/restore them so it can't perturb others.
-    static CTX_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    // `reading_file` is still a process global (a separate, not-yet-migrated
+    // concern); serialize this test against itself and save/restore it so it
+    // can't perturb others. `current_variable_set_list` now lives on this
+    // test's own `ExecContext`, so it needs no such lock.
+    static READING_FILE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-    /// Install a (default) file's context — swapping `current_variable_set_list`
-    /// and `reading_file` — then restore the saved values. Exercises both
-    /// `install_file_context` and `restore_file_context`.
+    /// Install a (default) file's context — swapping `ctx`'s
+    /// `current_variable_set_list` and the process-global `reading_file` —
+    /// then restore the saved values. Exercises both `install_file_context`
+    /// and `restore_file_context`.
     #[test]
     fn install_then_restore_file_context_roundtrips_globals() {
-        let _g = CTX_LOCK
+        let _g = READING_FILE_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         unsafe {
-            let saved_list = current_variable_set_list;
+            let ctx = crate::execctx::ExecContext::default();
+            let saved_list = ctx.variable_globals.current_variable_set_list.get();
             let saved_reading = crate::read::reading_file;
 
             let mut f = crate::file::File::default();
             let mut oldlist: *mut variable_set_list = ::core::ptr::null_mut();
             let mut oldfloc: *const Floc = ::core::ptr::null();
-            install_file_context(&raw mut f, &raw mut oldlist, &raw mut oldfloc);
+            install_file_context(&ctx, &raw mut f, &raw mut oldlist, &raw mut oldfloc);
             // The saved-out list is whatever was active before the swap.
             assert_eq!(oldlist, saved_list);
-            restore_file_context(oldlist, oldfloc);
-            let current_list = current_variable_set_list;
+            restore_file_context(&ctx, oldlist, oldfloc);
+            let current_list = ctx.variable_globals.current_variable_set_list.get();
             assert_eq!(current_list, saved_list);
 
-            // Fully restore the globals regardless of intermediate state.
-            current_variable_set_list = saved_list;
+            // Fully restore the process global regardless of intermediate state.
             crate::read::reading_file = saved_reading;
         }
     }

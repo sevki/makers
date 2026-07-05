@@ -55,9 +55,8 @@ use crate::output::fatal;
 use crate::read::{find_percent, reading_file};
 pub use crate::variable::variable;
 use crate::variable::{
-    current_variable_set_list, env_recursion, install_file_context, lookup_variable,
-    lookup_variable_in_set, o_command, o_env_override, o_override, restore_file_context,
-    warn_undefined,
+    env_recursion, install_file_context, lookup_variable, lookup_variable_in_set, o_command,
+    o_env_override, o_override, restore_file_context, warn_undefined,
 };
 
 /// "Whole string" length sentinel accepted by [`expand_string_buf`].
@@ -246,12 +245,12 @@ pub unsafe fn recursively_expand_for_file(
         (*v).set_exp_count((*v).exp_count() - 1);
     }
     if !file.is_null() {
-        install_file_context(file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
+        install_file_context(ctx, file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
     }
     (*v).set_expanding(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if (*v).append() != 0 {
         let mut sl: *mut variable_set_list;
-        sl = current_variable_set_list;
+        sl = ctx.variable_globals.current_variable_set_list.get();
         while !sl.is_null() && parent.is_null() {
             let vp: *mut variable = lookup_variable_in_set(ctx, (*v).name, nl, (*sl).set);
             if !vp.is_null() && vp != v && (*vp).origin() as i32 == o_override as i32 {
@@ -278,7 +277,7 @@ pub unsafe fn recursively_expand_for_file(
         reading_file = ::core::ptr::null::<Floc>();
     }
     if !file.is_null() {
-        restore_file_context(savev, ::core::ptr::null::<Floc>());
+        restore_file_context(ctx, savev, ::core::ptr::null::<Floc>());
     }
     expanding_var = saved_varp;
     value
@@ -624,14 +623,14 @@ pub unsafe fn expand_string_for_file_c(
             SIZE_MAX,
         );
     }
-    install_file_context(file, &raw mut savev, &raw mut savef);
+    install_file_context(ctx, file, &raw mut savev, &raw mut savef);
     let result = expand_string_buf(
         ctx,
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
         string,
         SIZE_MAX,
     );
-    restore_file_context(savev, savef);
+    restore_file_context(ctx, savev, savef);
     result
 }
 
@@ -654,7 +653,7 @@ pub fn expand_string_for_file(
         let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
         let mut savef: *const Floc = ::core::ptr::null::<Floc>();
         crate::variable::install_file_context_id(ctx, file, &raw mut savev, &raw mut savef);
-        let cur = crate::variable::current_variable_set_list;
+        let cur = ctx.variable_globals.current_variable_set_list.get();
         let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut olen: size_t = 0;
         install_variable_buffer(&raw mut obuf, &raw mut olen);
@@ -665,7 +664,7 @@ pub fn expand_string_for_file(
             SIZE_MAX,
         );
         let result = swap_variable_buffer(obuf, olen);
-        crate::variable::restore_file_context_id(cur, savev, savef);
+        crate::variable::restore_file_context_id(ctx, cur, savev, savef);
         if result.is_null() {
             vec![0]
         } else {
@@ -740,7 +739,7 @@ pub unsafe fn allocated_variable_append(
         ctx,
         (*v).name,
         strlen((*v).name) as size_t,
-        current_variable_set_list,
+        ctx.variable_globals.current_variable_set_list.get(),
         1,
     );
     swap_variable_buffer(obuf, olen)
