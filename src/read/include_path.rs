@@ -78,7 +78,7 @@ pub fn construct_include_path(ctx: &crate::execctx::ExecContext, arg_dirs: &[std
         }
     }
     if !disable {
-        for d in DEFAULT_INCLUDE_DIRECTORIES {
+        for d in ctx.default_include_directories() {
             push_include_dir(&mut dirs, d);
         }
     }

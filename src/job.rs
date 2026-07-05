@@ -2649,7 +2649,7 @@ unsafe fn construct_command_argv_internal(
                             *p as i32,
                         )
                         .is_null()
-                        && ctx.unixy_shell() != 0
+                        && ctx.shell_kind() == crate::execctx::ShellKind::Unixy
                     {
                         break 'fast;
                     }
@@ -2666,7 +2666,7 @@ unsafe fn construct_command_argv_internal(
                 }
                 match *p as i32 {
                     61 => {
-                        if seen_nonequals == 0 && ctx.unixy_shell() != 0 {
+                        if seen_nonequals == 0 && ctx.shell_kind() == crate::execctx::ShellKind::Unixy {
                             break 'fast;
                         }
                         word_has_equals = 1;
@@ -2959,7 +2959,7 @@ unsafe fn construct_command_argv_internal(
                 let fresh44 = ap;
                 ap = ap.offset(1_i32 as isize);
                 *fresh44 = '\\' as i32 as ::core::ffi::c_char;
-                if ctx.batch_mode_shell() == 0 {
+                if ctx.shell_kind() != crate::execctx::ShellKind::Batch {
                     let fresh45 = ap;
                     ap = ap.offset(1_i32 as isize);
                     *fresh45 = '\\' as i32 as ::core::ffi::c_char;
@@ -2969,8 +2969,7 @@ unsafe fn construct_command_argv_internal(
                 *fresh46 = '\n' as i32 as ::core::ffi::c_char;
                 p = p.offset(1_i32 as isize);
             } else {
-                if ctx.unixy_shell() != 0
-                    && ctx.batch_mode_shell() == 0
+                if ctx.shell_kind() == crate::execctx::ShellKind::Unixy
                     && (*p as i32 == '\\' as i32
                         || *p as i32 == '\'' as i32
                         || *p as i32 == '"' as i32
@@ -3002,7 +3001,7 @@ unsafe fn construct_command_argv_internal(
         return ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     }
     *ap = 0;
-    if ctx.unixy_shell() != 0 {
+    if ctx.shell_kind() == crate::execctx::ShellKind::Unixy {
         new_argv = construct_command_argv_internal(
             ctx,
             new_line,
@@ -3423,26 +3422,14 @@ mod jobserver_tokens_tests {
 }
 
 #[cfg(test)]
-mod unixy_shell_tests {
-    use crate::execctx::ExecContext;
+mod shell_kind_tests {
+    use crate::execctx::{ExecContext, ShellKind};
 
-    /// `ctx.unixy_shell()` is fixed at 1 in this POSIX port and is readable
-    /// from safe code (no `unsafe` needed).
+    /// `ctx.shell_kind()` is fixed at [`ShellKind::Unixy`] in this POSIX port
+    /// and is readable from safe code (no `unsafe` needed).
     #[test]
-    fn unixy_shell_is_one() {
-        assert_eq!(ExecContext::default().unixy_shell(), 1);
-    }
-}
-
-#[cfg(test)]
-mod batch_mode_shell_tests {
-    use crate::execctx::ExecContext;
-
-    /// `ctx.batch_mode_shell()` is fixed at 0 in this POSIX port and is
-    /// readable from safe code (no `unsafe` needed).
-    #[test]
-    fn batch_mode_shell_is_zero() {
-        assert_eq!(ExecContext::default().batch_mode_shell(), 0);
+    fn shell_kind_is_unixy() {
+        assert_eq!(ExecContext::default().shell_kind(), ShellKind::Unixy);
     }
 }
 

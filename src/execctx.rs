@@ -13,6 +13,28 @@
 //! take `&ExecContext` (or `&mut` when they update it); there is no global
 //! accessor and no singleton.
 
+/// Which shell "personality" governs recipe-line quoting/escaping. The C
+/// original tracks this as two independent int flags (`unixy_shell`,
+/// `batch_mode_shell`) whose only meaningful combinations are "unixy",
+/// "W32/DOS batch", or neither (the fatal "!unixy && !batch_mode_shell" case
+/// `construct_command_argv_internal` guards against) — never both at once.
+/// Modeling the pair as one enum makes that impossible fourth combination
+/// unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShellKind {
+    /// A POSIX-style ("unixy") shell. The only outcome this POSIX port ever
+    /// produces.
+    #[default]
+    Unixy,
+    /// W32/DOS batch-mode shell (COMMAND.COM/CMD.EXE). Unreachable in this
+    /// POSIX-only port; kept so the type carries the same state space as the
+    /// C original for a future non-POSIX target.
+    Batch,
+    /// Neither unixy nor batch shell context — the C original's fatal
+    /// "Bad shell context" case.
+    Other,
+}
+
 /// Immutable process configuration: values fixed once during startup and read
 /// for the rest of the run.
 #[derive(Debug, Clone)]
@@ -22,25 +44,32 @@ pub struct Config {
     /// level, N inside a recursive `$(MAKE)`), then immutable.
     pub makelevel: u32,
 
-    /// Whether the configured shell is a "unixy" shell. The C original
-    /// resolves this at startup from the detected shell (W32/DOS batch
-    /// interpreters are the only "non-unixy" case); this POSIX-only port has
-    /// exactly one outcome, but it lives as owned `Config` state rather than a
-    /// fixed `const` so a future non-POSIX target can set it per session
-    /// instead of reintroducing global state.
-    pub unixy_shell: i32,
+    /// Which shell personality is in effect. The C original resolves this at
+    /// startup from the detected shell; this POSIX-only port always resolves
+    /// to [`ShellKind::Unixy`], but it lives as owned `Config` state rather
+    /// than a fixed `const` so a future non-POSIX target can set it per
+    /// session instead of reintroducing global state.
+    pub shell_kind: ShellKind,
 
-    /// Whether the shell is running in W32/DOS batch mode. Same POSIX-only
-    /// reasoning as `unixy_shell`.
-    pub batch_mode_shell: i32,
+    /// Default system include directories searched by `-I` when not disabled
+    /// (`-I-`). Fixed at compile time in the C original via autoconf
+    /// substitution (`INCLUDEDIR` et al.); this port hardcodes the same
+    /// defaults, but keeps them as owned `Config` state rather than a bare
+    /// module-level `const` so nothing resembling build configuration lives
+    /// outside `ExecContext`.
+    pub default_include_directories: [&'static [u8]; 3],
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             makelevel: 0,
-            unixy_shell: 1,
-            batch_mode_shell: 0,
+            shell_kind: ShellKind::default(),
+            default_include_directories: [
+                b"/usr/gnu/include",
+                b"/usr/local/include",
+                b"/usr/include",
+            ],
         }
     }
 }
@@ -1345,16 +1374,15 @@ impl ExecContext {
         self.config.makelevel
     }
 
-    /// Whether the configured shell is a "unixy" shell (always true in this
-    /// POSIX port).
-    pub fn unixy_shell(&self) -> i32 {
-        self.config.unixy_shell
+    /// Which shell personality is in effect (always [`ShellKind::Unixy`] in
+    /// this POSIX port).
+    pub fn shell_kind(&self) -> ShellKind {
+        self.config.shell_kind
     }
 
-    /// Whether the shell is running in W32/DOS batch mode (always false in
-    /// this POSIX port).
-    pub fn batch_mode_shell(&self) -> i32 {
-        self.config.batch_mode_shell
+    /// Default system include directories searched by `-I` when not disabled.
+    pub fn default_include_directories(&self) -> [&'static [u8]; 3] {
+        self.config.default_include_directories
     }
 }
 
