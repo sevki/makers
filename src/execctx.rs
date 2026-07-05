@@ -597,6 +597,12 @@ pub struct ExecContext {
     /// `FileId` and resolution flags), the former `remake.rs` thread-local
     /// `GOAL_DEP`.
     pub goal_dep: ::core::cell::Cell<Option<(Option<crate::file::FileId>, crate::dep::DepFlags)>>,
+
+    /// The user-defined/built-in function table, the former `function.rs`
+    /// `static mut function_table`. Populated once by
+    /// `hash_init_function_table` before the `main_0` context rebuild, so
+    /// `main_0` carries it across like [`Self::pattern_vars`].
+    pub function_table: FunctionTableCell,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1211,6 +1217,44 @@ pub struct ChildChain(pub ::core::cell::Cell<*mut crate::job::child>);
 impl Default for ChildChain {
     fn default() -> Self {
         Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+/// The user-defined/built-in function table (`$(call)`-able functions,
+/// including those registered by `gmk_add_function`), the former
+/// `function.rs` `static mut function_table`. `hash_table` is a `Copy`
+/// c2rust record; call sites take `.0.as_ptr()` for the `*mut hash_table`
+/// the `hash.rs` FFI-shaped insert/lookup functions expect, the same
+/// raw-pointer-into-`Cell`-interior treatment [`Self::pattern_vars`] gets.
+#[derive(Clone)]
+pub struct FunctionTableCell(pub ::core::cell::Cell<crate::hash::hash_table>);
+
+impl Default for FunctionTableCell {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(crate::hash::hash_table {
+            ht_vec: ::core::ptr::null_mut(),
+            ht_hash_1: None,
+            ht_hash_2: None,
+            ht_compare: None,
+            ht_size: 0,
+            ht_capacity: 0,
+            ht_fill: 0,
+            ht_empty_slots: 0,
+            ht_collisions: 0,
+            ht_lookups: 0,
+            ht_rehashes: 0,
+            ht_in_map: [0; 1],
+            c2rust_padding: [0; 3],
+        }))
+    }
+}
+
+impl ::core::fmt::Debug for FunctionTableCell {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        // `hash_table` has no `Debug`; the fill count is the useful bit.
+        f.debug_tuple("FunctionTableCell")
+            .field(&self.0.get().ht_fill)
+            .finish()
     }
 }
 
