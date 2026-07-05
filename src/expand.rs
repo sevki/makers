@@ -204,7 +204,7 @@ pub unsafe fn recursively_expand_for_file(
     if (*v).expanding() != 0 && env_recursion(ctx) != 0 {
         // A self-referencing variable being exported to a $(shell ...)
         // function: hand back the unexpanded environment value instead.
-        if DB_VERBOSE & db_level() != 0 {
+        if DB_VERBOSE & db_level(ctx) != 0 {
             printf(
                 c"%s:%lu: not recursively expanding %s to export to shell function\n".as_ptr(),
                 (*v).fileinfo.filenm,

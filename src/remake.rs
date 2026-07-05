@@ -182,10 +182,10 @@ fn new_mtime() -> uintmax_t {
     })
 }
 
-/// Read the global debug level via the `make_main` accessor.
+/// Read the debug level via the `make_main` accessor.
 #[inline]
-fn dbg() -> i32 {
-    db_level()
+fn dbg(ctx: &crate::execctx::ExecContext) -> i32 {
+    db_level(ctx)
 }
 
 /// Whether `id` or any of its double-colon entries is running/deps-running.
@@ -354,7 +354,7 @@ pub fn update_goal_chain(
             let ocommands_started = ctx.commands_started.get();
             wait = (g_wait && running != 0) as i32;
             if wait != 0 {
-                if 0x2_i32 & dbg() != 0 {
+                if 0x2_i32 & dbg(ctx) != 0 {
                     let head_name = node_name(ctx, head);
                     let cn = cname(&head_name);
                     unsafe {
@@ -583,7 +583,7 @@ pub fn update_file(
             let ustatus = n.update_status;
             let name = n.name.clone();
             drop(n);
-            if 0x2_i32 & dbg() != 0 {
+            if 0x2_i32 & dbg(ctx) != 0 {
                 let cn = cname(&name);
                 unsafe {
                     print_spaces(depth);
@@ -788,7 +788,7 @@ fn update_file_1(
         )
     });
     let cn = cname(&name);
-    if 0x2_i32 & dbg() != 0 {
+    if 0x2_i32 & dbg(ctx) != 0 {
         unsafe {
             print_spaces(depth);
             printf(
@@ -800,7 +800,7 @@ fn update_file_1(
     }
     if updated {
         if ustatus as i32 > us_none as i32 {
-            if 0x2_i32 & dbg() != 0 {
+            if 0x2_i32 & dbg(ctx) != 0 {
                 unsafe {
                     print_spaces(depth);
                     printf(
@@ -817,7 +817,7 @@ fn update_file_1(
             }
             return ustatus;
         }
-        if 0x2_i32 & dbg() != 0 {
+        if 0x2_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -833,7 +833,7 @@ fn update_file_1(
     match cstate as i32 {
         0 | 1 => {}
         2 => {
-            if 0x2_i32 & dbg() != 0 {
+            if 0x2_i32 & dbg(ctx) != 0 {
                 unsafe {
                     print_spaces(depth);
                     printf(
@@ -846,7 +846,7 @@ fn update_file_1(
             return UpdateStatus::Success;
         }
         3 => {
-            if 0x2_i32 & dbg() != 0 {
+            if 0x2_i32 & dbg(ctx) != 0 {
                 unsafe {
                     print_spaces(depth);
                     printf(
@@ -876,7 +876,7 @@ fn update_file_1(
     let file = follow_renamed(ctx, file);
     let mut noexist = (this_mtime == NONEXISTENT_MTIME as uintmax_t) as i32;
     if noexist != 0 {
-        if 0x1_i32 & dbg() != 0 {
+        if 0x1_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -940,7 +940,7 @@ fn update_file_1(
                     (n.phony, n.name.clone())
                 })
                 .unwrap_or((false, Vec::new()));
-            if 0x1_i32 & dbg() != 0 {
+            if 0x1_i32 & dbg(ctx) != 0 {
                 let adcn = cname(&ad_name);
                 unsafe {
                     print_spaces(depth);
@@ -983,7 +983,7 @@ fn update_file_1(
         // Default-recipe inheritance from the `.DEFAULT` target. The c2rust code
         // copied `default_file->cmds`; with the recipe owned inline we leave the
         // diagnostic but defer the actual inheritance to the recipe layer.
-        if 0x8_i32 & dbg() != 0 {
+        if 0x8_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1240,7 +1240,7 @@ fn update_file_1(
     depth = depth.wrapping_sub(1);
     if running != 0 {
         set_command_state_id(ctx, file, cs_deps_running);
-        if 0x2_i32 & dbg() != 0 {
+        if 0x2_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1253,7 +1253,7 @@ fn update_file_1(
         }
         return UpdateStatus::Success;
     }
-    if 0x2_i32 & dbg() != 0 {
+    if 0x2_i32 & dbg(ctx) != 0 {
         unsafe {
             print_spaces(depth);
             printf(
@@ -1275,7 +1275,7 @@ fn update_file_1(
             );
         });
         notice_finished_file(ctx, file, entry);
-        if 0x2_i32 & dbg() != 0 {
+        if 0x2_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1356,7 +1356,7 @@ fn update_file_1(
         });
     if is_dc && deps_empty {
         must_make = 1;
-        if 0x1_i32 & dbg() != 0 {
+        if 0x1_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1374,7 +1374,7 @@ fn update_file_1(
         && !ctx.always_make_flag.get()
     {
         must_make = 0;
-        if 0x2_i32 & dbg() != 0 {
+        if 0x2_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1387,7 +1387,7 @@ fn update_file_1(
         }
     } else if must_make == 0 && file_has_recipe2 && ctx.always_make_flag.get() {
         must_make = 1;
-        if 0x2_i32 & dbg() != 0 {
+        if 0x2_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1400,7 +1400,7 @@ fn update_file_1(
         }
     }
     if must_make == 0 {
-        if 0x2_i32 & dbg() != 0 {
+        if 0x2_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1424,7 +1424,7 @@ fn update_file_1(
         });
         return UpdateStatus::Success;
     }
-    if 0x1_i32 & dbg() != 0 {
+    if 0x1_i32 & dbg(ctx) != 0 {
         unsafe {
             print_spaces(depth);
             printf(
@@ -1437,7 +1437,7 @@ fn update_file_1(
     // VPATH-name divergence check.
     let (nm, hn) = with_entry!(n, { (n.name.clone(), n.hname.clone()) });
     if nm != hn {
-        if 0x1_i32 & dbg() != 0 {
+        if 0x1_i32 & dbg(ctx) != 0 {
             let hncn = cname(&hn);
             unsafe {
                 printf(
@@ -1454,7 +1454,7 @@ fn update_file_1(
     remake_file(ctx, file, entry);
     let cstate2 = with_entry!(n, { n.command_state });
     if cstate2 as i32 != cs_finished as i32 {
-        if 0x2_i32 & dbg() != 0 {
+        if 0x2_i32 & dbg(ctx) != 0 {
             unsafe {
                 print_spaces(depth);
                 printf(
@@ -1469,7 +1469,7 @@ fn update_file_1(
     let ustatus2 = with_entry!(n, { n.update_status });
     match ustatus2 as i32 {
         3 => {
-            if 0x1_i32 & dbg() != 0 {
+            if 0x1_i32 & dbg(ctx) != 0 {
                 unsafe {
                     print_spaces(depth);
                     printf(
@@ -1482,7 +1482,7 @@ fn update_file_1(
             }
         }
         0 => {
-            if 0x1_i32 & dbg() != 0 {
+            if 0x1_i32 & dbg(ctx) != 0 {
                 unsafe {
                     print_spaces(depth);
                     printf(
@@ -1495,7 +1495,7 @@ fn update_file_1(
             }
         }
         2 => {
-            if 0x1_i32 & dbg() != 0 {
+            if 0x1_i32 & dbg(ctx) != 0 {
                 unsafe {
                     print_spaces(depth);
                     printf(

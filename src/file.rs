@@ -1301,7 +1301,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                             &[FmtArg::Str(cname_ptr)],
                         );
                     } else {
-                        if doneany == 0 && 0x1_i32 & db_level() != 0 {
+                        if doneany == 0 && 0x1_i32 & db_level(ctx) != 0 {
                             printf(
                                 b"Removing intermediate files...\n\0" as *const u8
                                     as *const ::core::ffi::c_char,

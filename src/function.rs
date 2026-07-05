@@ -3661,7 +3661,7 @@ pub unsafe fn func_shell_base(
                 reap_children(ctx, 1, 0);
             }
             if !batch_filename.is_null() {
-                if 0x2_i32 & db_level() != 0 {
+                if 0x2_i32 & db_level(ctx) != 0 {
                     printf(
                         b"Cleaning up temporary batch file %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -3972,7 +3972,7 @@ unsafe fn func_file(
         }
         if fp_0.is_null() {
             if *__errno_location() == ENOENT {
-                if 0x2_i32 & db_level() != 0 {
+                if 0x2_i32 & db_level(ctx) != 0 {
                     printf(
                         b"file: Failed to open '%s': %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,

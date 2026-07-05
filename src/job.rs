@@ -701,7 +701,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 found_bad = 1;
                 break;
             } else {
-                if 0x4_i32 & db_level() != 0 {
+                if 0x4_i32 & db_level(ctx) != 0 {
                     printf(
                         b"Live child %p (%s) PID %s %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -806,7 +806,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 if c.is_null() {
                     continue;
                 }
-                if 0x4_i32 & db_level() != 0 {
+                if 0x4_i32 & db_level(ctx) != 0 {
                     printf(
                         if exit_sig == 0 && exit_code == 0 {
                             b"Reaping winning child %p PID %s %s\n\0" as *const u8
@@ -900,7 +900,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         }
         if !(*c).sh_batch_file.is_null() {
             let rm_status: i32;
-            if 0x4_i32 & db_level() != 0 {
+            if 0x4_i32 & db_level(ctx) != 0 {
                 printf(
                     b"Cleaning up temp batch file %s\n\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -910,7 +910,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             }
             *__errno_location() = 0;
             rm_status = remove((*c).sh_batch_file);
-            if rm_status != 0 && 0x4_i32 & db_level() != 0 {
+            if rm_status != 0 && 0x4_i32 & db_level(ctx) != 0 {
                 printf(
                     b"Cleaning up temp batch file %s failed (%d)\n\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -992,7 +992,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             notice_finished_file(ctx, (*c).file, (*c).entry);
         }
         block_sigs(ctx);
-        if (*c).pid > 0 && 0x4_i32 & db_level() != 0 {
+        if (*c).pid > 0 && 0x4_i32 & db_level(ctx) != 0 {
             printf(
                 b"Removing child %p PID %s%s from chain.\n\0" as *const u8
                     as *const ::core::ffi::c_char,
@@ -1094,7 +1094,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
     }
     if jobserver_enabled(ctx) != 0 && jobserver_tokens(ctx) > 1 {
         jobserver_release(ctx, 1);
-        if 0x4_i32 & db_level() != 0 {
+        if 0x4_i32 & db_level(ctx) != 0 {
             printf(
                 b"Released token for child %p (%s).\n\0" as *const u8 as *const ::core::ffi::c_char,
                 child,
@@ -1236,7 +1236,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 crate::output::output_dump(ctx, &raw mut (*child).output);
             }
             if crate::make_main::opt_just_print()
-                || 0x10_i32 & db_level() != 0
+                || 0x10_i32 & db_level(ctx) != 0
                 || !(flags & 2 != 0) && !crate::make_main::opt_run_silent()
             {
                 message(
@@ -1392,7 +1392,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
         2 => {
             (*c).next = ctx.children.0.get();
             if (*c).pid > 0 {
-                if 0x4_i32 & db_level() != 0 {
+                if 0x4_i32 & db_level(ctx) != 0 {
                     printf(
                         b"Putting child %p (%s) PID %s%s on the chain.\n\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -1687,7 +1687,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
         }
     } else if jobserver_enabled(ctx) != 0 {
         loop {
-            if 0x4_i32 & db_level() != 0 {
+            if 0x4_i32 & db_level(ctx) != 0 {
                 printf(
                     b"Need a job token; we %shave children\n\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -1725,7 +1725,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             if !(got_token == 1) {
                 continue;
             }
-            if 0x4_i32 & db_level() != 0 {
+            if 0x4_i32 & db_level(ctx) != 0 {
                 printf(
                     b"Obtained token for child %p (%s).\n\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -1738,7 +1738,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
         }
     }
     ctx.jobserver_tokens.0.fetch_add(1, Ordering::Relaxed);
-    if 0x20_i32 & db_level() != 0 {
+    if 0x20_i32 & db_level(ctx) != 0 {
         // Build the "update target '...' due to: ..." diagnostic from the arena
         // (the former pointer walk over `cmds.fileinfo`/`also_make`/`deps`).
         // Snapshot everything we need under the lock, then format and drop it.
@@ -2007,7 +2007,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
             }
         }
         if proc_fd.get() < 0 {
-            if 0x4_i32 & db_level() != 0 {
+            if 0x4_i32 & db_level(ctx) != 0 {
                 printf(
                     b"Using system load detection method.\n\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -2015,7 +2015,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                 fflush(stdout);
             }
         } else {
-            if 0x4_i32 & db_level() != 0 {
+            if 0x4_i32 & db_level(ctx) != 0 {
                 printf(
                     b"Using /proc/loadavg load detection method.\n\0" as *const u8
                         as *const ::core::ffi::c_char,
@@ -2050,7 +2050,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                 // SAFETY: avg[r] was just set to NUL, so this is a valid C string.
                 let contents = ::core::ffi::CStr::from_ptr(avg.as_ptr()).to_bytes();
                 if let Some(cnt) = loadavg_running_jobs(contents) {
-                    if 0x4_i32 & db_level() != 0 {
+                    if 0x4_i32 & db_level(ctx) != 0 {
                         printf(
                             b"Running: system = %u / make = %u (max requested = %f)\n\0"
                                 as *const u8
@@ -2064,7 +2064,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                     return (cnt as ::core::ffi::c_double > crate::make_main::opt_max_load_average())
                         as i32;
                 }
-                if 0x4_i32 & db_level() != 0 {
+                if 0x4_i32 & db_level(ctx) != 0 {
                     printf(
                         b"Failed to parse /proc/loadavg: %s\n\0" as *const u8
                             as *const ::core::ffi::c_char,
@@ -2074,7 +2074,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                 }
             }
         }
-        if r < 0 && 0x4_i32 & db_level() != 0 {
+        if r < 0 && 0x4_i32 & db_level(ctx) != 0 {
             printf(
                 b"Failed to read /proc/loadavg: %s\n\0" as *const u8 as *const ::core::ffi::c_char,
                 strerror(*__errno_location()),
@@ -2121,7 +2121,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     ctx.load_sample_second.set(next_sample_second);
     ctx.load_prev_weight.set(next_prev_weight);
     ctx.job_counter.0.store(next_job_counter, Ordering::Relaxed);
-    if 0x4_i32 & db_level() != 0 {
+    if 0x4_i32 & db_level(ctx) != 0 {
         printf(
             b"Estimated system load = %f (actual = %f) (max requested = %f)\n\0" as *const u8
                 as *const ::core::ffi::c_char,
