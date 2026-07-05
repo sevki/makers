@@ -249,7 +249,7 @@ fn name_seq_len(head: Option<&NameSeq>) -> usize {
 pub const NONEXISTENT_MTIME: i32 = 1;
 /// Default system include directories searched when `-I` does not disable them.
 /// Genuine Rust byte slices (no NUL terminators, no `*const c_char`).
-static DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] =
+const DEFAULT_INCLUDE_DIRECTORIES: [&[u8]; 3] =
     [b"/usr/gnu/include", b"/usr/local/include", b"/usr/include"];
 pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
 /// # Safety
