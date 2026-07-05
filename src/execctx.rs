@@ -1407,9 +1407,22 @@ pub struct GlobalVariableSet(pub Box<::core::cell::Cell<crate::variable::Variabl
 
 impl GlobalVariableSet {
     /// The stable address every `== &global_variable_set`-style
-    /// pointer-identity check in `variable.rs` compares against.
+    /// pointer-identity check in `variable.rs` compares against. Needed at
+    /// the many call sites that only hold `&ExecContext` (the C-style
+    /// pointer-identity/lookup machinery `variable.rs` inherited from the
+    /// c2rust translation); prefer [`AsMut::as_mut`] wherever `&mut` is
+    /// already available.
     pub fn as_ptr(&self) -> *mut crate::variable::VariableSet {
         self.0.as_ptr()
+    }
+}
+
+impl ::core::convert::AsMut<crate::variable::VariableSet> for GlobalVariableSet {
+    /// Safe, exclusive access to the record, for callers that already hold
+    /// `&mut` and don't need the raw address `as_ptr` (and `variable.rs`'s
+    /// C-style call sites) require.
+    fn as_mut(&mut self) -> &mut crate::variable::VariableSet {
+        self.0.get_mut()
     }
 }
 
@@ -1435,14 +1448,6 @@ impl Default for GlobalVariableSet {
     }
 }
 
-impl Clone for GlobalVariableSet {
-    fn clone(&self) -> Self {
-        // A cloned context is a new run with its own global variable table,
-        // never an alias of the original's (same rationale as `MakeSync`).
-        Self::default()
-    }
-}
-
 impl ::core::fmt::Debug for GlobalVariableSet {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         // `VariableSet` has no `Debug`; the table's fill count is the useful bit.
@@ -1463,9 +1468,20 @@ pub struct GlobalSetlist(pub Box<::core::cell::Cell<crate::variable::VariableSet
 
 impl GlobalSetlist {
     /// The stable address every `== &global_setlist`-style pointer-identity
-    /// check in `variable.rs` compares against.
+    /// check in `variable.rs` compares against. Needed at the many call sites
+    /// that only hold `&ExecContext`; prefer [`AsMut::as_mut`] wherever `&mut`
+    /// is already available.
     pub fn as_ptr(&self) -> *mut crate::variable::VariableSetList {
         self.0.as_ptr()
+    }
+}
+
+impl ::core::convert::AsMut<crate::variable::VariableSetList> for GlobalSetlist {
+    /// Safe, exclusive access to the record, for callers that already hold
+    /// `&mut` and don't need the raw address `as_ptr` (and `variable.rs`'s
+    /// C-style call sites) require.
+    fn as_mut(&mut self) -> &mut crate::variable::VariableSetList {
+        self.0.get_mut()
     }
 }
 
@@ -1515,12 +1531,35 @@ impl Default for VariableGlobals {
 
 impl Clone for VariableGlobals {
     fn clone(&self) -> Self {
-        // A cloned context is a new run with its own variable globals, never
-        // an alias of the original's (same rationale as `MakeSync`); a plain
-        // derived `Clone` would also copy `current_variable_set_list`'s raw
-        // pointer value verbatim, leaving it dangling at the *original*
-        // `global_setlist`'s address instead of the freshly cloned one.
-        Self::default()
+        // A real copy, not a reset: a `Clone` that silently discards the
+        // current variable table (MAKEFLAGS, every already-defined variable,
+        // ...) would violate `Clone`'s contract that the result is equal to
+        // the original. Copy each record's data into its own freshly boxed
+        // cell, then re-anchor the self-referential pointers at the new
+        // addresses instead of the source's — a field-by-field derive would
+        // leave `global_setlist.set`/`current_variable_set_list` dangling at
+        // the *original* boxes.
+        let global_variable_set =
+            GlobalVariableSet(Box::new(::core::cell::Cell::new(self.global_variable_set.0.get())));
+        let mut setlist_data = self.global_setlist.0.get();
+        setlist_data.set = global_variable_set.as_ptr();
+        let global_setlist = GlobalSetlist(Box::new(::core::cell::Cell::new(setlist_data)));
+        // Only the "not inside any pushed scope" case (current ==
+        // global_setlist) can be soundly re-anchored; anything else points at
+        // a scope node owned outside this struct (pushed by
+        // `push_new_variable_scope`/`build_file_setlist`), which is carried
+        // across verbatim like the rest of this c2rust layer's raw pointers.
+        let current = self.current_variable_set_list.get();
+        let current = if current == self.global_setlist.as_ptr() {
+            global_setlist.as_ptr()
+        } else {
+            current
+        };
+        Self {
+            global_variable_set,
+            global_setlist,
+            current_variable_set_list: ::core::cell::Cell::new(current),
+        }
     }
 }
 
@@ -1660,6 +1699,37 @@ mod tests {
             cloned.variable_globals.global_setlist.as_ptr(),
             setlist_addr,
             "a cloned context owns a fresh global_setlist, never an alias"
+        );
+    }
+
+    /// `Clone` must produce a value equal in *content* to the original, not
+    /// merely a same-shaped-but-empty one — a `VariableGlobals::clone` that
+    /// silently reset the table would violate `Clone`'s contract even though
+    /// nothing in this codebase currently clones a populated `ExecContext`.
+    #[test]
+    fn variable_globals_clone_preserves_the_table_contents() {
+        let ctx = ExecContext::default();
+        // Simulate a populated table by writing directly into the boxed
+        // record (the real populating path is `init_hash_global_variable_set`
+        // + `define_variable_in_set`, exercised end-to-end elsewhere).
+        let mut vs = ctx.variable_globals.global_variable_set.0.get();
+        vs.table.ht_size = 7;
+        vs.table.ht_fill = 3;
+        ctx.variable_globals.global_variable_set.0.set(vs);
+
+        let cloned = ctx.clone();
+        let cloned_vs = cloned.variable_globals.global_variable_set.0.get();
+        assert_eq!(
+            (cloned_vs.table.ht_size, cloned_vs.table.ht_fill),
+            (7, 3),
+            "clone must copy the table's contents, not reset them"
+        );
+        // The clone's global_setlist must point at the clone's own
+        // global_variable_set, not the original's.
+        assert_eq!(
+            unsafe { (*cloned.variable_globals.global_setlist.as_ptr()).set },
+            cloned.variable_globals.global_variable_set.as_ptr(),
+            "the clone's global_setlist.set must be re-anchored at its own global_variable_set"
         );
     }
 
