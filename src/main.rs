@@ -2858,7 +2858,7 @@ unsafe fn main_0(
             style_ptr,
         ) != 0
         {
-            let auth = jobserver_get_auth();
+            let auth = jobserver_get_auth(&ctx);
             if !auth.is_null() {
                 *options.jobserver_auth.borrow_mut() = Some(
                     ::core::ffi::CStr::from_ptr(auth)
@@ -2881,7 +2881,7 @@ unsafe fn main_0(
         let has_mutex = options.sync_mutex.borrow().is_some();
         if !has_mutex {
             osync_setup(&ctx);
-            let m = osync_get_mutex();
+            let m = osync_get_mutex(&ctx);
             if !m.is_null() {
                 *options.sync_mutex.borrow_mut() = Some(
                     ::core::ffi::CStr::from_ptr(m)
@@ -3482,9 +3482,9 @@ unsafe fn main_0(
             fflush(stdout);
             fflush(stderr);
             osync_clear();
-            jobserver_pre_child(1);
+            jobserver_pre_child(&ctx, 1);
             exec_command(&ctx, nargv as *mut *mut ::core::ffi::c_char, environ);
-            jobserver_post_child(1);
+            jobserver_post_child(&ctx, 1);
             temp_stdin_unlink(&ctx);
             _exit(127);
         }
@@ -4795,7 +4795,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
-    if jobserver_enabled() != 0 && jobserver_tokens(ctx) != 0 {
+    if jobserver_enabled(ctx) != 0 && jobserver_tokens(ctx) != 0 {
         if status != 2 {
             error(
                 ctx,
