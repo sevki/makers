@@ -59,20 +59,20 @@ pub struct hash_table {
 
 pub const MAKE_TROUBLE: i32 = 1;
 
-/// Sentinel stored in slots whose item was deleted (its own address, so it
-/// can never equal a real item).
-pub static mut hash_deleted_item: *const c_void =
-    &raw const hash_deleted_item as *mut *const c_void as *const c_void;
+/// Sentinel stored in slots whose item was deleted. It is only ever compared
+/// for pointer identity (never dereferenced), so — unlike the c2rust
+/// translation's self-referential `static mut` (whose value was its own
+/// address) — any fixed, non-null value works; a `const` inlines this literal
+/// at every use site instead of needing a stable process-wide storage
+/// location.
+pub const hash_deleted_item: *const c_void = ::core::ptr::dangling::<c_void>();
 
 /// Is `item` a real entry (not empty, not the deleted sentinel)?
 ///
 /// Safe: `item` is never dereferenced — it is only compared against null and
-/// the deleted-item sentinel. The sentinel's value is its own address (it is
-/// initialized to `&hash_deleted_item` and never mutated), so we compare
-/// against that address via the safe `&raw const` operator instead of reading
-/// the `static mut`, which keeps the function free of `unsafe`.
+/// the deleted-item sentinel.
 pub fn is_real_item(item: *const c_void) -> bool {
-    !item.is_null() && item != (&raw const hash_deleted_item).cast::<c_void>()
+    !item.is_null() && item != hash_deleted_item
 }
 
 pub(crate) unsafe fn table_slots<'a>(ht: *const hash_table) -> &'a [*mut c_void] {
@@ -631,10 +631,9 @@ mod tests {
     #[test]
     fn is_real_item_classifies_null_sentinel_and_real() {
         // Safe `fn`: null and the deleted-item sentinel are not real; any other
-        // non-null pointer is. The sentinel is recognized by its own address.
+        // non-null pointer is.
         assert!(!is_real_item(::core::ptr::null()));
-        let sentinel = (&raw const hash_deleted_item).cast::<c_void>();
-        assert!(!is_real_item(sentinel));
+        assert!(!is_real_item(hash_deleted_item));
         let local = 0u8;
         let real = (&raw const local).cast::<c_void>();
         assert!(is_real_item(real));
