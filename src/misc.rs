@@ -1467,6 +1467,66 @@ mod concat_tests {
 }
 
 #[cfg(test)]
+mod concat_unsafe_oracle {
+    use super::{cstr_bytes_or_empty, strlen};
+    use ::core::ffi::c_char;
+
+    /// Verbatim pre-conversion implementation (the last `unsafe fn concat`,
+    /// before it became the safe, pure `super::concat`), preserved as a
+    /// differential test oracle. The scratch buffer is a plain local
+    /// `RefCell` argument rather than `ctx.concat_buffer` — that field no
+    /// longer exists on `ExecContext` after this conversion, and the
+    /// buffer's storage location isn't what's under test; the
+    /// null/empty-skip and growth/terminator algorithm is.
+    unsafe fn concat(
+        buf_cell: &::core::cell::RefCell<Vec<u8>>,
+        args: &[*const c_char],
+    ) -> *const c_char {
+        let mut buf = buf_cell.borrow_mut();
+        buf.clear();
+        for &s in args {
+            if s.is_null() {
+                continue;
+            }
+            let l = strlen(s);
+            if l == 0 {
+                continue;
+            }
+            buf.extend_from_slice(::core::slice::from_raw_parts(s as *const u8, l));
+        }
+        buf.push(0);
+        buf.as_ptr() as *const c_char
+    }
+
+    #[test]
+    fn safe_matches_oracle_over_representative_inputs() {
+        let buf_cell = ::core::cell::RefCell::new(Vec::new());
+        let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        let hello = c"hello";
+        let empty = c"";
+        let hi = c"hi";
+        let bye = c"bye";
+        unsafe {
+            let cases: [Vec<*const c_char>; 5] = [
+                vec![hello.as_ptr(), ::core::ptr::null(), empty.as_ptr(), long.as_ptr()],
+                vec![hi.as_ptr()],
+                vec![bye.as_ptr()],
+                vec![::core::ptr::null()],
+                vec![],
+            ];
+            for case in &cases {
+                let safe_args: Vec<&[u8]> =
+                    case.iter().map(|&p| cstr_bytes_or_empty(p)).collect();
+                let safe_result = super::concat(&safe_args);
+                let oracle_ptr = concat(&buf_cell, case);
+                let oracle_bytes = ::core::ffi::CStr::from_ptr(oracle_ptr).to_bytes_with_nul();
+                assert_eq!(safe_result, oracle_bytes, "mismatch for {case:?}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod free_ns_tests {
     use super::{free_ns, free_ns_chain};
     use crate::file::NameSeq;
