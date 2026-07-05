@@ -510,6 +510,58 @@ pub struct ExecContext {
     /// after the first `O_TMPFILE` failure so later calls skip straight to
     /// the `tmpfile()` fallback). Not signal-reachable.
     pub tmpfile_works: TrueAtomicBoolCell,
+
+    /// `build_target_list`'s memoized target-list length, the former
+    /// `file.rs` function-local `static mut last_targ_count`.
+    pub last_targ_count: ::core::cell::Cell<::core::ffi::c_ulong>,
+
+    /// One-shot `.WAIT`-as-a-prerequisite warning flags, the former
+    /// `read.rs` function-local `static WPRE`/`static WCMD` atomics inside
+    /// `check_special_file`.
+    pub wpre_warned: AtomicBoolCell,
+    pub wcmd_warned: AtomicBoolCell,
+
+    /// `reap_children`'s one-time "Waiting for unfinished jobs" notice
+    /// guard, the former `job.rs` function-local `static PRINTED` atomic.
+    pub reap_children_printed: AtomicBoolCell,
+
+    /// `reap_children`'s memoized `.DELETE_ON_ERROR` lookup (`-1` = not yet
+    /// computed, `0`/`1` = the answer), the former `job.rs` function-local
+    /// `static DELETE_ON_ERROR` atomic. Uses [`FdSentinelCell`] purely for
+    /// its `-1`-default `AtomicI32`; this isn't an fd.
+    pub delete_on_error: FdSentinelCell,
+
+    /// `func_call`'s saved `$(call)` recursion-depth argument count, the
+    /// former `function.rs` function-local `static MAX_ARGS` atomic.
+    pub max_args: AtomicU32Cell,
+
+    /// `decode_switches`'s re-entrancy guard, the former `main.rs`
+    /// function-local `static USING_GETOPT` atomic.
+    pub using_getopt: AtomicBoolCell,
+
+    /// `print_version`'s one-shot-per-run guard, the former `main.rs`
+    /// function-local `static PRINTED_VERSION` atomic.
+    pub printed_version: AtomicBoolCell,
+
+    /// `die`'s re-entrancy guard (only the first caller actually runs the
+    /// cleanup/exit path), the former `main.rs` function-local `static
+    /// DYING` atomic.
+    pub dying: AtomicBoolCell,
+
+    /// `setup_tmpfile`'s re-entrancy guard, the former `output.rs`
+    /// function-local `static IN_SETUP` atomic.
+    pub output_in_setup: AtomicBoolCell,
+
+    /// Saved `O_APPEND` flags for stdout/stderr, restored by `output_close`,
+    /// the former `output.rs` `static STDOUT_FLAGS`/`static STDERR_FLAGS`
+    /// atomics. Both default to `-1` (the "unset" sentinel `fd_set_append`
+    /// itself uses), hence [`FdSentinelCell`] rather than [`AtomicI32Cell`].
+    pub stdout_flags: FdSentinelCell,
+    pub stderr_flags: FdSentinelCell,
+
+    /// `check_io_state`'s memoized stdio-validity bitmask, the former
+    /// `posixos.rs` function-local `static IO_STATE` atomic.
+    pub io_state: IoStateCell,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -643,6 +695,29 @@ impl Default for TrueAtomicBoolCell {
 impl Clone for TrueAtomicBoolCell {
     fn clone(&self) -> Self {
         Self(::core::sync::atomic::AtomicBool::new(
+            self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// An `AtomicU32` defaulting to [`crate::posixos::IO_UNKNOWN`] (the
+/// "not yet computed" sentinel `check_io_state` checks for), rather than
+/// `AtomicU32`'s own `0` default — `0` would be misread as an already-cached
+/// "nothing is OK" result.
+#[derive(Debug)]
+pub struct IoStateCell(pub ::core::sync::atomic::AtomicU32);
+
+impl Default for IoStateCell {
+    fn default() -> Self {
+        Self(::core::sync::atomic::AtomicU32::new(
+            crate::posixos::IO_UNKNOWN as u32,
+        ))
+    }
+}
+
+impl Clone for IoStateCell {
+    fn clone(&self) -> Self {
+        Self(::core::sync::atomic::AtomicU32::new(
             self.0.load(::core::sync::atomic::Ordering::Relaxed),
         ))
     }

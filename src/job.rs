@@ -15,7 +15,7 @@ use libc::{
     __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
     strchr, strcmp, strerror, strsignal,
 };
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
@@ -674,12 +674,8 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         let mut any_local: i32;
         let dontcare: i32;
         if err != 0 && block != 0 {
-            // Guards the one-time "Waiting for unfinished jobs" notice. Atomic
-            // so the read/write are plain safe ops; reaping is single-threaded,
-            // so `Relaxed` preserves the original program order.
-            static PRINTED: AtomicBool = AtomicBool::new(false);
             fflush(stdout);
-            if !PRINTED.load(Ordering::Relaxed) {
+            if !ctx.reap_children_printed.0.load(Ordering::Relaxed) {
                 error(
                     ctx,
                     ::core::ptr::null_mut::<Floc>(),
@@ -689,7 +685,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     &[],
                 );
             }
-            PRINTED.store(true, Ordering::Relaxed);
+            ctx.reap_children_printed.0.store(true, Ordering::Relaxed);
         }
         if dead_children(ctx) > 0 {
             ctx.dead_children.0.fetch_sub(1, Ordering::Relaxed);
@@ -940,11 +936,6 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         }
         dontcare = (*c).dontcare() as i32;
         if child_failed != 0 && (*c).noerror() == 0 && !crate::make_main::opt_ignore_errors() {
-            // Caches whether `.DELETE_ON_ERROR` is a target: -1 = not yet
-            // computed, 0/1 = the looked-up answer. Atomic so the read/write are
-            // plain safe ops; access is single-threaded (children are reaped on
-            // the main thread), so `Relaxed` preserves the original order.
-            static DELETE_ON_ERROR: AtomicI32 = AtomicI32::new(-1);
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(ctx, c, exit_code, exit_sig, coredump, 0);
             }
@@ -958,7 +949,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     us_question
                 },
             );
-            if DELETE_ON_ERROR.load(Ordering::Relaxed) == -1_i32 {
+            if ctx.delete_on_error.0.load(Ordering::Relaxed) == -1_i32 {
                 let is_target = match lookup_file(ctx, b".DELETE_ON_ERROR") {
                     Some(fid) => match ctx.filenodes.get(fid) {
                         Some(node) => node.lock().expect("file node poisoned").is_target,
@@ -966,9 +957,11 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     },
                     None => false,
                 };
-                DELETE_ON_ERROR.store(is_target as i32, Ordering::Relaxed);
+                ctx.delete_on_error
+                    .0
+                    .store(is_target as i32, Ordering::Relaxed);
             }
-            if exit_sig != 0 || DELETE_ON_ERROR.load(Ordering::Relaxed) != 0 {
+            if exit_sig != 0 || ctx.delete_on_error.0.load(Ordering::Relaxed) != 0 {
                 delete_child_targets(ctx, c);
             }
         } else {
@@ -1660,7 +1653,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
         remote_noerror_good_stdin_deleted_recursive_jobslot_dontcare: [0; 1],
         c2rust_padding: [0; 7],
     });
-    crate::output::output_init(&raw mut boxed.output);
+    crate::output::output_init(ctx, &raw mut boxed.output);
     boxed.set_dontcare(dontcare as ::core::ffi::c_uint);
     set_output_context(if boxed.output.syncout() as i32 != 0 {
         &raw mut boxed.output

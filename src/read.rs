@@ -2664,10 +2664,8 @@ pub unsafe fn check_special_file(
         )
     };
     if is_wait {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static WPRE: AtomicBool = AtomicBool::new(false);
-        static WCMD: AtomicBool = AtomicBool::new(false);
-        if !WPRE.load(Ordering::Relaxed) && has_deps {
+        use std::sync::atomic::Ordering;
+        if !ctx.wpre_warned.0.load(Ordering::Relaxed) && has_deps {
             error(
                 ctx,
                 flocp,
@@ -2675,9 +2673,9 @@ pub unsafe fn check_special_file(
                 b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
             );
-            WPRE.store(true, Ordering::Relaxed);
+            ctx.wpre_warned.0.store(true, Ordering::Relaxed);
         }
-        if !WCMD.load(Ordering::Relaxed) && has_recipe {
+        if !ctx.wcmd_warned.0.load(Ordering::Relaxed) && has_recipe {
             error(
                 ctx,
                 flocp,
@@ -2685,7 +2683,7 @@ pub unsafe fn check_special_file(
                 b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
             );
-            WCMD.store(true, Ordering::Relaxed);
+            ctx.wcmd_warned.0.store(true, Ordering::Relaxed);
         }
     }
 }

@@ -25,7 +25,7 @@ use libc::{
     __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
@@ -1945,10 +1945,10 @@ unsafe fn main_0(
     CTX_PTR.with(|p| p.set(&ctx as *const crate::execctx::ExecContext));
     initialize_variable_output();
     spin(b"main-entry\0" as *const u8 as *const ::core::ffi::c_char);
-    if check_io_state() & 0x8 as ::core::ffi::c_uint != 0 {
+    if check_io_state(&ctx) & 0x8 as ::core::ffi::c_uint != 0 {
         atexit(Some(close_stdout as unsafe extern "C" fn() -> ()));
     }
-    crate::output::output_init(ctx.make_sync.as_ptr());
+    crate::output::output_init(&ctx, ctx.make_sync.as_ptr());
     initialize_stopchar_map();
     crate::warning::init();
     options.verify.set(true);
@@ -1964,7 +1964,7 @@ unsafe fn main_0(
     install_fatal_signal(&ctx, 24);
     install_fatal_signal(&ctx, 25);
     bsd_signal(SIGCHLD, SIG_DFL);
-    crate::output::output_init(::core::ptr::null_mut::<output>());
+    crate::output::output_init(&ctx, ::core::ptr::null_mut::<output>());
     if (*argv.offset(0_i32 as isize)).is_null() {
         let fresh33 = &mut (*argv.offset(0_i32 as isize));
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
@@ -2343,6 +2343,13 @@ unsafe fn main_0(
     // pointer rides along with it.
     let carried_make_sync = ::core::mem::take(&mut ctx.make_sync);
     let carried_output_context = ::core::mem::take(&mut ctx.output_context);
+    // `output_init(&ctx, null)` above (the stdio-append-mode branch) saved the
+    // original stdout/stderr `O_APPEND` flags so `output_close`/`die` can
+    // restore them at exit; carrying them keeps that restoration working
+    // after this rebuild instead of silently reverting to the "unset" -1
+    // sentinel and making `fd_reset_append` a no-op.
+    let carried_stdout_flags = ::core::mem::take(&mut ctx.stdout_flags);
+    let carried_stderr_flags = ::core::mem::take(&mut ctx.stderr_flags);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2360,6 +2367,8 @@ unsafe fn main_0(
         fatal_signal_set: carried_fatal_signal_set,
         make_sync: carried_make_sync,
         output_context: carried_output_context,
+        stdout_flags: carried_stdout_flags,
+        stderr_flags: carried_stderr_flags,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
@@ -3844,14 +3853,11 @@ unsafe fn decode_switches(
     let mut found_wait: ::core::ffi::c_uint = 0;
     let mut a: *mut *const ::core::ffi::c_char;
     // Re-entrancy guard: `decode_switches` must not be called recursively.
-    // Atomic so the read/writes are plain safe ops; switch decoding runs
-    // single-threaded, so `Relaxed` preserves the original program order.
-    static USING_GETOPT: AtomicBool = AtomicBool::new(false);
-    if !USING_GETOPT.load(Ordering::Relaxed) {
+    if !ctx.using_getopt.0.load(Ordering::Relaxed) {
     } else {
         panic!("assertion failed: using_getopt == 0");
     };
-    USING_GETOPT.store(true, Ordering::Relaxed);
+    ctx.using_getopt.0.store(true, Ordering::Relaxed);
     targets.max = (argc + 1) as ::core::ffi::c_uint;
     alloca_allocations.push(::std::vec::from_elem(
         0,
@@ -4147,7 +4153,7 @@ unsafe fn decode_switches(
     }
     let fresh23 = &mut (*targets.list.offset(targets.idx as isize));
     *fresh23 = ::core::ptr::null::<::core::ffi::c_char>();
-    USING_GETOPT.store(false, Ordering::Relaxed);
+    ctx.using_getopt.0.store(false, Ordering::Relaxed);
     a = targets.list;
     while !(*a).is_null() {
         let prior_found_wait: i32 = found_wait as i32;
@@ -4721,13 +4727,12 @@ pub fn should_print_dir(ctx: &crate::execctx::ExecContext, options: &Options) ->
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_version(ctx: &crate::execctx::ExecContext) {
-    static PRINTED_VERSION: AtomicBool = AtomicBool::new(false);
     let precede: *const ::core::ffi::c_char = if opt_print_data_base() {
         b"# \0" as *const u8 as *const ::core::ffi::c_char
     } else {
         b"\0" as *const u8 as *const ::core::ffi::c_char
     };
-    if PRINTED_VERSION.swap(true, Ordering::Relaxed) {
+    if ctx.printed_version.0.swap(true, Ordering::Relaxed) {
         return;
     }
     printf(
@@ -4840,8 +4845,7 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
-    static DYING: AtomicBool = AtomicBool::new(false);
-    if !DYING.swap(true, Ordering::Relaxed) {
+    if !ctx.dying.0.swap(true, Ordering::Relaxed) {
         let err: i32;
         if opt_print_version() {
             print_version(ctx);
