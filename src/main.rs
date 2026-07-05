@@ -2343,6 +2343,13 @@ unsafe fn main_0(
     // pointer rides along with it.
     let carried_make_sync = ::core::mem::take(&mut ctx.make_sync);
     let carried_output_context = ::core::mem::take(&mut ctx.output_context);
+    // `output_init(&ctx, null)` above (the stdio-append-mode branch) saved the
+    // original stdout/stderr `O_APPEND` flags so `output_close`/`die` can
+    // restore them at exit; carrying them keeps that restoration working
+    // after this rebuild instead of silently reverting to the "unset" -1
+    // sentinel and making `fd_reset_append` a no-op.
+    let carried_stdout_flags = ::core::mem::take(&mut ctx.stdout_flags);
+    let carried_stderr_flags = ::core::mem::take(&mut ctx.stderr_flags);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2360,6 +2367,8 @@ unsafe fn main_0(
         fatal_signal_set: carried_fatal_signal_set,
         make_sync: carried_make_sync,
         output_context: carried_output_context,
+        stdout_flags: carried_stdout_flags,
+        stderr_flags: carried_stderr_flags,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })
