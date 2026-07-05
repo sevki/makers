@@ -1051,7 +1051,7 @@ fn update_file_1(
                 .unwrap_or(false);
             if dep_updating {
                 let dep_name = node_name(ctx, dfile);
-                if warning::action(Type::CircularDep) == Action::Error {
+                if warning::action(ctx, Type::CircularDep) == Action::Error {
                     let dcn = cname(&dep_name);
                     unsafe {
                         fatal(
@@ -1067,7 +1067,7 @@ fn update_file_1(
                         );
                     }
                 }
-                if warning::is_active(Type::CircularDep) {
+                if warning::is_active(ctx, Type::CircularDep) {
                     let dcn = cname(&dep_name);
                     unsafe {
                         error(
