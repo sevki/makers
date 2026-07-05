@@ -2255,7 +2255,7 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
                 let name_0_bytes = unsafe { ::core::ffi::CStr::from_ptr(name_0).to_bytes().to_vec() };
                 // The c2rust "prefix length" used in gpath_search.
                 let name_len = name_0_bytes.len().saturating_sub(name.len()).saturating_sub(1);
-                if gpath_search(&name_0_bytes[..name_len.min(name_0_bytes.len())]) {
+                if gpath_search(ctx, &name_0_bytes[..name_len.min(name_0_bytes.len())]) {
                     rename_file(ctx, file, &name_0_bytes);
                     let live = follow_renamed(ctx, file);
                     let last_mtime = ctx
