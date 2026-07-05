@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use crate::expand::variable_buffer_output;
 use crate::floc::Floc;
@@ -61,45 +60,6 @@ impl Action {
             .into_iter()
             .find(|&a| a.name().unwrap().eq_ignore_ascii_case(s))
     }
-}
-
-static ACTION_NAME_CACHE: OnceLock<Mutex<HashMap<String, Option<Action>>>> = OnceLock::new();
-static TYPE_NAME_CACHE: OnceLock<Mutex<HashMap<String, Option<Type>>>> = OnceLock::new();
-
-fn action_name_cache() -> &'static Mutex<HashMap<String, Option<Action>>> {
-    ACTION_NAME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn type_name_cache() -> &'static Mutex<HashMap<String, Option<Type>>> {
-    TYPE_NAME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn action_from_name_cached(name: &str) -> Option<Action> {
-    let key = name.to_ascii_lowercase();
-    let mut cache = action_name_cache()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(cached) = cache.get(&key) {
-        return *cached;
-    }
-    let parsed = Action::from_name(&key);
-    if parsed.is_some() {
-        cache.insert(key, parsed);
-    }
-    parsed
-}
-
-fn type_from_name_cached(name: &str) -> Option<Type> {
-    let key = name.to_ascii_lowercase();
-    let mut cache = type_name_cache().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(cached) = cache.get(&key) {
-        return *cached;
-    }
-    let parsed = Type::from_name(&key);
-    if parsed.is_some() {
-        cache.insert(key, parsed);
-    }
-    parsed
 }
 
 #[derive(Default, Copy, Clone)]
@@ -201,7 +161,7 @@ pub fn decode_actions(ctx: &crate::execctx::ExecContext, value: &str, flocp: Opt
             if token.is_empty() {
                 continue;
             }
-            if let Some(action) = action_from_name_cached(token) {
+            if let Some(action) = Action::from_name(token) {
                 if target_flag {
                     s.flag.global = action;
                 } else {
@@ -213,7 +173,7 @@ pub fn decode_actions(ctx: &crate::execctx::ExecContext, value: &str, flocp: Opt
                 Some((n, a)) => (n, Some(a)),
                 None => (token, None),
             };
-            let ty = match type_from_name_cached(name) {
+            let ty = match Type::from_name(name) {
                 Some(t) => t,
                 None => {
                     errors.push((ReportKind::Unknown, name.to_string()));
@@ -222,7 +182,7 @@ pub fn decode_actions(ctx: &crate::execctx::ExecContext, value: &str, flocp: Opt
             };
             let action = match action_part {
                 None => Action::Warn,
-                Some(s) => match action_from_name_cached(s) {
+                Some(s) => match Action::from_name(s) {
                     Some(a) => a,
                     None => {
                         errors.push((ReportKind::UnknownAction, s.to_string()));
@@ -316,48 +276,24 @@ unsafe fn append_char(fp: *mut ::core::ffi::c_char, c: char) -> *mut ::core::ffi
 mod tests {
     use super::*;
 
-    /// Both cache accessor functions must return the same `Mutex` object on
-    /// every call (singleton). This catches mutations that replace the
-    /// `OnceLock`-based accessor with `Box::leak(Box::new(...))`, which
-    /// allocates a fresh map on each call and breaks the caching invariant.
     #[test]
-    fn action_name_cache_is_singleton() {
-        let p1 = action_name_cache() as *const _;
-        let p2 = action_name_cache() as *const _;
-        assert_eq!(p1, p2);
-    }
-
-    #[test]
-    fn type_name_cache_is_singleton() {
-        let p1 = type_name_cache() as *const _;
-        let p2 = type_name_cache() as *const _;
-        assert_eq!(p1, p2);
-    }
-
-    #[test]
-    fn action_from_name_cached_known_names() {
-        assert_eq!(action_from_name_cached("warn"), Some(Action::Warn));
-        assert_eq!(action_from_name_cached("ignore"), Some(Action::Ignore));
-        assert_eq!(action_from_name_cached("error"), Some(Action::Error));
+    fn action_from_name_known_names() {
+        assert_eq!(Action::from_name("warn"), Some(Action::Warn));
+        assert_eq!(Action::from_name("ignore"), Some(Action::Ignore));
+        assert_eq!(Action::from_name("error"), Some(Action::Error));
         // Case-insensitive match must also hit the correct variant.
-        assert_eq!(action_from_name_cached("WARN"), Some(Action::Warn));
+        assert_eq!(Action::from_name("WARN"), Some(Action::Warn));
         // Unknown names must return None.
-        assert_eq!(action_from_name_cached("xyzzy"), None);
+        assert_eq!(Action::from_name("xyzzy"), None);
     }
 
     #[test]
-    fn type_from_name_cached_known_names() {
-        assert_eq!(
-            type_from_name_cached("circular-dep"),
-            Some(Type::CircularDep)
-        );
-        assert_eq!(type_from_name_cached("invalid-ref"), Some(Type::InvalidRef));
-        assert_eq!(type_from_name_cached("invalid-var"), Some(Type::InvalidVar));
-        assert_eq!(
-            type_from_name_cached("undefined-var"),
-            Some(Type::UndefinedVar)
-        );
+    fn type_from_name_known_names() {
+        assert_eq!(Type::from_name("circular-dep"), Some(Type::CircularDep));
+        assert_eq!(Type::from_name("invalid-ref"), Some(Type::InvalidRef));
+        assert_eq!(Type::from_name("invalid-var"), Some(Type::InvalidVar));
+        assert_eq!(Type::from_name("undefined-var"), Some(Type::UndefinedVar));
         // Unknown names must return None.
-        assert_eq!(type_from_name_cached("xyzzy"), None);
+        assert_eq!(Type::from_name("xyzzy"), None);
     }
 }
