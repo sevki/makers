@@ -8,7 +8,7 @@
 
 use ::core::ffi::{c_char, c_uint, c_void};
 use ::core::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::Ordering;
 
 use libc::{
     __errno_location, close, ftruncate, lseek, perror, read, strerror, strlen, EINTR, SEEK_END,
@@ -241,14 +241,11 @@ pub unsafe fn output_tmpfd(ctx: &ExecContext) -> i32 {
 /// `out` must point to a valid `output`; must run single-threaded.
 pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     // Guards against re-entrant tmpfile setup (the C code's recursion check).
-    // Atomic so the read/write are plain safe ops; setup runs single-threaded,
-    // so `Relaxed` preserves the original program order.
-    static IN_SETUP: AtomicBool = AtomicBool::new(false);
-    if IN_SETUP.load(Ordering::Relaxed) {
+    if ctx.output_in_setup.0.load(Ordering::Relaxed) {
         return;
     }
-    IN_SETUP.store(true, Ordering::Relaxed);
-    let io_state: ::core::ffi::c_uint = check_io_state();
+    ctx.output_in_setup.0.store(true, Ordering::Relaxed);
+    let io_state: ::core::ffi::c_uint = check_io_state(ctx);
     // The block falls through to the error handler below on any failure;
     // reaching its end is the success path (the C code used `goto`).
     'setup: {
@@ -280,7 +277,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
                 (*out).err = fd_0;
             }
         }
-        IN_SETUP.store(false, Ordering::Relaxed);
+        ctx.output_in_setup.0.store(false, Ordering::Relaxed);
         return;
     }
     error(
@@ -293,7 +290,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     output_close(ctx, out);
     crate::make_main::with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
     osync_clear();
-    IN_SETUP.store(false, Ordering::Relaxed);
+    ctx.output_in_setup.0.store(false, Ordering::Relaxed);
 }
 /// Dump any captured output under the output-sync lock and truncate the
 /// temp files for reuse.
@@ -354,18 +351,12 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
         }
     }
 }
-/// Saved `O_APPEND`-state of stdout/stderr while output-sync redirects them,
-/// restored by `output_close`. Atomic so the read/write are plain safe ops;
-/// output setup/teardown runs single-threaded, so `Relaxed` preserves the
-/// original program order.
-static STDOUT_FLAGS: AtomicI32 = AtomicI32::new(-1);
-static STDERR_FLAGS: AtomicI32 = AtomicI32::new(-1);
 /// Initialize `out` (or, when null, switch stdout/stderr to append mode).
 ///
 /// # Safety
 /// `out` must be null or point to a valid `output`; must run
 /// single-threaded.
-pub unsafe fn output_init(out: *mut output) {
+pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
     if !out.is_null() {
         (*out).err = OUTPUT_NONE;
         (*out).out = (*out).err;
@@ -375,8 +366,12 @@ pub unsafe fn output_init(out: *mut output) {
         );
         return;
     }
-    STDOUT_FLAGS.store(fd_set_append(fileno(stdout)), Ordering::Relaxed);
-    STDERR_FLAGS.store(fd_set_append(fileno(stderr)), Ordering::Relaxed);
+    ctx.stdout_flags
+        .0
+        .store(fd_set_append(fileno(stdout)), Ordering::Relaxed);
+    ctx.stderr_flags
+        .0
+        .store(fd_set_append(fileno(stderr)), Ordering::Relaxed);
 }
 /// Dump and close `out`'s temp files (or, when null, restore
 /// stdout/stderr).
@@ -389,8 +384,8 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
         if stdio_traced() {
             log_working_directory(ctx, 0);
         }
-        fd_reset_append(fileno(stdout), STDOUT_FLAGS.load(Ordering::Relaxed));
-        fd_reset_append(fileno(stderr), STDERR_FLAGS.load(Ordering::Relaxed));
+        fd_reset_append(fileno(stdout), ctx.stdout_flags.0.load(Ordering::Relaxed));
+        fd_reset_append(fileno(stderr), ctx.stderr_flags.0.load(Ordering::Relaxed));
         return;
     }
     output_dump(ctx, out);
@@ -400,7 +395,7 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
     if (*out).err >= 0 && (*out).err != (*out).out {
         close((*out).err);
     }
-    output_init(out);
+    output_init(ctx, out);
 }
 /// Lazily set up output sync and the enter-directory trace before the
 /// first real output.

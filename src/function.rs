@@ -11,7 +11,7 @@ use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
 use libc::{__errno_location, abort, close, free, pipe, printf, remove, sprintf, strerror, strstr};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
     static mut stdout: *mut FILE;
@@ -4616,12 +4616,6 @@ unsafe fn func_call(
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    // Highest `$(call)` argument index seen so far, saved/restored around the
-    // recursive expansion below so nested calls clear the right `$N` automatic
-    // variables. Stored in an atomic (was a `static mut`) so its reads/writes
-    // are plain safe operations; all access is single-threaded, so `Relaxed`
-    // preserves the original program order.
-    static MAX_ARGS: AtomicU32 = AtomicU32::new(0);
     let fname: *mut ::core::ffi::c_char;
     let flen: size_t;
     let mut i: ::core::ffi::c_uint;
@@ -4677,7 +4671,7 @@ unsafe fn func_call(
         i = i.wrapping_add(1);
         argv = argv.offset(1_i32 as isize);
     }
-    while i < MAX_ARGS.load(Ordering::Relaxed) {
+    while i < ctx.max_args.0.load(Ordering::Relaxed) {
         let mut num_0: [::core::ffi::c_char; 22] = [0; 22];
         define_variable_in_set(
             ctx,
@@ -4696,10 +4690,12 @@ unsafe fn func_call(
         i = i.wrapping_add(1);
     }
     (*v).set_exp_count(EXP_COUNT_MAX as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let saved_args = MAX_ARGS.load(Ordering::Relaxed) as i32;
-    MAX_ARGS.store(i, Ordering::Relaxed);
+    let saved_args = ctx.max_args.0.load(Ordering::Relaxed) as i32;
+    ctx.max_args.0.store(i, Ordering::Relaxed);
     o = expand_variable_output(ctx, o, fname, flen);
-    MAX_ARGS.store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
+    ctx.max_args
+        .0
+        .store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
     (*v).set_exp_count(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     pop_variable_scope();
     o.offset(strlen(o) as isize)

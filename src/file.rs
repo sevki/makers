@@ -2609,7 +2609,6 @@ pub unsafe fn build_target_list(
     ctx: &crate::execctx::ExecContext,
     mut value: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    static mut last_targ_count: ::core::ffi::c_ulong = 0;
     // Snapshot the targets from the arena: lock the map, grab `Arc` handles,
     // release the map lock, then read each node's `is_target`/`name` under its
     // own lock and drop the guard.
@@ -2622,7 +2621,7 @@ pub unsafe fn build_target_list(
         .map(::std::sync::Arc::clone)
         .collect();
     let fill = nodes.len() as ::core::ffi::c_ulong;
-    if fill != last_targ_count {
+    if fill != ctx.last_targ_count.get() {
         let target_names: Vec<Vec<u8>> = nodes
             .iter()
             .filter_map(|node| {
@@ -2668,7 +2667,7 @@ pub unsafe fn build_target_list(
             *fresh4 = ' ' as i32 as ::core::ffi::c_char;
         }
         *p.offset(-(1_i32 as isize)) = 0;
-        last_targ_count = fill;
+        ctx.last_targ_count.set(fill);
     }
     value
 }

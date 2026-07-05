@@ -9,7 +9,7 @@
 use ::core::ffi::{c_char, c_longlong, c_uint, c_void, CStr};
 use ::core::ptr::{null, null_mut};
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 
 use libc::{
     __errno_location, close, dup, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, printf,
@@ -52,9 +52,8 @@ pub const IO_STDERR_OK: i32 = 0x10;
 ///
 /// # Safety
 /// Must run after stdio is initialized; reads the C stdio globals.
-pub unsafe fn check_io_state() -> c_uint {
-    static IO_STATE: AtomicU32 = AtomicU32::new(IO_UNKNOWN as c_uint);
-    let mut state = IO_STATE.load(Ordering::Relaxed);
+pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
+    let mut state = ctx.io_state.0.load(Ordering::Relaxed);
     if state != IO_UNKNOWN as c_uint {
         return state;
     }
@@ -83,7 +82,7 @@ pub unsafe fn check_io_state() -> c_uint {
         }
     }
 
-    IO_STATE.store(state, Ordering::Relaxed);
+    ctx.io_state.0.store(state, Ordering::Relaxed);
     state
 }
 
