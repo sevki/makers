@@ -416,7 +416,6 @@ unsafe fn eval_makefile(
             offset: 0,
         },
     };
-    let curfile: *const Floc;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let deps_idx: usize = {
         let mut rf = ctx.read_files.borrow_mut();
@@ -591,7 +590,7 @@ unsafe fn eval_makefile(
     ebuf.bufstart = xmalloc(ebuf.size) as *mut ::core::ffi::c_char;
     ebuf.bufnext = ebuf.bufstart;
     ebuf.buffer = ebuf.bufnext;
-    curfile = ctx.reading_file.0.get();
+    let curfile = ctx.reading_file.0.get();
     ctx.reading_file.0.set(&raw mut ebuf.floc);
     eval(
         ctx,
@@ -625,7 +624,6 @@ pub unsafe fn eval_buffer(
             offset: 0,
         },
     };
-    let curfile: *const Floc;
     ebuf.size = strlen(buffer) as size_t;
     ebuf.bufstart = buffer;
     ebuf.bufnext = ebuf.bufstart;
@@ -640,7 +638,7 @@ pub unsafe fn eval_buffer(
         ebuf.floc.lineno = 1;
         ebuf.floc.offset = 0;
     }
-    curfile = ctx.reading_file.0.get();
+    let curfile = ctx.reading_file.0.get();
     ctx.reading_file.0.set(&raw mut ebuf.floc);
     let saved = install_conditionals(ctx);
     eval(ctx, &raw mut ebuf, 1);
