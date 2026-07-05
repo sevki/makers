@@ -9,9 +9,9 @@ use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
-    __errno_location, calloc, free, getenv, getpid, malloc, memcpy, mkstemp, putchar, read,
-    realloc, sleep, sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask,
-    unlink, write, EINTR,
+    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, putchar, read, realloc,
+    sleep, sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, unlink, write,
+    EINTR,
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
@@ -272,37 +272,34 @@ pub unsafe fn print_spaces(n: c_uint) {
     }
 }
 
-/// Concatenate strings into a static (reused, growing) buffer and
-/// return it. Null arguments count as empty strings.
+/// Concatenate byte strings, returning the joined bytes as an owned,
+/// NUL-terminated buffer. Empty arguments contribute nothing.
+///
+/// Safe and pure: no raw pointers, no shared state, no `ctx`. Callers
+/// bridging from C strings build `args` with [`cstr_bytes_or_empty`].
+pub fn concat(args: &[&[u8]]) -> Vec<u8> {
+    let mut buf: Vec<u8> = Vec::new();
+    for &s in args {
+        if !s.is_empty() {
+            buf.extend_from_slice(s);
+        }
+    }
+    buf.push(0);
+    buf
+}
+
+/// View a NUL-terminated C string as a byte slice up to (not including) its
+/// terminator, or an empty slice for a null pointer — the FFI-boundary
+/// counterpart callers use to build [`concat`]'s `args`.
 ///
 /// # Safety
-/// Each argument must be null or a valid NUL-terminated string. Not
-/// reentrant: the returned buffer is shared between calls.
-pub unsafe fn concat(args: &[*const c_char]) -> *const c_char {
-    static mut rlen: size_t = 0;
-    static mut result: *mut c_char = null_mut();
-
-    let mut ri: size_t = 0;
-    for &s in args {
-        let l: size_t = if s.is_null() { 0 } else { strlen(s) };
-        if l == 0 {
-            continue;
-        }
-        if ri + l > rlen {
-            rlen = (if rlen != 0 { rlen } else { 60 } + l) * 2;
-            result = xrealloc(result as *mut c_void, rlen) as *mut c_char;
-        }
-        memcpy(result.add(ri) as *mut c_void, s as *const c_void, l);
-        ri += l;
+/// `p` must be null or point to a valid NUL-terminated C string.
+pub unsafe fn cstr_bytes_or_empty<'a>(p: *const c_char) -> &'a [u8] {
+    if p.is_null() {
+        &[]
+    } else {
+        ::core::ffi::CStr::from_ptr(p).to_bytes()
     }
-
-    // Get some more memory if we didn't get enough for the terminator.
-    if ri == rlen {
-        rlen = if rlen != 0 { rlen * 2 } else { 120 };
-        result = xrealloc(result as *mut c_void, rlen) as *mut c_char;
-    }
-    *result.add(ri) = 0;
-    result
 }
 
 /// # Safety
@@ -1434,25 +1431,97 @@ mod eval_tmpdir_var_tests {
 
 #[cfg(test)]
 mod concat_tests {
-    use super::concat;
-    use ::core::ptr::null;
+    use super::{concat, cstr_bytes_or_empty};
 
     #[test]
-    fn skips_null_and_empty_and_grows() {
-        // Exercises concat's null-arg, empty-arg (l==0 continue), and the
-        // realloc growth path, plus the trailing-terminator top-up.
+    fn skips_empty_and_joins_the_rest() {
+        // Exercises concat's empty-arg skip and multi-arg join, plus the
+        // trailing NUL terminator.
+        let long = b"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        assert!(long.len() > 60, "long arg exercises a multi-arg join");
+        let out = concat(&[b"hello", b"", long]);
+        assert!(out.ends_with(&[0]), "buffer is NUL-terminated");
+        let bytes = &out[..out.len() - 1];
+        assert!(bytes.starts_with(b"hello"));
+        // Empty args contribute nothing; total is "hello" + the long arg.
+        assert_eq!(bytes.len(), 5 + long.len());
+    }
+
+    #[test]
+    fn returns_a_fresh_buffer_each_call() {
+        // No shared/reused state (unlike the former `ctx`-owned scratch
+        // buffer): each call is an independent, safely owned `Vec<u8>`.
+        let first = concat(&[b"hi"]);
+        let second = concat(&[b"bye"]);
+        assert_eq!(first, b"hi\0");
+        assert_eq!(second, b"bye\0");
+    }
+
+    #[test]
+    fn cstr_bytes_or_empty_handles_null_and_valid_strings() {
         unsafe {
-            let hello = c"hello".as_ptr();
-            let empty = c"".as_ptr();
-            // A long arg forces growth past the initial 60-byte reservation.
-            let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234".as_ptr();
-            let long_len = ::core::ffi::CStr::from_ptr(long).to_bytes().len();
-            assert!(long_len > 60, "long arg must force the growth path");
-            let out = concat(&[hello, null(), empty, long]);
-            let bytes = ::core::ffi::CStr::from_ptr(out).to_bytes();
-            assert!(bytes.starts_with(b"hello"));
-            // null/empty args contribute nothing; total is "hello" + the long arg.
-            assert_eq!(bytes.len(), 5 + long_len);
+            assert_eq!(cstr_bytes_or_empty(::core::ptr::null()), b"");
+            assert_eq!(cstr_bytes_or_empty(c"hello".as_ptr()), b"hello");
+        }
+    }
+}
+
+#[cfg(test)]
+mod concat_unsafe_oracle {
+    use super::{cstr_bytes_or_empty, strlen};
+    use ::core::ffi::c_char;
+
+    /// Verbatim pre-conversion implementation (the last `unsafe fn concat`,
+    /// before it became the safe, pure `super::concat`), preserved as a
+    /// differential test oracle. The scratch buffer is a plain local
+    /// `RefCell` argument rather than `ctx.concat_buffer` — that field no
+    /// longer exists on `ExecContext` after this conversion, and the
+    /// buffer's storage location isn't what's under test; the
+    /// null/empty-skip and growth/terminator algorithm is.
+    unsafe fn concat(
+        buf_cell: &::core::cell::RefCell<Vec<u8>>,
+        args: &[*const c_char],
+    ) -> *const c_char {
+        let mut buf = buf_cell.borrow_mut();
+        buf.clear();
+        for &s in args {
+            if s.is_null() {
+                continue;
+            }
+            let l = strlen(s);
+            if l == 0 {
+                continue;
+            }
+            buf.extend_from_slice(::core::slice::from_raw_parts(s as *const u8, l));
+        }
+        buf.push(0);
+        buf.as_ptr() as *const c_char
+    }
+
+    #[test]
+    fn safe_matches_oracle_over_representative_inputs() {
+        let buf_cell = ::core::cell::RefCell::new(Vec::new());
+        let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        let hello = c"hello";
+        let empty = c"";
+        let hi = c"hi";
+        let bye = c"bye";
+        unsafe {
+            let cases: [Vec<*const c_char>; 5] = [
+                vec![hello.as_ptr(), ::core::ptr::null(), empty.as_ptr(), long.as_ptr()],
+                vec![hi.as_ptr()],
+                vec![bye.as_ptr()],
+                vec![::core::ptr::null()],
+                vec![],
+            ];
+            for case in &cases {
+                let safe_args: Vec<&[u8]> =
+                    case.iter().map(|&p| cstr_bytes_or_empty(p)).collect();
+                let safe_result = super::concat(&safe_args);
+                let oracle_ptr = concat(&buf_cell, case);
+                let oracle_bytes = ::core::ffi::CStr::from_ptr(oracle_ptr).to_bytes_with_nul();
+                assert_eq!(safe_result, oracle_bytes, "mismatch for {case:?}");
+            }
         }
     }
 }
