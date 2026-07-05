@@ -272,15 +272,15 @@ pub unsafe fn print_spaces(n: c_uint) {
     }
 }
 
-/// Concatenate strings into a static (reused, growing) buffer and
+/// Concatenate strings into a reused, growing buffer owned by `ctx` and
 /// return it. Null arguments count as empty strings.
 ///
 /// # Safety
 /// Each argument must be null or a valid NUL-terminated string. Not
-/// reentrant: the returned buffer is shared between calls.
-pub unsafe fn concat(args: &[*const c_char]) -> *const c_char {
-    static mut rlen: size_t = 0;
-    static mut result: *mut c_char = null_mut();
+/// reentrant: the returned buffer is shared between calls on the same `ctx`.
+pub unsafe fn concat(ctx: &crate::execctx::ExecContext, args: &[*const c_char]) -> *const c_char {
+    let mut rlen = ctx.concat_buffer.len.get();
+    let mut result = ctx.concat_buffer.ptr.get();
 
     let mut ri: size_t = 0;
     for &s in args {
@@ -302,6 +302,9 @@ pub unsafe fn concat(args: &[*const c_char]) -> *const c_char {
         result = xrealloc(result as *mut c_void, rlen) as *mut c_char;
     }
     *result.add(ri) = 0;
+
+    ctx.concat_buffer.len.set(rlen);
+    ctx.concat_buffer.ptr.set(result);
     result
 }
 
@@ -1435,6 +1438,7 @@ mod eval_tmpdir_var_tests {
 #[cfg(test)]
 mod concat_tests {
     use super::concat;
+    use crate::execctx::ExecContext;
     use ::core::ptr::null;
 
     #[test]
@@ -1442,17 +1446,38 @@ mod concat_tests {
         // Exercises concat's null-arg, empty-arg (l==0 continue), and the
         // realloc growth path, plus the trailing-terminator top-up.
         unsafe {
+            let ctx = ExecContext::default();
             let hello = c"hello".as_ptr();
             let empty = c"".as_ptr();
             // A long arg forces growth past the initial 60-byte reservation.
             let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234".as_ptr();
             let long_len = ::core::ffi::CStr::from_ptr(long).to_bytes().len();
             assert!(long_len > 60, "long arg must force the growth path");
-            let out = concat(&[hello, null(), empty, long]);
+            let out = concat(&ctx, &[hello, null(), empty, long]);
             let bytes = ::core::ffi::CStr::from_ptr(out).to_bytes();
             assert!(bytes.starts_with(b"hello"));
             // null/empty args contribute nothing; total is "hello" + the long arg.
             assert_eq!(bytes.len(), 5 + long_len);
+        }
+    }
+
+    #[test]
+    fn reuses_the_same_ctx_buffer_across_calls() {
+        // The buffer lives on `ctx.concat_buffer`, not a process-global
+        // static, so two calls on the same ctx must share (and grow) one
+        // backing allocation — the former static's contract, now scoped to
+        // the session. Mirrors job.rs's pid2str_tests::
+        // a_later_call_overwrites_the_same_buffer.
+        let ctx = ExecContext::default();
+        unsafe {
+            let first = concat(&ctx, &[c"hi".as_ptr()]);
+            assert_eq!(::core::ffi::CStr::from_ptr(first).to_bytes(), b"hi");
+            let second = concat(&ctx, &[c"bye".as_ptr()]);
+            assert_eq!(
+                first, second,
+                "same backing buffer, per the former static's contract"
+            );
+            assert_eq!(::core::ffi::CStr::from_ptr(second).to_bytes(), b"bye");
         }
     }
 }

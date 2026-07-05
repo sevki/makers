@@ -1945,7 +1945,7 @@ pub unsafe fn target_environment(
                             vars =
                                 strstr(value, b" -- \0" as *const u8 as *const ::core::ffi::c_char);
                             if vars.is_null() {
-                                mf = xstrdup(concat(&[value, invalid]));
+                                mf = xstrdup(concat(ctx, &[value, invalid]));
                             } else {
                                 let lf: size_t =
                                     vars.offset_from(value) as ::core::ffi::c_long as size_t;
@@ -1993,7 +1993,7 @@ pub unsafe fn target_environment(
                         .is_null()
                             && !((*v_0).origin() as i32 != o_env as i32)
                         {
-                            mf_0 = concat(&[value, invalid]);
+                            mf_0 = concat(ctx, &[value, invalid]);
                             free(cp as *mut ::core::ffi::c_void);
                             cp = xstrdup(mf_0);
                             value = cp;
@@ -2005,7 +2005,7 @@ pub unsafe fn target_environment(
                 }
                 let fresh10 = result;
                 result = result.offset(1_i32 as isize);
-                *fresh10 = xstrdup(concat(&[(*v_0).name, b"=\0" as *const u8 as *const ::core::ffi::c_char, value]));
+                *fresh10 = xstrdup(concat(ctx, &[(*v_0).name, b"=\0" as *const u8 as *const ::core::ffi::c_char, value]));
                 free(cp as *mut ::core::ffi::c_void);
             }
         }
@@ -2015,7 +2015,7 @@ pub unsafe fn target_environment(
         let shell_var = ctx.shell_var.0.get();
         let fresh11 = result;
         result = result.offset(1_i32 as isize);
-        *fresh11 = xstrdup(concat(&[shell_var.name, b"=\0" as *const u8 as *const ::core::ffi::c_char, shell_var.value]));
+        *fresh11 = xstrdup(concat(ctx, &[shell_var.name, b"=\0" as *const u8 as *const ::core::ffi::c_char, shell_var.value]));
     }
     if found_makelevel == 0 {
         let mut val_0: [::core::ffi::c_char; 33] = [0; 33];

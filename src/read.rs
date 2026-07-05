@@ -3607,7 +3607,7 @@ pub unsafe fn parse_file_seq(
                 }
             }
             if flags & 0x4_i32 != 0 {
-                let __n: *const ::core::ffi::c_char = concat(&[prefix, tmpbuf]);
+                let __n: *const ::core::ffi::c_char = concat(ctx, &[prefix, tmpbuf]);
                 push_name!(__n);
             } else {
                 name = tmpbuf;
@@ -3666,7 +3666,7 @@ pub unsafe fn parse_file_seq(
                         let found: *mut NameSeq =
                             ar_glob::<NameSeq>(ctx, *nlist.offset(i as isize), memname);
                         if found.is_null() {
-                            let __n_0: *const ::core::ffi::c_char = concat(&[
+                            let __n_0: *const ::core::ffi::c_char = concat(ctx, &[
                                 prefix,
                                 *nlist.offset(i as isize),
                                 b"(\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3678,7 +3678,7 @@ pub unsafe fn parse_file_seq(
                             let mut node = found;
                             while let Some(nref) = node.as_ref() {
                                 let nm: *const ::core::ffi::c_char = if !prefix.is_null() {
-                                    concat(&[prefix, nref.name])
+                                    concat(ctx, &[prefix, nref.name])
                                 } else {
                                     nref.name
                                 };
@@ -3689,7 +3689,7 @@ pub unsafe fn parse_file_seq(
                         }
                     } else {
                         let __n_1: *const ::core::ffi::c_char =
-                            concat(&[prefix, *nlist.offset(i as isize)]);
+                            concat(ctx, &[prefix, *nlist.offset(i as isize)]);
                         push_name!(__n_1);
                     }
                     i += 1;

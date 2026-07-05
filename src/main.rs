@@ -2404,7 +2404,7 @@ unsafe fn main_0(
         && !strchr(*argv.offset(0_i32 as isize), '/' as i32).is_null()
     {
         let fresh41 = &mut (*argv.offset(0_i32 as isize));
-        *fresh41 = xstrdup(concat(&[
+        *fresh41 = xstrdup(concat(&ctx, &[
             &raw mut current_directory as *mut ::core::ffi::c_char,
             b"/\0" as *const u8 as *const ::core::ffi::c_char,
             *argv.offset(0_i32 as isize),

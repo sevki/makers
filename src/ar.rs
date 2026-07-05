@@ -364,7 +364,7 @@ unsafe fn ar_glob_match<T: SeqNode>(
         let new: *mut T = T::alloc();
         T::set_name(
             new,
-            strcache_add(ctx, concat(&[
+            strcache_add(ctx, concat(ctx, &[
                 (*state).arname,
                 b"(\0" as *const u8 as *const ::core::ffi::c_char,
                 mem,

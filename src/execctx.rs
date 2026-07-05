@@ -668,6 +668,12 @@ pub struct ExecContext {
     /// The pseudo-vpath built from the `GPATH` variable, the former
     /// `vpath.rs` `static mut gpaths`.
     pub gpaths: VpathChain,
+
+    /// [`crate::misc::concat`]'s reused, growing scratch buffer, the former
+    /// `misc.rs` `static mut rlen`/`static mut result` pair. Refilled on
+    /// every call, so unlike [`Self::function_table`] this never needs to
+    /// survive the `main_0` context rebuild.
+    pub concat_buffer: ConcatBuffer,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1306,6 +1312,37 @@ impl Clone for VpathChain {
         // which owns it — the same hazard Codex found in `FunctionTableCell`
         // on PR #498. A fresh null pointer is the right (and only sound)
         // snapshot.
+        Self::default()
+    }
+}
+
+/// [`crate::misc::concat`]'s reused, growing scratch buffer — the former
+/// `static mut rlen`/`static mut result` pair. Owns a raw allocation from
+/// `xrealloc`/`malloc` that grows across calls within one session and is
+/// never freed (matching the former static's process-lifetime behavior).
+#[derive(Debug)]
+pub struct ConcatBuffer {
+    pub len: ::core::cell::Cell<crate::ffi_types::size_t>,
+    pub ptr: ::core::cell::Cell<*mut ::core::ffi::c_char>,
+}
+
+impl Default for ConcatBuffer {
+    fn default() -> Self {
+        Self {
+            len: ::core::cell::Cell::new(0),
+            ptr: ::core::cell::Cell::new(::core::ptr::null_mut()),
+        }
+    }
+}
+
+impl Clone for ConcatBuffer {
+    fn clone(&self) -> Self {
+        // Per-run scratch buffer, never carried across the `main_0` context
+        // rebuild or genuinely cloned; deriving `Clone` would copy the raw
+        // `*mut c_char` by value, letting two contexts `xrealloc`/free the
+        // same allocation — the same hazard Codex found in
+        // `FunctionTableCell` on PR #498. A fresh empty buffer is the right
+        // (and only sound) snapshot.
         Self::default()
     }
 }
