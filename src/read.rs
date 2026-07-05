@@ -140,8 +140,8 @@ use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_n
 use crate::posixos::fd_noinherit;
 use crate::rule::create_pattern_rule;
 use crate::variable::{
-    assign_variable_definition, create_pattern_var, current_variable_set_list,
-    define_variable_in_set, do_variable_definition, initialize_file_variables, lookup_variable,
+    assign_variable_definition, create_pattern_var, define_variable_in_set,
+    do_variable_definition, initialize_file_variables, lookup_variable,
     parse_variable_definition, try_variable_definition, undefine_variable_in_set,
 };
 use crate::vpath::construct_vpath_list;
@@ -264,7 +264,7 @@ pub unsafe fn read_all_makefiles(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_file,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     if 0x1_i32 & db_level(ctx) != 0 {
@@ -2365,8 +2365,7 @@ unsafe fn record_target_var(
     vmod: *mut vmodifiers,
     flocp: *const Floc,
 ) {
-    let global: *mut variable_set_list;
-    global = current_variable_set_list;
+    let global: *mut variable_set_list = ctx.variable_globals.current_variable_set_list.get();
     for entry in filenames {
         let v: *mut variable;
         let mut name_buf = entry.name.clone();
@@ -2411,7 +2410,7 @@ unsafe fn record_target_var(
             };
             initialize_file_variables(ctx, fid, 1);
             let head = crate::variable::build_file_setlist(ctx, fid);
-            current_variable_set_list = head;
+            ctx.variable_globals.current_variable_set_list.set(head);
             v = try_variable_definition(ctx, flocp, defn, origin, s_target);
             if v.is_null() {
                 fatal(
@@ -2433,9 +2432,9 @@ unsafe fn record_target_var(
                 let len: size_t = strlen(vref.name) as size_t;
                 // The global lookup must search the underlying global set, not
                 // the per-file head we just installed.
-                current_variable_set_list = global;
+                ctx.variable_globals.current_variable_set_list.set(global);
                 let gv: *mut variable = lookup_variable(ctx, vref.name, len);
-                current_variable_set_list = head;
+                ctx.variable_globals.current_variable_set_list.set(head);
                 if !gv.is_null()
                     && v != gv
                     && ((*gv).origin() as i32 == o_env_override as i32
@@ -2453,8 +2452,8 @@ unsafe fn record_target_var(
             if let Some(node) = ctx.filenodes.get(fid) {
                 node.lock().expect("file node poisoned").variables = snapshot;
             }
-            current_variable_set_list = global;
-            crate::variable::free_file_setlist(head);
+            ctx.variable_globals.current_variable_set_list.set(global);
+            crate::variable::free_file_setlist(ctx, head);
             continue;
         }
         // Pattern-variable branch: the variable was defined on a `pattern_var`,
@@ -2512,7 +2511,7 @@ pub unsafe fn check_specials(
                 b"-ec\0" as *const u8 as *const ::core::ffi::c_char,
                 o_default,
                 0,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
             define_variable_in_set(
@@ -2522,7 +2521,7 @@ pub unsafe fn check_specials(
                 b"c99\0" as *const u8 as *const ::core::ffi::c_char,
                 o_default,
                 0,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
             define_variable_in_set(
@@ -2532,7 +2531,7 @@ pub unsafe fn check_specials(
                 b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
                 o_default,
                 0,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
             define_variable_in_set(
@@ -2542,7 +2541,7 @@ pub unsafe fn check_specials(
                 b"fort77\0" as *const u8 as *const ::core::ffi::c_char,
                 o_default,
                 0,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
             define_variable_in_set(
@@ -2552,7 +2551,7 @@ pub unsafe fn check_specials(
                 b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
                 o_default,
                 0,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
             define_variable_in_set(
@@ -2562,7 +2561,7 @@ pub unsafe fn check_specials(
                 b"-s\0" as *const u8 as *const ::core::ffi::c_char,
                 o_default,
                 0,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
             define_variable_in_set(
@@ -2572,7 +2571,7 @@ pub unsafe fn check_specials(
                 b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
                 o_default,
                 0,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
         } else if !second_expansion()

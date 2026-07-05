@@ -309,8 +309,8 @@ use crate::remake::{f_mtime, update_goal_chain};
 use crate::remote_stub::remote_description;
 use crate::rule::{convert_to_pattern, print_rule_data_base, snap_implicit_rules};
 use crate::variable::{
-    current_variable_set_list, define_automatic_variables, define_variable_in_set,
-    init_hash_global_variable_set, lookup_variable, reset_env_override, try_variable_definition,
+    define_automatic_variables, define_variable_in_set, init_hash_global_variable_set,
+    lookup_variable, reset_env_override, try_variable_definition,
 };
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -1452,7 +1452,7 @@ unsafe fn install_fatal_signal(ctx: &crate::execctx::ExecContext, sig: i32) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn initialize_global_hash_tables(ctx: &crate::execctx::ExecContext) {
-    init_hash_global_variable_set();
+    init_hash_global_variable_set(ctx);
     strcache_init();
     // The file table now lives on `ExecContext` (`ctx.files`); no global init.
     hash_init_function_table(ctx);
@@ -2016,7 +2016,7 @@ unsafe fn main_0(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     ));
     (*fresh34).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2027,7 +2027,7 @@ unsafe fn main_0(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     ));
     (*fresh35).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2038,7 +2038,7 @@ unsafe fn main_0(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     ));
     (*fresh36).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2049,7 +2049,7 @@ unsafe fn main_0(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     ));
     (*fresh37).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2060,7 +2060,7 @@ unsafe fn main_0(
         b"-c\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -2070,7 +2070,7 @@ unsafe fn main_0(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     let features: *const ::core::ffi::c_char = b"target-specific order-only second-expansion else-if shortest-stem undefine oneshell nocomment grouped-target extra-prereqs notintermediate shell-export archives jobserver jobserver-fifo output-sync check-symlink maintainer\0"
@@ -2082,7 +2082,7 @@ unsafe fn main_0(
         features,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     guile_gmake_setup(NILF);
@@ -2124,7 +2124,7 @@ unsafe fn main_0(
                 ep,
                 o_env,
                 1,
-                (*current_variable_set_list).set,
+                (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
             if *(*v).name as i32 == *(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char) as i32
@@ -2167,7 +2167,7 @@ unsafe fn main_0(
             b"\0" as *const u8 as *const ::core::ffi::c_char,
             o_env,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
     }
@@ -2241,7 +2241,7 @@ unsafe fn main_0(
             },
             o_default,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         ));
         (*fresh39).set_export(v_export as variable_export);
@@ -2266,7 +2266,7 @@ unsafe fn main_0(
             },
             o_default,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         ));
         (*fresh40).set_export(v_export as variable_export);
@@ -2368,6 +2368,13 @@ unsafe fn main_0(
     // decoded level keeps the version banner and "Reading makefiles..." trace
     // below (both gated on `db_level`) from silently seeing a reset-to-0 value.
     let carried_db_level = ::core::mem::take(&mut ctx.db_level);
+    // `initialize_global_hash_tables`/`define_variable_in_set` above already
+    // populated the global variable set (`MAKEFLAGS`, `.VARIABLES`, every
+    // inherited environment variable, `SHELL`, ...); carrying it keeps that
+    // data (and the `global_setlist`/`current_variable_set_list` addresses
+    // every pointer-identity check in `variable.rs` compares against) alive
+    // across this rebuild instead of resetting to an empty table.
+    let carried_variable_globals = ::core::mem::take(&mut ctx.variable_globals);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2390,6 +2397,7 @@ unsafe fn main_0(
         function_table: carried_function_table,
         warning_state: carried_warning_state,
         db_level: carried_db_level,
+        variable_globals: carried_variable_globals,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
             ..Default::default()
@@ -2464,7 +2472,7 @@ unsafe fn main_0(
         &raw mut current_directory as *mut ::core::ffi::c_char,
         o_file,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     {
@@ -2518,7 +2526,7 @@ unsafe fn main_0(
         *argv.offset(0_i32 as isize),
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     define_variable_in_set(
@@ -2528,7 +2536,7 @@ unsafe fn main_0(
         b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     if !ctx.command_variables.0.get().is_null() {
@@ -2579,7 +2587,7 @@ unsafe fn main_0(
             value,
             o_automatic,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
         drop(value_buf);
@@ -2590,7 +2598,7 @@ unsafe fn main_0(
             b"${-*-command-variables-*-}\0" as *const u8 as *const ::core::ffi::c_char,
             o_default,
             1,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
     }
@@ -2722,7 +2730,7 @@ unsafe fn main_0(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_file,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     ));
     if !options.eval_strings.borrow().is_empty() {
@@ -2766,7 +2774,7 @@ unsafe fn main_0(
             value_0,
             o_automatic,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
         drop(value_0_buf);
@@ -2826,7 +2834,7 @@ unsafe fn main_0(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_override,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     decode_env_switches(
@@ -3815,7 +3823,7 @@ unsafe fn handle_non_switch_argument(
             value,
             o_default,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
     }
@@ -4207,7 +4215,7 @@ unsafe fn decode_switches(
         }
     }
     options.run_silent.set(options.silent.get());
-    reset_env_override();
+    reset_env_override(ctx);
 }
 unsafe fn decode_env_switches(
     ctx: &crate::execctx::ExecContext,
@@ -4340,7 +4348,7 @@ unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) {
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
 }
@@ -4681,7 +4689,7 @@ pub unsafe fn define_makeflags(
         ),
         o_env,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     if !options.eval_strings.borrow().is_empty() {
@@ -4725,7 +4733,7 @@ pub unsafe fn define_makeflags(
             o_file as i32
         }) as variable_origin,
         1,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     (*v).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);

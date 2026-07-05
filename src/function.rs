@@ -150,8 +150,8 @@ use crate::output::{error, fatal, out_of_memory, output_context, outputs};
 use crate::posixos::fd_noinherit;
 use crate::read::{eval_buffer, find_percent, parse_file_seq, reading_file};
 use crate::variable::{
-    current_variable_set_list, define_variable_in_set, lookup_variable, pop_variable_scope,
-    push_new_variable_scope, target_environment, warn_undefined,
+    define_variable_in_set, lookup_variable, pop_variable_scope, push_new_variable_scope,
+    target_environment, warn_undefined,
 };
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
@@ -930,7 +930,6 @@ mod func_origin_flavor_tests {
     };
     use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
     use std::ffi::{c_char, CString};
-    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn origin_message_matches_c_switch() {
@@ -1046,12 +1045,6 @@ mod func_origin_flavor_tests {
         *const c_char,
     ) -> *mut c_char;
 
-    // `global_variable_set`/`current_variable_set_list` are process globals;
-    // serialize test bodies that define/undefine variables in them so
-    // concurrently-run cases in this module can't observe each other's
-    // in-progress state.
-    static GLOBAL_VAR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
     /// Optionally define `name` in the global variable set with the given
     /// origin/recursive flag, drive `handler` with `argv = [name]` through a
     /// freshly initialized variable-output buffer, and return the bytes
@@ -1064,21 +1057,18 @@ mod func_origin_flavor_tests {
         let _buf_g = VARIABLE_BUFFER_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _var_g = GLOBAL_VAR_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        // The global variable set's hash table has no `main`-driven startup
-        // in a unit-test binary; initialize it once so `lookup_variable`'s
-        // `hash_find_item` has a valid table to probe, even for the
-        // lookup-miss (`origin: None`) case.
-        static HASH_INIT: ::std::sync::Once = ::std::sync::Once::new();
-        HASH_INIT.call_once(|| crate::variable::init_hash_global_variable_set());
         // `define_variable_in_set` reads `env_overrides()`, which needs a
         // thread-local `Options` installed (there's no `main`-driven startup
         // in a unit-test binary).
         crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
+        // `ctx.variable_globals.global_variable_set`'s hash table has no
+        // `main`-driven startup in a unit-test binary; initialize it here so
+        // `lookup_variable`'s `hash_find_item` has a valid table to probe,
+        // even for the lookup-miss (`origin: None`) case. `ctx` is fresh per
+        // call now (no longer a process global), so no serialization lock is
+        // needed for this anymore.
+        crate::variable::init_hash_global_variable_set(&ctx);
         let cname = CString::new(name).unwrap();
         let cvalue = CString::new("v").unwrap();
         if let Some((org, recursive)) = origin {
@@ -2362,7 +2352,7 @@ unsafe fn func_foreach(
         strlen(vp),
     )));
     *vp_eot = 0;
-    push_new_variable_scope();
+    push_new_variable_scope(ctx);
     var = define_variable_in_set(
         ctx,
         vp,
@@ -2370,7 +2360,7 @@ unsafe fn func_foreach(
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_automatic,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
     loop {
@@ -2392,7 +2382,7 @@ unsafe fn func_foreach(
     if doneany != 0 {
         o = o.offset(-1_i32 as isize);
     }
-    pop_variable_scope();
+    pop_variable_scope(ctx);
     o
 }
 unsafe fn func_let(
@@ -2416,7 +2406,7 @@ unsafe fn func_let(
     let mut vp_next: *const ::core::ffi::c_char = varnames.as_ptr();
     let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
     let mut vlen: size_t = 0;
-    push_new_variable_scope();
+    push_new_variable_scope(ctx);
     vp = find_next_token(&raw mut vp_next, &raw mut vlen);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*vp_next as ::core::ffi::c_uchar as isize) as i32
@@ -2443,7 +2433,7 @@ unsafe fn func_let(
             },
             o_automatic,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
         vp = find_next_token(&raw mut vp_next, &raw mut vlen);
@@ -2463,12 +2453,12 @@ unsafe fn func_let(
             next_token(list_iterator),
             o_automatic,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
     }
     o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t);
-    pop_variable_scope();
+    pop_variable_scope(ctx);
     o.offset(strlen(o) as isize)
 }
 unsafe fn func_filter_filterout(
@@ -3472,7 +3462,7 @@ pub unsafe fn shell_completed(
         &raw mut buf as *mut ::core::ffi::c_char,
         o_override,
         0,
-        (*current_variable_set_list).set,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
     );
 }
@@ -4636,7 +4626,7 @@ unsafe fn func_call(
     if v.is_null() || *(*v).value as i32 == 0 {
         return o;
     }
-    push_new_variable_scope();
+    push_new_variable_scope(ctx);
     i = 0;
     while !(*argv).is_null() {
         let mut num: [::core::ffi::c_char; 22] = [0; 22];
@@ -4651,7 +4641,7 @@ unsafe fn func_call(
             *argv,
             o_automatic,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
         i = i.wrapping_add(1);
@@ -4670,7 +4660,7 @@ unsafe fn func_call(
             b"\0" as *const u8 as *const ::core::ffi::c_char,
             o_automatic,
             0,
-            (*current_variable_set_list).set,
+            (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
         );
         i = i.wrapping_add(1);
@@ -4683,7 +4673,7 @@ unsafe fn func_call(
         .0
         .store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
     (*v).set_exp_count(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    pop_variable_scope();
+    pop_variable_scope(ctx);
     o.offset(strlen(o) as isize)
 }
 /// # Safety
