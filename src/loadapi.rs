@@ -22,7 +22,7 @@ use crate::expand::{
 };
 use crate::floc::Floc;
 use crate::function::define_new_function;
-use crate::read::{eval_buffer, reading_file};
+use crate::read::eval_buffer;
 
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
@@ -122,7 +122,7 @@ pub unsafe extern "C" fn gmk_add_function(
     flags: ::core::ffi::c_uint,
 ) {
     with_live_or_default_ctx(|ctx| unsafe {
-        define_new_function(ctx, reading_file, name, min, max, flags, func);
+        define_new_function(ctx, ctx.reading_file.0.get(), name, min, max, flags, func);
     });
 }
 

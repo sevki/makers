@@ -702,6 +702,33 @@ pub struct ExecContext {
     /// `SHELL`, ...), so like [`Self::function_table`] it must be carried
     /// across that rebuild.
     pub variable_globals: VariableGlobals,
+
+    /// The location attributed to diagnostics issued while reading/evaluating
+    /// a makefile, the former `read.rs` `static mut reading_file`. Set for
+    /// the dynamic extent of `eval_makefile`/`eval_buffer`/
+    /// `install_file_context*` via save/restore; read by `warn_undefined` and
+    /// similar diagnostics that need "where in the makefile are we". Not
+    /// populated before the `main_0` rebuild (makefile reading starts after
+    /// it), so unlike [`Self::variable_globals`] this never needs carrying.
+    pub reading_file: ReadingFile,
+
+    /// The location attributed to diagnostics issued while *expanding* a
+    /// variable reference, the former `expand.rs` `static mut expanding_var`.
+    /// `None` means "no per-variable override is active"; the effective
+    /// location is then whatever [`Self::reading_file`] currently points at
+    /// (see [`Self::expanding_var_floc`]) -- the former c2rust static's
+    /// initial value was literally `&reading_file`, so dereferencing it
+    /// before any override tracked `reading_file` dynamically, a behavior
+    /// this reproduces without the double indirection.
+    pub expanding_var: ::core::cell::Cell<Option<*const crate::floc::Floc>>,
+
+    /// Backing storage for the synthetic recipe `Floc` that
+    /// `install_file_context_id` points [`Self::reading_file`] at when a
+    /// target has a recipe with a known source location. Boxed for address
+    /// stability (the former `variable.rs` `thread_local! RECIPE_READING_FLOC`
+    /// folded onto the context): `reading_file` holds a raw pointer into this
+    /// cell for as long as that context is installed, so it must not move.
+    pub recipe_reading_floc: RecipeReadingFloc,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1284,6 +1311,58 @@ impl Default for OutputContext {
     }
 }
 
+/// A `Cell<*const Floc>` that defaults to null (no location attributed yet),
+/// for [`ExecContext::reading_file`] — raw pointers have no `Default`.
+#[derive(Debug, Clone)]
+pub struct ReadingFile(pub ::core::cell::Cell<*const crate::floc::Floc>);
+
+impl Default for ReadingFile {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(::core::ptr::null()))
+    }
+}
+
+/// Box-owned `Cell<Floc>` holding [`ExecContext::recipe_reading_floc`]. The
+/// `Box` pins the record's address: `install_file_context_id` points
+/// `reading_file` at it, and that pointer must stay valid for as long as the
+/// installed context is live — the same reasoning [`MakeSync`] and
+/// [`GlobalVariableSet`] use for their own boxed records.
+pub struct RecipeReadingFloc(pub Box<::core::cell::Cell<crate::floc::Floc>>);
+
+impl RecipeReadingFloc {
+    /// The stable address `install_file_context_id` points `reading_file` at.
+    pub fn as_ptr(&self) -> *mut crate::floc::Floc {
+        self.0.as_ptr()
+    }
+}
+
+impl Default for RecipeReadingFloc {
+    fn default() -> Self {
+        Self(Box::new(::core::cell::Cell::new(crate::floc::Floc {
+            filenm: ::core::ptr::null(),
+            lineno: 0,
+            offset: 0,
+        })))
+    }
+}
+
+impl Clone for RecipeReadingFloc {
+    fn clone(&self) -> Self {
+        // Transient scratch storage rebuilt by `install_file_context_id` on
+        // every call; never meaningfully shared, so a clone gets its own
+        // fresh (and not yet written) record rather than aliasing the
+        // original's.
+        Self::default()
+    }
+}
+
+impl ::core::fmt::Debug for RecipeReadingFloc {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        // `Floc` has no `Debug`; nothing but "present" is meaningful here.
+        f.debug_tuple("RecipeReadingFloc").finish()
+    }
+}
+
 /// Box-free `Cell<[u8; 100]>` holding [`ExecContext::pid_string`]. Plain byte
 /// array, not a pointer: `Cell::as_ptr` gives `pid2str` a stable address to
 /// `sprintf` into and return (cast to `*mut c_char` only at that FFI
@@ -1578,6 +1657,13 @@ impl ExecContext {
         self.config.makelevel
     }
 
+    /// The effective location for a diagnostic issued while expanding a
+    /// variable reference: [`Self::expanding_var`]'s override when one is
+    /// active, else wherever [`Self::reading_file`] currently points.
+    pub fn expanding_var_floc(&self) -> *const crate::floc::Floc {
+        self.expanding_var.get().unwrap_or_else(|| self.reading_file.0.get())
+    }
+
     /// Which shell personality is in effect (always [`ShellKind::Unixy`] in
     /// this POSIX port).
     pub fn shell_kind(&self) -> ShellKind {
@@ -1730,6 +1816,55 @@ mod tests {
             unsafe { (*cloned.variable_globals.global_setlist.as_ptr()).set },
             cloned.variable_globals.global_variable_set.as_ptr(),
             "the clone's global_setlist.set must be re-anchored at its own global_variable_set"
+        );
+    }
+
+    /// With no override active (`expanding_var` is `None`), the effective
+    /// location must track `reading_file`'s *current* value dynamically --
+    /// reproducing the former c2rust `expanding_var` static's initial value
+    /// of literally `&reading_file` (so `*expanding_var` always reflected
+    /// whatever `reading_file` held, even after it changed). Once an
+    /// override is set, it takes precedence regardless of `reading_file`.
+    #[test]
+    fn expanding_var_floc_tracks_reading_file_until_overridden() {
+        let ctx = ExecContext::default();
+        assert!(ctx.expanding_var_floc().is_null(), "starts at reading_file's default null");
+
+        let floc_a = crate::floc::Floc { filenm: ::core::ptr::null(), lineno: 1, offset: 0 };
+        ctx.reading_file.0.set(&floc_a as *const crate::floc::Floc);
+        assert_eq!(
+            ctx.expanding_var_floc(),
+            &floc_a as *const crate::floc::Floc,
+            "no override active: effective location follows reading_file"
+        );
+
+        let floc_b = crate::floc::Floc { filenm: ::core::ptr::null(), lineno: 2, offset: 0 };
+        ctx.reading_file.0.set(&floc_b as *const crate::floc::Floc);
+        assert_eq!(
+            ctx.expanding_var_floc(),
+            &floc_b as *const crate::floc::Floc,
+            "still no override: tracks reading_file's *new* value dynamically"
+        );
+
+        let floc_override = crate::floc::Floc { filenm: ::core::ptr::null(), lineno: 99, offset: 0 };
+        ctx.expanding_var.set(Some(&floc_override as *const crate::floc::Floc));
+        assert_eq!(
+            ctx.expanding_var_floc(),
+            &floc_override as *const crate::floc::Floc,
+            "override active: takes precedence over reading_file"
+        );
+        ctx.reading_file.0.set(&floc_b as *const crate::floc::Floc);
+        assert_eq!(
+            ctx.expanding_var_floc(),
+            &floc_override as *const crate::floc::Floc,
+            "override still active: unaffected by a further reading_file change"
+        );
+
+        ctx.expanding_var.set(None);
+        assert_eq!(
+            ctx.expanding_var_floc(),
+            &floc_b as *const crate::floc::Floc,
+            "override cleared: falls back to reading_file's current value again"
         );
     }
 

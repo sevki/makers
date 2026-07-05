@@ -59,8 +59,8 @@ pub struct VariableSetList {
 pub type dep = Dep;
 pub type commands = Commands;
 use crate::expand::{
-    allocated_expand_string_for_file, allocated_expand_variable, expanding_var,
-    install_variable_buffer, recursively_expand_for_file, swap_variable_buffer, variable_buffer,
+    allocated_expand_string_for_file, allocated_expand_variable, install_variable_buffer,
+    recursively_expand_for_file, swap_variable_buffer, variable_buffer,
 };
 use crate::execctx::ExecContext;
 use crate::floc::Floc;
@@ -76,7 +76,6 @@ use crate::misc::{concat, cstr_bytes_or_empty};
 use crate::output::fatal;
 use crate::output::msg;
 use crate::posixos::jobserver_get_invalid_auth;
-use crate::read::reading_file;
 use crate::remote_stub::remote_description;
 
 pub const o_invalid: variable_origin = 7;
@@ -855,7 +854,7 @@ unsafe fn check_variable_reference(
     if warning::is_active(ctx, Type::InvalidRef) {
         emit_var_name_warning(
             ctx,
-            (*expanding_var).as_ref(),
+            ctx.expanding_var_floc().as_ref(),
             warning::action(ctx, Type::InvalidRef) == Action::Error,
             "invalid variable reference",
             name_bytes,
@@ -1136,8 +1135,8 @@ pub unsafe fn install_file_context(
         .current_variable_set_list
         .set((*file).variables);
     if !oldfloc.is_null() {
-        *oldfloc = reading_file;
-        reading_file = file_recipe_floc(file);
+        *oldfloc = ctx.reading_file.0.get();
+        ctx.reading_file.0.set(file_recipe_floc(file));
     }
 }
 
@@ -1165,7 +1164,7 @@ pub unsafe fn restore_file_context(
 ) {
     ctx.variable_globals.current_variable_set_list.set(oldlist);
     if !oldfloc.is_null() {
-        reading_file = oldfloc;
+        ctx.reading_file.0.set(oldfloc);
     }
 }
 
@@ -1339,7 +1338,7 @@ pub unsafe fn install_file_context_id(
         .current_variable_set_list
         .set(build_file_setlist(ctx, file));
     if !oldfloc.is_null() {
-        *oldfloc = reading_file;
+        *oldfloc = ctx.reading_file.0.get();
         let recipe_floc: Option<(Vec<u8>, u64)> = ctx.filenodes.get(file).and_then(|node| {
             let guard = node.lock().expect("file node poisoned");
             guard
@@ -1350,30 +1349,16 @@ pub unsafe fn install_file_context_id(
         if let Some((mut fname, lineno)) = recipe_floc {
             fname.push(0);
             let filenm = strcache_add(ctx, fname.as_ptr() as *const ::core::ffi::c_char);
-            RECIPE_READING_FLOC.with(|cell| {
-                *cell.borrow_mut() = Floc {
-                    filenm,
-                    lineno,
-                    offset: 0,
-                };
-                reading_file = cell.as_ptr();
+            ctx.recipe_reading_floc.0.set(Floc {
+                filenm,
+                lineno,
+                offset: 0,
             });
+            ctx.reading_file.0.set(ctx.recipe_reading_floc.as_ptr() as *const Floc);
         } else {
-            reading_file = ::core::ptr::null::<Floc>();
+            ctx.reading_file.0.set(::core::ptr::null::<Floc>());
         }
     }
-}
-
-thread_local! {
-    /// Backing storage for the `reading_file` `Floc` set by
-    /// [`install_file_context_id`]; kept alive for the duration of the context.
-    static RECIPE_READING_FLOC: ::std::cell::RefCell<Floc> = const {
-        ::std::cell::RefCell::new(Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
-            lineno: 0,
-            offset: 0,
-        })
-    };
 }
 
 /// FileId-based form of [`restore_file_context`] that also frees the transient
@@ -1387,7 +1372,7 @@ pub unsafe fn restore_file_context_id(
     free_file_setlist(ctx, cur);
     ctx.variable_globals.current_variable_set_list.set(oldlist);
     if !oldfloc.is_null() {
-        reading_file = oldfloc;
+        ctx.reading_file.0.set(oldfloc);
     }
 }
 unsafe extern "C" fn merge_variable_sets(
@@ -2561,9 +2546,9 @@ pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
         if warning::is_active(ctx, Type::UndefinedVar) {
             emit_var_name_warning(
                 ctx,
-                // SAFETY: `reading_file` is a process-wide pointer to the
-                // current Floc, set during makefile evaluation; read-only here.
-                unsafe { reading_file.as_ref() },
+                // SAFETY: `reading_file` is a pointer to the current Floc,
+                // set during makefile evaluation; read-only here.
+                unsafe { ctx.reading_file.0.get().as_ref() },
                 warning::action(ctx, Type::UndefinedVar) == Action::Error,
                 "reference to undefined variable",
                 name,
@@ -2601,7 +2586,7 @@ mod warn_undefined_unsafe_oracle {
             if warning::is_active(ctx, Type::UndefinedVar) {
                 emit_var_name_warning(
                     ctx,
-                    reading_file.as_ref(),
+                    ctx.reading_file.0.get().as_ref(),
                     warning::action(ctx, Type::UndefinedVar) == Action::Error,
                     "reference to undefined variable",
                     ::core::slice::from_raw_parts(name as *const u8, len),
@@ -3343,28 +3328,18 @@ mod variable_cmp_tests {
 #[cfg(test)]
 mod file_context_coverage_tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    // `reading_file` is still a process global (a separate, not-yet-migrated
-    // concern); serialize this test against itself and save/restore it so it
-    // can't perturb others. `current_variable_set_list` now lives on this
-    // test's own `ExecContext`, so it needs no such lock.
-    static READING_FILE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     /// Install a (default) file's context — swapping `ctx`'s
-    /// `current_variable_set_list` and the process-global `reading_file` —
-    /// then restore the saved values. Exercises both `install_file_context`
-    /// and `restore_file_context`.
+    /// `current_variable_set_list` and `reading_file` — then restore the
+    /// saved values. Exercises both `install_file_context` and
+    /// `restore_file_context`. Both fields now live on this test's own
+    /// `ExecContext`, so no cross-test serialization lock is needed.
     #[test]
     fn install_then_restore_file_context_roundtrips_globals() {
-        let _g = READING_FILE_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         unsafe {
             let ctx = crate::execctx::ExecContext::default();
             let saved_list = ctx.variable_globals.current_variable_set_list.get();
-            let saved_reading = crate::read::reading_file;
+            let saved_reading = ctx.reading_file.0.get();
 
             let mut f = crate::file::File::default();
             let mut oldlist: *mut variable_set_list = ::core::ptr::null_mut();
@@ -3375,9 +3350,7 @@ mod file_context_coverage_tests {
             restore_file_context(&ctx, oldlist, oldfloc);
             let current_list = ctx.variable_globals.current_variable_set_list.get();
             assert_eq!(current_list, saved_list);
-
-            // Fully restore the process global regardless of intermediate state.
-            crate::read::reading_file = saved_reading;
+            assert_eq!(ctx.reading_file.0.get(), saved_reading);
         }
     }
 }

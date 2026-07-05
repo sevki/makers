@@ -52,7 +52,7 @@ use crate::floc::Floc;
 use crate::function::{handle_function, patsubst_expand_pat};
 use crate::make_main::{db_level, stopchar_map};
 use crate::output::fatal;
-use crate::read::{find_percent, reading_file};
+use crate::read::find_percent;
 pub use crate::variable::variable;
 use crate::variable::{
     env_recursion, install_file_context, lookup_variable, lookup_variable_in_set, o_command,
@@ -74,7 +74,10 @@ const MAP_NEWLINE: i32 = 0x0004;
 fn stop_set(c: ::core::ffi::c_char, mask: i32) -> bool {
     stopchar_map()[c as u8 as usize] as i32 & mask != 0
 }
-pub static mut expanding_var: *mut *const Floc = &raw const reading_file as *mut *const Floc;
+// The former `static mut expanding_var`/`reading_file` pair now lives on
+// `ExecContext` as `ctx.expanding_var`/`ctx.reading_file` (see
+// `execctx::ExecContext::expanding_var_floc`); every use below reads/writes
+// through those owned fields instead of process-wide statics.
 pub const VARIABLE_BUFFER_ZONE: i32 = 5;
 /// Process-wide lock serializing tests that drive the `variable_buffer`
 /// global (the output buffer for `$(...)` expansion). Tests in different
@@ -195,7 +198,6 @@ pub unsafe fn recursively_expand_for_file(
     v: *mut variable,
     file: *mut File,
 ) -> *mut ::core::ffi::c_char {
-    let mut this_var: *const Floc;
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut set_reading: i32 = 0;
     let nl: size_t = strlen((*v).name) as size_t;
@@ -223,20 +225,19 @@ pub unsafe fn recursively_expand_for_file(
         }
         return xstrdup(c"".as_ptr());
     }
-    let saved_varp = expanding_var;
+    let saved_varp = ctx.expanding_var.get();
     if !(*v).fileinfo.filenm.is_null() {
-        this_var = &raw mut (*v).fileinfo;
-        expanding_var = &raw mut this_var;
+        ctx.expanding_var.set(Some(&raw mut (*v).fileinfo as *const Floc));
     }
-    if reading_file.is_null() {
+    if ctx.reading_file.0.get().is_null() {
         set_reading = 1;
-        reading_file = &raw mut (*v).fileinfo;
+        ctx.reading_file.0.set(&raw mut (*v).fileinfo);
     }
     if (*v).expanding() != 0 {
         if (*v).exp_count() == 0 {
             fatal(
         ctx,
-        *expanding_var,
+        ctx.expanding_var_floc(),
         strlen((*v).name),
         c"recursive variable '%s' references itself (eventually)".as_ptr(),
         &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
@@ -274,12 +275,12 @@ pub unsafe fn recursively_expand_for_file(
     };
     (*v).set_expanding(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if set_reading != 0 {
-        reading_file = ::core::ptr::null::<Floc>();
+        ctx.reading_file.0.set(::core::ptr::null::<Floc>());
     }
     if !file.is_null() {
         restore_file_context(ctx, savev, ::core::ptr::null::<Floc>());
     }
-    expanding_var = saved_varp;
+    ctx.expanding_var.set(saved_varp);
     value
 }
 /// # Safety
@@ -416,7 +417,7 @@ pub unsafe fn expand_string_buf(
                 if handle_function(ctx, &raw mut o, &raw mut p) == 0 {
                     end = strchr(beg, closeparen as i32);
                     if end.is_null() {
-                        fatal(ctx, *expanding_var, 0, c"unterminated variable reference".as_ptr(), &[]);
+                        fatal(ctx, ctx.expanding_var_floc(), 0, c"unterminated variable reference".as_ptr(), &[]);
                     }
                     // Bridge the safe `lindex(&[u8], u8) -> Option<usize>` to
                     // the pointer-walking code below: view `[b, e)` as a byte
