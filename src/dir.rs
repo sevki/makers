@@ -157,7 +157,7 @@ pub unsafe fn find_directory(
                 // so this raw pointer outlives the released map borrow.
                 return (&mut **boxed) as *mut directory;
             }
-            if DB_VERBOSE & db_level() != 0 {
+            if DB_VERBOSE & db_level(ctx) != 0 {
                 printf(
                     c"Directory %s cache invalidated (count %lu != command %lu)\n".as_ptr(),
                     name,

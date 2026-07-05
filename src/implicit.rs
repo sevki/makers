@@ -43,11 +43,11 @@ fn stop_set(c: u8, mask: i32) -> bool {
 
 /// `DBS (DB_IMPLICIT, ...)`: print an indented trace line when implicit-rule
 /// debugging is enabled. Takes the depth and a preformatted byte string.
-fn dbs(depth: u32, msg: &[u8]) {
-    // SAFETY: tracing only; `db_level` is a process global and `print_spaces`
-    // / `printf` are the established trace sinks.
+fn dbs(ctx: &crate::execctx::ExecContext, depth: u32, msg: &[u8]) {
+    // SAFETY: tracing only; `print_spaces`/`printf` are the established trace
+    // sinks.
     unsafe {
-        if DB_IMPLICIT & db_level() != 0 {
+        if DB_IMPLICIT & db_level(ctx) != 0 {
             print_spaces(depth);
             let mut s = msg.to_vec();
             s.push(0);
@@ -190,7 +190,7 @@ pub fn try_implicit_rule(ctx: &crate::execctx::ExecContext, file: FileId, depth:
     let mut msg = b"Looking for an implicit rule for '".to_vec();
     msg.extend_from_slice(&name);
     msg.extend_from_slice(b"'.\n");
-    dbs(depth, &msg);
+    dbs(ctx, depth, &msg);
     if pattern_search(ctx, file, 0, depth, 0, 0) {
         return true;
     }
@@ -202,14 +202,14 @@ pub fn try_implicit_rule(ctx: &crate::execctx::ExecContext, file: FileId, depth:
         let mut msg = b"Looking for archive-member implicit rule for '".to_vec();
         msg.extend_from_slice(&name);
         msg.extend_from_slice(b"'.\n");
-        dbs(depth, &msg);
+        dbs(ctx, depth, &msg);
         if pattern_search(ctx, file, 1, depth, 0, 0) {
             return true;
         }
         let mut msg = b"No archive-member implicit rule found for '".to_vec();
         msg.extend_from_slice(&name);
         msg.extend_from_slice(b"'.\n");
-        dbs(depth, &msg);
+        dbs(ctx, depth, &msg);
     }
     false
 }
@@ -372,7 +372,7 @@ pub fn pattern_search(
             let mut msg = b"Avoiding implicit rule recursion for rule '".to_vec();
             msg.extend_from_slice(&defn);
             msg.extend_from_slice(b"'.\n");
-            dbs(depth, &msg);
+            dbs(ctx, depth, &msg);
             continue;
         }
         for ti in 0..rnum as usize {
@@ -461,7 +461,7 @@ pub fn pattern_search(
     'outer: while intermed_ok < 2 {
         deplist.clear();
         if intermed_ok != 0 {
-            dbs(depth, b"Trying harder.\n");
+            dbs(ctx, depth, b"Trying harder.\n");
         }
         ri = 0;
         while ri < tryrules.len() {
@@ -503,10 +503,10 @@ pub fn pattern_search(
                 msg.extend_from_slice(b"' with stem '");
                 msg.extend_from_slice(&name[stem_off..stem_off + stemlen]);
                 msg.extend_from_slice(b"'.\n");
-                dbs(depth, &msg);
+                dbs(ctx, depth, &msg);
             }
             if stemlen + if check_lastslash { pathlen } else { 0 } > GET_PATH_MAX {
-                dbs(depth, b"Stem too long.\n");
+                dbs(ctx, depth, b"Stem too long.\n");
                 ri += 1;
                 continue;
             }
@@ -608,7 +608,7 @@ pub fn pattern_search(
                         msg.extend_from_slice(b"' due to impossible prerequisite '");
                         msg.extend_from_slice(&dr_name);
                         msg.extend_from_slice(b"'.\n");
-                        dbs(depth, &msg);
+                        dbs(ctx, depth, &msg);
                         tryrules[ri].rule = None;
                         failed = true;
                         break 'deps;
@@ -661,19 +661,19 @@ pub fn pattern_search(
                         let mut msg = b"'".to_vec();
                         msg.extend_from_slice(&dr_name);
                         msg.extend_from_slice(b"' ought to exist.\n");
-                        dbs(depth, &msg);
+                        dbs(ctx, depth, &msg);
                     } else if exists(ctx, &dr_name) {
                         deplist.push(pe);
                         let mut msg = b"Found '".to_vec();
                         msg.extend_from_slice(&dr_name);
                         msg.extend_from_slice(b"'.\n");
-                        dbs(depth, &msg);
+                        dbs(ctx, depth, &msg);
                     } else if df.is_some() && allow_compat_rules != 0 {
                         deplist.push(pe);
                         let mut msg = b"Using compatibility rule due to '".to_vec();
                         msg.extend_from_slice(&dr_name);
                         msg.extend_from_slice(b"'.\n");
-                        dbs(depth, &msg);
+                        dbs(ctx, depth, &msg);
                     } else {
                         if df.is_some() {
                             found_compat_rule = true;
@@ -684,7 +684,7 @@ pub fn pattern_search(
                             msg.extend_from_slice(b"' as VPATH '");
                             msg.extend_from_slice(&vname);
                             msg.extend_from_slice(b"'.\n");
-                            dbs(depth, &msg);
+                            dbs(ctx, depth, &msg);
                             deplist.push(pe);
                         } else {
                             // Last resort: recursively search for a rule chain
@@ -728,7 +728,7 @@ pub fn pattern_search(
                                 let mut msg = b"Not found '".to_vec();
                                 msg.extend_from_slice(&dr_name);
                                 msg.extend_from_slice(b"'.\n");
-                                dbs(depth, &msg);
+                                dbs(ctx, depth, &msg);
                                 failed = true;
                                 break 'deps;
                             }
@@ -906,7 +906,7 @@ pub fn pattern_search(
     msg.extend_from_slice(b"' for '");
     msg.extend_from_slice(&full_name);
     msg.extend_from_slice(b"'.\n");
-    dbs(depth, &msg);
+    dbs(ctx, depth, &msg);
     true
 }
 
@@ -999,7 +999,7 @@ fn finish_no_rule(
         let mut msg = b"Searching for a compatibility rule for '".to_vec();
         msg.extend_from_slice(full_name);
         msg.extend_from_slice(b"'.\n");
-        dbs(depth, &msg);
+        dbs(ctx, depth, &msg);
         assert!(
             allow_compat_rules == 0,
             "compatibility-rule retry must not recurse"
@@ -1009,7 +1009,7 @@ fn finish_no_rule(
     let mut msg = b"No implicit rule found for '".to_vec();
     msg.extend_from_slice(full_name);
     msg.extend_from_slice(b"'.\n");
-    dbs(depth, &msg);
+    dbs(ctx, depth, &msg);
     false
 }
 

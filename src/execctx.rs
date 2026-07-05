@@ -677,6 +677,22 @@ pub struct ExecContext {
     /// `Action::Unset`. Pure POD content (no pointers), so `Cell` gets a
     /// sound auto-derived `Clone`.
     pub warning_state: ::core::cell::Cell<crate::warning::State>,
+
+    /// The `-d`/`--debug` bitmask, the former `main.rs` `static DB_LEVEL`
+    /// atomic. The process reads/writes this from a single thread (option
+    /// parsing, then the build), so a plain `Cell` preserves the original
+    /// `Relaxed`-ordering semantics with no synchronization cost.
+    /// `debug_signal_handler` (a real `SIGUSR1` handler, C-ABI, no `ctx`
+    /// parameter) reaches this through the `CTX_PTR` borrow channel, the
+    /// same mechanism `job_fds`/`handling_fatal_signal` use for their
+    /// signal-handler paths. `decode_debug_flags` also runs once from
+    /// `decode_switches`, *before* the `main_0` context rebuild (for any
+    /// `-d`/`--debug`/`MAKEFLAGS` bits given on the initial command line) —
+    /// like `warning_state`/`function_table`, this value must be carried
+    /// across that rebuild, or the version banner and "Reading
+    /// makefiles..." trace (both gated on `db_level`) silently see a
+    /// reset-to-0 value instead of what was just decoded.
+    pub db_level: ::core::cell::Cell<i32>,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
