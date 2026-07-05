@@ -534,7 +534,7 @@ unsafe fn check_valid_name(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) {
-    if !(warning::is_active(Type::InvalidVar)) {
+    if !(warning::is_active(ctx, Type::InvalidVar)) {
         return;
     }
     // The name is valid unless it contains an unquoted blank or newline.
@@ -545,11 +545,11 @@ unsafe fn check_valid_name(
     {
         return;
     }
-    if warning::is_active(Type::InvalidVar) {
+    if warning::is_active(ctx, Type::InvalidVar) {
         emit_var_name_warning(
             ctx,
             flocp.as_ref(),
-            warning::action(Type::InvalidVar) == Action::Error,
+            warning::action(ctx, Type::InvalidVar) == Action::Error,
             "invalid variable name",
             name_bytes,
         );
@@ -855,7 +855,7 @@ unsafe fn check_variable_reference(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) {
-    if !(warning::is_active(Type::InvalidRef)) {
+    if !(warning::is_active(ctx, Type::InvalidRef)) {
         return;
     }
     // The reference is valid unless it contains an unquoted blank or newline.
@@ -866,11 +866,11 @@ unsafe fn check_variable_reference(
     {
         return;
     }
-    if warning::is_active(Type::InvalidRef) {
+    if warning::is_active(ctx, Type::InvalidRef) {
         emit_var_name_warning(
             ctx,
             (*expanding_var).as_ref(),
-            warning::action(Type::InvalidRef) == Action::Error,
+            warning::action(ctx, Type::InvalidRef) == Action::Error,
             "invalid variable reference",
             name_bytes,
         );
@@ -2518,7 +2518,7 @@ const defined_vars: [defined_vars; 13] = [
 /// is one of the built-in always-defined variables in the `defined_vars`
 /// table, or the warning is inactive.
 pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
-    if warning::is_active(Type::UndefinedVar) {
+    if warning::is_active(ctx, Type::UndefinedVar) {
         // SAFETY: `defined_vars` is a NUL-terminated table of built-in
         // variable names. We only read it here, walking until the sentinel
         // null `name`, and compare each entry's bytes against `name`.
@@ -2539,13 +2539,13 @@ pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
         if is_builtin {
             return;
         }
-        if warning::is_active(Type::UndefinedVar) {
+        if warning::is_active(ctx, Type::UndefinedVar) {
             emit_var_name_warning(
                 ctx,
                 // SAFETY: `reading_file` is a process-wide pointer to the
                 // current Floc, set during makefile evaluation; read-only here.
                 unsafe { reading_file.as_ref() },
-                warning::action(Type::UndefinedVar) == Action::Error,
+                warning::action(ctx, Type::UndefinedVar) == Action::Error,
                 "reference to undefined variable",
                 name,
             );
@@ -2564,7 +2564,7 @@ mod warn_undefined_unsafe_oracle {
         name: *const ::core::ffi::c_char,
         len: size_t,
     ) {
-        if warning::is_active(Type::UndefinedVar) {
+        if warning::is_active(ctx, Type::UndefinedVar) {
             let mut dp: *const defined_vars;
             dp = defined_vars.as_ptr();
             while !(*dp).name.is_null() {
@@ -2579,11 +2579,11 @@ mod warn_undefined_unsafe_oracle {
                 }
                 dp = dp.offset(1 as i32 as isize);
             }
-            if warning::is_active(Type::UndefinedVar) {
+            if warning::is_active(ctx, Type::UndefinedVar) {
                 emit_var_name_warning(
                     ctx,
                     reading_file.as_ref(),
-                    warning::action(Type::UndefinedVar) == Action::Error,
+                    warning::action(ctx, Type::UndefinedVar) == Action::Error,
                     "reference to undefined variable",
                     ::core::slice::from_raw_parts(name as *const u8, len),
                 );

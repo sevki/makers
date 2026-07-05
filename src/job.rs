@@ -3075,8 +3075,8 @@ pub unsafe fn construct_command_argv(
     batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> *mut *mut ::core::ffi::c_char {
     let argv: *mut *mut ::core::ffi::c_char;
-    let save: Action = warning::action(Type::UndefinedVar);
-    warning::set_action(Type::UndefinedVar, Action::Ignore);
+    let save: Action = warning::action(ctx, Type::UndefinedVar);
+    warning::set_action(ctx, Type::UndefinedVar, Action::Ignore);
     // Look up SHELL/.SHELLFLAGS/IFS in the target's variable context (or the
     // global context when `file` is None — the former null `*mut File`). Each
     // returns an owned NUL-terminated buffer.
@@ -3096,7 +3096,7 @@ pub unsafe fn construct_command_argv(
         b"-c\0".to_vec()
     };
     let ifs_buf: Vec<u8> = expand_for_opt_file(ctx, b"$(IFS)\0", file);
-    warning::set_action(Type::UndefinedVar, save);
+    warning::set_action(ctx, Type::UndefinedVar, save);
     let shell = shell_buf.as_ptr() as *const ::core::ffi::c_char;
     let shellflags = shellflags_owned.as_ptr() as *const ::core::ffi::c_char;
     let ifs = ifs_buf.as_ptr() as *const ::core::ffi::c_char;

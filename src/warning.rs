@@ -1,5 +1,3 @@
-use std::sync::Mutex;
-
 use crate::expand::variable_buffer_output;
 use crate::floc::Floc;
 use crate::output::msg;
@@ -62,14 +60,18 @@ impl Action {
     }
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct Data {
     pub global: Action,
     pub actions: [Action; Type::COUNT],
 }
 
-#[derive(Default, Copy, Clone)]
-struct State {
+/// Warning configuration, held per-session on
+/// [`crate::execctx::ExecContext::warning_state`] in place of the former
+/// process-global `static STATE`. Pure POD (no pointers), so `Cell<State>`
+/// gets a sound auto-derived `Clone`.
+#[derive(Debug, Default, Copy, Clone)]
+pub struct State {
     /// Active per-warning action, indexed by `Type as usize`.
     warnings: [Action; Type::COUNT],
     default: Data,
@@ -77,33 +79,23 @@ struct State {
     flag: Data,
 }
 
-const EMPTY_DATA: Data = Data {
-    global: Action::Unset,
-    actions: [Action::Unset; Type::COUNT],
-};
-
-static STATE: Mutex<State> = Mutex::new(State {
-    warnings: [Action::Unset; Type::COUNT],
-    default: EMPTY_DATA,
-    variable: EMPTY_DATA,
-    flag: EMPTY_DATA,
-});
-
 /// Active action for the given warning type.
-pub fn action(t: Type) -> Action {
-    STATE.lock().unwrap().warnings[t as usize]
+pub fn action(ctx: &crate::execctx::ExecContext, t: Type) -> Action {
+    ctx.warning_state.get().warnings[t as usize]
 }
 
 /// Override the active action for `t`. Used by sites that temporarily
 /// silence a warning around a known-noisy call (e.g. `~` expansion in
 /// `read.rs`, `$SHELL` lookup in `job.rs`).
-pub fn set_action(t: Type, a: Action) {
-    STATE.lock().unwrap().warnings[t as usize] = a;
+pub fn set_action(ctx: &crate::execctx::ExecContext, t: Type, a: Action) {
+    let mut s = ctx.warning_state.get();
+    s.warnings[t as usize] = a;
+    ctx.warning_state.set(s);
 }
 
 /// True if the warning is currently configured to emit (warn or error).
-pub fn is_active(t: Type) -> bool {
-    matches!(action(t), Action::Warn | Action::Error)
+pub fn is_active(ctx: &crate::execctx::ExecContext, t: Type) -> bool {
+    matches!(action(ctx, t), Action::Warn | Action::Error)
 }
 
 /// Resolve the active per-warning action by walking the precedence chain:
@@ -125,15 +117,15 @@ fn refresh(state: &mut State) {
     }
 }
 
-pub fn init() {
-    let mut s = STATE.lock().unwrap();
-    *s = State::default();
+pub fn init(ctx: &crate::execctx::ExecContext) {
+    let mut s = State::default();
     s.default.global = Action::Warn;
     s.default.actions[Type::CircularDep as usize] = Action::Warn;
     s.default.actions[Type::InvalidRef as usize] = Action::Warn;
     s.default.actions[Type::InvalidVar as usize] = Action::Warn;
     s.default.actions[Type::UndefinedVar as usize] = Action::Ignore;
     refresh(&mut s);
+    ctx.warning_state.set(s);
 }
 
 /// Parse a `--warn=...` value (or a `.WARNINGS` variable value) and update
@@ -150,7 +142,7 @@ pub fn decode_actions(ctx: &crate::execctx::ExecContext, value: &str, flocp: Opt
     let mut errors: Vec<(ReportKind, String)> = Vec::new();
 
     {
-        let mut s = STATE.lock().unwrap();
+        let mut s = ctx.warning_state.get();
 
         // Updating .WARNINGS with an empty value resets variable-level data.
         if !target_flag && value.is_empty() {
@@ -197,10 +189,11 @@ pub fn decode_actions(ctx: &crate::execctx::ExecContext, value: &str, flocp: Opt
             }
         }
         refresh(&mut s);
+        ctx.warning_state.set(s);
     }
 
-    // `report_error` may not return (`fatal` path), so we drop the lock
-    // before invoking it.
+    // `report_error` may not return (`fatal` path); the updated state above is
+    // already written back before we risk that.
     for (kind, name) in errors {
         let body = match kind {
             ReportKind::Unknown => format!("unknown warning '{name}'"),
@@ -224,8 +217,11 @@ fn report_error(ctx: &crate::execctx::ExecContext, flocp: Option<&Floc>, message
 /// # Safety
 /// `fp` must point into a valid variable_buffer location; the underlying
 /// buffer is grown as needed by `variable_buffer_output`.
-pub unsafe fn encode_flag(mut fp: *mut ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
-    let flag = STATE.lock().unwrap().flag;
+pub unsafe fn encode_flag(
+    ctx: &crate::execctx::ExecContext,
+    mut fp: *mut ::core::ffi::c_char,
+) -> *mut ::core::ffi::c_char {
+    let flag = ctx.warning_state.get().flag;
     let any_per_warning = flag.actions.iter().any(|a| *a != Action::Unset);
     if !any_per_warning && flag.global == Action::Unset {
         return fp;
@@ -276,23 +272,15 @@ unsafe fn append_char(fp: *mut ::core::ffi::c_char, c: char) -> *mut ::core::ffi
 mod tests {
     use super::*;
 
-    /// Serializes tests that touch the shared `STATE`, the same pattern as
-    /// `crate::expand::VARIABLE_BUFFER_TEST_LOCK`, since `cargo test` runs
-    /// unit tests in parallel by default and `STATE` is process-global until
-    /// its own dedicated ExecContext migration.
-    static WARNING_STATE_TEST_LOCK: ::std::sync::Mutex<()> = ::std::sync::Mutex::new(());
-
+    /// `warning_state` lives on `ExecContext` now (no longer a shared
+    /// process-global), so each test just builds its own isolated context —
+    /// no cross-test lock needed.
     #[test]
     fn decode_actions_flag_level_sets_active_action() {
-        let _g = WARNING_STATE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        init();
         let ctx = crate::execctx::ExecContext::default();
+        init(&ctx);
         decode_actions(&ctx, "undefined-var:error", None);
-        assert_eq!(action(Type::UndefinedVar), Action::Error);
-        // Leave `STATE` at a known baseline for any later test in this lock group.
-        init();
+        assert_eq!(action(&ctx, Type::UndefinedVar), Action::Error);
     }
 
     #[test]
@@ -314,5 +302,60 @@ mod tests {
         assert_eq!(Type::from_name("undefined-var"), Some(Type::UndefinedVar));
         // Unknown names must return None.
         assert_eq!(Type::from_name("xyzzy"), None);
+    }
+
+    #[test]
+    fn set_action_and_is_active_cover_all_variants() {
+        let ctx = crate::execctx::ExecContext::default();
+        // Fresh context: every type starts Unset (not active).
+        assert!(!is_active(&ctx, Type::CircularDep));
+        set_action(&ctx, Type::CircularDep, Action::Ignore);
+        assert_eq!(action(&ctx, Type::CircularDep), Action::Ignore);
+        assert!(!is_active(&ctx, Type::CircularDep));
+        set_action(&ctx, Type::CircularDep, Action::Warn);
+        assert!(is_active(&ctx, Type::CircularDep));
+        set_action(&ctx, Type::CircularDep, Action::Error);
+        assert!(is_active(&ctx, Type::CircularDep));
+        // Setting one type must not disturb another.
+        assert!(!is_active(&ctx, Type::InvalidRef));
+    }
+
+    #[test]
+    fn init_sets_the_documented_defaults() {
+        let ctx = crate::execctx::ExecContext::default();
+        init(&ctx);
+        assert_eq!(action(&ctx, Type::CircularDep), Action::Warn);
+        assert_eq!(action(&ctx, Type::InvalidRef), Action::Warn);
+        assert_eq!(action(&ctx, Type::InvalidVar), Action::Warn);
+        assert_eq!(action(&ctx, Type::UndefinedVar), Action::Ignore);
+    }
+
+    #[test]
+    fn encode_flag_with_no_overrides_returns_fp_unchanged() {
+        let _g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = crate::execctx::ExecContext::default();
+        unsafe {
+            let fp = crate::expand::initialize_variable_output();
+            assert_eq!(encode_flag(&ctx, fp), fp);
+        }
+    }
+
+    #[test]
+    fn encode_flag_renders_global_and_per_warning_overrides() {
+        let _g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = crate::execctx::ExecContext::default();
+        decode_actions(&ctx, "error", None);
+        decode_actions(&ctx, "circular-dep:ignore", None);
+        unsafe {
+            let fp = crate::expand::initialize_variable_output();
+            let out = encode_flag(&ctx, fp);
+            let rendered = ::core::ffi::CStr::from_ptr(fp).to_str().unwrap();
+            assert_eq!(rendered, " --warn=error,circular-dep:ignore");
+            assert_eq!(out, fp.add(rendered.len()));
+        }
     }
 }

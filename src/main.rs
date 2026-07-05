@@ -1953,7 +1953,7 @@ unsafe fn main_0(
     }
     crate::output::output_init(&ctx, ctx.make_sync.as_ptr());
     initialize_stopchar_map();
-    crate::warning::init();
+    crate::warning::init(&ctx);
     options.verify.set(true);
     setlocale(LC_ALL, b"\0" as *const u8 as *const ::core::ffi::c_char);
     let mut fatal_sigs = ctx.fatal_signal_set.0.get();
@@ -2358,6 +2358,10 @@ unsafe fn main_0(
     // `ht_vec` allocation (and every `gmk_add_function` registration since)
     // alive instead of leaking it and losing the lookups.
     let carried_function_table = ::core::mem::take(&mut ctx.function_table);
+    // `warning::init` above configured the `--warn`/`.WARNINGS` defaults;
+    // carrying it across keeps those defaults (and any `--warn`/`MAKEFLAGS`
+    // overrides already decoded above) alive for the rest of the run.
+    let carried_warning_state = ::core::mem::take(&mut ctx.warning_state);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2378,6 +2382,7 @@ unsafe fn main_0(
         stdout_flags: carried_stdout_flags,
         stderr_flags: carried_stderr_flags,
         function_table: carried_function_table,
+        warning_state: carried_warning_state,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
             ..Default::default()
@@ -4587,7 +4592,7 @@ pub unsafe fn define_makeflags(
                 }
                 4 | 3 => {
                     if (*cs).c == WARN_OPT {
-                        fp = crate::warning::encode_flag(fp);
+                        fp = crate::warning::encode_flag(ctx, fp);
                     } else {
                         // Gather the item pointers to serialize. The migrated list
                         // options read their owned `Vec<CString>`; `--debug`

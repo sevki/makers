@@ -668,6 +668,15 @@ pub struct ExecContext {
     /// The pseudo-vpath built from the `GPATH` variable, the former
     /// `vpath.rs` `static mut gpaths`.
     pub gpaths: VpathChain,
+
+    /// The `--warn`/`.WARNINGS` configuration, the former `warning.rs`
+    /// `static STATE`. Set up by `warning::init` before the `main_0` context
+    /// rebuild, so like [`Self::function_table`] it must be carried across
+    /// that rebuild — otherwise the configured defaults would be lost and
+    /// every later `is_active`/`action` check would see raw
+    /// `Action::Unset`. Pure POD content (no pointers), so `Cell` gets a
+    /// sound auto-derived `Clone`.
+    pub warning_state: ::core::cell::Cell<crate::warning::State>,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because

@@ -131,14 +131,14 @@ pub unsafe fn tilde_expand(
     {
         let mut home_dir: *mut ::core::ffi::c_char;
         let is_variable: i32;
-        let save: Action = warning::action(Type::UndefinedVar);
-        warning::set_action(Type::UndefinedVar, Action::Ignore);
+        let save: Action = warning::action(ctx, Type::UndefinedVar);
+        warning::set_action(ctx, Type::UndefinedVar, Action::Ignore);
         home_dir = allocated_expand_variable(
             ctx,
             b"HOME\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
         );
-        warning::set_action(Type::UndefinedVar, save);
+        warning::set_action(ctx, Type::UndefinedVar, save);
         is_variable = (*home_dir.offset(0_i32 as isize) as i32 != 0) as i32;
         if is_variable == 0 {
             free(home_dir as *mut ::core::ffi::c_void);
