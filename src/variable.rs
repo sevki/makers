@@ -798,7 +798,7 @@ pub unsafe fn lookup_special_var(ctx: &ExecContext, var: *mut variable) -> *mut 
         let mut p: *mut ::core::ffi::c_char;
         let gvs = ctx.variable_globals.global_variable_set.as_ptr();
         let mut vp: *mut *mut variable = (*gvs).table.ht_vec as *mut *mut variable;
-        let end: *mut *mut variable = vp.offset((*gvs).table.ht_size as isize) as *mut *mut variable;
+        let end: *mut *mut variable = vp.offset((*gvs).table.ht_size as isize);
         (*var).value =
             xrealloc((*var).value as *mut ::core::ffi::c_void, max) as *mut ::core::ffi::c_char;
         p = (*var).value;
@@ -1305,7 +1305,15 @@ pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVaria
 
 /// Release a chain built by [`build_file_setlist`], stopping at the shared
 /// `global_setlist` (owned by `ctx`, never freed).
-pub unsafe fn free_file_setlist(ctx: &crate::execctx::ExecContext, mut list: *mut variable_set_list) {
+///
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn free_file_setlist(
+    ctx: &crate::execctx::ExecContext,
+    mut list: *mut variable_set_list,
+) {
     let global_setlist_ptr = ctx.variable_globals.global_setlist.as_ptr();
     while !list.is_null() && list != global_setlist_ptr {
         // SAFETY: `list` was just checked non-null; read `next` through a

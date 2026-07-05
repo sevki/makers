@@ -2365,8 +2365,7 @@ unsafe fn record_target_var(
     vmod: *mut vmodifiers,
     flocp: *const Floc,
 ) {
-    let global: *mut variable_set_list;
-    global = ctx.variable_globals.current_variable_set_list.get();
+    let global: *mut variable_set_list = ctx.variable_globals.current_variable_set_list.get();
     for entry in filenames {
         let v: *mut variable;
         let mut name_buf = entry.name.clone();
