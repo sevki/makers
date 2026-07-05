@@ -4450,7 +4450,6 @@ pub unsafe fn handle_function(
     stringp: *mut *const ::core::ffi::c_char,
 ) -> i32 {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let entry_p: *const function_table_entry;
     let openparen: ::core::ffi::c_char = *(*stringp).offset(0_i32 as isize);
     let closeparen: ::core::ffi::c_char = (if openparen as i32 == '(' as i32 {
         ')' as i32
@@ -4464,7 +4463,7 @@ pub unsafe fn handle_function(
     let mut argvp: *mut *mut ::core::ffi::c_char;
     let mut nargs: ::core::ffi::c_uint;
     beg = (*stringp).offset(1_i32 as isize);
-    entry_p = lookup_function(ctx, beg);
+    let entry_p = lookup_function(ctx, beg);
     if entry_p.is_null() {
         return 0;
     }
@@ -4607,7 +4606,6 @@ unsafe fn func_call(
     let fname: *mut ::core::ffi::c_char;
     let flen: size_t;
     let mut i: ::core::ffi::c_uint;
-    let entry_p: *const function_table_entry;
     let v: *mut variable;
     fname = next_token(*argv.offset(0_i32 as isize));
     // Bridge to the safe `end_of_token`: terminate the function name by writing
@@ -4620,7 +4618,7 @@ unsafe fn func_call(
     if *fname as i32 == 0 {
         return o;
     }
-    entry_p = lookup_function(ctx, fname);
+    let entry_p = lookup_function(ctx, fname);
     if !entry_p.is_null() {
         i = 0;
         while !(*argv.offset(i.wrapping_add(1) as isize)).is_null() {
