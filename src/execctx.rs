@@ -1226,7 +1226,6 @@ impl Default for ChildChain {
 /// c2rust record; call sites take `.0.as_ptr()` for the `*mut hash_table`
 /// the `hash.rs` FFI-shaped insert/lookup functions expect, the same
 /// raw-pointer-into-`Cell`-interior treatment [`Self::pattern_vars`] gets.
-#[derive(Clone)]
 pub struct FunctionTableCell(pub ::core::cell::Cell<crate::hash::hash_table>);
 
 impl Default for FunctionTableCell {
@@ -1246,6 +1245,18 @@ impl Default for FunctionTableCell {
             ht_in_map: [0; 1],
             c2rust_padding: [0; 3],
         }))
+    }
+}
+
+impl Clone for FunctionTableCell {
+    fn clone(&self) -> Self {
+        // Per-run build state handed across the `main_0` context rebuild by
+        // `mem::take`, never by clone; deriving `Clone` would copy the
+        // `hash_table` record's `ht_vec` pointer by value, aliasing the same
+        // slot array across two contexts with independently-mutable
+        // `ht_fill`/`ht_size` counters. A fresh empty table is the right (and
+        // only sound) snapshot, matching `DirNameTable`/`DirContentsTable`.
+        Self::default()
     }
 }
 
