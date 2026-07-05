@@ -4792,7 +4792,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     print_dir_data_base(ctx);
     print_rule_data_base(ctx);
     print_file_data_base(ctx);
-    print_vpath_data_base();
+    print_vpath_data_base(ctx);
     strcache_print_stats(b"#\0" as *const u8 as *const ::core::ffi::c_char);
     let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx).0))
         .expect("formatted timestamp never contains an interior NUL");

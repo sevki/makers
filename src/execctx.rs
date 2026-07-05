@@ -603,6 +603,20 @@ pub struct ExecContext {
     /// `hash_init_function_table` before the `main_0` context rebuild, so
     /// `main_0` carries it across like [`Self::pattern_vars`].
     pub function_table: FunctionTableCell,
+
+    /// The chain built from `vpath` directives, the former `vpath.rs`
+    /// `static mut vpaths`. Rebuilt by `build_vpath_lists` after the
+    /// `main_0` context rebuild, so unlike [`Self::function_table`] this
+    /// never needs to survive it.
+    pub vpaths: VpathChain,
+
+    /// The pseudo-vpath built from the `VPATH` variable, the former
+    /// `vpath.rs` `static mut general_vpath`.
+    pub general_vpath: VpathChain,
+
+    /// The pseudo-vpath built from the `GPATH` variable, the former
+    /// `vpath.rs` `static mut gpaths`.
+    pub gpaths: VpathChain,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1217,6 +1231,31 @@ pub struct ChildChain(pub ::core::cell::Cell<*mut crate::job::child>);
 impl Default for ChildChain {
     fn default() -> Self {
         Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+/// A `Cell<*mut Vpath>` list head that defaults to null, for
+/// [`ExecContext::vpaths`]/[`ExecContext::general_vpath`]/
+/// [`ExecContext::gpaths`] — raw pointers have no `Default`.
+#[derive(Debug)]
+pub struct VpathChain(pub ::core::cell::Cell<*mut crate::vpath::Vpath>);
+
+impl Default for VpathChain {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+impl Clone for VpathChain {
+    fn clone(&self) -> Self {
+        // Per-run build state rebuilt fresh by `build_vpath_lists` after each
+        // `main_0` context rebuild, never carried across it or genuinely
+        // cloned; deriving `Clone` would copy the raw `*mut Vpath` by value,
+        // aliasing the same chain across two contexts with no way to tell
+        // which owns it — the same hazard Codex found in `FunctionTableCell`
+        // on PR #498. A fresh null pointer is the right (and only sound)
+        // snapshot.
+        Self::default()
     }
 }
 

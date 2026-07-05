@@ -60,7 +60,7 @@ const NEW_MTIME: uintmax_t = uintmax_t::MAX;
 /// One element of the `vpath` directive chain: a `%` pattern plus the
 /// directories to search for files matching it.
 #[repr(C)]
-struct Vpath {
+pub struct Vpath {
     next: *mut Vpath,
     /// The pattern to match, in the string cache.
     pattern: *const c_char,
@@ -75,14 +75,6 @@ struct Vpath {
     /// Length of the longest entry in `searchpath`.
     maxlen: size_t,
 }
-
-/// The chain built from `vpath` directives, in reverse parse order until
-/// `build_vpath_lists` reverses it.
-static mut vpaths: *mut Vpath = null_mut();
-/// The pseudo-vpath built from the `VPATH` variable, searched for every file.
-static mut general_vpath: *mut Vpath = null_mut();
-/// The pseudo-vpath built from the `GPATH` variable.
-static mut gpaths: *mut Vpath = null_mut();
 
 /// The `searchpath` directory entries of a `Vpath` as a slice.
 unsafe fn searchpath_entries<'a>(path: *const Vpath) -> &'a [*const c_char] {
@@ -108,20 +100,20 @@ pub unsafe fn build_vpath_lists(ctx: &crate::execctx::ExecContext) {
     // Reverse the chain so vpaths are searched in the order their
     // directives appeared in the makefile.
     let mut reversed: *mut Vpath = null_mut();
-    let mut old = vpaths;
+    let mut old = ctx.vpaths.0.get();
     while !old.is_null() {
         let next = (*old).next;
         (*old).next = reversed;
         reversed = old;
         old = next;
     }
-    vpaths = reversed;
+    ctx.vpaths.0.set(reversed);
 
     if let Some(list) = vpath_from_variable(ctx, b"VPATH\0") {
-        general_vpath = list;
+        ctx.general_vpath.0.set(list);
     }
     if let Some(list) = vpath_from_variable(ctx, b"GPATH\0") {
-        gpaths = list;
+        ctx.gpaths.0.set(list);
     }
 }
 
@@ -150,16 +142,16 @@ unsafe fn vpath_from_variable(
     if start == len {
         return None;
     }
-    let saved = vpaths;
-    vpaths = null_mut();
+    let saved = ctx.vpaths.0.get();
+    ctx.vpaths.0.set(null_mut());
     let mut pattern = *b"%\0";
     construct_vpath_list(
         ctx,
         pattern.as_mut_ptr() as *mut c_char,
         buf[start..].as_mut_ptr() as *mut c_char,
     );
-    let list = vpaths;
-    vpaths = saved;
+    let list = ctx.vpaths.0.get();
+    ctx.vpaths.0.set(saved);
     Some(list)
 }
 
@@ -187,7 +179,7 @@ pub unsafe fn construct_vpath_list(
     if dirpath.is_null() {
         // Remove matching listings from the chain.
         let mut lastpath: *mut Vpath = null_mut();
-        let mut path = vpaths;
+        let mut path = ctx.vpaths.0.get();
         while !path.is_null() {
             let next = (*path).next;
             let matches = pattern.is_null()
@@ -203,7 +195,7 @@ pub unsafe fn construct_vpath_list(
                 if let Some(lp) = lastpath.as_mut() {
                     lp.next = next;
                 } else {
-                    vpaths = next;
+                    ctx.vpaths.0.set(next);
                 }
                 free((*path).searchpath as *mut c_void);
                 free(path as *mut c_void);
@@ -271,8 +263,8 @@ pub unsafe fn construct_vpath_list(
     (*path).searchpath = searchpath;
     (*path).npaths = n;
     (*path).maxlen = maxvpath;
-    (*path).next = vpaths;
-    vpaths = path;
+    (*path).next = ctx.vpaths.0.get();
+    ctx.vpaths.0.set(path);
     (*path).pattern = strcache_add(ctx, pattern);
     (*path).patlen = strlen(pattern);
     // `find_percent` already unquoted `pattern` in place, and the cached copy
@@ -289,12 +281,12 @@ pub unsafe fn construct_vpath_list(
 
 /// Search the `GPATH` list for a pathname (`file` of length `len`, which is
 /// not null-terminated). Returns `true` if it is there, `false` if not.
-pub fn gpath_search(file: &[u8]) -> bool {
-    // SAFETY: `gpaths` is the process-wide GPATH list built during startup and
-    // only read here; the slices it hands out (`searchpath_entries`,
-    // `cstr_bytes`) borrow that still-C-shaped data for the duration of the
-    // comparison.
+pub fn gpath_search(ctx: &crate::execctx::ExecContext, file: &[u8]) -> bool {
+    // SAFETY: `gpaths` is only read here; the slices it hands out
+    // (`searchpath_entries`, `cstr_bytes`) borrow that still-C-shaped data
+    // for the duration of the comparison.
     unsafe {
+        let gpaths = ctx.gpaths.0.get();
         if !gpaths.is_null() && file.len() <= (*gpaths).maxlen {
             for &entry in searchpath_entries(gpaths) {
                 // The GPATH entry must equal exactly the first `len` bytes.
@@ -368,7 +360,12 @@ mod gpath_search_unsafe_oracle {
 
     /// Verbatim pre-conversion implementation, preserved as a differential
     /// oracle. Operates on a raw pointer + length and returns `i32`.
-    unsafe fn gpath_search_oracle(file: *const c_char, len: size_t) -> i32 {
+    unsafe fn gpath_search_oracle(
+        ctx: &crate::execctx::ExecContext,
+        file: *const c_char,
+        len: size_t,
+    ) -> i32 {
+        let gpaths = ctx.gpaths.0.get();
         if !gpaths.is_null() && len <= (*gpaths).maxlen {
             let needle = ::core::slice::from_raw_parts(file as *const u8, len);
             for &entry in searchpath_entries(gpaths) {
@@ -382,9 +379,9 @@ mod gpath_search_unsafe_oracle {
     }
 
     /// Build a `Vpath` whose `searchpath` holds the given NUL-terminated
-    /// entries and publish it as the process `gpaths` for the test. The
-    /// backing storage is leaked deliberately so it outlives the comparison.
-    fn install_gpaths(entries: &[&[u8]]) {
+    /// entries and publish it as `ctx.gpaths` for the test. The backing
+    /// storage is leaked deliberately so it outlives the comparison.
+    fn install_gpaths(ctx: &crate::execctx::ExecContext, entries: &[&[u8]]) {
         let mut ptrs: Vec<*const c_char> = entries
             .iter()
             .map(|e| {
@@ -406,14 +403,13 @@ mod gpath_search_unsafe_oracle {
             npaths,
             maxlen,
         });
-        unsafe {
-            gpaths = Box::leak(vp);
-        }
+        ctx.gpaths.0.set(Box::leak(vp));
     }
 
     #[test]
     fn safe_matches_oracle() {
-        install_gpaths(&[b"src", b"include", b"a/b/c"]);
+        let ctx = crate::execctx::ExecContext::default();
+        install_gpaths(&ctx, &[b"src", b"include", b"a/b/c"]);
         let cases: &[&[u8]] = &[
             b"src",
             b"include",
@@ -425,9 +421,10 @@ mod gpath_search_unsafe_oracle {
             b"a/b/c/d/e/f", // longer than maxlen
         ];
         for &needle in cases {
-            let safe = gpath_search(needle);
-            let oracle =
-                unsafe { gpath_search_oracle(needle.as_ptr() as *const c_char, needle.len()) };
+            let safe = gpath_search(&ctx, needle);
+            let oracle = unsafe {
+                gpath_search_oracle(&ctx, needle.as_ptr() as *const c_char, needle.len())
+            };
             assert_eq!(
                 safe,
                 oracle != 0,
@@ -622,6 +619,8 @@ pub unsafe fn vpath_search(
     let file_ref = file
         .as_ref()
         .expect("vpath_search requires a non-null file");
+    let vpaths = ctx.vpaths.0.get();
+    let general_vpath = ctx.general_vpath.0.get();
     if *file_ref == '/' as c_char || (vpaths.is_null() && general_vpath.is_null()) {
         return null();
     }
@@ -665,9 +664,11 @@ pub unsafe fn vpath_search(
 /// # Safety
 /// Must run single-threaded: it reads the module's vpath chains and writes
 /// to the C `stdout` stream.
-pub unsafe fn print_vpath_data_base() {
+pub unsafe fn print_vpath_data_base(ctx: &crate::execctx::ExecContext) {
     puts(c"\n# VPATH Search Paths\n".as_ptr());
 
+    let vpaths = ctx.vpaths.0.get();
+    let general_vpath = ctx.general_vpath.0.get();
     let mut nvpaths: c_uint = 0;
     let mut v = vpaths;
     while !v.is_null() {
