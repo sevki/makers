@@ -2363,6 +2363,11 @@ unsafe fn main_0(
     // carrying it across keeps those defaults (and any `--warn`/`MAKEFLAGS`
     // overrides already decoded above) alive for the rest of the run.
     let carried_warning_state = ::core::mem::take(&mut ctx.warning_state);
+    // `decode_switches` above already ran `decode_debug_flags` for any
+    // `-d`/`--debug`/`MAKEFLAGS` bits given before this rebuild; carrying the
+    // decoded level keeps the version banner and "Reading makefiles..." trace
+    // below (both gated on `db_level`) from silently seeing a reset-to-0 value.
+    let carried_db_level = ::core::mem::take(&mut ctx.db_level);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2384,6 +2389,7 @@ unsafe fn main_0(
         stderr_flags: carried_stderr_flags,
         function_table: carried_function_table,
         warning_state: carried_warning_state,
+        db_level: carried_db_level,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
             ..Default::default()

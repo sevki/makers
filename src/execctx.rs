@@ -685,10 +685,13 @@ pub struct ExecContext {
     /// `debug_signal_handler` (a real `SIGUSR1` handler, C-ABI, no `ctx`
     /// parameter) reaches this through the `CTX_PTR` borrow channel, the
     /// same mechanism `job_fds`/`handling_fatal_signal` use for their
-    /// signal-handler paths. `decode_debug_flags` (the only setter from
-    /// command-line/`MAKEFLAGS` parsing) runs after the `main_0` context
-    /// rebuild, so unlike `warning_state`/`function_table` this never needs
-    /// to survive it.
+    /// signal-handler paths. `decode_debug_flags` also runs once from
+    /// `decode_switches`, *before* the `main_0` context rebuild (for any
+    /// `-d`/`--debug`/`MAKEFLAGS` bits given on the initial command line) —
+    /// like `warning_state`/`function_table`, this value must be carried
+    /// across that rebuild, or the version banner and "Reading
+    /// makefiles..." trace (both gated on `db_level`) silently see a
+    /// reset-to-0 value instead of what was just decoded.
     pub db_level: ::core::cell::Cell<i32>,
 }
 
