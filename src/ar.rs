@@ -42,7 +42,7 @@ use crate::arscan::{ar_member_touch, ar_name_equal, ar_scan};
 use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
-use crate::misc::{alpha_cmp, concat};
+use crate::misc::{alpha_cmp, concat, cstr_bytes};
 use crate::output::{error, fatal, out_of_memory, perror_with_name};
 use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
@@ -364,12 +364,11 @@ unsafe fn ar_glob_match<T: SeqNode>(
         let new: *mut T = T::alloc();
         T::set_name(
             new,
-            strcache_add(ctx, concat(ctx, &[
-                (*state).arname,
-                b"(\0" as *const u8 as *const ::core::ffi::c_char,
-                mem,
-                b")\0" as *const u8 as *const ::core::ffi::c_char,
-            ])),
+            strcache_add(
+                ctx,
+                concat(&[cstr_bytes((*state).arname), b"(", cstr_bytes(mem), b")"]).as_ptr()
+                    as *const ::core::ffi::c_char,
+            ),
         );
         T::set_next(new, (*state).chain);
         (*state).chain = new;

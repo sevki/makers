@@ -668,12 +668,6 @@ pub struct ExecContext {
     /// The pseudo-vpath built from the `GPATH` variable, the former
     /// `vpath.rs` `static mut gpaths`.
     pub gpaths: VpathChain,
-
-    /// [`crate::misc::concat`]'s reused, growing scratch buffer, the former
-    /// `misc.rs` `static mut rlen`/`static mut result` pair. Refilled on
-    /// every call, so unlike [`Self::function_table`] this never needs to
-    /// survive the `main_0` context rebuild.
-    pub concat_buffer: ConcatBuffer,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1315,17 +1309,6 @@ impl Clone for VpathChain {
         Self::default()
     }
 }
-
-/// [`crate::misc::concat`]'s reused, growing scratch buffer — the former
-/// `static mut rlen`/`static mut result` pair. A plain owned `Vec<u8>` behind
-/// a `RefCell` replaces the raw `xrealloc`'d allocation: growth and
-/// null-termination are ordinary safe-Rust `Vec` operations, and the buffer
-/// is genuinely freed when the `ExecContext` drops instead of leaking for the
-/// process lifetime like the former static did. No raw pointer is stored, so
-/// unlike [`FunctionTableCell`]/[`VpathChain`] a derived `Clone` (deep-copying
-/// the `Vec`) is sound as-is.
-#[derive(Debug, Default, Clone)]
-pub struct ConcatBuffer(pub ::core::cell::RefCell<Vec<u8>>);
 
 /// The user-defined/built-in function table (`$(call)`-able functions,
 /// including those registered by `gmk_add_function`), the former

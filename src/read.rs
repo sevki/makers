@@ -135,7 +135,7 @@ use crate::load::load_file;
 use crate::make_main::{
     db_level, one_shell, opt_snapped_deps, posix_pedantic, second_expansion, stopchar_map,
 };
-use crate::misc::concat;
+use crate::misc::{concat, cstr_bytes};
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
 use crate::posixos::fd_noinherit;
 use crate::rule::create_pattern_rule;
@@ -3607,8 +3607,8 @@ pub unsafe fn parse_file_seq(
                 }
             }
             if flags & 0x4_i32 != 0 {
-                let __n: *const ::core::ffi::c_char = concat(ctx, &[prefix, tmpbuf]);
-                push_name!(__n);
+                let __n_buf = concat(&[cstr_bytes(prefix), cstr_bytes(tmpbuf)]);
+                push_name!(__n_buf.as_ptr() as *const ::core::ffi::c_char);
             } else {
                 name = tmpbuf;
                 if *tmpbuf.offset(0_i32 as isize) as i32 == '~' as i32 {
@@ -3666,21 +3666,25 @@ pub unsafe fn parse_file_seq(
                         let found: *mut NameSeq =
                             ar_glob::<NameSeq>(ctx, *nlist.offset(i as isize), memname);
                         if found.is_null() {
-                            let __n_0: *const ::core::ffi::c_char = concat(ctx, &[
-                                prefix,
-                                *nlist.offset(i as isize),
-                                b"(\0" as *const u8 as *const ::core::ffi::c_char,
-                                memname,
-                                b")\0" as *const u8 as *const ::core::ffi::c_char,
+                            let __n_0_buf = concat(&[
+                                cstr_bytes(prefix),
+                                cstr_bytes(*nlist.offset(i as isize)),
+                                b"(",
+                                cstr_bytes(memname),
+                                b")",
                             ]);
-                            push_name!(__n_0);
+                            push_name!(__n_0_buf.as_ptr() as *const ::core::ffi::c_char);
                         } else {
                             let mut node = found;
                             while let Some(nref) = node.as_ref() {
-                                let nm: *const ::core::ffi::c_char = if !prefix.is_null() {
-                                    concat(ctx, &[prefix, nref.name])
+                                let nm_buf = if !prefix.is_null() {
+                                    Some(concat(&[cstr_bytes(prefix), cstr_bytes(nref.name)]))
                                 } else {
-                                    nref.name
+                                    None
+                                };
+                                let nm: *const ::core::ffi::c_char = match &nm_buf {
+                                    Some(buf) => buf.as_ptr() as *const ::core::ffi::c_char,
+                                    None => nref.name,
                                 };
                                 push_name!(nm);
                                 node = nref.next;
@@ -3688,9 +3692,9 @@ pub unsafe fn parse_file_seq(
                             crate::file::free_seq_chain(found);
                         }
                     } else {
-                        let __n_1: *const ::core::ffi::c_char =
-                            concat(ctx, &[prefix, *nlist.offset(i as isize)]);
-                        push_name!(__n_1);
+                        let __n_1_buf =
+                            concat(&[cstr_bytes(prefix), cstr_bytes(*nlist.offset(i as isize))]);
+                        push_name!(__n_1_buf.as_ptr() as *const ::core::ffi::c_char);
                     }
                     i += 1;
                 }

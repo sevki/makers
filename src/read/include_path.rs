@@ -155,8 +155,10 @@ pub unsafe fn tilde_expand(
             }
         }
         if !home_dir.is_null() {
-            let new: *mut ::core::ffi::c_char =
-                xstrdup(concat(ctx, &[home_dir, name.offset(1_i32 as isize)]));
+            let new: *mut ::core::ffi::c_char = xstrdup(
+                concat(&[cstr_bytes(home_dir), cstr_bytes(name.offset(1_i32 as isize))]).as_ptr()
+                    as *const ::core::ffi::c_char,
+            );
             if is_variable != 0 {
                 free(home_dir as *mut ::core::ffi::c_void);
             }
@@ -182,7 +184,14 @@ pub unsafe fn tilde_expand(
                 // `~user/suffix` — home + the `/suffix` tail (the byte at `i` is
                 // the `/`, so the tail after it starts at `1 + i + 1`).
                 Some(i) => {
-                    return xstrdup(concat(ctx, &[(*pwent).pw_dir, b"/\0" as *const u8 as *const ::core::ffi::c_char, name.add(1 + i + 1)]));
+                    return xstrdup(
+                        concat(&[
+                            cstr_bytes((*pwent).pw_dir),
+                            b"/",
+                            cstr_bytes(name.add(1 + i + 1)),
+                        ])
+                        .as_ptr() as *const ::core::ffi::c_char,
+                    );
                 }
             }
         }

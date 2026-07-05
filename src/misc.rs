@@ -272,27 +272,34 @@ pub unsafe fn print_spaces(n: c_uint) {
     }
 }
 
-/// Concatenate strings into a reused, growing buffer owned by `ctx` and
-/// return it. Null arguments count as empty strings.
+/// Concatenate byte strings, returning the joined bytes as an owned,
+/// NUL-terminated buffer. Empty arguments contribute nothing.
 ///
-/// # Safety
-/// Each argument must be null or a valid NUL-terminated string. Not
-/// reentrant: the returned buffer is shared between calls on the same `ctx`.
-pub unsafe fn concat(ctx: &crate::execctx::ExecContext, args: &[*const c_char]) -> *const c_char {
-    let mut buf = ctx.concat_buffer.0.borrow_mut();
-    buf.clear();
+/// Safe and pure: no raw pointers, no shared state, no `ctx`. Callers
+/// bridging from C strings build `args` with [`cstr_bytes`].
+pub fn concat(args: &[&[u8]]) -> Vec<u8> {
+    let mut buf: Vec<u8> = Vec::new();
     for &s in args {
-        if s.is_null() {
-            continue;
+        if !s.is_empty() {
+            buf.extend_from_slice(s);
         }
-        let l = strlen(s);
-        if l == 0 {
-            continue;
-        }
-        buf.extend_from_slice(::core::slice::from_raw_parts(s as *const u8, l));
     }
     buf.push(0);
-    buf.as_ptr() as *const c_char
+    buf
+}
+
+/// View a NUL-terminated C string as a byte slice up to (not including) its
+/// terminator, or an empty slice for a null pointer — the FFI-boundary
+/// counterpart callers use to build [`concat`]'s `args`.
+///
+/// # Safety
+/// `p` must be null or point to a valid NUL-terminated C string.
+pub unsafe fn cstr_bytes<'a>(p: *const c_char) -> &'a [u8] {
+    if p.is_null() {
+        &[]
+    } else {
+        ::core::ffi::CStr::from_ptr(p).to_bytes()
+    }
 }
 
 /// # Safety
@@ -1424,47 +1431,37 @@ mod eval_tmpdir_var_tests {
 
 #[cfg(test)]
 mod concat_tests {
-    use super::concat;
-    use crate::execctx::ExecContext;
-    use ::core::ptr::null;
+    use super::{concat, cstr_bytes};
 
     #[test]
-    fn skips_null_and_empty_and_grows() {
-        // Exercises concat's null-arg, empty-arg (l==0 continue), and the
-        // realloc growth path, plus the trailing-terminator top-up.
-        unsafe {
-            let ctx = ExecContext::default();
-            let hello = c"hello".as_ptr();
-            let empty = c"".as_ptr();
-            // A long arg forces growth past the initial 60-byte reservation.
-            let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234".as_ptr();
-            let long_len = ::core::ffi::CStr::from_ptr(long).to_bytes().len();
-            assert!(long_len > 60, "long arg must force the growth path");
-            let out = concat(&ctx, &[hello, null(), empty, long]);
-            let bytes = ::core::ffi::CStr::from_ptr(out).to_bytes();
-            assert!(bytes.starts_with(b"hello"));
-            // null/empty args contribute nothing; total is "hello" + the long arg.
-            assert_eq!(bytes.len(), 5 + long_len);
-        }
+    fn skips_empty_and_joins_the_rest() {
+        // Exercises concat's empty-arg skip and multi-arg join, plus the
+        // trailing NUL terminator.
+        let long = b"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        assert!(long.len() > 60, "long arg exercises a multi-arg join");
+        let out = concat(&[b"hello", b"", long]);
+        assert!(out.ends_with(&[0]), "buffer is NUL-terminated");
+        let bytes = &out[..out.len() - 1];
+        assert!(bytes.starts_with(b"hello"));
+        // Empty args contribute nothing; total is "hello" + the long arg.
+        assert_eq!(bytes.len(), 5 + long.len());
     }
 
     #[test]
-    fn reuses_the_same_ctx_buffer_across_calls() {
-        // The buffer lives on `ctx.concat_buffer`, not a process-global
-        // static, so two calls on the same ctx must share (and grow) one
-        // backing allocation — the former static's contract, now scoped to
-        // the session. Mirrors job.rs's pid2str_tests::
-        // a_later_call_overwrites_the_same_buffer.
-        let ctx = ExecContext::default();
+    fn returns_a_fresh_buffer_each_call() {
+        // No shared/reused state (unlike the former `ctx`-owned scratch
+        // buffer): each call is an independent, safely owned `Vec<u8>`.
+        let first = concat(&[b"hi"]);
+        let second = concat(&[b"bye"]);
+        assert_eq!(first, b"hi\0");
+        assert_eq!(second, b"bye\0");
+    }
+
+    #[test]
+    fn cstr_bytes_handles_null_and_valid_strings() {
         unsafe {
-            let first = concat(&ctx, &[c"hi".as_ptr()]);
-            assert_eq!(::core::ffi::CStr::from_ptr(first).to_bytes(), b"hi");
-            let second = concat(&ctx, &[c"bye".as_ptr()]);
-            assert_eq!(
-                first, second,
-                "same backing buffer, per the former static's contract"
-            );
-            assert_eq!(::core::ffi::CStr::from_ptr(second).to_bytes(), b"bye");
+            assert_eq!(cstr_bytes(::core::ptr::null()), b"");
+            assert_eq!(cstr_bytes(c"hello".as_ptr()), b"hello");
         }
     }
 }
