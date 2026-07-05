@@ -4782,7 +4782,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
         b"\n# Make data base, printed on %s\n\0" as *const u8 as *const ::core::ffi::c_char,
         stamp.as_ptr(),
     );
-    print_variable_data_base();
+    print_variable_data_base(ctx);
     print_dir_data_base(ctx);
     print_rule_data_base(ctx);
     print_file_data_base(ctx);
