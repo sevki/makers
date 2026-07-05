@@ -562,6 +562,29 @@ pub struct ExecContext {
     /// `check_io_state`'s memoized stdio-validity bitmask, the former
     /// `posixos.rs` function-local `static IO_STATE` atomic.
     pub io_state: IoStateCell,
+
+    /// Depth of the in-progress environment-variable expansion (used to
+    /// detect self-referential recursion), the former `variable.rs` `pub
+    /// static ENV_RECURSION` atomic.
+    pub env_recursion: AtomicU64Cell,
+
+    /// Monotonic counter bumped whenever the global variable set changes;
+    /// used to invalidate the cached `.VARIABLES` value in
+    /// `lookup_special_var`, the former `variable.rs` `static
+    /// VARIABLE_CHANGENUM` atomic.
+    pub variable_changenum: AtomicU64Cell,
+
+    /// `lookup_special_var`'s memoized `.VARIABLES` rebuild point, the
+    /// former `variable.rs` function-local `static LAST_CHANGENUM` atomic.
+    pub last_changenum: AtomicU64Cell,
+
+    /// Head of the pattern-variable list (`--pattern-target%suffix: ...`
+    /// definitions), the former `variable.rs` `static mut pattern_vars`.
+    pub pattern_vars: PatternVarsCell,
+
+    /// `create_pattern_var`'s per-target-length fast-insert cache, the
+    /// former `variable.rs` `static mut last_pattern_vars` array.
+    pub last_pattern_vars: LastPatternVarsCell,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -719,6 +742,32 @@ impl Clone for IoStateCell {
     fn clone(&self) -> Self {
         Self(::core::sync::atomic::AtomicU32::new(
             self.0.load(::core::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+/// A `Cell<*mut pattern_var>` that defaults to null, for the same reason
+/// [`ChildChain`] exists: raw pointers have no `Default`.
+#[derive(Debug, Clone)]
+pub struct PatternVarsCell(pub ::core::cell::Cell<*mut crate::variable::pattern_var>);
+
+impl Default for PatternVarsCell {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+/// A `Cell<[*mut pattern_var; 256]>` that defaults to all-null:
+/// `create_pattern_var`'s per-target-length fast-insert cache.
+#[derive(Debug, Clone)]
+pub struct LastPatternVarsCell(
+    pub ::core::cell::Cell<[*mut crate::variable::pattern_var; 256]>,
+);
+
+impl Default for LastPatternVarsCell {
+    fn default() -> Self {
+        Self(::core::cell::Cell::new(
+            [::core::ptr::null_mut(); 256],
         ))
     }
 }

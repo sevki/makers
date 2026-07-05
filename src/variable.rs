@@ -149,37 +149,26 @@ pub const NILF: *mut Floc = ::core::ptr::null_mut::<Floc>();
 pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
     unsafe { ::core::mem::transmute::<[u8; 10], [::core::ffi::c_char; 10]>(*b"MAKELEVEL\0") };
 pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
-/// Depth of the in-progress environment-variable expansion (used to detect
-/// self-referential recursion). Stored in an atomic so its reads are plain
-/// safe operations; all access is single-threaded, so `Relaxed` preserves the
-/// original program order.
-pub static ENV_RECURSION: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
-
 /// Current environment-variable expansion recursion depth.
-pub fn env_recursion() -> u64 {
-    ENV_RECURSION.load(::std::sync::atomic::Ordering::Relaxed)
+pub fn env_recursion(ctx: &ExecContext) -> u64 {
+    ctx.env_recursion.0.load(::std::sync::atomic::Ordering::Relaxed)
 }
-/// Monotonic counter bumped whenever the global variable set changes; used to
-/// invalidate the cached `.VARIABLES` value in `lookup_special_var`. Atomic so
-/// its reads/writes are plain safe ops; variable mutation is single-threaded,
-/// so `Relaxed` preserves the original program order.
-static VARIABLE_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
 
 /// Reads the change counter masked to the C `unsigned long` width. The original
 /// counter is a `c_ulong`, which is 32-bit on some targets (Windows, 32-bit
 /// Unix); masking keeps the wraparound point — and therefore the `.VARIABLES`
 /// invalidation behavior — identical to the C oracle on every target. The mask
 /// is `u64::MAX` (a no-op) where `c_ulong` is already 64-bit.
-fn variable_changenum() -> u64 {
+fn variable_changenum(ctx: &ExecContext) -> u64 {
     // No-op (`u64::MAX`) on 64-bit `c_ulong`; the low 32 bits where `c_ulong`
     // is 32-bit. Computed via a shift to avoid a cast that clippy flags as
     // redundant on 64-bit targets.
     let mask = u64::MAX >> (u64::BITS - ::core::ffi::c_ulong::BITS);
-    VARIABLE_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed) & mask
+    ctx.variable_changenum
+        .0
+        .load(::std::sync::atomic::Ordering::Relaxed)
+        & mask
 }
-static mut pattern_vars: *mut pattern_var = ::core::ptr::null::<pattern_var>() as *mut pattern_var;
-static mut last_pattern_vars: [*mut pattern_var; 256] =
-    [::core::ptr::null::<pattern_var>() as *mut pattern_var; 256];
 
 /// Map a c2rust `variable_flavor` discriminant to the idiomatic [`VarFlavor`].
 fn flavor_from_c(f: variable_flavor) -> VarFlavor {
@@ -353,19 +342,21 @@ pub fn define_target_variable(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn create_pattern_var(
+    ctx: &ExecContext,
     target: *const ::core::ffi::c_char,
     suffix: *const ::core::ffi::c_char,
 ) -> *mut pattern_var {
     let len: size_t = strlen(target) as size_t;
     let p: *mut pattern_var =
         xcalloc(::core::mem::size_of::<pattern_var>() as size_t) as *mut pattern_var;
-    if !pattern_vars.is_null() {
-        if len < 256 && !last_pattern_vars[len as usize].is_null() {
-            (*p).next = (*last_pattern_vars[len as usize]).next;
-            (*last_pattern_vars[len as usize]).next = p;
+    let last_pattern_vars = ctx.last_pattern_vars.0.as_ptr();
+    if !ctx.pattern_vars.0.get().is_null() {
+        if len < 256 && !(*last_pattern_vars)[len as usize].is_null() {
+            (*p).next = (*(*last_pattern_vars)[len as usize]).next;
+            (*(*last_pattern_vars)[len as usize]).next = p;
         } else {
             let mut v: *mut *mut pattern_var;
-            v = &raw mut pattern_vars;
+            v = ctx.pattern_vars.0.as_ptr();
             loop {
                 if (*v).is_null() || (**v).len > len {
                     (*p).next = *v;
@@ -377,18 +368,19 @@ pub unsafe fn create_pattern_var(
             }
         }
     } else {
-        pattern_vars = p;
+        ctx.pattern_vars.0.set(p);
         (*p).next = ::core::ptr::null_mut::<pattern_var>();
     }
     (*p).target = target;
     (*p).len = len;
     (*p).suffix = suffix.offset(1_i32 as isize);
     if len < 256 {
-        last_pattern_vars[len as usize] = p;
+        (*last_pattern_vars)[len as usize] = p;
     }
     p
 }
-unsafe extern "C" fn lookup_pattern_var(
+unsafe fn lookup_pattern_var(
+    ctx: &ExecContext,
     start: *mut pattern_var,
     target: *const ::core::ffi::c_char,
     targlen: size_t,
@@ -397,7 +389,7 @@ unsafe extern "C" fn lookup_pattern_var(
     p = if !start.is_null() {
         (*start).next
     } else {
-        pattern_vars
+        ctx.pattern_vars.0.get()
     };
     while !p.is_null() {
         let stem: *const ::core::ffi::c_char;
@@ -667,7 +659,9 @@ pub unsafe fn define_variable_in_set(
         var_slot as *const ::core::ffi::c_void,
     );
     if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
-        VARIABLE_CHANGENUM.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
+        ctx.variable_changenum
+            .0
+            .fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     vr.value = xstrdup(value);
     if let Some(floc) = flocp.as_ref() {
@@ -784,7 +778,9 @@ pub unsafe fn undefine_variable_in_set(
             free_variable_name_and_value(v as *const ::core::ffi::c_void);
             free(v as *mut ::core::ffi::c_void);
             if ::core::ptr::eq(&raw const *set, &raw const global_variable_set) {
-                VARIABLE_CHANGENUM.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
+                ctx.variable_changenum
+                    .0
+                    .fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -793,12 +789,12 @@ pub unsafe fn undefine_variable_in_set(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
-    // Memoizes the variable-set change number at which `.VARIABLES` was last
-    // rebuilt. Function-local atomic so the read/write are plain safe ops;
-    // access is single-threaded, so `Relaxed` preserves the original order.
-    static LAST_CHANGENUM: ::std::sync::atomic::AtomicU64 = ::std::sync::atomic::AtomicU64::new(0);
-    if variable_changenum() != LAST_CHANGENUM.load(::std::sync::atomic::Ordering::Relaxed)
+pub unsafe fn lookup_special_var(ctx: &ExecContext, var: *mut variable) -> *mut variable {
+    if variable_changenum(ctx)
+        != ctx
+            .last_changenum
+            .0
+            .load(::std::sync::atomic::Ordering::Relaxed)
         && (*(*var).name as i32
             == *(b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char) as i32
             && (*(*var).name as i32 == 0
@@ -847,7 +843,10 @@ pub unsafe fn lookup_special_var(var: *mut variable) -> *mut variable {
             vp = vp.offset(1_i32 as isize);
         }
         *p.offset(-(1_i32 as isize)) = 0;
-        LAST_CHANGENUM.store(variable_changenum(), ::std::sync::atomic::Ordering::Relaxed);
+        ctx.last_changenum.0.store(
+            variable_changenum(ctx),
+            ::std::sync::atomic::Ordering::Relaxed,
+        );
     }
     var
 }
@@ -912,7 +911,7 @@ pub unsafe fn lookup_variable(
         ) as *mut variable;
         if !v.is_null() && (is_parent == 0 || (*v).private_var() == 0) {
             return if (*v).special() as i32 != 0 {
-                lookup_special_var(v)
+                lookup_special_var(ctx, v)
             } else {
                 v
             };
@@ -1000,7 +999,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
         let name_ptr = name_c.as_ptr() as *const ::core::ffi::c_char;
         let targlen: size_t = name.len() as size_t;
         let mut p: *mut pattern_var =
-            lookup_pattern_var(::core::ptr::null_mut::<pattern_var>(), name_ptr, targlen);
+            lookup_pattern_var(ctx, ::core::ptr::null_mut::<pattern_var>(), name_ptr, targlen);
         if !p.is_null() {
             // Expand the matched pattern values inside a throwaway scope so the
             // legacy expanders behave exactly as before, then snapshot each
@@ -1042,7 +1041,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
                 v.set_export((*p).variable.export() as variable_export);
                 v.set_private_var((*p).variable.private_var() as ::core::ffi::c_uint);
                 collected.push(target_variable_from_c(v as *const variable));
-                p = lookup_pattern_var(p, name_ptr, targlen);
+                p = lookup_pattern_var(ctx, p, name_ptr, targlen);
                 if p.is_null() {
                     break;
                 }
@@ -1376,7 +1375,11 @@ pub unsafe fn restore_file_context_id(
         reading_file = oldfloc;
     }
 }
-unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *mut variable_set) {
+unsafe extern "C" fn merge_variable_sets(
+    ctx: &ExecContext,
+    to_set: *mut variable_set,
+    from_set: *mut variable_set,
+) {
     let Some(from_set_ref) = from_set.as_ref() else {
         return;
     };
@@ -1406,7 +1409,9 @@ unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *m
                     from_var as *const ::core::ffi::c_void,
                     to_var_slot as *const ::core::ffi::c_void,
                 );
-                VARIABLE_CHANGENUM.fetch_add(inc as u64, ::std::sync::atomic::Ordering::Relaxed);
+                ctx.variable_changenum
+                    .0
+                    .fetch_add(inc as u64, ::std::sync::atomic::Ordering::Relaxed);
             } else {
                 if let Some(fv) = from_var.as_ref() {
                     free(fv.value as *mut ::core::ffi::c_void);
@@ -1422,6 +1427,7 @@ unsafe extern "C" fn merge_variable_sets(to_set: *mut variable_set, from_set: *m
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn merge_variable_set_lists(
+    ctx: &ExecContext,
     setlist0: *mut *mut variable_set_list,
     mut setlist1: *mut variable_set_list,
 ) {
@@ -1446,7 +1452,7 @@ pub unsafe fn merge_variable_set_lists(
             let fromr = setlist1.as_ref().expect("setlist1 non-null in merge loop");
             let tor = to.as_ref().expect("to non-null in merge loop");
             setlist1 = fromr.next;
-            merge_variable_sets(tor.set, fromr.set);
+            merge_variable_sets(ctx, tor.set, fromr.set);
             last0 = to;
             to = tor.next;
         }
@@ -1772,7 +1778,9 @@ pub unsafe fn target_environment(
     let mut found_mflags: i32 = 0;
     let mut found_makeflags: i32 = 0;
     if file.is_none() {
-        ENV_RECURSION.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
+        ctx.env_recursion
+            .0
+            .fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     if recursive == 0 && crate::make_main::opt_jobserver_auth_present() {
         invalid = jobserver_get_invalid_auth(ctx);
@@ -2024,7 +2032,9 @@ pub unsafe fn target_environment(
     *result = ::core::ptr::null_mut::<::core::ffi::c_char>();
     hash_free(&raw mut table, 0);
     if file.is_none() {
-        ENV_RECURSION.fetch_sub(1, ::std::sync::atomic::Ordering::Relaxed);
+        ctx.env_recursion
+            .0
+            .fetch_sub(1, ::std::sync::atomic::Ordering::Relaxed);
     }
     if !owned_list.is_null() {
         current_variable_set_list = saved_current;
@@ -2790,7 +2800,7 @@ unsafe extern "C" fn print_variable_set(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_variable_data_base() {
+pub unsafe fn print_variable_data_base(ctx: &ExecContext) {
     puts(b"\n# Variables\n\0" as *const u8 as *const ::core::ffi::c_char);
     print_variable_set(
         &raw mut global_variable_set,
@@ -2800,7 +2810,7 @@ pub unsafe fn print_variable_data_base() {
     puts(b"\n# Pattern-specific Variable Values\0" as *const u8 as *const ::core::ffi::c_char);
     let mut p: *mut pattern_var;
     let mut rules: ::core::ffi::c_uint = 0;
-    p = pattern_vars;
+    p = ctx.pattern_vars.0.get();
     while !p.is_null() {
         rules = rules.wrapping_add(1);
         printf(
@@ -3014,28 +3024,30 @@ mod should_export_unsafe_oracle {
 
 #[cfg(test)]
 mod env_recursion_tests {
-    use super::{env_recursion, ENV_RECURSION};
+    use super::env_recursion;
     use std::sync::atomic::Ordering;
 
-    /// `env_recursion()` is a plain load of the `ENV_RECURSION` counter, so it
-    /// agrees with a direct load. Read-only to avoid disturbing the shared
-    /// production global, which the enter/leave paths mutate — keeping this
-    /// test safe under the parallel test harness.
+    /// `env_recursion()` is a plain load of `ctx.env_recursion`, so it agrees
+    /// with a direct load. Each test gets its own `ExecContext`, so this
+    /// doesn't need to worry about a shared production counter.
     #[test]
     fn env_recursion_reflects_the_counter() {
-        assert_eq!(env_recursion(), ENV_RECURSION.load(Ordering::Relaxed));
+        let ctx = crate::execctx::ExecContext::default();
+        assert_eq!(
+            env_recursion(&ctx),
+            ctx.env_recursion.0.load(Ordering::Relaxed)
+        );
     }
 
     /// The fetch_add/fetch_sub the enter/leave paths use round-trip back to the
-    /// starting value. Exercised on a local atomic so it never touches the
-    /// shared production counter.
+    /// starting value.
     #[test]
     fn env_recursion_add_sub_round_trips() {
-        let counter = std::sync::atomic::AtomicU64::new(0);
-        counter.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(counter.load(Ordering::Relaxed), 1);
-        counter.fetch_sub(1, Ordering::Relaxed);
-        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        let ctx = crate::execctx::ExecContext::default();
+        ctx.env_recursion.0.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(env_recursion(&ctx), 1);
+        ctx.env_recursion.0.fetch_sub(1, Ordering::Relaxed);
+        assert_eq!(env_recursion(&ctx), 0);
     }
 }
 
