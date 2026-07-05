@@ -253,9 +253,6 @@ pub const MAKE_FAILURE: i32 = 2;
 /// value nothing ever mutates — `const` just inlines the pointer at each use.
 pub const default_shell: *const ::core::ffi::c_char =
     b"/bin/sh\0" as *const u8 as *const ::core::ffi::c_char;
-/// Batch-mode shell is a W32/DOS feature: the only writers in the C original
-/// are platform-specific, so the value is fixed at 0 in this POSIX port.
-pub const batch_mode_shell: i32 = 0;
 pub const S_IXUSR: i32 = __S_IEXEC;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const COMMANDS_RECURSE: i32 = 1;
@@ -287,9 +284,6 @@ pub unsafe fn pid2str(
 pub fn job_slots_used(ctx: &crate::execctx::ExecContext) -> u32 {
     ctx.job_slots_used.0.load(Ordering::Relaxed)
 }
-/// The shell is always "unixy" in this POSIX port: the only writers in the C
-/// original are W32/DOS-specific, so the value is fixed at 1 here.
-pub const unixy_shell: i32 = 1;
 /// Number of jobs started since the load average was last sampled; used by
 /// `load_too_high` to estimate the incremental load each new job adds. Atomic
 /// so its reads/writes are plain safe ops; job bookkeeping is single-threaded,
@@ -2655,7 +2649,7 @@ unsafe fn construct_command_argv_internal(
                             *p as i32,
                         )
                         .is_null()
-                        && unixy_shell != 0
+                        && ctx.unixy_shell() != 0
                     {
                         break 'fast;
                     }
@@ -2672,7 +2666,7 @@ unsafe fn construct_command_argv_internal(
                 }
                 match *p as i32 {
                     61 => {
-                        if seen_nonequals == 0 && unixy_shell != 0 {
+                        if seen_nonequals == 0 && ctx.unixy_shell() != 0 {
                             break 'fast;
                         }
                         word_has_equals = 1;
@@ -2965,7 +2959,7 @@ unsafe fn construct_command_argv_internal(
                 let fresh44 = ap;
                 ap = ap.offset(1_i32 as isize);
                 *fresh44 = '\\' as i32 as ::core::ffi::c_char;
-                if batch_mode_shell == 0 {
+                if ctx.batch_mode_shell() == 0 {
                     let fresh45 = ap;
                     ap = ap.offset(1_i32 as isize);
                     *fresh45 = '\\' as i32 as ::core::ffi::c_char;
@@ -2975,8 +2969,8 @@ unsafe fn construct_command_argv_internal(
                 *fresh46 = '\n' as i32 as ::core::ffi::c_char;
                 p = p.offset(1_i32 as isize);
             } else {
-                if unixy_shell != 0
-                    && batch_mode_shell == 0
+                if ctx.unixy_shell() != 0
+                    && ctx.batch_mode_shell() == 0
                     && (*p as i32 == '\\' as i32
                         || *p as i32 == '\'' as i32
                         || *p as i32 == '"' as i32
@@ -3008,7 +3002,7 @@ unsafe fn construct_command_argv_internal(
         return ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
     }
     *ap = 0;
-    if unixy_shell != 0 {
+    if ctx.unixy_shell() != 0 {
         new_argv = construct_command_argv_internal(
             ctx,
             new_line,
@@ -3430,25 +3424,25 @@ mod jobserver_tokens_tests {
 
 #[cfg(test)]
 mod unixy_shell_tests {
-    use super::unixy_shell;
+    use crate::execctx::ExecContext;
 
-    /// `unixy_shell` is a `const` fixed at 1 in this POSIX port and is
-    /// readable from safe code (no `unsafe` needed).
+    /// `ctx.unixy_shell()` is fixed at 1 in this POSIX port and is readable
+    /// from safe code (no `unsafe` needed).
     #[test]
     fn unixy_shell_is_one() {
-        assert_eq!(unixy_shell, 1);
+        assert_eq!(ExecContext::default().unixy_shell(), 1);
     }
 }
 
 #[cfg(test)]
 mod batch_mode_shell_tests {
-    use super::batch_mode_shell;
+    use crate::execctx::ExecContext;
 
-    /// `batch_mode_shell` is a `const` fixed at 0 in this POSIX port and is
+    /// `ctx.batch_mode_shell()` is fixed at 0 in this POSIX port and is
     /// readable from safe code (no `unsafe` needed).
     #[test]
     fn batch_mode_shell_is_zero() {
-        assert_eq!(batch_mode_shell, 0);
+        assert_eq!(ExecContext::default().batch_mode_shell(), 0);
     }
 }
 
@@ -3465,7 +3459,10 @@ mod pid2str_tests {
 
     #[test]
     fn formats_the_pid_as_decimal() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         // SAFETY: single-threaded test; ctx.pidstring is freshly owned.
         let s = unsafe { core::ffi::CStr::from_ptr(pid2str(&ctx, 12345)) };
         assert_eq!(s.to_bytes(), b"12345");
@@ -3473,7 +3470,10 @@ mod pid2str_tests {
 
     #[test]
     fn a_later_call_overwrites_the_same_buffer() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         // SAFETY: single-threaded test; each pointer is read before the next
         // call, matching every real call site (arg to a printf-family call).
         unsafe {

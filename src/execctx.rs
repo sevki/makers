@@ -15,12 +15,34 @@
 
 /// Immutable process configuration: values fixed once during startup and read
 /// for the rest of the run.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Config {
     /// `$(MAKELEVEL)` — the recursion depth of *this* make process. Parsed once
     /// from the `MAKELEVEL` environment variable during startup (0 at the top
     /// level, N inside a recursive `$(MAKE)`), then immutable.
     pub makelevel: u32,
+
+    /// Whether the configured shell is a "unixy" shell. The C original
+    /// resolves this at startup from the detected shell (W32/DOS batch
+    /// interpreters are the only "non-unixy" case); this POSIX-only port has
+    /// exactly one outcome, but it lives as owned `Config` state rather than a
+    /// fixed `const` so a future non-POSIX target can set it per session
+    /// instead of reintroducing global state.
+    pub unixy_shell: i32,
+
+    /// Whether the shell is running in W32/DOS batch mode. Same POSIX-only
+    /// reasoning as `unixy_shell`.
+    pub batch_mode_shell: i32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            makelevel: 0,
+            unixy_shell: 1,
+            batch_mode_shell: 0,
+        }
+    }
 }
 
 /// The owned execution context, created in `main` and threaded by reference
@@ -1322,6 +1344,18 @@ impl ExecContext {
     pub fn makelevel(&self) -> u32 {
         self.config.makelevel
     }
+
+    /// Whether the configured shell is a "unixy" shell (always true in this
+    /// POSIX port).
+    pub fn unixy_shell(&self) -> i32 {
+        self.config.unixy_shell
+    }
+
+    /// Whether the shell is running in W32/DOS batch mode (always false in
+    /// this POSIX port).
+    pub fn batch_mode_shell(&self) -> i32 {
+        self.config.batch_mode_shell
+    }
 }
 
 #[cfg(test)]
@@ -1330,7 +1364,7 @@ mod tests {
 
     #[test]
     fn context_exposes_makelevel() {
-        let ctx = ExecContext::new(Config { makelevel: 3 });
+        let ctx = ExecContext::new(Config { makelevel: 3, ..Default::default() });
         assert_eq!(ctx.makelevel(), 3);
         // Cloning yields an independent copy of the owned state.
         assert_eq!(ctx.clone().makelevel(), 3);
@@ -1348,7 +1382,7 @@ mod tests {
     /// contrast, is a new run and must get its own record.
     #[test]
     fn make_sync_address_survives_the_rebuild_carry() {
-        let mut ctx = ExecContext::new(Config { makelevel: 0 });
+        let mut ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         let addr = ctx.make_sync.as_ptr();
         ctx.output_context.0.set(addr);
 
@@ -1359,7 +1393,7 @@ mod tests {
         let ctx = ExecContext {
             make_sync: carried_make_sync,
             output_context: carried_output_context,
-            ..ExecContext::new(Config { makelevel: 2 })
+            ..ExecContext::new(Config { makelevel: 2, ..Default::default() })
         };
         assert_eq!(ctx.make_sync.as_ptr(), addr, "carry must not move the record");
         assert_eq!(
@@ -1391,7 +1425,7 @@ mod tests {
     /// stable across gets (the former static's address never moved either).
     #[test]
     fn pid_string_round_trips_and_has_a_stable_address() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert_eq!(ctx.pid_string.0.get()[0], 0, "starts empty");
         let addr = ctx.pid_string.0.as_ptr();
 
@@ -1412,7 +1446,7 @@ mod tests {
     /// handler (via the `CTX_PTR` channel) all see one chain.
     #[test]
     fn child_chains_start_empty_and_mutate_in_place() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert!(ctx.children.0.get().is_null());
         assert!(ctx.waiting_jobs.0.get().is_null());
 
@@ -1428,7 +1462,7 @@ mod tests {
 
     #[test]
     fn load_sample_cache_starts_zeroed() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert_eq!(ctx.load_sample_second.get(), 0);
         assert_eq!(ctx.load_prev_weight.get(), 0.0);
         // `..Self::default()` in `new` must not skip the cache fields.
@@ -1442,7 +1476,7 @@ mod tests {
     /// `..Self::default()` in `new`.
     #[test]
     fn load_probe_caches_start_at_sentinels() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert_eq!(ctx.load_proc_fd.0.get(), -2);
         assert_eq!(ctx.load_lossage.0.get(), -1);
         assert_eq!(ExecContext::default().load_proc_fd.0.get(), -2);
@@ -1485,7 +1519,7 @@ mod tests {
         let carried = ::core::mem::take(&mut populated.directories);
         let rebuilt = ExecContext {
             directories: carried,
-            ..ExecContext::new(Config { makelevel: 1 })
+            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
         };
         // The carried table survived; the source field reset to empty.
         assert_eq!(rebuilt.directories.0.borrow().len(), 1);
@@ -1518,7 +1552,7 @@ mod tests {
         let rebuilt = ExecContext {
             read_dirstream_buf: carried_buf,
             read_dirstream_bufsz: carried_bufsz,
-            ..ExecContext::new(Config { makelevel: 1 })
+            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
         };
         // The carried buffer survived; the source fields reset to empty.
         assert_eq!(
@@ -1550,7 +1584,7 @@ mod tests {
         let carried_buf = ::core::mem::take(&mut populated.file_seq_tmpbuf);
         let rebuilt = ExecContext {
             file_seq_tmpbuf: carried_buf,
-            ..ExecContext::new(Config { makelevel: 1 })
+            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
         };
         assert_eq!(&*rebuilt.file_seq_tmpbuf.borrow(), b"scratch");
         assert!(populated.file_seq_tmpbuf.borrow().is_empty());
@@ -1594,7 +1628,7 @@ mod tests {
         let rebuilt = ExecContext {
             shell_var: carried_shell_var,
             command_variables: carried_command_variables,
-            ..ExecContext::new(Config { makelevel: 1 })
+            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
         };
         assert_eq!(rebuilt.shell_var.0.get().length, 5);
         assert!(!rebuilt.shell_var.0.get().value.is_null());
@@ -1632,7 +1666,7 @@ mod tests {
         let carried = ::core::mem::take(&mut populated.fatal_signal_set);
         let rebuilt = ExecContext {
             fatal_signal_set: carried,
-            ..ExecContext::new(Config { makelevel: 1 })
+            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
         };
         assert_eq!(rebuilt.fatal_signal_set.0.get().__val[0], 1 << 1);
         // The source field reset to empty; a fresh context inherits nothing.
@@ -1650,7 +1684,7 @@ mod tests {
     /// replacing the former process-global `no_intermediates`/`ALL_SECONDARY`.
     #[test]
     fn intermediate_latches_start_unset_and_are_per_run() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert!(!ctx.no_intermediates.get());
         assert!(!ctx.all_secondary.get());
 
@@ -1668,7 +1702,7 @@ mod tests {
     /// unset, replacing the former process-global `always_make_flag`.
     #[test]
     fn always_make_flag_starts_unset_and_is_per_run() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert!(!ctx.always_make_flag.get());
 
         ctx.always_make_flag.set(true);
@@ -1683,7 +1717,7 @@ mod tests {
     /// `snap_implicit_rules`/`pattern_search` compute.
     #[test]
     fn pattern_rule_stats_start_zero_and_track_maxima() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert_eq!(ctx.num_pattern_rules.get(), 0);
         assert_eq!(ctx.max_pattern_targets.get(), 0);
         assert_eq!(ctx.max_pattern_deps.get(), 0);
@@ -1710,7 +1744,7 @@ mod tests {
     /// process-global `CLOCK_SKEW_DETECTED`.
     #[test]
     fn clock_skew_detected_starts_unset_and_is_per_run() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert!(!ctx.clock_skew_detected.get(), "no skew yet");
 
         ctx.clock_skew_detected.set(true);
@@ -1724,7 +1758,7 @@ mod tests {
     /// former `static` atomics) start at 0, bump monotonically, and are per-run.
     #[test]
     fn goal_chain_counters_start_zero_and_bump() {
-        let ctx = ExecContext::new(Config { makelevel: 0 });
+        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
         assert_eq!(ctx.commands_started.get(), 0);
         assert_eq!(ctx.considered.get(), 0);
 

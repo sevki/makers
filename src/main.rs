@@ -1934,7 +1934,10 @@ unsafe fn main_0(
     // the call graph in place of the former process-global makelevel. It
     // starts at level 0 (matching the old startup default) and is rebuilt from
     // the parsed `MAKELEVEL` env var below.
-    let mut ctx = crate::execctx::ExecContext::new(crate::execctx::Config { makelevel: 0 });
+    let mut ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
+        makelevel: 0,
+        ..Default::default()
+    });
     // Install a borrow channel to `options` for the single deep makefile-time
     // callback (`set_special_var` -> `reset_makeflags`) that cannot receive an
     // `&Options` parameter. `options` itself remains the owner.
@@ -2377,6 +2380,7 @@ unsafe fn main_0(
         function_table: carried_function_table,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
+            ..Default::default()
         })
     };
     // Re-derive the glob borrow channel from the rebuilt `ctx`. The `&mut ctx`
