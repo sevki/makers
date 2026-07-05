@@ -77,8 +77,8 @@ pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
 // the arena. The former module statics (`goal_list`/`goal_dep`/`dropped_list`)
 // are replaced by owned, `FileId`-based state:
 //   * `goal_dep` (the currently-processed goal, used by `show_goal_error`) and
-//     `goal_list` (the makefile-remaking goal set) are kept as thread-local
-//     owned `GoalDepNode`/`FileId` state below.
+//     `goal_list` (the makefile-remaking goal set) now live on `ExecContext`
+//     (`ctx.goal_dep`/`ctx.goal_list`), not a thread-local or module static.
 //   * `dropped_list` (the circular-dep drop bookkeeping) is dropped entirely:
 //     deps removed for circularity are simply removed from the owning
 //     `Vec<DepNode>` by index.
@@ -87,17 +87,6 @@ pub const DROPPED_LIST_INCR: i32 = 5;
 use crate::dep::{DepFlags, DepNode, GoalDepNode};
 use crate::file::{FileId, FileNode};
 use crate::recipe::RecipeLineFlags;
-
-::std::thread_local! {
-    /// The makefile-remaking goal set (`goal_list` in the c2rust source),
-    /// consulted by `show_goal_error`. Empty unless rebuilding makefiles.
-    static GOAL_LIST: ::core::cell::RefCell<Vec<GoalDepNode>> =
-        const { ::core::cell::RefCell::new(Vec::new()) };
-    /// The goal currently being processed in `update_goal_chain` (`goal_dep`):
-    /// its target `FileId` and resolution flags.
-    static GOAL_DEP: ::core::cell::Cell<Option<(Option<FileId>, DepFlags)>> =
-        const { ::core::cell::Cell::new(None) };
-}
 
 /// Walk the `renamed` chain from `id` to the live node, collecting ids so no
 /// `FileNode` guard is held across an arena lookup. Returns the final id (the
@@ -305,14 +294,12 @@ pub fn update_goal_chain(
     // an owned, index-addressable Vec we can splice as goals finish.
     let mut goals: Vec<GoalDepNode> = goaldeps.clone();
     // `goal_list` (consulted by `show_goal_error`) is the makefile-remaking goal
-    // set; populate the thread-local only when rebuilding makefiles.
-    GOAL_LIST.with(|gl| {
-        *gl.borrow_mut() = if opt_rebuilding_makefiles() {
-            goaldeps.clone()
-        } else {
-            Vec::new()
-        };
-    });
+    // set; populate it only when rebuilding makefiles.
+    *ctx.goal_list.borrow_mut() = if opt_rebuilding_makefiles() {
+        goaldeps.clone()
+    } else {
+        Vec::new()
+    };
     ctx.considered.set(ctx.considered.get().wrapping_add(1));
     while !goals.is_empty() {
         let mut running: i32 = 0;
@@ -330,9 +317,8 @@ pub fn update_goal_chain(
         let mut gi = 0usize;
         while gi < goals.len() {
             let mut stop: i32 = 0;
-            GOAL_DEP.with(|gd| {
-                gd.set(Some((goals[gi].dep.file, goals[gi].dep.flags)));
-            });
+            ctx.goal_dep
+                .set(Some((goals[gi].dep.file, goals[gi].dep.flags)));
             let g_flags = goals[gi].dep.flags;
             let g_wait = goals[gi].dep.wait_here;
             let Some(g_file) = goals[gi].dep.file else {
@@ -501,14 +487,14 @@ pub fn update_goal_chain(
 /// FileId port of `show_goal_error`: emit the deferred goal-read `errno` error
 /// for the current goal, if it came from an `include` and carried an error.
 pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
-    let Some((cur_file, cur_flags)) = GOAL_DEP.with(|gd| gd.get()) else {
+    let Some((cur_file, cur_flags)) = ctx.goal_dep.get() else {
         return;
     };
     if cur_flags.bits() as i32 & (RM_INCLUDED | RM_DONTCARE) != RM_INCLUDED {
         return;
     }
-    GOAL_LIST.with(|gl| {
-        let mut list = gl.borrow_mut();
+    {
+        let mut list = ctx.goal_list.borrow_mut();
         for goal in list.iter_mut() {
             if goal.dep.file == cur_file {
                 if goal.error != 0 {
@@ -551,7 +537,7 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                 return;
             }
         }
-    });
+    }
 }
 
 /// FileId port of `update_file`. Walks the target and (for double-colon targets)
