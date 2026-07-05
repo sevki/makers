@@ -276,6 +276,25 @@ unsafe fn append_char(fp: *mut ::core::ffi::c_char, c: char) -> *mut ::core::ffi
 mod tests {
     use super::*;
 
+    /// Serializes tests that touch the shared `STATE`, the same pattern as
+    /// `crate::expand::VARIABLE_BUFFER_TEST_LOCK`, since `cargo test` runs
+    /// unit tests in parallel by default and `STATE` is process-global until
+    /// its own dedicated ExecContext migration.
+    static WARNING_STATE_TEST_LOCK: ::std::sync::Mutex<()> = ::std::sync::Mutex::new(());
+
+    #[test]
+    fn decode_actions_flag_level_sets_active_action() {
+        let _g = WARNING_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        init();
+        let ctx = crate::execctx::ExecContext::default();
+        decode_actions(&ctx, "undefined-var:error", None);
+        assert_eq!(action(Type::UndefinedVar), Action::Error);
+        // Leave `STATE` at a known baseline for any later test in this lock group.
+        init();
+    }
+
     #[test]
     fn action_from_name_known_names() {
         assert_eq!(Action::from_name("warn"), Some(Action::Warn));
