@@ -5,7 +5,7 @@
 //! still C-shaped APIs shared across modules.
 
 use ::core::ffi::{c_char, CStr};
-use ::core::ptr::{addr_of, addr_of_mut, null};
+use ::core::ptr::null;
 
 use crate::dep::DepNode;
 use crate::ffi_types::size_t;
@@ -23,9 +23,11 @@ const RECIPEPREFIX_DEFAULT: c_char = b'\t' as c_char;
 /// The default `.SUFFIXES` list, in the order in which the corresponding
 /// suffix rules are tried.
 ///
-/// Kept as a mutable byte buffer because `parse_file_seq` parses (and may
-/// de-escape) the sequence in place, matching the mutable `char[]` in C.
-static mut default_suffixes: [u8; 147] =
+/// A plain `const`, not a `static mut`: `parse_file_seq` parses (and may
+/// de-escape) its input in place, so [`install_builtin_suffixes`] takes a
+/// fresh stack copy on each call instead of sharing one mutable buffer across
+/// calls/sessions.
+const DEFAULT_SUFFIXES: [u8; 147] =
     *b".out .a .ln .o .c .cc .C .cpp .p .f .F .m .r .y .l .ym .yl .s .S .mod .sym .def .h .info .dvi .tex .texinfo .texi .txinfo .w .ch .web .sh .elc .el\0";
 
 /// Default non-terminal pattern rules: (target, deps, recipe).
@@ -297,7 +299,8 @@ unsafe fn install_builtin_suffixes(
     ctx: &crate::execctx::ExecContext,
     suffix_file: crate::file::FileId,
 ) {
-    let mut p = addr_of_mut!(default_suffixes).cast::<u8>() as *mut c_char;
+    let mut default_suffixes = DEFAULT_SUFFIXES;
+    let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
     let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE);
     let deps: Vec<DepNode> = parsed
         .into_iter()
@@ -320,7 +323,7 @@ unsafe fn install_builtin_suffixes(
         ctx,
         c"SUFFIXES".as_ptr(),
         8,
-        addr_of!(default_suffixes).cast::<u8>() as *const c_char,
+        default_suffixes.as_ptr() as *const c_char,
         o_default,
         0,
         (*current_variable_set_list).set,
