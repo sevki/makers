@@ -135,7 +135,7 @@ use crate::load::load_file;
 use crate::make_main::{
     db_level, one_shell, opt_snapped_deps, posix_pedantic, second_expansion, stopchar_map,
 };
-use crate::misc::{concat, cstr_bytes};
+use crate::misc::{concat, cstr_bytes_or_empty};
 use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
 use crate::posixos::fd_noinherit;
 use crate::rule::create_pattern_rule;
@@ -3607,7 +3607,7 @@ pub unsafe fn parse_file_seq(
                 }
             }
             if flags & 0x4_i32 != 0 {
-                let __n_buf = concat(&[cstr_bytes(prefix), cstr_bytes(tmpbuf)]);
+                let __n_buf = concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(tmpbuf)]);
                 push_name!(__n_buf.as_ptr() as *const ::core::ffi::c_char);
             } else {
                 name = tmpbuf;
@@ -3667,10 +3667,10 @@ pub unsafe fn parse_file_seq(
                             ar_glob::<NameSeq>(ctx, *nlist.offset(i as isize), memname);
                         if found.is_null() {
                             let __n_0_buf = concat(&[
-                                cstr_bytes(prefix),
-                                cstr_bytes(*nlist.offset(i as isize)),
+                                cstr_bytes_or_empty(prefix),
+                                cstr_bytes_or_empty(*nlist.offset(i as isize)),
                                 b"(",
-                                cstr_bytes(memname),
+                                cstr_bytes_or_empty(memname),
                                 b")",
                             ]);
                             push_name!(__n_0_buf.as_ptr() as *const ::core::ffi::c_char);
@@ -3678,7 +3678,7 @@ pub unsafe fn parse_file_seq(
                             let mut node = found;
                             while let Some(nref) = node.as_ref() {
                                 let nm_buf = if !prefix.is_null() {
-                                    Some(concat(&[cstr_bytes(prefix), cstr_bytes(nref.name)]))
+                                    Some(concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(nref.name)]))
                                 } else {
                                     None
                                 };
@@ -3693,7 +3693,7 @@ pub unsafe fn parse_file_seq(
                         }
                     } else {
                         let __n_1_buf =
-                            concat(&[cstr_bytes(prefix), cstr_bytes(*nlist.offset(i as isize))]);
+                            concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(*nlist.offset(i as isize))]);
                         push_name!(__n_1_buf.as_ptr() as *const ::core::ffi::c_char);
                     }
                     i += 1;

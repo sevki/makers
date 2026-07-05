@@ -72,7 +72,7 @@ use crate::hash::{
 };
 use crate::job::default_shell;
 use crate::make_main::stopchar_map;
-use crate::misc::{concat, cstr_bytes};
+use crate::misc::{concat, cstr_bytes_or_empty};
 use crate::output::fatal;
 use crate::output::msg;
 use crate::posixos::jobserver_get_invalid_auth;
@@ -1946,7 +1946,7 @@ pub unsafe fn target_environment(
                                 strstr(value, b" -- \0" as *const u8 as *const ::core::ffi::c_char);
                             if vars.is_null() {
                                 mf = xstrdup(
-                                    concat(&[cstr_bytes(value), cstr_bytes(invalid)]).as_ptr()
+                                    concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]).as_ptr()
                                         as *const ::core::ffi::c_char,
                                 );
                             } else {
@@ -1995,7 +1995,7 @@ pub unsafe fn target_environment(
                         .is_null()
                             && !((*v_0).origin() as i32 != o_env as i32)
                         {
-                            let mf_0 = concat(&[cstr_bytes(value), cstr_bytes(invalid)]);
+                            let mf_0 = concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]);
                             free(cp as *mut ::core::ffi::c_void);
                             cp = xstrdup(mf_0.as_ptr() as *const ::core::ffi::c_char);
                             value = cp;
@@ -2008,7 +2008,7 @@ pub unsafe fn target_environment(
                 let fresh10 = result;
                 result = result.offset(1_i32 as isize);
                 *fresh10 = xstrdup(
-                    concat(&[cstr_bytes((*v_0).name), b"=", cstr_bytes(value)]).as_ptr()
+                    concat(&[cstr_bytes_or_empty((*v_0).name), b"=", cstr_bytes_or_empty(value)]).as_ptr()
                         as *const ::core::ffi::c_char,
                 );
                 free(cp as *mut ::core::ffi::c_void);
@@ -2022,9 +2022,9 @@ pub unsafe fn target_environment(
         result = result.offset(1_i32 as isize);
         *fresh11 = xstrdup(
             concat(&[
-                cstr_bytes(shell_var.name),
+                cstr_bytes_or_empty(shell_var.name),
                 b"=",
-                cstr_bytes(shell_var.value),
+                cstr_bytes_or_empty(shell_var.value),
             ])
             .as_ptr() as *const ::core::ffi::c_char,
         );

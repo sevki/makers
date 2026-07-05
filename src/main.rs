@@ -291,7 +291,7 @@ use crate::function::hash_init_function_table;
 use crate::guile::guile_gmake_setup;
 use crate::job::{child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children};
 use crate::load::load_file;
-use crate::misc::{concat, cstr_bytes};
+use crate::misc::{concat, cstr_bytes_or_empty};
 pub use crate::output::output;
 use crate::output::{
     error, fatal, output_context, perror_with_name, pfatal_with_name, set_output_context,
@@ -2406,9 +2406,9 @@ unsafe fn main_0(
         let fresh41 = &mut (*argv.offset(0_i32 as isize));
         *fresh41 = xstrdup(
             concat(&[
-                cstr_bytes(&raw mut current_directory as *const ::core::ffi::c_char),
+                cstr_bytes_or_empty(&raw mut current_directory as *const ::core::ffi::c_char),
                 b"/",
-                cstr_bytes(*argv.offset(0_i32 as isize)),
+                cstr_bytes_or_empty(*argv.offset(0_i32 as isize)),
             ])
             .as_ptr() as *const ::core::ffi::c_char,
         );

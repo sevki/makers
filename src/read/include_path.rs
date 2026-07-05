@@ -156,7 +156,7 @@ pub unsafe fn tilde_expand(
         }
         if !home_dir.is_null() {
             let new: *mut ::core::ffi::c_char = xstrdup(
-                concat(&[cstr_bytes(home_dir), cstr_bytes(name.offset(1_i32 as isize))]).as_ptr()
+                concat(&[cstr_bytes_or_empty(home_dir), cstr_bytes_or_empty(name.offset(1_i32 as isize))]).as_ptr()
                     as *const ::core::ffi::c_char,
             );
             if is_variable != 0 {
@@ -186,9 +186,9 @@ pub unsafe fn tilde_expand(
                 Some(i) => {
                     return xstrdup(
                         concat(&[
-                            cstr_bytes((*pwent).pw_dir),
+                            cstr_bytes_or_empty((*pwent).pw_dir),
                             b"/",
-                            cstr_bytes(name.add(1 + i + 1)),
+                            cstr_bytes_or_empty(name.add(1 + i + 1)),
                         ])
                         .as_ptr() as *const ::core::ffi::c_char,
                     );

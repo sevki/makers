@@ -276,7 +276,7 @@ pub unsafe fn print_spaces(n: c_uint) {
 /// NUL-terminated buffer. Empty arguments contribute nothing.
 ///
 /// Safe and pure: no raw pointers, no shared state, no `ctx`. Callers
-/// bridging from C strings build `args` with [`cstr_bytes`].
+/// bridging from C strings build `args` with [`cstr_bytes_or_empty`].
 pub fn concat(args: &[&[u8]]) -> Vec<u8> {
     let mut buf: Vec<u8> = Vec::new();
     for &s in args {
@@ -294,7 +294,7 @@ pub fn concat(args: &[&[u8]]) -> Vec<u8> {
 ///
 /// # Safety
 /// `p` must be null or point to a valid NUL-terminated C string.
-pub unsafe fn cstr_bytes<'a>(p: *const c_char) -> &'a [u8] {
+pub unsafe fn cstr_bytes_or_empty<'a>(p: *const c_char) -> &'a [u8] {
     if p.is_null() {
         &[]
     } else {
@@ -1431,7 +1431,7 @@ mod eval_tmpdir_var_tests {
 
 #[cfg(test)]
 mod concat_tests {
-    use super::{concat, cstr_bytes};
+    use super::{concat, cstr_bytes_or_empty};
 
     #[test]
     fn skips_empty_and_joins_the_rest() {
@@ -1458,10 +1458,10 @@ mod concat_tests {
     }
 
     #[test]
-    fn cstr_bytes_handles_null_and_valid_strings() {
+    fn cstr_bytes_or_empty_handles_null_and_valid_strings() {
         unsafe {
-            assert_eq!(cstr_bytes(::core::ptr::null()), b"");
-            assert_eq!(cstr_bytes(c"hello".as_ptr()), b"hello");
+            assert_eq!(cstr_bytes_or_empty(::core::ptr::null()), b"");
+            assert_eq!(cstr_bytes_or_empty(c"hello".as_ptr()), b"hello");
         }
     }
 }
