@@ -1455,11 +1455,11 @@ unsafe fn install_fatal_signal(ctx: &crate::execctx::ExecContext, sig: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_global_hash_tables(_ctx: &crate::execctx::ExecContext) {
+pub unsafe fn initialize_global_hash_tables(ctx: &crate::execctx::ExecContext) {
     init_hash_global_variable_set();
     strcache_init();
     // The file table now lives on `ExecContext` (`ctx.files`); no global init.
-    hash_init_function_table();
+    hash_init_function_table(ctx);
 }
 /// Build the global `stopchar_map` character-classification table the parser
 /// consults to recognize separators, blanks, and special characters.
@@ -2350,6 +2350,11 @@ unsafe fn main_0(
     // sentinel and making `fd_reset_append` a no-op.
     let carried_stdout_flags = ::core::mem::take(&mut ctx.stdout_flags);
     let carried_stderr_flags = ::core::mem::take(&mut ctx.stderr_flags);
+    // `initialize_global_hash_tables` (via `hash_init_function_table`) filled
+    // this in before the rebuild; carrying it keeps the function table's
+    // `ht_vec` allocation (and every `gmk_add_function` registration since)
+    // alive instead of leaking it and losing the lookups.
+    let carried_function_table = ::core::mem::take(&mut ctx.function_table);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2369,6 +2374,7 @@ unsafe fn main_0(
         output_context: carried_output_context,
         stdout_flags: carried_stdout_flags,
         stderr_flags: carried_stderr_flags,
+        function_table: carried_function_table,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
         })

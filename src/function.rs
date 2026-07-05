@@ -269,21 +269,6 @@ unsafe fn function_table_entry_hash_cmp(
         )
     }
 }
-static mut function_table: hash_table = hash_table {
-    ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
-    ht_hash_1: None,
-    ht_hash_2: None,
-    ht_compare: None,
-    ht_size: 0,
-    ht_capacity: 0,
-    ht_fill: 0,
-    ht_empty_slots: 0,
-    ht_collisions: 0,
-    ht_lookups: 0,
-    ht_rehashes: 0,
-    ht_in_map: [0; 1],
-    c2rust_padding: [0; 3],
-};
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -472,7 +457,10 @@ pub unsafe fn patsubst_expand(
     }
     patsubst_expand_pat(o, text, pattern, replace, pattern_percent, replace_percent)
 }
-unsafe extern "C" fn lookup_function(s: *const ::core::ffi::c_char) -> *const function_table_entry {
+unsafe fn lookup_function(
+    ctx: &crate::execctx::ExecContext,
+    s: *const ::core::ffi::c_char,
+) -> *const function_table_entry {
     let mut function_table_entry_key: function_table_entry = function_table_entry {
         fptr: C2RustUnnamed { func_ptr: None },
         name: ::core::ptr::null::<::core::ffi::c_char>(),
@@ -501,7 +489,7 @@ unsafe extern "C" fn lookup_function(s: *const ::core::ffi::c_char) -> *const fu
     function_table_entry_key.name = s;
     function_table_entry_key.len = e.offset_from(s) as ::core::ffi::c_long as ::core::ffi::c_uchar;
     hash_find_item(
-        &raw mut function_table,
+        ctx.function_table.0.as_ptr(),
         &raw mut function_table_entry_key as *const ::core::ffi::c_void,
     ) as *const function_table_entry
 }
@@ -4462,7 +4450,6 @@ pub unsafe fn handle_function(
     stringp: *mut *const ::core::ffi::c_char,
 ) -> i32 {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let entry_p: *const function_table_entry;
     let openparen: ::core::ffi::c_char = *(*stringp).offset(0_i32 as isize);
     let closeparen: ::core::ffi::c_char = (if openparen as i32 == '(' as i32 {
         ')' as i32
@@ -4476,7 +4463,7 @@ pub unsafe fn handle_function(
     let mut argvp: *mut *mut ::core::ffi::c_char;
     let mut nargs: ::core::ffi::c_uint;
     beg = (*stringp).offset(1_i32 as isize);
-    entry_p = lookup_function(beg);
+    let entry_p = lookup_function(ctx, beg);
     if entry_p.is_null() {
         return 0;
     }
@@ -4619,7 +4606,6 @@ unsafe fn func_call(
     let fname: *mut ::core::ffi::c_char;
     let flen: size_t;
     let mut i: ::core::ffi::c_uint;
-    let entry_p: *const function_table_entry;
     let v: *mut variable;
     fname = next_token(*argv.offset(0_i32 as isize));
     // Bridge to the safe `end_of_token`: terminate the function name by writing
@@ -4632,7 +4618,7 @@ unsafe fn func_call(
     if *fname as i32 == 0 {
         return o;
     }
-    entry_p = lookup_function(fname);
+    let entry_p = lookup_function(ctx, fname);
     if !entry_p.is_null() {
         i = 0;
         while !(*argv.offset(i.wrapping_add(1) as isize)).is_null() {
@@ -4787,7 +4773,7 @@ pub unsafe fn define_new_function(
     (*ent).set_alloc_fn(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     (*ent).set_adds_command(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     (*ent).fptr.alloc_func_ptr = func;
-    ent = hash_insert(&raw mut function_table, ent as *const ::core::ffi::c_void)
+    ent = hash_insert(ctx.function_table.0.as_ptr(), ent as *const ::core::ffi::c_void)
         as *mut function_table_entry;
     free(ent as *mut ::core::ffi::c_void);
 }
@@ -4795,9 +4781,9 @@ pub unsafe fn define_new_function(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn hash_init_function_table() {
+pub unsafe fn hash_init_function_table(ctx: &crate::execctx::ExecContext) {
     hash_init(
-        &raw mut function_table,
+        ctx.function_table.0.as_ptr(),
         (::core::mem::size_of::<[function_table_entry; 38]>() as ::core::ffi::c_ulong)
             .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong)
             .wrapping_mul(2),
@@ -4806,7 +4792,7 @@ pub unsafe fn hash_init_function_table() {
         Some(function_table_entry_hash_cmp),
     );
     hash_load(
-        &raw mut function_table,
+        ctx.function_table.0.as_ptr(),
         function_table_init.as_ptr() as *const ::core::ffi::c_void,
         (::core::mem::size_of::<[function_table_entry; 38]>() as ::core::ffi::c_ulong)
             .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong),
