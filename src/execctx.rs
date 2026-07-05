@@ -1317,35 +1317,15 @@ impl Clone for VpathChain {
 }
 
 /// [`crate::misc::concat`]'s reused, growing scratch buffer — the former
-/// `static mut rlen`/`static mut result` pair. Owns a raw allocation from
-/// `xrealloc`/`malloc` that grows across calls within one session and is
-/// never freed (matching the former static's process-lifetime behavior).
-#[derive(Debug)]
-pub struct ConcatBuffer {
-    pub len: ::core::cell::Cell<crate::ffi_types::size_t>,
-    pub ptr: ::core::cell::Cell<*mut ::core::ffi::c_char>,
-}
-
-impl Default for ConcatBuffer {
-    fn default() -> Self {
-        Self {
-            len: ::core::cell::Cell::new(0),
-            ptr: ::core::cell::Cell::new(::core::ptr::null_mut()),
-        }
-    }
-}
-
-impl Clone for ConcatBuffer {
-    fn clone(&self) -> Self {
-        // Per-run scratch buffer, never carried across the `main_0` context
-        // rebuild or genuinely cloned; deriving `Clone` would copy the raw
-        // `*mut c_char` by value, letting two contexts `xrealloc`/free the
-        // same allocation — the same hazard Codex found in
-        // `FunctionTableCell` on PR #498. A fresh empty buffer is the right
-        // (and only sound) snapshot.
-        Self::default()
-    }
-}
+/// `static mut rlen`/`static mut result` pair. A plain owned `Vec<u8>` behind
+/// a `RefCell` replaces the raw `xrealloc`'d allocation: growth and
+/// null-termination are ordinary safe-Rust `Vec` operations, and the buffer
+/// is genuinely freed when the `ExecContext` drops instead of leaking for the
+/// process lifetime like the former static did. No raw pointer is stored, so
+/// unlike [`FunctionTableCell`]/[`VpathChain`] a derived `Clone` (deep-copying
+/// the `Vec`) is sound as-is.
+#[derive(Debug, Default, Clone)]
+pub struct ConcatBuffer(pub ::core::cell::RefCell<Vec<u8>>);
 
 /// The user-defined/built-in function table (`$(call)`-able functions,
 /// including those registered by `gmk_add_function`), the former

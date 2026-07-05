@@ -9,9 +9,9 @@ use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
-    __errno_location, calloc, free, getenv, getpid, malloc, memcpy, mkstemp, putchar, read,
-    realloc, sleep, sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask,
-    unlink, write, EINTR,
+    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, putchar, read, realloc,
+    sleep, sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, unlink, write,
+    EINTR,
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
@@ -279,33 +279,20 @@ pub unsafe fn print_spaces(n: c_uint) {
 /// Each argument must be null or a valid NUL-terminated string. Not
 /// reentrant: the returned buffer is shared between calls on the same `ctx`.
 pub unsafe fn concat(ctx: &crate::execctx::ExecContext, args: &[*const c_char]) -> *const c_char {
-    let mut rlen = ctx.concat_buffer.len.get();
-    let mut result = ctx.concat_buffer.ptr.get();
-
-    let mut ri: size_t = 0;
+    let mut buf = ctx.concat_buffer.0.borrow_mut();
+    buf.clear();
     for &s in args {
-        let l: size_t = if s.is_null() { 0 } else { strlen(s) };
+        if s.is_null() {
+            continue;
+        }
+        let l = strlen(s);
         if l == 0 {
             continue;
         }
-        if ri + l > rlen {
-            rlen = (if rlen != 0 { rlen } else { 60 } + l) * 2;
-            result = xrealloc(result as *mut c_void, rlen) as *mut c_char;
-        }
-        memcpy(result.add(ri) as *mut c_void, s as *const c_void, l);
-        ri += l;
+        buf.extend_from_slice(::core::slice::from_raw_parts(s as *const u8, l));
     }
-
-    // Get some more memory if we didn't get enough for the terminator.
-    if ri == rlen {
-        rlen = if rlen != 0 { rlen * 2 } else { 120 };
-        result = xrealloc(result as *mut c_void, rlen) as *mut c_char;
-    }
-    *result.add(ri) = 0;
-
-    ctx.concat_buffer.len.set(rlen);
-    ctx.concat_buffer.ptr.set(result);
-    result
+    buf.push(0);
+    buf.as_ptr() as *const c_char
 }
 
 /// # Safety
