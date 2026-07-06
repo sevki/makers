@@ -56,7 +56,6 @@ extern "C" {
         __modes: i32,
         __n: size_t,
     ) -> i32;
-    fn fprintf(__stream: *mut FILE, __format: *const ::core::ffi::c_char, ...) -> i32;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn fread(
         __ptr: *mut ::core::ffi::c_void,
@@ -4173,15 +4172,10 @@ fn decode_switches(
         // another option's value) -- nothing more to recover from this
         // batch.
         if bad != 0 && origin == o_command {
-            // SAFETY: `print_usage` prints the built-in usage table; it takes
-            // no raw pointers and imposes no precondition beyond a valid
-            // `&ExecContext`/`&Options`, which we have. `die` still exits
-            // here: bubbling a bad-switch error out of `decode_switches` is a
-            // later #432 subtask.
-            unsafe {
-                print_usage(ctx, options, bad);
-                die(ctx, MAKE_FAILURE);
-            }
+            // `die` still exits here: bubbling a bad-switch error out of
+            // `decode_switches` is a later #432 subtask.
+            print_usage(ctx, options, bad);
+            die(ctx, MAKE_FAILURE);
         }
         return;
     };
@@ -5099,22 +5093,33 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
+pub fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
     die_cleanup(ctx, status);
-    exit(status);
+    // The legacy fatal-path exit; retiring it (so the bin shim's exit is the
+    // only one left) is the remainder of #432.
+    ::std::process::exit(status);
 }
 /// The end-of-run cleanup `die` performs before exiting — reaping children,
 /// removing intermediates, closing output sync, releasing jobserver tokens,
 /// chdir-ing back — split out so `main_0`'s own terminal paths can run it and
 /// then *return* their status (Phase B, #432) instead of exiting from inside
 /// the library. Guarded by `ctx.dying`: only the first caller cleans up.
-///
+pub fn die_cleanup(ctx: &crate::execctx::ExecContext, status: i32) {
+    if !ctx.dying.0.swap(true, Ordering::Relaxed) {
+        // SAFETY: every call below takes the valid `ctx` this function was
+        // handed (plus constants and pointers `ctx` itself owns: `make_sync`,
+        // `directory_before_chdir`); none imposes a precondition the caller
+        // must uphold beyond that. The block shrinks as the cleanup helpers
+        // convert to safe fns.
+        unsafe { die_cleanup_body(ctx, status) }
+    }
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn die_cleanup(ctx: &crate::execctx::ExecContext, status: i32) {
-    if !ctx.dying.0.swap(true, Ordering::Relaxed) {
+/// translation; `ctx` must be the live run's context.
+unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
+    {
         let err: i32;
         if opt_print_version() {
             print_version(ctx);
