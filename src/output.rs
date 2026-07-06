@@ -2,25 +2,21 @@
 //! output-sync machinery that captures recipe output into temp files and
 //! dumps it atomically.
 //!
-//! Port of `output.c`. The variadic printers keep their C ABI because they
-//! are called with printf-style argument lists from all over the crate; the
-//! [`msg`] submodule provides native-Rust counterparts.
+//! Port of `output.c`. The printers keep a printf-style calling convention
+//! (a C format string plus a `FmtArg` slice, not real C ABI/varargs) because
+//! they are called that way from all over the crate; the [`msg`] submodule
+//! provides native-Rust counterparts.
 
 use ::core::ffi::c_uint;
 use ::core::ptr::{null, null_mut};
-use std::io::Write;
+use std::io::{Read, Seek, Write};
 use std::sync::atomic::Ordering;
 
-use libc::{
-    __errno_location, close, ftruncate, lseek, perror, read, strerror, strlen, EINTR, SEEK_END,
-    SEEK_SET, STDERR_FILENO, STDOUT_FILENO,
-};
-
 use crate::execctx::ExecContext;
-use crate::ffi_types::{__off_t, size_t, uintmax_t};
+use crate::ffi_types::{size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::die;
-use crate::misc::{open_anon_tmpfd, writebuf};
+use crate::misc::open_anon_tmpfd;
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
     osync_release,
@@ -90,23 +86,37 @@ pub fn set_stdio_traced(value: bool) {
     crate::make_main::with_options(|o| o.stdio_traced.set(value));
 }
 pub const OUTPUT_NONE: i32 = -1;
-unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
+
+/// Run `f` on a `File` view of the raw fd `fd` without taking ownership of
+/// it: `f`'s `File` is released back to a raw fd afterward instead of being
+/// closed on drop (unlike a plain `File::from_raw_fd(fd)` whose drop would
+/// close a descriptor this function doesn't own).
+///
+/// # Safety
+/// `fd` must be a valid, open file descriptor.
+unsafe fn with_borrowed_fd<T>(fd: i32, f: impl FnOnce(&mut std::fs::File) -> T) -> T {
+    use std::os::unix::io::{FromRawFd, IntoRawFd};
+    let mut file = std::fs::File::from_raw_fd(fd);
+    let result = f(&mut file);
+    let _ = file.into_raw_fd();
+    result
+}
+
+/// # Safety
+/// `msg` must be a valid NUL-terminated C string, and `out` must be null or
+/// point to a valid `output`.
+unsafe fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
+    let bytes = ::core::ffi::CStr::from_ptr(msg).to_bytes();
     if !out.is_null() && (*out).syncout() as i32 != 0 {
         let fd: i32 = if is_err != 0 { (*out).err } else { (*out).out };
         if fd != OUTPUT_NONE {
-            let len: size_t = strlen(msg) as size_t;
-            let mut r: i32;
-            loop {
-                r = lseek(fd, 0, 2) as i32;
-                if !(r == -1 && *__errno_location() == EINTR) {
-                    break;
-                }
-            }
-            writebuf(fd, msg as *const ::core::ffi::c_void, len);
+            with_borrowed_fd(fd, |file| {
+                let _ = file.seek(std::io::SeekFrom::End(0));
+                let _ = file.write_all(bytes);
+            });
             return;
         }
     }
-    let bytes = ::core::ffi::CStr::from_ptr(msg).to_bytes();
     if is_err != 0 {
         let mut w = std::io::stderr().lock();
         let _ = w.write_all(bytes);
@@ -183,50 +193,36 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
 /// (`is_err == true`), from the beginning.
 ///
 /// # Safety
-/// `from` must be an open, seekable fd; uses a static buffer, so must run
-/// single-threaded.
+/// `from` must be an open, seekable fd.
 pub unsafe fn pump_from_tmp(from: i32, is_err: bool) {
-    // Plain per-call scratch (the former `static mut buffer`): nothing reads
-    // it across calls, the static only existed to keep the C frame small.
-    let mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
-    if lseek(from, 0, SEEK_SET) == -1 as __off_t {
-        perror(c"lseek()".as_ptr());
-    }
-    loop {
-        let mut len: i32;
+    with_borrowed_fd(from, |file| {
+        if let Err(e) = file.seek(std::io::SeekFrom::Start(0)) {
+            eprintln!("lseek(): {e}");
+        }
+        let mut buffer = [0u8; 8192];
         loop {
-            len = read(
-                from,
-                buffer.as_mut_ptr() as *mut ::core::ffi::c_void,
-                ::core::mem::size_of::<[::core::ffi::c_char; 8192]>() as size_t,
-            ) as i32;
-            if !(len == -1 && *__errno_location() == EINTR) {
+            let len = match file.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("read(): {e}");
+                    break;
+                }
+            };
+            let chunk = &buffer[..len];
+            let result = if is_err {
+                let mut w = std::io::stderr().lock();
+                w.write_all(chunk).and_then(|_| w.flush())
+            } else {
+                let mut w = std::io::stdout().lock();
+                w.write_all(chunk).and_then(|_| w.flush())
+            };
+            if let Err(e) = result {
+                eprintln!("write(): {e}");
                 break;
             }
         }
-        if len < 0 {
-            perror(c"read()".as_ptr());
-        }
-        if len <= 0 {
-            break;
-        }
-        let chunk = ::core::slice::from_raw_parts(buffer.as_ptr() as *const u8, len as usize);
-        let wrote = if is_err {
-            let mut w = std::io::stderr().lock();
-            let ok = w.write_all(chunk).is_ok();
-            let _ = w.flush();
-            ok
-        } else {
-            let mut w = std::io::stdout().lock();
-            let ok = w.write_all(chunk).is_ok();
-            let _ = w.flush();
-            ok
-        };
-        if !wrote {
-            perror(c"write()".as_ptr());
-            break;
-        }
-    }
+    });
 }
 /// Create an anonymous temp fd in append mode for output sync.
 ///
@@ -301,10 +297,13 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
 /// # Safety
 /// `out` must point to a valid `output`; must run single-threaded.
 pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
-    let outfd_not_empty: i32 =
-        ((*out).out != OUTPUT_NONE && lseek((*out).out, 0, SEEK_END) > 0) as i32;
-    let errfd_not_empty: i32 =
-        ((*out).err != OUTPUT_NONE && lseek((*out).err, 0, SEEK_END) > 0) as i32;
+    // Current size of the fd's underlying file, via `SeekFrom::End(0)` (the
+    // former `lseek(fd, 0, SEEK_END)`).
+    let fd_size = |fd: i32| -> i64 {
+        with_borrowed_fd(fd, |file| file.seek(std::io::SeekFrom::End(0)).unwrap_or(0) as i64)
+    };
+    let outfd_not_empty: i32 = ((*out).out != OUTPUT_NONE && fd_size((*out).out) > 0) as i32;
+    let errfd_not_empty: i32 = ((*out).err != OUTPUT_NONE && fd_size((*out).err) > 0) as i32;
     if outfd_not_empty != 0 || errfd_not_empty != 0 {
         let mut traced: i32 = 0;
         if osync_acquire(ctx) == 0 {
@@ -332,25 +331,17 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             log_working_directory(ctx, 0);
         }
         osync_release(ctx);
+        let truncate = |fd: i32| {
+            with_borrowed_fd(fd, |file| {
+                let _ = file.seek(std::io::SeekFrom::Start(0));
+                let _ = file.set_len(0);
+            });
+        };
         if (*out).out != OUTPUT_NONE {
-            let mut e: i32;
-            lseek((*out).out, 0, SEEK_SET);
-            loop {
-                e = ftruncate((*out).out, 0);
-                if !(e == -1 && *__errno_location() == EINTR) {
-                    break;
-                }
-            }
+            truncate((*out).out);
         }
         if (*out).err != OUTPUT_NONE && (*out).err != (*out).out {
-            let mut e_0: i32;
-            lseek((*out).err, 0, SEEK_SET);
-            loop {
-                e_0 = ftruncate((*out).err, 0);
-                if !(e_0 == -1 && *__errno_location() == EINTR) {
-                    break;
-                }
-            }
+            truncate((*out).err);
         }
     }
 }
@@ -369,12 +360,15 @@ pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
         );
         return;
     }
-    ctx.stdout_flags
-        .0
-        .store(fd_set_append(STDOUT_FILENO), Ordering::Relaxed);
-    ctx.stderr_flags
-        .0
-        .store(fd_set_append(STDERR_FILENO), Ordering::Relaxed);
+    use std::os::unix::io::AsRawFd;
+    ctx.stdout_flags.0.store(
+        fd_set_append(std::io::stdout().as_raw_fd()),
+        Ordering::Relaxed,
+    );
+    ctx.stderr_flags.0.store(
+        fd_set_append(std::io::stderr().as_raw_fd()),
+        Ordering::Relaxed,
+    );
 }
 /// Dump and close `out`'s temp files (or, when null, restore
 /// stdout/stderr).
@@ -387,16 +381,24 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
         if stdio_traced() {
             log_working_directory(ctx, 0);
         }
-        fd_reset_append(STDOUT_FILENO, ctx.stdout_flags.0.load(Ordering::Relaxed));
-        fd_reset_append(STDERR_FILENO, ctx.stderr_flags.0.load(Ordering::Relaxed));
+        use std::os::unix::io::AsRawFd;
+        fd_reset_append(
+            std::io::stdout().as_raw_fd(),
+            ctx.stdout_flags.0.load(Ordering::Relaxed),
+        );
+        fd_reset_append(
+            std::io::stderr().as_raw_fd(),
+            ctx.stderr_flags.0.load(Ordering::Relaxed),
+        );
         return;
     }
     output_dump(ctx, out);
+    use std::os::unix::io::FromRawFd;
     if (*out).out >= 0 {
-        close((*out).out);
+        drop(std::fs::File::from_raw_fd((*out).out));
     }
     if (*out).err >= 0 && (*out).err != (*out).out {
-        close((*out).err);
+        drop(std::fs::File::from_raw_fd((*out).err));
     }
     output_init(ctx, out);
 }
@@ -705,6 +707,19 @@ pub unsafe fn fatal(
     die(ctx, MAKE_FAILURE);
 }
 
+/// The current errno's message, matching `strerror`'s wording exactly:
+/// `std::io::Error`'s `Display` is `strerror`'s text plus a trailing
+/// `" (os error N)"` (its `sys::os::error_string` is `strerror_r`-backed on
+/// Unix), so strip that suffix back off rather than reaching for `strerror`
+/// directly.
+fn os_error_message() -> String {
+    let full = std::io::Error::last_os_error().to_string();
+    match full.find(" (os error ") {
+        Some(idx) => full[..idx].to_string(),
+        None => full,
+    }
+}
+
 /// Report `str``name`: strerror(errno) via [`error`].
 ///
 /// # Safety
@@ -714,13 +729,13 @@ pub unsafe fn perror_with_name(
     str: *const ::core::ffi::c_char,
     name: *const ::core::ffi::c_char,
 ) {
-    let err: *const ::core::ffi::c_char = strerror(*__errno_location());
+    let err = ::std::ffi::CString::new(os_error_message()).unwrap_or_default();
     error(
         ctx,
         null::<Floc>(),
         0,
         c"%s%s: %s".as_ptr(),
-        &[FmtArg::Str(str), FmtArg::Str(name), FmtArg::Str(err)],
+        &[FmtArg::Str(str), FmtArg::Str(name), FmtArg::Str(err.as_ptr())],
     );
 }
 /// Report `name`: strerror(errno) via [`fatal`] and die.
@@ -728,13 +743,13 @@ pub unsafe fn perror_with_name(
 /// # Safety
 /// `name` must be a valid NUL-terminated string.
 pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_char) -> ! {
-    let err: *const ::core::ffi::c_char = strerror(*__errno_location());
+    let err = ::std::ffi::CString::new(os_error_message()).unwrap_or_default();
     fatal(
         ctx,
         null::<Floc>(),
         0,
         c"%s: %s".as_ptr(),
-        &[FmtArg::Str(name), FmtArg::Str(err)],
+        &[FmtArg::Str(name), FmtArg::Str(err.as_ptr())],
     );
 }
 /// Print the out-of-memory message without allocating and exit with
@@ -753,13 +768,14 @@ pub fn out_of_memory() -> ! {
     std::process::exit(MAKE_FAILURE)
 }
 
-/// Native-Rust counterparts to the variadic C-ABI `message`/`error`/`fatal`
+/// Native-Rust counterparts to the printf-style `message`/`error`/`fatal`
 /// in this module. Callers build their formatted message with `format!`
 /// (or any `Display` source) and hand a `&str` here; the prefix and suffix
 /// are added in idiomatic Rust.
 ///
-/// Compatibility note: the variadic extern "C" versions still live above
-/// for legacy call sites; both produce identical output formats.
+/// Compatibility note: the printf-style versions still live above for
+/// legacy call sites (called with a C format string and a `FmtArg` slice,
+/// not real C varargs); both produce identical output formats.
 pub mod msg {
     use super::{die, outputs, MAKE_FAILURE};
     use crate::execctx::ExecContext;
@@ -910,7 +926,6 @@ mod output_context_tests {
 #[cfg(test)]
 mod outputs_tests {
     use super::{_outputs, output, OUTPUT_NONE};
-    use std::ffi::CString;
 
     /// A unique temp path; the file is created by `open_temp_fd`.
     fn temp_path(tag: &str) -> std::path::PathBuf {
@@ -921,16 +936,18 @@ mod outputs_tests {
         std::env::temp_dir().join(format!("outputs-{tag}-{nanos}-{}", std::process::id()))
     }
 
-    /// Open `path` for read/write, creating/truncating it, returning a raw fd.
-    unsafe fn open_temp_fd(path: &std::path::Path) -> i32 {
-        let c = CString::new(path.to_str().unwrap()).unwrap();
-        let fd = libc::open(
-            c.as_ptr(),
-            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
-            0o600,
-        );
-        assert!(fd >= 0, "open temp file");
-        fd
+    /// Open `path` for read/write, creating/truncating it, returning a raw fd
+    /// (the caller takes ownership and must close it).
+    fn open_temp_fd(path: &std::path::Path) -> i32 {
+        use std::os::unix::io::IntoRawFd;
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .expect("open temp file");
+        file.into_raw_fd()
     }
 
     /// Read the whole file at `path` to a string.
@@ -971,8 +988,9 @@ mod outputs_tests {
                 1,
                 c"to-stderr\n".as_ptr(),
             );
-            libc::close(out_fd);
-            libc::close(err_fd);
+            use std::os::unix::io::FromRawFd;
+            drop(std::fs::File::from_raw_fd(out_fd));
+            drop(std::fs::File::from_raw_fd(err_fd));
         }
         assert_eq!(
             read_all(&out_path),
