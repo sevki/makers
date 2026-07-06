@@ -201,7 +201,7 @@ pub struct a_word {
 }
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct a_pattern {
+pub struct APattern {
     pub str_0: *mut ::core::ffi::c_char,
     pub percent: *mut ::core::ffi::c_char,
     pub length: size_t,
@@ -2535,9 +2535,9 @@ unsafe fn func_filter_filterout(
     let words: *mut a_word;
     let word_end: *mut a_word;
     let mut wp: *mut a_word;
-    let patterns: *mut a_pattern;
-    let pat_end: *mut a_pattern;
-    let mut pp: *mut a_pattern;
+    let patterns: *mut APattern;
+    let pat_end: *mut APattern;
+    let mut pp: *mut APattern;
     let mut pat_count: ::core::ffi::c_ulong = 0;
     let mut word_count: ::core::ffi::c_ulong = 0;
     // Word lookup table for the literal-pattern fast path, built only when
@@ -2583,7 +2583,7 @@ unsafe fn func_filter_filterout(
         }
         pat_count = pat_count.wrapping_add(1);
     }
-    let mut patterns_vec: Vec<a_pattern> = Vec::with_capacity(pat_count as usize);
+    let mut patterns_vec: Vec<APattern> = Vec::with_capacity(pat_count as usize);
     patterns_vec.resize_with(pat_count as usize, || unsafe { ::core::mem::zeroed() });
     patterns = patterns_vec.as_mut_ptr();
     pat_end = patterns.offset(pat_count as isize);
