@@ -6,13 +6,14 @@
 //! are called with printf-style argument lists from all over the crate; the
 //! [`msg`] submodule provides native-Rust counterparts.
 
-use ::core::ffi::{c_char, c_uint, c_void};
+use ::core::ffi::c_uint;
 use ::core::ptr::{null, null_mut};
+use std::io::Write;
 use std::sync::atomic::Ordering;
 
 use libc::{
     __errno_location, close, ftruncate, lseek, perror, read, strerror, strlen, EINTR, SEEK_END,
-    SEEK_SET,
+    SEEK_SET, STDERR_FILENO, STDOUT_FILENO,
 };
 
 use crate::execctx::ExecContext;
@@ -24,16 +25,6 @@ use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
     osync_release,
 };
-use crate::stdio::FILE;
-
-extern "C" {
-    static mut stdout: *mut FILE;
-    static mut stderr: *mut FILE;
-    fn fflush(stream: *mut FILE) -> i32;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
-    fn fwrite(ptr: *const c_void, size: size_t, n: size_t, s: *mut FILE) -> ::core::ffi::c_ulong;
-    fn fileno(stream: *mut FILE) -> i32;
-}
 
 /// Per-target output state: temp-file descriptors for stdout/stderr while
 /// output sync is active.
@@ -115,9 +106,16 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
             return;
         }
     }
-    let f: *mut FILE = if is_err != 0 { stderr } else { stdout };
-    fputs(msg, f);
-    fflush(f);
+    let bytes = ::core::ffi::CStr::from_ptr(msg).to_bytes();
+    if is_err != 0 {
+        let mut w = std::io::stderr().lock();
+        let _ = w.write_all(bytes);
+        let _ = w.flush();
+    } else {
+        let mut w = std::io::stdout().lock();
+        let _ = w.write_all(bytes);
+        let _ = w.flush();
+    }
 }
 /// Print an entering/leaving-directory line (returns 1).
 ///
@@ -181,12 +179,13 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     _outputs(null_mut(), 0, line.as_ptr() as *const ::core::ffi::c_char);
     1
 }
-/// Copy everything from fd `from` to stream `to`, from the beginning.
+/// Copy everything from fd `from` to stdout (`is_err == false`) or stderr
+/// (`is_err == true`), from the beginning.
 ///
 /// # Safety
-/// `from` must be an open, seekable fd and `to` an open stream; uses a
-/// static buffer, so must run single-threaded.
-pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
+/// `from` must be an open, seekable fd; uses a static buffer, so must run
+/// single-threaded.
+pub unsafe fn pump_from_tmp(from: i32, is_err: bool) {
     // Plain per-call scratch (the former `static mut buffer`): nothing reads
     // it across calls, the static only existed to keep the C frame small.
     let mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
@@ -211,17 +210,21 @@ pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
         if len <= 0 {
             break;
         }
-        if fwrite(
-            buffer.as_ptr() as *const ::core::ffi::c_void,
-            len as size_t,
-            1,
-            to,
-        ) < 1
-        {
-            perror(c"fwrite()".as_ptr());
-            break;
+        let chunk = ::core::slice::from_raw_parts(buffer.as_ptr() as *const u8, len as usize);
+        let wrote = if is_err {
+            let mut w = std::io::stderr().lock();
+            let ok = w.write_all(chunk).is_ok();
+            let _ = w.flush();
+            ok
         } else {
-            fflush(to);
+            let mut w = std::io::stdout().lock();
+            let ok = w.write_all(chunk).is_ok();
+            let _ = w.flush();
+            ok
+        };
+        if !wrote {
+            perror(c"write()".as_ptr());
+            break;
         }
     }
 }
@@ -320,10 +323,10 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             traced = log_working_directory(ctx, 1);
         }
         if outfd_not_empty != 0 {
-            pump_from_tmp((*out).out, stdout);
+            pump_from_tmp((*out).out, false);
         }
         if errfd_not_empty != 0 && (*out).err != (*out).out {
-            pump_from_tmp((*out).err, stderr);
+            pump_from_tmp((*out).err, true);
         }
         if traced != 0 {
             log_working_directory(ctx, 0);
@@ -368,10 +371,10 @@ pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
     }
     ctx.stdout_flags
         .0
-        .store(fd_set_append(fileno(stdout)), Ordering::Relaxed);
+        .store(fd_set_append(STDOUT_FILENO), Ordering::Relaxed);
     ctx.stderr_flags
         .0
-        .store(fd_set_append(fileno(stderr)), Ordering::Relaxed);
+        .store(fd_set_append(STDERR_FILENO), Ordering::Relaxed);
 }
 /// Dump and close `out`'s temp files (or, when null, restore
 /// stdout/stderr).
@@ -384,8 +387,8 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
         if stdio_traced() {
             log_working_directory(ctx, 0);
         }
-        fd_reset_append(fileno(stdout), ctx.stdout_flags.0.load(Ordering::Relaxed));
-        fd_reset_append(fileno(stderr), ctx.stderr_flags.0.load(Ordering::Relaxed));
+        fd_reset_append(STDOUT_FILENO, ctx.stdout_flags.0.load(Ordering::Relaxed));
+        fd_reset_append(STDERR_FILENO, ctx.stderr_flags.0.load(Ordering::Relaxed));
         return;
     }
     output_dump(ctx, out);
@@ -988,7 +991,7 @@ mod outputs_tests {
     /// When the selected descriptor is `OUTPUT_NONE`, the sync fast-path is
     /// skipped and the call falls through to the stdio writer. Driving it with
     /// an empty message keeps the test output clean while still exercising the
-    /// `fd == OUTPUT_NONE` branch and the `fputs`/`fflush` tail.
+    /// `fd == OUTPUT_NONE` branch and the `std::io::stdout()` write+flush tail.
     #[test]
     fn falls_through_when_descriptor_is_none() {
         unsafe {
