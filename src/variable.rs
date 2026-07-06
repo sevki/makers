@@ -76,7 +76,6 @@ use crate::misc::{concat, cstr_bytes_or_empty};
 use crate::output::fatal;
 use crate::output::msg;
 use crate::posixos::jobserver_get_invalid_auth;
-use crate::remote_stub::remote_description;
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
@@ -1492,11 +1491,11 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         &raw mut buf as *mut ::core::ffi::c_char,
         b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
         crate::version::version_string(),
-        match remote_description(ctx) {
+        match ctx.remote_backend.0.description() {
             None => b"\0" as *const u8 as *const ::core::ffi::c_char,
             Some(_) => b"-\0" as *const u8 as *const ::core::ffi::c_char,
         },
-        match remote_description(ctx) {
+        match ctx.remote_backend.0.description() {
             None => b"\0" as *const u8 as *const ::core::ffi::c_char,
             Some(desc) => desc.as_ptr(),
         },

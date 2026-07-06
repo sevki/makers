@@ -553,7 +553,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         while !c.is_null() {
             if (*c).remote() != 0 && (*c).pid > 0 {
                 crate::make_main::with_exec_context(|live_ctx| {
-                    crate::remote_stub::remote_kill(live_ctx, (*c).pid, sig)
+                    live_ctx.remote_backend.0.kill((*c).pid, sig)
                 });
             }
             c = (*c).next;
