@@ -1379,10 +1379,10 @@ impl ::core::fmt::Debug for RecipeReadingFloc {
 ///
 /// Backed by an owned `Vec<u8>`, not a raw pointer + length pair: growth
 /// reuses `Vec::resize`'s safe reallocation instead of manual `xrealloc`, and
-/// `#[derive(Clone)]` deep-copies the bytes into a fresh, independent
-/// allocation, so cloning an `ExecContext` can never leave two contexts
-/// aliasing (and racing to grow/free) the same heap block the way a
-/// `Cell<*mut c_char>` field would.
+/// `Clone` deep-copies the bytes into a fresh, independent allocation, so
+/// cloning an `ExecContext` can never leave two contexts aliasing (and
+/// racing to grow/free) the same heap block the way a `Cell<*mut c_char>`
+/// field would.
 ///
 /// A few call sites (`allocated_expand_variable` and friends) need to hand
 /// the buffer's current contents out as a `*mut c_char` that the wider
@@ -1392,51 +1392,98 @@ impl ::core::fmt::Debug for RecipeReadingFloc {
 /// capacity slack), so the escaped pointer is a genuine allocation that
 /// Rust's default (libc-backed) global allocator's `free()` can reclaim,
 /// matching `xmalloc`'s contract.
-#[derive(Debug, Clone, Default)]
-pub struct VariableBuffer(::core::cell::RefCell<Vec<u8>>);
+///
+/// Boxed and accessed via [`::core::cell::Cell::as_ptr`] rather than
+/// `RefCell`'s `borrow`/`borrow_mut`: a pointer derived from a `Ref`/`RefMut`
+/// guard reads, to static analysis, as tied to that guard's (very short)
+/// lifetime, even though the guard dropping doesn't actually move or free
+/// the `Vec`'s heap allocation -- `Cell::as_ptr` hands out a raw pointer
+/// straight into the box with no guard object in between, so there's no
+/// borrow-lifetime for a pointer to (spuriously, in this case) outlive.
+pub struct VariableBuffer(Box<::core::cell::Cell<Vec<u8>>>);
+
+impl ::core::fmt::Debug for VariableBuffer {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("VariableBuffer")
+            .field("length", &self.length())
+            .finish()
+    }
+}
+
+impl Default for VariableBuffer {
+    fn default() -> Self {
+        Self(Box::new(::core::cell::Cell::new(Vec::new())))
+    }
+}
+
+impl Clone for VariableBuffer {
+    fn clone(&self) -> Self {
+        // Real copy into a fresh, independent Vec/allocation -- never share
+        // the same heap buffer across two contexts (see AGENTS.md's Clone
+        // rule: a Box-wrapped-cell type's Clone must copy the current data,
+        // never reset to a default/empty value, and here that copy must
+        // also be a distinct allocation, not an aliased one).
+        //
+        // SAFETY: `self.0.as_ptr()` is a raw pointer straight into the box
+        // (no `Ref`/`RefMut` guard involved); the reference it's dereferenced
+        // into here is read-only and dropped before this statement ends.
+        let v: &Vec<u8> = unsafe { &*self.0.as_ptr() };
+        Self(Box::new(::core::cell::Cell::new(v.clone())))
+    }
+}
 
 impl VariableBuffer {
     /// Current base pointer, or null if never initialized (empty).
     pub fn ptr(&self) -> *mut ::core::ffi::c_char {
-        let buf = self.0.borrow();
-        if buf.is_empty() {
-            ::core::ptr::null_mut()
-        } else {
-            buf.as_ptr() as *mut ::core::ffi::c_char
+        // SAFETY: see the module-level note on `Cell::as_ptr` vs. `RefCell`
+        // guards; every dereference here is a single, non-reentrant access
+        // that finishes within this statement.
+        unsafe {
+            let v = &mut *self.0.as_ptr();
+            if v.is_empty() {
+                ::core::ptr::null_mut()
+            } else {
+                v.as_mut_ptr() as *mut ::core::ffi::c_char
+            }
         }
     }
 
     /// Current usable length (0 if never initialized).
     pub fn length(&self) -> crate::ffi_types::size_t {
-        self.0.borrow().len()
+        let v: &Vec<u8> = unsafe { &*self.0.as_ptr() };
+        v.len()
     }
 
     /// Grow the buffer (zero-filled) to at least `min_len` bytes if it isn't
     /// already that large, doubling like the former `xrealloc` policy:
     /// `min_len.max(2 * current_len)`.
     pub fn ensure_len(&self, min_len: crate::ffi_types::size_t) {
-        let mut buf = self.0.borrow_mut();
-        if min_len > buf.len() {
-            let new_len = min_len.max(2 * buf.len());
-            buf.resize(new_len, 0);
+        unsafe {
+            let v = &mut *self.0.as_ptr();
+            if min_len > v.len() {
+                let new_len = min_len.max(2 * v.len());
+                v.resize(new_len, 0);
+            }
         }
     }
 
     /// Read the byte at `off` (bounds-checked via `Vec` indexing).
     pub fn byte_at(&self, off: crate::ffi_types::size_t) -> ::core::ffi::c_char {
-        self.0.borrow()[off] as ::core::ffi::c_char
+        let v: &Vec<u8> = unsafe { &*self.0.as_ptr() };
+        v[off] as ::core::ffi::c_char
     }
 
     /// Write the byte at `off` (bounds-checked via `Vec` indexing).
     pub fn set_byte_at(&self, off: crate::ffi_types::size_t, b: ::core::ffi::c_char) {
-        self.0.borrow_mut()[off] = b as u8;
+        let v: &mut Vec<u8> = unsafe { &mut *self.0.as_ptr() };
+        v[off] = b as u8;
     }
 
     /// Detach the current contents as a raw, `free`-compatible allocation
     /// (used to hand a finished expansion out to its caller), replacing this
     /// buffer with a fresh, empty one.
     pub fn take_raw(&self) -> (*mut ::core::ffi::c_char, crate::ffi_types::size_t) {
-        let old = self.0.replace(Vec::new());
+        let old = unsafe { ::core::mem::take(&mut *self.0.as_ptr()) };
         if old.is_empty() {
             return (::core::ptr::null_mut(), 0);
         }
@@ -1460,7 +1507,7 @@ impl VariableBuffer {
             let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(ptr as *mut u8, len);
             unsafe { Box::from_raw(slice_ptr).into_vec() }
         };
-        self.0.replace(v);
+        unsafe { *self.0.as_ptr() = v };
     }
 }
 
