@@ -274,6 +274,7 @@ unsafe fn function_table_entry_hash_cmp(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn subst_expand(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     text: *const ::core::ffi::c_char,
     subst: *const ::core::ffi::c_char,
@@ -288,9 +289,9 @@ pub unsafe fn subst_expand(
     let text_bytes = ::core::ffi::CStr::from_ptr(text).to_bytes();
     let subst_bytes = ::core::slice::from_raw_parts(subst as *const u8, slen);
     if slen == 0 && by_word == 0 {
-        o = variable_buffer_output(o, text, text_bytes.len());
+        o = variable_buffer_output(ctx, o, text, text_bytes.len());
         if rlen > 0 {
-            o = variable_buffer_output(o, replace, rlen);
+            o = variable_buffer_output(ctx, o, replace, rlen);
         }
         return o;
     }
@@ -320,6 +321,7 @@ pub unsafe fn subst_expand(
                 Some(rel) => p = ti + rel,
                 None => {
                     o = variable_buffer_output(
+                        ctx,
                         o,
                         text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
                         text_bytes.len() - ti,
@@ -330,6 +332,7 @@ pub unsafe fn subst_expand(
         }
         if p > ti {
             o = variable_buffer_output(
+                ctx,
                 o,
                 text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
                 p - ti,
@@ -342,9 +345,9 @@ pub unsafe fn subst_expand(
         let after = text_bytes.get(p + slen).copied().unwrap_or(0);
         let after_breaks = !stop_set(after, MAP_BLANK | MAP_NEWLINE | MAP_NUL);
         if by_word != 0 && (prev_breaks || after_breaks) {
-            o = variable_buffer_output(o, subst, slen);
+            o = variable_buffer_output(ctx, o, subst, slen);
         } else if rlen > 0 {
-            o = variable_buffer_output(o, replace, rlen);
+            o = variable_buffer_output(ctx, o, replace, rlen);
         }
         // Advance past the match; stop when the cursor reaches the NUL.
         ti = p + slen;
@@ -359,6 +362,7 @@ pub unsafe fn subst_expand(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn patsubst_expand_pat(
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut text: *const ::core::ffi::c_char,
     pattern: *const ::core::ffi::c_char,
@@ -382,6 +386,7 @@ pub unsafe fn patsubst_expand_pat(
     }
     if pattern_percent.is_null() {
         return subst_expand(
+            ctx,
             o,
             text,
             pattern,
@@ -410,25 +415,31 @@ pub unsafe fn patsubst_expand_pat(
             && tok[..prepercent_len] == *pat_prefix
             && tok[tok.len() - postpercent_len..] == *pat_suffix;
         if matched {
-            o = variable_buffer_output(o, replace, replace_prepercent_len);
+            o = variable_buffer_output(ctx, o, replace, replace_prepercent_len);
             if !replace_percent.is_null() {
                 // The stem is what '%' captured: the token minus prefix/suffix.
                 let stem = &tok[prepercent_len..tok.len() - postpercent_len];
                 o = variable_buffer_output(
+                    ctx,
                     o,
                     stem.as_ptr() as *const ::core::ffi::c_char,
                     stem.len(),
                 );
-                o = variable_buffer_output(o, replace_percent, replace_postpercent_len);
+                o = variable_buffer_output(ctx, o, replace_percent, replace_postpercent_len);
             }
         } else {
-            o = variable_buffer_output(o, t, len);
+            o = variable_buffer_output(ctx, o, t, len);
         }
         if !matched
             || replace_prepercent_len > 0
             || !replace_percent.is_null() && len.wrapping_add(replace_postpercent_len) > 0
         {
-            o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+            o = variable_buffer_output(
+                ctx,
+                o,
+                b" \0" as *const u8 as *const ::core::ffi::c_char,
+                1,
+            );
             doneany = 1;
         }
     }
@@ -442,6 +453,7 @@ pub unsafe fn patsubst_expand_pat(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn patsubst_expand(
+    ctx: &crate::execctx::ExecContext,
     o: *mut ::core::ffi::c_char,
     text: *const ::core::ffi::c_char,
     pattern: *mut ::core::ffi::c_char,
@@ -455,7 +467,15 @@ pub unsafe fn patsubst_expand(
     if !pattern_percent.is_null() {
         pattern_percent = pattern_percent.offset(1_i32 as isize);
     }
-    patsubst_expand_pat(o, text, pattern, replace, pattern_percent, replace_percent)
+    patsubst_expand_pat(
+        ctx,
+        o,
+        text,
+        pattern,
+        replace,
+        pattern_percent,
+        replace_percent,
+    )
 }
 unsafe fn lookup_function(
     ctx: &crate::execctx::ExecContext,
@@ -570,7 +590,10 @@ fn find_next_argument(startparen: u8, endparen: u8, bytes: &[u8]) -> Option<usiz
 ///
 /// `line` must be valid for [`parse_file_seq`]: a writable, NUL-terminated C
 /// string, which this consumes as the glob input.
-pub unsafe fn string_glob(ctx: &crate::execctx::ExecContext, mut line: *mut ::core::ffi::c_char) -> Vec<u8> {
+pub unsafe fn string_glob(
+    ctx: &crate::execctx::ExecContext,
+    mut line: *mut ::core::ffi::c_char,
+) -> Vec<u8> {
     // 0x1 = MAP_NUL stopmap; 0x1|0x10|0x8 = PARSEFS_NOSTRIP|PARSEFS_NOCACHE|PARSEFS_EXISTS
     let chain = parse_file_seq(
         ctx,
@@ -662,12 +685,13 @@ mod string_glob_tests {
     }
 }
 unsafe fn func_patsubst(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     o = patsubst_expand(
+        ctx,
         o,
         *argv.offset(2_i32 as isize),
         *argv.offset(0_i32 as isize),
@@ -705,7 +729,7 @@ fn join_lists(list1: &[u8], list2: &[u8]) -> Vec<u8> {
     out
 }
 fn func_join(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
@@ -726,6 +750,7 @@ fn func_join(
         // is a valid byte buffer of the given length.
         o = unsafe {
             variable_buffer_output(
+                ctx,
                 o,
                 joined.as_ptr() as *const ::core::ffi::c_char,
                 joined.len() as size_t,
@@ -870,6 +895,7 @@ fn func_origin(
         // `msg` is a valid byte buffer of the given length.
         o = unsafe {
             variable_buffer_output(
+                ctx,
                 o,
                 msg.as_ptr() as *const ::core::ffi::c_char,
                 msg.len() as size_t,
@@ -914,6 +940,7 @@ fn func_flavor(
     // is a valid byte buffer of the given length.
     o = unsafe {
         variable_buffer_output(
+            ctx,
             o,
             msg.as_ptr() as *const ::core::ffi::c_char,
             msg.len() as size_t,
@@ -928,7 +955,7 @@ mod func_origin_flavor_tests {
         define_variable_in_set, flavor_message, lookup_variable, o_override, origin_message,
         size_t, strlen, variable, variable_buffer_output, variable_origin,
     };
-    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use std::ffi::{c_char, CString};
 
     #[test]
@@ -972,27 +999,34 @@ mod func_origin_flavor_tests {
             strlen(*argv.offset(0_i32 as isize)) as size_t,
         );
         if v.is_null() {
-            o = variable_buffer_output(o, b"undefined\0" as *const u8 as *const c_char, 9);
+            o = variable_buffer_output(ctx, o, b"undefined\0" as *const u8 as *const c_char, 9);
         } else {
             match (*v).origin() as i32 {
                 7 => {
                     super::abort();
                 }
                 0 => {
-                    o = variable_buffer_output(o, b"default\0" as *const u8 as *const c_char, 7);
+                    o = variable_buffer_output(
+                        ctx,
+                        o,
+                        b"default\0" as *const u8 as *const c_char,
+                        7,
+                    );
                 }
                 1 => {
                     o = variable_buffer_output(
+                        ctx,
                         o,
                         b"environment\0" as *const u8 as *const c_char,
                         11,
                     );
                 }
                 2 => {
-                    o = variable_buffer_output(o, b"file\0" as *const u8 as *const c_char, 4);
+                    o = variable_buffer_output(ctx, o, b"file\0" as *const u8 as *const c_char, 4);
                 }
                 3 => {
                     o = variable_buffer_output(
+                        ctx,
                         o,
                         b"environment override\0" as *const u8 as *const c_char,
                         20,
@@ -1000,16 +1034,27 @@ mod func_origin_flavor_tests {
                 }
                 4 => {
                     o = variable_buffer_output(
+                        ctx,
                         o,
                         b"command line\0" as *const u8 as *const c_char,
                         12,
                     );
                 }
                 5 => {
-                    o = variable_buffer_output(o, b"override\0" as *const u8 as *const c_char, 8);
+                    o = variable_buffer_output(
+                        ctx,
+                        o,
+                        b"override\0" as *const u8 as *const c_char,
+                        8,
+                    );
                 }
                 6 => {
-                    o = variable_buffer_output(o, b"automatic\0" as *const u8 as *const c_char, 9);
+                    o = variable_buffer_output(
+                        ctx,
+                        o,
+                        b"automatic\0" as *const u8 as *const c_char,
+                        9,
+                    );
                 }
                 _ => {}
             }
@@ -1029,11 +1074,11 @@ mod func_origin_flavor_tests {
             strlen(*argv.offset(0_i32 as isize)) as size_t,
         );
         if v.is_null() {
-            o = variable_buffer_output(o, b"undefined\0" as *const u8 as *const c_char, 9);
+            o = variable_buffer_output(ctx, o, b"undefined\0" as *const u8 as *const c_char, 9);
         } else if (*v).recursive() != 0 {
-            o = variable_buffer_output(o, b"recursive\0" as *const u8 as *const c_char, 9);
+            o = variable_buffer_output(ctx, o, b"recursive\0" as *const u8 as *const c_char, 9);
         } else {
-            o = variable_buffer_output(o, b"simple\0" as *const u8 as *const c_char, 6);
+            o = variable_buffer_output(ctx, o, b"simple\0" as *const u8 as *const c_char, 6);
         }
         o
     }
@@ -1085,12 +1130,12 @@ mod func_origin_flavor_tests {
         }
         let mut argv: [*mut c_char; 2] = [cname.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let fname = CString::new("f").unwrap();
-        let start = initialize_variable_output();
+        let start = initialize_variable_output(&ctx);
         let end = handler(&ctx, start, argv.as_mut_ptr(), fname.as_ptr());
         // `variable_buffer_output` may `xrealloc` and move the global buffer,
         // so measure the written span from the current base rather than the
         // possibly-stale `start`.
-        let base = variable_buffer;
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -1277,12 +1322,13 @@ fn func_addsuffix_addprefix(
     addprefix_addsuffix_result(args[0], args[1], is_addprefix)
 }
 unsafe fn func_subst(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     o = subst_expand(
+        ctx,
         o,
         *argv.offset(2_i32 as isize),
         *argv.offset(0_i32 as isize),
@@ -1361,9 +1407,7 @@ mod word_family_tests {
     //! For `func_words` this cross-checks `u32::to_string` against the original
     //! `sprintf("%u")`.
     use super::{func_firstword, func_lastword, func_words, size_t, tokens, SafeFunc};
-    use crate::expand::{
-        initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK,
-    };
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CString};
 
@@ -1375,33 +1419,43 @@ mod word_family_tests {
     ) -> *mut c_char;
 
     unsafe fn func_firstword_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
     ) -> *mut c_char {
         let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
         if let Some(w) = tokens(bytes).next() {
-            o = super::variable_buffer_output(o, w.as_ptr() as *const c_char, w.len() as size_t);
+            o = super::variable_buffer_output(
+                ctx,
+                o,
+                w.as_ptr() as *const c_char,
+                w.len() as size_t,
+            );
         }
         o
     }
 
     unsafe fn func_lastword_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
     ) -> *mut c_char {
         let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes();
         if let Some(w) = tokens(bytes).next_back() {
-            o = super::variable_buffer_output(o, w.as_ptr() as *const c_char, w.len() as size_t);
+            o = super::variable_buffer_output(
+                ctx,
+                o,
+                w.as_ptr() as *const c_char,
+                w.len() as size_t,
+            );
         }
         o
     }
 
     unsafe fn func_words_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
@@ -1410,6 +1464,7 @@ mod word_family_tests {
         let i = tokens(bytes).count() as ::core::ffi::c_uint;
         let mut buf: [c_char; 22] = [0; 22];
         o = super::variable_buffer_output(
+            ctx,
             o,
             &raw mut buf as *mut c_char,
             super::sprintf(
@@ -1431,18 +1486,14 @@ mod word_family_tests {
         let cstr = CString::new(arg).unwrap();
         let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let name = CString::new("f").unwrap();
-        let start = initialize_variable_output();
-        let end = handler(
-            &crate::execctx::ExecContext::default(),
-            start,
-            argv.as_mut_ptr(),
-            name.as_ptr(),
-        );
-        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
+        // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // `start` can be stale after the call. Measure the written span from the
-        // current base (`variable_buffer`), which `end` is guaranteed to point
-        // into, rather than the possibly-freed `start`.
-        let base = variable_buffer;
+        // current base (`ctx.variable_buffer`), which `end` is guaranteed to
+        // point into, rather than the possibly-freed `start`.
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -1502,10 +1553,10 @@ mod path_family_tests {
     //! buffer alongside the converted safe handlers, asserting byte-identical
     //! output for both `notdir`/`suffix` and `basename`/`dir`.
     use super::{
-        find_next_token, func_basename_dir, func_notdir_suffix, size_t, stop_set, variable_buffer_output,
-        SafeFunc, MAP_DIRSEP, MAP_DOT, MAP_NUL,
+        find_next_token, func_basename_dir, func_notdir_suffix, size_t, stop_set,
+        variable_buffer_output, SafeFunc, MAP_DIRSEP, MAP_DOT, MAP_NUL,
     };
-    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CString};
 
@@ -1517,7 +1568,7 @@ mod path_family_tests {
     ) -> *mut c_char;
 
     unsafe fn func_notdir_suffix_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         funcname: *const c_char,
@@ -1542,6 +1593,7 @@ mod path_family_tests {
                 Some(pos) => {
                     if is_notdir != 0 {
                         o = variable_buffer_output(
+                            ctx,
                             o,
                             tok[pos + 1..].as_ptr() as *const c_char,
                             (tok.len() - pos - 1) as size_t,
@@ -1550,18 +1602,19 @@ mod path_family_tests {
                         continue;
                     } else {
                         o = variable_buffer_output(
+                            ctx,
                             o,
                             tok[pos..].as_ptr() as *const c_char,
                             (tok.len() - pos) as size_t,
                         );
                     }
-                    o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+                    o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
                     doneany = 1;
                 }
                 None => {
                     if is_notdir != 0 {
-                        o = variable_buffer_output(o, p2, len);
-                        o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+                        o = variable_buffer_output(ctx, o, p2, len);
+                        o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
                         doneany = 1;
                     }
                 }
@@ -1574,7 +1627,7 @@ mod path_family_tests {
     }
 
     unsafe fn func_basename_dir_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         funcname: *const c_char,
@@ -1597,19 +1650,19 @@ mod path_family_tests {
             let tok = ::core::slice::from_raw_parts(p2 as *const u8, len as usize);
             match tok.iter().rposition(|&c| stop_set(c, stop)) {
                 Some(pos) if is_dir != 0 => {
-                    o = variable_buffer_output(o, p2, (pos + 1) as size_t);
+                    o = variable_buffer_output(ctx, o, p2, (pos + 1) as size_t);
                 }
                 Some(pos) if tok[pos] == b'.' => {
-                    o = variable_buffer_output(o, p2, pos as size_t);
+                    o = variable_buffer_output(ctx, o, p2, pos as size_t);
                 }
                 _ if is_dir != 0 => {
-                    o = variable_buffer_output(o, b"./\0" as *const u8 as *const c_char, 2);
+                    o = variable_buffer_output(ctx, o, b"./\0" as *const u8 as *const c_char, 2);
                 }
                 _ => {
-                    o = variable_buffer_output(o, p2, len);
+                    o = variable_buffer_output(ctx, o, p2, len);
                 }
             }
-            o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+            o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
             doneany = 1;
         }
         if doneany != 0 {
@@ -1628,16 +1681,12 @@ mod path_family_tests {
         let cstr = CString::new(arg).unwrap();
         let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let name = CString::new(funcname).unwrap();
-        let start = initialize_variable_output();
-        let end = handler(
-            &crate::execctx::ExecContext::default(),
-            start,
-            argv.as_mut_ptr(),
-            name.as_ptr(),
-        );
-        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
+        // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // measure the span from the current base rather than the stale `start`.
-        let base = variable_buffer;
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -1708,7 +1757,7 @@ mod affix_tests {
     use super::{
         find_next_token, func_addsuffix_addprefix, size_t, strlen, variable_buffer_output, SafeFunc,
     };
-    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CString};
 
@@ -1720,7 +1769,7 @@ mod affix_tests {
     ) -> *mut c_char;
 
     unsafe fn func_addsuffix_addprefix_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         funcname: *const c_char,
@@ -1738,13 +1787,13 @@ mod affix_tests {
                 break;
             }
             if is_addprefix != 0 {
-                o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
+                o = variable_buffer_output(ctx, o, *argv.offset(0_i32 as isize), fixlen);
             }
-            o = variable_buffer_output(o, p, len);
+            o = variable_buffer_output(ctx, o, p, len);
             if is_addsuffix != 0 {
-                o = variable_buffer_output(o, *argv.offset(0_i32 as isize), fixlen);
+                o = variable_buffer_output(ctx, o, *argv.offset(0_i32 as isize), fixlen);
             }
-            o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+            o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
             doneany = 1;
         }
         if doneany != 0 {
@@ -1769,16 +1818,12 @@ mod affix_tests {
             ::core::ptr::null_mut(),
         ];
         let name = CString::new(funcname).unwrap();
-        let start = initialize_variable_output();
-        let end = handler(
-            &crate::execctx::ExecContext::default(),
-            start,
-            argv.as_mut_ptr(),
-            name.as_ptr(),
-        );
-        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
+        // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // measure the span from the current base rather than the stale `start`.
-        let base = variable_buffer;
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -1960,12 +2005,12 @@ unsafe fn parse_numeric(
         NumParse::Ok(n) => n,
         // `fatal` diverges (`-> !`), so these arms never produce an `i64`.
         NumParse::Empty => fatal(
-        ctx,
-        ctx.expanding_var_floc(),
-        msg.to_bytes().len() as size_t,
-        c"%s: empty value".as_ptr(),
-        &[FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char)],
-    ),
+            ctx,
+            ctx.expanding_var_floc(),
+            msg.to_bytes().len() as size_t,
+            c"%s: empty value".as_ptr(),
+            &[FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char)],
+        ),
         other => {
             let fmt = if other == NumParse::OutOfRange {
                 c"%s: '%s' out of range"
@@ -2002,7 +2047,13 @@ fn func_word(
     };
     if i < 1 {
         unsafe {
-            fatal(ctx, ctx.expanding_var_floc(), 0, c"first argument to 'word' function must be greater than 0".as_ptr(), &[]);
+            fatal(
+                ctx,
+                ctx.expanding_var_floc(),
+                0,
+                c"first argument to 'word' function must be greater than 0".as_ptr(),
+                &[],
+            );
         }
     }
     let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes() };
@@ -2013,7 +2064,12 @@ fn func_word(
         .and_then(|n| tokens(bytes).nth(n))
     {
         o = unsafe {
-            variable_buffer_output(o, w.as_ptr() as *const ::core::ffi::c_char, w.len() as size_t)
+            variable_buffer_output(
+                ctx,
+                o,
+                w.as_ptr() as *const ::core::ffi::c_char,
+                w.len() as size_t,
+            )
         };
     }
     o
@@ -2091,6 +2147,7 @@ fn func_wordlist(
     if let Some(span) = span {
         o = unsafe {
             variable_buffer_output(
+                ctx,
                 o,
                 span.as_ptr() as *const ::core::ffi::c_char,
                 span.len() as size_t,
@@ -2100,7 +2157,7 @@ fn func_wordlist(
     o
 }
 fn func_findstring(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
@@ -2111,6 +2168,7 @@ fn func_findstring(
     unsafe {
         if !strstr(*argv.offset(1_i32 as isize), *argv.offset(0_i32 as isize)).is_null() {
             o = variable_buffer_output(
+                ctx,
                 o,
                 *argv.offset(0_i32 as isize),
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
@@ -2132,7 +2190,7 @@ mod selection_tests {
         fatal, func_findstring, func_word, func_wordlist, make_lltoa, parse_numeric, size_t,
         strlen, strstr, tokens, variable_buffer_output, word_span, FmtArg,
     };
-    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CString};
 
@@ -2144,13 +2202,14 @@ mod selection_tests {
     ) -> *mut c_char;
 
     unsafe fn func_findstring_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
     ) -> *mut c_char {
         if !strstr(*argv.offset(1_i32 as isize), *argv.offset(0_i32 as isize)).is_null() {
             o = variable_buffer_output(
+                ctx,
                 o,
                 *argv.offset(0_i32 as isize),
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
@@ -2171,11 +2230,20 @@ mod selection_tests {
             c"invalid first argument to 'word' function",
         );
         if i < 1 {
-            fatal(ctx, ctx.expanding_var_floc(), 0, c"first argument to 'word' function must be greater than 0".as_ptr(), &[]);
+            fatal(
+                ctx,
+                ctx.expanding_var_floc(),
+                0,
+                c"first argument to 'word' function must be greater than 0".as_ptr(),
+                &[],
+            );
         }
         let bytes = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
-        if let Some(w) = usize::try_from(i - 1).ok().and_then(|n| tokens(bytes).nth(n)) {
-            o = variable_buffer_output(o, w.as_ptr() as *const c_char, w.len() as size_t);
+        if let Some(w) = usize::try_from(i - 1)
+            .ok()
+            .and_then(|n| tokens(bytes).nth(n))
+        {
+            o = variable_buffer_output(ctx, o, w.as_ptr() as *const c_char, w.len() as size_t);
         }
         o
     }
@@ -2233,6 +2301,7 @@ mod selection_tests {
             .and_then(|start| word_span(bytes, start, usize::try_from(stop).unwrap_or(usize::MAX)));
         if let Some(span) = span {
             o = variable_buffer_output(
+                ctx,
                 o,
                 span.as_ptr() as *const c_char,
                 span.len() as size_t,
@@ -2243,7 +2312,7 @@ mod selection_tests {
 
     /// Drive `handler` with `args` through a freshly initialized variable-output
     /// buffer and return the bytes it wrote. Measures the span from the current
-    /// `variable_buffer` base after the call (it may `xrealloc`), per #315.
+    /// `ctx.variable_buffer` base after the call (it may `xrealloc`), per #315.
     unsafe fn emit(handler: Handler, args: &[&[u8]]) -> Vec<u8> {
         let _g = VARIABLE_BUFFER_TEST_LOCK
             .lock()
@@ -2253,14 +2322,10 @@ mod selection_tests {
         let mut argv: Vec<*mut c_char> = cstrs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
         argv.push(::core::ptr::null_mut());
         let name = CString::new("f").unwrap();
-        let start = initialize_variable_output();
-        let end = handler(
-            &crate::execctx::ExecContext::default(),
-            start,
-            argv.as_mut_ptr(),
-            name.as_ptr(),
-        );
-        let base = variable_buffer;
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -2375,8 +2440,8 @@ unsafe fn func_foreach(
             body,
             ::core::ptr::null_mut::<File>(),
         ));
-        o = variable_buffer_output(o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
-        o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+        o = variable_buffer_output(ctx, o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
+        o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         doneany = 1;
     }
     if doneany != 0 {
@@ -2462,7 +2527,7 @@ unsafe fn func_let(
     o.offset(strlen(o) as isize)
 }
 unsafe fn func_filter_filterout(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
@@ -2614,8 +2679,13 @@ unsafe fn func_filter_filterout(
             ((*wp).matched == 0) as i32
         } != 0
         {
-            o = variable_buffer_output(o, (*wp).str_0, strlen((*wp).str_0) as size_t);
-            o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+            o = variable_buffer_output(ctx, o, (*wp).str_0, strlen((*wp).str_0) as size_t);
+            o = variable_buffer_output(
+                ctx,
+                o,
+                b" \0" as *const u8 as *const ::core::ffi::c_char,
+                1,
+            );
             doneany = 1;
         }
         wp = wp.offset(1_i32 as isize);
@@ -2653,7 +2723,7 @@ fn strip_words(bytes: &[u8]) -> Vec<u8> {
     out
 }
 fn func_strip(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
@@ -2662,13 +2732,15 @@ fn func_strip(
     // only unsafe is the FFI at the edges. SAFETY: the dispatcher passes an
     // `argv` of at least `maximum_args` NUL-terminated C strings (`strip` has
     // min = max = 1), so `argv[0]` is valid.
-    let stripped =
-        strip_words(unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes() });
+    let stripped = strip_words(unsafe {
+        ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)).to_bytes()
+    });
     if !stripped.is_empty() {
         // SAFETY: `o` is the caller's variable-buffer output cursor and
         // `stripped` is a valid byte buffer of the given length.
         o = unsafe {
             variable_buffer_output(
+                ctx,
                 o,
                 stripped.as_ptr() as *const ::core::ffi::c_char,
                 stripped.len() as size_t,
@@ -2690,21 +2762,25 @@ unsafe fn func_error(
     match logfn {
         Some(crate::parser::LogFunction::Error) => {
             fatal(
-        ctx,
-        ctx.reading_file.0.get(),
-        strlen(*argv.offset(0_i32 as isize)) as size_t,
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                ctx.reading_file.0.get(),
+                strlen(*argv.offset(0_i32 as isize)) as size_t,
+                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str(
+                    (*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char,
+                )],
+            );
         }
         Some(crate::parser::LogFunction::Warning) => {
             error(
-        ctx,
-        ctx.reading_file.0.get(),
-        strlen(*argv.offset(0_i32 as isize)) as size_t,
-        b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                ctx.reading_file.0.get(),
+                strlen(*argv.offset(0_i32 as isize)) as size_t,
+                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str(
+                    (*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char,
+                )],
+            );
         }
         Some(crate::parser::LogFunction::Info) => {
             // $(info ...): build "<arg>\n\0" in an owned buffer instead of a
@@ -2719,12 +2795,12 @@ unsafe fn func_error(
         }
         _ => {
             fatal(
-        ctx,
-        ctx.expanding_var_floc(),
-        strlen(funcname) as size_t,
-        b"INTERNAL: func_error: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((funcname) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                ctx.expanding_var_floc(),
+                strlen(funcname) as size_t,
+                b"INTERNAL: func_error: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((funcname) as *const ::core::ffi::c_char)],
+            );
         }
     }
     o
@@ -2749,7 +2825,7 @@ fn sort_words(bytes: &[u8]) -> Vec<u8> {
     out
 }
 fn func_sort(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
@@ -2765,6 +2841,7 @@ fn func_sort(
         // is a valid byte buffer of the given length.
         o = unsafe {
             variable_buffer_output(
+                ctx,
                 o,
                 sorted.as_ptr() as *const ::core::ffi::c_char,
                 sorted.len() as size_t,
@@ -2781,12 +2858,8 @@ mod strip_sort_tests {
     //! safe handlers, asserting the emitted bytes are identical — including the
     //! per-word `variable_buffer_output` calls and the trailing `o -= 1` trim
     //! the safe versions replaced with an owned buffer + `pop()`.
-    use super::{
-        func_sort, func_strip, size_t, stop_set, tokens, MAP_BLANK, MAP_NEWLINE,
-    };
-    use crate::expand::{
-        initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK,
-    };
+    use super::{func_sort, func_strip, size_t, stop_set, tokens, MAP_BLANK, MAP_NEWLINE};
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
     use crate::misc::alpha_cmp;
     use std::ffi::{c_char, CString};
@@ -2802,7 +2875,7 @@ mod strip_sort_tests {
     /// separator space via `variable_buffer_output`, then trim the trailing
     /// space by walking the cursor back one byte.
     unsafe fn func_strip_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
@@ -2824,11 +2897,12 @@ mod strip_sort_tests {
                 break;
             }
             o = super::variable_buffer_output(
+                ctx,
                 o,
                 bytes[word_start..].as_ptr() as *const c_char,
                 word_len as size_t,
             );
-            o = super::variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+            o = super::variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
             doneany = true;
         }
         if doneany {
@@ -2841,7 +2915,7 @@ mod strip_sort_tests {
     /// followed by a separator space, then trim the trailing space by walking
     /// the cursor back one byte.
     unsafe fn func_sort_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
@@ -2853,11 +2927,12 @@ mod strip_sort_tests {
             words.dedup();
             for w in words {
                 o = super::variable_buffer_output(
+                    ctx,
                     o,
                     w.as_ptr() as *const c_char,
                     w.len() as size_t,
                 );
-                o = super::variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+                o = super::variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
             }
             o = o.offset(-1_i32 as isize);
         }
@@ -2874,18 +2949,14 @@ mod strip_sort_tests {
         let cstr = CString::new(arg).unwrap();
         let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let name = CString::new("f").unwrap();
-        let start = initialize_variable_output();
-        let end = handler(
-            &crate::execctx::ExecContext::default(),
-            start,
-            argv.as_mut_ptr(),
-            name.as_ptr(),
-        );
-        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
+        // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // `start` can be stale after the call. Measure the written span from the
-        // current base (`variable_buffer`), which `end` is guaranteed to point
-        // into, rather than the possibly-freed `start`.
-        let base = variable_buffer;
+        // current base (`ctx.variable_buffer`), which `end` is guaranteed to
+        // point into, rather than the possibly-freed `start`.
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -3013,20 +3084,22 @@ unsafe fn parse_textint(
     let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
     match classify_textint(t) {
         TextInt::Empty => fatal(
-        ctx,
-        ctx.expanding_var_floc(),
-        strlen(msg) as size_t,
-        b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
-    ),
+            ctx,
+            ctx.expanding_var_floc(),
+            strlen(msg) as size_t,
+            b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
+        ),
         TextInt::NotNumeric => fatal(
-        ctx,
-        ctx.expanding_var_floc(),
-        (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
-        b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((msg) as *const ::core::ffi::c_char),
-            FmtArg::Str((number) as *const ::core::ffi::c_char)],
-    ),
+            ctx,
+            ctx.expanding_var_floc(),
+            (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
+            b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+            &[
+                FmtArg::Str((msg) as *const ::core::ffi::c_char),
+                FmtArg::Str((number) as *const ::core::ffi::c_char),
+            ],
+        ),
         TextInt::Parsed {
             sign: s,
             num_start,
@@ -3107,9 +3180,15 @@ unsafe fn func_intcmp(
     argv = argv.offset(2_i32 as isize);
     if (*argv).is_null() && cmp == 0 {
         if lsign < 0 {
-            o = variable_buffer_output(o, b"-\0" as *const u8 as *const ::core::ffi::c_char, 1);
+            o = variable_buffer_output(
+                ctx,
+                o,
+                b"-\0" as *const u8 as *const ::core::ffi::c_char,
+                1,
+            );
         }
         o = variable_buffer_output(
+            ctx,
             o,
             lnum.offset(-((lsign == 0) as i32 as isize)),
             (llen + (lsign == 0) as i32 as ptrdiff_t) as size_t,
@@ -3123,7 +3202,12 @@ unsafe fn func_intcmp(
     }
     if !(*argv).is_null() {
         let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
-        o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
+        o = variable_buffer_output(
+            ctx,
+            o,
+            expansion.as_ptr(),
+            strlen(expansion.as_ptr()) as size_t,
+        );
     }
     o
 }
@@ -3184,7 +3268,12 @@ unsafe fn func_if(
     argv = argv.offset((1 + (!condition) as i32) as isize);
     if !(*argv).is_null() {
         let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
-        o = variable_buffer_output(o, expansion.as_ptr(), strlen(expansion.as_ptr()) as size_t);
+        o = variable_buffer_output(
+            ctx,
+            o,
+            expansion.as_ptr(),
+            strlen(expansion.as_ptr()) as size_t,
+        );
     }
     o
 }
@@ -3198,7 +3287,7 @@ unsafe fn func_or(
         if let Some(expansion) = expand_trimmed(ctx, *argv) {
             let result = strlen(expansion.as_ptr()) as size_t;
             if result != 0 {
-                o = variable_buffer_output(o, expansion.as_ptr(), result);
+                o = variable_buffer_output(ctx, o, expansion.as_ptr(), result);
                 break;
             }
         }
@@ -3224,7 +3313,7 @@ unsafe fn func_and(
         }
         argv = argv.offset(1_i32 as isize);
         if (*argv).is_null() {
-            o = variable_buffer_output(o, expansion.as_ptr(), result);
+            o = variable_buffer_output(ctx, o, expansion.as_ptr(), result);
             break;
         }
         // More arguments remain: drop this expansion and evaluate the next.
@@ -3299,7 +3388,12 @@ unsafe fn func_wildcard(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let names = string_glob(ctx, *argv.offset(0_i32 as isize));
-    o = variable_buffer_output(o, names.as_ptr() as *const ::core::ffi::c_char, names.len() as size_t);
+    o = variable_buffer_output(
+        ctx,
+        o,
+        names.as_ptr() as *const ::core::ffi::c_char,
+        names.len() as size_t,
+    );
     o
 }
 unsafe fn func_eval(
@@ -3310,13 +3404,13 @@ unsafe fn func_eval(
 ) -> *mut ::core::ffi::c_char {
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
-    install_variable_buffer(&raw mut buf, &raw mut len);
+    install_variable_buffer(ctx, &raw mut buf, &raw mut len);
     eval_buffer(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<Floc>(),
     );
-    restore_variable_buffer(buf, len);
+    restore_variable_buffer(ctx, buf, len);
     o
 }
 unsafe fn func_value(
@@ -3331,7 +3425,7 @@ unsafe fn func_value(
         strlen(*argv.offset(0_i32 as isize)) as size_t,
     );
     if !v.is_null() {
-        o = variable_buffer_output(o, (*v).value, strlen((*v).value) as size_t);
+        o = variable_buffer_output(ctx, o, (*v).value, strlen((*v).value) as size_t);
     }
     o
 }
@@ -3443,7 +3537,9 @@ pub unsafe fn shell_completed(
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     ctx.shell_function_pid.0.store(0, Ordering::Relaxed);
     if exit_sig == 0 && exit_code == 127 {
-        ctx.shell_function_completed.0.store(-1_i32, Ordering::Relaxed);
+        ctx.shell_function_completed
+            .0
+            .store(-1_i32, Ordering::Relaxed);
     } else {
         ctx.shell_function_completed.0.store(1, Ordering::Relaxed);
     }
@@ -3622,12 +3718,14 @@ pub unsafe fn func_shell_base(
     child.environment = target_environment(ctx, None, 0);
     if pipe(&raw mut pipedes as *mut i32) < 0 {
         error(
-        ctx,
-        ctx.reading_file.0.get(),
-        strlen(strerror(*__errno_location())) as size_t,
-        b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+            ctx,
+            ctx.reading_file.0.get(),
+            strlen(strerror(*__errno_location())) as size_t,
+            b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str(
+                (strerror(*__errno_location())) as *const ::core::ffi::c_char,
+            )],
+        );
     } else {
         fd_noinherit(pipedes[1_i32 as usize]);
         fd_noinherit(pipedes[0_i32 as usize]);
@@ -3668,7 +3766,7 @@ pub unsafe fn func_shell_base(
                 &raw mut i,
                 trim_newlines,
             );
-            o = variable_buffer_output(o, buffer.as_mut_ptr() as *mut ::core::ffi::c_char, i);
+            o = variable_buffer_output(ctx, o, buffer.as_mut_ptr() as *mut ::core::ffi::c_char, i);
         }
     }
     if !command_argv.is_null() {
@@ -3808,7 +3906,7 @@ fn realpath_token(token: &[u8]) -> Option<Vec<u8>> {
     Some(bytes)
 }
 unsafe fn func_realpath(
-    _ctx: &crate::execctx::ExecContext,
+    ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
@@ -3827,11 +3925,17 @@ unsafe fn func_realpath(
             let token = ::core::slice::from_raw_parts(path as *const u8, len as usize);
             if let Some(resolved) = realpath_token(token) {
                 o = variable_buffer_output(
+                    ctx,
                     o,
                     resolved.as_ptr() as *const ::core::ffi::c_char,
                     resolved.len() as size_t,
                 );
-                o = variable_buffer_output(o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
+                o = variable_buffer_output(
+                    ctx,
+                    o,
+                    b" \0" as *const u8 as *const ::core::ffi::c_char,
+                    1,
+                );
                 doneany = 1;
             }
         }
@@ -3862,7 +3966,13 @@ unsafe fn func_file(
         }
         start = next_token(fn_0);
         if *start.offset(0_i32 as isize) as i32 == 0 {
-            fatal(ctx, ctx.expanding_var_floc(), 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            fatal(
+                ctx,
+                ctx.expanding_var_floc(),
+                0,
+                b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start, NUL)` is exactly the token length.
@@ -3887,14 +3997,16 @@ unsafe fn func_file(
         }
         if fp.is_null() {
             fatal(
-        ctx,
-        ctx.reading_file.0.get(),
-        (strlen(nm) as size_t)
+                ctx,
+                ctx.reading_file.0.get(),
+                (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((nm) as *const ::core::ffi::c_char),
+                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                ],
+            );
         }
         crate::make_main::bump_command_count();
         if !(*argv.offset(1_i32 as isize)).is_null() {
@@ -3906,26 +4018,30 @@ unsafe fn func_file(
                 || nl != 0 && fputc('\n' as i32, fp) == EOF
             {
                 fatal(
-        ctx,
-        ctx.reading_file.0.get(),
-        (strlen(nm) as size_t)
+                    ctx,
+                    ctx.reading_file.0.get(),
+                    (strlen(nm) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"write: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                    b"write: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str((nm) as *const ::core::ffi::c_char),
+                        FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    ],
+                );
             }
         }
         if fclose(fp) != 0 {
             fatal(
-        ctx,
-        ctx.reading_file.0.get(),
-        (strlen(nm) as size_t)
+                ctx,
+                ctx.reading_file.0.get(),
+                (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((nm) as *const ::core::ffi::c_char),
+                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                ],
+            );
         }
     } else if *fn_0.offset(0_i32 as isize) as i32 == '<' as i32 {
         let mut n: size_t = 0;
@@ -3934,10 +4050,22 @@ unsafe fn func_file(
         let mut fp_0: *mut FILE;
         start_0 = next_token(fn_0.offset(1_i32 as isize));
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
-            fatal(ctx, ctx.expanding_var_floc(), 0, b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            fatal(
+                ctx,
+                ctx.expanding_var_floc(),
+                0,
+                b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            fatal(ctx, ctx.expanding_var_floc(), 0, b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+            fatal(
+                ctx,
+                ctx.expanding_var_floc(),
+                0,
+                b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            );
         }
         // Bridge to the safe `end_of_token`: the returned offset of the first
         // whitespace/NUL within `[start_0, NUL)` is exactly the token length.
@@ -3974,14 +4102,16 @@ unsafe fn func_file(
                 return o;
             }
             fatal(
-        ctx,
-        ctx.reading_file.0.get(),
-        (strlen(nm_0) as size_t)
+                ctx,
+                ctx.reading_file.0.get(),
+                (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
+                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                ],
+            );
         }
         loop {
             let mut buf: [::core::ffi::c_char; 1024] = [0; 1024];
@@ -3992,19 +4122,21 @@ unsafe fn func_file(
                 fp_0,
             ) as size_t;
             if l_0 > 0 {
-                o = variable_buffer_output(o, &raw mut buf as *mut ::core::ffi::c_char, l_0);
+                o = variable_buffer_output(ctx, o, &raw mut buf as *mut ::core::ffi::c_char, l_0);
                 n = n.wrapping_add(l_0);
             }
             if ferror(fp_0) != 0 && *__errno_location() != EINTR {
                 fatal(
-        ctx,
-        ctx.reading_file.0.get(),
-        (strlen(nm_0) as size_t)
+                    ctx,
+                    ctx.reading_file.0.get(),
+                    (strlen(nm_0) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                    b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &[
+                        FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
+                        FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    ],
+                );
             }
             if feof(fp_0) != 0 {
                 break;
@@ -4012,14 +4144,16 @@ unsafe fn func_file(
         }
         if fclose(fp_0) != 0 {
             fatal(
-        ctx,
-        ctx.reading_file.0.get(),
-        (strlen(nm_0) as size_t)
+                ctx,
+                ctx.reading_file.0.get(),
+                (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-        b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-            FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char)],
-    );
+                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
+                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                ],
+            );
         }
         if n != 0 && *o.offset(-1_i32 as isize) as i32 == '\n' as i32 {
             o = o.offset(
@@ -4029,12 +4163,12 @@ unsafe fn func_file(
         }
     } else {
         fatal(
-        ctx,
-        ctx.expanding_var_floc(),
-        strlen(fn_0) as size_t,
-        b"file: invalid file operation: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((fn_0) as *const ::core::ffi::c_char)],
-    );
+            ctx,
+            ctx.expanding_var_floc(),
+            strlen(fn_0) as size_t,
+            b"file: invalid file operation: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str((fn_0) as *const ::core::ffi::c_char)],
+        );
     }
     o
 }
@@ -4094,7 +4228,7 @@ mod func_abspath_tests {
         abspath_into, abspath_result, find_next_token, func_abspath, size_t,
         starting_directory_bytes, variable_buffer_output, SafeFunc, GET_PATH_MAX,
     };
-    use crate::expand::{initialize_variable_output, variable_buffer, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CString};
 
@@ -4106,7 +4240,7 @@ mod func_abspath_tests {
     ) -> *mut c_char;
 
     unsafe fn func_abspath_unsafe_oracle(
-        _ctx: &crate::execctx::ExecContext,
+        ctx: &crate::execctx::ExecContext,
         mut o: *mut c_char,
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
@@ -4126,8 +4260,13 @@ mod func_abspath_tests {
                 let mut out: [u8; 4097] = [0; 4097];
                 let name = ::core::slice::from_raw_parts(path as *const u8, len as usize);
                 if let Some(out_len) = abspath_into(name, starting_dir, &mut out) {
-                    o = variable_buffer_output(o, out.as_ptr() as *mut c_char, out_len as size_t);
-                    o = variable_buffer_output(o, b" \0" as *const u8 as *const c_char, 1);
+                    o = variable_buffer_output(
+                        ctx,
+                        o,
+                        out.as_ptr() as *mut c_char,
+                        out_len as size_t,
+                    );
+                    o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
                     doneany = 1;
                 }
             }
@@ -4148,16 +4287,12 @@ mod func_abspath_tests {
         let cstr = CString::new(arg).unwrap();
         let mut argv: [*mut c_char; 2] = [cstr.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let name = CString::new("abspath").unwrap();
-        let start = initialize_variable_output();
-        let end = handler(
-            &crate::execctx::ExecContext::default(),
-            start,
-            argv.as_mut_ptr(),
-            name.as_ptr(),
-        );
-        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
+        // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // measure the span from the current base rather than the stale `start`.
-        let base = variable_buffer;
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -4316,11 +4451,12 @@ const function_table_init: [function_table_entry; 38] = [
 /// `free`. Kept separate so the owned buffer's `Drop` scope stays out of the
 /// hot `expand_builtin_function` dispatch.
 unsafe fn output_owned_result(
+    ctx: &crate::execctx::ExecContext,
     o: *mut ::core::ffi::c_char,
     p: *mut ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
     let owned = ExpandedArg::from_raw(p);
-    variable_buffer_output(o, owned.as_ptr(), strlen(owned.as_ptr()) as size_t)
+    variable_buffer_output(ctx, o, owned.as_ptr(), strlen(owned.as_ptr()) as size_t)
 }
 unsafe fn expand_builtin_function(
     ctx: &crate::execctx::ExecContext,
@@ -4373,12 +4509,10 @@ unsafe fn expand_builtin_function(
         let args: Vec<&[u8]> = (0..argc as usize)
             .map(|i| ::core::ffi::CStr::from_ptr(*argv.add(i)).to_bytes())
             .collect();
-        let result = entry
-            .fptr
-            .safe_func_ptr
-            .expect("non-null function pointer")(name, &args);
+        let result = entry.fptr.safe_func_ptr.expect("non-null function pointer")(name, &args);
         if !result.is_empty() {
             o = variable_buffer_output(
+                ctx,
                 o,
                 result.as_ptr() as *const ::core::ffi::c_char,
                 result.len() as size_t,
@@ -4387,19 +4521,14 @@ unsafe fn expand_builtin_function(
         return o;
     }
     if entry.alloc_fn() == 0 {
-        return entry.fptr.func_ptr.expect("non-null function pointer")(
-            ctx,
-            o,
-            argv,
-            entry.name,
-        );
+        return entry.fptr.func_ptr.expect("non-null function pointer")(ctx, o, argv, entry.name);
     }
     p = entry
         .fptr
         .alloc_func_ptr
         .expect("non-null function pointer")(entry.name, argc, argv);
     if !p.is_null() {
-        o = output_owned_result(o, p);
+        o = output_owned_result(ctx, o, p);
     }
     o
 }
@@ -4494,14 +4623,16 @@ pub unsafe fn handle_function(
     }
     if count >= 0 {
         fatal(
-        ctx,
-        ctx.expanding_var_floc(),
-        strlen(entry.name) as size_t,
-        b"unterminated call to function '%s': missing '%c'\0" as *const u8
+            ctx,
+            ctx.expanding_var_floc(),
+            strlen(entry.name) as size_t,
+            b"unterminated call to function '%s': missing '%c'\0" as *const u8
                 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
-            FmtArg::Int((closeparen as i32) as i64)],
-    );
+            &[
+                FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
+                FmtArg::Int((closeparen as i32) as i64),
+            ],
+        );
     }
     *stringp = end;
     alloca_allocations.push(::std::vec::from_elem(
@@ -4701,25 +4832,31 @@ pub unsafe fn define_new_function(
     }
     len = e.offset_from(name) as ::core::ffi::c_long as size_t;
     if len == 0 {
-        fatal(ctx, flocp, 0, b"empty function name\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        fatal(
+            ctx,
+            flocp,
+            0,
+            b"empty function name\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        );
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
         fatal(
-        ctx,
-        flocp,
-        strlen(name) as size_t,
-        b"invalid function name: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+            ctx,
+            flocp,
+            strlen(name) as size_t,
+            b"invalid function name: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+        );
     }
     if len > 255 {
         fatal(
-        ctx,
-        flocp,
-        strlen(name) as size_t,
-        b"function name too long: %s\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-    );
+            ctx,
+            flocp,
+            strlen(name) as size_t,
+            b"function name too long: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+        );
     }
     if min > 255 {
         fatal(
@@ -4763,8 +4900,10 @@ pub unsafe fn define_new_function(
     (*ent).set_alloc_fn(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     (*ent).set_adds_command(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     (*ent).fptr.alloc_func_ptr = func;
-    ent = hash_insert(ctx.function_table.0.as_ptr(), ent as *const ::core::ffi::c_void)
-        as *mut function_table_entry;
+    ent = hash_insert(
+        ctx.function_table.0.as_ptr(),
+        ent as *const ::core::ffi::c_void,
+    ) as *mut function_table_entry;
     free(ent as *mut ::core::ffi::c_void);
 }
 /// # Safety
@@ -5343,27 +5482,32 @@ mod realpath_tests {
 mod subst_and_strip_tests {
     use super::{func_strip, subst_expand};
     use crate::expand::{
-        initialize_variable_output, variable_buffer, variable_buffer_output,
-        VARIABLE_BUFFER_TEST_LOCK,
+        initialize_variable_output, variable_buffer_output, VARIABLE_BUFFER_TEST_LOCK,
     };
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CStr, CString};
 
     /// Run `body` with a freshly initialized variable-output buffer, returning
     /// the bytes it wrote (`[buffer, end_cursor)`), where `body` returns the
-    /// end cursor produced by the function under test.
-    unsafe fn with_output<F: FnOnce(*mut c_char) -> *mut c_char>(body: F) -> Vec<u8> {
+    /// end cursor produced by the function under test. `body` receives the same
+    /// freshly built [`crate::execctx::ExecContext`] that owns the buffer, so
+    /// whatever it calls (`subst_expand`, `func_strip`, ...) writes into the
+    /// buffer this helper measures rather than some other context's.
+    unsafe fn with_output<F: FnOnce(&crate::execctx::ExecContext, *mut c_char) -> *mut c_char>(
+        body: F,
+    ) -> Vec<u8> {
         let _g = VARIABLE_BUFFER_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         initialize_stopchar_map();
-        let start = initialize_variable_output();
-        let end = body(start);
-        // `variable_buffer_output` may `xrealloc` and move the global buffer, so
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = body(&ctx, start);
+        // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // `start` can be stale after the call. Measure the written span from the
-        // current base (`variable_buffer`), which `end` is guaranteed to point
-        // into, rather than the possibly-freed `start`.
-        let base = variable_buffer;
+        // current base (`ctx.variable_buffer`), which `end` is guaranteed to
+        // point into, rather than the possibly-freed `start`.
+        let base = ctx.variable_buffer.ptr.get();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -5376,8 +5520,17 @@ mod subst_and_strip_tests {
             let text = CString::new("a.b.c").unwrap();
             let subst = CString::new(".").unwrap();
             let replace = CString::new("-").unwrap();
-            let out = with_output(|o| {
-                subst_expand(o, text.as_ptr(), subst.as_ptr(), replace.as_ptr(), 1, 1, 0)
+            let out = with_output(|ctx, o| {
+                subst_expand(
+                    ctx,
+                    o,
+                    text.as_ptr(),
+                    subst.as_ptr(),
+                    replace.as_ptr(),
+                    1,
+                    1,
+                    0,
+                )
             });
             assert_eq!(out, b"a-b-c");
         }
@@ -5390,8 +5543,17 @@ mod subst_and_strip_tests {
             let text = CString::new("xy").unwrap();
             let subst = CString::new("").unwrap();
             let replace = CString::new("Z").unwrap();
-            let out = with_output(|o| {
-                subst_expand(o, text.as_ptr(), subst.as_ptr(), replace.as_ptr(), 0, 1, 0)
+            let out = with_output(|ctx, o| {
+                subst_expand(
+                    ctx,
+                    o,
+                    text.as_ptr(),
+                    subst.as_ptr(),
+                    replace.as_ptr(),
+                    0,
+                    1,
+                    0,
+                )
             });
             assert_eq!(out, b"xyZ");
         }
@@ -5405,8 +5567,17 @@ mod subst_and_strip_tests {
             let text = CString::new("foo foobar foo").unwrap();
             let subst = CString::new("foo").unwrap();
             let replace = CString::new("Q").unwrap();
-            let out = with_output(|o| {
-                subst_expand(o, text.as_ptr(), subst.as_ptr(), replace.as_ptr(), 3, 1, 1)
+            let out = with_output(|ctx, o| {
+                subst_expand(
+                    ctx,
+                    o,
+                    text.as_ptr(),
+                    subst.as_ptr(),
+                    replace.as_ptr(),
+                    3,
+                    1,
+                    1,
+                )
             });
             assert_eq!(out, b"Q foobar Q");
         }
@@ -5419,14 +5590,7 @@ mod subst_and_strip_tests {
             // argv is a NULL-terminated vector of arg pointers.
             let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
             let name = CString::new("strip").unwrap();
-            let out = with_output(|o| {
-                func_strip(
-                    &crate::execctx::ExecContext::default(),
-                    o,
-                    argv.as_mut_ptr(),
-                    name.as_ptr(),
-                )
-            });
+            let out = with_output(|ctx, o| func_strip(ctx, o, argv.as_mut_ptr(), name.as_ptr()));
             // Words separated by single spaces, no leading/trailing space.
             assert_eq!(out, b"a b c");
             // Keep `arg` alive until after the call.
@@ -5440,14 +5604,7 @@ mod subst_and_strip_tests {
             let arg = CString::new("   \t  ").unwrap();
             let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
             let name = CString::new("strip").unwrap();
-            let out = with_output(|o| {
-                func_strip(
-                    &crate::execctx::ExecContext::default(),
-                    o,
-                    argv.as_mut_ptr(),
-                    name.as_ptr(),
-                )
-            });
+            let out = with_output(|ctx, o| func_strip(ctx, o, argv.as_mut_ptr(), name.as_ptr()));
             assert_eq!(out, b"");
         }
     }
@@ -5460,12 +5617,13 @@ mod subst_and_strip_tests {
             let _g = VARIABLE_BUFFER_TEST_LOCK
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let start = initialize_variable_output();
+            let ctx = crate::execctx::ExecContext::default();
+            let start = initialize_variable_output(&ctx);
             let s = CString::new("hi").unwrap();
-            let end = variable_buffer_output(start, s.as_ptr(), 2);
+            let end = variable_buffer_output(&ctx, start, s.as_ptr(), 2);
             assert_eq!(end.offset_from(start), 2);
             assert_eq!(*end, 0, "buffer is NUL-terminated at the cursor");
-            assert!(!variable_buffer.is_null());
+            assert!(!ctx.variable_buffer.ptr.get().is_null());
         }
     }
 }

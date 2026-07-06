@@ -729,6 +729,14 @@ pub struct ExecContext {
     /// folded onto the context): `reading_file` holds a raw pointer into this
     /// cell for as long as that context is installed, so it must not move.
     pub recipe_reading_floc: RecipeReadingFloc,
+
+    /// The shared grow-on-demand output buffer every `$(...)`/recipe
+    /// expansion writes into (pointer + capacity), the former `expand.rs`
+    /// `static mut variable_buffer` / `static mut variable_buffer_length`
+    /// pair. Nothing ever takes the address of the static itself (only the
+    /// heap memory it points at), so a plain `Cell`-based field -- not a
+    /// `Box`-pinned one like [`Self::recipe_reading_floc`] -- is correct here.
+    pub variable_buffer: VariableBuffer,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1362,6 +1370,27 @@ impl ::core::fmt::Debug for RecipeReadingFloc {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         // `Floc` has no `Debug`; nothing but "present" is meaningful here.
         f.debug_tuple("RecipeReadingFloc").finish()
+    }
+}
+
+/// [`ExecContext::variable_buffer`]'s pointer + capacity pair, the former
+/// `expand.rs` `static mut variable_buffer` / `static mut
+/// variable_buffer_length` globals. Raw pointers have no `Default`, so
+/// (like [`ReadingFile`]) this needs its own wrapper; unlike
+/// [`RecipeReadingFloc`], nothing takes this field's own address, so a plain
+/// (non-`Box`ed) pair of `Cell`s is sufficient.
+#[derive(Debug, Clone)]
+pub struct VariableBuffer {
+    pub ptr: ::core::cell::Cell<*mut ::core::ffi::c_char>,
+    pub length: ::core::cell::Cell<crate::ffi_types::size_t>,
+}
+
+impl Default for VariableBuffer {
+    fn default() -> Self {
+        Self {
+            ptr: ::core::cell::Cell::new(::core::ptr::null_mut()),
+            length: ::core::cell::Cell::new(0),
+        }
     }
 }
 
@@ -2053,6 +2082,38 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// The `$(...)`/recipe expansion output buffer (the former `expand.rs`
+    /// `static mut variable_buffer`/`variable_buffer_length`) starts empty,
+    /// is per-run, and survives the `main_0` carry-over the same way
+    /// [`read_dirstream_buffer_starts_empty_and_survives_carry_over`]
+    /// verifies for `read_dirstream_buf` -- a single heap block must serve
+    /// the whole run, as the former static did.
+    #[test]
+    fn variable_buffer_starts_empty_and_survives_carry_over() {
+        let ctx = ExecContext::default();
+        assert!(ctx.variable_buffer.ptr.get().is_null());
+        assert_eq!(ctx.variable_buffer.length.get(), 0);
+
+        let sentinel = ::core::ptr::dangling_mut::<::core::ffi::c_char>();
+        let mut populated = ExecContext::default();
+        populated.variable_buffer.ptr.set(sentinel);
+        populated.variable_buffer.length.set(200);
+
+        let carried_variable_buffer = ::core::mem::take(&mut populated.variable_buffer);
+        let rebuilt = ExecContext {
+            variable_buffer: carried_variable_buffer,
+            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+        };
+        assert_eq!(rebuilt.variable_buffer.ptr.get(), sentinel);
+        assert_eq!(rebuilt.variable_buffer.length.get(), 200);
+        assert!(populated.variable_buffer.ptr.get().is_null());
+        assert_eq!(populated.variable_buffer.length.get(), 0);
+        assert_eq!(rebuilt.makelevel(), 1);
+
+        assert!(ExecContext::default().variable_buffer.ptr.get().is_null());
+        assert_eq!(ExecContext::default().variable_buffer.length.get(), 0);
     }
 
     /// `parse_file_seq`'s reused scratch buffer (the former function-local

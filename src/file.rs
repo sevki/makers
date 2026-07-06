@@ -340,9 +340,7 @@ impl FileNode {
 // Re-exported here so existing `crate::file::Commands` paths — and the
 // `pub type commands = Commands` alias below — keep resolving.
 use crate::commands::{print_commands, set_file_variables};
-use crate::expand::{
-    expand_string_buf, expand_string_for_file, variable_buffer, variable_buffer_output,
-};
+use crate::expand::{expand_string_buf, expand_string_for_file, variable_buffer_output};
 use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
 use crate::make_main::{db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP};
@@ -1438,13 +1436,15 @@ pub unsafe fn enter_prereqs(
                         strlen(percent),
                     );
                     o = variable_buffer_output(
-                        variable_buffer,
+                        ctx,
+                        ctx.variable_buffer.ptr.get(),
                         nm_ptr,
                         (strlen(nm_ptr) as size_t).wrapping_add(1),
                     );
                 } else {
                     o = patsubst_expand_pat(
-                        variable_buffer,
+                        ctx,
+                        ctx.variable_buffer.ptr.get(),
                         stem_c.as_ptr() as *const ::core::ffi::c_char,
                         pattern,
                         nm_ptr,
@@ -1452,13 +1452,13 @@ pub unsafe fn enter_prereqs(
                         percent.offset(1_i32 as isize),
                     );
                 }
-                if *variable_buffer.offset(0_i32 as isize) as i32 == 0 {
+                if *ctx.variable_buffer.ptr.get().offset(0_i32 as isize) as i32 == 0 {
                     // Expanded to nothing: drop this prerequisite.
                     continue;
                 } else {
                     let result = ::core::slice::from_raw_parts(
-                        variable_buffer as *const u8,
-                        o.offset_from(variable_buffer) as usize,
+                        ctx.variable_buffer.ptr.get() as *const u8,
+                        o.offset_from(ctx.variable_buffer.ptr.get()) as usize,
                     );
                     d.name = String::from_utf8_lossy(result).into_owned();
                 }
@@ -3087,7 +3087,7 @@ mod tests {
             crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
-            crate::expand::initialize_variable_output();
+            crate::expand::initialize_variable_output(&ctx);
 
             let deps = vec![dep_node_from_name(b"%.o".to_vec(), false, false)];
             let out = enter_prereqs(&ctx, deps, Some(b"epp_stem"));
@@ -3115,7 +3115,7 @@ mod tests {
         unsafe {
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
-            crate::expand::initialize_variable_output();
+            crate::expand::initialize_variable_output(&ctx);
 
             let deps = vec![dep_node_from_name(b"%".to_vec(), false, false)];
             // The bare `%` with an empty stem expands to "", so the dep is

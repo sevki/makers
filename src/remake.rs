@@ -42,7 +42,7 @@ use crate::floc::Floc;
 
 use crate::ar::{ar_member_date, ar_name, ar_parse_name, ar_touch};
 use crate::commands::{chop_commands, execute_file_commands};
-use crate::expand::{allocated_expand_variable, variable_buffer, variable_buffer_output};
+use crate::expand::{allocated_expand_variable, variable_buffer_output};
 pub use crate::file::nameseq;
 use crate::file::{
     enter_file, expand_deps, file_timestamp_cons, file_timestamp_now, lookup_file, rehash_file,
@@ -498,11 +498,7 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
         for goal in list.iter_mut() {
             if goal.dep.file == cur_file {
                 if goal.error != 0 {
-                    let name = goal
-                        .dep
-                        .file
-                        .map(|f| node_name(ctx, f))
-                        .unwrap_or_default();
+                    let name = goal.dep.file.map(|f| node_name(ctx, f)).unwrap_or_default();
                     let cn = cname(&name);
                     // The error is located at the goal's source floc (the
                     // include directive), the c2rust `&goal->floc`. Materialize
@@ -1866,7 +1862,13 @@ pub fn check_dep(
                     }
                     let mut maybe_make = *must_make;
                     // lock: no guard held across check_dep.
-                    let new = check_dep(ctx, dep_file, depth.wrapping_add(1), this_mtime, &mut maybe_make);
+                    let new = check_dep(
+                        ctx,
+                        dep_file,
+                        depth.wrapping_add(1),
+                        this_mtime,
+                        &mut maybe_make,
+                    );
                     if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                         dep_status = new;
                     }
@@ -2576,18 +2578,20 @@ unsafe extern "C" fn library_search(
             *p.offset(len as isize) = c;
         } else {
             p4 = variable_buffer_output(
-                variable_buffer,
+                ctx,
+                ctx.variable_buffer.ptr.get(),
                 p,
                 p3.offset_from(p) as ::core::ffi::c_long as size_t,
             );
-            p4 = variable_buffer_output(p4, lib, liblen);
+            p4 = variable_buffer_output(ctx, p4, lib, liblen);
             variable_buffer_output(
+                ctx,
                 p4,
                 p3.offset(1_i32 as isize),
                 len.wrapping_sub(p3.offset_from(p) as ::core::ffi::c_long as size_t),
             );
             *p.offset(len as isize) = c;
-            libbuf = variable_buffer;
+            libbuf = ctx.variable_buffer.ptr.get();
             mtime = name_mtime(ctx, libbuf);
             if mtime != NONEXISTENT_MTIME as uintmax_t {
                 if !mtime_ptr.is_null() {
