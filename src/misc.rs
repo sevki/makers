@@ -5,8 +5,8 @@
 //! their callers (the makefile reader, the variable expander, the job
 //! runner) are still C-shaped.
 
-use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
-use ::core::ptr::{null, null_mut};
+use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void, CStr};
+use ::core::ptr::null_mut;
 
 use libc::{
     __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, putchar, read, realloc,
@@ -16,7 +16,6 @@ use libc::{
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
 use crate::file::nameseq;
-use crate::floc::Floc;
 use crate::make_main::{posix_pedantic, stopchar_map};
 use crate::output::{error, out_of_memory, FmtArg};
 use crate::posixos::os_anontmp;
@@ -646,13 +645,15 @@ unsafe fn eval_tmpdir_var(
     if r < 0 {
         error(
             ctx,
-            null::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             var.count_bytes() + strlen(val) + strlen(strerror(*__errno_location())),
-            c"%s value %s: %s".as_ptr(),
+            c"%s value %s: %s",
             &[
-                FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
-                FmtArg::Str((val) as *const ::core::ffi::c_char),
-                FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                FmtArg::Str(var),
+                FmtArg::Str(CStr::from_ptr(val)),
+                FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
             ],
         );
         return TmpdirCandidate::Invalid;
@@ -660,13 +661,12 @@ unsafe fn eval_tmpdir_var(
     if st.st_mode & S_IFMT != S_IFDIR {
         error(
             ctx,
-            null::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             var.count_bytes() + strlen(val),
-            c"%s value %s: not a directory".as_ptr(),
-            &[
-                FmtArg::Str((var.as_ptr()) as *const ::core::ffi::c_char),
-                FmtArg::Str((val) as *const ::core::ffi::c_char),
-            ],
+            c"%s value %s: not a directory",
+            &[FmtArg::Str(var), FmtArg::Str(CStr::from_ptr(val))],
         );
         return TmpdirCandidate::Invalid;
     }
@@ -699,10 +699,12 @@ pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
         if found {
             error(
                 ctx,
-                null::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                c"using default temporary directory '%s'".as_ptr(),
-                &[FmtArg::Str(tmpdir)],
+                c"using default temporary directory '%s'",
+                &[FmtArg::Str(CStr::from_ptr(tmpdir))],
             );
         }
     }
@@ -760,12 +762,14 @@ pub unsafe fn open_named_tmpfd(ctx: &crate::execctx::ExecContext) -> (i32, *mut 
     if fd < 0 {
         error(
             ctx,
-            null::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            c"cannot create temporary file %s: %s".as_ptr(),
+            c"cannot create temporary file %s: %s",
             &[
-                FmtArg::Str(tmpnm),
-                FmtArg::Str(strerror(*__errno_location())),
+                FmtArg::Str(CStr::from_ptr(tmpnm)),
+                FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
             ],
         );
         free(tmpnm as *mut c_void);
@@ -782,45 +786,50 @@ pub unsafe fn open_named_tmpfd(ctx: &crate::execctx::ExecContext) -> (i32, *mut 
 /// temp file where available, otherwise an `mkstemp` file unlinked immediately.
 /// On failure reports the error and returns `-1`.
 ///
-/// # Safety
-/// Always safe in practice; `unsafe` only for the libc temp-file calls.
-pub unsafe fn open_anon_tmpfd(ctx: &crate::execctx::ExecContext) -> i32 {
-    // If there's an OS-specific way to get an anonymous temp file, use it.
-    let fd = os_anontmp(ctx);
-    if fd >= 0 {
-        return fd;
-    }
-
-    let (fd, tmpnm) = open_named_tmpfd(ctx);
-    if fd < 0 {
-        // `open_named_tmpfd` already reported the error and freed the name.
-        return -1;
-    }
-
-    // Unlink immediately so the file has no name; `umask` only affects the
-    // already-completed creation, so restoring it before the unlink (as
-    // `open_named_tmpfd` does) is equivalent to the original's order.
-    let mut r: i32;
-    loop {
-        r = unlink(tmpnm);
-        if !(r == -1 && *__errno_location() == EINTR) {
-            break;
+/// `unsafe` internally only for the libc temp-file calls; always safe to
+/// call in practice.
+pub fn open_anon_tmpfd(ctx: &crate::execctx::ExecContext) -> i32 {
+    // SAFETY: `os_anontmp`/`open_named_tmpfd` are safe to call with any
+    // `ctx`; `tmpnm` is the NUL-terminated name `open_named_tmpfd` just
+    // created and owns, freed below after its last use.
+    unsafe {
+        // If there's an OS-specific way to get an anonymous temp file, use it.
+        let fd = os_anontmp(ctx);
+        if fd >= 0 {
+            return fd;
         }
+
+        let (fd, tmpnm) = open_named_tmpfd(ctx);
+        if fd < 0 {
+            // `open_named_tmpfd` already reported the error and freed the name.
+            return -1;
+        }
+
+        // Unlink immediately so the file has no name; `umask` only affects
+        // the already-completed creation, so restoring it before the
+        // unlink (as `open_named_tmpfd` does) is equivalent to the
+        // original's order.
+        let mut r: i32;
+        loop {
+            r = unlink(tmpnm);
+            if !(r == -1 && *__errno_location() == EINTR) {
+                break;
+            }
+        }
+        if r < 0 {
+            let errno_msg = CStr::from_ptr(strerror(*__errno_location()));
+            error(
+                ctx,
+                crate::output::output_context().as_mut(),
+                None,
+                0,
+                c"cannot unlink temporary file %s: %s",
+                &[FmtArg::Str(CStr::from_ptr(tmpnm)), FmtArg::Str(errno_msg)],
+            );
+        }
+        free(tmpnm as *mut c_void);
+        fd
     }
-    if r < 0 {
-        error(
-            ctx,
-            null::<Floc>(),
-            0,
-            c"cannot unlink temporary file %s: %s".as_ptr(),
-            &[
-                FmtArg::Str(tmpnm),
-                FmtArg::Str(strerror(*__errno_location())),
-            ],
-        );
-    }
-    free(tmpnm as *mut c_void);
-    fd
 }
 
 /// Create a temporary `FILE *` opened `"wb+"`; `*name` receives the
@@ -862,12 +871,14 @@ pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_c
         };
         error(
             ctx,
-            null::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            c"fdopen: temporary file %s: %s".as_ptr(),
+            c"fdopen: temporary file %s: %s",
             &[
-                FmtArg::Str(tmp_name_for_err),
-                FmtArg::Str(strerror(*__errno_location())),
+                FmtArg::Str(CStr::from_ptr(tmp_name_for_err)),
+                FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
             ],
         );
     }

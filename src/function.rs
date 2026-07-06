@@ -2006,10 +2006,12 @@ unsafe fn parse_numeric(
         // `fatal` diverges (`-> !`), so these arms never produce an `i64`.
         NumParse::Empty => fatal(
             ctx,
-            ctx.expanding_var_floc(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            unsafe { ctx.expanding_var_floc().as_ref() },
             msg.to_bytes().len() as size_t,
-            c"%s: empty value".as_ptr(),
-            &[FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char)],
+            c"%s: empty value",
+            &[FmtArg::Str(msg)],
         ),
         other => {
             let fmt = if other == NumParse::OutOfRange {
@@ -2019,13 +2021,12 @@ unsafe fn parse_numeric(
             };
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                unsafe { ctx.expanding_var_floc().as_ref() },
                 (msg.to_bytes().len() + s.to_bytes().len()) as size_t,
-                fmt.as_ptr(),
-                &[
-                    FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char),
-                    FmtArg::Str((s.as_ptr()) as *const ::core::ffi::c_char),
-                ],
+                fmt,
+                &[FmtArg::Str(msg), FmtArg::Str(s)],
             )
         }
     }
@@ -2049,9 +2050,11 @@ fn func_word(
         unsafe {
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
                 0,
-                c"first argument to 'word' function must be greater than 0".as_ptr(),
+                c"first argument to 'word' function must be greater than 0",
                 &[],
             );
         }
@@ -2094,19 +2097,18 @@ fn func_wordlist(
     };
     if start < 1 {
         unsafe {
+            let lltoa_ptr = make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char);
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
-                (badfirst.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
-                ),
-                c"%s: '%s'".as_ptr(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
+                (badfirst.to_bytes().len() as size_t).wrapping_add(strlen(lltoa_ptr) as size_t),
+                c"%s: '%s'",
                 &[
-                    FmtArg::Str((badfirst.as_ptr()) as *const ::core::ffi::c_char),
-                    FmtArg::Str(
-                        (make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char))
-                            as *const ::core::ffi::c_char,
-                    ),
+                    FmtArg::Str(badfirst),
+                    // SAFETY: `make_lltoa` wrote a NUL-terminated decimal string into `buf`.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(lltoa_ptr)),
                 ],
             );
         }
@@ -2120,19 +2122,18 @@ fn func_wordlist(
     };
     if stop < 0 {
         unsafe {
+            let lltoa_ptr = make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char);
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
-                (badsecond.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
-                ),
-                c"%s: '%s'".as_ptr(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
+                (badsecond.to_bytes().len() as size_t).wrapping_add(strlen(lltoa_ptr) as size_t),
+                c"%s: '%s'",
                 &[
-                    FmtArg::Str((badsecond.as_ptr()) as *const ::core::ffi::c_char),
-                    FmtArg::Str(
-                        (make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char))
-                            as *const ::core::ffi::c_char,
-                    ),
+                    FmtArg::Str(badsecond),
+                    // SAFETY: `make_lltoa` wrote a NUL-terminated decimal string into `buf`.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(lltoa_ptr)),
                 ],
             );
         }
@@ -2232,9 +2233,11 @@ mod selection_tests {
         if i < 1 {
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
                 0,
-                c"first argument to 'word' function must be greater than 0".as_ptr(),
+                c"first argument to 'word' function must be greater than 0",
                 &[],
             );
         }
@@ -2263,16 +2266,18 @@ mod selection_tests {
             badfirst,
         );
         if start < 1 {
+            let lltoa_ptr = make_lltoa(start, &raw mut buf as *mut c_char);
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
-                (badfirst.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(start, &raw mut buf as *mut c_char)) as size_t,
-                ),
-                c"%s: '%s'".as_ptr(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
+                (badfirst.to_bytes().len() as size_t).wrapping_add(strlen(lltoa_ptr) as size_t),
+                c"%s: '%s'",
                 &[
-                    FmtArg::Str((badfirst.as_ptr()) as *const c_char),
-                    FmtArg::Str((make_lltoa(start, &raw mut buf as *mut c_char)) as *const c_char),
+                    FmtArg::Str(badfirst),
+                    // SAFETY: `make_lltoa` wrote a NUL-terminated decimal string into `buf`.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(lltoa_ptr)),
                 ],
             );
         }
@@ -2282,16 +2287,18 @@ mod selection_tests {
             badsecond,
         );
         if stop < 0 {
+            let lltoa_ptr = make_lltoa(stop, &raw mut buf as *mut c_char);
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
-                (badsecond.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(stop, &raw mut buf as *mut c_char)) as size_t,
-                ),
-                c"%s: '%s'".as_ptr(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
+                (badsecond.to_bytes().len() as size_t).wrapping_add(strlen(lltoa_ptr) as size_t),
+                c"%s: '%s'",
                 &[
-                    FmtArg::Str((badsecond.as_ptr()) as *const c_char),
-                    FmtArg::Str((make_lltoa(stop, &raw mut buf as *mut c_char)) as *const c_char),
+                    FmtArg::Str(badsecond),
+                    // SAFETY: `make_lltoa` wrote a NUL-terminated decimal string into `buf`.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(lltoa_ptr)),
                 ],
             );
         }
@@ -2763,23 +2770,29 @@ unsafe fn func_error(
         Some(crate::parser::LogFunction::Error) => {
             fatal(
                 ctx,
-                ctx.reading_file.0.get(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.reading_file.0.get().as_ref(),
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[FmtArg::Str(
-                    (*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char,
-                )],
+                c"%s",
+                // SAFETY: `argv[0]` is a NUL-terminated C string from the dispatcher.
+                &[FmtArg::Str(::core::ffi::CStr::from_ptr(
+                    *argv.offset(0_i32 as isize),
+                ))],
             );
         }
         Some(crate::parser::LogFunction::Warning) => {
             error(
                 ctx,
-                ctx.reading_file.0.get(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.reading_file.0.get().as_ref(),
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[FmtArg::Str(
-                    (*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char,
-                )],
+                c"%s",
+                // SAFETY: `argv[0]` is a NUL-terminated C string from the dispatcher.
+                &[FmtArg::Str(::core::ffi::CStr::from_ptr(
+                    *argv.offset(0_i32 as isize),
+                ))],
             );
         }
         Some(crate::parser::LogFunction::Info) => {
@@ -2791,15 +2804,24 @@ unsafe fn func_error(
             msg.extend_from_slice(::core::slice::from_raw_parts(src as *const u8, len));
             msg.push(b'\n');
             msg.push(0);
-            outputs(ctx, 0, msg.as_ptr() as *const ::core::ffi::c_char);
+            outputs(
+                ctx,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                0,
+                ::core::ffi::CStr::from_bytes_with_nul(&msg).unwrap(),
+            );
         }
         _ => {
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
                 strlen(funcname) as size_t,
-                b"INTERNAL: func_error: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                &[FmtArg::Str((funcname) as *const ::core::ffi::c_char)],
+                c"INTERNAL: func_error: '%s'",
+                // SAFETY: `funcname` is a NUL-terminated C string from the dispatcher.
+                &[FmtArg::Str(::core::ffi::CStr::from_ptr(funcname))],
             );
         }
     }
@@ -3083,21 +3105,27 @@ unsafe fn parse_textint(
     let p: *const ::core::ffi::c_char = next_token(number);
     let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
     match classify_textint(t) {
+        // SAFETY: `msg`/`number` are NUL-terminated C strings per this function's contract.
         TextInt::Empty => fatal(
             ctx,
-            ctx.expanding_var_floc(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            ctx.expanding_var_floc().as_ref(),
             strlen(msg) as size_t,
-            b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
-            &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
+            c"%s: empty value",
+            &[FmtArg::Str(::core::ffi::CStr::from_ptr(msg))],
         ),
+        // SAFETY: `msg`/`number` are NUL-terminated C strings per this function's contract.
         TextInt::NotNumeric => fatal(
             ctx,
-            ctx.expanding_var_floc(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            ctx.expanding_var_floc().as_ref(),
             (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
-            b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+            c"%s: '%s'",
             &[
-                FmtArg::Str((msg) as *const ::core::ffi::c_char),
-                FmtArg::Str((number) as *const ::core::ffi::c_char),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(msg)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(number)),
             ],
         ),
         TextInt::Parsed {
@@ -3708,7 +3736,11 @@ pub unsafe fn func_shell_base(
     if command_argv.is_null() {
         return o;
     }
-    crate::output::output_start(ctx);
+    crate::output::output_start(
+        ctx,
+        // SAFETY: the current output-sync target, resolved fresh here.
+        crate::output::output_context().as_mut(),
+    );
     let osync = output_context();
     errfd = if !osync.is_null() && (*osync).err >= 0 {
         (*osync).err
@@ -3719,12 +3751,15 @@ pub unsafe fn func_shell_base(
     if pipe(&raw mut pipedes as *mut i32) < 0 {
         error(
             ctx,
-            ctx.reading_file.0.get(),
+            // SAFETY: `osync` was resolved from `output_context()` moments earlier.
+            osync.as_mut(),
+            ctx.reading_file.0.get().as_ref(),
             strlen(strerror(*__errno_location())) as size_t,
-            b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            &[FmtArg::Str(
-                (strerror(*__errno_location())) as *const ::core::ffi::c_char,
-            )],
+            c"pipe: %s",
+            // SAFETY: `strerror` returns a NUL-terminated static/thread-local string.
+            &[FmtArg::Str(::core::ffi::CStr::from_ptr(
+                strerror(*__errno_location()),
+            ))],
         );
     } else {
         fd_noinherit(pipedes[1_i32 as usize]);
@@ -3968,9 +4003,11 @@ unsafe fn func_file(
         if *start.offset(0_i32 as isize) as i32 == 0 {
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
                 0,
-                b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
+                c"file: missing filename",
                 &[],
             );
         }
@@ -3998,13 +4035,17 @@ unsafe fn func_file(
         if fp.is_null() {
             fatal(
                 ctx,
-                ctx.reading_file.0.get(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.reading_file.0.get().as_ref(),
                 (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"open: %s: %s",
                 &[
-                    FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    // SAFETY: `nm` was just written as a NUL-terminated buffer above.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                    // SAFETY: `strerror` returns a NUL-terminated static/thread-local string.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
         }
@@ -4019,13 +4060,17 @@ unsafe fn func_file(
             {
                 fatal(
                     ctx,
-                    ctx.reading_file.0.get(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    ctx.reading_file.0.get().as_ref(),
                     (strlen(nm) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                    b"write: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    c"write: %s: %s",
                     &[
-                        FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                        FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                        // SAFETY: `nm` was just written as a NUL-terminated buffer above.
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                        // SAFETY: `strerror` returns a NUL-terminated static/thread-local string.
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                     ],
                 );
             }
@@ -4033,13 +4078,17 @@ unsafe fn func_file(
         if fclose(fp) != 0 {
             fatal(
                 ctx,
-                ctx.reading_file.0.get(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.reading_file.0.get().as_ref(),
                 (strlen(nm) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"close: %s: %s",
                 &[
-                    FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    // SAFETY: `nm` was just written as a NUL-terminated buffer above.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                    // SAFETY: `strerror` returns a NUL-terminated static/thread-local string.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
         }
@@ -4052,18 +4101,22 @@ unsafe fn func_file(
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
                 0,
-                b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
+                c"file: missing filename",
                 &[],
             );
         }
         if !(*argv.offset(1_i32 as isize)).is_null() {
             fatal(
                 ctx,
-                ctx.expanding_var_floc(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.expanding_var_floc().as_ref(),
                 0,
-                b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char,
+                c"file: too many arguments",
                 &[],
             );
         }
@@ -4103,13 +4156,17 @@ unsafe fn func_file(
             }
             fatal(
                 ctx,
-                ctx.reading_file.0.get(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.reading_file.0.get().as_ref(),
                 (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"open: %s: %s",
                 &[
-                    FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    // SAFETY: `nm_0` was just written as a NUL-terminated buffer above.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(nm_0)),
+                    // SAFETY: `strerror` returns a NUL-terminated static/thread-local string.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
         }
@@ -4128,13 +4185,17 @@ unsafe fn func_file(
             if ferror(fp_0) != 0 && *__errno_location() != EINTR {
                 fatal(
                     ctx,
-                    ctx.reading_file.0.get(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    ctx.reading_file.0.get().as_ref(),
                     (strlen(nm_0) as size_t)
                         .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                    b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    c"read: %s: %s",
                     &[
-                        FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-                        FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                        // SAFETY: `nm_0` was just written as a NUL-terminated buffer above.
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(nm_0)),
+                        // SAFETY: `strerror` returns a NUL-terminated static/thread-local string.
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                     ],
                 );
             }
@@ -4145,13 +4206,17 @@ unsafe fn func_file(
         if fclose(fp_0) != 0 {
             fatal(
                 ctx,
-                ctx.reading_file.0.get(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                ctx.reading_file.0.get().as_ref(),
                 (strlen(nm_0) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"close: %s: %s",
                 &[
-                    FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    // SAFETY: `nm_0` was just written as a NUL-terminated buffer above.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(nm_0)),
+                    // SAFETY: `strerror` returns a NUL-terminated static/thread-local string.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
         }
@@ -4164,10 +4229,13 @@ unsafe fn func_file(
     } else {
         fatal(
             ctx,
-            ctx.expanding_var_floc(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            ctx.expanding_var_floc().as_ref(),
             strlen(fn_0) as size_t,
-            b"file: invalid file operation: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            &[FmtArg::Str((fn_0) as *const ::core::ffi::c_char)],
+            c"file: invalid file operation: %s",
+            // SAFETY: `fn_0` is a NUL-terminated C string from the dispatcher's argv.
+            &[FmtArg::Str(::core::ffi::CStr::from_ptr(fn_0))],
         );
     }
     o
@@ -4475,13 +4543,15 @@ unsafe fn expand_builtin_function(
     if argc < entry.minimum_args as ::core::ffi::c_uint {
         fatal(
             ctx,
-            ctx.expanding_var_floc(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            ctx.expanding_var_floc().as_ref(),
             strlen(entry.name) as size_t,
-            b"insufficient number of arguments (%u) to function '%s'\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"insufficient number of arguments (%u) to function '%s'",
             &[
                 FmtArg::Uint((argc) as u32 as u64),
-                FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
+                // SAFETY: `entry.name` is a NUL-terminated C string owned by the function table.
+                FmtArg::Str(::core::ffi::CStr::from_ptr(entry.name)),
             ],
         );
     }
@@ -4491,11 +4561,13 @@ unsafe fn expand_builtin_function(
     if entry.fptr.func_ptr.is_none() {
         fatal(
             ctx,
-            ctx.expanding_var_floc(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            ctx.expanding_var_floc().as_ref(),
             strlen(entry.name) as size_t,
-            b"unimplemented on this platform: function '%s'\0" as *const u8
-                as *const ::core::ffi::c_char,
-            &[FmtArg::Str((entry.name) as *const ::core::ffi::c_char)],
+            c"unimplemented on this platform: function '%s'",
+            // SAFETY: `entry.name` is a NUL-terminated C string owned by the function table.
+            &[FmtArg::Str(::core::ffi::CStr::from_ptr(entry.name))],
         );
     }
     if entry.adds_command() != 0 {
@@ -4624,12 +4696,14 @@ pub unsafe fn handle_function(
     if count >= 0 {
         fatal(
             ctx,
-            ctx.expanding_var_floc(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            ctx.expanding_var_floc().as_ref(),
             strlen(entry.name) as size_t,
-            b"unterminated call to function '%s': missing '%c'\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"unterminated call to function '%s': missing '%c'",
             &[
-                FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
+                // SAFETY: `entry.name` is a NUL-terminated C string owned by the function table.
+                FmtArg::Str(::core::ffi::CStr::from_ptr(entry.name)),
                 FmtArg::Int((closeparen as i32) as i64),
             ],
         );
@@ -4834,53 +4908,65 @@ pub unsafe fn define_new_function(
     if len == 0 {
         fatal(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            flocp.as_ref(),
             0,
-            b"empty function name\0" as *const u8 as *const ::core::ffi::c_char,
+            c"empty function name",
             &[],
         );
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
         fatal(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            flocp.as_ref(),
             strlen(name) as size_t,
-            b"invalid function name: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+            c"invalid function name: %s",
+            // SAFETY: `name` is a NUL-terminated C string per this function's contract.
+            &[FmtArg::Str(::core::ffi::CStr::from_ptr(name))],
         );
     }
     if len > 255 {
         fatal(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            flocp.as_ref(),
             strlen(name) as size_t,
-            b"function name too long: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+            c"function name too long: %s",
+            // SAFETY: `name` is a NUL-terminated C string per this function's contract.
+            &[FmtArg::Str(::core::ffi::CStr::from_ptr(name))],
         );
     }
     if min > 255 {
         fatal(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            flocp.as_ref(),
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
-            b"invalid minimum argument count (%u) for function %s\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"invalid minimum argument count (%u) for function %s",
             &[
                 FmtArg::Uint((min) as u32 as u64),
-                FmtArg::Str((name) as *const ::core::ffi::c_char),
+                // SAFETY: `name` is a NUL-terminated C string per this function's contract.
+                FmtArg::Str(::core::ffi::CStr::from_ptr(name)),
             ],
         );
     }
     if max > 255 || max != 0 && max < min {
         fatal(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            flocp.as_ref(),
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
-            b"invalid maximum argument count (%u) for function %s\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"invalid maximum argument count (%u) for function %s",
             &[
                 FmtArg::Uint((max) as u32 as u64),
-                FmtArg::Str((name) as *const ::core::ffi::c_char),
+                // SAFETY: `name` is a NUL-terminated C string per this function's contract.
+                FmtArg::Str(::core::ffi::CStr::from_ptr(name)),
             ],
         );
     }

@@ -501,9 +501,11 @@ fn emit_var_name_warning(
 ) {
     let body = format!("{kind} '{}'", String::from_utf8_lossy(name));
     if is_error {
-        msg::fatal(ctx, loc, &body);
+        // SAFETY: the current output-sync target, resolved fresh here.
+        msg::fatal(ctx, unsafe { crate::output::output_context().as_mut() }, loc, &body);
     }
-    msg::error(ctx, loc, &format!("warning: {body}"));
+    // SAFETY: the current output-sync target, resolved fresh here.
+    msg::error(ctx, unsafe { crate::output::output_context().as_mut() }, loc, &format!("warning: {body}"));
 }
 
 unsafe fn check_valid_name(
@@ -2410,7 +2412,15 @@ pub unsafe fn assign_variable_definition(
 /// string, and `ctx` must be valid for diagnostic reporting.
 unsafe fn fatal_on_empty_variable_name(ctx: &crate::execctx::ExecContext, v: *mut variable) {
     if *(*v).name.offset(0_i32 as isize) as i32 == 0 {
-        fatal(ctx, &raw mut (*v).fileinfo, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        fatal(
+            ctx,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            unsafe { (&raw const (*v).fileinfo).as_ref() },
+            0,
+            c"empty variable name",
+            &[],
+        );
     }
 }
 /// # Safety

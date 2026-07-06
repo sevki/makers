@@ -217,18 +217,21 @@ pub unsafe fn decode_switches_oracle(
                                             op = (*cs).long_name;
                                         }
                                         error(ctx,
-                                        super::NILF,
+                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                        unsafe { crate::output::output_context().as_mut() },
+                                        None,
                                         strlen(op) as size_t,
-                                        b"the '%s%s' option requires a non-empty string argument\0"
-                                            as *const u8
-                                            as *const ::core::ffi::c_char,
+                                        c"the '%s%s' option requires a non-empty string argument",
                                         &[
                                             FmtArg::Str(if (*cs).c <= CHAR_MAX {
-                                                b"-\0" as *const u8 as *const ::core::ffi::c_char
+                                                c"-"
                                             } else {
-                                                b"--\0" as *const u8 as *const ::core::ffi::c_char
+                                                c"--"
                                             }),
-                                            FmtArg::Str(op),
+                                            // SAFETY: `op` is a valid NUL-terminated option name
+                                            // string (either the synthesized short-option buffer
+                                            // or `(*cs).long_name`).
+                                            FmtArg::Str(unsafe { ::core::ffi::CStr::from_ptr(op) }),
                                         ],
                                     );
                                         bad = 1;
@@ -294,8 +297,15 @@ pub unsafe fn decode_switches_oracle(
                                                 ::core::ffi::CStr::from_ptr(coptarg).to_owned()
                                             } else if (*cs).c == TEMP_STDIN_OPT {
                                                 if options.stdin_offset.get() > 0 {
-                                                    super::fatal(ctx, super::NILF, 0, b"INTERNAL: multiple --temp-stdin options provided!\0"
-                                                                    as *const u8 as *const ::core::ffi::c_char, &[]);
+                                                    super::fatal(
+                                                        ctx,
+                                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                                        unsafe { crate::output::output_context().as_mut() },
+                                                        None,
+                                                        0,
+                                                        c"INTERNAL: multiple --temp-stdin options provided!",
+                                                        &[],
+                                                    );
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
                                                 let cached = strcache_add(ctx, coptarg);
@@ -338,10 +348,11 @@ pub unsafe fn decode_switches_oracle(
                                         .unwrap_or(0);
                                     if i == 0 {
                                         error(ctx,
-                                            super::NILF,
+                                            // SAFETY: the current output-sync target, resolved fresh here.
+                                            unsafe { crate::output::output_context().as_mut() },
+                                            None,
                                             0,
-                                            b"the '-%c' option requires a positive integer argument\0"
-                                                as *const u8 as *const ::core::ffi::c_char,
+                                            c"the '-%c' option requires a positive integer argument",
                         &[FmtArg::Int(((*cs).c) as i64)],
                     );
                                         bad = 1;

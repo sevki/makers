@@ -1516,8 +1516,10 @@ pub unsafe extern "C" fn close_stdout() {
         // prefix and reads no global.
         crate::output::outputs(
             &crate::execctx::ExecContext::default(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
             1,
-            bytes.as_ptr() as *const ::core::ffi::c_char,
+            ::std::ffi::CStr::from_bytes_with_nul(&bytes).unwrap(),
         );
         exit(MAKE_TROUBLE);
     }
@@ -1530,9 +1532,11 @@ unsafe fn expand_command_line_file(
     if *name.offset(0_i32 as isize) as i32 == 0 {
         fatal(
             ctx,
-            ::core::ptr::null_mut::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
+            c"empty string invalid as file name",
             &[],
         );
     }
@@ -1684,11 +1688,12 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
                     _ => {
                         fatal(
                             ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            None,
                             strlen(p) as size_t,
-                            b"unknown debug level specification '%s'\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+                            c"unknown debug level specification '%s'",
+                            &[FmtArg::Str(::core::ffi::CStr::from_ptr(p))],
                         );
                     }
                 }
@@ -1740,10 +1745,12 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
                 let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
                 fatal(
                     ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     opt.len() as size_t,
-                    b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                    &[FmtArg::Str((c.as_ptr()) as *const ::core::ffi::c_char)],
+                    c"unknown output-sync type '%s'",
+                    &[FmtArg::Str(c.as_c_str())],
                 );
             }
         }
@@ -1911,8 +1918,10 @@ pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
         if r < 0 && *__errno_location() != ENOENT && !handling_fatal_signal(ctx) {
             perror_with_name(
                 ctx,
-                b"unlink (temporary file): \0" as *const u8 as *const ::core::ffi::c_char,
-                nm,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"unlink (temporary file): ",
+                ::core::ffi::CStr::from_ptr(nm),
             );
         }
     }
@@ -1953,7 +1962,7 @@ unsafe fn main_0(
     if check_io_state(&ctx) & 0x8 as ::core::ffi::c_uint != 0 {
         atexit(Some(close_stdout as unsafe extern "C" fn() -> ()));
     }
-    crate::output::output_init(&ctx, ctx.make_sync.as_ptr());
+    crate::output::output_init(&ctx, Some(&mut *ctx.make_sync.as_ptr()));
     initialize_stopchar_map();
     crate::warning::init(&ctx);
     options.verify.set(true);
@@ -1969,7 +1978,7 @@ unsafe fn main_0(
     install_fatal_signal(&ctx, 24);
     install_fatal_signal(&ctx, 25);
     bsd_signal(SIGCHLD, SIG_DFL);
-    crate::output::output_init(&ctx, ::core::ptr::null_mut::<output>());
+    crate::output::output_init(&ctx, None);
     if (*argv.offset(0_i32 as isize)).is_null() {
         let fresh33 = &mut (*argv.offset(0_i32 as isize));
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
@@ -1998,8 +2007,10 @@ unsafe fn main_0(
     {
         perror_with_name(
             &ctx,
-            b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            c"getcwd",
+            c"",
         );
         current_directory[0_i32 as usize] = 0;
         ctx.directory_before_chdir
@@ -2278,7 +2289,7 @@ unsafe fn main_0(
     syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
-        crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
+        crate::output::output_close(&ctx, Some(&mut *ctx.make_sync.as_ptr()));
     }
     set_make_sync_syncout(&ctx, syncing as ::core::ffi::c_uint);
     set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
@@ -2453,7 +2464,12 @@ unsafe fn main_0(
         for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
             if chdir(dir) < 0 {
-                pfatal_with_name(&ctx, dir);
+                pfatal_with_name(
+                    &ctx,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    ::core::ffi::CStr::from_ptr(dir),
+                );
             }
         }
     }
@@ -2466,8 +2482,10 @@ unsafe fn main_0(
         {
             perror_with_name(
                 &ctx,
-                b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
-                b"\0" as *const u8 as *const ::core::ffi::c_char,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"getcwd",
+                c"",
             );
             ctx.starting_directory
                 .0
@@ -2510,10 +2528,11 @@ unsafe fn main_0(
             } else {
                 error(
                     &ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    b"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)\0"
-                        as *const u8 as *const ::core::ffi::c_char,
+                    c"warning: jobserver unavailable: using -j1 (add '+' to parent make rule)",
                     &[],
                 );
                 options.arg_job_slots.set(Some(1));
@@ -2521,10 +2540,11 @@ unsafe fn main_0(
         } else if restarts == 0 && argv_slots != Some(1) {
             error(
                 &ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 INTSTR_LENGTH,
-                b"warning: -j%d forced in submake: resetting jobserver mode\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"warning: -j%d forced in submake: resetting jobserver mode",
                 &[FmtArg::Int((argv_slots.unwrap_or(0)) as i32 as i64)],
             );
         }
@@ -2626,10 +2646,11 @@ unsafe fn main_0(
                 if options.stdin_offset.get() >= 0 {
                     fatal(
                         &ctx,
-                        ::core::ptr::null_mut::<Floc>(),
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
+                        None,
                         0,
-                        b"Makefile from standard input specified twice\0" as *const u8
-                            as *const ::core::ffi::c_char,
+                        c"Makefile from standard input specified twice",
                         &[],
                     );
                 }
@@ -2637,10 +2658,11 @@ unsafe fn main_0(
                 if outfile.is_null() {
                     fatal(
                         &ctx,
-                        ::core::ptr::null_mut::<Floc>(),
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
+                        None,
                         0,
-                        b"cannot store makefile from stdin to a temporary file\0" as *const u8
-                            as *const ::core::ffi::c_char,
+                        c"cannot store makefile from stdin to a temporary file",
                         &[],
                     );
                 }
@@ -2663,16 +2685,17 @@ unsafe fn main_0(
                     {
                         fatal(
                             &ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            None,
                             (strlen(newnm) as size_t)
                                 .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                            b"fwrite: temporary file %s: %s\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c"fwrite: temporary file %s: %s",
                             &[
-                                FmtArg::Str((newnm) as *const ::core::ffi::c_char),
-                                FmtArg::Str(
-                                    (strerror(*__errno_location())) as *const ::core::ffi::c_char,
-                                ),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(newnm)),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(
+                                    *__errno_location(),
+                                ))),
                             ],
                         );
                     }
@@ -2723,7 +2746,9 @@ unsafe fn main_0(
     {
         pfatal_with_name(
             &ctx,
-            b"sigprocmask(SIG_SETMASK, SIGCHLD)\0" as *const u8 as *const ::core::ffi::c_char,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            c"sigprocmask(SIG_SETMASK, SIGCHLD)",
         );
     }
     bsd_signal(
@@ -2865,10 +2890,11 @@ unsafe fn main_0(
         if restarts == 0 {
             error(
                 &ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 INTSTR_LENGTH,
-                b"warning: -j%d forced in makefile: resetting jobserver mode\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"warning: -j%d forced in makefile: resetting jobserver mode",
                 &[FmtArg::Int(
                     (options.arg_job_slots.get().unwrap_or(0)) as i32 as i64,
                 )],
@@ -2879,7 +2905,7 @@ unsafe fn main_0(
     syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
-        crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
+        crate::output::output_close(&ctx, Some(&mut *ctx.make_sync.as_ptr()));
     }
     set_make_sync_syncout(&ctx, syncing as ::core::ffi::c_uint);
     set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
@@ -2928,7 +2954,7 @@ unsafe fn main_0(
     }
     if syncing != 0 && options.job_slots.get() == 1 {
         set_output_context(::core::ptr::null_mut::<output>());
-        crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
+        crate::output::output_close(&ctx, Some(&mut *ctx.make_sync.as_ptr()));
         syncing = 0;
         options.output_sync.set(OUTPUT_SYNC_NONE);
     }
@@ -3010,7 +3036,7 @@ unsafe fn main_0(
     }
     ctx.remote_backend.0.setup();
     set_output_context(::core::ptr::null_mut::<output>());
-    crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
+    crate::output::output_close(&ctx, Some(&mut *ctx.make_sync.as_ptr()));
     if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level(&ctx) != 0 {
         let sm = options.shuffle_mode.borrow().clone().unwrap();
         let sm_c = ::std::ffi::CString::new(sm.as_bytes()).unwrap_or_default();
@@ -3109,13 +3135,15 @@ unsafe fn main_0(
             let floc = goal_floc(d_1);
             error(
                 &ctx,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
                 floc.as_ref()
-                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                    .map(|f| &f.floc),
                 (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"%s: %s",
                 &[
-                    FmtArg::Str((d1_name) as *const ::core::ffi::c_char),
-                    FmtArg::Str((err) as *const ::core::ffi::c_char),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(d1_name)),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(err)),
                 ],
             );
         }
@@ -3147,11 +3175,15 @@ unsafe fn main_0(
                             nm.push(0);
                             fatal(
                                 &ctx,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                crate::output::output_context().as_mut(),
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map(|f| &f.floc),
                                 strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
-                                b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
-                                &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
+                                c"%s: failed to load",
+                                &[FmtArg::Str(::core::ffi::CStr::from_ptr(
+                                    nm.as_ptr() as *const ::core::ffi::c_char
+                                ))],
                             );
                         }
                         if let Some(node) = ctx.filenodes.get(fid) {
@@ -3195,12 +3227,15 @@ unsafe fn main_0(
                             let floc = goal_floc(d_4);
                             error(
                                 &ctx,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                crate::output::output_context().as_mut(),
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map(|f| &f.floc),
                                 strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
-                                b"failed to remake makefile '%s'\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
+                                c"failed to remake makefile '%s'",
+                                &[FmtArg::Str(::core::ffi::CStr::from_ptr(
+                                    nm.as_ptr() as *const ::core::ffi::c_char
+                                ))],
                             );
                             let mtime: uintmax_t = if last_mtime == UNKNOWN_MTIME as uintmax_t {
                                 f_mtime(&ctx, fid.unwrap(), false)
@@ -3221,21 +3256,23 @@ unsafe fn main_0(
                             let floc = goal_floc(d_4);
                             error(
                                 &ctx,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                crate::output::output_context().as_mut(),
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map(|f| &f.floc),
                                 strlen(dnm) as size_t,
-                                b"included makefile '%s' was not found\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+                                c"included makefile '%s' was not found",
+                                &[FmtArg::Str(::core::ffi::CStr::from_ptr(dnm))],
                             );
                         } else {
                             error(
                                 &ctx,
-                                ::core::ptr::null_mut::<Floc>(),
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                crate::output::output_context().as_mut(),
+                                None,
                                 strlen(dnm) as size_t,
-                                b"makefile '%s' was not found\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[FmtArg::Str((dnm) as *const ::core::ffi::c_char)],
+                                c"makefile '%s' was not found",
+                                &[FmtArg::Str(::core::ffi::CStr::from_ptr(dnm))],
                             );
                             any_failed = 1;
                         }
@@ -3433,8 +3470,10 @@ unsafe fn main_0(
                     if chdir(ctx.directory_before_chdir.0.get()) < 0 {
                         perror_with_name(
                             &ctx,
-                            b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
-                            b"\0" as *const u8 as *const ::core::ffi::c_char,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            c"chdir",
+                            c"",
                         );
                     } else {
                         bad = 0;
@@ -3443,10 +3482,11 @@ unsafe fn main_0(
                 if bad != 0 {
                     fatal(
                         &ctx,
-                        ::core::ptr::null_mut::<Floc>(),
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
+                        None,
                         0,
-                        b"couldn't change back to original directory\0" as *const u8
-                            as *const ::core::ffi::c_char,
+                        c"couldn't change back to original directory",
                         &[],
                     );
                 }
@@ -3601,10 +3641,11 @@ unsafe fn main_0(
                     if names.len() > 1 {
                         fatal(
                             &ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            None,
                             0,
-                            b".DEFAULT_GOAL contains more than one target\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c".DEFAULT_GOAL contains more than one target",
                             &[],
                         );
                     }
@@ -3628,18 +3669,21 @@ unsafe fn main_0(
         {
             fatal(
                 &ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                b"No targets\0" as *const u8 as *const ::core::ffi::c_char,
+                c"No targets",
                 &[],
             );
         }
         fatal(
             &ctx,
-            ::core::ptr::null_mut::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            b"No targets specified and no makefile found\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"No targets specified and no makefile found",
             &[],
         );
     }
@@ -3666,10 +3710,11 @@ unsafe fn main_0(
     if ctx.clock_skew_detected.get() {
         error(
             &ctx,
-            ::core::ptr::null_mut::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            b"warning: clock skew detected: your build may be incomplete\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"warning: clock skew detected: your build may be incomplete",
             &[],
         );
     }
@@ -4057,17 +4102,14 @@ fn apply_value_switch(
         unsafe {
             error(
                 ctx,
-                NILF,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 strlen(op) as size_t,
-                b"the '%s%s' option requires a non-empty string argument\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"the '%s%s' option requires a non-empty string argument",
                 &[
-                    FmtArg::Str(if cs.c <= CHAR_MAX {
-                        b"-\0" as *const u8 as *const ::core::ffi::c_char
-                    } else {
-                        b"--\0" as *const u8 as *const ::core::ffi::c_char
-                    }),
-                    FmtArg::Str(op),
+                    FmtArg::Str(if cs.c <= CHAR_MAX { c"-" } else { c"--" }),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(op)),
                 ],
             );
         }
@@ -4128,10 +4170,11 @@ fn apply_value_switch(
                     unsafe {
                         fatal(
                             ctx,
-                            NILF,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            None,
                             0,
-                            b"INTERNAL: multiple --temp-stdin options provided!\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c"INTERNAL: multiple --temp-stdin options provided!",
                             &[],
                         );
                     }
@@ -4361,10 +4404,11 @@ fn decode_switches(
                         unsafe {
                             error(
                                 ctx,
-                                NILF,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                crate::output::output_context().as_mut(),
+                                None,
                                 0,
-                                b"the '-%c' option requires a positive integer argument\0"
-                                    as *const u8 as *const ::core::ffi::c_char,
+                                c"the '-%c' option requires a positive integer argument",
                                 &[FmtArg::Int(cs.c as i64)],
                             );
                         }
@@ -5076,10 +5120,11 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
         if status != 2 {
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 INTSTR_LENGTH,
-                b"INTERNAL: exiting with %u jobserver tokens (should be 0)!\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"INTERNAL: exiting with %u jobserver tokens (should be 0)!",
                 &[FmtArg::Uint(jobserver_tokens(ctx) as u64)],
             );
         } else {
@@ -5099,10 +5144,11 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
         if tokens != master_slots {
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 INTSTR_LENGTH.wrapping_mul(2),
-                b"INTERNAL: exiting with %u jobserver tokens available; should be %u!\0"
-                    as *const u8 as *const ::core::ffi::c_char,
+                c"INTERNAL: exiting with %u jobserver tokens available; should be %u!",
                 &[
                     FmtArg::Uint((tokens) as u32 as u64),
                     FmtArg::Uint((master_slots) as u32 as u64),
@@ -5142,13 +5188,13 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
         // is the record `output_context` may be pointing at.
         let osync = output_context();
         if !osync.is_null() {
-            crate::output::output_close(ctx, osync);
+            crate::output::output_close(ctx, Some(&mut *osync));
             if osync != ctx.make_sync.as_ptr() {
-                crate::output::output_close(ctx, ctx.make_sync.as_ptr());
+                crate::output::output_close(ctx, Some(&mut *ctx.make_sync.as_ptr()));
             }
             set_output_context(::core::ptr::null_mut::<output>());
         }
-        crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
+        crate::output::output_close(ctx, None);
         osync_clear();
         if !ctx.directory_before_chdir.0.get().is_null() {
             let mut _x: i32 = 0;

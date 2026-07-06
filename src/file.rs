@@ -341,7 +341,6 @@ impl FileNode {
 // `pub type commands = Commands` alias below — keep resolving.
 use crate::commands::{print_commands, set_file_variables};
 use crate::expand::{expand_string_buf, expand_string_for_file, variable_buffer_output};
-use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
 use crate::make_main::{db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP};
 use crate::output::{error, fatal, perror_with_name, FmtArg};
@@ -1292,11 +1291,15 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                     if sig != 0 {
                         error(
                             ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            unsafe { crate::output::output_context().as_mut() },
+                            None,
                             name.len() as size_t,
-                            b"*** deleting intermediate file '%s'\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            &[FmtArg::Str(cname_ptr)],
+                            c"*** deleting intermediate file '%s'",
+                            &[FmtArg::Str(
+                                // SAFETY: cname is a local NUL-terminated Vec<u8> still in scope.
+                                unsafe { ::core::ffi::CStr::from_ptr(cname_ptr) },
+                            )],
                         );
                     } else {
                         if doneany == 0 && 0x1_i32 & db_level(ctx) != 0 {
@@ -1324,8 +1327,11 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                         fflush(stdout);
                         perror_with_name(
                             ctx,
-                            b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
-                            cname_ptr,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            unsafe { crate::output::output_context().as_mut() },
+                            c"unlink: ",
+                            // SAFETY: cname is a local NUL-terminated Vec<u8> still in scope.
+                            unsafe { ::core::ffi::CStr::from_ptr(cname_ptr) },
                         );
                         doneany = 0;
                     }
@@ -1814,10 +1820,11 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     if ctx.no_intermediates.get() && ctx.all_secondary.get() {
         fatal(
             ctx,
-            ::core::ptr::null_mut::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            None,
             0,
-            b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c".NOTINTERMEDIATE and .SECONDARY are mutually exclusive",
             &[],
         );
     }
@@ -2042,10 +2049,16 @@ unsafe fn fatal_special_conflict(
     msg.push(0);
     fatal(
         ctx,
-        ::core::ptr::null_mut::<Floc>(),
+        // SAFETY: the current output-sync target, resolved fresh here.
+        unsafe { crate::output::output_context().as_mut() },
+        None,
         name.len() as size_t,
-        msg.as_ptr() as *const ::core::ffi::c_char,
-        &[FmtArg::Str(name_c.as_ptr() as *const ::core::ffi::c_char)],
+        // SAFETY: msg is a local NUL-terminated Vec<u8> still in scope.
+        unsafe { ::core::ffi::CStr::from_ptr(msg.as_ptr() as *const ::core::ffi::c_char) },
+        &[FmtArg::Str(
+            // SAFETY: name_c is a local NUL-terminated Vec<u8> still in scope.
+            unsafe { ::core::ffi::CStr::from_ptr(name_c.as_ptr() as *const ::core::ffi::c_char) },
+        )],
     )
 }
 /// # Safety
@@ -2160,11 +2173,22 @@ pub unsafe fn file_timestamp_cons(
             let buf = stamp.as_ptr();
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                None,
                 (strlen(f) as size_t).wrapping_add(strlen(buf) as size_t),
-                b"%s: timestamp out of range: substituting %s\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[FmtArg::Str(f), FmtArg::Str(buf)],
+                c"%s: timestamp out of range: substituting %s",
+                &[
+                    FmtArg::Str(
+                        // SAFETY: f is either the caller-provided NUL-terminated
+                        // fname (checked non-null above) or the "Current time" literal.
+                        unsafe { ::core::ffi::CStr::from_ptr(f) },
+                    ),
+                    FmtArg::Str(
+                        // SAFETY: buf is stamp.as_ptr(); stamp is a live CString in scope.
+                        unsafe { ::core::ffi::CStr::from_ptr(buf) },
+                    ),
+                ],
             );
             substitute
         }

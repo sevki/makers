@@ -650,34 +650,38 @@ unsafe fn child_error(
     if exit_sig == 0 {
         error(
             ctx,
-            NILF,
+            // SAFETY: the sync target just installed above via `set_output_context`.
+            crate::output::output_context().as_mut(),
+            None,
             l.wrapping_add(INTSTR_LENGTH),
-            b"%s[%s: %s] Error %d%s%s\0" as *const u8 as *const ::core::ffi::c_char,
+            c"%s[%s: %s] Error %d%s%s",
             &[
-                FmtArg::Str((pre) as *const ::core::ffi::c_char),
-                FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                FmtArg::Str((f_name) as *const ::core::ffi::c_char),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(pre)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(f_name)),
                 FmtArg::Int((exit_code) as i64),
-                FmtArg::Str((post) as *const ::core::ffi::c_char),
-                FmtArg::Str(smode_or_empty(smode).as_ptr()),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(post)),
+                FmtArg::Str(smode_or_empty(smode)),
             ],
         );
     } else {
         let s: *const ::core::ffi::c_char = strsignal(exit_sig);
         error(
             ctx,
-            NILF,
+            // SAFETY: the sync target just installed above via `set_output_context`.
+            crate::output::output_context().as_mut(),
+            None,
             l.wrapping_add(strlen(s) as size_t)
                 .wrapping_add(strlen(dump) as size_t),
-            b"%s[%s: %s] %s%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
+            c"%s[%s: %s] %s%s%s%s",
             &[
-                FmtArg::Str((pre) as *const ::core::ffi::c_char),
-                FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                FmtArg::Str((f_name) as *const ::core::ffi::c_char),
-                FmtArg::Str((s) as *const ::core::ffi::c_char),
-                FmtArg::Str((dump) as *const ::core::ffi::c_char),
-                FmtArg::Str((post) as *const ::core::ffi::c_char),
-                FmtArg::Str(smode_or_empty(smode).as_ptr()),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(pre)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(f_name)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(s)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(dump)),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(post)),
+                FmtArg::Str(smode_or_empty(smode)),
             ],
         );
     }
@@ -724,10 +728,11 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             if !ctx.reap_children_printed.0.load(Ordering::Relaxed) {
                 error(
                     ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    b"*** Waiting for unfinished jobs....\0" as *const u8
-                        as *const ::core::ffi::c_char,
+                    c"*** Waiting for unfinished jobs....",
                     &[],
                 );
             }
@@ -791,7 +796,9 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             } else if pid < 0 {
                 pfatal_with_name(
                     ctx,
-                    b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    c"remote_status",
                 );
             } else {
                 if any_local != 0 {
@@ -809,7 +816,12 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     pid = 0_i32 as pid_t;
                 }
                 if pid < 0 {
-                    pfatal_with_name(ctx, b"wait\0" as *const u8 as *const ::core::ffi::c_char);
+                    pfatal_with_name(
+                        ctx,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
+                        c"wait",
+                    );
                 } else if pid > 0 {
                     exit_code = (status & 0xff00_i32) >> 8;
                     exit_sig = if ((status & 0x7f_i32) + 1) as ::core::ffi::c_schar as i32 >> 1 > 0
@@ -833,7 +845,9 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     if pid < 0 {
                         pfatal_with_name(
                             ctx,
-                            b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            c"remote_status",
                         );
                     }
                     if pid == 0 {
@@ -930,12 +944,14 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             if !e.is_null() {
                 error(
                     ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     (strlen((*c).cmd_name) as size_t).wrapping_add(strlen(e) as size_t),
-                    b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    c"%s: %s",
                     &[
-                        FmtArg::Str(((*c).cmd_name) as *const ::core::ffi::c_char),
-                        FmtArg::Str((e) as *const ::core::ffi::c_char),
+                        FmtArg::Str(::core::ffi::CStr::from_ptr((*c).cmd_name)),
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(e)),
                     ],
                 );
             }
@@ -1020,7 +1036,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_failed);
                 } else {
                     if crate::make_main::opt_output_sync() == OUTPUT_SYNC_LINE {
-                        crate::output::output_dump(ctx, &raw mut (*c).output);
+                        crate::output::output_dump(ctx, &mut (*c).output);
                     }
                     (*c).set_remote(
                         ctx.remote_backend.0.can_start_job(false) as ::core::ffi::c_uint,
@@ -1041,7 +1057,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_success);
             }
         }
-        crate::output::output_dump(ctx, &raw mut (*c).output);
+        crate::output::output_dump(ctx, &mut (*c).output);
         if !handling_fatal_signal(ctx) {
             notice_finished_file(ctx, (*c).file, (*c).entry);
         }
@@ -1105,7 +1121,7 @@ pub unsafe fn free_childbase(child: *mut childbase) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
-    crate::output::output_close(ctx, &raw mut (*child).output);
+    crate::output::output_close(ctx, Some(&mut (*child).output));
     release_jobserver_token(ctx, child);
     if handling_fatal_signal(ctx) {
         return;
@@ -1136,13 +1152,14 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
     if jobserver_tokens(ctx) == 0 {
         fatal(
             ctx,
-            ::core::ptr::null_mut::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
-            b"INTERNAL: freeing child %p (%s) but no tokens left\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"INTERNAL: freeing child %p (%s) but no tokens left",
             &[
                 FmtArg::Ptr((child) as *const ::core::ffi::c_void),
-                FmtArg::Str((name) as *const ::core::ffi::c_char),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(name)),
             ],
         );
     }
@@ -1287,7 +1304,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 ::core::ptr::null_mut::<output>()
             });
             if (*child).output.syncout() == 0 {
-                crate::output::output_dump(ctx, &raw mut (*child).output);
+                crate::output::output_dump(ctx, &mut (*child).output);
             }
             if crate::make_main::opt_just_print()
                 || 0x10_i32 & db_level(ctx) != 0
@@ -1295,10 +1312,12 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             {
                 message(
                     ctx,
+                    // SAFETY: the sync target just installed above via `set_output_context`.
+                    crate::output::output_context().as_mut(),
                     0,
                     strlen(p) as size_t,
-                    b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+                    c"%s",
+                    &[FmtArg::Str(::core::ffi::CStr::from_ptr(p))],
                 );
             }
             ctx.commands_started
@@ -1326,7 +1345,8 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     free(argv as *mut ::core::ffi::c_void);
                 }
             } else {
-                crate::output::output_start(ctx);
+                // SAFETY: the sync target just installed above via `set_output_context`.
+                crate::output::output_start(ctx, crate::output::output_context().as_mut());
                 fflush(stdout);
                 fflush(stderr);
                 (*child)
@@ -1695,7 +1715,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
         remote_noerror_good_stdin_deleted_recursive_jobslot_dontcare: [0; 1],
         c2rust_padding: [0; 7],
     });
-    crate::output::output_init(ctx, &raw mut boxed.output);
+    crate::output::output_init(ctx, Some(&mut boxed.output));
     boxed.set_dontcare(dontcare as ::core::ffi::c_uint);
     set_output_context(if boxed.output.syncout() as i32 != 0 {
         &raw mut boxed.output
@@ -1762,10 +1782,11 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             if ctx.children.0.get().is_null() {
                 fatal(
                     ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    b"INTERNAL: no children as we go to sleep on read\0" as *const u8
-                        as *const ::core::ffi::c_char,
+                    c"INTERNAL: no children as we go to sleep on read",
                     &[],
                 );
             }
@@ -1867,20 +1888,28 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             if info.phony {
                 message(
                     ctx,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
                     0,
                     (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-                    b"%s: update target '%s' due to: target is .PHONY\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[FmtArg::Str(nm), FmtArg::Str(tp)],
+                    c"%s: update target '%s' due to: target is .PHONY",
+                    &[
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(tp)),
+                    ],
                 );
             } else if info.last_mtime == NONEXISTENT_MTIME as u64 {
                 message(
                     ctx,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
                     0,
                     (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-                    b"%s: update target '%s' due to: target does not exist\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[FmtArg::Str(nm), FmtArg::Str(tp)],
+                    c"%s: update target '%s' due to: target does not exist",
+                    &[
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(tp)),
+                    ],
                 );
             } else {
                 // The set of newer prerequisites ($?), expanded for this file.
@@ -1894,22 +1923,31 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                     let np = newer_buf.as_ptr() as *const ::core::ffi::c_char;
                     message(
                         ctx,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
                         0,
                         (strlen(nm) as size_t)
                             .wrapping_add(strlen(tp) as size_t)
                             .wrapping_add(strlen(np) as size_t),
-                        b"%s: update target '%s' due to: %s\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[FmtArg::Str(nm), FmtArg::Str(tp), FmtArg::Str(np)],
+                        c"%s: update target '%s' due to: %s",
+                        &[
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(tp)),
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(np)),
+                        ],
                     );
                 } else if info.nonexistent_deps.is_empty() {
                     message(
                         ctx,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
                         0,
                         (strlen(nm) as size_t).wrapping_add(strlen(tp) as size_t),
-                        b"%s: update target '%s' due to: unknown reasons\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[FmtArg::Str(nm), FmtArg::Str(tp)],
+                        c"%s: update target '%s' due to: unknown reasons",
+                        &[
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(tp)),
+                        ],
                     );
                 } else {
                     let mut newer_buf: Vec<u8> = Vec::new();
@@ -1923,13 +1961,18 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                     let np = newer_buf.as_ptr() as *const ::core::ffi::c_char;
                     message(
                         ctx,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
                         0,
                         (strlen(nm) as size_t)
                             .wrapping_add(strlen(tp) as size_t)
                             .wrapping_add(strlen(np) as size_t),
-                        b"%s: update target '%s' due to: %s\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[FmtArg::Str(nm), FmtArg::Str(tp), FmtArg::Str(np)],
+                        c"%s: update target '%s' due to: %s",
+                        &[
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(nm)),
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(tp)),
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(np)),
+                        ],
                     );
                 }
             }
@@ -2143,17 +2186,20 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
             if *__errno_location() == 0 {
                 error(
                     ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    b"cannot enforce load limits on this operating system\0" as *const u8
-                        as *const ::core::ffi::c_char,
+                    c"cannot enforce load limits on this operating system",
                     &[],
                 );
             } else {
                 perror_with_name(
                     ctx,
-                    b"cannot enforce load limit: \0" as *const u8 as *const ::core::ffi::c_char,
-                    b"getloadavg\0" as *const u8 as *const ::core::ffi::c_char,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    c"cannot enforce load limit: ",
+                    c"getloadavg",
                 );
             }
         }
@@ -2243,13 +2289,15 @@ pub unsafe fn child_execute_job(
     if pid < 0 {
         error(
             ctx,
-            ::core::ptr::null_mut::<Floc>(),
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             (strlen(*argv.offset(0_i32 as isize)) as size_t)
                 .wrapping_add(strlen(strerror(r)) as size_t),
-            b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+            c"%s: %s",
             &[
-                FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-                FmtArg::Str((strerror(r)) as *const ::core::ffi::c_char),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize))),
+                FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(r))),
             ],
         );
     }
@@ -2458,13 +2506,15 @@ pub unsafe fn exec_command(
         ENOENT => {
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 (strlen(*argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"%s: %s",
                 &[
-                    FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize))),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
         }
@@ -2501,26 +2551,30 @@ pub unsafe fn exec_command(
             execvp(shell, new_argv as *const *mut ::core::ffi::c_char);
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 (strlen(*new_argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"%s: %s",
                 &[
-                    FmtArg::Str((*new_argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(*new_argv.offset(0_i32 as isize))),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
         }
         _ => {
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 (strlen(*argv.offset(0_i32 as isize)) as size_t)
                     .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                c"%s: %s",
                 &[
-                    FmtArg::Str((*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize))),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
         }
@@ -3070,19 +3124,14 @@ unsafe fn construct_command_argv_internal(
     } else {
         fatal(
             ctx,
-            NILF,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            None,
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
                 .wrapping_sub(1)
                 .wrapping_add(INTSTR_LENGTH),
-            b"%s (line %d) Bad shell context (!unixy && !batch_mode_shell)\n\0" as *const u8
-                as *const ::core::ffi::c_char,
-            &[
-                FmtArg::Str(
-                    (b"src/job.c\0" as *const u8 as *const ::core::ffi::c_char)
-                        as *const ::core::ffi::c_char,
-                ),
-                FmtArg::Int((3621_i32) as i64),
-            ],
+            c"%s (line %d) Bad shell context (!unixy && !batch_mode_shell)\n",
+            &[FmtArg::Str(c"src/job.c"), FmtArg::Int((3621_i32) as i64)],
         );
     }
     free(new_line as *mut ::core::ffi::c_void);

@@ -6,9 +6,17 @@
 //! (a C format string plus a `FmtArg` slice, not real C ABI/varargs) because
 //! they are called that way from all over the crate; the [`msg`] submodule
 //! provides native-Rust counterparts.
+//!
+//! Every public function here takes safe types (`&CStr`, `Option<&Floc>`,
+//! `Option<&mut output>`) rather than raw pointers. The current output-sync
+//! target is a process-wide, pointer-based handle (`output_context`) owned
+//! by whichever file holds the live `ExecContext`; resolving that raw
+//! pointer to a reference is therefore each *caller's* job (`unsafe {
+//! output_context().as_mut() }`), not this file's — the one exception is
+//! `fatal`/`pfatal_with_name`/`msg::fatal`'s call into `die`, a pre-existing,
+//! enormous shutdown subsystem (main.rs) out of scope for this file.
 
-use ::core::ffi::c_uint;
-use ::core::ptr::{null, null_mut};
+use ::core::ffi::{c_uint, CStr};
 use std::io::{Read, Seek, Write};
 use std::sync::atomic::Ordering;
 
@@ -102,19 +110,24 @@ unsafe fn with_borrowed_fd<T>(fd: i32, f: impl FnOnce(&mut std::fs::File) -> T) 
     result
 }
 
-/// # Safety
-/// `msg` must be a valid NUL-terminated C string, and `out` must be null or
-/// point to a valid `output`.
-unsafe fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
-    let bytes = ::core::ffi::CStr::from_ptr(msg).to_bytes();
-    if !out.is_null() && (*out).syncout() as i32 != 0 {
-        let fd: i32 = if is_err != 0 { (*out).err } else { (*out).out };
-        if fd != OUTPUT_NONE {
-            with_borrowed_fd(fd, |file| {
-                let _ = file.seek(std::io::SeekFrom::End(0));
-                let _ = file.write_all(bytes);
-            });
-            return;
+/// Write `msg` to `out`'s sync descriptor if one is active, else to real
+/// stdout/stderr.
+fn _outputs(out: Option<&mut output>, is_err: i32, msg: &CStr) {
+    let bytes = msg.to_bytes();
+    if let Some(o) = out {
+        if o.syncout() as i32 != 0 {
+            let fd: i32 = if is_err != 0 { o.err } else { o.out };
+            if fd != OUTPUT_NONE {
+                // SAFETY: `fd` is either `out.out`/`out.err`, an fd this
+                // module opened itself via `output_tmpfd`.
+                unsafe {
+                    with_borrowed_fd(fd, |file| {
+                        let _ = file.seek(std::io::SeekFrom::End(0));
+                        let _ = file.write_all(bytes);
+                    });
+                }
+                return;
+            }
         }
     }
     if is_err != 0 {
@@ -128,42 +141,40 @@ unsafe fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_cha
     }
 }
 /// Print an entering/leaving-directory line (returns 1).
-///
-/// # Safety
-/// `ctx.program`/`ctx.starting_directory` must be null or valid
-/// NUL-terminated strings (the c2rust pointer contract they always carry).
-pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
+pub fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     let makelevel = ctx.makelevel();
     // `program` is null only on context-less paths handed a throwaway
     // `ExecContext` (plugin ABI); the C original could not get here with a
     // null `program` global. Fall back to the plain name like
     // `msg::program_name` rather than passing null to the formatter.
-    let program = ctx.program.0.get();
-    let program = if program.is_null() { c"make".as_ptr() } else { program };
-    let starting_directory = ctx.starting_directory.0.get();
-    let fmt: *const ::core::ffi::c_char;
+    let program: &CStr = ctx.program.as_cstr().unwrap_or(c"make");
+    let has_dir = ctx.starting_directory.as_cstr().is_some();
+    // Harmless placeholder when there's no starting directory: the formats
+    // below have no `%s` slot for it in that case, so it's never consumed.
+    let starting_directory: &CStr = ctx.starting_directory.as_cstr().unwrap_or(c"");
+    let fmt: &CStr;
     if makelevel == 0 {
-        if starting_directory.is_null() {
-            if entering != 0 {
-                fmt = c"%s: Entering an unknown directory\n".as_ptr();
+        if !has_dir {
+            fmt = if entering != 0 {
+                c"%s: Entering an unknown directory\n"
             } else {
-                fmt = c"%s: Leaving an unknown directory\n".as_ptr();
-            }
+                c"%s: Leaving an unknown directory\n"
+            };
         } else if entering != 0 {
-            fmt = c"%s: Entering directory '%s'\n".as_ptr();
+            fmt = c"%s: Entering directory '%s'\n";
         } else {
-            fmt = c"%s: Leaving directory '%s'\n".as_ptr();
+            fmt = c"%s: Leaving directory '%s'\n";
         }
-    } else if starting_directory.is_null() {
-        if entering != 0 {
-            fmt = c"%s[%u]: Entering an unknown directory\n".as_ptr();
+    } else if !has_dir {
+        fmt = if entering != 0 {
+            c"%s[%u]: Entering an unknown directory\n"
         } else {
-            fmt = c"%s[%u]: Leaving an unknown directory\n".as_ptr();
-        }
+            c"%s[%u]: Leaving an unknown directory\n"
+        };
     } else if entering != 0 {
-        fmt = c"%s[%u]: Entering directory '%s'\n".as_ptr();
+        fmt = c"%s[%u]: Entering directory '%s'\n";
     } else {
-        fmt = c"%s[%u]: Leaving directory '%s'\n".as_ptr();
+        fmt = c"%s[%u]: Leaving directory '%s'\n";
     }
     // The line is built in an owned buffer per call (the former grow-only
     // `static mut buf`/`len` pair); `_outputs` copies the bytes before
@@ -186,49 +197,47 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     };
     vformat_into(&mut line, fmt, args);
     line.push(0);
-    _outputs(null_mut(), 0, line.as_ptr() as *const ::core::ffi::c_char);
+    let msg = CStr::from_bytes_with_nul(&line).unwrap();
+    _outputs(None, 0, msg);
     1
 }
 /// Copy everything from fd `from` to stdout (`is_err == false`) or stderr
 /// (`is_err == true`), from the beginning.
-///
-/// # Safety
-/// `from` must be an open, seekable fd.
-pub unsafe fn pump_from_tmp(from: i32, is_err: bool) {
-    with_borrowed_fd(from, |file| {
-        if let Err(e) = file.seek(std::io::SeekFrom::Start(0)) {
-            eprintln!("lseek(): {e}");
-        }
-        let mut buffer = [0u8; 8192];
-        loop {
-            let len = match file.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("read(): {e}");
+pub fn pump_from_tmp(from: i32, is_err: bool) {
+    // SAFETY: `from` is an open, seekable fd, per this function's contract.
+    unsafe {
+        with_borrowed_fd(from, |file| {
+            if let Err(e) = file.seek(std::io::SeekFrom::Start(0)) {
+                eprintln!("lseek(): {e}");
+            }
+            let mut buffer = [0u8; 8192];
+            loop {
+                let len = match file.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("read(): {e}");
+                        break;
+                    }
+                };
+                let chunk = &buffer[..len];
+                let result = if is_err {
+                    let mut w = std::io::stderr().lock();
+                    w.write_all(chunk).and_then(|_| w.flush())
+                } else {
+                    let mut w = std::io::stdout().lock();
+                    w.write_all(chunk).and_then(|_| w.flush())
+                };
+                if let Err(e) = result {
+                    eprintln!("write(): {e}");
                     break;
                 }
-            };
-            let chunk = &buffer[..len];
-            let result = if is_err {
-                let mut w = std::io::stderr().lock();
-                w.write_all(chunk).and_then(|_| w.flush())
-            } else {
-                let mut w = std::io::stdout().lock();
-                w.write_all(chunk).and_then(|_| w.flush())
-            };
-            if let Err(e) = result {
-                eprintln!("write(): {e}");
-                break;
             }
-        }
-    });
+        });
+    }
 }
 /// Create an anonymous temp fd in append mode for output sync.
-///
-/// # Safety
-/// Always safe; unsafe for C-API compatibility.
-pub unsafe fn output_tmpfd(ctx: &ExecContext) -> i32 {
+pub fn output_tmpfd(ctx: &ExecContext) -> i32 {
     let fd: i32 = open_anon_tmpfd(ctx);
     fd_set_append(fd);
     fd
@@ -237,23 +246,19 @@ pub unsafe fn output_tmpfd(ctx: &ExecContext) -> i32 {
 /// (with a message) on failure.
 ///
 /// # Safety
-/// `out` must point to a valid `output`; must run single-threaded.
-pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
+/// Must run single-threaded.
+pub fn setup_tmpfile(ctx: &ExecContext, out: &mut output) {
     // Guards against re-entrant tmpfile setup (the C code's recursion check).
     if ctx.output_in_setup.0.load(Ordering::Relaxed) {
         return;
     }
     ctx.output_in_setup.0.store(true, Ordering::Relaxed);
-    let io_state: ::core::ffi::c_uint = check_io_state(ctx);
+    let io_state: c_uint = check_io_state(ctx);
     // The block falls through to the error handler below on any failure;
     // reaching its end is the success path (the C code used `goto`).
     'setup: {
         if io_state & (IO_STDOUT_OK | IO_STDERR_OK) == 0 {
-            perror_with_name(
-                ctx,
-                c"output-sync suppressed: ".as_ptr(),
-                c"stderr".as_ptr(),
-            );
+            perror_with_name(ctx, Some(&mut *out), c"output-sync suppressed: ", c"stderr");
             break 'setup;
         }
         if io_state & IO_STDOUT_OK != 0 {
@@ -262,18 +267,18 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
                 break 'setup;
             }
             fd_noinherit(fd);
-            (*out).out = fd;
+            out.out = fd;
         }
         if io_state & IO_STDERR_OK != 0 {
-            if (*out).out != OUTPUT_NONE && io_state & IO_COMBINED_OUTERR != 0 {
-                (*out).err = (*out).out;
+            if out.out != OUTPUT_NONE && io_state & IO_COMBINED_OUTERR != 0 {
+                out.err = out.out;
             } else {
                 let fd_0: i32 = output_tmpfd(ctx);
                 if fd_0 < 0 {
                     break 'setup;
                 }
                 fd_noinherit(fd_0);
-                (*out).err = fd_0;
+                out.err = fd_0;
             }
         }
         ctx.output_in_setup.0.store(false, Ordering::Relaxed);
@@ -281,12 +286,13 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
     }
     error(
         ctx,
-        null::<Floc>(),
+        Some(&mut *out),
+        None,
         0,
-        c"cannot open output-sync lock file: suppressing output-sync".as_ptr(),
+        c"cannot open output-sync lock file: suppressing output-sync",
         &[],
     );
-    output_close(ctx, out);
+    output_close(ctx, Some(&mut *out));
     crate::make_main::with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
     osync_clear();
     ctx.output_in_setup.0.store(false, Ordering::Relaxed);
@@ -295,23 +301,26 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
 /// temp files for reuse.
 ///
 /// # Safety
-/// `out` must point to a valid `output`; must run single-threaded.
-pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
+/// Must run single-threaded.
+pub fn output_dump(ctx: &ExecContext, out: &mut output) {
     // Current size of the fd's underlying file, via `SeekFrom::End(0)` (the
     // former `lseek(fd, 0, SEEK_END)`).
     let fd_size = |fd: i32| -> i64 {
-        with_borrowed_fd(fd, |file| file.seek(std::io::SeekFrom::End(0)).unwrap_or(0) as i64)
+        // SAFETY: `fd` is `out.out`/`out.err`, an fd this module opened
+        // itself.
+        unsafe { with_borrowed_fd(fd, |file| file.seek(std::io::SeekFrom::End(0)).unwrap_or(0) as i64) }
     };
-    let outfd_not_empty: i32 = ((*out).out != OUTPUT_NONE && fd_size((*out).out) > 0) as i32;
-    let errfd_not_empty: i32 = ((*out).err != OUTPUT_NONE && fd_size((*out).err) > 0) as i32;
+    let outfd_not_empty: i32 = (out.out != OUTPUT_NONE && fd_size(out.out) > 0) as i32;
+    let errfd_not_empty: i32 = (out.err != OUTPUT_NONE && fd_size(out.err) > 0) as i32;
     if outfd_not_empty != 0 || errfd_not_empty != 0 {
         let mut traced: i32 = 0;
         if osync_acquire(ctx) == 0 {
             error(
                 ctx,
-                null::<Floc>(),
+                Some(&mut *out),
+                None,
                 0,
-                c"warning: cannot acquire output lock: disabling output sync".as_ptr(),
+                c"warning: cannot acquire output lock: disabling output sync",
                 &[],
             );
             osync_clear();
@@ -322,42 +331,42 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             traced = log_working_directory(ctx, 1);
         }
         if outfd_not_empty != 0 {
-            pump_from_tmp((*out).out, false);
+            pump_from_tmp(out.out, false);
         }
-        if errfd_not_empty != 0 && (*out).err != (*out).out {
-            pump_from_tmp((*out).err, true);
+        if errfd_not_empty != 0 && out.err != out.out {
+            pump_from_tmp(out.err, true);
         }
         if traced != 0 {
             log_working_directory(ctx, 0);
         }
         osync_release(ctx);
         let truncate = |fd: i32| {
-            with_borrowed_fd(fd, |file| {
-                let _ = file.seek(std::io::SeekFrom::Start(0));
-                let _ = file.set_len(0);
-            });
+            // SAFETY: `fd` is `out.out`/`out.err`, an fd this module opened
+            // itself.
+            unsafe {
+                with_borrowed_fd(fd, |file| {
+                    let _ = file.seek(std::io::SeekFrom::Start(0));
+                    let _ = file.set_len(0);
+                });
+            }
         };
-        if (*out).out != OUTPUT_NONE {
-            truncate((*out).out);
+        if out.out != OUTPUT_NONE {
+            truncate(out.out);
         }
-        if (*out).err != OUTPUT_NONE && (*out).err != (*out).out {
-            truncate((*out).err);
+        if out.err != OUTPUT_NONE && out.err != out.out {
+            truncate(out.err);
         }
     }
 }
-/// Initialize `out` (or, when null, switch stdout/stderr to append mode).
+/// Initialize `out` (or, when `None`, switch stdout/stderr to append mode).
 ///
 /// # Safety
-/// `out` must be null or point to a valid `output`; must run
-/// single-threaded.
-pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
-    if !out.is_null() {
-        (*out).err = OUTPUT_NONE;
-        (*out).out = (*out).err;
-        (*out).set_syncout(
-            (crate::make_main::opt_output_sync() != 0) as i32 as ::core::ffi::c_uint
-                as ::core::ffi::c_uint,
-        );
+/// Must run single-threaded.
+pub fn output_init(ctx: &ExecContext, out: Option<&mut output>) {
+    if let Some(out) = out {
+        out.err = OUTPUT_NONE;
+        out.out = out.err;
+        out.set_syncout((crate::make_main::opt_output_sync() != 0) as i32 as c_uint);
         return;
     }
     use std::os::unix::io::AsRawFd;
@@ -370,14 +379,13 @@ pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
         Ordering::Relaxed,
     );
 }
-/// Dump and close `out`'s temp files (or, when null, restore
+/// Dump and close `out`'s temp files (or, when `None`, restore
 /// stdout/stderr).
 ///
 /// # Safety
-/// `out` must be null or point to a valid `output`; must run
-/// single-threaded.
-pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
-    if out.is_null() {
+/// Must run single-threaded.
+pub fn output_close(ctx: &ExecContext, out: Option<&mut output>) {
+    let Some(out) = out else {
         if stdio_traced() {
             log_working_directory(ctx, 0);
         }
@@ -391,29 +399,31 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
             ctx.stderr_flags.0.load(Ordering::Relaxed),
         );
         return;
-    }
+    };
     output_dump(ctx, out);
-    use std::os::unix::io::FromRawFd;
-    if (*out).out >= 0 {
-        drop(std::fs::File::from_raw_fd((*out).out));
+    // SAFETY: `out.out`/`out.err` are either `OUTPUT_NONE` (checked below)
+    // or fds this module opened itself via `output_tmpfd`.
+    unsafe {
+        use std::os::unix::io::FromRawFd;
+        if out.out >= 0 {
+            drop(std::fs::File::from_raw_fd(out.out));
+        }
+        if out.err >= 0 && out.err != out.out {
+            drop(std::fs::File::from_raw_fd(out.err));
+        }
     }
-    if (*out).err >= 0 && (*out).err != (*out).out {
-        drop(std::fs::File::from_raw_fd((*out).err));
-    }
-    output_init(ctx, out);
+    output_init(ctx, Some(out));
 }
 /// Lazily set up output sync and the enter-directory trace before the
 /// first real output.
 ///
 /// # Safety
 /// Must run single-threaded: touches output and trace globals.
-pub unsafe fn output_start(ctx: &ExecContext) {
-    let osync = output_context();
-    if !osync.is_null()
-        && (*osync).syncout() as i32 != 0
-        && !((*osync).out >= 0 || (*osync).err >= 0)
-    {
-        setup_tmpfile(ctx, osync);
+pub fn output_start(ctx: &ExecContext, mut osync: Option<&mut output>) {
+    if let Some(o) = osync.as_deref_mut() {
+        if o.syncout() as i32 != 0 && !(o.out >= 0 || o.err >= 0) {
+            setup_tmpfile(ctx, o);
+        }
     }
     if (crate::make_main::opt_output_sync() == OUTPUT_SYNC_NONE
         || crate::make_main::opt_output_sync() == OUTPUT_SYNC_RECURSE)
@@ -423,17 +433,15 @@ pub unsafe fn output_start(ctx: &ExecContext) {
         set_stdio_traced(log_working_directory(ctx, 1) != 0);
     }
 }
-/// Write `msg` to stdout or stderr (or the sync temp file), starting
-/// output first.
-///
-/// # Safety
-/// `msg` must be null or a valid NUL-terminated string.
-pub unsafe fn outputs(ctx: &ExecContext, is_err: i32, msg: *const ::core::ffi::c_char) {
-    if msg.is_null() || *msg as i32 == 0 {
+/// Write `msg` to stdout or stderr (or `osync`'s sync temp file), starting
+/// output first. `osync` is the caller's already-resolved view of the
+/// current output-sync target (see [`output_context`]).
+pub fn outputs(ctx: &ExecContext, mut osync: Option<&mut output>, is_err: i32, msg: &CStr) {
+    if msg.to_bytes().is_empty() {
         return;
     }
-    output_start(ctx);
-    _outputs(output_context(), is_err, msg);
+    output_start(ctx, osync.as_deref_mut());
+    _outputs(osync, is_err, msg);
 }
 // The former shared, growing printer buffer (`static mut fmtbuf` and its
 // `get_buffer` accessor) is gone: each printer builds its line in an owned
@@ -441,8 +449,8 @@ pub unsafe fn outputs(ctx: &ExecContext, is_err: i32, msg: *const ::core::ffi::c
 // bytes before returning, so no allocation outlives its call.
 /// One argument to the printf-subset formatter that replaced C varargs.
 #[derive(Copy, Clone)]
-pub enum FmtArg {
-    Str(*const ::core::ffi::c_char),
+pub enum FmtArg<'a> {
+    Str(&'a CStr),
     Int(i64),
     Uint(u64),
     Ptr(*const ::core::ffi::c_void),
@@ -451,8 +459,8 @@ pub enum FmtArg {
 /// Render printf-style `fmt` with `args` into `out`, byte-for-byte like the
 /// C printf subset this codebase uses: %s %d %i %u %x %c %p %% with flags,
 /// width and precision (including `*`), and h/l/ll/z length modifiers.
-pub unsafe fn vformat_into(out: &mut Vec<u8>, fmt: *const ::core::ffi::c_char, args: &[FmtArg]) {
-    let bytes = ::core::ffi::CStr::from_ptr(fmt).to_bytes();
+pub fn vformat_into(out: &mut Vec<u8>, fmt: &CStr, args: &[FmtArg]) {
+    let bytes = fmt.to_bytes();
     let mut args = args.iter();
     let mut i = 0;
     while i < bytes.len() {
@@ -512,14 +520,9 @@ pub unsafe fn vformat_into(out: &mut Vec<u8>, fmt: *const ::core::ffi::c_char, a
         let piece: Vec<u8> = match conv {
             b'%' => vec![b'%'],
             b's' => {
-                let p = match args.next() {
-                    Some(FmtArg::Str(p)) => *p,
-                    _ => ::core::ptr::null(),
-                };
-                let mut v = if p.is_null() {
-                    b"(null)".to_vec()
-                } else {
-                    ::core::ffi::CStr::from_ptr(p).to_bytes().to_vec()
+                let mut v = match args.next() {
+                    Some(FmtArg::Str(s)) => s.to_bytes().to_vec(),
+                    _ => b"(null)".to_vec(),
                 };
                 if let Some(prec) = precision {
                     v.truncate(prec);
@@ -561,7 +564,7 @@ pub unsafe fn vformat_into(out: &mut Vec<u8>, fmt: *const ::core::ffi::c_char, a
             b'p' => {
                 let p = match args.next() {
                     Some(FmtArg::Ptr(p)) => *p as usize,
-                    Some(FmtArg::Str(p)) => *p as usize,
+                    Some(FmtArg::Str(s)) => s.as_ptr() as usize,
                     _ => 0,
                 };
                 format!("0x{:x}", p).into_bytes()
@@ -595,14 +598,8 @@ fn push_cstr(out: &mut Vec<u8>, s: Option<&::core::ffi::CStr>) {
     }
 }
 
-unsafe fn push_program_prefix(
-    ctx: &ExecContext,
-    out: &mut Vec<u8>,
-    makelevel: u32,
-    fatal_marker: bool,
-) {
-    let program = ctx.program.0.get();
-    push_cstr(out, (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)));
+fn push_program_prefix(ctx: &ExecContext, out: &mut Vec<u8>, makelevel: u32, fatal_marker: bool) {
+    push_cstr(out, ctx.program.as_cstr());
     if makelevel == 0 {
         out.extend_from_slice(b": ");
     } else {
@@ -615,42 +612,34 @@ unsafe fn push_program_prefix(
     }
 }
 
-unsafe fn push_error_prefix(
+fn push_error_prefix(
     ctx: &ExecContext,
     out: &mut Vec<u8>,
-    flocp: *const Floc,
+    flocp: Option<&Floc>,
     makelevel: u32,
     fatal_marker: bool,
 ) {
-    if let Some(fl) = flocp.as_ref().filter(|fl| !fl.filenm.is_null()) {
-        // `filenm` is non-null in this arm, so it is always `Some`.
-        push_cstr(out, Some(::core::ffi::CStr::from_ptr(fl.filenm)));
-        out.push(b':');
-        out.extend_from_slice(
-            fl.lineno
-                .wrapping_add(fl.offset)
-                .to_string()
-                .as_bytes(),
-        );
-        out.extend_from_slice(b": ");
-        if fatal_marker {
-            out.extend_from_slice(b"*** ");
+    match flocp.and_then(|fl| fl.filenm_cstr().map(|fnm| (fnm, fl))) {
+        Some((fnm, fl)) => {
+            push_cstr(out, Some(fnm));
+            out.push(b':');
+            out.extend_from_slice(fl.lineno.wrapping_add(fl.offset).to_string().as_bytes());
+            out.extend_from_slice(b": ");
+            if fatal_marker {
+                out.extend_from_slice(b"*** ");
+            }
         }
-    } else {
-        push_program_prefix(ctx, out, makelevel, fatal_marker);
+        None => push_program_prefix(ctx, out, makelevel, fatal_marker),
     }
 }
 
 /// printf-subset message to stdout, optionally prefixed with the program name.
-///
-/// # Safety
-/// `fmt` must be a valid NUL-terminated format string. The format
-/// specifiers must match `args`.
-pub unsafe fn message(
+pub fn message(
     ctx: &ExecContext,
+    osync: Option<&mut output>,
     prefix: i32,
     _len: size_t,
-    fmt: *const ::core::ffi::c_char,
+    fmt: &CStr,
     args: &[FmtArg],
 ) {
     let makelevel = ctx.makelevel();
@@ -661,19 +650,17 @@ pub unsafe fn message(
     vformat_into(&mut out, fmt, args);
     out.push(b'\n');
     out.push(0);
-    outputs(ctx, 0, out.as_ptr() as *const ::core::ffi::c_char);
+    let msg = CStr::from_bytes_with_nul(&out).unwrap();
+    outputs(ctx, osync, 0, msg);
 }
 
 /// printf-subset error to stderr with a file:line or program prefix.
-///
-/// # Safety
-/// `flocp` must be null or valid. `fmt` must be a valid NUL-terminated
-/// format string and the format specifiers must match `args`.
-pub unsafe fn error(
+pub fn error(
     ctx: &ExecContext,
-    flocp: *const Floc,
+    osync: Option<&mut output>,
+    flocp: Option<&Floc>,
     _len: size_t,
-    fmt: *const ::core::ffi::c_char,
+    fmt: &CStr,
     args: &[FmtArg],
 ) {
     let makelevel = ctx.makelevel();
@@ -682,19 +669,18 @@ pub unsafe fn error(
     vformat_into(&mut out, fmt, args);
     out.push(b'\n');
     out.push(0);
-    outputs(ctx, 1, out.as_ptr() as *const ::core::ffi::c_char);
+    let msg = CStr::from_bytes_with_nul(&out).unwrap();
+    outputs(ctx, osync, 1, msg);
 }
 
 /// Like [`error`] but adds the `*** ` marker and `.  Stop.` suffix, then
 /// dies with `MAKE_FAILURE`.
-///
-/// # Safety
-/// Same contract as [`error`].
-pub unsafe fn fatal(
+pub fn fatal(
     ctx: &ExecContext,
-    flocp: *const Floc,
+    osync: Option<&mut output>,
+    flocp: Option<&Floc>,
     _len: size_t,
-    fmt: *const ::core::ffi::c_char,
+    fmt: &CStr,
     args: &[FmtArg],
 ) -> ! {
     let makelevel = ctx.makelevel();
@@ -703,8 +689,14 @@ pub unsafe fn fatal(
     vformat_into(&mut out, fmt, args);
     out.extend_from_slice(b".  Stop.\n");
     out.push(0);
-    outputs(ctx, 1, out.as_ptr() as *const ::core::ffi::c_char);
-    die(ctx, MAKE_FAILURE);
+    let msg = CStr::from_bytes_with_nul(&out).unwrap();
+    outputs(ctx, osync, 1, msg);
+    // SAFETY: `die` is the make-process exit point (main.rs's whole
+    // shutdown sequence — reap_children, remove_intermediates,
+    // print_data_base, clean_jobserver, etc.), a pre-existing subsystem out
+    // of scope for this file's unsafe-removal; this is the one deliberate
+    // exception.
+    unsafe { die(ctx, MAKE_FAILURE) }
 }
 
 /// The current errno's message, matching `strerror`'s wording exactly:
@@ -720,36 +712,32 @@ fn os_error_message() -> String {
     }
 }
 
-/// Report `str``name`: strerror(errno) via [`error`].
-///
-/// # Safety
-/// `str` and `name` must be valid NUL-terminated strings.
-pub unsafe fn perror_with_name(
-    ctx: &ExecContext,
-    str: *const ::core::ffi::c_char,
-    name: *const ::core::ffi::c_char,
-) {
+/// Report `str_``name`: strerror(errno) via [`error`].
+pub fn perror_with_name(ctx: &ExecContext, osync: Option<&mut output>, str_: &CStr, name: &CStr) {
     let err = ::std::ffi::CString::new(os_error_message()).unwrap_or_default();
     error(
         ctx,
-        null::<Floc>(),
+        osync,
+        None,
         0,
-        c"%s%s: %s".as_ptr(),
-        &[FmtArg::Str(str), FmtArg::Str(name), FmtArg::Str(err.as_ptr())],
+        c"%s%s: %s",
+        &[
+            FmtArg::Str(str_),
+            FmtArg::Str(name),
+            FmtArg::Str(err.as_c_str()),
+        ],
     );
 }
 /// Report `name`: strerror(errno) via [`fatal`] and die.
-///
-/// # Safety
-/// `name` must be a valid NUL-terminated string.
-pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_char) -> ! {
+pub fn pfatal_with_name(ctx: &ExecContext, osync: Option<&mut output>, name: &CStr) -> ! {
     let err = ::std::ffi::CString::new(os_error_message()).unwrap_or_default();
     fatal(
         ctx,
-        null::<Floc>(),
+        osync,
+        None,
         0,
-        c"%s: %s".as_ptr(),
-        &[FmtArg::Str(name), FmtArg::Str(err.as_ptr())],
+        c"%s: %s",
+        &[FmtArg::Str(name), FmtArg::Str(err.as_c_str())],
     );
 }
 /// Print the out-of-memory message without allocating and exit with
@@ -777,106 +765,114 @@ pub fn out_of_memory() -> ! {
 /// legacy call sites (called with a C format string and a `FmtArg` slice,
 /// not real C varargs); both produce identical output formats.
 pub mod msg {
-    use super::{die, outputs, MAKE_FAILURE};
+    use super::{die, output, outputs, MAKE_FAILURE};
     use crate::execctx::ExecContext;
     use crate::floc::Floc;
 
     pub(crate) fn program_name(ctx: &ExecContext) -> String {
-        let p = ctx.program.0.get();
-        if p.is_null() {
-            // Startup derives the name from argv[0] before anything can
-            // print; a null only occurs pre-startup or on a bare test
-            // context, where the plain name is the right prefix.
-            "make".to_string()
-        } else {
-            // SAFETY: a non-null `program` is a NUL-terminated C string that
-            // outlives the run (argv or 'static storage backs it).
-            unsafe { ::core::ffi::CStr::from_ptr(p) }
-                .to_string_lossy()
-                .into_owned()
+        // Startup derives the name from argv[0] before anything can print;
+        // a null only occurs pre-startup or on a bare test context, where
+        // the plain name is the right prefix.
+        match ctx.program.as_cstr() {
+            Some(p) => p.to_string_lossy().into_owned(),
+            None => "make".to_string(),
         }
     }
 
     fn build_prefix(ctx: &ExecContext, loc: Option<&Floc>, fatal_marker: bool) -> String {
         let marker = if fatal_marker { "*** " } else { "" };
-        // SAFETY: `(*flocp).filenm` is a NUL-terminated C string when non-null.
-        unsafe {
-            match loc {
-                Some(f) if !f.filenm.is_null() => {
-                    let fnm = ::core::ffi::CStr::from_ptr(f.filenm).to_string_lossy();
-                    format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
-                }
-                _ => {
-                    let lvl = ctx.makelevel();
-                    let prog = program_name(ctx);
-                    if lvl == 0 {
-                        format!("{prog}: {marker}")
-                    } else {
-                        format!("{prog}[{lvl}]: {marker}")
-                    }
+        match loc.and_then(|f| f.filenm_cstr().map(|fnm| (fnm, f))) {
+            Some((fnm, f)) => {
+                format!(
+                    "{}:{}: {}",
+                    fnm.to_string_lossy(),
+                    f.lineno.wrapping_add(f.offset),
+                    marker
+                )
+            }
+            None => {
+                let lvl = ctx.makelevel();
+                let prog = program_name(ctx);
+                if lvl == 0 {
+                    format!("{prog}: {marker}")
+                } else {
+                    format!("{prog}[{lvl}]: {marker}")
                 }
             }
         }
     }
 
-    fn write_line(ctx: &ExecContext, line: String, is_err: bool) {
+    fn write_line(ctx: &ExecContext, osync: Option<&mut output>, line: String, is_err: bool) {
         let mut bytes = line.into_bytes();
         bytes.push(0);
-        // SAFETY: `outputs` reads up to the trailing NUL we just appended.
-        unsafe {
-            outputs(
-                ctx,
-                if is_err { 1 } else { 0 },
-                bytes.as_ptr() as *const ::core::ffi::c_char,
-            );
-        }
+        let msg = ::core::ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
+        outputs(ctx, osync, if is_err { 1 } else { 0 }, msg);
     }
 
     /// Print `msg` to stdout with a trailing newline. If `with_prefix`,
     /// prepend the make program name (and `[LEVEL]` when nested).
-    pub fn message(ctx: &ExecContext, with_prefix: bool, msg: &str) {
+    pub fn message(ctx: &ExecContext, osync: Option<&mut output>, with_prefix: bool, msg: &str) {
         let line = if with_prefix {
             format!("{}{msg}\n", build_prefix(ctx, None, false))
         } else {
             format!("{msg}\n")
         };
-        write_line(ctx, line, false);
+        write_line(ctx, osync, line, false);
     }
 
     /// Print `msg` to stderr with the make program/file:line prefix and a
     /// trailing newline.
-    pub fn error(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) {
+    pub fn error(ctx: &ExecContext, osync: Option<&mut output>, loc: Option<&Floc>, msg: &str) {
         let line = format!("{}{msg}\n", build_prefix(ctx, loc, false));
-        write_line(ctx, line, true);
+        write_line(ctx, osync, line, true);
     }
 
     /// Print `msg` to stderr with the make program/file:line prefix plus
     /// the `*** ` fatal marker, append `.  Stop.\n`, and exit with
     /// `MAKE_FAILURE`.
-    pub fn fatal(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) -> ! {
+    pub fn fatal(ctx: &ExecContext, osync: Option<&mut output>, loc: Option<&Floc>, msg: &str) -> ! {
         let line = format!("{}{msg}.  Stop.\n", build_prefix(ctx, loc, true));
-        write_line(ctx, line, true);
-        // SAFETY: `die` is the make-process exit point and never returns.
+        write_line(ctx, osync, line, true);
+        // SAFETY: see `output::fatal`'s `die` exception.
         unsafe { die(ctx, MAKE_FAILURE) }
+    }
+
+    #[cfg(test)]
+    mod program_name_tests {
+        use super::program_name;
+
+        #[test]
+        fn falls_back_to_make_when_unset() {
+            let ctx = crate::execctx::ExecContext::default();
+            assert_eq!(program_name(&ctx), "make");
+        }
+
+        #[test]
+        fn reflects_the_installed_program_name() {
+            let ctx = crate::execctx::ExecContext::default();
+            ctx.program.0.set(c"mymake".as_ptr());
+            assert_eq!(program_name(&ctx), "mymake");
+        }
     }
 }
 
 /// Print a `<prefix><msg>` line to stderr, formatting `msg` with `format!`
-/// syntax. Safe wrapper over [`msg::error`] — `$loc` is an `Option<&Floc>`.
+/// syntax. Safe wrapper over [`msg::error`] — `$loc` is an `Option<&Floc>`,
+/// `$osync` an `Option<&mut output>` (see [`output_context`]).
 #[macro_export]
 macro_rules! error {
-    ($ctx:expr, $loc:expr, $($arg:tt)*) => {
-        $crate::output::msg::error($ctx, $loc, &::std::format!($($arg)*))
+    ($ctx:expr, $osync:expr, $loc:expr, $($arg:tt)*) => {
+        $crate::output::msg::error($ctx, $osync, $loc, &::std::format!($($arg)*))
     };
 }
 
 /// Print a fatal `<prefix>*** <msg>.  Stop.` line to stderr and exit, formatting
 /// `msg` with `format!` syntax. Safe wrapper over [`msg::fatal`]; never returns.
-/// `$loc` is an `Option<&Floc>`.
+/// `$loc` is an `Option<&Floc>`, `$osync` an `Option<&mut output>`.
 #[macro_export]
 macro_rules! fatal {
-    ($ctx:expr, $loc:expr, $($arg:tt)*) => {
-        $crate::output::msg::fatal($ctx, $loc, &::std::format!($($arg)*))
+    ($ctx:expr, $osync:expr, $loc:expr, $($arg:tt)*) => {
+        $crate::output::msg::fatal($ctx, $osync, $loc, &::std::format!($($arg)*))
     };
 }
 
@@ -890,9 +886,8 @@ mod log_working_directory_tests {
     fn tolerates_null_program_context() {
         crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
-        assert!(ctx.program.0.get().is_null());
-        // SAFETY: single-threaded test; the options channel is installed above.
-        let traced = unsafe { super::log_working_directory(&ctx, 1) };
+        assert!(ctx.program.as_cstr().is_none());
+        let traced = super::log_working_directory(&ctx, 1);
         assert_eq!(traced, 1);
     }
 }
@@ -955,12 +950,15 @@ mod outputs_tests {
         std::fs::read_to_string(path).expect("read temp file")
     }
 
-    /// Build a zeroed `output` with `syncout` enabled and its stdout/stderr
+    /// Build an `output` with `syncout` enabled and its stdout/stderr
     /// descriptors pointed at two raw fds.
-    unsafe fn sync_output(out_fd: i32, err_fd: i32) -> output {
-        let mut o: output = ::core::mem::zeroed();
-        o.out = out_fd;
-        o.err = err_fd;
+    fn sync_output(out_fd: i32, err_fd: i32) -> output {
+        let mut o = output {
+            out: out_fd,
+            err: err_fd,
+            syncout: [0; 1],
+            c2rust_padding: [0; 3],
+        };
         o.set_syncout(1);
         o
     }
@@ -973,22 +971,16 @@ mod outputs_tests {
     fn writes_to_sync_descriptor_per_stream() {
         let out_path = temp_path("out");
         let err_path = temp_path("err");
-        unsafe {
-            let out_fd = open_temp_fd(&out_path);
-            let err_fd = open_temp_fd(&err_path);
-            let o = sync_output(out_fd, err_fd);
+        let out_fd = open_temp_fd(&out_path);
+        let err_fd = open_temp_fd(&err_path);
+        let mut o = sync_output(out_fd, err_fd);
 
-            _outputs(
-                &o as *const output as *mut output,
-                0,
-                c"to-stdout\n".as_ptr(),
-            );
-            _outputs(
-                &o as *const output as *mut output,
-                1,
-                c"to-stderr\n".as_ptr(),
-            );
-            use std::os::unix::io::FromRawFd;
+        _outputs(Some(&mut o), 0, c"to-stdout\n");
+        _outputs(Some(&mut o), 1, c"to-stderr\n");
+        use std::os::unix::io::FromRawFd;
+        // SAFETY: `out_fd`/`err_fd` were opened by `open_temp_fd` above and
+        // aren't otherwise closed.
+        unsafe {
             drop(std::fs::File::from_raw_fd(out_fd));
             drop(std::fs::File::from_raw_fd(err_fd));
         }
@@ -1012,18 +1004,14 @@ mod outputs_tests {
     /// `fd == OUTPUT_NONE` branch and the `std::io::stdout()` write+flush tail.
     #[test]
     fn falls_through_when_descriptor_is_none() {
-        unsafe {
-            let o = sync_output(OUTPUT_NONE, OUTPUT_NONE);
-            _outputs(&o as *const output as *mut output, 0, c"".as_ptr());
-        }
+        let mut o = sync_output(OUTPUT_NONE, OUTPUT_NONE);
+        _outputs(Some(&mut o), 0, c"");
     }
 
     /// A null `output` (no sync context) goes straight to the stdio writer.
     #[test]
     fn null_output_uses_stdio() {
-        unsafe {
-            _outputs(::core::ptr::null_mut(), 0, c"".as_ptr());
-        }
+        _outputs(None, 0, c"");
     }
 }
 

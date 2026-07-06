@@ -11,7 +11,6 @@ use crate::file::{
     file_timestamp_cons, lookup_file, remove_intermediates, system_time_from_unix, CommandState,
     FileId, FileNode, UpdateStatus, VarOrigin, NONEXISTENT_MTIME, ORDINARY_MTIME_MIN,
 };
-use crate::floc::Floc;
 use crate::job::{child, job_slots_used, new_job, reap_children};
 use crate::load::unload_file;
 use crate::make_main::{one_shell, stopchar_map, temp_stdin_unlink};
@@ -600,7 +599,10 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         );
         let mut bytes = msg.into_bytes();
         bytes.push(0);
-        crate::output::outputs(&ctx, 1, bytes.as_ptr() as *const ::core::ffi::c_char);
+        let msg_cstr =
+            ::core::ffi::CStr::from_bytes_with_nul(&bytes).expect("no interior NUL in message");
+        // SAFETY: the current output-sync target, resolved fresh here.
+        crate::output::outputs(&ctx, unsafe { crate::output::output_context().as_mut() }, 1, msg_cstr);
         // `die` reaps the children chain and unwinds run state, so it must run
         // on the live context (the throwaway one has an empty chain and would
         // spin waiting for job slots that never free).
@@ -657,21 +659,29 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
                     >> if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }) as time_t
             };
             if ar_member_date(ctx, name_ptr) != file_date {
+                // SAFETY: `name_ptr` points into `name_c`, which is NUL-terminated
+                // above and outlives this call.
+                let name_cstr = CStr::from_ptr(name_ptr);
                 if !behalf_ptr.is_null() {
+                    // SAFETY: `behalf_ptr` points into `behalf_c`, which is
+                    // NUL-terminated above and outlives this call.
+                    let behalf_cstr = CStr::from_ptr(behalf_ptr);
                     error(
                         ctx,
-                        null::<Floc>(),
+                        crate::output::output_context().as_mut(),
+                        None,
                         0,
-                        c"*** [%s] archive member '%s' may be bogus; not deleted".as_ptr(),
-                        &[FmtArg::Str(behalf_ptr), FmtArg::Str(name_ptr)],
+                        c"*** [%s] archive member '%s' may be bogus; not deleted",
+                        &[FmtArg::Str(behalf_cstr), FmtArg::Str(name_cstr)],
                     );
                 } else {
                     error(
                         ctx,
-                        null::<Floc>(),
+                        crate::output::output_context().as_mut(),
+                        None,
                         0,
-                        c"*** archive member '%s' may be bogus; not deleted".as_ptr(),
-                        &[FmtArg::Str(name_ptr)],
+                        c"*** archive member '%s' may be bogus; not deleted",
+                        &[FmtArg::Str(name_cstr)],
                     );
                 }
             }
@@ -694,25 +704,38 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
                 system_time_from_unix(st.st_mtime as i64, st.st_mtime_nsec as u32),
             ) != last_mtime
         {
+            // SAFETY: `name_ptr` points into `name_c`, which is NUL-terminated
+            // above and outlives this call.
+            let name_cstr = CStr::from_ptr(name_ptr);
             if !behalf_ptr.is_null() {
+                // SAFETY: `behalf_ptr` points into `behalf_c`, which is
+                // NUL-terminated above and outlives this call.
+                let behalf_cstr = CStr::from_ptr(behalf_ptr);
                 error(
                     ctx,
-                    null::<Floc>(),
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    c"*** [%s] deleting file '%s'".as_ptr(),
-                    &[FmtArg::Str(behalf_ptr), FmtArg::Str(name_ptr)],
+                    c"*** [%s] deleting file '%s'",
+                    &[FmtArg::Str(behalf_cstr), FmtArg::Str(name_cstr)],
                 );
             } else {
                 error(
                     ctx,
-                    null::<Floc>(),
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    c"*** deleting file '%s'".as_ptr(),
-                    &[FmtArg::Str(name_ptr)],
+                    c"*** deleting file '%s'",
+                    &[FmtArg::Str(name_cstr)],
                 );
             }
             if unlink(name_ptr) < 0 && *__errno_location() != ENOENT {
-                perror_with_name(ctx, c"unlink: ".as_ptr(), name_ptr);
+                perror_with_name(
+                    ctx,
+                    crate::output::output_context().as_mut(),
+                    c"unlink: ",
+                    name_cstr,
+                );
             }
         }
     }

@@ -316,6 +316,8 @@ fn suffix_rule_applies(
     }
     crate::error!(
         ctx,
+        // SAFETY: the current output-sync target, resolved fresh here.
+        unsafe { crate::output::output_context().as_mut() },
         Some(fileinfo),
         "warning: ignoring prerequisites on suffix rule definition"
     );

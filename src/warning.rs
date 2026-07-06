@@ -205,8 +205,20 @@ pub fn decode_actions(ctx: &crate::execctx::ExecContext, value: &str, flocp: Opt
 
 fn report_error(ctx: &crate::execctx::ExecContext, flocp: Option<&Floc>, message: String) {
     match flocp {
-        None => msg::fatal(ctx, None, &message),
-        Some(fp) => msg::error(ctx, Some(fp), &format!("{message}: ignored")),
+        None => msg::fatal(
+            ctx,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            None,
+            &message,
+        ),
+        Some(fp) => msg::error(
+            ctx,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            Some(fp),
+            &format!("{message}: ignored"),
+        ),
     }
 }
 

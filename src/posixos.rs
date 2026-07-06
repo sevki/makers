@@ -21,7 +21,6 @@ use libc::{
 
 use crate::commands::handling_fatal_signal;
 use crate::ffi_types::mode_t;
-use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup};
 use crate::output::{error, fatal, perror_with_name, pfatal_with_name, FmtArg, INTSTR_LENGTH};
@@ -52,33 +51,40 @@ pub const IO_STDERR_OK: i32 = 0x10;
 ///
 /// # Safety
 /// Must run after stdio is initialized; reads the C stdio globals.
-pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
+pub fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
     let mut state = ctx.io_state.0.load(Ordering::Relaxed);
     if state != IO_UNKNOWN as c_uint {
         return state;
     }
 
-    if fcntl(stream_fd(stdin), F_GETFD) != -1 || *__errno_location() != EBADF {
-        state |= IO_STDIN_OK as c_uint;
-    }
-    if fcntl(stream_fd(stdout), F_GETFD) != -1 || *__errno_location() != EBADF {
-        state |= IO_STDOUT_OK as c_uint;
-    }
-    if fcntl(stream_fd(stderr), F_GETFD) != -1 || *__errno_location() != EBADF {
-        state |= IO_STDERR_OK as c_uint;
-    }
+    // SAFETY: `stdin`/`stdout`/`stderr` are the process's real C stdio
+    // streams (never reassigned by this codebase) and `__errno_location`
+    // reads the current thread's errno; both are always valid to call here.
+    unsafe {
+        if fcntl(stream_fd(stdin), F_GETFD) != -1 || *__errno_location() != EBADF {
+            state |= IO_STDIN_OK as c_uint;
+        }
+        if fcntl(stream_fd(stdout), F_GETFD) != -1 || *__errno_location() != EBADF {
+            state |= IO_STDOUT_OK as c_uint;
+        }
+        if fcntl(stream_fd(stderr), F_GETFD) != -1 || *__errno_location() != EBADF {
+            state |= IO_STDERR_OK as c_uint;
+        }
 
-    // If stdout and stderr are both usable, check whether they refer to the
-    // same file.
-    if state & (IO_STDOUT_OK | IO_STDERR_OK) as c_uint == (IO_STDOUT_OK | IO_STDERR_OK) as c_uint {
-        let mut stbuf_o: libc::stat = ::core::mem::zeroed();
-        let mut stbuf_e: libc::stat = ::core::mem::zeroed();
-        if fstat(stream_fd(stdout), &mut stbuf_o) == 0
-            && fstat(stream_fd(stderr), &mut stbuf_e) == 0
-            && stbuf_o.st_dev == stbuf_e.st_dev
-            && stbuf_o.st_ino == stbuf_e.st_ino
+        // If stdout and stderr are both usable, check whether they refer to
+        // the same file.
+        if state & (IO_STDOUT_OK | IO_STDERR_OK) as c_uint
+            == (IO_STDOUT_OK | IO_STDERR_OK) as c_uint
         {
-            state |= IO_COMBINED_OUTERR as c_uint;
+            let mut stbuf_o: libc::stat = ::core::mem::zeroed();
+            let mut stbuf_e: libc::stat = ::core::mem::zeroed();
+            if fstat(stream_fd(stdout), &mut stbuf_o) == 0
+                && fstat(stream_fd(stderr), &mut stbuf_e) == 0
+                && stbuf_o.st_dev == stbuf_e.st_dev
+                && stbuf_o.st_ino == stbuf_e.st_ino
+            {
+                state |= IO_COMBINED_OUTERR as c_uint;
+            }
         }
     }
 
@@ -157,7 +163,8 @@ unsafe fn set_blocking(ctx: &crate::execctx::ExecContext, fd: i32, blocking: boo
         flags | O_NONBLOCK
     };
     if fcntl_set_retry(fd, F_SETFL, new_flags) < 0 {
-        pfatal_with_name(ctx, c"fcntl(O_NONBLOCK)".as_ptr());
+        // SAFETY: the current output-sync target, resolved fresh here.
+        pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"fcntl(O_NONBLOCK)");
     }
 }
 
@@ -195,7 +202,12 @@ pub unsafe fn jobserver_setup(
             }
         }
         if r < 0 {
-            perror_with_name(ctx, c"jobserver mkfifo: ".as_ptr(), fifo_name);
+            perror_with_name(
+                ctx,
+                crate::output::output_context().as_mut(),
+                c"jobserver mkfifo: ",
+                CStr::from_ptr(fifo_name),
+            );
             free(fifo_name as *mut c_void);
             ctx.fifo_name.0.set(null_mut());
         } else {
@@ -210,12 +222,13 @@ pub unsafe fn jobserver_setup(
             if fds[0] < 0 {
                 fatal(
                     ctx,
-                    null::<Floc>(),
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    c"cannot open jobserver %s: %s".as_ptr(),
+                    c"cannot open jobserver %s: %s",
                     &[
-                        FmtArg::Str(fifo_name),
-                        FmtArg::Str(strerror(*__errno_location())),
+                        FmtArg::Str(CStr::from_ptr(fifo_name)),
+                        FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
                     ],
                 );
             }
@@ -229,12 +242,13 @@ pub unsafe fn jobserver_setup(
             if fds[0] < 0 {
                 fatal(
                     ctx,
-                    null::<Floc>(),
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
-                    c"cannot open jobserver %s: %s".as_ptr(),
+                    c"cannot open jobserver %s: %s",
                     &[
-                        FmtArg::Str(fifo_name),
-                        FmtArg::Str(strerror(*__errno_location())),
+                        FmtArg::Str(CStr::from_ptr(fifo_name)),
+                        FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
                     ],
                 );
             }
@@ -246,10 +260,11 @@ pub unsafe fn jobserver_setup(
         if !style.is_null() && strcmp(style, c"pipe".as_ptr()) != 0 {
             fatal(
                 ctx,
-                null::<Floc>(),
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                c"unknown jobserver auth style '%s'".as_ptr(),
-                &[FmtArg::Str(style)],
+                c"unknown jobserver auth style '%s'",
+                &[FmtArg::Str(CStr::from_ptr(style))],
             );
         }
         let mut fds = ctx.job_fds.0.get();
@@ -261,7 +276,7 @@ pub unsafe fn jobserver_setup(
         }
         ctx.job_fds.0.set(fds);
         if r < 0 {
-            pfatal_with_name(ctx, c"creating jobs pipe".as_ptr());
+            pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"creating jobs pipe");
         }
         js_type_set(ctx, JsType::Pipe);
     }
@@ -270,7 +285,7 @@ pub unsafe fn jobserver_setup(
     fd_noinherit(fds[0]);
     fd_noinherit(fds[1]);
     if make_job_rfd() < 0 {
-        pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
+        pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"duping jobs pipe");
     }
 
     // Fill the pipe with tokens, one per slot, without blocking so we can
@@ -286,13 +301,14 @@ pub unsafe fn jobserver_setup(
         }
         if r != 1 {
             if *__errno_location() != EAGAIN {
-                pfatal_with_name(ctx, c"init jobserver pipe".as_ptr());
+                pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"init jobserver pipe");
             }
             fatal(
                 ctx,
-                null::<Floc>(),
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                c"requested job count (%d) is larger than system limit (%d)".as_ptr(),
+                c"requested job count (%d) is larger than system limit (%d)",
                 &[FmtArg::Int((slots + 1) as i64), FmtArg::Int(k as i64)],
             );
         }
@@ -331,12 +347,13 @@ pub unsafe fn jobserver_parse_auth(
         if fds[0] < 0 {
             error(
                 ctx,
-                null::<Floc>(),
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                c"cannot open jobserver %s: %s".as_ptr(),
+                c"cannot open jobserver %s: %s",
                 &[
-                    FmtArg::Str(fifo_name),
-                    FmtArg::Str(strerror(*__errno_location())),
+                    FmtArg::Str(CStr::from_ptr(fifo_name)),
+                    FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
             return 0;
@@ -351,12 +368,13 @@ pub unsafe fn jobserver_parse_auth(
         if fds[1] < 0 {
             error(
                 ctx,
-                null::<Floc>(),
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                c"cannot open jobserver %s: %s".as_ptr(),
+                c"cannot open jobserver %s: %s",
                 &[
-                    FmtArg::Str(fifo_name),
-                    FmtArg::Str(strerror(*__errno_location())),
+                    FmtArg::Str(CStr::from_ptr(fifo_name)),
+                    FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
                 ],
             );
             return 0;
@@ -375,17 +393,18 @@ pub unsafe fn jobserver_parse_auth(
     } else {
         error(
             ctx,
-            null::<Floc>(),
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            c"invalid --jobserver-auth string '%s'".as_ptr(),
-            &[FmtArg::Str(auth)],
+            c"invalid --jobserver-auth string '%s'",
+            &[FmtArg::Str(CStr::from_ptr(auth))],
         );
         return 0;
     }
 
     if make_job_rfd() < 0 {
         if *__errno_location() != EBADF {
-            pfatal_with_name(ctx, c"jobserver readfd".as_ptr());
+            pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"jobserver readfd");
         }
         jobserver_clear();
         return 0;
@@ -497,9 +516,9 @@ pub unsafe fn jobserver_release(ctx: &crate::execctx::ExecContext, is_fatal: i32
     }
     if r != 1 {
         if is_fatal != 0 {
-            pfatal_with_name(ctx, c"write jobserver".as_ptr());
+            pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"write jobserver");
         }
-        perror_with_name(ctx, c"write".as_ptr(), c"".as_ptr());
+        perror_with_name(ctx, crate::output::output_context().as_mut(), c"write", c"");
     }
 }
 
@@ -590,7 +609,7 @@ pub fn jobserver_signal() {
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_pre_acquire(ctx: &crate::execctx::ExecContext) {
     if job_rfd(ctx) < 0 && ctx.job_fds.0.get()[0] >= 0 && make_job_rfd() < 0 {
-        pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
+        pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"duping jobs pipe");
     }
 }
 
@@ -627,9 +646,16 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
                 EINTR => return 0,
                 EBADF => {
                     // The read side was closed by jobserver_signal().
-                    fatal(ctx, null::<Floc>(), 0, c"job server shut down".as_ptr(), &[]);
+                    fatal(
+                        ctx,
+                        crate::output::output_context().as_mut(),
+                        None,
+                        0,
+                        c"job server shut down",
+                        &[],
+                    );
                 }
-                _ => pfatal_with_name(ctx, c"pselect jobs pipe".as_ptr()),
+                _ => pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"pselect jobs pipe"),
             }
         }
         if r == 0 {
@@ -649,7 +675,7 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
             if *__errno_location() == EAGAIN {
                 continue;
             }
-            pfatal_with_name(ctx, c"read jobs pipe".as_ptr());
+            pfatal_with_name(ctx, crate::output::output_context().as_mut(), c"read jobs pipe");
         }
         return (r > 0) as c_uint;
     }
@@ -702,10 +728,11 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
     if strncmp(mutex, MUTEX_PREFIX.as_ptr(), MUTEX_PREFIX.to_bytes().len()) != 0 {
         error(
             ctx,
-            null::<Floc>(),
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            c"invalid --sync-mutex string '%s'".as_ptr(),
-            &[FmtArg::Str(mutex)],
+            c"invalid --sync-mutex string '%s'",
+            &[FmtArg::Str(CStr::from_ptr(mutex))],
         );
         return 0;
     }
@@ -724,12 +751,13 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
     if ctx.osync_handle.0.load(Ordering::Relaxed) < 0 {
         fatal(
             ctx,
-            null::<Floc>(),
+            crate::output::output_context().as_mut(),
+            None,
             0,
-            c"cannot open output sync mutex %s: %s".as_ptr(),
+            c"cannot open output sync mutex %s: %s",
             &[
-                FmtArg::Str(osync_tmpfile),
-                FmtArg::Str(strerror(*__errno_location())),
+                FmtArg::Str(CStr::from_ptr(osync_tmpfile)),
+                FmtArg::Str(CStr::from_ptr(strerror(*__errno_location()))),
             ],
         );
     }
@@ -745,24 +773,28 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
 /// rather than taking `&ExecContext` — and, since bare unit tests may run
 /// with no context installed, `try_with_exec_context` treats that as "no
 /// tmpfile to clear" rather than panicking.
-pub unsafe fn osync_clear() {
+pub fn osync_clear() {
     crate::make_main::try_with_exec_context(|ctx| {
         let h = ctx.osync_handle.0.load(Ordering::Relaxed);
-        if h >= 0 {
-            close(h);
-            ctx.osync_handle.0.store(-1, Ordering::Relaxed);
-        }
-        let osync_tmpfile = ctx.osync_tmpfile.0.get();
-        if ctx.sync_root.0.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
-            let mut r: i32;
-            loop {
-                r = unlink(osync_tmpfile);
-                if !(r == -1 && *__errno_location() == EINTR) {
-                    break;
-                }
+        // SAFETY: `h` and `osync_tmpfile` are either the sentinel
+        // (-1/null) or values this same module opened/allocated itself.
+        unsafe {
+            if h >= 0 {
+                close(h);
+                ctx.osync_handle.0.store(-1, Ordering::Relaxed);
             }
-            free(osync_tmpfile as *mut c_void);
-            ctx.osync_tmpfile.0.set(null_mut());
+            let osync_tmpfile = ctx.osync_tmpfile.0.get();
+            if ctx.sync_root.0.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
+                let mut r: i32;
+                loop {
+                    r = unlink(osync_tmpfile);
+                    if !(r == -1 && *__errno_location() == EINTR) {
+                        break;
+                    }
+                }
+                free(osync_tmpfile as *mut c_void);
+                ctx.osync_tmpfile.0.set(null_mut());
+            }
         }
     });
 }
@@ -772,15 +804,17 @@ pub unsafe fn osync_clear() {
 ///
 /// # Safety
 /// Must run single-threaded.
-pub unsafe fn osync_acquire(ctx: &crate::execctx::ExecContext) -> c_uint {
+pub fn osync_acquire(ctx: &crate::execctx::ExecContext) -> c_uint {
     if osync_enabled(ctx) != 0 {
-        let mut fl: flock = ::core::mem::zeroed();
+        let mut fl: flock = unsafe { ::core::mem::zeroed() };
         fl.l_type = F_WRLCK as ::core::ffi::c_short;
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
-            perror(c"fcntl()".as_ptr());
+        // SAFETY: `osync_handle` is either -1 (fcntl fails harmlessly on a
+        // bad fd, caught below) or an fd this module opened itself.
+        if unsafe { fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) } == -1 {
+            unsafe { perror(c"fcntl()".as_ptr()) };
             return 0;
         }
     }
@@ -791,15 +825,16 @@ pub unsafe fn osync_acquire(ctx: &crate::execctx::ExecContext) -> c_uint {
 ///
 /// # Safety
 /// Must run single-threaded.
-pub unsafe fn osync_release(ctx: &crate::execctx::ExecContext) {
+pub fn osync_release(ctx: &crate::execctx::ExecContext) {
     if osync_enabled(ctx) != 0 {
-        let mut fl: flock = ::core::mem::zeroed();
+        let mut fl: flock = unsafe { ::core::mem::zeroed() };
         fl.l_type = F_UNLCK as ::core::ffi::c_short;
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
-            perror(c"fcntl()".as_ptr());
+        // SAFETY: see `osync_acquire`.
+        if unsafe { fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) } == -1 {
+            unsafe { perror(c"fcntl()".as_ptr()) };
         }
     }
 }
@@ -854,10 +889,13 @@ pub unsafe fn fd_inherit(fd: i32) {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-pub unsafe fn fd_noinherit(fd: i32) {
-    let flags = fcntl_retry(fd, F_GETFD);
-    if flags >= 0 {
-        fcntl_set_retry(fd, F_SETFD, flags | FD_CLOEXEC);
+pub fn fd_noinherit(fd: i32) {
+    // SAFETY: `fd` is an open descriptor per this function's contract.
+    unsafe {
+        let flags = fcntl_retry(fd, F_GETFD);
+        if flags >= 0 {
+            fcntl_set_retry(fd, F_SETFD, flags | FD_CLOEXEC);
+        }
     }
 }
 
@@ -867,13 +905,16 @@ pub unsafe fn fd_noinherit(fd: i32) {
 ///
 /// # Safety
 /// `fd` must be an open descriptor.
-pub unsafe fn fd_set_append(fd: i32) -> i32 {
+pub fn fd_set_append(fd: i32) -> i32 {
     let mut flags: i32 = -1;
-    let mut stbuf: libc::stat = ::core::mem::zeroed();
-    if fstat(fd, &mut stbuf) == 0 && stbuf.st_mode & S_IFMT == S_IFREG {
-        flags = fcntl(fd, F_GETFL, 0);
-        if flags >= 0 {
-            fcntl_set_retry(fd, F_SETFL, flags | O_APPEND);
+    // SAFETY: `fd` is an open descriptor per this function's contract.
+    unsafe {
+        let mut stbuf: libc::stat = ::core::mem::zeroed();
+        if fstat(fd, &mut stbuf) == 0 && stbuf.st_mode & S_IFMT == S_IFREG {
+            flags = fcntl(fd, F_GETFL, 0);
+            if flags >= 0 {
+                fcntl_set_retry(fd, F_SETFL, flags | O_APPEND);
+            }
         }
     }
     flags
@@ -884,9 +925,13 @@ pub unsafe fn fd_set_append(fd: i32) -> i32 {
 /// # Safety
 /// `fd` must be an open descriptor; `flags` must come from
 /// [`fd_set_append`].
-pub unsafe fn fd_reset_append(fd: i32, flags: i32) {
-    if flags >= 0 {
-        fcntl_set_retry(fd, F_SETFL, flags);
+pub fn fd_reset_append(fd: i32, flags: i32) {
+    // SAFETY: `fd` is an open descriptor and `flags` came from
+    // `fd_set_append`, per this function's contract.
+    unsafe {
+        if flags >= 0 {
+            fcntl_set_retry(fd, F_SETFL, flags);
+        }
     }
 }
 
@@ -936,10 +981,11 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
         if tfile.is_null() {
             error(
                 ctx,
-                null::<Floc>(),
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                c"tmpfile: %s".as_ptr(),
-                &[FmtArg::Str(strerror(*__errno_location()))],
+                c"tmpfile: %s",
+                &[FmtArg::Str(CStr::from_ptr(strerror(*__errno_location())))],
             );
             return -1;
         }
@@ -953,10 +999,11 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
         if fd < 0 {
             error(
                 ctx,
-                null::<Floc>(),
+                crate::output::output_context().as_mut(),
+                None,
                 0,
-                c"dup: %s".as_ptr(),
-                &[FmtArg::Str(strerror(*__errno_location()))],
+                c"dup: %s",
+                &[FmtArg::Str(CStr::from_ptr(strerror(*__errno_location())))],
             );
         }
         libc::fclose(tfile);
@@ -1072,10 +1119,8 @@ mod tests {
         let mut fds = [-1i32; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
         ctx.job_fds.0.set(fds);
-        unsafe {
-            fd_noinherit(fds[0]);
-            fd_noinherit(fds[1]);
-        }
+        fd_noinherit(fds[0]);
+        fd_noinherit(fds[1]);
         let cloexec = |fd: i32| unsafe { fcntl_retry(fd, F_GETFD) } & FD_CLOEXEC;
 
         // recursive == 0: no-op regardless of style.

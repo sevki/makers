@@ -307,7 +307,14 @@ pub unsafe fn read_all_makefiles(
         while let Some(mref) = makefiles.as_mut().filter(|m| !m.is_null()) {
             let d: usize = eval_makefile(ctx, *mref, 0);
             if *__errno_location() != 0 {
-                perror_with_name(ctx, b"\0" as *const u8 as *const ::core::ffi::c_char, *mref);
+                perror_with_name(
+                    ctx,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    c"",
+                    // SAFETY: *mref is a valid NUL-terminated C string for the lifetime of this call.
+                    unsafe { CStr::from_ptr(*mref) },
+                );
             }
             // The goal carries no `name`; report the resolved file's name (the
             // former `(*(*d).file)->name`). Re-intern its bytes as a cached C
@@ -357,7 +364,14 @@ pub unsafe fn read_all_makefiles(
         if !(*p_0).is_null() {
             eval_makefile(ctx, *p_0, 0);
             if *__errno_location() != 0 {
-                perror_with_name(ctx, b"\0" as *const u8 as *const ::core::ffi::c_char, *p_0);
+                perror_with_name(
+                    ctx,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    c"",
+                    // SAFETY: *p_0 is a valid NUL-terminated C string for the lifetime of this call.
+                    unsafe { CStr::from_ptr(*p_0) },
+                );
             }
         } else {
             p_0 = &raw const default_makefiles_table as *const *const ::core::ffi::c_char;
@@ -469,10 +483,14 @@ unsafe fn eval_makefile(
             let err: *const ::core::ffi::c_char = strerror(open_error);
             fatal(
                 ctx,
-                ctx.reading_file.0.get(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: reading_file is a pointer to the current Floc, valid for this call.
+                unsafe { ctx.reading_file.0.get().as_ref() },
                 strlen(err) as size_t,
-                b"%s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[FmtArg::Str((err) as *const ::core::ffi::c_char)],
+                c"%s",
+                // SAFETY: err is a valid NUL-terminated C string for the lifetime of this call.
+                &[FmtArg::Str(unsafe { CStr::from_ptr(err) })],
             );
         }
         _ => {}
@@ -684,10 +702,12 @@ unsafe fn parse_var_assignment(
     if scan.had_modifier && !flocp.is_null() {
         error(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            // SAFETY: flocp is a valid Floc pointer for this call, checked non-null above.
+            unsafe { flocp.as_ref() },
             0,
-            b"warning: directive lines cannot start with TAB\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"warning: directive lines cannot start with TAB",
             &[],
         );
     }
@@ -957,10 +977,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                     if i == -1_i32 {
                         fatal(
                             ctx,
-                            fstart,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            unsafe { crate::output::output_context().as_mut() },
+                            // SAFETY: fstart is a valid Floc pointer for this call.
+                            unsafe { fstart.as_ref() },
                             0,
-                            b"invalid syntax in conditional\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c"invalid syntax in conditional",
                             &[],
                         );
                     }
@@ -997,22 +1019,21 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         if initial_tab != 0 {
                             error(
                                 ctx,
-                                &raw mut (*ebuf).floc,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                unsafe { crate::output::output_context().as_mut() },
+                                // SAFETY: ebuf is a valid pointer for the duration of this call.
+                                unsafe { (&raw const (*ebuf).floc).as_ref() },
                                 strlen(if exporting != 0 {
                                     b"export\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"unexport\0" as *const u8 as *const ::core::ffi::c_char
                                 }) as size_t,
-                                b"warning: %s lines cannot start with TAB\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[FmtArg::Str(
-                                    (if exporting != 0 {
-                                        b"export\0" as *const u8 as *const ::core::ffi::c_char
-                                    } else {
-                                        b"unexport\0" as *const u8 as *const ::core::ffi::c_char
-                                    })
-                                        as *const ::core::ffi::c_char,
-                                )],
+                                c"warning: %s lines cannot start with TAB",
+                                &[FmtArg::Str(if exporting != 0 {
+                                    c"export"
+                                } else {
+                                    c"unexport"
+                                })],
                             );
                         }
                         if filenames.is_some() {
@@ -1088,11 +1109,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         if initial_tab != 0 {
                             error(
                                 ctx,
-                                &raw mut (*ebuf).floc,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                unsafe { crate::output::output_context().as_mut() },
+                                // SAFETY: ebuf is a valid pointer for the duration of this call.
+                                unsafe { (&raw const (*ebuf).floc).as_ref() },
                                 0,
-                                b"warning: vpath directive lines cannot start with TAB\0"
-                                    as *const u8
-                                    as *const ::core::ffi::c_char,
+                                c"warning: vpath directive lines cannot start with TAB",
                                 &[],
                             );
                         }
@@ -1166,7 +1188,10 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         if initial_tab != 0 {
                             error(
                                 ctx,
-                                &raw mut (*ebuf).floc,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                unsafe { crate::output::output_context().as_mut() },
+                                // SAFETY: ebuf is a valid pointer for the duration of this call.
+                                unsafe { (&raw const (*ebuf).floc).as_ref() },
                                 strlen(if *p as i32 == 'i' as i32 {
                                     b"include\0" as *const u8 as *const ::core::ffi::c_char
                                 } else if *p as i32 == '-' as i32 {
@@ -1174,14 +1199,13 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 } else {
                                     b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
                                 }) as size_t,
-                                b"warning: %s lines cannot start with TAB\0" as *const u8
-                                    as *const ::core::ffi::c_char,
+                                c"warning: %s lines cannot start with TAB",
                                 &[FmtArg::Str(if *p as i32 == 'i' as i32 {
-                                    b"include\0" as *const u8 as *const ::core::ffi::c_char
+                                    c"include"
                                 } else if *p as i32 == '-' as i32 {
-                                    b"-include\0" as *const u8 as *const ::core::ffi::c_char
+                                    c"-include"
                                 } else {
-                                    b"sinclude\0" as *const u8 as *const ::core::ffi::c_char
+                                    c"sinclude"
                                 })],
                             );
                         }
@@ -1293,22 +1317,21 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         if initial_tab != 0 {
                             error(
                                 ctx,
-                                &raw mut (*ebuf).floc,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                unsafe { crate::output::output_context().as_mut() },
+                                // SAFETY: ebuf is a valid pointer for the duration of this call.
+                                unsafe { (&raw const (*ebuf).floc).as_ref() },
                                 strlen(if noerror_0 != 0 {
                                     b"-load\0" as *const u8 as *const ::core::ffi::c_char
                                 } else {
                                     b"load\0" as *const u8 as *const ::core::ffi::c_char
                                 }) as size_t,
-                                b"warning: %s lines cannot start with TAB\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                                &[FmtArg::Str(
-                                    (if noerror_0 != 0 {
-                                        b"-load\0" as *const u8 as *const ::core::ffi::c_char
-                                    } else {
-                                        b"load\0" as *const u8 as *const ::core::ffi::c_char
-                                    })
-                                        as *const ::core::ffi::c_char,
-                                )],
+                                c"warning: %s lines cannot start with TAB",
+                                &[FmtArg::Str(if noerror_0 != 0 {
+                                    c"-load"
+                                } else {
+                                    c"load"
+                                })],
                             );
                         }
                         if filenames.is_some() {
@@ -1411,11 +1434,14 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 if r == 0 && noerror_0 == 0 {
                                     fatal(
                                         ctx,
-                                        &raw mut (*ebuf).floc,
+                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                        unsafe { crate::output::output_context().as_mut() },
+                                        // SAFETY: ebuf is a valid pointer for the duration of this call.
+                                        unsafe { (&raw const (*ebuf).floc).as_ref() },
                                         strlen(name) as size_t,
-                                        b"%s: failed to load\0" as *const u8
-                                            as *const ::core::ffi::c_char,
-                                        &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+                                        c"%s: failed to load",
+                                        // SAFETY: name is a valid NUL-terminated C string for the lifetime of this call.
+                                        &[FmtArg::Str(unsafe { CStr::from_ptr(name) })],
                                     );
                                 }
                                 name = file.name;
@@ -1450,10 +1476,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         {
                             fatal(
                                 ctx,
-                                fstart,
+                                // SAFETY: the current output-sync target, resolved fresh here.
+                                unsafe { crate::output::output_context().as_mut() },
+                                // SAFETY: fstart is a valid Floc pointer for this call.
+                                unsafe { fstart.as_ref() },
                                 0,
-                                b"recipe commences before first target\0" as *const u8
-                                    as *const ::core::ffi::c_char,
+                                c"recipe commences before first target",
                                 &[],
                             );
                         }
@@ -1508,10 +1536,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 if !cmdleft.is_null() {
                                     fatal(
                                         ctx,
-                                        fstart,
+                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                        unsafe { crate::output::output_context().as_mut() },
+                                        // SAFETY: fstart is a valid Floc pointer for this call.
+                                        unsafe { fstart.as_ref() },
                                         0,
-                                        b"missing rule before recipe\0" as *const u8
-                                            as *const ::core::ffi::c_char,
+                                        c"missing rule before recipe",
                                         &[],
                                     );
                                 }
@@ -1603,10 +1633,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     {
                                         fatal(
                                             ctx,
-                                            fstart,
+                                            // SAFETY: the current output-sync target, resolved fresh here.
+                                            unsafe { crate::output::output_context().as_mut() },
+                                            // SAFETY: fstart is a valid Floc pointer for this call.
+                                            unsafe { fstart.as_ref() },
                                             0,
-                                            b"missing separator (did you mean TAB instead of 8 spaces?)\0"
-                                                as *const u8 as *const ::core::ffi::c_char,
+                                            c"missing separator (did you mean TAB instead of 8 spaces?)",
         &[],
     );
                                     }
@@ -1621,19 +1653,23 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     ) {
                                         fatal(
                                             ctx,
-                                            fstart,
+                                            // SAFETY: the current output-sync target, resolved fresh here.
+                                            unsafe { crate::output::output_context().as_mut() },
+                                            // SAFETY: fstart is a valid Floc pointer for this call.
+                                            unsafe { fstart.as_ref() },
                                             0,
-                                            b"missing separator (ifeq/ifneq must be followed by whitespace)\0"
-                                                as *const u8 as *const ::core::ffi::c_char,
+                                            c"missing separator (ifeq/ifneq must be followed by whitespace)",
         &[],
     );
                                     }
                                     fatal(
                                         ctx,
-                                        fstart,
+                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                        unsafe { crate::output::output_context().as_mut() },
+                                        // SAFETY: fstart is a valid Floc pointer for this call.
+                                        unsafe { fstart.as_ref() },
                                         0,
-                                        b"missing separator\0" as *const u8
-                                            as *const ::core::ffi::c_char,
+                                        c"missing separator",
                                         &[],
                                     );
                                 } else {
@@ -1807,19 +1843,23 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 if target.is_empty() {
                                                     fatal(
                                                         ctx,
-                                                        fstart,
+                                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                                        unsafe { crate::output::output_context().as_mut() },
+                                                        // SAFETY: fstart is a valid Floc pointer for this call.
+                                                        unsafe { fstart.as_ref() },
                                                         0,
-                                                        b"missing target pattern\0" as *const u8
-                                                            as *const ::core::ffi::c_char,
+                                                        c"missing target pattern",
                                                         &[],
                                                     );
                                                 } else if target.len() > 1 {
                                                     fatal(
                                                         ctx,
-                                                        fstart,
+                                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                                        unsafe { crate::output::output_context().as_mut() },
+                                                        // SAFETY: fstart is a valid Floc pointer for this call.
+                                                        unsafe { fstart.as_ref() },
                                                         0,
-                                                        b"multiple target patterns\0" as *const u8
-                                                            as *const ::core::ffi::c_char,
+                                                        c"multiple target patterns",
                                                         &[],
                                                     );
                                                 }
@@ -1832,11 +1872,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 if pattern_percent.is_null() {
                                                     fatal(
                                                         ctx,
-                                                        fstart,
+                                                        // SAFETY: the current output-sync target, resolved fresh here.
+                                                        unsafe { crate::output::output_context().as_mut() },
+                                                        // SAFETY: fstart is a valid Floc pointer for this call.
+                                                        unsafe { fstart.as_ref() },
                                                         0,
-                                                        b"target pattern contains no '%%'\0"
-                                                            as *const u8
-                                                            as *const ::core::ffi::c_char,
+                                                        c"target pattern contains no '%%'",
                                                         &[],
                                                     );
                                                 }
@@ -1901,9 +1942,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
     if !ctx.conditionals.borrow().ignoring.is_empty() {
         fatal(
             ctx,
-            fstart,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            // SAFETY: fstart is a valid Floc pointer for this call.
+            unsafe { fstart.as_ref() },
             0,
-            b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char,
+            c"missing 'endif'",
             &[],
         );
     }
@@ -1953,9 +1997,12 @@ unsafe fn do_undefine(
         Some(s) => s,
         None => fatal(
             ctx,
-            &raw mut (*ebuf).floc,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            // SAFETY: ebuf is a valid pointer for the duration of this call.
+            unsafe { (&raw const (*ebuf).floc).as_ref() },
             0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+            c"empty variable name",
             &[],
         ),
     };
@@ -2010,10 +2057,11 @@ unsafe fn do_define(
         if *var.value.offset(0_i32 as isize) as i32 != 0 {
             error(
                 ctx,
-                &raw mut defstart,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                Some(&defstart),
                 0,
-                b"extraneous text after 'define' directive\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"extraneous text after 'define' directive",
                 &[],
             );
         }
@@ -2026,9 +2074,11 @@ unsafe fn do_define(
         Some(s) => s,
         None => fatal(
             ctx,
-            &raw mut defstart,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            Some(&defstart),
             0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+            c"empty variable name",
             &[],
         ),
     };
@@ -2040,10 +2090,11 @@ unsafe fn do_define(
         if nlines < 0 {
             fatal(
                 ctx,
-                &raw mut defstart,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                Some(&defstart),
                 0,
-                b"missing 'endef', unterminated 'define'\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"missing 'endef', unterminated 'define'",
                 &[],
             );
         }
@@ -2070,10 +2121,12 @@ unsafe fn do_define(
                     if !crate::parser::rest_is_blank(::std::ffi::CStr::from_ptr(p).to_bytes()) {
                         error(
                             ctx,
-                            &raw mut (*ebuf).floc,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            unsafe { crate::output::output_context().as_mut() },
+                            // SAFETY: ebuf is a valid pointer for the duration of this call.
+                            unsafe { (&raw const (*ebuf).floc).as_ref() },
                             0,
-                            b"extraneous text after 'endef' directive\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c"extraneous text after 'endef' directive",
                             &[],
                         );
                     }
@@ -2139,7 +2192,7 @@ unsafe fn conditional_line(
     flocp: *const Floc,
     initial_tab: ::core::ffi::c_uint,
 ) -> i32 {
-    let cmdname: *const ::core::ffi::c_char;
+    let cmdname: &::core::ffi::CStr;
     let cmdtype: C2RustUnnamed;
     // Classify the directive keyword (the line's first `len` bytes) via the
     // typed AST layer instead of a wall of `strncmp`/`size_of` comparisons.
@@ -2148,17 +2201,19 @@ unsafe fn conditional_line(
     match directive {
         Some(d) => {
             cmdtype = directive_cmdtype(d);
-            cmdname = d.name().as_ptr();
+            cmdname = d.name();
         }
         None => return -2_i32,
     }
     if initial_tab != 0 {
         error(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            // SAFETY: flocp is a valid Floc pointer for this call.
+            unsafe { flocp.as_ref() },
             0,
-            b"warning: conditional directive lines cannot start with TAB\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"warning: conditional directive lines cannot start with TAB",
             &[],
         );
     }
@@ -2174,20 +2229,25 @@ unsafe fn conditional_line(
         if *line as i32 != 0 {
             error(
                 ctx,
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous text after '%s' directive\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
+                cmdname.to_bytes().len() as size_t,
+                c"extraneous text after '%s' directive",
+                &[FmtArg::Str(cmdname)],
             );
         }
         if ctx.conditionals.borrow().ignoring.is_empty() {
             fatal(
                 ctx,
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
+                cmdname.to_bytes().len() as size_t,
+                c"extraneous '%s'",
+                &[FmtArg::Str(cmdname)],
             );
         }
         let mut cf = ctx.conditionals.borrow_mut();
@@ -2198,19 +2258,25 @@ unsafe fn conditional_line(
         if ctx.conditionals.borrow().ignoring.is_empty() {
             fatal(
                 ctx,
-                flocp,
-                strlen(cmdname) as size_t,
-                b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
+                cmdname.to_bytes().len() as size_t,
+                c"extraneous '%s'",
+                &[FmtArg::Str(cmdname)],
             );
         }
         let o: usize = ctx.conditionals.borrow().ignoring.len() - 1;
         if ctx.conditionals.borrow().seen_else[o] != 0 {
             fatal(
                 ctx,
-                flocp,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
                 0,
-                b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
+                c"only one 'else' per conditional",
                 &[],
             );
         }
@@ -2252,11 +2318,13 @@ unsafe fn conditional_line(
             {
                 error(
                     ctx,
-                    flocp,
-                    strlen(cmdname) as size_t,
-                    b"extraneous text after '%s' directive\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    // SAFETY: flocp is a valid Floc pointer for this call.
+                    unsafe { flocp.as_ref() },
+                    cmdname.to_bytes().len() as size_t,
+                    c"extraneous text after '%s' directive",
+                    &[FmtArg::Str(cmdname)],
                 );
             } else {
                 let mut cf = ctx.conditionals.borrow_mut();
@@ -2343,11 +2411,13 @@ unsafe fn conditional_line(
                     if trailing_text {
                         error(
                             ctx,
-                            flocp,
-                            strlen(cmdname) as size_t,
-                            b"extraneous text after '%s' directive\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            unsafe { crate::output::output_context().as_mut() },
+                            // SAFETY: flocp is a valid Floc pointer for this call.
+                            unsafe { flocp.as_ref() },
+                            cmdname.to_bytes().len() as size_t,
+                            c"extraneous text after '%s' directive",
+                            &[FmtArg::Str(cmdname)],
                         );
                     }
                     // Expand the first argument to an owned string before
@@ -2432,10 +2502,12 @@ unsafe fn record_target_var(
             if v.is_null() {
                 fatal(
                     ctx,
-                    flocp,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    // SAFETY: flocp is a valid Floc pointer for this call.
+                    unsafe { flocp.as_ref() },
                     0,
-                    b"malformed target-specific variable definition\0" as *const u8
-                        as *const ::core::ffi::c_char,
+                    c"malformed target-specific variable definition",
                     &[],
                 );
             }
@@ -2680,9 +2752,12 @@ pub unsafe fn check_special_file(
         if !ctx.wpre_warned.0.load(Ordering::Relaxed) && has_deps {
             error(
                 ctx,
-                flocp,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
                 0,
-                b".WAIT should not have prerequisites\0" as *const u8 as *const ::core::ffi::c_char,
+                c".WAIT should not have prerequisites",
                 &[],
             );
             ctx.wpre_warned.0.store(true, Ordering::Relaxed);
@@ -2690,9 +2765,12 @@ pub unsafe fn check_special_file(
         if !ctx.wcmd_warned.0.load(Ordering::Relaxed) && has_recipe {
             error(
                 ctx,
-                flocp,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
                 0,
-                b".WAIT should not have commands\0" as *const u8 as *const ::core::ffi::c_char,
+                c".WAIT should not have commands",
                 &[],
             );
             ctx.wcmd_warned.0.store(true, Ordering::Relaxed);
@@ -2865,10 +2943,12 @@ unsafe fn record_files(
     if opt_snapped_deps() {
         fatal(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            // SAFETY: flocp is a valid Floc pointer for this call.
+            unsafe { flocp.as_ref() },
             0,
-            b"prerequisites cannot be defined in recipes\0" as *const u8
-                as *const ::core::ffi::c_char,
+            c"prerequisites cannot be defined in recipes",
             &[],
         );
     }
@@ -2898,9 +2978,12 @@ unsafe fn record_files(
     } else if are_also_makes != 0 {
         fatal(
             ctx,
-            flocp,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            // SAFETY: flocp is a valid Floc pointer for this call.
+            unsafe { flocp.as_ref() },
             0,
-            b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
+            c"grouped targets must provide a recipe",
             &[],
         )
     } else {
@@ -2942,10 +3025,12 @@ unsafe fn record_files(
         if !pattern.is_null() {
             fatal(
                 ctx,
-                flocp,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
                 0,
-                b"mixed implicit and static pattern rules\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"mixed implicit and static pattern rules",
                 &[],
             );
         }
@@ -2965,9 +3050,12 @@ unsafe fn record_files(
             if ip.is_null() {
                 fatal(
                     ctx,
-                    flocp,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    // SAFETY: flocp is a valid Floc pointer for this call.
+                    unsafe { flocp.as_ref() },
                     0,
-                    b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
+                    c"mixed implicit and normal rules",
                     &[],
                 );
             }
@@ -2999,11 +3087,14 @@ unsafe fn record_files(
             if !pattern.is_null() && pattern_matches(pattern, pattern_percent, name) == 0 {
                 error(
                     ctx,
-                    flocp,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    // SAFETY: flocp is a valid Floc pointer for this call.
+                    unsafe { flocp.as_ref() },
                     strlen(name) as size_t,
-                    b"target '%s' doesn't match the target pattern\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+                    c"target '%s' doesn't match the target pattern",
+                    // SAFETY: name is a valid NUL-terminated C string for the lifetime of this call.
+                    &[FmtArg::Str(unsafe { CStr::from_ptr(name) })],
                 );
                 Vec::new()
             } else if !deps.is_empty() {
@@ -3035,12 +3126,15 @@ unsafe fn record_files(
                     // `fatal` diverges (aborts); the lock is released by unwind.
                     fatal(
                         ctx,
-                        flocp,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        unsafe { crate::output::output_context().as_mut() },
+                        // SAFETY: flocp is a valid Floc pointer for this call.
+                        unsafe { flocp.as_ref() },
                         nm.len() as size_t,
-                        b"target file '%s' has both : and :: entries\0" as *const u8
-                            as *const ::core::ffi::c_char,
+                        c"target file '%s' has both : and :: entries",
                         &[FmtArg::Str(
-                            strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
+                            // SAFETY: strcache_add_bytes returns a valid NUL-terminated C string.
+                            unsafe { CStr::from_ptr(strcache_add_bytes(ctx, &nm)) },
                         )],
                     );
                 }
@@ -3051,19 +3145,25 @@ unsafe fn record_files(
                     let l = nm.len() as size_t;
                     error(
                         ctx,
-                        flocp,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        unsafe { crate::output::output_context().as_mut() },
+                        // SAFETY: flocp is a valid Floc pointer for this call.
+                        unsafe { flocp.as_ref() },
                         l,
-                        b"warning: overriding recipe for target '%s'\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[FmtArg::Str(nptr)],
+                        c"warning: overriding recipe for target '%s'",
+                        // SAFETY: nptr is a valid NUL-terminated C string for the lifetime of this call.
+                        &[FmtArg::Str(unsafe { CStr::from_ptr(nptr) })],
                     );
                     error(
                         ctx,
-                        flocp,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        unsafe { crate::output::output_context().as_mut() },
+                        // SAFETY: flocp is a valid Floc pointer for this call.
+                        unsafe { flocp.as_ref() },
                         l,
-                        b"warning: ignoring old recipe for target '%s'\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[FmtArg::Str(nptr)],
+                        c"warning: ignoring old recipe for target '%s'",
+                        // SAFETY: nptr is a valid NUL-terminated C string for the lifetime of this call.
+                        &[FmtArg::Str(unsafe { CStr::from_ptr(nptr) })],
                     );
                     n = node.lock().expect("file node lock poisoned");
                 }
@@ -3092,12 +3192,15 @@ unsafe fn record_files(
                     drop(n);
                     fatal(
                         ctx,
-                        flocp,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        unsafe { crate::output::output_context().as_mut() },
+                        // SAFETY: flocp is a valid Floc pointer for this call.
+                        unsafe { flocp.as_ref() },
                         nm.len() as size_t,
-                        b"target file '%s' has both : and :: entries\0" as *const u8
-                            as *const ::core::ffi::c_char,
+                        c"target file '%s' has both : and :: entries",
                         &[FmtArg::Str(
-                            strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
+                            // SAFETY: strcache_add_bytes returns a valid NUL-terminated C string.
+                            unsafe { CStr::from_ptr(strcache_add_bytes(ctx, &nm)) },
                         )],
                     );
                 }
@@ -3227,10 +3330,12 @@ unsafe fn record_files(
         if !find_percent_cached(ctx, &raw mut name).is_null() {
             error(
                 ctx,
-                flocp,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
                 0,
-                b"*** mixed implicit and normal rules: deprecated syntax\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"*** mixed implicit and normal rules: deprecated syntax",
                 &[],
             );
         }
@@ -3264,12 +3369,15 @@ unsafe fn record_files(
             drop(n);
             error(
                 ctx,
-                flocp,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                // SAFETY: flocp is a valid Floc pointer for this call.
+                unsafe { flocp.as_ref() },
                 nm.len() as size_t,
-                b"warning: overriding group membership for target '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"warning: overriding group membership for target '%s'",
                 &[FmtArg::Str(
-                    strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
+                    // SAFETY: strcache_add_bytes returns a valid NUL-terminated C string.
+                    unsafe { CStr::from_ptr(strcache_add_bytes(ctx, &nm)) },
                 )],
             );
             n = node.lock().expect("file node lock poisoned");

@@ -24,6 +24,9 @@ pub unsafe fn load_file(
     if noerror == 0 {
         fatal!(
             ctx,
+            // SAFETY: the current output-sync target, resolved fresh here
+            // (see `crate::output::output_context`).
+            unsafe { crate::output::output_context().as_mut() },
             flocp.as_ref(),
             "'load' is not supported on this platform"
         );
@@ -39,6 +42,8 @@ pub unsafe fn load_file(
 pub fn unload_file(ctx: &crate::execctx::ExecContext, _name: *const ::core::ffi::c_char) -> i32 {
     fatal!(
         ctx,
+        // SAFETY: the current output-sync target, resolved fresh here.
+        unsafe { crate::output::output_context().as_mut() },
         None,
         "INTERNAL: cannot unload when load is not supported"
     )

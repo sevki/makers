@@ -21,8 +21,6 @@ pub const us_question: update_status_0 = 2;
 pub const us_none: update_status_0 = 1;
 pub const us_success: update_status_0 = 0;
 pub type dep = Dep;
-use crate::floc::Floc;
-
 pub type ar_member_func_t = Option<
     unsafe fn(
         i32,
@@ -105,11 +103,12 @@ pub fn ar_name(ctx: &crate::execctx::ExecContext, name: &::core::ffi::CStr) -> b
         ArName::Unsupported => unsafe {
             fatal(
         ctx,
-        ::core::ptr::null_mut::<Floc>(),
+        // SAFETY: the current output-sync target, resolved fresh here.
+        crate::output::output_context().as_mut(),
+        None,
         name.to_bytes().len() as size_t,
-        b"attempt to use unsupported feature: '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
+        c"attempt to use unsupported feature: '%s'",
+        &[FmtArg::Str(name)],
     )
         },
     }
@@ -128,12 +127,16 @@ pub unsafe fn ar_parse_name(
     *arname_p = xstrdup(name);
     p = strchr(*arname_p, '(' as i32);
     if p.is_null() {
+        // SAFETY: *arname_p is a NUL-terminated xstrdup of `name`.
+        let arname_p_cstr = ::core::ffi::CStr::from_ptr(*arname_p);
         fatal(
         ctx,
-        ::core::ptr::null_mut::<Floc>(),
+        // SAFETY: the current output-sync target, resolved fresh here.
+        crate::output::output_context().as_mut(),
+        None,
         strlen(*arname_p) as size_t,
-        b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*arname_p) as *const ::core::ffi::c_char)],
+        c"INTERNAL: ar_parse_name: bad name '%s'",
+        &[FmtArg::Str(arname_p_cstr)],
     );
     }
     let fresh0 = p;
@@ -288,40 +291,56 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
     val = 1;
     match ar_member_touch(ctx, arname, memname) {
         -1 => {
+            // SAFETY: arname is a NUL-terminated archive name from ar_parse_name.
+            let arname_cstr = ::core::ffi::CStr::from_ptr(arname);
             error(
         ctx,
-        ::core::ptr::null_mut::<Floc>(),
+        // SAFETY: the current output-sync target, resolved fresh here.
+        crate::output::output_context().as_mut(),
+        None,
         strlen(arname) as size_t,
-        b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+        c"touch: archive '%s' does not exist",
+        &[FmtArg::Str(arname_cstr)],
     );
         }
         -2 => {
+            // SAFETY: arname is a NUL-terminated archive name from ar_parse_name.
+            let arname_cstr = ::core::ffi::CStr::from_ptr(arname);
             error(
         ctx,
-        ::core::ptr::null_mut::<Floc>(),
+        // SAFETY: the current output-sync target, resolved fresh here.
+        crate::output::output_context().as_mut(),
+        None,
         strlen(arname) as size_t,
-        b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+        c"touch: '%s' is not a valid archive",
+        &[FmtArg::Str(arname_cstr)],
     );
         }
         -3 => {
+            // SAFETY: arname is a NUL-terminated archive name from ar_parse_name.
+            let arname_cstr = ::core::ffi::CStr::from_ptr(arname);
             perror_with_name(
                 ctx,
-                b"touch: \0" as *const u8 as *const ::core::ffi::c_char,
-                arname,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"touch: ",
+                arname_cstr,
             );
         }
         1 => {
+            // SAFETY: memname and arname are NUL-terminated names from ar_parse_name.
+            let memname_cstr = ::core::ffi::CStr::from_ptr(memname);
+            let arname_cstr = ::core::ffi::CStr::from_ptr(arname);
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 (strlen(memname) as size_t).wrapping_add(strlen(arname) as size_t),
-                b"touch: member '%s' does not exist in '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
+                c"touch: member '%s' does not exist in '%s'",
                 &[
-                    FmtArg::Str((memname) as *const ::core::ffi::c_char),
-                    FmtArg::Str((arname) as *const ::core::ffi::c_char),
+                    FmtArg::Str(memname_cstr),
+                    FmtArg::Str(arname_cstr),
                 ],
             );
         }
@@ -329,13 +348,16 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
             val = 0;
         }
         _ => {
+            // SAFETY: name is the NUL-terminated target name passed into ar_touch.
+            let name_cstr = ::core::ffi::CStr::from_ptr(name);
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 strlen(name) as size_t,
-                b"touch: bad return code from ar_member_touch on '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
+                c"touch: bad return code from ar_member_touch on '%s'",
+                &[FmtArg::Str(name_cstr)],
             );
         }
     }

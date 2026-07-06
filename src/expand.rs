@@ -243,10 +243,15 @@ pub unsafe fn recursively_expand_for_file(
         if (*v).exp_count() == 0 {
             fatal(
         ctx,
-        ctx.expanding_var_floc(),
+        // SAFETY: the current output-sync target, resolved fresh here.
+        unsafe { crate::output::output_context().as_mut() },
+        // SAFETY: `expanding_var_floc` returns either null or a live `Floc`
+        // borrowed from `expanding_var`/`reading_file`.
+        unsafe { ctx.expanding_var_floc().as_ref() },
         strlen((*v).name),
-        c"recursive variable '%s' references itself (eventually)".as_ptr(),
-        &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
+        c"recursive variable '%s' references itself (eventually)",
+        // SAFETY: `(*v).name` is a valid NUL-terminated variable name string.
+        &[FmtArg::Str(unsafe { ::core::ffi::CStr::from_ptr((*v).name) })],
     );
         }
         (*v).set_exp_count((*v).exp_count() - 1);
@@ -428,9 +433,13 @@ pub unsafe fn expand_string_buf(
                     if end.is_null() {
                         fatal(
                             ctx,
-                            ctx.expanding_var_floc(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            unsafe { crate::output::output_context().as_mut() },
+                            // SAFETY: `expanding_var_floc` returns either null or a live
+                            // `Floc` borrowed from `expanding_var`/`reading_file`.
+                            unsafe { ctx.expanding_var_floc().as_ref() },
                             0,
-                            c"unterminated variable reference".as_ptr(),
+                            c"unterminated variable reference",
                             &[],
                         );
                     }

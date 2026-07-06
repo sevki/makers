@@ -65,7 +65,13 @@ pub fn set_mode(ctx: &crate::execctx::ExecContext, arg: &str) {
         } else {
             match arg.parse::<u32>() {
                 Ok(n) => n,
-                Err(_) => fatal!(ctx, None, "invalid shuffle mode: Invalid value: '{arg}'"),
+                Err(_) => fatal!(
+                    ctx,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    None,
+                    "invalid shuffle mode: Invalid value: '{arg}'"
+                ),
             }
         };
         cfg.mode = Mode::Random;

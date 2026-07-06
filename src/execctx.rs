@@ -1134,6 +1134,20 @@ impl Default for PtrCell {
     }
 }
 
+impl PtrCell {
+    /// Safe view of the held pointer as a C string, or `None` if null.
+    ///
+    /// Every non-null value ever stored in a `PtrCell` is a NUL-terminated
+    /// string that outlives the run (argv or 'static storage backs it) —
+    /// the cell is the one place that owns this contract, so it's the place
+    /// that converts it to a real reference rather than every reader
+    /// re-deriving the same unsafety.
+    pub fn as_cstr(&self) -> Option<&::core::ffi::CStr> {
+        let p = self.0.get();
+        (!p.is_null()).then(|| unsafe { ::core::ffi::CStr::from_ptr(p) })
+    }
+}
+
 /// A `Cell<*mut c_char>` that defaults to null, for the same reason.
 #[derive(Debug, Clone)]
 pub struct MutPtrCell(pub ::core::cell::Cell<*mut ::core::ffi::c_char>);
@@ -1141,6 +1155,15 @@ pub struct MutPtrCell(pub ::core::cell::Cell<*mut ::core::ffi::c_char>);
 impl Default for MutPtrCell {
     fn default() -> Self {
         MutPtrCell(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+impl MutPtrCell {
+    /// Safe view of the held pointer as a C string, or `None` if null. See
+    /// [`PtrCell::as_cstr`].
+    pub fn as_cstr(&self) -> Option<&::core::ffi::CStr> {
+        let p = self.0.get();
+        (!p.is_null()).then(|| unsafe { ::core::ffi::CStr::from_ptr(p) })
     }
 }
 

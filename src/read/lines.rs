@@ -74,8 +74,15 @@ pub unsafe fn readline(
         let mut backslash: i32;
         len = strlen(p) as size_t;
         if len == 0 {
-            error(ctx, &raw mut (*ebuf).floc, 0, b"warning: NUL character seen; rest of line ignored\0" as *const u8
-                    as *const ::core::ffi::c_char, &[]);
+            error(
+                ctx,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                unsafe { crate::output::output_context().as_mut() },
+                (&raw const (*ebuf).floc).as_ref(),
+                0,
+                c"warning: NUL character seen; rest of line ignored",
+                &[],
+            );
             *p.offset(0_i32 as isize) = '\n' as i32 as ::core::ffi::c_char;
             len = 1;
         }
@@ -119,7 +126,13 @@ pub unsafe fn readline(
         *p = 0;
     }
     if ferror((*ebuf).fp) != 0 {
-        pfatal_with_name(ctx, (*ebuf).floc.filenm);
+        pfatal_with_name(
+            ctx,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            unsafe { crate::output::output_context().as_mut() },
+            // SAFETY: filenm is a valid NUL-terminated C string for the lifetime of this call.
+            unsafe { ::core::ffi::CStr::from_ptr((*ebuf).floc.filenm) },
+        );
     }
     if nlines != 0 {
         nlines

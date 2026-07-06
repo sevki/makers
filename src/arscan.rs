@@ -296,6 +296,8 @@ pub unsafe fn ar_scan(
                 parse_int(field, base, max).unwrap_or_else(|| {
                     crate::output::msg::fatal(
                         ctx,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        unsafe { crate::output::output_context().as_mut() },
                         None,
                         &format!("invalid {what} for archive {archive_str} member {name_str}"),
                     )

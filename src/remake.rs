@@ -251,19 +251,18 @@ pub fn check_also_make(ctx: &crate::execctx::ExecContext, file: FileId) {
                 n.last_mtime
             };
             if peer_mtime == NONEXISTENT_MTIME as uintmax_t {
-                let mut floc = recipe_floc.clone();
-                let floc_ptr = floc
-                    .as_mut()
-                    .map_or(::core::ptr::null_mut::<Floc>(), |f| f as *mut Floc);
+                let floc = recipe_floc.clone();
                 let pcn = cname(&peer_name);
                 unsafe {
                     error(
                         ctx,
-                        floc_ptr,
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
+                        floc.as_ref(),
                         0,
-                        b"warning: pattern recipe did not update peer target '%s'\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[FmtArg::Str(pcn.as_ptr() as *const ::core::ffi::c_char)],
+                        c"warning: pattern recipe did not update peer target '%s'",
+                        // SAFETY: `cname` always appends a trailing NUL.
+                        &[FmtArg::Str(::core::ffi::CStr::from_ptr(pcn.as_ptr() as *const ::core::ffi::c_char))],
                     );
                 }
             }
@@ -451,15 +450,17 @@ pub fn update_goal_chain(
                     unsafe {
                         message(
                             ctx,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
                             1,
                             head_name.len() as size_t,
                             if phony || !has_recipe {
-                                b"Nothing to be done for '%s'.\0" as *const u8
-                                    as *const ::core::ffi::c_char
+                                c"Nothing to be done for '%s'."
                             } else {
-                                b"'%s' is up to date.\0" as *const u8 as *const ::core::ffi::c_char
+                                c"'%s' is up to date."
                             },
-                            &[FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char)],
+                            // SAFETY: `cname` always appends a trailing NUL.
+                            &[FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char))],
                         );
                     }
                 }
@@ -512,19 +513,20 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                             offset: goal.offset as ::core::ffi::c_ulong,
                         }
                     });
-                    let floc_ptr = floc
-                        .as_ref()
-                        .map_or(::core::ptr::null_mut::<Floc>(), |f| f as *const Floc as *mut Floc);
                     unsafe {
                         let errstr = strerror(goal.error);
                         error(
                             ctx,
-                            floc_ptr,
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            floc.as_ref(),
                             (name.len() as size_t).wrapping_add(strlen(errstr) as size_t),
-                            b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                            c"%s: %s",
                             &[
-                                FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                                FmtArg::Str(errstr as *const ::core::ffi::c_char),
+                                // SAFETY: `cname` always appends a trailing NUL.
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                                // SAFETY: `strerror` returns a valid NUL-terminated string.
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(errstr)),
                             ],
                         );
                     }
@@ -672,62 +674,72 @@ pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
     if let Some(parent_id) = parent {
         let pname = node_name(ctx, parent_id);
         let pcn = cname(&pname);
-        let m: *const ::core::ffi::c_char = b"%sNo rule to make target '%s', needed by '%s'%s\0"
-            as *const u8 as *const ::core::ffi::c_char;
+        let m: &::core::ffi::CStr = c"%sNo rule to make target '%s', needed by '%s'%s";
         unsafe {
             if !crate::make_main::opt_keep_going() {
                 fatal(
                     ctx,
-                    NILF,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
                     m,
                     &[
-                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
-                        FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                        FmtArg::Str(pcn.as_ptr() as *const ::core::ffi::c_char),
-                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                        FmtArg::Str(c""),
+                        // SAFETY: `cname` always appends a trailing NUL.
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(pcn.as_ptr() as *const ::core::ffi::c_char)),
+                        FmtArg::Str(c""),
                     ],
                 );
             }
             error(
                 ctx,
-                NILF,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 0,
                 m,
                 &[
-                    FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
-                    FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                    FmtArg::Str(pcn.as_ptr() as *const ::core::ffi::c_char),
-                    FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
+                    FmtArg::Str(c"*** "),
+                    // SAFETY: `cname` always appends a trailing NUL.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(pcn.as_ptr() as *const ::core::ffi::c_char)),
+                    FmtArg::Str(c"."),
                 ],
             );
         }
     } else {
-        let m_0: *const ::core::ffi::c_char =
-            b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
+        let m_0: &::core::ffi::CStr = c"%sNo rule to make target '%s'%s";
         unsafe {
             if !crate::make_main::opt_keep_going() {
                 fatal(
                     ctx,
-                    NILF,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     0,
                     m_0,
                     &[
-                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
-                        FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                        FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
+                        FmtArg::Str(c""),
+                        // SAFETY: `cname` always appends a trailing NUL.
+                        FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                        FmtArg::Str(c""),
                     ],
                 );
             }
             error(
                 ctx,
-                NILF,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 0,
                 m_0,
                 &[
-                    FmtArg::Str(b"*** \0" as *const u8 as *const ::core::ffi::c_char),
-                    FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                    FmtArg::Str(b".\0" as *const u8 as *const ::core::ffi::c_char),
+                    FmtArg::Str(c"*** "),
+                    // SAFETY: `cname` always appends a trailing NUL.
+                    FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                    FmtArg::Str(c"."),
                 ],
             );
         }
@@ -897,11 +909,13 @@ fn update_file_1(
             unsafe {
                 error(
                     ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     name.len() as size_t,
-                    b"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp\0"
-                        as *const u8 as *const ::core::ffi::c_char,
-                    &[FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char)],
+                    c"*** warning: .LOW_RESOLUTION_TIME file '%s' has a high resolution time stamp",
+                    // SAFETY: `cname` always appends a trailing NUL.
+                    &[FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char))],
                 );
             }
         }
@@ -1052,13 +1066,15 @@ fn update_file_1(
                     unsafe {
                         fatal(
                             ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            None,
                             (name.len() as size_t).wrapping_add(dep_name.len() as size_t),
-                            b"circular %s <- %s dependency detected\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c"circular %s <- %s dependency detected",
+                            // SAFETY: `cname` always appends a trailing NUL.
                             &[
-                                FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                                FmtArg::Str(dcn.as_ptr() as *const ::core::ffi::c_char),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(dcn.as_ptr() as *const ::core::ffi::c_char)),
                             ],
                         );
                     }
@@ -1068,13 +1084,15 @@ fn update_file_1(
                     unsafe {
                         error(
                             ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            None,
                             (name.len() as size_t).wrapping_add(dep_name.len() as size_t),
-                            b"circular %s <- %s dependency dropped\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c"circular %s <- %s dependency dropped",
+                            // SAFETY: `cname` always appends a trailing NUL.
                             &[
-                                FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                                FmtArg::Str(dcn.as_ptr() as *const ::core::ffi::c_char),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(dcn.as_ptr() as *const ::core::ffi::c_char)),
                             ],
                         );
                     }
@@ -1289,11 +1307,13 @@ fn update_file_1(
             unsafe {
                 error(
                     ctx,
-                    ::core::ptr::null_mut::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    None,
                     name.len() as size_t,
-                    b"Target '%s' not remade because of errors.\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    &[FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char)],
+                    c"Target '%s' not remade because of errors.",
+                    // SAFETY: `cname` always appends a trailing NUL.
+                    &[FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char))],
                 );
             }
         }
@@ -1844,13 +1864,15 @@ pub fn check_dep(
                     unsafe {
                         error(
                             ctx,
-                            ::core::ptr::null_mut::<Floc>(),
+                            // SAFETY: the current output-sync target, resolved fresh here.
+                            crate::output::output_context().as_mut(),
+                            None,
                             0,
-                            b"circular %s <- %s dependency dropped\0" as *const u8
-                                as *const ::core::ffi::c_char,
+                            c"circular %s <- %s dependency dropped",
+                            // SAFETY: `cname` always appends a trailing NUL.
                             &[
-                                FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
-                                FmtArg::Str(dcn.as_ptr() as *const ::core::ffi::c_char),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(cn.as_ptr() as *const ::core::ffi::c_char)),
+                                FmtArg::Str(::core::ffi::CStr::from_ptr(dcn.as_ptr() as *const ::core::ffi::c_char)),
                             ],
                         );
                     }
@@ -1916,13 +1938,17 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
     let cn = cname(&name);
     let name_ptr = cn.as_ptr() as *const ::core::ffi::c_char;
     unsafe {
+        // SAFETY: `cname` always appends a trailing NUL.
+        let name_cstr = ::core::ffi::CStr::from_ptr(name_ptr);
         if !crate::make_main::opt_run_silent() {
             message(
                 ctx,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
                 0,
                 name.len() as size_t,
-                b"touch %s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[FmtArg::Str(name_ptr)],
+                c"touch %s",
+                &[FmtArg::Str(name_cstr)],
             );
         }
         if crate::make_main::opt_just_print() {
@@ -1945,8 +1971,10 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
         if fd < 0 {
             perror_with_name(
                 ctx,
-                b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
-                name_ptr,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"touch: open: ",
+                name_cstr,
             );
             return UpdateStatus::Failed;
         }
@@ -1978,8 +2006,10 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
         if e < 0 {
             perror_with_name(
                 ctx,
-                b"touch: fstat: \0" as *const u8 as *const ::core::ffi::c_char,
-                name_ptr,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"touch: fstat: ",
+                name_cstr,
             );
             return UpdateStatus::Failed;
         }
@@ -1992,8 +2022,10 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
         if e < 0 {
             perror_with_name(
                 ctx,
-                b"touch: read: \0" as *const u8 as *const ::core::ffi::c_char,
-                name_ptr,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"touch: read: ",
+                name_cstr,
             );
             return UpdateStatus::Failed;
         }
@@ -2007,8 +2039,10 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
         if o < 0 {
             perror_with_name(
                 ctx,
-                b"touch: lseek: \0" as *const u8 as *const ::core::ffi::c_char,
-                name_ptr,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"touch: lseek: ",
+                name_cstr,
             );
             return UpdateStatus::Failed;
         }
@@ -2021,8 +2055,10 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
         if e < 0 {
             perror_with_name(
                 ctx,
-                b"touch: write: \0" as *const u8 as *const ::core::ffi::c_char,
-                name_ptr,
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                c"touch: write: ",
+                name_cstr,
             );
             return UpdateStatus::Failed;
         }
@@ -2037,8 +2073,10 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
             if fd < 0 {
                 perror_with_name(
                     ctx,
-                    b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
-                    name_ptr,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    c"touch: open: ",
+                    name_cstr,
                 );
                 return UpdateStatus::Failed;
             }
@@ -2327,18 +2365,20 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
                     }
                     error(
                         ctx,
-                        ::core::ptr::null_mut::<Floc>(),
+                        // SAFETY: the current output-sync target, resolved fresh here.
+                        crate::output::output_context().as_mut(),
+                        None,
                         (name.len() as size_t).wrapping_add(
                             strlen(&raw mut from_now_string as *mut ::core::ffi::c_char) as size_t,
                         ),
-                        b"warning: file '%s' has modification time %s s in the future\0"
-                            as *const u8 as *const ::core::ffi::c_char,
+                        c"warning: file '%s' has modification time %s s in the future",
                         &[
-                            FmtArg::Str(name_ptr),
-                            FmtArg::Str(
-                                (&raw mut from_now_string as *mut ::core::ffi::c_char)
-                                    as *const ::core::ffi::c_char,
-                            ),
+                            // SAFETY: `cname` always appends a trailing NUL.
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(name_ptr)),
+                            // SAFETY: `sprintf` above wrote a NUL-terminated string.
+                            FmtArg::Str(::core::ffi::CStr::from_ptr(
+                                &raw mut from_now_string as *mut ::core::ffi::c_char,
+                            )),
                         ],
                     );
                 }
@@ -2421,8 +2461,12 @@ pub unsafe fn name_mtime(
     } else {
         perror_with_name(
             ctx,
-            b"stat: \0" as *const u8 as *const ::core::ffi::c_char,
-            name,
+            // SAFETY: the current output-sync target, resolved fresh here.
+            crate::output::output_context().as_mut(),
+            c"stat: ",
+            // SAFETY: `name` is documented (by this function's callers) to be a
+            // valid NUL-terminated path.
+            ::core::ffi::CStr::from_ptr(name),
         );
         return NONEXISTENT_MTIME as uintmax_t;
     }
@@ -2463,8 +2507,11 @@ unsafe fn follow_symlink_mtime(
             if *__errno_location() != ENOENT && *__errno_location() != ENOTDIR {
                 perror_with_name(
                     ctx,
-                    b"lstat: \0" as *const u8 as *const ::core::ffi::c_char,
-                    &raw mut lpath as *mut ::core::ffi::c_char,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    c"lstat: ",
+                    // SAFETY: `lpath` is a local NUL-terminated buffer populated by `strcpy`/`readlink` above.
+                    ::core::ffi::CStr::from_ptr(&raw mut lpath as *mut ::core::ffi::c_char),
                 );
             }
             break;
@@ -2493,8 +2540,11 @@ unsafe fn follow_symlink_mtime(
             if llen < 0 {
                 perror_with_name(
                     ctx,
-                    b"readlink: \0" as *const u8 as *const ::core::ffi::c_char,
-                    &raw mut lpath as *mut ::core::ffi::c_char,
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    crate::output::output_context().as_mut(),
+                    c"readlink: ",
+                    // SAFETY: `lpath` is a local NUL-terminated buffer populated by `strcpy`/`readlink` above.
+                    ::core::ffi::CStr::from_ptr(&raw mut lpath as *mut ::core::ffi::c_char),
                 );
                 break;
             } else {
@@ -2569,11 +2619,13 @@ unsafe extern "C" fn library_search(
         if p3.is_null() {
             error(
                 ctx,
-                ::core::ptr::null_mut::<Floc>(),
+                // SAFETY: the current output-sync target, resolved fresh here.
+                crate::output::output_context().as_mut(),
+                None,
                 strlen(p) as size_t,
-                b".LIBPATTERNS element '%s' is not a pattern\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
+                c".LIBPATTERNS element '%s' is not a pattern",
+                // SAFETY: the byte at `p + len` was just set to NUL above.
+                &[FmtArg::Str(::core::ffi::CStr::from_ptr(p))],
             );
             *p.offset(len as isize) = c;
         } else {

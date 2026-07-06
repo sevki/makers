@@ -6,7 +6,6 @@
 //! Port of `dir.c`.
 
 pub use crate::ffi_types::{__ino_t, __off_t, __size_t, dev_t, ino_t, size_t, time_t};
-use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::xrealloc;
 use crate::output::{fatal, FmtArg};
@@ -297,12 +296,18 @@ unsafe fn dir_contents_file_exists_p(
             if *__errno_location() != 0 {
                 fatal(
                     ctx,
-                    null::<Floc>(),
+                    // SAFETY: the current output-sync target, resolved fresh here.
+                    unsafe { crate::output::output_context().as_mut() },
+                    None,
                     0,
-                    c"readdir %s: %s".as_ptr(),
+                    c"readdir %s: %s",
                     &[
-                        FmtArg::Str(dir.name),
-                        FmtArg::Str(strerror(*__errno_location())),
+                        // SAFETY: `dir.name` is a valid NUL-terminated directory name string.
+                        FmtArg::Str(unsafe { ::core::ffi::CStr::from_ptr(dir.name) }),
+                        // SAFETY: `strerror` returns a valid NUL-terminated static string.
+                        FmtArg::Str(unsafe {
+                            ::core::ffi::CStr::from_ptr(strerror(*__errno_location()))
+                        }),
                     ],
                 );
             }
