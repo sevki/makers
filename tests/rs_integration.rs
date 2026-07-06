@@ -1253,8 +1253,15 @@ fn canonical_exit_codes_reach_the_os() {
     // this pins its exit code so that conversion stays observable too. Not
     // differential — the fixture suite diffs richer behavior; this pins the
     // plumbing itself.
-    let (_, code) = run_make("all: ;\n", &[], &["-h"]);
+    // Paired with the `usage_help` fixture, which byte-diffs the full usage
+    // text against the C oracle in the fixtures-diff CI job.
+    let (stdout, code) = run_make("all: ;\n", &[], &["-h"]);
     assert_eq!(code, Some(0), "-h usage exits MAKE_SUCCESS");
+    assert!(stdout.contains("Options:\n"), "-h prints the usage table");
+    assert!(
+        stdout.contains("Report bugs to <bug-make@gnu.org>\n"),
+        "-h usage runs through to the trailer"
+    );
     let (_, code) = run_make("all: ;\n", &[], &["--version"]);
     assert_eq!(code, Some(0), "--version exits MAKE_SUCCESS");
     let (_, code) = run_make("all: ;\n", &[], &["--definitely-not-a-switch"]);
