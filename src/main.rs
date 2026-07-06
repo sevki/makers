@@ -5216,10 +5216,7 @@ pub fn main() -> i32 {
             vars.as_mut_ptr() as *mut *mut ::core::ffi::c_char,
         )
     };
-    match result {
-        Ok(report) => report.exit_code(),
-        Err(err) => err.exit_code(),
-    }
+    crate::build_result::exit_code(result)
 }
 /// The command-line switch table, freshly built with its real contents — the
 /// former `.init_array` `run_static_initializers` body that populated the

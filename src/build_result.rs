@@ -74,6 +74,16 @@ pub fn result_from_status(status: i32) -> Result<BuildReport, BuildError> {
     }
 }
 
+/// The process exit code for a finished run, however it ended — the inverse
+/// of [`result_from_status`], used by the `bin/make.rs` shim's single
+/// `std::process::exit` call.
+pub fn exit_code(result: Result<BuildReport, BuildError>) -> i32 {
+    match result {
+        Ok(report) => report.exit_code(),
+        Err(err) => err.exit_code(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +101,13 @@ mod tests {
         assert_eq!(result_from_status(MAKE_SUCCESS), Ok(BuildReport));
         assert_eq!(result_from_status(MAKE_TROUBLE), Err(BuildError::Trouble));
         assert_eq!(result_from_status(MAKE_FAILURE), Err(BuildError::Failure));
+    }
+
+    #[test]
+    fn exit_code_inverts_result_from_status() {
+        for status in [MAKE_SUCCESS, MAKE_TROUBLE, MAKE_FAILURE] {
+            assert_eq!(exit_code(result_from_status(status)), status);
+        }
     }
 
     #[test]
