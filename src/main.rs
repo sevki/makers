@@ -25,6 +25,19 @@ use libc::{
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
 use std::sync::atomic::Ordering;
+
+/// Differential-test oracle for the clap-based `decode_switches`: the
+/// original `getopt_long`-based implementation, preserved verbatim per
+/// AGENTS.md rule 3. Lives in its own file (not a nested `mod { .. }` block
+/// here) so the `optarg`/`optind`/`opterr`/`getopt_long` externs it needs
+/// never appear in this file's text at all -- this is the one piece of
+/// process-wide libc state Phase A (#431/#439) couldn't move onto
+/// `ExecContext`/`Options` outright, so instead it's fully retired from the
+/// shipping binary and kept only as a `#[cfg(test)]`-gated correctness check.
+#[cfg(test)]
+#[path = "getopt_oracle_test.rs"]
+mod getopt_oracle_test;
+
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
@@ -32,9 +45,6 @@ extern "C" {
     fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
     fn getcwd(__buf: *mut ::core::ffi::c_char, __size: size_t) -> *mut ::core::ffi::c_char;
     static mut environ: *mut *mut ::core::ffi::c_char;
-    static mut optarg: *mut ::core::ffi::c_char;
-    static mut optind: i32;
-    static mut opterr: i32;
     static mut stdin: *mut FILE;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
@@ -81,13 +91,6 @@ extern "C" {
         __n: size_t,
     ) -> i32;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
-    fn getopt_long(
-        argc: i32,
-        argv: *const *mut ::core::ffi::c_char,
-        shortopts: *const ::core::ffi::c_char,
-        longopts: *const option,
-        longind: *mut i32,
-    ) -> i32;
 }
 pub type __uint32_t = u32;
 #[derive(Copy, Clone)]
@@ -242,13 +245,6 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct stringlist {
-    pub list: *mut *const ::core::ffi::c_char,
-    pub idx: ::core::ffi::c_uint,
-    pub max: ::core::ffi::c_uint,
-}
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct command_switch {
@@ -2195,13 +2191,16 @@ unsafe fn main_0(
     });
     let env_slots: Option<u32> = options.arg_job_slots.get();
     options.arg_job_slots.set(None);
-    decode_switches(
-        &ctx,
-        &options,
-        argc,
-        argv as *mut *const ::core::ffi::c_char,
-        o_command,
-    );
+    let cli_tokens: Vec<::std::ffi::OsString> = {
+        use std::os::unix::ffi::OsStrExt;
+        (1..argc)
+            .map(|i| {
+                let cstr = ::core::ffi::CStr::from_ptr(*argv.offset(i as isize));
+                ::std::ffi::OsStr::from_bytes(cstr.to_bytes()).to_os_string()
+            })
+            .collect()
+    };
+    decode_switches(&ctx, &options, &cli_tokens, o_command);
     argv_slots = options.arg_job_slots.get();
     if options.arg_job_slots.get().is_none() {
         options.arg_job_slots.set(env_slots);
@@ -3676,85 +3675,6 @@ unsafe fn main_0(
     }
     die(&ctx, makefile_status);
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-///
-/// Builds the getopt tables — the short-option string and the `option`
-/// long-option array — from the `switches` table, returning them by value.
-/// The former `static mut getopt_shorts`/`long_options` pair: the tables are
-/// a pure function of `switches`, so each `decode_switches` call builds its
-/// own copies as locals instead of lazily initializing process globals.
-unsafe fn build_getopt_tables(options: &Options) -> ([::core::ffi::c_char; 127], [option; 51]) {
-    let mut getopt_shorts: [::core::ffi::c_char; 127] = [0; 127];
-    let mut long_options: [option; 51] = [option {
-        name: ::core::ptr::null::<::core::ffi::c_char>(),
-        has_arg: 0,
-        flag: ::core::ptr::null_mut::<i32>(),
-        val: 0,
-    }; 51];
-    let switches = options.switches.borrow();
-    let mut p: *mut ::core::ffi::c_char;
-    let mut c: ::core::ffi::c_uint;
-    let mut i: ::core::ffi::c_uint;
-    p = getopt_shorts.as_mut_ptr();
-    let fresh24 = p;
-    p = p.offset(1_i32 as isize);
-    *fresh24 = '-' as i32 as ::core::ffi::c_char;
-    i = 0;
-    while switches[i as usize].c != 0 {
-        long_options[i as usize].name = (if switches[i as usize].long_name.is_null() {
-            b"\0" as *const u8 as *const ::core::ffi::c_char
-        } else {
-            switches[i as usize].long_name
-        }) as *mut ::core::ffi::c_char;
-        long_options[i as usize].flag = ::core::ptr::null_mut::<i32>();
-        long_options[i as usize].val = switches[i as usize].c;
-        if switches[i as usize].c <= CHAR_MAX {
-            let fresh25 = p;
-            p = p.offset(1_i32 as isize);
-            *fresh25 = switches[i as usize].c as ::core::ffi::c_char;
-        }
-        match switches[i as usize].type_0 as ::core::ffi::c_uint {
-            0 | 1 | 7 => {
-                long_options[i as usize].has_arg = no_argument;
-            }
-            2 | 3 | 4 | 5 | 6 => {
-                if switches[i as usize].c <= CHAR_MAX {
-                    let fresh26 = p;
-                    p = p.offset(1_i32 as isize);
-                    *fresh26 = ':' as i32 as ::core::ffi::c_char;
-                }
-                if !switches[i as usize].noarg_value.is_null() {
-                    if switches[i as usize].c <= CHAR_MAX {
-                        let fresh27 = p;
-                        p = p.offset(1_i32 as isize);
-                        *fresh27 = ':' as i32 as ::core::ffi::c_char;
-                    }
-                    long_options[i as usize].has_arg = optional_argument;
-                } else {
-                    long_options[i as usize].has_arg = required_argument;
-                }
-            }
-            _ => {}
-        }
-        i = i.wrapping_add(1);
-    }
-    *p = 0;
-    c = 0;
-    while (c as usize)
-        < (::core::mem::size_of::<[option; 9]>() as usize)
-            .wrapping_div(::core::mem::size_of::<option>() as usize)
-    {
-        let fresh28 = i;
-        i = i.wrapping_add(1);
-        long_options[fresh28 as usize] = LONG_OPTION_ALIASES[c as usize];
-        c = c.wrapping_add(1);
-    }
-    long_options[i as usize].name = ::core::ptr::null::<::core::ffi::c_char>();
-    (getopt_shorts, long_options)
-}
 unsafe fn handle_non_switch_argument(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
@@ -3886,342 +3806,621 @@ pub unsafe fn reset_makeflags(
     disable_builtins(ctx, options);
     define_makeflags(ctx, options, opt_rebuilding_makefiles() as i32);
 }
-unsafe fn decode_switches(
+/// Switch chars whose `command_switch.type_0` is `flag`/`flag_off` and which
+/// share their underlying `Options` storage with a counterpart char (the
+/// negation aliases): whichever of the pair appears *last* on the command
+/// line wins, matching `opt_set_flag`'s "later assignment overwrites" getopt
+/// loop semantics. Mirrors the char groupings already hardcoded in
+/// `opt_set_flag`/`opt_origin_cell` (`'k'|'S'`, `'w'|CHAR_MAX+4`,
+/// `'s'|CHAR_MAX+8`) -- there are only these three pairs in the whole table.
+const FLAG_PAIRS: [(i32, i32); 3] = [
+    ('k' as i32, 'S' as i32),
+    ('w' as i32, CHAR_MAX + 4),
+    ('s' as i32, CHAR_MAX + 8),
+];
+
+/// Every optional-argument switch (`command_switch.noarg_value` non-null) and
+/// its bare spellings (short + long name + any optional-argument alias). Used
+/// by [`normalize_argv_for_clap`] to recognize a bare occurrence before clap
+/// parses the token stream.
+struct OptionalArgSwitch {
+    c: i32,
+    short: Option<String>,
+    longs: Vec<String>,
+    /// Only `-j`/`--jobs` and `-l`/`--load-average`/`--max-load` accept a
+    /// *separate* following argv token as their value (the hand-rolled
+    /// numeric lookahead in the original `decode_switches`); every other
+    /// optional-arg switch never consumes a following token.
+    numeric_lookahead: bool,
+}
+
+fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgSwitch> {
+    let mut out = Vec::new();
+    for cs in switches {
+        if cs.c == 0 || cs.noarg_value.is_null() {
+            continue;
+        }
+        let short = if cs.c <= CHAR_MAX {
+            Some(format!("-{}", cs.c as u8 as char))
+        } else {
+            None
+        };
+        let mut longs = Vec::new();
+        if !cs.long_name.is_null() {
+            // SAFETY: `long_name` was just checked non-null; every table
+            // entry's `long_name` is either null or a valid NUL-terminated
+            // `&'static str` literal.
+            if let Ok(s) = unsafe { ::core::ffi::CStr::from_ptr(cs.long_name) }.to_str() {
+                if !s.is_empty() {
+                    longs.push(format!("--{}", s));
+                }
+            }
+        }
+        for alias in LONG_OPTION_ALIASES.iter() {
+            if alias.val == cs.c && alias.has_arg == optional_argument {
+                // SAFETY: every `LONG_OPTION_ALIASES` entry's `name` is a
+                // valid NUL-terminated `&'static str` literal.
+                if let Ok(s) = unsafe { ::core::ffi::CStr::from_ptr(alias.name) }.to_str() {
+                    longs.push(format!("--{}", s));
+                }
+            }
+        }
+        out.push(OptionalArgSwitch {
+            c: cs.c,
+            short,
+            longs,
+            numeric_lookahead: cs.c == 'j' as i32 || cs.c == 'l' as i32,
+        });
+    }
+    out
+}
+
+/// Sentinel substituted for a *bare* optional-arg switch occurrence (see
+/// [`normalize_argv_for_clap`]), so after clap parses it, "no value was
+/// given" stays distinguishable from a genuine explicit empty value
+/// (`--debug=`) -- the two must be treated differently (see
+/// [`apply_value_switch`] and the `-j`/`-l` handling in [`decode_switches`]).
+/// argv tokens can never contain a NUL byte (they're NUL-terminated C
+/// strings at the OS level), so this can never collide with real input.
+const NOARG_SENTINEL: &str = "\0";
+
+/// Rewrites `tokens` so every *bare* occurrence of an optional-argument
+/// switch carries an explicit value before clap ever sees it. clap's own
+/// `num_args(0..=1)` handling (unlike `getopt_long`'s) always tries to
+/// consume the *next* token as the value when one is bare, which is wrong
+/// for every optional-arg switch except `-j`/`-l` -- and even for those two,
+/// only when the next token is all-numeric (`-j`) or numeric/`.`-led (`-l`),
+/// replicating the original hand-rolled lookahead exactly. Every other bare
+/// occurrence is rewritten to [`NOARG_SENTINEL`] (`-j=\0`/`--debug=\0`) so
+/// clap records "given, no value" instead of grabbing an unrelated following
+/// token, while staying distinguishable from a real explicit empty value.
+fn normalize_argv_for_clap(
+    switches: &[command_switch],
+    tokens: &[::std::ffi::OsString],
+) -> Vec<::std::ffi::OsString> {
+    use std::os::unix::ffi::OsStrExt;
+    // Byte-level `"{a}={b}"` concatenation, avoiding any UTF-8 assumption
+    // about `a`/`b` (a switch value like `-l`'s can be arbitrary bytes past
+    // its first char -- the original hand-rolled lookahead is byte-based,
+    // not string-based).
+    fn concat_eq(a: &::std::ffi::OsStr, b: &[u8]) -> ::std::ffi::OsString {
+        let mut buf = a.as_bytes().to_vec();
+        buf.push(b'=');
+        buf.extend_from_slice(b);
+        ::std::ffi::OsStr::from_bytes(&buf).to_os_string()
+    }
+
+    let opt_args = optional_arg_switches(switches);
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = &tokens[i];
+        let matched = opt_args.iter().find(|o| {
+            o.short.as_deref().is_some_and(|s| tok.as_os_str() == ::std::ffi::OsStr::new(s))
+                || o.longs.iter().any(|l| tok.as_os_str() == ::std::ffi::OsStr::new(l.as_str()))
+        });
+        let Some(o) = matched else {
+            out.push(tok.clone());
+            i += 1;
+            continue;
+        };
+        if o.numeric_lookahead {
+            if let Some(next) = tokens.get(i + 1) {
+                let bytes = next.as_bytes();
+                let consume = if o.c == 'j' as i32 {
+                    !bytes.is_empty() && bytes.iter().all(u8::is_ascii_digit)
+                } else {
+                    bytes.first().is_some_and(|&b| b.is_ascii_digit() || b == b'.')
+                };
+                if consume {
+                    out.push(concat_eq(tok.as_os_str(), bytes));
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        out.push(concat_eq(tok.as_os_str(), NOARG_SENTINEL.as_bytes()));
+        i += 1;
+    }
+    out
+}
+
+/// Builds a [`clap::Command`] from the `switches` table: one `Arg` per
+/// switch (short/long name + any long-option aliases from
+/// `LONG_OPTION_ALIASES`), plus a trailing catch-all positional for
+/// everything else (targets, `VAR=value` assignments). Replaces the former
+/// `build_getopt_tables`/`getopt_long` pair -- rebuilt fresh on every
+/// `decode_switches` call, same as the table it replaced.
+fn build_clap_command(switches: &[command_switch]) -> clap::Command {
+    use clap::builder::OsStringValueParser;
+    use clap::{Arg, ArgAction, Command};
+    let mut cmd = Command::new("make")
+        .no_binary_name(true)
+        .disable_help_flag(true)
+        .disable_version_flag(true);
+    for cs in switches {
+        if cs.c == 0 {
+            continue;
+        }
+        let mut arg = Arg::new(format!("c{}", cs.c));
+        if cs.c <= CHAR_MAX {
+            arg = arg.short(cs.c as u8 as char);
+        }
+        if !cs.long_name.is_null() {
+            // SAFETY: `long_name` was just checked non-null; every table
+            // entry's `long_name` is either null or a valid NUL-terminated
+            // `&'static str` literal.
+            if let Ok(s) = unsafe { ::core::ffi::CStr::from_ptr(cs.long_name) }.to_str() {
+                if !s.is_empty() {
+                    arg = arg.long(s.to_string());
+                }
+            }
+        }
+        arg = match cs.type_0 {
+            t if t == flag || t == flag_off || t == ignore => arg.action(ArgAction::Count),
+            _ if cs.noarg_value.is_null() => arg
+                .action(ArgAction::Append)
+                .num_args(1)
+                .value_parser(OsStringValueParser::new()),
+            _ => arg
+                .action(ArgAction::Append)
+                .num_args(0..=1)
+                .value_parser(OsStringValueParser::new()),
+        };
+        cmd = cmd.arg(arg);
+    }
+    for alias in LONG_OPTION_ALIASES.iter() {
+        // SAFETY: every `LONG_OPTION_ALIASES` entry's `name` is a valid
+        // NUL-terminated `&'static str` literal.
+        if let Ok(name) = unsafe { ::core::ffi::CStr::from_ptr(alias.name) }.to_str() {
+            let name = name.to_string();
+            cmd = cmd.mut_arg(format!("c{}", alias.val), move |a| a.alias(name));
+        }
+    }
+    cmd.arg(
+        Arg::new("__rest")
+            .action(ArgAction::Append)
+            .num_args(0..)
+            .allow_hyphen_values(false)
+            .value_parser(OsStringValueParser::new()),
+    )
+}
+
+/// Applies a single occurrence of a `string`/`strlist`/`filename`-type
+/// switch, given its already-tokenized (possibly empty, meaning "no value
+/// given") argument. Extracted from the getopt-loop body virtually
+/// unchanged; only the argument's origin (an `ArgMatches` value instead of a
+/// `getopt_long` `coptarg` pointer) differs.
+#[allow(clippy::too_many_arguments)]
+fn apply_value_switch(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
-    argc: i32,
-    argv: *mut *const ::core::ffi::c_char,
+    cs: &command_switch,
+    raw_value: &::std::ffi::OsStr,
+    doit: bool,
+    cs_origin: Option<&::core::cell::Cell<variable_origin>>,
+    origin: variable_origin,
+    bad: &mut i32,
+) {
+    use std::os::unix::ffi::OsStrExt;
+    if !doit {
+        return;
+    }
+    // Resolve the option argument. A bare occurrence (no value given at
+    // all -- flagged by `NOARG_SENTINEL`, see `normalize_argv_for_clap`)
+    // falls back to the switch's `noarg_value`; a genuine *explicit* empty
+    // value (`--debug=`, `-f ''`) is always an error, matching
+    // `getopt_long`'s `*coptarg == 0` check regardless of whether this
+    // switch also has a `noarg_value` substitute. Built from raw bytes (not
+    // through `str`) so a non-UTF-8 filename argument round-trips exactly,
+    // matching the original getopt-based `CString` path.
+    let resolved: ::std::ffi::CString = if raw_value == ::std::ffi::OsStr::new(NOARG_SENTINEL) {
+        // SAFETY: `NOARG_SENTINEL` is only ever produced by
+        // `normalize_argv_for_clap` for a switch listed in
+        // `optional_arg_switches`, which filters on `noarg_value` being
+        // non-null; every table entry's `noarg_value`, when non-null, is a
+        // valid NUL-terminated `&'static str` literal.
+        unsafe { ::core::ffi::CStr::from_ptr(cs.noarg_value as *const ::core::ffi::c_char) }
+            .to_owned()
+    } else if raw_value.is_empty() {
+        let mut opt: [::core::ffi::c_char; 2] = [0; 2];
+        let op: *const ::core::ffi::c_char = if cs.c <= CHAR_MAX {
+            opt[0_i32 as usize] = cs.c as ::core::ffi::c_char;
+            &raw mut opt as *mut ::core::ffi::c_char
+        } else {
+            // SAFETY: every table entry with `c > CHAR_MAX` (long-only) has
+            // a non-null `long_name`, since it has no single-char spelling.
+            cs.long_name
+        };
+        // SAFETY: `op` is either `opt` (a local, NUL-terminated 2-byte
+        // buffer) or `cs.long_name` (non-null and NUL-terminated per above).
+        unsafe {
+            error(
+                ctx,
+                NILF,
+                strlen(op) as size_t,
+                b"the '%s%s' option requires a non-empty string argument\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str(if cs.c <= CHAR_MAX {
+                        b"-\0" as *const u8 as *const ::core::ffi::c_char
+                    } else {
+                        b"--\0" as *const u8 as *const ::core::ffi::c_char
+                    }),
+                    FmtArg::Str(op),
+                ],
+            );
+        }
+        *bad = 1;
+        return;
+    } else {
+        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default()
+    };
+    let coptarg = resolved.as_ptr();
+    if cs.type_0 == string {
+        let s = resolved.to_string_lossy().into_owned();
+        opt_set_str(options, cs.c, s);
+        if let Some(oc) = cs_origin {
+            oc.set(origin);
+        }
+    } else if cs.c == CHAR_MAX + 1 {
+        // `--debug` accumulates its args into a `Vec<CString>`, skipping an
+        // exact duplicate of an already-stored value (matching the original
+        // stringlist dedup logic).
+        let mut db_flags = options.db_flags.borrow_mut();
+        let duplicate = db_flags.iter().any(|e| e.as_c_str() == resolved.as_c_str());
+        if !duplicate {
+            db_flags.push(resolved.clone());
+            if let Some(oc) = cs_origin {
+                oc.set(origin);
+            }
+        }
+    } else {
+        // List options (`strlist`/`filename`) store owned `CString`s in a
+        // `Vec` on `Options`. Dispatch on the switch char to the relevant
+        // `Vec`.
+        let mut list = match cs.c {
+            c if c == 'C' as i32 => options.directories.borrow_mut(),
+            c if c == 'f' as i32 || c == TEMP_STDIN_OPT => options.makefiles.borrow_mut(),
+            c if c == 'I' as i32 => options.include_dirs.borrow_mut(),
+            c if c == 'o' as i32 => options.old_files.borrow_mut(),
+            c if c == 'W' as i32 => options.new_files.borrow_mut(),
+            c if c == 'E' as i32 => options.eval_strings.borrow_mut(),
+            c if c == WARN_OPT => options.warn_flags.borrow_mut(),
+            _ => unreachable!("non-list option in list arm"),
+        };
+        // Skip a value already present (but -f and --warn allow duplicates).
+        let duplicate = if cs.c != 'f' as i32 && cs.c != WARN_OPT {
+            list.iter().any(|e| e.as_c_str() == resolved.as_c_str())
+        } else {
+            false
+        };
+        if !duplicate {
+            // `strlist` stores the raw arg; `filename` stores the expanded
+            // path (or the strcache entry for the --temp-stdin placeholder).
+            let stored: ::std::ffi::CString = if cs.type_0 == strlist {
+                resolved.clone()
+            } else if cs.c == TEMP_STDIN_OPT {
+                if options.stdin_offset.get() > 0 {
+                    // SAFETY: `fatal` requires a valid NUL-terminated format
+                    // string with no `%` conversions beyond the given args;
+                    // this literal has none.
+                    unsafe {
+                        fatal(
+                            ctx,
+                            NILF,
+                            0,
+                            b"INTERNAL: multiple --temp-stdin options provided!\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
+                    }
+                }
+                options.stdin_offset.set(list.len() as i32);
+                // SAFETY: `strcache_add` requires a valid NUL-terminated C
+                // string; `coptarg` is `resolved.as_ptr()`, a live `CString`.
+                // Its return value is a strcache-owned, valid NUL-terminated
+                // string for the process lifetime.
+                let cached = unsafe { strcache_add(ctx, coptarg) };
+                ctx.temp_stdin_name.0.set(cached);
+                unsafe { ::core::ffi::CStr::from_ptr(cached) }.to_owned()
+            } else {
+                // SAFETY: `expand_command_line_file` requires a valid
+                // NUL-terminated C string (`coptarg`, as above) and returns
+                // one.
+                unsafe { ::core::ffi::CStr::from_ptr(expand_command_line_file(ctx, coptarg)) }
+                    .to_owned()
+            };
+            list.push(stored);
+            if let Some(oc) = cs_origin {
+                oc.set(origin);
+            }
+        }
+    }
+}
+
+fn decode_switches(
+    ctx: &crate::execctx::ExecContext,
+    options: &Options,
+    tokens: &[::std::ffi::OsString],
     origin: variable_origin,
 ) {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut bad: i32 = 0;
-    let mut cs: *mut command_switch;
-    let mut targets: stringlist = stringlist {
-        list: ::core::ptr::null_mut::<*const ::core::ffi::c_char>(),
-        idx: 0,
-        max: 0,
-    };
-    let mut c: i32;
-    let mut found_wait: ::core::ffi::c_uint = 0;
-    let mut a: *mut *const ::core::ffi::c_char;
-    // Re-entrancy guard: `decode_switches` must not be called recursively.
-    if !ctx.using_getopt.0.load(Ordering::Relaxed) {
-    } else {
-        panic!("assertion failed: using_getopt == 0");
-    };
-    ctx.using_getopt.0.store(true, Ordering::Relaxed);
-    targets.max = (argc + 1) as ::core::ffi::c_uint;
-    alloca_allocations.push(::std::vec::from_elem(
-        0,
-        (targets.max as usize)
-            .wrapping_mul(::core::mem::size_of::<*mut *const ::core::ffi::c_char>() as usize)
-            as usize,
-    ));
-    targets.list =
-        alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut *const ::core::ffi::c_char;
-    targets.idx = 0;
-    let (mut getopt_shorts, mut long_options) = build_getopt_tables(options);
-    opterr = (origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint) as i32;
-    optind = 0;
-    while optind < argc {
-        let mut coptarg: *const ::core::ffi::c_char;
-        c = getopt_long(
-            argc,
-            argv as *const *mut ::core::ffi::c_char,
-            getopt_shorts.as_mut_ptr(),
-            long_options.as_mut_ptr(),
-            ::core::ptr::null_mut::<i32>(),
-        );
-        coptarg = optarg;
-        if c == EOF {
-            break;
+    let switches_snapshot: Vec<command_switch> = options.switches.borrow().to_vec();
+
+    let normalized = normalize_argv_for_clap(&switches_snapshot, tokens);
+    let mut retry_tokens = normalized;
+    let matches = loop {
+        match build_clap_command(&switches_snapshot).try_get_matches_from(retry_tokens.clone()) {
+            Ok(m) => break Some(m),
+            Err(e) => {
+                bad = 1;
+                // Best-effort recovery matching getopt_long's per-token
+                // tolerance: drop the one token clap rejected and retry, so
+                // an unrelated valid switch elsewhere on the same command
+                // line (or MAKEFLAGS-derived token list) still applies.
+                let culprit = e.get(clap::error::ContextKind::InvalidArg).map(|v| v.to_string());
+                if let Some(c) =
+                    culprit.and_then(|c| retry_tokens.iter().position(|t| t.to_str() == Some(c.as_str())))
+                {
+                    retry_tokens.remove(c);
+                    continue;
+                }
+                break None;
+            }
         }
-        if c == '?' as i32 {
-            bad = 1;
-        } else if c == 1 {
-            let fresh8 = targets.idx;
-            targets.idx = targets.idx.wrapping_add(1);
-            let fresh9 = &mut (*targets.list.offset(fresh8 as isize));
-            *fresh9 = coptarg;
-        } else {
-            let mut switches = options.switches.borrow_mut();
-            cs = switches.as_mut_ptr();
-            while (*cs).c != 0 {
-                if (*cs).c == c {
-                    let cs_origin = opt_origin_cell(options, (*cs).c);
-                    let doit: i32 = (origin as ::core::ffi::c_uint
-                        == o_command as i32 as ::core::ffi::c_uint
-                        || (*cs).env() as i32 != 0
-                            && (cs_origin.is_none()
-                                || origin as ::core::ffi::c_uint
-                                    >= cs_origin.unwrap().get() as ::core::ffi::c_uint))
-                        as i32;
-                    if doit != 0 {
-                        (*cs).set_specified(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    };
+    let Some(matches) = matches else {
+        // Couldn't isolate the offending token (e.g. it was consumed as
+        // another option's value) -- nothing more to recover from this
+        // batch.
+        if bad != 0 && origin == o_command {
+            // SAFETY: `print_usage` prints the built-in usage table and
+            // exits; it takes no raw pointers and imposes no precondition
+            // beyond a valid `&ExecContext`/`&Options`, which we have.
+            unsafe {
+                print_usage(ctx, options, bad);
+            }
+        }
+        return;
+    };
+
+    // Flags (`flag`/`flag_off`/`ignore`): a bare switch applies once; one of
+    // the three negation pairs (`FLAG_PAIRS`) applies whichever appeared
+    // *last*, matching `opt_set_flag`'s overwrite-on-every-occurrence
+    // getopt-loop semantics.
+    let mut paired: std::collections::HashSet<i32> = std::collections::HashSet::new();
+    for &(a, b) in FLAG_PAIRS.iter() {
+        paired.insert(a);
+        paired.insert(b);
+        let a_last = matches
+            .indices_of(format!("c{a}").as_str())
+            .and_then(|mut ix| ix.next_back())
+            .filter(|_| matches.get_count(format!("c{a}").as_str()) > 0);
+        let b_last = matches
+            .indices_of(format!("c{b}").as_str())
+            .and_then(|mut ix| ix.next_back())
+            .filter(|_| matches.get_count(format!("c{b}").as_str()) > 0);
+        let winner = match (a_last, b_last) {
+            (Some(ai), Some(bi)) => Some(if bi > ai { b } else { a }),
+            (Some(_), None) => Some(a),
+            (None, Some(_)) => Some(b),
+            (None, None) => None,
+        };
+        // `k`/`S` (and each other pair) share the same origin cell, so
+        // `doit` is identical for both -- but the original getopt loop marks
+        // `specified` for *every* occurrence it dispatches, even one whose
+        // value is later overwritten by the other half of the pair. Mark
+        // both if both occurred; only the winner's value actually applies.
+        for &c in &[a, b] {
+            let occurred = if c == a { a_last.is_some() } else { b_last.is_some() };
+            if !occurred {
+                continue;
+            }
+            let Some(cs) = switches_snapshot.iter().find(|cs| cs.c == c) else {
+                continue;
+            };
+            let cs_origin = opt_origin_cell(options, cs.c);
+            let doit = origin == o_command
+                || (cs.env() != 0 && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+            if doit {
+                options.switches.borrow_mut()
+                    [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
+                .set_specified(1);
+            }
+        }
+        if let Some(c) = winner {
+            if let Some(cs) = switches_snapshot.iter().find(|cs| cs.c == c) {
+                let cs_origin = opt_origin_cell(options, cs.c);
+                let doit = origin == o_command
+                    || (cs.env() != 0
+                        && (cs_origin.is_none()
+                            || origin >= cs_origin.unwrap().get()));
+                if doit {
+                    let on = cs.type_0 == flag;
+                    opt_set_flag(options, cs.c, on);
+                    if let Some(oc) = cs_origin {
+                        oc.set(origin);
                     }
-                    match (*cs).type_0 as ::core::ffi::c_uint {
-                        7 => {}
-                        0 | 1 => {
-                            if doit != 0 {
-                                let on = (*cs).type_0 as ::core::ffi::c_uint
-                                    == flag as i32 as ::core::ffi::c_uint;
-                                opt_set_flag(options, (*cs).c, on);
-                                if let Some(oc) = cs_origin {
-                                    oc.set(origin);
-                                }
-                            }
-                        }
-                        2 | 3 | 4 => {
-                            if !(doit == 0) {
-                                // Resolve the option argument; an empty value is an error
-                                // and the option is skipped.
-                                let arg_ok =
-                                    if coptarg.is_null() {
-                                        coptarg = (*cs).noarg_value as *const ::core::ffi::c_char;
-                                        true
-                                    } else if *coptarg as i32 == 0 {
-                                        let mut opt: [::core::ffi::c_char; 2] =
-                                            ::core::mem::transmute::<
-                                                [u8; 2],
-                                                [::core::ffi::c_char; 2],
-                                            >(*b"c\0");
-                                        let mut op: *const ::core::ffi::c_char =
-                                            &raw mut opt as *mut ::core::ffi::c_char;
-                                        if (*cs).c <= CHAR_MAX {
-                                            opt[0_i32 as usize] = (*cs).c as ::core::ffi::c_char;
-                                        } else {
-                                            op = (*cs).long_name;
-                                        }
-                                        error(ctx,
-                                        NILF,
-                                        strlen(op) as size_t,
-                                        b"the '%s%s' option requires a non-empty string argument\0"
-                                            as *const u8
-                                            as *const ::core::ffi::c_char,
-                                        &[
-                                            FmtArg::Str(if (*cs).c <= CHAR_MAX {
-                                                b"-\0" as *const u8 as *const ::core::ffi::c_char
-                                            } else {
-                                                b"--\0" as *const u8 as *const ::core::ffi::c_char
-                                            }),
-                                            FmtArg::Str(op),
-                                        ],
-                                    );
-                                        bad = 1;
-                                        false
-                                    } else {
-                                        true
-                                    };
-                                if arg_ok {
-                                    if (*cs).type_0 as ::core::ffi::c_uint
-                                        == string as i32 as ::core::ffi::c_uint
-                                    {
-                                        let s = ::core::ffi::CStr::from_ptr(coptarg)
-                                            .to_string_lossy()
-                                            .into_owned();
-                                        opt_set_str(options, (*cs).c, s);
-                                        if let Some(oc) = cs_origin {
-                                            oc.set(origin);
-                                        }
-                                    } else if (*cs).c == CHAR_MAX + 1 {
-                                        // `--debug` accumulates its args into a
-                                        // `Vec<CString>`, skipping an exact duplicate of an
-                                        // already-stored value (matching the original
-                                        // stringlist dedup logic).
-                                        let mut db_flags = options.db_flags.borrow_mut();
-                                        let want = ::core::ffi::CStr::from_ptr(coptarg);
-                                        let duplicate =
-                                            db_flags.iter().any(|e| e.as_c_str() == want);
-                                        if !duplicate {
-                                            db_flags.push(want.to_owned());
-                                            if let Some(oc) = cs_origin {
-                                                oc.set(origin);
-                                            }
-                                        }
-                                    } else {
-                                        // List options (`strlist`/`filename`) store owned
-                                        // `CString`s in a `Vec` on `Options`. Dispatch on the
-                                        // switch char to the relevant `Vec`.
-                                        let mut list = match (*cs).c {
-                                            c if c == 'C' as i32 => {
-                                                options.directories.borrow_mut()
-                                            }
-                                            c if c == 'f' as i32 || c == TEMP_STDIN_OPT => {
-                                                options.makefiles.borrow_mut()
-                                            }
-                                            c if c == 'I' as i32 => {
-                                                options.include_dirs.borrow_mut()
-                                            }
-                                            c if c == 'o' as i32 => options.old_files.borrow_mut(),
-                                            c if c == 'W' as i32 => options.new_files.borrow_mut(),
-                                            c if c == 'E' as i32 => {
-                                                options.eval_strings.borrow_mut()
-                                            }
-                                            c if c == WARN_OPT => options.warn_flags.borrow_mut(),
-                                            _ => {
-                                                unreachable!("non-list option in list arm")
-                                            }
-                                        };
-                                        // Skip a value already present (but -f and --warn allow
-                                        // duplicates). The comparison is against the raw
-                                        // `coptarg` bytes, exactly as the original
-                                        // stringlist code did.
-                                        let duplicate =
-                                            if (*cs).c != 'f' as i32 && (*cs).c != WARN_OPT {
-                                                let want = ::core::ffi::CStr::from_ptr(coptarg);
-                                                list.iter().any(|e| e.as_c_str() == want)
-                                            } else {
-                                                false
-                                            };
-                                        if !duplicate {
-                                            // Build the owned `CString` to store.  `strlist`
-                                            // stores the raw arg; `filename` stores the
-                                            // expanded path (or the strcache entry for the
-                                            // --temp-stdin placeholder).
-                                            let stored: ::std::ffi::CString = if (*cs).type_0
-                                                as ::core::ffi::c_uint
-                                                == strlist as i32 as ::core::ffi::c_uint
-                                            {
-                                                ::core::ffi::CStr::from_ptr(coptarg).to_owned()
-                                            } else if (*cs).c == TEMP_STDIN_OPT {
-                                                if options.stdin_offset.get() > 0 {
-                                                    fatal(ctx, NILF, 0, b"INTERNAL: multiple --temp-stdin options provided!\0"
-                                                                    as *const u8 as *const ::core::ffi::c_char, &[]);
-                                                }
-                                                options.stdin_offset.set(list.len() as i32);
-                                                let cached = strcache_add(ctx, coptarg);
-                                                ctx.temp_stdin_name.0.set(cached);
-                                                ::core::ffi::CStr::from_ptr(cached).to_owned()
-                                            } else {
-                                                ::core::ffi::CStr::from_ptr(
-                                                    expand_command_line_file(ctx, coptarg),
-                                                )
-                                                .to_owned()
-                                            };
-                                            list.push(stored);
-                                            if let Some(oc) = cs_origin {
-                                                oc.set(origin);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        5 => {
-                            if coptarg.is_null() && argc > optind {
-                                let mut cp: *const ::core::ffi::c_char;
-                                cp = *argv.offset(optind as isize);
-                                while (*cp.offset(0_i32 as isize) as ::core::ffi::c_uint)
-                                    .wrapping_sub('0' as i32 as ::core::ffi::c_uint)
-                                    <= 9
-                                {
-                                    cp = cp.offset(1_i32 as isize);
-                                }
-                                if *cp.offset(0_i32 as isize) as i32 == 0 {
-                                    let fresh18 = optind;
-                                    optind += 1;
-                                    coptarg = *argv.offset(fresh18 as isize);
-                                }
-                            }
-                            if !(doit == 0) {
-                                if !coptarg.is_null() {
-                                    let i = make_toui(::core::ffi::CStr::from_ptr(coptarg))
-                                        .unwrap_or(0);
-                                    if i == 0 {
-                                        error(ctx,
-                                            NILF,
-                                            0,
-                                            b"the '-%c' option requires a positive integer argument\0"
-                                                as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Int(((*cs).c) as i64)],
-    );
-                                        bad = 1;
-                                    } else {
-                                        // Only `-j` is a positive_int option; it stores into
-                                        // `arg_job_slots` (Some(n) for finite jobs).
-                                        options.arg_job_slots.set(Some(i));
-                                        if let Some(oc) = cs_origin {
-                                            oc.set(origin);
-                                        }
-                                    }
-                                } else {
-                                    // No argument: the table's `noarg_value` constant
-                                    // (`inf_jobs` == 0) marks infinite jobs => Some(0).
-                                    let n = *((*cs).noarg_value as *const ::core::ffi::c_uint);
-                                    options.arg_job_slots.set(Some(n));
-                                    if let Some(oc) = cs_origin {
-                                        oc.set(origin);
-                                    }
-                                }
-                            }
-                        }
-                        6 => {
-                            if coptarg.is_null()
-                                && optind < argc
-                                && ((*(*argv.offset(optind as isize)).offset(0_i32 as isize)
-                                    as ::core::ffi::c_uint)
-                                    .wrapping_sub('0' as i32 as ::core::ffi::c_uint)
-                                    <= 9
-                                    || *(*argv.offset(optind as isize)).offset(0_i32 as isize)
-                                        as i32
-                                        == '.' as i32)
-                            {
-                                let fresh19 = optind;
-                                optind += 1;
-                                coptarg = *argv.offset(fresh19 as isize);
-                            }
-                            if doit != 0 {
-                                // Only `-l` is a floating option; it stores into
-                                // `max_load_average`.
-                                let v = if !coptarg.is_null() {
-                                    atof(coptarg)
-                                } else {
-                                    *((*cs).noarg_value as *const ::core::ffi::c_double)
-                                };
-                                options.max_load_average.set(v);
-                                if let Some(oc) = cs_origin {
-                                    oc.set(origin);
-                                }
-                            }
-                        }
-                        _ => {
-                            abort();
-                        }
-                    }
-                    break;
-                } else {
-                    cs = cs.offset(1_i32 as isize);
                 }
             }
         }
     }
-    while optind < argc {
-        let fresh20 = optind;
-        optind += 1;
-        let fresh21 = targets.idx;
-        targets.idx = targets.idx.wrapping_add(1);
-        let fresh22 = &mut (*targets.list.offset(fresh21 as isize));
-        *fresh22 = *argv.offset(fresh20 as isize);
-    }
-    let fresh23 = &mut (*targets.list.offset(targets.idx as isize));
-    *fresh23 = ::core::ptr::null::<::core::ffi::c_char>();
-    ctx.using_getopt.0.store(false, Ordering::Relaxed);
-    a = targets.list;
-    while !(*a).is_null() {
-        let prior_found_wait: i32 = found_wait as i32;
-        found_wait = handle_non_switch_argument(ctx, options, *a, origin);
-        if prior_found_wait != 0 {
-            if let Some(last) = options.goals.borrow_mut().last_mut() {
-                last.dep.wait_here = true;
+    for cs in switches_snapshot.iter() {
+        if cs.c == 0 || paired.contains(&cs.c) {
+            continue;
+        }
+        if !matches!(cs.type_0, t if t == flag || t == flag_off || t == ignore) {
+            continue;
+        }
+        if matches.get_count(format!("c{}", cs.c).as_str()) == 0 {
+            continue;
+        }
+        let cs_origin = opt_origin_cell(options, cs.c);
+        let doit = origin == o_command
+            || (cs.env() != 0 && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+        if doit {
+            options.switches.borrow_mut()
+                [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
+            .set_specified(1);
+            if cs.type_0 != ignore {
+                let on = cs.type_0 == flag;
+                opt_set_flag(options, cs.c, on);
+                if let Some(oc) = cs_origin {
+                    oc.set(origin);
+                }
             }
         }
-        a = a.offset(1_i32 as isize);
     }
-    if bad != 0 && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint {
-        print_usage(ctx, options, bad);
+
+    // Value-taking switches: apply every occurrence, in the order clap
+    // recorded them (matching each switch's own occurrence order in argv).
+    for cs in switches_snapshot.iter() {
+        if cs.c == 0 || !matches!(cs.type_0, string | strlist | filename) {
+            continue;
+        }
+        let id = format!("c{}", cs.c);
+        let Some(values) = matches.get_many::<::std::ffi::OsString>(&id) else {
+            continue;
+        };
+        let cs_origin = opt_origin_cell(options, cs.c);
+        for raw_value in values {
+            let doit = origin == o_command
+                || (cs.env() != 0
+                    && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+            if doit {
+                options.switches.borrow_mut()
+                    [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
+                .set_specified(1);
+            }
+            apply_value_switch(ctx, options, cs, raw_value, doit, cs_origin, origin, &mut bad);
+        }
     }
-    decode_debug_flags(ctx, options);
-    decode_output_sync_flags(ctx, options);
+
+    // `-j`/`--jobs` (positive_int) and `-l`/`--load-average` (floating): only
+    // one occurrence is meaningful (repeats simply overwrite, same as the
+    // original getopt loop re-dispatching each occurrence in turn).
+    for cs in switches_snapshot.iter() {
+        if cs.c != 'j' as i32 && cs.c != 'l' as i32 {
+            continue;
+        }
+        let id = format!("c{}", cs.c);
+        let Some(mut values) = matches.get_many::<::std::ffi::OsString>(&id) else {
+            continue;
+        };
+        let cs_origin = opt_origin_cell(options, cs.c);
+        for raw_value in values.by_ref() {
+            let doit = origin == o_command
+                || (cs.env() != 0
+                    && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+            if doit {
+                options.switches.borrow_mut()
+                    [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
+                .set_specified(1);
+            }
+            if !doit {
+                continue;
+            }
+            use std::os::unix::ffi::OsStrExt;
+            let is_sentinel = raw_value.as_os_str() == ::std::ffi::OsStr::new(NOARG_SENTINEL);
+            if cs.c == 'j' as i32 {
+                if is_sentinel {
+                    // SAFETY: `-j`'s table entry's `noarg_value` is always
+                    // set (to `&inf_jobs`), a valid `c_uint`.
+                    let n = unsafe { *(cs.noarg_value as *const ::core::ffi::c_uint) };
+                    options.arg_job_slots.set(Some(n));
+                } else {
+                    let cstr =
+                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
+                    let n = make_toui(&cstr).unwrap_or(0);
+                    if n == 0 {
+                        // SAFETY: `error` requires a valid NUL-terminated
+                        // format string with args matching its `%`
+                        // conversions; this literal has one `%c` matched by
+                        // one `FmtArg::Int`.
+                        unsafe {
+                            error(
+                                ctx,
+                                NILF,
+                                0,
+                                b"the '-%c' option requires a positive integer argument\0"
+                                    as *const u8 as *const ::core::ffi::c_char,
+                                &[FmtArg::Int(cs.c as i64)],
+                            );
+                        }
+                        bad = 1;
+                    } else {
+                        options.arg_job_slots.set(Some(n));
+                    }
+                }
+            } else {
+                let v = if is_sentinel {
+                    // SAFETY: `-l`'s table entry's `noarg_value` is always
+                    // set (to `&default_load_average`), a valid `c_double`.
+                    unsafe { *(cs.noarg_value as *const ::core::ffi::c_double) }
+                } else {
+                    let cstr =
+                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
+                    // SAFETY: `atof` requires a valid NUL-terminated C
+                    // string; `cstr` is a live `CString`.
+                    unsafe { atof(cstr.as_ptr()) }
+                };
+                options.max_load_average.set(v);
+            }
+            if let Some(oc) = cs_origin {
+                oc.set(origin);
+            }
+        }
+    }
+
+    // Non-switch tokens (targets, `VAR=value`), in original relative order.
+    if let Some(rest) = matches.get_many::<::std::ffi::OsString>("__rest") {
+        use std::os::unix::ffi::OsStrExt;
+        let mut found_wait: ::core::ffi::c_uint = 0;
+        for tok in rest {
+            let ctok = ::std::ffi::CString::new(tok.as_bytes()).unwrap_or_default();
+            let prior_found_wait = found_wait;
+            // SAFETY: `handle_non_switch_argument` requires a valid
+            // NUL-terminated C string; `ctok` is a live `CString`.
+            found_wait = unsafe { handle_non_switch_argument(ctx, options, ctok.as_ptr(), origin) };
+            if prior_found_wait != 0 {
+                if let Some(last) = options.goals.borrow_mut().last_mut() {
+                    last.dep.wait_here = true;
+                }
+            }
+        }
+    }
+
+    // SAFETY: none of these take raw pointers or impose a precondition
+    // beyond a valid `&ExecContext`/`&Options`, which we have; `print_usage`
+    // exits without returning when reached.
+    unsafe {
+        if bad != 0 && origin == o_command {
+            print_usage(ctx, options, bad);
+        }
+        decode_debug_flags(ctx, options);
+        decode_output_sync_flags(ctx, options);
+    }
     if options.warn_undefined_variables.get() {
         crate::warning::decode_actions(ctx, "undefined-var", None);
         options.warn_undefined_variables.set(false);
@@ -4234,90 +4433,80 @@ unsafe fn decode_switches(
         }
     }
     options.run_silent.set(options.silent.get());
-    reset_env_override(ctx);
+    // SAFETY: `reset_env_override` takes no raw pointers and imposes no
+    // precondition beyond a valid `&ExecContext`, which we have.
+    unsafe {
+        reset_env_override(ctx);
+    }
 }
+/// Tokenizes an already-expanded `MAKEFLAGS`/`GNUMAKEFLAGS` value on
+/// whitespace (per [`stopchar_map`]'s `MAP_BLANK` bit), honoring
+/// backslash-escapes exactly as the original buffer-based splitter did: a
+/// backslash followed by any character copies that character literally
+/// (never testing it against the stopchar map), and a run of consecutive
+/// blank bytes ends the current word and is otherwise skipped. Always
+/// produces at least one (possibly empty) trailing word, matching the
+/// original's unconditional final `argc += 1`.
+fn split_makeflags_value(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut words = Vec::new();
+    let mut cur = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\\' && i + 1 < bytes.len() {
+            cur.push(bytes[i + 1]);
+            i += 2;
+            continue;
+        }
+        if stopchar_map()[b as usize] & 0x2 != 0 {
+            words.push(::core::mem::take(&mut cur));
+            i += 1;
+            while i < bytes.len() && stopchar_map()[bytes[i] as usize] & 0x2 != 0 {
+                i += 1;
+            }
+            continue;
+        }
+        cur.push(b);
+        i += 1;
+    }
+    words.push(cur);
+    words
+}
+
 unsafe fn decode_env_switches(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
     envar: *const ::core::ffi::c_char,
-    mut len: size_t,
+    len: size_t,
     origin: variable_origin,
 ) {
-    let mut value: *mut ::core::ffi::c_char;
-    let mut p: *mut ::core::ffi::c_char;
-    let buf: *mut ::core::ffi::c_char;
-    let mut argc: i32;
-    let argv: *mut *const ::core::ffi::c_char;
-    value = expand_variable_buf(
-        ctx,
-        ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        envar,
-        len,
-    );
-    while stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & (0x2_i32 | 0x4_i32) != 0
-    {
-        value = value.offset(1_i32 as isize);
+    let value = expand_variable_buf(ctx, ::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len);
+    let mut bytes = ::core::ffi::CStr::from_ptr(value).to_bytes();
+    while !bytes.is_empty() && stopchar_map()[bytes[0] as usize] & (0x2 | 0x4) != 0 {
+        bytes = &bytes[1..];
     }
-    len = strlen(value) as size_t;
-    if len == 0 {
+    if bytes.is_empty() {
         return;
     }
-    argv = xmalloc(
-        (1 as size_t)
-            .wrapping_add(len)
-            .wrapping_add(1)
-            .wrapping_mul(::core::mem::size_of::<*mut ::core::ffi::c_char>() as size_t),
-    ) as *mut *const ::core::ffi::c_char;
-    let fresh0 = &mut (*argv.offset(0_i32 as isize));
-    *fresh0 = b"\0" as *const u8 as *const ::core::ffi::c_char;
-    argc = 1;
-    buf = xmalloc((1 as size_t).wrapping_add(len).wrapping_add(1)) as *mut ::core::ffi::c_char;
-    *buf.offset(0_i32 as isize) = '-' as i32 as ::core::ffi::c_char;
-    p = buf.offset(1_i32 as isize);
-    let fresh1 = &mut (*argv.offset(argc as isize));
-    *fresh1 = p;
-    while *value as i32 != 0 {
-        if *value as i32 == '\\' as i32 && *value.offset(1_i32 as isize) as i32 != 0 {
-            value = value.offset(1_i32 as isize);
-        } else if stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & 0x2_i32 != 0 {
-            let fresh2 = p;
-            p = p.offset(1_i32 as isize);
-            *fresh2 = 0;
-            argc += 1;
-            let fresh3 = &mut (*argv.offset(argc as isize));
-            *fresh3 = p;
-            loop {
-                value = value.offset(1_i32 as isize);
-                if !(stopchar_map()[*value as ::core::ffi::c_uchar as usize] as i32 & 0x2_i32 != 0)
-                {
-                    break;
-                }
-            }
-            continue;
+    use std::os::unix::ffi::OsStrExt;
+    let words = split_makeflags_value(bytes);
+    let mut tokens: Vec<::std::ffi::OsString> = words
+        .iter()
+        .map(|w| ::std::ffi::OsStr::from_bytes(w).to_os_string())
+        .collect();
+    // Legacy dash-optional rewrite: a `MAKEFLAGS` value written without a
+    // leading dash (e.g. `MAKEFLAGS=ik`) is bundled as short flags, but only
+    // when its first word has no `=` (so `FOO=bar`-shaped content is left
+    // alone).
+    if let Some(first) = tokens.first_mut() {
+        let raw = first.as_bytes();
+        if !raw.starts_with(b"-") && !raw.contains(&b'=') {
+            let mut rewritten = vec![b'-'];
+            rewritten.extend_from_slice(raw);
+            *first = ::std::ffi::OsStr::from_bytes(&rewritten).to_os_string();
         }
-        let fresh4 = value;
-        value = value.offset(1_i32 as isize);
-        let fresh5 = p;
-        p = p.offset(1_i32 as isize);
-        *fresh5 = *fresh4;
     }
-    *p = 0;
-    argc += 1;
-    let fresh6 = &mut (*argv.offset(argc as isize));
-    *fresh6 = ::core::ptr::null::<::core::ffi::c_char>();
-    if p < buf.offset(len as isize).offset(2_i32 as isize) {
-    } else {
-        panic!("assertion failed: p < buf + len + 2");
-    };
-    if *(*argv.offset(1_i32 as isize)).offset(0_i32 as isize) as i32 != '-' as i32
-        && strchr(*argv.offset(1_i32 as isize), '=' as i32).is_null()
-    {
-        let fresh7 = &mut (*argv.offset(1_i32 as isize));
-        *fresh7 = buf;
-    }
-    decode_switches(ctx, options, argc, argv, origin);
-    free(buf as *mut ::core::ffi::c_void);
-    free(argv as *mut ::core::ffi::c_void);
+    decode_switches(ctx, options, &tokens, origin);
 }
 unsafe extern "C" fn quote_for_env(
     mut out: *mut ::core::ffi::c_char,
@@ -4971,9 +5160,10 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
 pub const __CHAR_BIT__: i32 = 8;
 pub const __SCHAR_MAX__: i32 = 127;
 pub fn main() {
-    let mut args_strings: Vec<Vec<u8>> = ::std::env::args()
+    use std::os::unix::ffi::OsStrExt;
+    let mut args_strings: Vec<Vec<u8>> = ::std::env::args_os()
         .map(|arg| {
-            ::std::ffi::CString::new(arg)
+            ::std::ffi::CString::new(arg.as_bytes())
                 .expect("Failed to convert argument into CString.")
                 .into_bytes_with_nul()
         })
@@ -6551,5 +6741,343 @@ mod jobserver_and_stdin_cleanup_tests {
         }
         assert!(!path.exists(), "temp stdin file should have been unlinked");
         drop(cpath);
+    }
+}
+
+#[cfg(test)]
+mod decode_switches_clap_vs_getopt_tests {
+    use super::getopt_oracle_test::decode_switches_oracle;
+    use super::{decode_switches, install_default_options_for_test, o_command, o_env, Options};
+    use crate::execctx::ExecContext;
+    use crate::variable::init_hash_global_variable_set;
+    use std::ffi::CString;
+
+    /// Everything `decode_switches` writes, gathered into one comparable
+    /// value. `max_load_average` is compared via its bit pattern so `NaN`
+    /// (never actually produced here) wouldn't silently pass; every other
+    /// field is a plain `Eq` type.
+    #[derive(Debug, PartialEq)]
+    struct Snapshot {
+        silent: bool,
+        touch: bool,
+        just_print: bool,
+        db_flags: Vec<String>,
+        debug_flag: bool,
+        output_sync_option: Option<String>,
+        env_overrides: bool,
+        ignore_errors: bool,
+        print_data_base: bool,
+        print_targets: bool,
+        question: bool,
+        no_builtin_rules: bool,
+        no_builtin_variables: bool,
+        keep_going: bool,
+        check_symlink: bool,
+        print_directory: Option<bool>,
+        print_version: bool,
+        makefiles: Vec<String>,
+        stdin_offset: i32,
+        arg_job_slots: Option<u32>,
+        jobserver_auth: Option<String>,
+        jobserver_style: Option<String>,
+        shuffle_mode: Option<String>,
+        sync_mutex: Option<String>,
+        max_load_average_bits: u64,
+        directories: Vec<String>,
+        include_dirs: Vec<String>,
+        old_files: Vec<String>,
+        new_files: Vec<String>,
+        eval_strings: Vec<String>,
+        print_usage: bool,
+        warn_flags: Vec<String>,
+        trace: bool,
+        always_make: bool,
+        run_silent: bool,
+        goal_count: usize,
+        specified: Vec<u8>,
+    }
+
+    fn strs(v: &[CString]) -> Vec<String> {
+        v.iter().map(|s| s.to_string_lossy().into_owned()).collect()
+    }
+
+    fn snapshot(options: &Options) -> Snapshot {
+        Snapshot {
+            silent: options.silent.get(),
+            touch: options.touch.get(),
+            just_print: options.just_print.get(),
+            db_flags: strs(&options.db_flags.borrow()),
+            debug_flag: options.debug_flag.get(),
+            output_sync_option: options.output_sync_option.borrow().clone(),
+            env_overrides: options.env_overrides.get(),
+            ignore_errors: options.ignore_errors.get(),
+            print_data_base: options.print_data_base.get(),
+            print_targets: options.print_targets.get(),
+            question: options.question.get(),
+            no_builtin_rules: options.no_builtin_rules.get(),
+            no_builtin_variables: options.no_builtin_variables.get(),
+            keep_going: options.keep_going.get(),
+            check_symlink: options.check_symlink.get(),
+            print_directory: options.print_directory.get(),
+            print_version: options.print_version.get(),
+            makefiles: strs(&options.makefiles.borrow()),
+            stdin_offset: options.stdin_offset.get(),
+            arg_job_slots: options.arg_job_slots.get(),
+            jobserver_auth: options.jobserver_auth.borrow().clone(),
+            jobserver_style: options.jobserver_style.borrow().clone(),
+            shuffle_mode: options.shuffle_mode.borrow().clone(),
+            sync_mutex: options.sync_mutex.borrow().clone(),
+            max_load_average_bits: options.max_load_average.get().to_bits(),
+            directories: strs(&options.directories.borrow()),
+            include_dirs: strs(&options.include_dirs.borrow()),
+            old_files: strs(&options.old_files.borrow()),
+            new_files: strs(&options.new_files.borrow()),
+            eval_strings: strs(&options.eval_strings.borrow()),
+            print_usage: options.print_usage.get(),
+            warn_flags: strs(&options.warn_flags.borrow()),
+            trace: options.trace.get(),
+            always_make: options.always_make.get(),
+            run_silent: options.run_silent.get(),
+            goal_count: options.goals.borrow().len(),
+            specified: options
+                .switches
+                .borrow()
+                .iter()
+                .map(|s| s.specified() as u8)
+                .collect(),
+        }
+    }
+
+    /// Serializes calls to the getopt-based oracle. This is test-only
+    /// belt-and-suspenders: `cargo test`'s default parallel runner calls
+    /// `check()` from many threads at once, and the oracle's `optarg`/
+    /// `optind`/`opterr` are real libc globals shared by the whole process
+    /// -- without this lock, concurrent oracle calls race on them (observed:
+    /// garbage `Options` state, even a segfault), which is exactly the
+    /// latent multi-tenant hazard this migration replaces `decode_switches`
+    /// to eliminate from the shipping binary. The new, clap-based
+    /// `decode_switches` has no such shared state and needs no lock.
+    static ORACLE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Runs `tokens` through both the clap-based `decode_switches` and the
+    /// preserved getopt-based oracle against fresh, independent `Options`,
+    /// and asserts every field they write agrees.
+    fn check(tokens: &[&str], origin: super::variable_origin) {
+        // `handle_non_switch_argument`'s variable-assignment scan reads
+        // `stopchar_map()`, which is a zeroed fallback until
+        // `initialize_stopchar_map()` has run once (it's a `OnceLock`,
+        // idempotent past the first call) -- without it, the scan for a
+        // terminating stopchar never finds one and spins forever. Every
+        // other test in this codebase that exercises parsing already calls
+        // this first for the same reason.
+        super::initialize_stopchar_map();
+        install_default_options_for_test();
+
+        let ctx_new = ExecContext::default();
+        unsafe { init_hash_global_variable_set(&ctx_new) };
+        let options_new = Options::new();
+        let owned_tokens: Vec<::std::ffi::OsString> =
+            tokens.iter().map(::std::ffi::OsString::from).collect();
+        decode_switches(&ctx_new, &options_new, &owned_tokens, origin);
+
+        let ctx_oracle = ExecContext::default();
+        unsafe { init_hash_global_variable_set(&ctx_oracle) };
+        let options_oracle = Options::new();
+        // Build a C-style argv: argv[0] is the (skipped) program name, like
+        // the real `main_0`/`decode_env_switches` callers always pass.
+        let cstrings: Vec<CString> = ::core::iter::once(String::new())
+            .chain(tokens.iter().map(|s| s.to_string()))
+            .map(|s| CString::new(s).unwrap())
+            .collect();
+        let argv_ptrs: Vec<*const ::core::ffi::c_char> =
+            cstrings.iter().map(|s| s.as_ptr()).collect();
+        {
+            let _guard = ORACLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                decode_switches_oracle(
+                    &ctx_oracle,
+                    &options_oracle,
+                    argv_ptrs.len() as i32,
+                    argv_ptrs.as_ptr() as *mut *const ::core::ffi::c_char,
+                    origin,
+                )
+            };
+        }
+
+        let snap_new = snapshot(&options_new);
+        let snap_oracle = snapshot(&options_oracle);
+        assert_eq!(snap_new, snap_oracle, "mismatch for tokens {tokens:?} (origin {origin})");
+    }
+
+    #[test]
+    fn plain_boolean_flags() {
+        check(&["-i", "-p", "-q", "-r", "-R", "-B", "-L", "-v"], o_command);
+        check(&["--ignore-errors", "--print-data-base"], o_command);
+    }
+
+    #[test]
+    fn flag_off_pairs_last_one_wins() {
+        check(&["-k"], o_command);
+        check(&["-S"], o_command);
+        check(&["-k", "-S"], o_command);
+        check(&["-S", "-k"], o_command);
+        check(&["-w"], o_command);
+        check(&["--no-print-directory"], o_command);
+        check(&["-w", "--no-print-directory"], o_command);
+        check(&["--no-print-directory", "-w"], o_command);
+        check(&["-s"], o_command);
+        check(&["--no-silent"], o_command);
+        check(&["-s", "--no-silent"], o_command);
+        check(&["--no-silent", "-s"], o_command);
+        check(&["-kS"], o_command);
+        check(&["-Sk"], o_command);
+    }
+
+    #[test]
+    fn aliases() {
+        check(&["--quiet"], o_command);
+        check(&["--stop"], o_command);
+        check(&["--dry-run", "t"], o_command);
+        check(&["--recon", "t"], o_command);
+        check(&["--makefile", "a.mk"], o_command);
+        check(&["--assume-old", "a"], o_command);
+        check(&["--max-load=2.5"], o_command);
+        check(&["--assume-new", "a"], o_command);
+    }
+
+    #[test]
+    fn jobs_optional_arg_variants() {
+        check(&["-j"], o_command);
+        check(&["-j4"], o_command);
+        check(&["-j", "4"], o_command);
+        check(&["--jobs"], o_command);
+        check(&["--jobs=4"], o_command);
+        check(&["--jobs", "4"], o_command);
+        check(&["-j", "target"], o_command); // non-numeric next: -j stays bare, "target" is a target
+        check(&["-j4", "-j8"], o_command); // repeats: last wins
+        // o_env, not o_command: an explicit empty value is a real error
+        // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
+        // which exits the whole test process.
+        check(&["--jobs="], o_env); // explicit empty value (distinct from bare --jobs): error
+    }
+
+    #[test]
+    fn load_average_optional_arg_variants() {
+        check(&["-l"], o_command);
+        check(&["-l3.5"], o_command);
+        check(&["-l", "3.5"], o_command);
+        check(&["-l", ".5"], o_command);
+        check(&["--load-average"], o_command);
+        check(&["--load-average=2"], o_command);
+        check(&["--max-load", "2"], o_command);
+        check(&["-l", "target"], o_command); // non-numeric, non-dot next: -l stays bare
+        check(&["--load-average="], o_command); // explicit empty value
+    }
+
+    #[test]
+    fn other_optional_arg_switches() {
+        check(&["-O"], o_command);
+        check(&["-Otarget"], o_command);
+        check(&["-O", "target"], o_command); // -O never consumes a separate token
+        check(&["--output-sync"], o_command);
+        check(&["--output-sync=line"], o_command);
+        check(&["--debug"], o_command);
+        check(&["--debug=b"], o_command);
+        check(&["--debug=b", "--debug=v"], o_command);
+        check(&["--debug=b", "--debug=b"], o_command); // exact-dup skipped
+        check(&["--shuffle"], o_command);
+        check(&["--shuffle=reverse"], o_command);
+        // o_env, not o_command: an explicit empty value is a real error
+        // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
+        // which exits the whole test process.
+        check(&["--debug="], o_env); // explicit empty value: error
+        check(&["--output-sync="], o_env); // explicit empty value: error
+        check(&["--shuffle="], o_env); // explicit empty value: error
+    }
+
+    #[test]
+    fn required_arg_list_switches_dedup_rules() {
+        check(&["-I", "a", "-I", "b"], o_command);
+        check(&["-I", "a", "-I", "a"], o_command); // -I dedups
+        check(&["-f", "a.mk", "-f", "a.mk"], o_command); // -f allows dups
+        check(&["-C", "sub1", "-C", "sub2"], o_command);
+        check(&["-o", "a"], o_command);
+        check(&["-W", "a"], o_command);
+        check(&["-E", "FOO=bar"], o_command);
+        check(&["--warn=undefined-var", "--warn=undefined-var"], o_command); // --warn allows dups
+    }
+
+    #[test]
+    fn required_arg_empty_value_is_an_error() {
+        // o_env, not o_command: bad=1 with origin==o_command triggers
+        // print_usage(), which exits the whole test process.
+        check(&["-f", ""], o_env);
+        check(&["--file="], o_env);
+    }
+
+    /// A non-UTF-8 filename argument (e.g. from a byte-oriented POSIX
+    /// filesystem) must round-trip through `decode_switches` exactly, not
+    /// get replaced with U+FFFD -- unlike `check()`'s other cases, this
+    /// bypasses the oracle comparison (its harness only accepts `&str`
+    /// tokens) and asserts directly on the stored bytes.
+    #[test]
+    fn non_utf8_filename_argument_round_trips_exact_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        super::initialize_stopchar_map();
+        install_default_options_for_test();
+        let ctx = ExecContext::default();
+        unsafe { init_hash_global_variable_set(&ctx) };
+        let options = Options::new();
+
+        let raw_name: &[u8] = b"weird-\xffname.mk";
+        let tokens: Vec<::std::ffi::OsString> = vec![
+            ::std::ffi::OsString::from("-f"),
+            ::std::ffi::OsStr::from_bytes(raw_name).to_os_string(),
+        ];
+        decode_switches(&ctx, &options, &tokens, o_command);
+
+        let makefiles = options.makefiles.borrow();
+        assert_eq!(makefiles.len(), 1);
+        assert_eq!(makefiles[0].as_bytes(), raw_name);
+    }
+
+    #[test]
+    fn string_switches() {
+        check(&["-Otarget"], o_command);
+        check(&["--jobserver-auth=3,4"], o_command);
+        check(&["--sync-mutex=foo"], o_command);
+    }
+
+    #[test]
+    fn targets_and_assignments_interleaved() {
+        check(&["-j4", "VAR=val", "-k", "target2"], o_command);
+        check(&["target1", "-k", "VAR=1", "target2"], o_command);
+    }
+
+    #[test]
+    fn unknown_option_mixed_with_valid_ones() {
+        // o_env, not o_command: bad=1 with origin==o_command triggers
+        // print_usage(), which exits the whole test process.
+        check(&["-j2", "-Q", "target"], o_env);
+        check(&["-Q", "-j2", "target"], o_env);
+        check(&["--bogus-long", "-k", "target"], o_env);
+    }
+
+    #[test]
+    fn origin_env_does_not_override_command_origin() {
+        // `-s`/`-k`/`-w` have an origin cell; a weaker `o_env`-origin re-parse
+        // must not clobber a value already recorded from `o_command`.
+        check(&["-k"], o_command);
+        check(&["-k"], o_env);
+        check(&["-w"], o_env);
+    }
+
+    #[test]
+    fn makeflags_style_bundle_via_env_helper() {
+        // `decode_env_switches`'s dash-optional legacy rewrite is exercised
+        // separately (it runs before `decode_switches`); here we just check
+        // that an already-dashed bundle behaves the same through both paths.
+        check(&["-ik"], o_command);
     }
 }
