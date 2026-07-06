@@ -9,6 +9,7 @@ extern crate self as make_sys;
 
 pub mod ar;
 pub mod arscan;
+pub mod build_result;
 pub mod commands;
 pub mod content_hash;
 pub mod default;

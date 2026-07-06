@@ -837,8 +837,7 @@ pub mod msg {
     pub fn fatal(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) -> ! {
         let line = format!("{}{msg}.  Stop.\n", build_prefix(ctx, loc, true));
         write_line(ctx, line, true);
-        // SAFETY: `die` is the make-process exit point and never returns.
-        unsafe { die(ctx, MAKE_FAILURE) }
+        die(ctx, MAKE_FAILURE)
     }
 }
 

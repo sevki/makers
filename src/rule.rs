@@ -685,7 +685,14 @@ pub fn print_rule_data_base(ctx: &crate::execctx::ExecContext) {
             .as_bytes(),
         );
     }
-    let _ = std::io::stdout().write_all(&buf);
+    // Flush explicitly: the count line above has no trailing newline (matching
+    // the C oracle's printf), so Rust's line-buffered stdout would otherwise
+    // hold it past the libc-printf sections that follow — and lose it entirely
+    // when the run ends through libc `exit()` (fatal paths), which does not
+    // flush Rust's buffer.
+    let mut out = std::io::stdout();
+    let _ = out.write_all(&buf);
+    let _ = out.flush();
     let num_pattern_rules = ctx.num_pattern_rules.get();
     if num_pattern_rules != rules_count && num_pattern_rules != 0 {
         // INTERNAL consistency check (was a `fatal`).
