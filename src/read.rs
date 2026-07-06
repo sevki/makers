@@ -1551,16 +1551,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 SIZE_MAX as size_t,
                                             );
                                             lb_next = lb_next.offset(strlen(lb_next) as isize);
-                                            p2 = ctx
-                                                .variable_buffer
-                                                .ptr
-                                                .get()
-                                                .offset(p2_off as isize);
+                                            p2 = ctx.variable_buffer.ptr.get().add(p2_off);
                                             cmdleft = ctx
                                                 .variable_buffer
                                                 .ptr
                                                 .get()
-                                                .offset(cmd_off as isize)
+                                                .add(cmd_off)
                                                 .offset(1);
                                         }
                                     }
@@ -1696,7 +1692,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 lb_next,
                                                 (strlen(lb_next) as size_t).wrapping_add(1),
                                             );
-                                            p2 = ctx.variable_buffer.ptr.get().offset(l_1 as isize);
+                                            p2 = ctx.variable_buffer.ptr.get().add(l_1);
                                         }
                                         p2 = parse_var_assignment(
                                             ctx,
@@ -1722,11 +1718,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                     semip,
                                                     (strlen(semip) as size_t).wrapping_add(1),
                                                 );
-                                                p2 = ctx
-                                                    .variable_buffer
-                                                    .ptr
-                                                    .get()
-                                                    .offset(l_2 as isize);
+                                                p2 = ctx.variable_buffer.ptr.get().add(l_2);
                                             }
                                             record_target_var(
                                                 ctx,
@@ -1757,11 +1749,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                     lb_next,
                                                     SIZE_MAX as size_t,
                                                 );
-                                                p2 = ctx
-                                                    .variable_buffer
-                                                    .ptr
-                                                    .get()
-                                                    .offset(l_3 as isize);
+                                                p2 = ctx.variable_buffer.ptr.get().add(l_3);
                                                 if cmdleft.is_null() {
                                                     cmdleft = find_char_unquote(p2, ';' as i32);
                                                     if !cmdleft.is_null() {
