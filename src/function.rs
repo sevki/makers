@@ -1135,7 +1135,7 @@ mod func_origin_flavor_tests {
         // `variable_buffer_output` may `xrealloc` and move the global buffer,
         // so measure the written span from the current base rather than the
         // possibly-stale `start`.
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -1493,7 +1493,7 @@ mod word_family_tests {
         // `start` can be stale after the call. Measure the written span from the
         // current base (`ctx.variable_buffer`), which `end` is guaranteed to
         // point into, rather than the possibly-freed `start`.
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -1686,7 +1686,7 @@ mod path_family_tests {
         let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
         // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // measure the span from the current base rather than the stale `start`.
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -1823,7 +1823,7 @@ mod affix_tests {
         let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
         // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // measure the span from the current base rather than the stale `start`.
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -2325,7 +2325,7 @@ mod selection_tests {
         let ctx = crate::execctx::ExecContext::default();
         let start = initialize_variable_output(&ctx);
         let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -2956,7 +2956,7 @@ mod strip_sort_tests {
         // `start` can be stale after the call. Measure the written span from the
         // current base (`ctx.variable_buffer`), which `end` is guaranteed to
         // point into, rather than the possibly-freed `start`.
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -4292,7 +4292,7 @@ mod func_abspath_tests {
         let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
         // `variable_buffer_output` may `xrealloc` and move the buffer, so
         // measure the span from the current base rather than the stale `start`.
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -5507,7 +5507,7 @@ mod subst_and_strip_tests {
         // `start` can be stale after the call. Measure the written span from the
         // current base (`ctx.variable_buffer`), which `end` is guaranteed to
         // point into, rather than the possibly-freed `start`.
-        let base = ctx.variable_buffer.ptr.get();
+        let base = ctx.variable_buffer.ptr();
         assert!(!base.is_null());
         let len = end.offset_from(base);
         assert!(len >= 0, "output cursor moved before the buffer start");
@@ -5623,7 +5623,7 @@ mod subst_and_strip_tests {
             let end = variable_buffer_output(&ctx, start, s.as_ptr(), 2);
             assert_eq!(end.offset_from(start), 2);
             assert_eq!(*end, 0, "buffer is NUL-terminated at the cursor");
-            assert!(!ctx.variable_buffer.ptr.get().is_null());
+            assert!(!ctx.variable_buffer.ptr().is_null());
         }
     }
 }

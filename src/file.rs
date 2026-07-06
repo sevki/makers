@@ -1437,14 +1437,14 @@ pub unsafe fn enter_prereqs(
                     );
                     o = variable_buffer_output(
                         ctx,
-                        ctx.variable_buffer.ptr.get(),
+                        ctx.variable_buffer.ptr(),
                         nm_ptr,
                         (strlen(nm_ptr) as size_t).wrapping_add(1),
                     );
                 } else {
                     o = patsubst_expand_pat(
                         ctx,
-                        ctx.variable_buffer.ptr.get(),
+                        ctx.variable_buffer.ptr(),
                         stem_c.as_ptr() as *const ::core::ffi::c_char,
                         pattern,
                         nm_ptr,
@@ -1452,13 +1452,13 @@ pub unsafe fn enter_prereqs(
                         percent.offset(1_i32 as isize),
                     );
                 }
-                if *ctx.variable_buffer.ptr.get().offset(0_i32 as isize) as i32 == 0 {
+                if *ctx.variable_buffer.ptr().offset(0_i32 as isize) as i32 == 0 {
                     // Expanded to nothing: drop this prerequisite.
                     continue;
                 } else {
                     let result = ::core::slice::from_raw_parts(
-                        ctx.variable_buffer.ptr.get() as *const u8,
-                        o.offset_from(ctx.variable_buffer.ptr.get()) as usize,
+                        ctx.variable_buffer.ptr() as *const u8,
+                        o.offset_from(ctx.variable_buffer.ptr()) as usize,
                     );
                     d.name = String::from_utf8_lossy(result).into_owned();
                 }

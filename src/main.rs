@@ -3577,12 +3577,12 @@ unsafe fn main_0(
         } else {
             p_6 = variable_buffer_output(
                 &ctx,
-                ctx.variable_buffer.ptr.get(),
+                ctx.variable_buffer.ptr(),
                 (*default_goal_var).value,
                 strlen((*default_goal_var).value) as size_t,
             );
             *p_6 = 0;
-            p_6 = ctx.variable_buffer.ptr.get();
+            p_6 = ctx.variable_buffer.ptr();
         }
         if *p_6 as i32 != 0 {
             let mut f_6: Option<crate::file::FileId> =
@@ -4415,7 +4415,7 @@ pub unsafe fn define_makeflags(
     install_variable_buffer(ctx, &raw mut bufsave, &raw mut lensave);
     fp = variable_buffer_output(
         ctx,
-        ctx.variable_buffer.ptr.get(),
+        ctx.variable_buffer.ptr(),
         b"-\0" as *const u8 as *const ::core::ffi::c_char,
         1,
     );
@@ -4707,17 +4707,17 @@ pub unsafe fn define_makeflags(
         }
         cs = cs.offset(1_i32 as isize);
     }
-    if fp == ctx.variable_buffer.ptr.get().offset(1_i32 as isize) {
-        fp = ctx.variable_buffer.ptr.get();
+    if fp == ctx.variable_buffer.ptr().offset(1_i32 as isize) {
+        fp = ctx.variable_buffer.ptr();
     }
     *fp = 0;
     define_variable_in_set(
         ctx,
         b"MFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-        ctx.variable_buffer.ptr.get().offset(
-            (if *ctx.variable_buffer.ptr.get().offset(0_i32 as isize) as i32 == '-' as i32
-                && *ctx.variable_buffer.ptr.get().offset(1_i32 as isize) as i32 == ' ' as i32
+        ctx.variable_buffer.ptr().offset(
+            (if *ctx.variable_buffer.ptr().offset(0_i32 as isize) as i32 == '-' as i32
+                && *ctx.variable_buffer.ptr().offset(1_i32 as isize) as i32 == ' ' as i32
             {
                 2
             } else {
@@ -4762,7 +4762,7 @@ pub unsafe fn define_makeflags(
         );
     }
     *fp = 0;
-    fp = ctx.variable_buffer.ptr.get();
+    fp = ctx.variable_buffer.ptr();
     if *fp.offset(0_i32 as isize) as i32 == '-' as i32 {
         fp = fp.offset(1_i32 as isize);
     }

@@ -2125,7 +2125,7 @@ pub unsafe fn shell_result(
     args[1_i32 as usize] = ::core::ptr::null_mut::<::core::ffi::c_char>();
     func_shell_base(
         ctx,
-        ctx.variable_buffer.ptr.get(),
+        ctx.variable_buffer.ptr(),
         &raw mut args as *mut *mut ::core::ffi::c_char,
         0,
     );

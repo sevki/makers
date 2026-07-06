@@ -6,7 +6,7 @@
 
 pub use crate::ffi_types::size_t;
 use crate::file::{File, VariableSet, VariableSetList};
-use crate::misc::{lindex, xmalloc, xrealloc, xstrdup, xstrndup};
+use crate::misc::{lindex, xstrdup, xstrndup};
 use crate::output::FmtArg;
 use crate::stdio::FILE;
 use libc::{free, memcpy, printf, strchr, strlen, strncmp};
@@ -86,137 +86,108 @@ pub const VARIABLE_BUFFER_ZONE: i32 = 5;
 pub static VARIABLE_BUFFER_TEST_LOCK: ::std::sync::Mutex<()> = ::std::sync::Mutex::new(());
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// `ptr` must be a cursor previously returned by this function (or
+/// [`initialize_variable_output`]) into `ctx.variable_buffer`'s current
+/// allocation.
 pub unsafe fn variable_buffer_output(
     ctx: &crate::execctx::ExecContext,
     mut ptr: *mut ::core::ffi::c_char,
     string: *const ::core::ffi::c_char,
     length: size_t,
 ) -> *mut ::core::ffi::c_char {
-    let mut variable_buffer = ctx.variable_buffer.ptr.get();
-    let mut variable_buffer_length = ctx.variable_buffer.length.get();
-    assert!(ptr >= variable_buffer, "output cursor before the buffer");
+    let base = ctx.variable_buffer.ptr();
+    let cur_len = ctx.variable_buffer.length();
+    assert!(ptr >= base, "output cursor before the buffer");
     assert!(
-        ptr < variable_buffer.add(variable_buffer_length),
+        ptr < unsafe { base.add(cur_len) },
         "output cursor past the buffer"
     );
-    let newlen = length + ptr.offset_from(variable_buffer) as size_t;
+    let offset = unsafe { ptr.offset_from(base) as size_t };
+    let newlen = length + offset;
 
-    if newlen + VARIABLE_BUFFER_ZONE as size_t + 1 > variable_buffer_length {
-        let offset = ptr.offset_from(variable_buffer) as usize;
-        variable_buffer_length = (newlen + 100).max(2 * variable_buffer_length);
-        variable_buffer = xrealloc(
-            variable_buffer as *mut ::core::ffi::c_void,
-            variable_buffer_length + 1,
-        ) as *mut ::core::ffi::c_char;
-        ptr = variable_buffer.add(offset);
-        ctx.variable_buffer.ptr.set(variable_buffer);
-        ctx.variable_buffer.length.set(variable_buffer_length);
+    if newlen + VARIABLE_BUFFER_ZONE as size_t + 1 > cur_len {
+        ctx.variable_buffer.ensure_len(newlen + 100);
+        ptr = unsafe { ctx.variable_buffer.ptr().add(offset) };
     }
-    memcpy(
-        ptr as *mut ::core::ffi::c_void,
-        string as *const ::core::ffi::c_void,
-        length,
-    );
-    ptr = ptr.add(length);
-    *ptr = 0;
+    unsafe {
+        memcpy(
+            ptr as *mut ::core::ffi::c_void,
+            string as *const ::core::ffi::c_void,
+            length,
+        );
+        ptr = ptr.add(length);
+        *ptr = 0;
+    }
     ptr
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn initialize_variable_output(
-    ctx: &crate::execctx::ExecContext,
-) -> *mut ::core::ffi::c_char {
-    let mut variable_buffer = ctx.variable_buffer.ptr.get();
-    if variable_buffer.is_null() {
-        let variable_buffer_length: size_t = 200;
-        variable_buffer = xmalloc(variable_buffer_length) as *mut ::core::ffi::c_char;
-        ctx.variable_buffer.ptr.set(variable_buffer);
-        ctx.variable_buffer.length.set(variable_buffer_length);
+/// Ensure the buffer is allocated (200 bytes, the former initial `xmalloc`
+/// size) and NUL-terminate it at the start, returning the base pointer.
+pub fn initialize_variable_output(ctx: &crate::execctx::ExecContext) -> *mut ::core::ffi::c_char {
+    if ctx.variable_buffer.length() == 0 {
+        ctx.variable_buffer.ensure_len(200);
     }
-    *variable_buffer = 0;
-    variable_buffer
+    ctx.variable_buffer.set_byte_at(0, 0);
+    ctx.variable_buffer.ptr()
 }
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// `bufp`/`lenp` must be valid for writes.
 pub unsafe fn install_variable_buffer(
     ctx: &crate::execctx::ExecContext,
     bufp: *mut *mut ::core::ffi::c_char,
     lenp: *mut size_t,
 ) {
-    *bufp = ctx.variable_buffer.ptr.get();
-    *lenp = ctx.variable_buffer.length.get();
-    ctx.variable_buffer
-        .ptr
-        .set(::core::ptr::null_mut::<::core::ffi::c_char>());
+    let (old_ptr, old_len) = ctx.variable_buffer.take_raw();
+    unsafe {
+        *bufp = old_ptr;
+        *lenp = old_len;
+    }
     initialize_variable_output(ctx);
 }
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// `buf`/`len` must be exactly a pair previously produced by
+/// [`crate::execctx::VariableBuffer::take_raw`] (e.g. via
+/// [`install_variable_buffer`]'s out-params).
 pub unsafe fn restore_variable_buffer(
     ctx: &crate::execctx::ExecContext,
     buf: *mut ::core::ffi::c_char,
     len: size_t,
 ) {
-    free(ctx.variable_buffer.ptr.get() as *mut ::core::ffi::c_void);
-    ctx.variable_buffer.ptr.set(buf);
-    ctx.variable_buffer.length.set(len);
+    unsafe { ctx.variable_buffer.set_raw(buf, len) };
 }
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// `buf`/`len` must be exactly a pair previously produced by
+/// [`crate::execctx::VariableBuffer::take_raw`] (e.g. via
+/// [`install_variable_buffer`]'s out-params).
 pub unsafe fn swap_variable_buffer(
     ctx: &crate::execctx::ExecContext,
     buf: *mut ::core::ffi::c_char,
     len: size_t,
 ) -> *mut ::core::ffi::c_char {
-    let p: *mut ::core::ffi::c_char = ctx.variable_buffer.ptr.get();
-    ctx.variable_buffer.ptr.set(buf);
-    ctx.variable_buffer.length.set(len);
-    p
+    let (old_ptr, _old_len) = ctx.variable_buffer.take_raw();
+    unsafe { ctx.variable_buffer.set_raw(buf, len) };
+    old_ptr
 }
 /// Read one byte from the variable expansion buffer at `off`.
 ///
-/// Bounds-checked access into `variable_buffer` via a slice, used in place of
-/// raw-pointer dereferences of cursors derived from it (e.g. pointers returned
-/// by `find_char_unquote`) so the access cannot touch a stale pointer.
-///
-/// # Safety
-///
-/// `variable_buffer` must be initialized and `off` within its allocation.
-pub unsafe fn variable_buffer_byte(
-    ctx: &crate::execctx::ExecContext,
-    off: size_t,
-) -> ::core::ffi::c_char {
-    ::core::slice::from_raw_parts(
-        ctx.variable_buffer.ptr.get() as *const u8,
-        ctx.variable_buffer.length.get(),
-    )[off] as ::core::ffi::c_char
+/// Bounds-checked access into `ctx.variable_buffer` via `Vec` indexing, used
+/// in place of raw-pointer dereferences of cursors derived from it (e.g.
+/// pointers returned by `find_char_unquote`) so the access cannot touch a
+/// stale pointer.
+pub fn variable_buffer_byte(ctx: &crate::execctx::ExecContext, off: size_t) -> ::core::ffi::c_char {
+    ctx.variable_buffer.byte_at(off)
 }
 /// Write one byte into the variable expansion buffer at `off`.
 ///
 /// Bounds-checked counterpart to [`variable_buffer_byte`].
-///
-/// # Safety
-///
-/// `variable_buffer` must be initialized and `off` within its allocation.
-pub unsafe fn set_variable_buffer_byte(
+pub fn set_variable_buffer_byte(
     ctx: &crate::execctx::ExecContext,
     off: size_t,
     b: ::core::ffi::c_char,
 ) {
-    ::core::slice::from_raw_parts_mut(
-        ctx.variable_buffer.ptr.get() as *mut u8,
-        ctx.variable_buffer.length.get(),
-    )[off] = b as u8;
+    ctx.variable_buffer.set_byte_at(off, b);
 }
 /// # Safety
 ///
@@ -361,8 +332,8 @@ pub unsafe fn expand_variable_buf(
     if buf.is_null() {
         buf = initialize_variable_output(ctx);
     }
-    let variable_buffer = ctx.variable_buffer.ptr.get();
-    let variable_buffer_length = ctx.variable_buffer.length.get();
+    let variable_buffer = ctx.variable_buffer.ptr();
+    let variable_buffer_length = ctx.variable_buffer.length();
     assert!(buf >= variable_buffer, "output cursor before the buffer");
     assert!(
         buf < variable_buffer.add(variable_buffer_length),
@@ -370,7 +341,7 @@ pub unsafe fn expand_variable_buf(
     );
     let offs = buf.offset_from(variable_buffer) as size_t;
     expand_variable_output(ctx, buf, name, length);
-    ctx.variable_buffer.ptr.get().add(offs as usize)
+    ctx.variable_buffer.ptr().add(offs as usize)
 }
 /// # Safety
 ///
@@ -384,7 +355,7 @@ pub unsafe fn allocated_expand_variable(
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(ctx, &raw mut obuf, &raw mut olen);
-    expand_variable_output(ctx, ctx.variable_buffer.ptr.get(), name, length);
+    expand_variable_output(ctx, ctx.variable_buffer.ptr(), name, length);
     swap_variable_buffer(ctx, obuf, olen)
 }
 /// # Safety
@@ -404,9 +375,9 @@ pub unsafe fn expand_string_buf(
         buf = initialize_variable_output(ctx);
     }
     o = buf;
-    let line_offset = buf.offset_from(ctx.variable_buffer.ptr.get()) as usize;
+    let line_offset = buf.offset_from(ctx.variable_buffer.ptr()) as usize;
     if length == 0 {
-        return ctx.variable_buffer.ptr.get();
+        return ctx.variable_buffer.ptr();
     }
     // Work on a stable copy: expansion may reuse the variable buffer the
     // input could be pointing into.
@@ -615,7 +586,7 @@ pub unsafe fn expand_string_buf(
         }
         p = p.add(1);
     }
-    ctx.variable_buffer.ptr.get().add(line_offset)
+    ctx.variable_buffer.ptr().add(line_offset)
 }
 /// # Safety
 ///
@@ -754,7 +725,7 @@ unsafe fn variable_append(
     } else {
         initialize_variable_output(ctx)
     };
-    if buf > ctx.variable_buffer.ptr.get() {
+    if buf > ctx.variable_buffer.ptr() {
         buf = variable_buffer_output(ctx, buf, c" ".as_ptr(), 1);
     }
     if (*v).recursive() == 0 {

@@ -1532,11 +1532,11 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         cmdleft = find_char_unquote(p2, ';' as i32);
                                         if !cmdleft.is_null() {
                                             let p2_off: size_t = p2
-                                                .offset_from(ctx.variable_buffer.ptr.get())
+                                                .offset_from(ctx.variable_buffer.ptr())
                                                 as ::core::ffi::c_long
                                                 as size_t;
                                             let cmd_off: size_t = cmdleft
-                                                .offset_from(ctx.variable_buffer.ptr.get())
+                                                .offset_from(ctx.variable_buffer.ptr())
                                                 as ::core::ffi::c_long
                                                 as size_t;
                                             let pend: *mut ::core::ffi::c_char =
@@ -1551,19 +1551,14 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 SIZE_MAX as size_t,
                                             );
                                             lb_next = lb_next.offset(strlen(lb_next) as isize);
-                                            p2 = ctx.variable_buffer.ptr.get().add(p2_off);
-                                            cmdleft = ctx
-                                                .variable_buffer
-                                                .ptr
-                                                .get()
-                                                .add(cmd_off)
-                                                .offset(1);
+                                            p2 = ctx.variable_buffer.ptr().add(p2_off);
+                                            cmdleft = ctx.variable_buffer.ptr().add(cmd_off).offset(1);
                                         }
                                     }
                                     colonp = find_char_unquote(p2, ':' as i32);
                                     if !colonp.is_null() {
                                         let colon_off: size_t = colonp
-                                            .offset_from(ctx.variable_buffer.ptr.get())
+                                            .offset_from(ctx.variable_buffer.ptr())
                                             as ::core::ffi::c_long
                                             as size_t;
                                         if colonp > p2
@@ -1594,7 +1589,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         p2 = expand_string_buf(ctx, p2, lb_next, wlen);
                                     }
                                 }
-                                p2 = next_token(ctx.variable_buffer.ptr.get());
+                                p2 = next_token(ctx.variable_buffer.ptr());
                                 if wtype as ::core::ffi::c_uint
                                     == w_eol as i32 as ::core::ffi::c_uint
                                 {
@@ -1643,7 +1638,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     );
                                 } else {
                                     let colon_off: size_t = colonp
-                                        .offset_from(ctx.variable_buffer.ptr.get())
+                                        .offset_from(ctx.variable_buffer.ptr())
                                         as ::core::ffi::c_long
                                         as size_t;
                                     let save_0: ::core::ffi::c_char =
@@ -1682,7 +1677,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         }
                                         if *lb_next as i32 != 0 {
                                             let l_1: size_t = p2
-                                                .offset_from(ctx.variable_buffer.ptr.get())
+                                                .offset_from(ctx.variable_buffer.ptr())
                                                 as ::core::ffi::c_long
                                                 as size_t;
                                             plen = strlen(p2) as size_t;
@@ -1692,7 +1687,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 lb_next,
                                                 (strlen(lb_next) as size_t).wrapping_add(1),
                                             );
-                                            p2 = ctx.variable_buffer.ptr.get().add(l_1);
+                                            p2 = ctx.variable_buffer.ptr().add(l_1);
                                         }
                                         p2 = parse_var_assignment(
                                             ctx,
@@ -1704,7 +1699,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         if vmod.assign_v() != 0 {
                                             if !semip.is_null() {
                                                 let l_2: size_t = p2
-                                                    .offset_from(ctx.variable_buffer.ptr.get())
+                                                    .offset_from(ctx.variable_buffer.ptr())
                                                     as ::core::ffi::c_long
                                                     as size_t;
                                                 ::core::slice::from_raw_parts_mut(
@@ -1718,7 +1713,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                     semip,
                                                     (strlen(semip) as size_t).wrapping_add(1),
                                                 );
-                                                p2 = ctx.variable_buffer.ptr.get().add(l_2);
+                                                p2 = ctx.variable_buffer.ptr().add(l_2);
                                             }
                                             record_target_var(
                                                 ctx,
@@ -1740,7 +1735,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             no_targets = 0;
                                             if *lb_next as i32 != 0 {
                                                 let l_3: size_t = p2
-                                                    .offset_from(ctx.variable_buffer.ptr.get())
+                                                    .offset_from(ctx.variable_buffer.ptr())
                                                     as ::core::ffi::c_long
                                                     as size_t;
                                                 expand_string_buf(
@@ -1749,7 +1744,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                     lb_next,
                                                     SIZE_MAX as size_t,
                                                 );
-                                                p2 = ctx.variable_buffer.ptr.get().add(l_3);
+                                                p2 = ctx.variable_buffer.ptr().add(l_3);
                                                 if cmdleft.is_null() {
                                                     cmdleft = find_char_unquote(p2, ';' as i32);
                                                     if !cmdleft.is_null() {
@@ -2801,14 +2796,14 @@ unsafe fn enter_prereqs_vec(
                     );
                     o = variable_buffer_output(
                         ctx,
-                        ctx.variable_buffer.ptr.get(),
+                        ctx.variable_buffer.ptr(),
                         nm_ptr,
                         (strlen(nm_ptr) as size_t).wrapping_add(1),
                     );
                 } else {
                     o = patsubst_expand_pat(
                         ctx,
-                        ctx.variable_buffer.ptr.get(),
+                        ctx.variable_buffer.ptr(),
                         stem_c.as_ptr() as *const ::core::ffi::c_char,
                         pattern,
                         nm_ptr,
@@ -2816,13 +2811,13 @@ unsafe fn enter_prereqs_vec(
                         percent.offset(1_i32 as isize),
                     );
                 }
-                if *ctx.variable_buffer.ptr.get().offset(0_i32 as isize) as i32 == 0 {
+                if *ctx.variable_buffer.ptr().offset(0_i32 as isize) as i32 == 0 {
                     // Expanded to nothing: drop this prerequisite.
                     continue;
                 } else {
                     let result = ::core::slice::from_raw_parts(
-                        ctx.variable_buffer.ptr.get() as *const u8,
-                        o.offset_from(ctx.variable_buffer.ptr.get()) as usize,
+                        ctx.variable_buffer.ptr() as *const u8,
+                        o.offset_from(ctx.variable_buffer.ptr()) as usize,
                     );
                     d.name = String::from_utf8_lossy(result).into_owned();
                 }
@@ -3163,7 +3158,7 @@ unsafe fn record_files(
                 b"%\0" as *const u8 as *const ::core::ffi::c_char;
             let o: *mut ::core::ffi::c_char = patsubst_expand_pat(
                 ctx,
-                ctx.variable_buffer.ptr.get(),
+                ctx.variable_buffer.ptr(),
                 name,
                 pattern,
                 percent,
@@ -3171,8 +3166,8 @@ unsafe fn record_files(
                 percent.offset(1_i32 as isize),
             );
             let stem = ::core::slice::from_raw_parts(
-                ctx.variable_buffer.ptr.get() as *const u8,
-                o.offset_from(ctx.variable_buffer.ptr.get()) as usize,
+                ctx.variable_buffer.ptr() as *const u8,
+                o.offset_from(ctx.variable_buffer.ptr()) as usize,
             )
             .to_vec();
             {

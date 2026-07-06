@@ -2579,7 +2579,7 @@ unsafe extern "C" fn library_search(
         } else {
             p4 = variable_buffer_output(
                 ctx,
-                ctx.variable_buffer.ptr.get(),
+                ctx.variable_buffer.ptr(),
                 p,
                 p3.offset_from(p) as ::core::ffi::c_long as size_t,
             );
@@ -2591,7 +2591,7 @@ unsafe extern "C" fn library_search(
                 len.wrapping_sub(p3.offset_from(p) as ::core::ffi::c_long as size_t),
             );
             *p.offset(len as isize) = c;
-            libbuf = ctx.variable_buffer.ptr.get();
+            libbuf = ctx.variable_buffer.ptr();
             mtime = name_mtime(ctx, libbuf);
             if mtime != NONEXISTENT_MTIME as uintmax_t {
                 if !mtime_ptr.is_null() {
