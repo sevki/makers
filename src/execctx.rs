@@ -1487,14 +1487,47 @@ impl VariableBuffer {
     /// Detach the current contents as a raw, `free`-compatible allocation
     /// (used to hand a finished expansion out to its caller), replacing this
     /// buffer with a fresh, empty one.
-    pub fn take_raw(&self) -> (*mut ::core::ffi::c_char, crate::ffi_types::size_t) {
+    ///
+    /// `None` iff the buffer was empty: an empty `Vec`'s backing storage is
+    /// never a real heap allocation (`Vec::into_boxed_slice` never asks the
+    /// allocator for a zero-size block, only a dangling sentinel), so there's
+    /// nothing here a caller could safely hand to `free()`. Callers that
+    /// don't need to eventually `free()` the result (they just round-trip it
+    /// back through [`Self::set_raw`]) can turn this into the traditional
+    /// nullable pointer with `.map_or(null_mut(), NonNull::as_ptr)`; callers
+    /// that will `free()` it (e.g. via [`Self::take_raw_nonnull`]) must not
+    /// paper over `None` with a null pointer, since freeing that sentinel
+    /// address is undefined behavior, unlike `free(NULL)`.
+    pub fn take_raw(
+        &self,
+    ) -> (Option<::core::ptr::NonNull<::core::ffi::c_char>>, crate::ffi_types::size_t) {
         let old = unsafe { ::core::mem::take(&mut *self.0.as_ptr()) };
         if old.is_empty() {
-            return (::core::ptr::null_mut(), 0);
+            return (None, 0);
         }
         let len = old.len();
         let boxed = old.into_boxed_slice();
-        (Box::into_raw(boxed) as *mut ::core::ffi::c_char, len)
+        let ptr = Box::into_raw(boxed) as *mut ::core::ffi::c_char;
+        (::core::ptr::NonNull::new(ptr), len)
+    }
+
+    /// Like [`Self::take_raw`], but for callers whose buffer is guaranteed
+    /// (by the `initialize_variable_output`/`install_variable_buffer`
+    /// convention) to already be non-empty at this point -- e.g.
+    /// `swap_variable_buffer`'s outgoing buffer, which every real caller
+    /// eventually `free()`s. Panics rather than ever handing out a pointer
+    /// this codebase might `free()` that doesn't trace back to a real
+    /// allocation.
+    pub fn take_raw_nonnull(
+        &self,
+    ) -> (::core::ptr::NonNull<::core::ffi::c_char>, crate::ffi_types::size_t) {
+        let (ptr, len) = self.take_raw();
+        (
+            ptr.expect(
+                "take_raw_nonnull: buffer must be initialized (missing install_variable_buffer?)",
+            ),
+            len,
+        )
     }
 
     /// Reclaim a buffer previously produced by [`Self::take_raw`] as the

@@ -139,7 +139,7 @@ pub unsafe fn install_variable_buffer(
 ) {
     let (old_ptr, old_len) = ctx.variable_buffer.take_raw();
     unsafe {
-        *bufp = old_ptr;
+        *bufp = old_ptr.map_or(::core::ptr::null_mut(), |p| p.as_ptr());
         *lenp = old_len;
     }
     initialize_variable_output(ctx);
@@ -166,17 +166,15 @@ pub unsafe fn swap_variable_buffer(
     buf: *mut ::core::ffi::c_char,
     len: size_t,
 ) -> *mut ::core::ffi::c_char {
-    let (old_ptr, _old_len) = ctx.variable_buffer.take_raw();
     // Every real caller reaches this through install_variable_buffer (which
     // runs initialize_variable_output first), so the buffer being handed out
     // here is always allocated; callers (e.g. allocated_expand_variable's
     // many call sites) dereference the result directly without a null check.
-    assert!(
-        !old_ptr.is_null(),
-        "swap_variable_buffer: outgoing buffer must be initialized (missing install_variable_buffer?)"
-    );
+    // `take_raw_nonnull` panics rather than silently handing out a would-be
+    // pointer this codebase later `free()`s that isn't a real allocation.
+    let (old_ptr, _old_len) = ctx.variable_buffer.take_raw_nonnull();
     unsafe { ctx.variable_buffer.set_raw(buf, len) };
-    old_ptr
+    old_ptr.as_ptr()
 }
 /// Read one byte from the variable expansion buffer at `off`.
 ///
