@@ -378,4 +378,60 @@ mod tests {
             assert_eq!(out, fp.add(rendered.len()));
         }
     }
+
+    /// With a location, `report_error` reports via `msg::error` (returns,
+    /// rather than the `None`/`msg::fatal` arm) and appends `": ignored"` —
+    /// drives it through a real temp-fd sync target so the emitted bytes can
+    /// be read back and asserted on, instead of only exercising it
+    /// indirectly through `decode_actions`'s unknown-name warnings.
+    #[test]
+    fn report_error_with_location_writes_the_ignored_message() {
+        crate::make_main::install_default_exec_context_for_test();
+        crate::make_main::install_default_options_for_test();
+        let ctx = crate::execctx::ExecContext::default();
+
+        let path = std::env::temp_dir().join(format!(
+            "report-error-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .expect("open temp file");
+        use std::os::unix::io::IntoRawFd;
+        let fd = file.into_raw_fd();
+        let mut out = crate::output::output {
+            out: fd,
+            err: fd,
+            syncout: [0; 1],
+            c2rust_padding: [0; 3],
+        };
+        out.set_syncout(1);
+        crate::output::set_output_context(&mut out as *mut _);
+
+        let floc = Floc {
+            filenm: c"Makefile".as_ptr(),
+            lineno: 3,
+            offset: 0,
+        };
+        report_error(&ctx, Some(&floc), "bogus warning name".to_string());
+
+        crate::output::set_output_context(::core::ptr::null_mut());
+        use std::os::unix::io::FromRawFd;
+        drop(unsafe { std::fs::File::from_raw_fd(fd) });
+
+        let contents = std::fs::read_to_string(&path).expect("read temp file");
+        assert!(
+            contents.contains("Makefile:3: bogus warning name: ignored"),
+            "unexpected output: {contents:?}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
 }
