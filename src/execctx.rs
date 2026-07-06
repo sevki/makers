@@ -586,10 +586,6 @@ pub struct ExecContext {
     /// former `function.rs` function-local `static MAX_ARGS` atomic.
     pub max_args: AtomicU32Cell,
 
-    /// `decode_switches`'s re-entrancy guard, the former `main.rs`
-    /// function-local `static USING_GETOPT` atomic.
-    pub using_getopt: AtomicBoolCell,
-
     /// `print_version`'s one-shot-per-run guard, the former `main.rs`
     /// function-local `static PRINTED_VERSION` atomic.
     pub printed_version: AtomicBoolCell,
