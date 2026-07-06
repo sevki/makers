@@ -90,3 +90,5 @@ checkcfg.*.log
 
 # cargo-mutants output
 mutants.out/
+.direnv
+.codex

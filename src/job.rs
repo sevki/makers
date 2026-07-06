@@ -1,22 +1,66 @@
 pub use crate::ffi_types::{
-    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
-    __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
-    ssize_t, time_t, uintmax_t,
+    __blkcnt_t,
+    __blksize_t,
+    __dev_t,
+    __gid_t,
+    __ino_t,
+    __mode_t,
+    __nlink_t,
+    __off64_t,
+    __off_t,
+    __pid_t,
+    __sig_atomic_t,
+    __syscall_slong_t,
+    __time_t,
+    __uid_t,
+    pid_t,
+    sig_atomic_t,
+    size_t,
+    ssize_t,
+    time_t,
+    uintmax_t,
 };
-use crate::file::{
-    cs_finished, cs_running, us_failed, us_question, us_success, CommandState, UpdateStatus,
+use {
+    crate::{
+        file::{
+            cs_finished,
+            cs_running,
+            us_failed,
+            us_question,
+            us_success,
+            CommandState,
+            FileId,
+            FileNode,
+            UpdateStatus,
+            VariableSet,
+            VariableSetList,
+        },
+        misc::{xmalloc, xstrdup},
+        recipe::RecipeLineFlags,
+        stdio::FILE,
+    },
+    ::c2rust_bitfields,
+    libc::{
+        __errno_location,
+        close,
+        free,
+        getenv,
+        getloadavg,
+        open,
+        printf,
+        remove,
+        sprintf,
+        stpcpy,
+        strchr,
+        strcmp,
+        strerror,
+        strsignal,
+    },
+    std::{
+        sync::atomic::Ordering,
+        time::{SystemTime, UNIX_EPOCH},
+    },
 };
-use crate::file::{FileId, FileNode, VariableSet, VariableSetList};
-use crate::misc::{xmalloc, xstrdup};
-use crate::recipe::RecipeLineFlags;
-use crate::stdio::FILE;
-use ::c2rust_bitfields;
-use libc::{
-    __errno_location, close, free, getenv, getloadavg, open, printf, remove, sprintf, stpcpy,
-    strchr, strcmp, strerror, strsignal,
-};
-use std::sync::atomic::Ordering;
-use std::time::{SystemTime, UNIX_EPOCH};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn sigemptyset(__set: *mut sigset_t) -> i32;
@@ -51,8 +95,7 @@ extern "C" {
     fn waitpid(__pid: __pid_t, __stat_loc: *mut i32, __options: i32) -> __pid_t;
 }
 pub type sigset_t = crate::make_main::SigsetT;
-pub use crate::sys_stat::stat;
-pub use crate::sys_stat::timespec;
+pub use crate::sys_stat::{stat, timespec};
 pub type C2RustUnnamed = ::core::ffi::c_uint;
 pub const _CS_V7_ENV: C2RustUnnamed = 1149;
 pub const _CS_V6_ENV: C2RustUnnamed = 1148;
@@ -209,23 +252,36 @@ impl crate::file::NextLinked for child {
         (*this).next
     }
 }
-use crate::commands::{chop_commands, delete_child_targets, handling_fatal_signal};
-use crate::file::lookup_file;
-use crate::findprog::find_in_given_path;
-use crate::function::{shell_completed, shell_function_pid};
-use crate::make_main::{
-    db_level, die, not_parallel, one_shell, posix_pedantic, stopchar_map,
+use crate::{
+    commands::{chop_commands, delete_child_targets, handling_fatal_signal},
+    file::lookup_file,
+    findprog::find_in_given_path,
+    function::{shell_completed, shell_function_pid},
+    make_main::{db_level, die, not_parallel, one_shell, posix_pedantic, stopchar_map},
+    output::{
+        error,
+        fatal,
+        message,
+        perror_with_name,
+        pfatal_with_name,
+        set_output_context,
+        FmtArg,
+    },
+    posixos::{
+        fd_noinherit,
+        get_bad_stdin,
+        jobserver_acquire,
+        jobserver_enabled,
+        jobserver_post_child,
+        jobserver_pre_acquire,
+        jobserver_pre_child,
+        jobserver_release,
+        jobserver_signal,
+    },
+    remake::{notice_finished_file, show_goal_error},
+    variable::target_environment,
+    warning::{self, Action, Type},
 };
-use crate::output::{
-    error, fatal, message, perror_with_name, pfatal_with_name, set_output_context, FmtArg,
-};
-use crate::posixos::{
-    fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
-    jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
-};
-use crate::remake::{notice_finished_file, show_goal_error};
-use crate::variable::target_environment;
-use crate::warning::{self, Action, Type};
 pub const __S_IFMT: i32 = 0o170000_i32;
 pub const __S_IEXEC: i32 = 0o100_i32;
 pub const SIG_BLOCK: i32 = 0;
@@ -262,10 +318,7 @@ pub const NONEXISTENT_MTIME: i32 = 1;
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn pid2str(
-    ctx: &crate::execctx::ExecContext,
-    pid: pid_t,
-) -> *const ::core::ffi::c_char {
+pub unsafe fn pid2str(ctx: &crate::execctx::ExecContext, pid: pid_t) -> *const ::core::ffi::c_char {
     let buf = ctx.pid_string.0.as_ptr() as *mut ::core::ffi::c_char;
     sprintf(
         buf,
@@ -442,11 +495,13 @@ fn recipe_floc(
                 offset: offset as ::core::ffi::c_ulong,
             }
         }
-        None => Floc {
-            filenm: ::core::ptr::null(),
-            lineno: 0,
-            offset: 0,
-        },
+        None => {
+            Floc {
+                filenm: ::core::ptr::null(),
+                lineno: 0,
+                offset: 0,
+            }
+        }
     }
 }
 
@@ -722,12 +777,11 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         }
         if found_bad == 0 {
             if any_remote != 0 {
-                pid = crate::remote_stub::remote_status(
-                    ctx,
+                pid = ctx.remote_backend.0.status(
                     &raw mut exit_code,
                     &raw mut exit_sig,
                     &raw mut coredump,
-                    0,
+                    false,
                 ) as pid_t;
             } else {
                 pid = 0_i32 as pid_t;
@@ -770,12 +824,11 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     if block == 0 || any_remote == 0 {
                         break;
                     }
-                    pid = crate::remote_stub::remote_status(
-                        ctx,
+                    pid = ctx.remote_backend.0.status(
                         &raw mut exit_code,
                         &raw mut exit_sig,
                         &raw mut coredump,
-                        1,
+                        false,
                     ) as pid_t;
                     if pid < 0 {
                         pfatal_with_name(
@@ -942,10 +995,12 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             );
             if ctx.delete_on_error.0.load(Ordering::Relaxed) == -1_i32 {
                 let is_target = match lookup_file(ctx, b".DELETE_ON_ERROR") {
-                    Some(fid) => match ctx.filenodes.get(fid) {
-                        Some(node) => node.lock().expect("file node poisoned").is_target,
-                        None => false,
-                    },
+                    Some(fid) => {
+                        match ctx.filenodes.get(fid) {
+                            Some(node) => node.lock().expect("file node poisoned").is_target,
+                            None => false,
+                        }
+                    }
                     None => false,
                 };
                 ctx.delete_on_error
@@ -968,8 +1023,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         crate::output::output_dump(ctx, &raw mut (*c).output);
                     }
                     (*c).set_remote(
-                        crate::remote_stub::start_remote_job_p(ctx, 0) as ::core::ffi::c_uint
-                            as ::core::ffi::c_uint,
+                        ctx.remote_backend.0.can_start_job(false) as ::core::ffi::c_uint,
                     );
                     start_job_command(ctx, c);
                     unblock_sigs(ctx);
@@ -1284,13 +1338,14 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
                     let any_recurse = match ctx.filenodes.get((*child).file) {
-                        Some(node) => node
-                            .lock()
-                            .expect("file node poisoned")
-                            .recipe
-                            .as_ref()
-                            .map(|r| r.any_recurse)
-                            .unwrap_or(false),
+                        Some(node) => {
+                            node.lock()
+                                .expect("file node poisoned")
+                                .recipe
+                                .as_ref()
+                                .map(|r| r.any_recurse)
+                                .unwrap_or(false)
+                        }
                         None => false,
                     };
                     (*child).environment =
@@ -1303,8 +1358,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     let mut is_remote: i32 = 0;
                     let mut used_stdin: i32 = 0;
                     let mut id: pid_t = 0;
-                    if crate::remote_stub::start_remote_job(
-                        ctx,
+                    if ctx.remote_backend.0.start_job(
                         argv,
                         (*child).environment,
                         if (*child).good_stdin() as i32 != 0 {
@@ -1374,10 +1428,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
 pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child) -> i32 {
     let f: FileId = (*c).file;
     let e: usize = (*c).entry;
-    (*c).set_remote(
-        crate::remote_stub::start_remote_job_p(ctx, 1) as ::core::ffi::c_uint
-            as ::core::ffi::c_uint,
-    );
+    (*c).set_remote(ctx.remote_backend.0.can_start_job(true) as ::core::ffi::c_uint);
     if (*c).remote() == 0 && (job_slots_used(ctx) > 0 && load_too_high(ctx) != 0) {
         set_file_command_state_entry(ctx, f, e, cs_running);
         (*c).next = ctx.waiting_jobs.0.get();
@@ -1718,10 +1769,9 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                     &[],
                 );
             }
-            let got_token: i32 = jobserver_acquire(
-                ctx,
-                (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32,
-            ) as i32;
+            let got_token: i32 =
+                jobserver_acquire(ctx, (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32)
+                    as i32;
             if !(got_token == 1) {
                 continue;
             }
@@ -2323,8 +2373,7 @@ unsafe fn spawn_via_std(
     fderr: i32,
     pid: *mut pid_t,
 ) -> i32 {
-    use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::process::CommandExt;
+    use std::os::unix::{ffi::OsStrExt, process::CommandExt};
     // Raw pointers are not `Send`/`Sync`, which `pre_exec`'s closure must be;
     // they cross the fork as plain addresses (valid in the child's copied
     // address space) and are only dereferenced there.
@@ -2334,8 +2383,7 @@ unsafe fn spawn_via_std(
     let stdin_fd = fileno(stdin);
     let stdout_fd = fileno(stdout);
     let stderr_fd = fileno(stderr);
-    let program =
-        ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(file).to_bytes());
+    let program = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(file).to_bytes());
     let mut command = std::process::Command::new(program);
     command.pre_exec(move || {
         // Runs in the forked child. Route the job's stdio exactly as the
@@ -2351,7 +2399,12 @@ unsafe fn spawn_via_std(
         // not a documented `pre_exec` guarantee — clear it explicitly.
         let mut empty: sigset_t = crate::make_main::SigsetT { __val: [0; 16] };
         sigemptyset(&raw mut empty);
-        if sigprocmask(SIG_SETMASK, &raw const empty, ::core::ptr::null_mut::<sigset_t>()) < 0 {
+        if sigprocmask(
+            SIG_SETMASK,
+            &raw const empty,
+            ::core::ptr::null_mut::<sigset_t>(),
+        ) < 0
+        {
             return Err(::std::io::Error::last_os_error());
         }
         if fdin >= 0 && fdin != stdin_fd && libc::dup2(fdin, stdin_fd) < 0 {
@@ -2666,7 +2719,9 @@ unsafe fn construct_command_argv_internal(
                 }
                 match *p as i32 {
                     61 => {
-                        if seen_nonequals == 0 && ctx.shell_kind() == crate::execctx::ShellKind::Unixy {
+                        if seen_nonequals == 0
+                            && ctx.shell_kind() == crate::execctx::ShellKind::Unixy
+                        {
                             break 'fast;
                         }
                         word_has_equals = 1;
@@ -3280,8 +3335,7 @@ mod wall_clock_seconds_tests {
 
 #[cfg(test)]
 mod is_bourne_compatible_shell_tests {
-    use super::is_bourne_compatible_shell;
-    use std::path::Path;
+    use {super::is_bourne_compatible_shell, std::path::Path};
 
     fn is_shell(s: &str) -> bool {
         is_bourne_compatible_shell(Path::new(s))
@@ -3349,9 +3403,7 @@ mod good_stdin_used_tests {
 
 #[cfg(test)]
 mod dead_children_tests {
-    use super::dead_children;
-    use crate::execctx::ExecContext;
-    use std::sync::atomic::Ordering;
+    use {super::dead_children, crate::execctx::ExecContext, std::sync::atomic::Ordering};
 
     /// `dead_children(ctx)` reflects `ctx.dead_children`, and the atomic
     /// add/sub used by the signal handler and reap loop round-trip. Each test
@@ -3373,9 +3425,7 @@ mod dead_children_tests {
 
 #[cfg(test)]
 mod job_slots_used_tests {
-    use super::job_slots_used;
-    use crate::execctx::ExecContext;
-    use std::sync::atomic::Ordering;
+    use {super::job_slots_used, crate::execctx::ExecContext, std::sync::atomic::Ordering};
 
     /// `job_slots_used(ctx)` reflects `ctx.job_slots_used`, and the add/sub
     /// used by the start/reap paths round-trip through it. Each test gets its
@@ -3399,9 +3449,7 @@ mod job_slots_used_tests {
 
 #[cfg(test)]
 mod jobserver_tokens_tests {
-    use super::jobserver_tokens;
-    use crate::execctx::ExecContext;
-    use std::sync::atomic::Ordering;
+    use {super::jobserver_tokens, crate::execctx::ExecContext, std::sync::atomic::Ordering};
 
     /// `jobserver_tokens(ctx)` reflects `ctx.jobserver_tokens`, and the
     /// add/sub used by the acquire/free paths round-trip through it. Each
@@ -3441,8 +3489,10 @@ mod pid2str_tests {
     //! buffer (the address stability that made the former static safe to
     //! return a pointer into).
 
-    use super::pid2str;
-    use crate::execctx::{Config, ExecContext};
+    use {
+        super::pid2str,
+        crate::execctx::{Config, ExecContext},
+    };
 
     #[test]
     fn formats_the_pid_as_decimal() {
@@ -3467,7 +3517,10 @@ mod pid2str_tests {
             let first = pid2str(&ctx, 1);
             assert_eq!(core::ffi::CStr::from_ptr(first).to_bytes(), b"1");
             let second = pid2str(&ctx, 22);
-            assert_eq!(first, second, "same backing buffer, per the former static's contract");
+            assert_eq!(
+                first, second,
+                "same backing buffer, per the former static's contract"
+            );
             assert_eq!(core::ffi::CStr::from_ptr(second).to_bytes(), b"22");
         }
     }
@@ -3521,8 +3574,10 @@ mod collapse_dollar_refs_tests {
 
 #[cfg(test)]
 mod child_error_helper_tests {
-    use super::{child_error_label, smode_or_empty, Floc};
-    use std::ffi::{CStr, CString};
+    use {
+        super::{child_error_label, smode_or_empty, Floc},
+        std::ffi::{CStr, CString},
+    };
 
     /// Original c2rust raw-pointer implementation, preserved verbatim as a
     /// differential oracle: passes a non-null `smode` through, maps null to a
@@ -3606,9 +3661,7 @@ mod spawn_via_std_tests {
     //! that is what keeps recipe children byte-identical to the C oracle's
     //! `posix_spawn` behavior.
 
-    use super::spawn_via_std;
-    use crate::ffi_types::pid_t;
-    use std::ffi::CString;
+    use {super::spawn_via_std, crate::ffi_types::pid_t, std::ffi::CString};
 
     /// Build a NULL-terminated `char *[]` from `strings`, returning the owning
     /// `CString`s alongside the raw array.
@@ -3724,9 +3777,12 @@ mod spawn_via_std_tests {
                 0o600,
             );
             assert!(fd >= 0, "open temp stdout");
-            let (_argv_own, mut argv) =
-                c_array(&["sh", "-c", "grep SigBlk /proc/self/status"]);
-            let (_envp_own, mut envp) = c_array(&["PATH=/usr/bin:/bin"]);
+            let (_argv_own, mut argv) = c_array(&["sh", "-c", "grep SigBlk /proc/self/status"]);
+            let path_env = format!(
+                "PATH={}",
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+            );
+            let (_envp_own, mut envp) = c_array(&[path_env.as_str()]);
             let file = CString::new("/bin/sh").unwrap();
             let mut pid: pid_t = -1;
             let r = spawn_via_std(
@@ -3738,7 +3794,8 @@ mod spawn_via_std_tests {
                 libc::STDERR_FILENO,
                 &raw mut pid,
             );
-            let restored = libc::pthread_sigmask(libc::SIG_SETMASK, &saved, ::core::ptr::null_mut());
+            let restored =
+                libc::pthread_sigmask(libc::SIG_SETMASK, &saved, ::core::ptr::null_mut());
             assert_eq!(r, 0, "spawn failed: errno {r}");
             assert_eq!(restored, 0);
             let status = wait_status(pid);

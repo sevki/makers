@@ -13,7 +13,6 @@ use crate::load::unload_all;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
 use crate::misc::{make_toui, xmalloc, xstrdup};
 use crate::read::construct_include_path;
-use crate::remote_stub::{remote_cleanup, remote_setup};
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use crate::strcache::{strcache_init, strcache_print_stats};
@@ -306,7 +305,6 @@ use crate::posixos::{
 pub use crate::read::goaldep;
 use crate::read::{eval_buffer, parse_file_seq, read_all_makefiles, tilde_expand};
 use crate::remake::{f_mtime, update_goal_chain};
-use crate::remote_stub::remote_description;
 use crate::rule::{convert_to_pattern, print_rule_data_base, snap_implicit_rules};
 use crate::variable::{
     define_automatic_variables, define_variable_in_set, init_hash_global_variable_set,
@@ -1855,7 +1853,7 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
         fputs(*cpp, usageto);
         cpp = cpp.offset(1_i32 as isize);
     }
-    match remote_description(ctx) {
+    match ctx.remote_backend.0.description() {
         None => {
             fprintf(
                 usageto,
@@ -3011,7 +3009,7 @@ unsafe fn main_0(
             }
         }
     }
-    remote_setup(&ctx);
+    ctx.remote_backend.0.setup();
     set_output_context(::core::ptr::null_mut::<output>());
     crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level(&ctx) != 0 {
@@ -4825,7 +4823,7 @@ pub unsafe fn print_version(ctx: &crate::execctx::ExecContext) {
         precede,
         crate::version::version_string(),
     );
-    match remote_description(ctx) {
+    match ctx.remote_backend.0.description() {
         None => {
             printf(
                 b"%sBuilt for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4940,7 +4938,7 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
         while job_slots_used(ctx) > 0 {
             reap_children(ctx, 1, err);
         }
-        remote_cleanup(ctx);
+        ctx.remote_backend.0.cleanup();
         remove_intermediates(ctx, 0);
         if opt_print_data_base() {
             print_data_base(ctx);
