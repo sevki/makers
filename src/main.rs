@@ -1757,7 +1757,7 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i32) -> ! {
+pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i32) {
     // The usage text, one option per line; NULL-terminated like the C table.
     // A function-local (not a `static mut`): only this printer reads it.
     let usage: [*const ::core::ffi::c_char; 36] = [
@@ -1870,7 +1870,6 @@ pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, 
         usageto,
         b"Report bugs to <bug-make@gnu.org>\n\0" as *const u8 as *const ::core::ffi::c_char,
     );
-    die(ctx, if bad != 0 { MAKE_FAILURE } else { MAKE_SUCCESS });
 }
 /// # Safety
 ///
@@ -1921,7 +1920,8 @@ unsafe fn main_0(
     argc: i32,
     argv: *mut *mut ::core::ffi::c_char,
     envp: *mut *mut ::core::ffi::c_char,
-) -> i32 {
+) -> Result<crate::build_result::BuildReport, crate::build_result::BuildError> {
+    use crate::build_result::{BuildError, BuildReport};
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut makefile_status: i32 = MAKE_SUCCESS;
     let mut read_files: Vec<crate::dep::GoalDepNode>;
@@ -2207,10 +2207,13 @@ unsafe fn main_0(
     }
     if options.print_usage.get() {
         print_usage(&ctx, &options, 0);
+        die_cleanup(&ctx, MAKE_SUCCESS);
+        return Ok(BuildReport);
     }
     if options.print_version.get() {
         print_version(&ctx);
-        die(&ctx, MAKE_SUCCESS);
+        die_cleanup(&ctx, MAKE_SUCCESS);
+        return Ok(BuildReport);
     }
     setvbuf(
         stdout,
@@ -2995,7 +2998,8 @@ unsafe fn main_0(
     }
     if options.print_targets.get() {
         print_targets(&ctx);
-        die(&ctx, EXIT_SUCCESS);
+        die_cleanup(&ctx, EXIT_SUCCESS);
+        return Ok(BuildReport);
     }
     if restarts == 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
@@ -3544,7 +3548,8 @@ unsafe fn main_0(
             _exit(127);
         }
         if any_failed != 0 {
-            die(&ctx, MAKE_FAILURE);
+            die_cleanup(&ctx, MAKE_FAILURE);
+            return Err(BuildError::Failure);
         }
     }
     define_makeflags(&ctx, &options, 0);
@@ -3673,7 +3678,8 @@ unsafe fn main_0(
             &[],
         );
     }
-    die(&ctx, makefile_status);
+    die_cleanup(&ctx, makefile_status);
+    crate::build_result::result_from_status(makefile_status)
 }
 unsafe fn handle_non_switch_argument(
     ctx: &crate::execctx::ExecContext,
@@ -4195,11 +4201,14 @@ fn decode_switches(
         // another option's value) -- nothing more to recover from this
         // batch.
         if bad != 0 && origin == o_command {
-            // SAFETY: `print_usage` prints the built-in usage table and
-            // exits; it takes no raw pointers and imposes no precondition
-            // beyond a valid `&ExecContext`/`&Options`, which we have.
+            // SAFETY: `print_usage` prints the built-in usage table; it takes
+            // no raw pointers and imposes no precondition beyond a valid
+            // `&ExecContext`/`&Options`, which we have. `die` still exits
+            // here: bubbling a bad-switch error out of `decode_switches` is a
+            // later #432 subtask.
             unsafe {
                 print_usage(ctx, options, bad);
+                die(ctx, MAKE_FAILURE);
             }
         }
         return;
@@ -4412,11 +4421,13 @@ fn decode_switches(
     }
 
     // SAFETY: none of these take raw pointers or impose a precondition
-    // beyond a valid `&ExecContext`/`&Options`, which we have; `print_usage`
-    // exits without returning when reached.
+    // beyond a valid `&ExecContext`/`&Options`, which we have. `die` still
+    // exits on the bad-switch path: bubbling that error out of
+    // `decode_switches` is a later #432 subtask.
     unsafe {
         if bad != 0 && origin == o_command {
             print_usage(ctx, options, bad);
+            die(ctx, MAKE_FAILURE);
         }
         decode_debug_flags(ctx, options);
         decode_output_sync_flags(ctx, options);
@@ -5117,6 +5128,20 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
+    die_cleanup(ctx, status);
+    exit(status);
+}
+/// The end-of-run cleanup `die` performs before exiting — reaping children,
+/// removing intermediates, closing output sync, releasing jobserver tokens,
+/// chdir-ing back — split out so `main_0`'s own terminal paths can run it and
+/// then *return* their status (Phase B, #432) instead of exiting from inside
+/// the library. Guarded by `ctx.dying`: only the first caller cleans up.
+///
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn die_cleanup(ctx: &crate::execctx::ExecContext, status: i32) {
     if !ctx.dying.0.swap(true, Ordering::Relaxed) {
         let err: i32;
         if opt_print_version() {
@@ -5155,11 +5180,12 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
             _x = chdir(ctx.directory_before_chdir.0.get());
         }
     }
-    exit(status);
 }
 pub const __CHAR_BIT__: i32 = 8;
 pub const __SCHAR_MAX__: i32 = 127;
-pub fn main() {
+/// Run make and report the process exit code. The `bin/make.rs` shim is the
+/// only caller and the single `std::process::exit` point (Phase B, #432).
+pub fn main() -> i32 {
     use std::os::unix::ffi::OsStrExt;
     let mut args_strings: Vec<Vec<u8>> = ::std::env::args_os()
         .map(|arg| {
@@ -5183,12 +5209,16 @@ pub fn main() {
         );
     }
     vars.push(::core::ptr::null_mut());
-    unsafe {
-        ::std::process::exit(main_0(
+    let result = unsafe {
+        main_0(
             (args_ptrs.len() - 1) as i32,
             args_ptrs.as_mut_ptr() as *mut *mut ::core::ffi::c_char,
             vars.as_mut_ptr() as *mut *mut ::core::ffi::c_char,
-        ) as i32)
+        )
+    };
+    match result {
+        Ok(report) => report.exit_code(),
+        Err(err) => err.exit_code(),
     }
 }
 /// The command-line switch table, freshly built with its real contents — the

@@ -1245,6 +1245,51 @@ fn run_make(makefile: &str, files: &[(&str, &str)], args: &[&str]) -> (String, O
 }
 
 #[test]
+fn exit_codes_flow_through_the_single_exit_point() {
+    // main_0 returns Result<BuildReport, BuildError> and bin/make.rs maps it
+    // onto the process exit status (#432); each canonical code still reaches
+    // the OS. Not differential — the fixture suite diffs richer behavior; this
+    // pins the plumbing itself.
+    let (_, code) = run_make("all: ;\n", &[], &["-h"]);
+    assert_eq!(code, Some(0), "-h usage exits MAKE_SUCCESS");
+    let (_, code) = run_make("all: ;\n", &[], &["--version"]);
+    assert_eq!(code, Some(0), "--version exits MAKE_SUCCESS");
+    let (_, code) = run_make("all: ;\n", &[], &["--definitely-not-a-switch"]);
+    assert_eq!(code, Some(2), "a bad switch exits MAKE_FAILURE");
+    let (_, code) = run_make("fail:\n\tfalse\n", &[], &["-q", "fail"]);
+    assert_eq!(code, Some(1), "-q with work to do exits MAKE_TROUBLE");
+    let (_, code) = run_make("x: ;\n", &[("x", "")], &["-q"]);
+    assert_eq!(code, Some(0), "-q with everything current exits MAKE_SUCCESS");
+    let (_, code) = run_make("fail:\n\tfalse\n", &[], &["fail"]);
+    assert_eq!(code, Some(2), "a failed recipe exits MAKE_FAILURE");
+}
+
+#[test]
+fn print_data_base_rule_count_lands_before_files_section() {
+    // rule.rs print_rule_data_base writes through Rust's line-buffered stdout
+    // while the surrounding sections use libc printf; its final line has no
+    // trailing newline (matching the C oracle), so without an explicit flush
+    // it was lost when the run exited through libc `exit()`. Pin both its
+    // presence and its position between the rules and files sections.
+    let (stdout, code) = run_make("x: ;\n", &[("x", "")], &["-p", "-q"]);
+    assert_eq!(code, Some(0));
+    let count = stdout
+        .find("implicit rules,")
+        .expect("-p prints the implicit-rule count line");
+    let files = stdout
+        .find("# Files")
+        .expect("-p prints the files section");
+    assert!(
+        count < files,
+        "rule count line must precede the files section as in the C oracle"
+    );
+    assert!(
+        stdout.contains("# Finished Make data base"),
+        "-p output runs through to the trailer"
+    );
+}
+
+#[test]
 fn load_directive_unsupported_aborts() {
     // load.rs load_file (safe `fatal!`): dynamic loading is stubbed out, so a
     // `load` directive aborts with the unsupported diagnostic on stderr and a
