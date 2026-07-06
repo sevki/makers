@@ -1245,11 +1245,14 @@ fn run_make(makefile: &str, files: &[(&str, &str)], args: &[&str]) -> (String, O
 }
 
 #[test]
-fn exit_codes_flow_through_the_single_exit_point() {
+fn canonical_exit_codes_reach_the_os() {
     // main_0 returns Result<BuildReport, BuildError> and bin/make.rs maps it
     // onto the process exit status (#432); each canonical code still reaches
-    // the OS. Not differential — the fixture suite diffs richer behavior; this
-    // pins the plumbing itself.
+    // the OS. The bad-switch case is the exception: decode_switches still
+    // terminates via die() until a later #432 subtask bubbles that error out —
+    // this pins its exit code so that conversion stays observable too. Not
+    // differential — the fixture suite diffs richer behavior; this pins the
+    // plumbing itself.
     let (_, code) = run_make("all: ;\n", &[], &["-h"]);
     assert_eq!(code, Some(0), "-h usage exits MAKE_SUCCESS");
     let (_, code) = run_make("all: ;\n", &[], &["--version"]);

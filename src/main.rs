@@ -5199,16 +5199,21 @@ pub fn main() -> i32 {
         .map(|arg| arg.as_mut_ptr() as *mut ::core::ffi::c_char)
         .chain(::core::iter::once(::core::ptr::null_mut()))
         .collect();
-    let mut vars: Vec<*mut ::core::ffi::c_char> = Vec::new();
-    for (var_name, var_value) in ::std::env::vars() {
-        let var: String = format!("{}={}", var_name, var_value);
-        vars.push(
-            ::std::ffi::CString::new(var)
+    // Own the env strings like the args above so they are reclaimed when this
+    // function returns — `main_0` copies what it keeps (`xstrndup`/`xstrdup`
+    // in `define_variable_in_set`), and libc `environ` never aliases these.
+    let mut vars_strings: Vec<Vec<u8>> = ::std::env::vars()
+        .map(|(var_name, var_value)| {
+            ::std::ffi::CString::new(format!("{}={}", var_name, var_value))
                 .expect("Failed to convert environment variable into CString.")
-                .into_raw(),
-        );
-    }
-    vars.push(::core::ptr::null_mut());
+                .into_bytes_with_nul()
+        })
+        .collect();
+    let mut vars: Vec<*mut ::core::ffi::c_char> = vars_strings
+        .iter_mut()
+        .map(|var| var.as_mut_ptr() as *mut ::core::ffi::c_char)
+        .chain(::core::iter::once(::core::ptr::null_mut()))
+        .collect();
     let result = unsafe {
         main_0(
             (args_ptrs.len() - 1) as i32,
