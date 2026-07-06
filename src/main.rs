@@ -3584,6 +3584,10 @@ unsafe fn main_0(
             *p_6 = 0;
             p_6 = ctx.variable_buffer.ptr();
         }
+        assert!(
+            !p_6.is_null(),
+            "variable_buffer must be initialized by this point in main_0"
+        );
         if *p_6 as i32 != 0 {
             let mut f_6: Option<crate::file::FileId> =
                 lookup_file(&ctx, ::std::ffi::CStr::from_ptr(p_6).to_bytes());
@@ -4710,6 +4714,10 @@ pub unsafe fn define_makeflags(
     if fp == ctx.variable_buffer.ptr().offset(1_i32 as isize) {
         fp = ctx.variable_buffer.ptr();
     }
+    assert!(
+        !fp.is_null(),
+        "variable_buffer must be initialized by this point in define_makeflags"
+    );
     *fp = 0;
     define_variable_in_set(
         ctx,

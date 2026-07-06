@@ -167,6 +167,14 @@ pub unsafe fn swap_variable_buffer(
     len: size_t,
 ) -> *mut ::core::ffi::c_char {
     let (old_ptr, _old_len) = ctx.variable_buffer.take_raw();
+    // Every real caller reaches this through install_variable_buffer (which
+    // runs initialize_variable_output first), so the buffer being handed out
+    // here is always allocated; callers (e.g. allocated_expand_variable's
+    // many call sites) dereference the result directly without a null check.
+    assert!(
+        !old_ptr.is_null(),
+        "swap_variable_buffer: outgoing buffer must be initialized (missing install_variable_buffer?)"
+    );
     unsafe { ctx.variable_buffer.set_raw(buf, len) };
     old_ptr
 }
