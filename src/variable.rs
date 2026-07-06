@@ -60,7 +60,7 @@ pub type dep = Dep;
 pub type commands = Commands;
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, install_variable_buffer,
-    recursively_expand_for_file, swap_variable_buffer, variable_buffer,
+    recursively_expand_for_file, swap_variable_buffer,
 };
 use crate::execctx::ExecContext;
 use crate::floc::Floc;
@@ -2119,16 +2119,16 @@ pub unsafe fn shell_result(
     let mut len: size_t = 0;
     let mut args: [*mut ::core::ffi::c_char; 2] =
         [::core::ptr::null_mut::<::core::ffi::c_char>(); 2];
-    install_variable_buffer(&raw mut buf, &raw mut len);
+    install_variable_buffer(ctx, &raw mut buf, &raw mut len);
     args[0_i32 as usize] = p as *mut ::core::ffi::c_char;
     args[1_i32 as usize] = ::core::ptr::null_mut::<::core::ffi::c_char>();
     func_shell_base(
         ctx,
-        variable_buffer,
+        ctx.variable_buffer.ptr(),
         &raw mut args as *mut *mut ::core::ffi::c_char,
         0,
     );
-    swap_variable_buffer(buf, len)
+    swap_variable_buffer(ctx, buf, len)
 }
 /// # Safety
 ///

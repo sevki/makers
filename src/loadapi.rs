@@ -68,7 +68,6 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
     } else {
         flp = ::core::ptr::null_mut::<Floc>();
     }
-    install_variable_buffer(&raw mut pbuf, &raw mut plen);
     let mut eval_input = ::std::ffi::CStr::from_ptr(buffer)
         .to_bytes_with_nul()
         .to_vec();
@@ -76,15 +75,17 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
     // table — not a throwaway context. This C-ABI entry point can't carry the
     // owned `ExecContext`, so reach `main_0`'s through the `CTX_PTR` borrow
     // channel (installed for all of `main_0`, which is on the stack whenever a
-    // loaded plugin runs).
+    // loaded plugin runs). The variable-buffer save/restore now needs that
+    // same `ctx`, so it moves inside the closure alongside `eval_buffer`.
     crate::make_main::with_exec_context(|ctx| unsafe {
+        install_variable_buffer(ctx, &raw mut pbuf, &raw mut plen);
         eval_buffer(
             ctx,
             eval_input.as_mut_ptr() as *mut ::core::ffi::c_char,
             flp,
         );
+        restore_variable_buffer(ctx, pbuf, plen);
     });
-    restore_variable_buffer(pbuf, plen);
 }
 /// # Safety
 ///

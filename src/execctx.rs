@@ -729,6 +729,13 @@ pub struct ExecContext {
     /// folded onto the context): `reading_file` holds a raw pointer into this
     /// cell for as long as that context is installed, so it must not move.
     pub recipe_reading_floc: RecipeReadingFloc,
+
+    /// The shared grow-on-demand output buffer every `$(...)`/recipe
+    /// expansion writes into, the former `expand.rs` `static mut
+    /// variable_buffer` / `static mut variable_buffer_length` pair. See
+    /// [`VariableBuffer`]'s doc for why this is `Vec<u8>`-backed rather than
+    /// a raw pointer + length pair.
+    pub variable_buffer: VariableBuffer,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1362,6 +1369,183 @@ impl ::core::fmt::Debug for RecipeReadingFloc {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         // `Floc` has no `Debug`; nothing but "present" is meaningful here.
         f.debug_tuple("RecipeReadingFloc").finish()
+    }
+}
+
+/// [`ExecContext::variable_buffer`]'s owned backing storage: the shared
+/// grow-on-demand output buffer every `$(...)`/recipe expansion writes into,
+/// the former `expand.rs` `static mut variable_buffer` / `static mut
+/// variable_buffer_length` globals.
+///
+/// Backed by an owned `Vec<u8>`, not a raw pointer + length pair: growth
+/// reuses `Vec::resize`'s safe reallocation instead of manual `xrealloc`, and
+/// `Clone` deep-copies the bytes into a fresh, independent allocation, so
+/// cloning an `ExecContext` can never leave two contexts aliasing (and
+/// racing to grow/free) the same heap block the way a `Cell<*mut c_char>`
+/// field would.
+///
+/// A few call sites (`allocated_expand_variable` and friends) need to hand
+/// the buffer's current contents out as a `*mut c_char` that the wider
+/// (still-c2rust) codebase `free()`s directly once done. [`Self::take_raw`]/
+/// [`Self::set_raw`] round-trip through `Vec::into_boxed_slice`/
+/// `Box::into_raw` (which shrinks to exactly the requested length -- no `Vec`
+/// capacity slack), so the escaped pointer is a genuine allocation that
+/// Rust's default (libc-backed) global allocator's `free()` can reclaim,
+/// matching `xmalloc`'s contract.
+///
+/// Boxed and accessed via [`::core::cell::Cell::as_ptr`] rather than
+/// `RefCell`'s `borrow`/`borrow_mut`: a pointer derived from a `Ref`/`RefMut`
+/// guard reads, to static analysis, as tied to that guard's (very short)
+/// lifetime, even though the guard dropping doesn't actually move or free
+/// the `Vec`'s heap allocation -- `Cell::as_ptr` hands out a raw pointer
+/// straight into the box with no guard object in between, so there's no
+/// borrow-lifetime for a pointer to (spuriously, in this case) outlive.
+pub struct VariableBuffer(Box<::core::cell::Cell<Vec<u8>>>);
+
+impl ::core::fmt::Debug for VariableBuffer {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("VariableBuffer")
+            .field("length", &self.length())
+            .finish()
+    }
+}
+
+impl Default for VariableBuffer {
+    fn default() -> Self {
+        Self(Box::new(::core::cell::Cell::new(Vec::new())))
+    }
+}
+
+impl Clone for VariableBuffer {
+    fn clone(&self) -> Self {
+        // Real copy into a fresh, independent Vec/allocation -- never share
+        // the same heap buffer across two contexts (see AGENTS.md's Clone
+        // rule: a Box-wrapped-cell type's Clone must copy the current data,
+        // never reset to a default/empty value, and here that copy must
+        // also be a distinct allocation, not an aliased one).
+        //
+        // SAFETY: `self.0.as_ptr()` is a raw pointer straight into the box
+        // (no `Ref`/`RefMut` guard involved); the reference it's dereferenced
+        // into here is read-only and dropped before this statement ends.
+        let v: &Vec<u8> = unsafe { &*self.0.as_ptr() };
+        Self(Box::new(::core::cell::Cell::new(v.clone())))
+    }
+}
+
+impl VariableBuffer {
+    /// Current base pointer. Every real caller reads/writes through this
+    /// only after `initialize_variable_output`/`install_variable_buffer` has
+    /// run (which `ensure_len`s the buffer first), so this is never actually
+    /// dereferenced while empty; it deliberately never returns
+    /// `core::ptr::null_mut()` for that empty case (unlike an explicit null
+    /// literal, `Vec::as_mut_ptr`'s own dangling-but-non-null sentinel for a
+    /// zero-length `Vec` doesn't read, to interprocedural static analysis, as
+    /// a pointer that "became invalid" -- it was never valid to dereference
+    /// in the first place, which is exactly the state callers are required
+    /// to avoid).
+    pub fn ptr(&self) -> *mut ::core::ffi::c_char {
+        // SAFETY: see the module-level note on `Cell::as_ptr` vs. `RefCell`
+        // guards; every dereference here is a single, non-reentrant access
+        // that finishes within this statement.
+        unsafe {
+            let v: &mut Vec<u8> = &mut *self.0.as_ptr();
+            v.as_mut_ptr() as *mut ::core::ffi::c_char
+        }
+    }
+
+    /// Current usable length (0 if never initialized).
+    pub fn length(&self) -> crate::ffi_types::size_t {
+        let v: &Vec<u8> = unsafe { &*self.0.as_ptr() };
+        v.len()
+    }
+
+    /// Grow the buffer (zero-filled) to at least `min_len` bytes if it isn't
+    /// already that large, doubling like the former `xrealloc` policy:
+    /// `min_len.max(2 * current_len)`.
+    pub fn ensure_len(&self, min_len: crate::ffi_types::size_t) {
+        unsafe {
+            let v = &mut *self.0.as_ptr();
+            if min_len > v.len() {
+                let new_len = min_len.max(2 * v.len());
+                v.resize(new_len, 0);
+            }
+        }
+    }
+
+    /// Read the byte at `off` (bounds-checked via `Vec` indexing).
+    pub fn byte_at(&self, off: crate::ffi_types::size_t) -> ::core::ffi::c_char {
+        let v: &Vec<u8> = unsafe { &*self.0.as_ptr() };
+        v[off] as ::core::ffi::c_char
+    }
+
+    /// Write the byte at `off` (bounds-checked via `Vec` indexing).
+    pub fn set_byte_at(&self, off: crate::ffi_types::size_t, b: ::core::ffi::c_char) {
+        let v: &mut Vec<u8> = unsafe { &mut *self.0.as_ptr() };
+        v[off] = b as u8;
+    }
+
+    /// Detach the current contents as a raw, `free`-compatible allocation
+    /// (used to hand a finished expansion out to its caller), replacing this
+    /// buffer with a fresh, empty one.
+    ///
+    /// `None` iff the buffer was empty: an empty `Vec`'s backing storage is
+    /// never a real heap allocation (`Vec::into_boxed_slice` never asks the
+    /// allocator for a zero-size block, only a dangling sentinel), so there's
+    /// nothing here a caller could safely hand to `free()`. Callers that
+    /// don't need to eventually `free()` the result (they just round-trip it
+    /// back through [`Self::set_raw`]) can turn this into the traditional
+    /// nullable pointer with `.map_or(null_mut(), NonNull::as_ptr)`; callers
+    /// that will `free()` it (e.g. via [`Self::take_raw_nonnull`]) must not
+    /// paper over `None` with a null pointer, since freeing that sentinel
+    /// address is undefined behavior, unlike `free(NULL)`.
+    pub fn take_raw(
+        &self,
+    ) -> (Option<::core::ptr::NonNull<::core::ffi::c_char>>, crate::ffi_types::size_t) {
+        let old = unsafe { ::core::mem::take(&mut *self.0.as_ptr()) };
+        if old.is_empty() {
+            return (None, 0);
+        }
+        let len = old.len();
+        let boxed = old.into_boxed_slice();
+        let ptr = Box::into_raw(boxed) as *mut ::core::ffi::c_char;
+        (::core::ptr::NonNull::new(ptr), len)
+    }
+
+    /// Like [`Self::take_raw`], but for callers whose buffer is guaranteed
+    /// (by the `initialize_variable_output`/`install_variable_buffer`
+    /// convention) to already be non-empty at this point -- e.g.
+    /// `swap_variable_buffer`'s outgoing buffer, which every real caller
+    /// eventually `free()`s. Panics rather than ever handing out a pointer
+    /// this codebase might `free()` that doesn't trace back to a real
+    /// allocation.
+    pub fn take_raw_nonnull(
+        &self,
+    ) -> (::core::ptr::NonNull<::core::ffi::c_char>, crate::ffi_types::size_t) {
+        let (ptr, len) = self.take_raw();
+        (
+            ptr.expect(
+                "take_raw_nonnull: buffer must be initialized (missing install_variable_buffer?)",
+            ),
+            len,
+        )
+    }
+
+    /// Reclaim a buffer previously produced by [`Self::take_raw`] as the
+    /// active one, dropping (freeing) whatever was previously active.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` (if non-null) and `len` must be exactly a pair previously
+    /// produced by [`Self::take_raw`] -- not, e.g., an arbitrary `xmalloc`ed
+    /// block.
+    pub unsafe fn set_raw(&self, ptr: *mut ::core::ffi::c_char, len: crate::ffi_types::size_t) {
+        let v = if ptr.is_null() {
+            Vec::new()
+        } else {
+            let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(ptr as *mut u8, len);
+            unsafe { Box::from_raw(slice_ptr).into_vec() }
+        };
+        unsafe { *self.0.as_ptr() = v };
     }
 }
 
@@ -2053,6 +2237,64 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// The `$(...)`/recipe expansion output buffer (the former `expand.rs`
+    /// `static mut variable_buffer`/`variable_buffer_length`) starts empty,
+    /// is per-run, and survives the `main_0` carry-over the same way
+    /// [`read_dirstream_buffer_starts_empty_and_survives_carry_over`]
+    /// verifies for `read_dirstream_buf` -- a single heap block must serve
+    /// the whole run, as the former static did.
+    #[test]
+    fn variable_buffer_starts_empty_and_survives_carry_over() {
+        let ctx = ExecContext::default();
+        assert_eq!(ctx.variable_buffer.length(), 0);
+
+        let mut populated = ExecContext::default();
+        populated.variable_buffer.ensure_len(200);
+        populated.variable_buffer.set_byte_at(0, b'x' as ::core::ffi::c_char);
+        let addr = populated.variable_buffer.ptr();
+
+        let carried_variable_buffer = ::core::mem::take(&mut populated.variable_buffer);
+        let rebuilt = ExecContext {
+            variable_buffer: carried_variable_buffer,
+            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+        };
+        // The carried buffer's contents (and address, since carrying is a
+        // move, not a copy) survived.
+        assert_eq!(rebuilt.variable_buffer.ptr(), addr);
+        assert_eq!(rebuilt.variable_buffer.length(), 200);
+        assert_eq!(rebuilt.variable_buffer.byte_at(0), b'x' as ::core::ffi::c_char);
+        // The source field reset to empty; a fresh context inherits nothing.
+        assert_eq!(populated.variable_buffer.length(), 0);
+        assert_eq!(rebuilt.makelevel(), 1);
+
+        assert_eq!(ExecContext::default().variable_buffer.length(), 0);
+    }
+
+    /// `Clone` must deep-copy the buffer's bytes into a fresh, independent
+    /// allocation -- never share the same heap block across two contexts
+    /// (a raw `Cell<*mut c_char>` field would alias here, letting one
+    /// context's growth/realloc invalidate or corrupt the other's).
+    #[test]
+    fn variable_buffer_clone_is_an_independent_copy() {
+        let ctx = ExecContext::default();
+        ctx.variable_buffer.ensure_len(200);
+        ctx.variable_buffer.set_byte_at(0, b'x' as ::core::ffi::c_char);
+
+        let cloned = ctx.clone();
+        assert_ne!(
+            ctx.variable_buffer.ptr(),
+            cloned.variable_buffer.ptr(),
+            "clone must own a separate allocation"
+        );
+        assert_eq!(cloned.variable_buffer.length(), 200);
+        assert_eq!(cloned.variable_buffer.byte_at(0), b'x' as ::core::ffi::c_char);
+
+        // Mutating one must not affect the other.
+        cloned.variable_buffer.set_byte_at(0, b'y' as ::core::ffi::c_char);
+        assert_eq!(ctx.variable_buffer.byte_at(0), b'x' as ::core::ffi::c_char);
+        assert_eq!(cloned.variable_buffer.byte_at(0), b'y' as ::core::ffi::c_char);
     }
 
     /// `parse_file_seq`'s reused scratch buffer (the former function-local

@@ -126,7 +126,7 @@ use crate::ar::{ar_glob, ar_name, ar_parse_name};
 use crate::dir::{dir_setup_glob, file_exists_p};
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, expand_string_buf,
-    variable_buffer, variable_buffer_output,
+    variable_buffer_output,
 };
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
@@ -392,7 +392,10 @@ pub fn install_conditionals(
 /// Restore a conditionals frame saved by [`install_conditionals`]. The
 /// nested scope's frame this replaces is dropped, freeing its `Vec`s — the
 /// former manual `free(ignoring)`/`free(seen_else)`.
-pub fn restore_conditionals(ctx: &crate::execctx::ExecContext, saved: crate::execctx::ConditionalsFrame) {
+pub fn restore_conditionals(
+    ctx: &crate::execctx::ExecContext,
+    saved: crate::execctx::ConditionalsFrame,
+) {
     ctx.conditionals.replace(saved);
 }
 /// Read makefile `filename` and record a goal for it. Returns the index of the
@@ -1528,16 +1531,19 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     if cmdleft.is_null() {
                                         cmdleft = find_char_unquote(p2, ';' as i32);
                                         if !cmdleft.is_null() {
-                                            let p2_off: size_t = p2.offset_from(variable_buffer)
+                                            let p2_off: size_t = p2
+                                                .offset_from(ctx.variable_buffer.ptr())
                                                 as ::core::ffi::c_long
                                                 as size_t;
                                             let cmd_off: size_t = cmdleft
-                                                .offset_from(variable_buffer)
+                                                .offset_from(ctx.variable_buffer.ptr())
                                                 as ::core::ffi::c_long
                                                 as size_t;
                                             let pend: *mut ::core::ffi::c_char =
                                                 p2.offset(strlen(p2) as isize);
-                                            crate::expand::set_variable_buffer_byte(cmd_off, 0);
+                                            crate::expand::set_variable_buffer_byte(
+                                                ctx, cmd_off, 0,
+                                            );
                                             expand_string_buf(
                                                 ctx,
                                                 pend,
@@ -1545,19 +1551,21 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 SIZE_MAX as size_t,
                                             );
                                             lb_next = lb_next.offset(strlen(lb_next) as isize);
-                                            p2 = variable_buffer.offset(p2_off as isize);
-                                            cmdleft =
-                                                variable_buffer.offset(cmd_off as isize).offset(1);
+                                            p2 = ctx.variable_buffer.ptr().add(p2_off);
+                                            cmdleft = ctx.variable_buffer.ptr().add(cmd_off).offset(1);
                                         }
                                     }
                                     colonp = find_char_unquote(p2, ':' as i32);
                                     if !colonp.is_null() {
-                                        let colon_off: size_t = colonp.offset_from(variable_buffer)
+                                        let colon_off: size_t = colonp
+                                            .offset_from(ctx.variable_buffer.ptr())
                                             as ::core::ffi::c_long
                                             as size_t;
                                         if colonp > p2
-                                            && crate::expand::variable_buffer_byte(colon_off - 1)
-                                                as i32
+                                            && crate::expand::variable_buffer_byte(
+                                                ctx,
+                                                colon_off - 1,
+                                            ) as i32
                                                 == '&' as i32
                                         {
                                             colonp = colonp.offset(-1_i32 as isize);
@@ -1581,7 +1589,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         p2 = expand_string_buf(ctx, p2, lb_next, wlen);
                                     }
                                 }
-                                p2 = next_token(variable_buffer);
+                                p2 = next_token(ctx.variable_buffer.ptr());
                                 if wtype as ::core::ffi::c_uint
                                     == w_eol as i32 as ::core::ffi::c_uint
                                 {
@@ -1629,15 +1637,16 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         &[],
                                     );
                                 } else {
-                                    let colon_off: size_t = colonp.offset_from(variable_buffer)
+                                    let colon_off: size_t = colonp
+                                        .offset_from(ctx.variable_buffer.ptr())
                                         as ::core::ffi::c_long
                                         as size_t;
                                     let save_0: ::core::ffi::c_char =
-                                        crate::expand::variable_buffer_byte(colon_off);
+                                        crate::expand::variable_buffer_byte(ctx, colon_off);
                                     if save_0 as i32 == '&' as i32 {
                                         also_make_targets = 1;
                                     }
-                                    crate::expand::set_variable_buffer_byte(colon_off, 0);
+                                    crate::expand::set_variable_buffer_byte(ctx, colon_off, 0);
                                     let parsed_targets = parse_file_seq(
                                         ctx,
                                         &raw mut p2,
@@ -1651,7 +1660,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     } else {
                                         Some(parsed_targets)
                                     };
-                                    crate::expand::set_variable_buffer_byte(colon_off, save_0);
+                                    crate::expand::set_variable_buffer_byte(ctx, colon_off, save_0);
                                     p2 = colonp
                                         .offset((save_0 as i32 == '&' as i32) as i32 as isize);
                                     if filenames.is_none() {
@@ -1667,16 +1676,18 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             p2 = p2.offset(1_i32 as isize);
                                         }
                                         if *lb_next as i32 != 0 {
-                                            let l_1: size_t = p2.offset_from(variable_buffer)
+                                            let l_1: size_t = p2
+                                                .offset_from(ctx.variable_buffer.ptr())
                                                 as ::core::ffi::c_long
                                                 as size_t;
                                             plen = strlen(p2) as size_t;
                                             variable_buffer_output(
+                                                ctx,
                                                 p2.offset(plen as isize),
                                                 lb_next,
                                                 (strlen(lb_next) as size_t).wrapping_add(1),
                                             );
-                                            p2 = variable_buffer.offset(l_1 as isize);
+                                            p2 = ctx.variable_buffer.ptr().add(l_1);
                                         }
                                         p2 = parse_var_assignment(
                                             ctx,
@@ -1687,7 +1698,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                         );
                                         if vmod.assign_v() != 0 {
                                             if !semip.is_null() {
-                                                let l_2: size_t = p2.offset_from(variable_buffer)
+                                                let l_2: size_t = p2
+                                                    .offset_from(ctx.variable_buffer.ptr())
                                                     as ::core::ffi::c_long
                                                     as size_t;
                                                 ::core::slice::from_raw_parts_mut(
@@ -1696,11 +1708,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                 )[0] = b';';
                                                 collapse_continuations(semip);
                                                 variable_buffer_output(
+                                                    ctx,
                                                     p2.offset(strlen(p2) as isize),
                                                     semip,
                                                     (strlen(semip) as size_t).wrapping_add(1),
                                                 );
-                                                p2 = variable_buffer.offset(l_2 as isize);
+                                                p2 = ctx.variable_buffer.ptr().add(l_2);
                                             }
                                             record_target_var(
                                                 ctx,
@@ -1721,7 +1734,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             prefix = crate::make_main::opt_cmd_prefix();
                                             no_targets = 0;
                                             if *lb_next as i32 != 0 {
-                                                let l_3: size_t = p2.offset_from(variable_buffer)
+                                                let l_3: size_t = p2
+                                                    .offset_from(ctx.variable_buffer.ptr())
                                                     as ::core::ffi::c_long
                                                     as size_t;
                                                 expand_string_buf(
@@ -1730,7 +1744,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                     lb_next,
                                                     SIZE_MAX as size_t,
                                                 );
-                                                p2 = variable_buffer.offset(l_3 as isize);
+                                                p2 = ctx.variable_buffer.ptr().add(l_3);
                                                 if cmdleft.is_null() {
                                                     cmdleft = find_char_unquote(p2, ';' as i32);
                                                     if !cmdleft.is_null() {
@@ -2265,7 +2279,10 @@ unsafe fn conditional_line(
             cf.seen_else.push(0);
             o
         };
-        if ctx.conditionals.borrow().ignoring[..o].iter().any(|&x| x != 0) {
+        if ctx.conditionals.borrow().ignoring[..o]
+            .iter()
+            .any(|&x| x != 0)
+        {
             ctx.conditionals.borrow_mut().ignoring[o] = 1;
             return 1;
         }
@@ -2285,10 +2302,10 @@ unsafe fn conditional_line(
                 };
             *var.add(l) = 0;
             v = lookup_variable(ctx, var, l);
-            ctx.conditionals.borrow_mut().ignoring[o] =
-                ((!v.is_null() && *(*v).value as i32 != 0) as i32
-                    == (cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint)
-                        as i32) as u8;
+            ctx.conditionals.borrow_mut().ignoring[o] = ((!v.is_null() && *(*v).value as i32 != 0)
+                as i32
+                == (cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint)
+                    as i32) as u8;
             free(var as *mut ::core::ffi::c_void);
         } else {
             // The `ifeq`/`ifneq` argument forms — `(a,b)`, `"a" "b"`, `'a' 'b'`
@@ -2778,13 +2795,15 @@ unsafe fn enter_prereqs_vec(
                         strlen(percent),
                     );
                     o = variable_buffer_output(
-                        variable_buffer,
+                        ctx,
+                        ctx.variable_buffer.ptr(),
                         nm_ptr,
                         (strlen(nm_ptr) as size_t).wrapping_add(1),
                     );
                 } else {
                     o = patsubst_expand_pat(
-                        variable_buffer,
+                        ctx,
+                        ctx.variable_buffer.ptr(),
                         stem_c.as_ptr() as *const ::core::ffi::c_char,
                         pattern,
                         nm_ptr,
@@ -2792,13 +2811,13 @@ unsafe fn enter_prereqs_vec(
                         percent.offset(1_i32 as isize),
                     );
                 }
-                if *variable_buffer.offset(0_i32 as isize) as i32 == 0 {
+                if *ctx.variable_buffer.ptr().offset(0_i32 as isize) as i32 == 0 {
                     // Expanded to nothing: drop this prerequisite.
                     continue;
                 } else {
                     let result = ::core::slice::from_raw_parts(
-                        variable_buffer as *const u8,
-                        o.offset_from(variable_buffer) as usize,
+                        ctx.variable_buffer.ptr() as *const u8,
+                        o.offset_from(ctx.variable_buffer.ptr()) as usize,
                     );
                     d.name = String::from_utf8_lossy(result).into_owned();
                 }
@@ -3138,7 +3157,8 @@ unsafe fn record_files(
             let percent: *const ::core::ffi::c_char =
                 b"%\0" as *const u8 as *const ::core::ffi::c_char;
             let o: *mut ::core::ffi::c_char = patsubst_expand_pat(
-                variable_buffer,
+                ctx,
+                ctx.variable_buffer.ptr(),
                 name,
                 pattern,
                 percent,
@@ -3146,8 +3166,8 @@ unsafe fn record_files(
                 percent.offset(1_i32 as isize),
             );
             let stem = ::core::slice::from_raw_parts(
-                variable_buffer as *const u8,
-                o.offset_from(variable_buffer) as usize,
+                ctx.variable_buffer.ptr() as *const u8,
+                o.offset_from(ctx.variable_buffer.ptr()) as usize,
             )
             .to_vec();
             {

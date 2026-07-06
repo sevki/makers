@@ -227,7 +227,7 @@ pub unsafe fn encode_flag(
         return fp;
     }
 
-    fp = append(fp, " --warn");
+    fp = append(ctx, fp, " --warn");
 
     if !any_per_warning && flag.global == Action::Warn {
         return fp;
@@ -235,9 +235,9 @@ pub unsafe fn encode_flag(
 
     let mut sep = '=';
     if let Some(name) = flag.global.name() {
-        fp = append_char(fp, sep);
+        fp = append_char(ctx, fp, sep);
         sep = ',';
-        fp = append(fp, name);
+        fp = append(ctx, fp, name);
     }
 
     if any_per_warning {
@@ -246,26 +246,34 @@ pub unsafe fn encode_flag(
             if act == Action::Unset {
                 continue;
             }
-            fp = append_char(fp, sep);
+            fp = append_char(ctx, fp, sep);
             sep = ',';
-            fp = append(fp, t.name());
+            fp = append(ctx, fp, t.name());
             if act != Action::Warn {
                 let action_name = act.name().unwrap();
-                fp = append(fp, ":");
-                fp = append(fp, action_name);
+                fp = append(ctx, fp, ":");
+                fp = append(ctx, fp, action_name);
             }
         }
     }
     fp
 }
 
-unsafe fn append(fp: *mut ::core::ffi::c_char, s: &str) -> *mut ::core::ffi::c_char {
-    variable_buffer_output(fp, s.as_ptr() as *const ::core::ffi::c_char, s.len())
+unsafe fn append(
+    ctx: &crate::execctx::ExecContext,
+    fp: *mut ::core::ffi::c_char,
+    s: &str,
+) -> *mut ::core::ffi::c_char {
+    variable_buffer_output(ctx, fp, s.as_ptr() as *const ::core::ffi::c_char, s.len())
 }
 
-unsafe fn append_char(fp: *mut ::core::ffi::c_char, c: char) -> *mut ::core::ffi::c_char {
+unsafe fn append_char(
+    ctx: &crate::execctx::ExecContext,
+    fp: *mut ::core::ffi::c_char,
+    c: char,
+) -> *mut ::core::ffi::c_char {
     let byte = c as u8;
-    variable_buffer_output(fp, &byte as *const u8 as *const ::core::ffi::c_char, 1)
+    variable_buffer_output(ctx, fp, &byte as *const u8 as *const ::core::ffi::c_char, 1)
 }
 
 #[cfg(test)]
@@ -337,7 +345,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         let ctx = crate::execctx::ExecContext::default();
         unsafe {
-            let fp = crate::expand::initialize_variable_output();
+            let fp = crate::expand::initialize_variable_output(&ctx);
             assert_eq!(encode_flag(&ctx, fp), fp);
         }
     }
@@ -351,7 +359,7 @@ mod tests {
         decode_actions(&ctx, "error", None);
         decode_actions(&ctx, "circular-dep:ignore", None);
         unsafe {
-            let fp = crate::expand::initialize_variable_output();
+            let fp = crate::expand::initialize_variable_output(&ctx);
             let out = encode_flag(&ctx, fp);
             let rendered = ::core::ffi::CStr::from_ptr(fp).to_str().unwrap();
             assert_eq!(rendered, " --warn=error,circular-dep:ignore");

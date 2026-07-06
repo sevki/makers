@@ -279,7 +279,7 @@ pub const flag: OptionArgKind = 0;
 use crate::commands::{fatal_error_signal, handling_fatal_signal};
 use crate::expand::{
     expand_string_buf, expand_variable_buf, initialize_variable_output, install_variable_buffer,
-    restore_variable_buffer, variable_buffer, variable_buffer_output,
+    restore_variable_buffer, variable_buffer_output,
 };
 pub use crate::file::nameseq;
 use crate::file::{
@@ -1631,7 +1631,14 @@ pub unsafe extern "C" fn debug_signal_handler(mut _sig: i32) {
     // parameter, so it reaches `main_0`'s live context through the `CTX_PTR`
     // borrow channel, like `fatal_error_signal`'s cleanup helpers.
     with_exec_context(|ctx| {
-        set_db_level(ctx, if db_level(ctx) != 0 { DB_NONE } else { DB_BASIC });
+        set_db_level(
+            ctx,
+            if db_level(ctx) != 0 {
+                DB_NONE
+            } else {
+                DB_BASIC
+            },
+        );
     });
 }
 /// # Safety
@@ -1945,7 +1952,7 @@ unsafe fn main_0(
     // the per-run directory cache held on the context. `ctx`'s stack slot is
     // stable across the build-phase rebuild below, so this install stays valid.
     CTX_PTR.with(|p| p.set(&ctx as *const crate::execctx::ExecContext));
-    initialize_variable_output();
+    initialize_variable_output(&ctx);
     spin(b"main-entry\0" as *const u8 as *const ::core::ffi::c_char);
     if check_io_state(&ctx) & 0x8 as ::core::ffi::c_uint != 0 {
         atexit(Some(close_stdout as unsafe extern "C" fn() -> ()));
@@ -2373,6 +2380,14 @@ unsafe fn main_0(
     // every pointer-identity check in `variable.rs` compares against) alive
     // across this rebuild instead of resetting to an empty table.
     let carried_variable_globals = ::core::mem::take(&mut ctx.variable_globals);
+    // `initialize_variable_output()` above (at main_0's very start) already
+    // allocated the shared `$(...)`/recipe expansion output buffer; carrying
+    // it keeps that single allocation alive for the rest of the run instead
+    // of silently discarding it and allocating a second one on first use
+    // after this rebuild, matching the one-allocation-for-the-whole-run
+    // invariant the former `static mut variable_buffer` had (and that
+    // `read_dirstream_buf` preserves the same way).
+    let carried_variable_buffer = ::core::mem::take(&mut ctx.variable_buffer);
     ctx = crate::execctx::ExecContext {
         directories: carried_directories,
         directory_contents: carried_directory_contents,
@@ -2396,6 +2411,7 @@ unsafe fn main_0(
         warning_state: carried_warning_state,
         db_level: carried_db_level,
         variable_globals: carried_variable_globals,
+        variable_buffer: carried_variable_buffer,
         ..crate::execctx::ExecContext::new(crate::execctx::Config {
             makelevel: parsed_makelevel,
             ..Default::default()
@@ -3558,13 +3574,18 @@ unsafe fn main_0(
             );
         } else {
             p_6 = variable_buffer_output(
-                variable_buffer,
+                &ctx,
+                ctx.variable_buffer.ptr(),
                 (*default_goal_var).value,
                 strlen((*default_goal_var).value) as size_t,
             );
             *p_6 = 0;
-            p_6 = variable_buffer;
+            p_6 = ctx.variable_buffer.ptr();
         }
+        assert!(
+            !p_6.is_null(),
+            "variable_buffer must be initialized by this point in main_0"
+        );
         if *p_6 as i32 != 0 {
             let mut f_6: Option<crate::file::FileId> =
                 lookup_file(&ctx, ::std::ffi::CStr::from_ptr(p_6).to_bytes());
@@ -4393,9 +4414,10 @@ pub unsafe fn define_makeflags(
     let mut lensave: size_t = 0;
     let mut fp: *mut ::core::ffi::c_char;
     let mut c: [::core::ffi::c_char; 3] = [0; 3];
-    install_variable_buffer(&raw mut bufsave, &raw mut lensave);
+    install_variable_buffer(ctx, &raw mut bufsave, &raw mut lensave);
     fp = variable_buffer_output(
-        variable_buffer,
+        ctx,
+        ctx.variable_buffer.ptr(),
         b"-\0" as *const u8 as *const ::core::ffi::c_char,
         1,
     );
@@ -4414,7 +4436,7 @@ pub unsafe fn define_makeflags(
                     || opt_flag_int(options, (*cs).c) != *((*cs).default_value as *mut i32)))
         {
             c[0_i32 as usize] = (*cs).c as ::core::ffi::c_char;
-            fp = variable_buffer_output(fp, &raw mut c as *mut ::core::ffi::c_char, 1);
+            fp = variable_buffer_output(ctx, fp, &raw mut c as *mut ::core::ffi::c_char, 1);
         }
         cs = cs.offset(1_i32 as isize);
     }
@@ -4442,6 +4464,7 @@ pub unsafe fn define_makeflags(
                         if (*cs).c <= CHAR_MAX {
                             c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
@@ -4449,11 +4472,13 @@ pub unsafe fn define_makeflags(
                         } else {
                             c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 (*cs).long_name,
                                 strlen((*cs).long_name) as size_t,
@@ -4469,6 +4494,7 @@ pub unsafe fn define_makeflags(
                         if (*cs).c <= CHAR_MAX {
                             c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
@@ -4476,11 +4502,13 @@ pub unsafe fn define_makeflags(
                         } else {
                             c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 (*cs).long_name,
                                 strlen((*cs).long_name) as size_t,
@@ -4504,12 +4532,13 @@ pub unsafe fn define_makeflags(
                             );
                             if !((*cs).c <= CHAR_MAX) {
                                 fp = variable_buffer_output(
+                                    ctx,
                                     fp,
                                     b"=\0" as *const u8 as *const ::core::ffi::c_char,
                                     1,
                                 );
                             }
-                            fp = variable_buffer_output(fp, buf, buflen as size_t);
+                            fp = variable_buffer_output(ctx, fp, buf, buflen as size_t);
                         }
                     }
                 }
@@ -4521,6 +4550,7 @@ pub unsafe fn define_makeflags(
                         if (*cs).c <= CHAR_MAX {
                             c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
@@ -4528,11 +4558,13 @@ pub unsafe fn define_makeflags(
                         } else {
                             c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 (*cs).long_name,
                                 strlen((*cs).long_name) as size_t,
@@ -4556,12 +4588,13 @@ pub unsafe fn define_makeflags(
                             );
                             if !((*cs).c <= CHAR_MAX) {
                                 fp = variable_buffer_output(
+                                    ctx,
                                     fp,
                                     b"=\0" as *const u8 as *const ::core::ffi::c_char,
                                     1,
                                 );
                             }
-                            fp = variable_buffer_output(fp, buf_0, buflen_0 as size_t);
+                            fp = variable_buffer_output(ctx, fp, buf_0, buflen_0 as size_t);
                         }
                     }
                 }
@@ -4576,6 +4609,7 @@ pub unsafe fn define_makeflags(
                         if (*cs).c <= CHAR_MAX {
                             c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
@@ -4583,11 +4617,13 @@ pub unsafe fn define_makeflags(
                         } else {
                             c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 &raw mut c as *mut ::core::ffi::c_char,
                                 3,
                             );
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 (*cs).long_name,
                                 strlen((*cs).long_name) as size_t,
@@ -4595,12 +4631,13 @@ pub unsafe fn define_makeflags(
                         }
                         if !((*cs).c <= CHAR_MAX) {
                             fp = variable_buffer_output(
+                                ctx,
                                 fp,
                                 b"=\0" as *const u8 as *const ::core::ffi::c_char,
                                 1,
                             );
                         }
-                        fp = variable_buffer_output(fp, p, strlen(p) as size_t);
+                        fp = variable_buffer_output(ctx, fp, p, strlen(p) as size_t);
                     }
                 }
                 4 | 3 => {
@@ -4632,6 +4669,7 @@ pub unsafe fn define_makeflags(
                                 if (*cs).c <= CHAR_MAX {
                                     c[2_i32 as usize] = (*cs).c as ::core::ffi::c_char;
                                     fp = variable_buffer_output(
+                                        ctx,
                                         fp,
                                         &raw mut c as *mut ::core::ffi::c_char,
                                         3,
@@ -4639,11 +4677,13 @@ pub unsafe fn define_makeflags(
                                 } else {
                                     c[2_i32 as usize] = '-' as i32 as ::core::ffi::c_char;
                                     fp = variable_buffer_output(
+                                        ctx,
                                         fp,
                                         &raw mut c as *mut ::core::ffi::c_char,
                                         3,
                                     );
                                     fp = variable_buffer_output(
+                                        ctx,
                                         fp,
                                         (*cs).long_name,
                                         strlen((*cs).long_name) as size_t,
@@ -4651,12 +4691,13 @@ pub unsafe fn define_makeflags(
                                 }
                                 if !((*cs).c <= CHAR_MAX) {
                                     fp = variable_buffer_output(
+                                        ctx,
                                         fp,
                                         b"=\0" as *const u8 as *const ::core::ffi::c_char,
                                         1,
                                     );
                                 }
-                                fp = variable_buffer_output(fp, item, strlen(item) as size_t);
+                                fp = variable_buffer_output(ctx, fp, item, strlen(item) as size_t);
                             }
                         }
                     }
@@ -4668,17 +4709,21 @@ pub unsafe fn define_makeflags(
         }
         cs = cs.offset(1_i32 as isize);
     }
-    if fp == variable_buffer.offset(1_i32 as isize) {
-        fp = variable_buffer;
+    if fp == ctx.variable_buffer.ptr().offset(1_i32 as isize) {
+        fp = ctx.variable_buffer.ptr();
     }
+    assert!(
+        !fp.is_null(),
+        "variable_buffer must be initialized by this point in define_makeflags"
+    );
     *fp = 0;
     define_variable_in_set(
         ctx,
         b"MFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-        variable_buffer.offset(
-            (if *variable_buffer.offset(0_i32 as isize) as i32 == '-' as i32
-                && *variable_buffer.offset(1_i32 as isize) as i32 == ' ' as i32
+        ctx.variable_buffer.ptr().offset(
+            (if *ctx.variable_buffer.ptr().offset(0_i32 as isize) as i32 == '-' as i32
+                && *ctx.variable_buffer.ptr().offset(1_i32 as isize) as i32 == ' ' as i32
             {
                 2
             } else {
@@ -4692,6 +4737,7 @@ pub unsafe fn define_makeflags(
     );
     if !options.eval_strings.borrow().is_empty() {
         fp = variable_buffer_output(
+            ctx,
             fp,
             &raw const evalref as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 21]>() as size_t).wrapping_sub(1),
@@ -4708,15 +4754,21 @@ pub unsafe fn define_makeflags(
         .is_some_and(|vr| !vr.value.is_null() && *vr.value.offset(0) as i32 != 0)
     {
         fp = variable_buffer_output(
+            ctx,
             fp,
             b" -- $(\0" as *const u8 as *const ::core::ffi::c_char,
             6,
         );
-        fp = variable_buffer_output(fp, r, l);
-        fp = variable_buffer_output(fp, b")\0" as *const u8 as *const ::core::ffi::c_char, 1);
+        fp = variable_buffer_output(ctx, fp, r, l);
+        fp = variable_buffer_output(
+            ctx,
+            fp,
+            b")\0" as *const u8 as *const ::core::ffi::c_char,
+            1,
+        );
     }
     *fp = 0;
-    fp = variable_buffer;
+    fp = ctx.variable_buffer.ptr();
     if *fp.offset(0_i32 as isize) as i32 == '-' as i32 {
         fp = fp.offset(1_i32 as isize);
     }
@@ -4735,7 +4787,7 @@ pub unsafe fn define_makeflags(
         NILF,
     );
     (*v).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    restore_variable_buffer(bufsave, lensave);
+    restore_variable_buffer(ctx, bufsave, lensave);
     v
 }
 /// Decide whether `make` should announce directory changes.

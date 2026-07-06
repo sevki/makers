@@ -397,6 +397,7 @@ pub fn end_of_token(s: &[u8]) -> usize {
 /// # Safety
 /// `s` must be a valid NUL-terminated string.
 pub unsafe fn next_token(mut s: *const c_char) -> *mut c_char {
+    assert!(!s.is_null(), "next_token: s must not be null");
     while stop_set(*s, MAP_SPACE) {
         s = s.add(1);
     }
@@ -454,7 +455,9 @@ pub fn skip_reference(bytes: &[u8]) -> usize {
 /// `*ptr` must be a valid NUL-terminated string; `lengthptr` must be null or
 /// valid for writes.
 pub unsafe fn find_next_token(ptr: *mut *const c_char, lengthptr: *mut size_t) -> *mut c_char {
+    assert!(!ptr.is_null(), "find_next_token: ptr must not be null");
     let p: *const c_char = next_token(*ptr);
+    assert!(!p.is_null(), "find_next_token: token address must not be null");
     if *p == 0 {
         return null_mut();
     }
