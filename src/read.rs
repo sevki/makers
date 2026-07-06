@@ -247,7 +247,9 @@ fn name_seq_len(head: Option<&NameSeq>) -> usize {
     len
 }
 pub const NONEXISTENT_MTIME: i32 = 1;
-pub static mut reading_file: *const Floc = ::core::ptr::null::<Floc>();
+// The former `static mut reading_file` now lives on `ExecContext` as
+// `ctx.reading_file` (see `execctx::ReadingFile`); every use below reads
+// through that owned field instead of a process-wide static.
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -414,7 +416,6 @@ unsafe fn eval_makefile(
             offset: 0,
         },
     };
-    let curfile: *const Floc;
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let deps_idx: usize = {
         let mut rf = ctx.read_files.borrow_mut();
@@ -465,7 +466,7 @@ unsafe fn eval_makefile(
             let err: *const ::core::ffi::c_char = strerror(open_error);
             fatal(
                 ctx,
-                reading_file,
+                ctx.reading_file.0.get(),
                 strlen(err) as size_t,
                 b"%s\0" as *const u8 as *const ::core::ffi::c_char,
                 &[FmtArg::Str((err) as *const ::core::ffi::c_char)],
@@ -589,14 +590,14 @@ unsafe fn eval_makefile(
     ebuf.bufstart = xmalloc(ebuf.size) as *mut ::core::ffi::c_char;
     ebuf.bufnext = ebuf.bufstart;
     ebuf.buffer = ebuf.bufnext;
-    curfile = reading_file;
-    reading_file = &raw mut ebuf.floc;
+    let curfile = ctx.reading_file.0.get();
+    ctx.reading_file.0.set(&raw mut ebuf.floc);
     eval(
         ctx,
         &raw mut ebuf,
         (flags as i32 & RM_NO_DEFAULT_GOAL == 0) as i32,
     );
-    reading_file = curfile;
+    ctx.reading_file.0.set(curfile);
     fclose(ebuf.fp);
     free(ebuf.bufstart as *mut ::core::ffi::c_void);
     *__errno_location() = 0;
@@ -623,7 +624,6 @@ pub unsafe fn eval_buffer(
             offset: 0,
         },
     };
-    let curfile: *const Floc;
     ebuf.size = strlen(buffer) as size_t;
     ebuf.bufstart = buffer;
     ebuf.bufnext = ebuf.bufstart;
@@ -631,19 +631,19 @@ pub unsafe fn eval_buffer(
     ebuf.fp = ::core::ptr::null_mut::<FILE>();
     if let Some(fl) = flocp.as_ref() {
         ebuf.floc = *fl;
-    } else if !reading_file.is_null() {
-        ebuf.floc = *reading_file;
+    } else if !ctx.reading_file.0.get().is_null() {
+        ebuf.floc = *ctx.reading_file.0.get();
     } else {
         ebuf.floc.filenm = ::core::ptr::null::<::core::ffi::c_char>();
         ebuf.floc.lineno = 1;
         ebuf.floc.offset = 0;
     }
-    curfile = reading_file;
-    reading_file = &raw mut ebuf.floc;
+    let curfile = ctx.reading_file.0.get();
+    ctx.reading_file.0.set(&raw mut ebuf.floc);
     let saved = install_conditionals(ctx);
     eval(ctx, &raw mut ebuf, 1);
     restore_conditionals(ctx, saved);
-    reading_file = curfile;
+    ctx.reading_file.0.set(curfile);
 }
 unsafe fn parse_var_assignment(
     ctx: &crate::execctx::ExecContext,
