@@ -3832,7 +3832,7 @@ struct OptionalArgSwitch {
     numeric_lookahead: bool,
 }
 
-unsafe fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgSwitch> {
+fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgSwitch> {
     let mut out = Vec::new();
     for cs in switches {
         if cs.c == 0 || cs.noarg_value.is_null() {
@@ -3845,7 +3845,10 @@ unsafe fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgS
         };
         let mut longs = Vec::new();
         if !cs.long_name.is_null() {
-            if let Ok(s) = ::core::ffi::CStr::from_ptr(cs.long_name).to_str() {
+            // SAFETY: `long_name` was just checked non-null; every table
+            // entry's `long_name` is either null or a valid NUL-terminated
+            // `&'static str` literal.
+            if let Ok(s) = unsafe { ::core::ffi::CStr::from_ptr(cs.long_name) }.to_str() {
                 if !s.is_empty() {
                     longs.push(format!("--{}", s));
                 }
@@ -3853,7 +3856,9 @@ unsafe fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgS
         }
         for alias in LONG_OPTION_ALIASES.iter() {
             if alias.val == cs.c && alias.has_arg == optional_argument {
-                if let Ok(s) = ::core::ffi::CStr::from_ptr(alias.name).to_str() {
+                // SAFETY: every `LONG_OPTION_ALIASES` entry's `name` is a
+                // valid NUL-terminated `&'static str` literal.
+                if let Ok(s) = unsafe { ::core::ffi::CStr::from_ptr(alias.name) }.to_str() {
                     longs.push(format!("--{}", s));
                 }
             }
@@ -3878,7 +3883,7 @@ unsafe fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgS
 /// occurrence is rewritten to an explicit empty value (`-j=`/`--debug=`) so
 /// clap records "given, no value" instead of grabbing an unrelated following
 /// token.
-unsafe fn normalize_argv_for_clap(switches: &[command_switch], tokens: &[String]) -> Vec<String> {
+fn normalize_argv_for_clap(switches: &[command_switch], tokens: &[String]) -> Vec<String> {
     let opt_args = optional_arg_switches(switches);
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0;
@@ -3920,7 +3925,7 @@ unsafe fn normalize_argv_for_clap(switches: &[command_switch], tokens: &[String]
 /// everything else (targets, `VAR=value` assignments). Replaces the former
 /// `build_getopt_tables`/`getopt_long` pair -- rebuilt fresh on every
 /// `decode_switches` call, same as the table it replaced.
-unsafe fn build_clap_command(switches: &[command_switch]) -> clap::Command {
+fn build_clap_command(switches: &[command_switch]) -> clap::Command {
     use clap::{Arg, ArgAction, Command};
     let mut cmd = Command::new("make")
         .no_binary_name(true)
@@ -3935,7 +3940,10 @@ unsafe fn build_clap_command(switches: &[command_switch]) -> clap::Command {
             arg = arg.short(cs.c as u8 as char);
         }
         if !cs.long_name.is_null() {
-            if let Ok(s) = ::core::ffi::CStr::from_ptr(cs.long_name).to_str() {
+            // SAFETY: `long_name` was just checked non-null; every table
+            // entry's `long_name` is either null or a valid NUL-terminated
+            // `&'static str` literal.
+            if let Ok(s) = unsafe { ::core::ffi::CStr::from_ptr(cs.long_name) }.to_str() {
                 if !s.is_empty() {
                     arg = arg.long(s.to_string());
                 }
@@ -3949,7 +3957,9 @@ unsafe fn build_clap_command(switches: &[command_switch]) -> clap::Command {
         cmd = cmd.arg(arg);
     }
     for alias in LONG_OPTION_ALIASES.iter() {
-        if let Ok(name) = ::core::ffi::CStr::from_ptr(alias.name).to_str() {
+        // SAFETY: every `LONG_OPTION_ALIASES` entry's `name` is a valid
+        // NUL-terminated `&'static str` literal.
+        if let Ok(name) = unsafe { ::core::ffi::CStr::from_ptr(alias.name) }.to_str() {
             let name = name.to_string();
             cmd = cmd.mut_arg(format!("c{}", alias.val), move |a| a.alias(name));
         }
@@ -3987,8 +3997,7 @@ unsafe fn apply_value_switch(
         if !cs.noarg_value.is_null() {
             ::core::ffi::CStr::from_ptr(cs.noarg_value as *const ::core::ffi::c_char).to_owned()
         } else {
-            let mut opt: [::core::ffi::c_char; 2] =
-                ::core::mem::transmute::<[u8; 2], [::core::ffi::c_char; 2]>(*b"c\0");
+            let mut opt: [::core::ffi::c_char; 2] = [0; 2];
             let op: *const ::core::ffi::c_char = if cs.c <= CHAR_MAX {
                 opt[0_i32 as usize] = cs.c as ::core::ffi::c_char;
                 &raw mut opt as *mut ::core::ffi::c_char
