@@ -2191,13 +2191,15 @@ unsafe fn main_0(
     });
     let env_slots: Option<u32> = options.arg_job_slots.get();
     options.arg_job_slots.set(None);
-    let cli_tokens: Vec<String> = (1..argc)
-        .map(|i| {
-            ::core::ffi::CStr::from_ptr(*argv.offset(i as isize))
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
+    let cli_tokens: Vec<::std::ffi::OsString> = {
+        use std::os::unix::ffi::OsStrExt;
+        (1..argc)
+            .map(|i| {
+                let cstr = ::core::ffi::CStr::from_ptr(*argv.offset(i as isize));
+                ::std::ffi::OsStr::from_bytes(cstr.to_bytes()).to_os_string()
+            })
+            .collect()
+    };
     decode_switches(&ctx, &options, &cli_tokens, o_command);
     argv_slots = options.arg_job_slots.get();
     if options.arg_job_slots.get().is_none() {
@@ -3873,6 +3875,15 @@ fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgSwitch> 
     out
 }
 
+/// Sentinel substituted for a *bare* optional-arg switch occurrence (see
+/// [`normalize_argv_for_clap`]), so after clap parses it, "no value was
+/// given" stays distinguishable from a genuine explicit empty value
+/// (`--debug=`) -- the two must be treated differently (see
+/// [`apply_value_switch`] and the `-j`/`-l` handling in [`decode_switches`]).
+/// argv tokens can never contain a NUL byte (they're NUL-terminated C
+/// strings at the OS level), so this can never collide with real input.
+const NOARG_SENTINEL: &str = "\0";
+
 /// Rewrites `tokens` so every *bare* occurrence of an optional-argument
 /// switch carries an explicit value before clap ever sees it. clap's own
 /// `num_args(0..=1)` handling (unlike `getopt_long`'s) always tries to
@@ -3880,18 +3891,34 @@ fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgSwitch> 
 /// for every optional-arg switch except `-j`/`-l` -- and even for those two,
 /// only when the next token is all-numeric (`-j`) or numeric/`.`-led (`-l`),
 /// replicating the original hand-rolled lookahead exactly. Every other bare
-/// occurrence is rewritten to an explicit empty value (`-j=`/`--debug=`) so
+/// occurrence is rewritten to [`NOARG_SENTINEL`] (`-j=\0`/`--debug=\0`) so
 /// clap records "given, no value" instead of grabbing an unrelated following
-/// token.
-fn normalize_argv_for_clap(switches: &[command_switch], tokens: &[String]) -> Vec<String> {
+/// token, while staying distinguishable from a real explicit empty value.
+fn normalize_argv_for_clap(
+    switches: &[command_switch],
+    tokens: &[::std::ffi::OsString],
+) -> Vec<::std::ffi::OsString> {
+    use std::os::unix::ffi::OsStrExt;
+    // Byte-level `"{a}={b}"` concatenation, avoiding any UTF-8 assumption
+    // about `a`/`b` (a switch value like `-l`'s can be arbitrary bytes past
+    // its first char -- the original hand-rolled lookahead is byte-based,
+    // not string-based).
+    fn concat_eq(a: &::std::ffi::OsStr, b: &[u8]) -> ::std::ffi::OsString {
+        let mut buf = a.as_bytes().to_vec();
+        buf.push(b'=');
+        buf.extend_from_slice(b);
+        ::std::ffi::OsStr::from_bytes(&buf).to_os_string()
+    }
+
     let opt_args = optional_arg_switches(switches);
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
         let tok = &tokens[i];
-        let matched = opt_args
-            .iter()
-            .find(|o| o.short.as_deref() == Some(tok.as_str()) || o.longs.iter().any(|l| l == tok));
+        let matched = opt_args.iter().find(|o| {
+            o.short.as_deref().is_some_and(|s| tok.as_os_str() == ::std::ffi::OsStr::new(s))
+                || o.longs.iter().any(|l| tok.as_os_str() == ::std::ffi::OsStr::new(l.as_str()))
+        });
         let Some(o) = matched else {
             out.push(tok.clone());
             i += 1;
@@ -3899,21 +3926,20 @@ fn normalize_argv_for_clap(switches: &[command_switch], tokens: &[String]) -> Ve
         };
         if o.numeric_lookahead {
             if let Some(next) = tokens.get(i + 1) {
+                let bytes = next.as_bytes();
                 let consume = if o.c == 'j' as i32 {
-                    !next.is_empty() && next.bytes().all(|b| b.is_ascii_digit())
+                    !bytes.is_empty() && bytes.iter().all(u8::is_ascii_digit)
                 } else {
-                    next.as_bytes()
-                        .first()
-                        .is_some_and(|&b| b.is_ascii_digit() || b == b'.')
+                    bytes.first().is_some_and(|&b| b.is_ascii_digit() || b == b'.')
                 };
                 if consume {
-                    out.push(format!("{tok}={next}"));
+                    out.push(concat_eq(tok.as_os_str(), bytes));
                     i += 2;
                     continue;
                 }
             }
         }
-        out.push(format!("{tok}="));
+        out.push(concat_eq(tok.as_os_str(), NOARG_SENTINEL.as_bytes()));
         i += 1;
     }
     out
@@ -3926,6 +3952,7 @@ fn normalize_argv_for_clap(switches: &[command_switch], tokens: &[String]) -> Ve
 /// `build_getopt_tables`/`getopt_long` pair -- rebuilt fresh on every
 /// `decode_switches` call, same as the table it replaced.
 fn build_clap_command(switches: &[command_switch]) -> clap::Command {
+    use clap::builder::OsStringValueParser;
     use clap::{Arg, ArgAction, Command};
     let mut cmd = Command::new("make")
         .no_binary_name(true)
@@ -3951,8 +3978,14 @@ fn build_clap_command(switches: &[command_switch]) -> clap::Command {
         }
         arg = match cs.type_0 {
             t if t == flag || t == flag_off || t == ignore => arg.action(ArgAction::Count),
-            _ if cs.noarg_value.is_null() => arg.action(ArgAction::Append).num_args(1),
-            _ => arg.action(ArgAction::Append).num_args(0..=1),
+            _ if cs.noarg_value.is_null() => arg
+                .action(ArgAction::Append)
+                .num_args(1)
+                .value_parser(OsStringValueParser::new()),
+            _ => arg
+                .action(ArgAction::Append)
+                .num_args(0..=1)
+                .value_parser(OsStringValueParser::new()),
         };
         cmd = cmd.arg(arg);
     }
@@ -3968,7 +4001,8 @@ fn build_clap_command(switches: &[command_switch]) -> clap::Command {
         Arg::new("__rest")
             .action(ArgAction::Append)
             .num_args(0..)
-            .allow_hyphen_values(false),
+            .allow_hyphen_values(false)
+            .value_parser(OsStringValueParser::new()),
     )
 }
 
@@ -3978,32 +4012,49 @@ fn build_clap_command(switches: &[command_switch]) -> clap::Command {
 /// unchanged; only the argument's origin (an `ArgMatches` value instead of a
 /// `getopt_long` `coptarg` pointer) differs.
 #[allow(clippy::too_many_arguments)]
-unsafe fn apply_value_switch(
+fn apply_value_switch(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
     cs: &command_switch,
-    raw_value: &str,
+    raw_value: &::std::ffi::OsStr,
     doit: bool,
     cs_origin: Option<&::core::cell::Cell<variable_origin>>,
     origin: variable_origin,
     bad: &mut i32,
 ) {
+    use std::os::unix::ffi::OsStrExt;
     if !doit {
         return;
     }
-    // Resolve the option argument; an empty value is an error (unless this
-    // switch has a `noarg_value` substitute) and the option is skipped.
-    let resolved: ::std::ffi::CString = if raw_value.is_empty() {
-        if !cs.noarg_value.is_null() {
-            ::core::ffi::CStr::from_ptr(cs.noarg_value as *const ::core::ffi::c_char).to_owned()
+    // Resolve the option argument. A bare occurrence (no value given at
+    // all -- flagged by `NOARG_SENTINEL`, see `normalize_argv_for_clap`)
+    // falls back to the switch's `noarg_value`; a genuine *explicit* empty
+    // value (`--debug=`, `-f ''`) is always an error, matching
+    // `getopt_long`'s `*coptarg == 0` check regardless of whether this
+    // switch also has a `noarg_value` substitute. Built from raw bytes (not
+    // through `str`) so a non-UTF-8 filename argument round-trips exactly,
+    // matching the original getopt-based `CString` path.
+    let resolved: ::std::ffi::CString = if raw_value == ::std::ffi::OsStr::new(NOARG_SENTINEL) {
+        // SAFETY: `NOARG_SENTINEL` is only ever produced by
+        // `normalize_argv_for_clap` for a switch listed in
+        // `optional_arg_switches`, which filters on `noarg_value` being
+        // non-null; every table entry's `noarg_value`, when non-null, is a
+        // valid NUL-terminated `&'static str` literal.
+        unsafe { ::core::ffi::CStr::from_ptr(cs.noarg_value as *const ::core::ffi::c_char) }
+            .to_owned()
+    } else if raw_value.is_empty() {
+        let mut opt: [::core::ffi::c_char; 2] = [0; 2];
+        let op: *const ::core::ffi::c_char = if cs.c <= CHAR_MAX {
+            opt[0_i32 as usize] = cs.c as ::core::ffi::c_char;
+            &raw mut opt as *mut ::core::ffi::c_char
         } else {
-            let mut opt: [::core::ffi::c_char; 2] = [0; 2];
-            let op: *const ::core::ffi::c_char = if cs.c <= CHAR_MAX {
-                opt[0_i32 as usize] = cs.c as ::core::ffi::c_char;
-                &raw mut opt as *mut ::core::ffi::c_char
-            } else {
-                cs.long_name
-            };
+            // SAFETY: every table entry with `c > CHAR_MAX` (long-only) has
+            // a non-null `long_name`, since it has no single-char spelling.
+            cs.long_name
+        };
+        // SAFETY: `op` is either `opt` (a local, NUL-terminated 2-byte
+        // buffer) or `cs.long_name` (non-null and NUL-terminated per above).
+        unsafe {
             error(
                 ctx,
                 NILF,
@@ -4019,11 +4070,11 @@ unsafe fn apply_value_switch(
                     FmtArg::Str(op),
                 ],
             );
-            *bad = 1;
-            return;
         }
+        *bad = 1;
+        return;
     } else {
-        ::std::ffi::CString::new(raw_value).unwrap_or_default()
+        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default()
     };
     let coptarg = resolved.as_ptr();
     if cs.type_0 == string {
@@ -4071,21 +4122,34 @@ unsafe fn apply_value_switch(
                 resolved.clone()
             } else if cs.c == TEMP_STDIN_OPT {
                 if options.stdin_offset.get() > 0 {
-                    fatal(
-                        ctx,
-                        NILF,
-                        0,
-                        b"INTERNAL: multiple --temp-stdin options provided!\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &[],
-                    );
+                    // SAFETY: `fatal` requires a valid NUL-terminated format
+                    // string with no `%` conversions beyond the given args;
+                    // this literal has none.
+                    unsafe {
+                        fatal(
+                            ctx,
+                            NILF,
+                            0,
+                            b"INTERNAL: multiple --temp-stdin options provided!\0" as *const u8
+                                as *const ::core::ffi::c_char,
+                            &[],
+                        );
+                    }
                 }
                 options.stdin_offset.set(list.len() as i32);
-                let cached = strcache_add(ctx, coptarg);
+                // SAFETY: `strcache_add` requires a valid NUL-terminated C
+                // string; `coptarg` is `resolved.as_ptr()`, a live `CString`.
+                // Its return value is a strcache-owned, valid NUL-terminated
+                // string for the process lifetime.
+                let cached = unsafe { strcache_add(ctx, coptarg) };
                 ctx.temp_stdin_name.0.set(cached);
-                ::core::ffi::CStr::from_ptr(cached).to_owned()
+                unsafe { ::core::ffi::CStr::from_ptr(cached) }.to_owned()
             } else {
-                ::core::ffi::CStr::from_ptr(expand_command_line_file(ctx, coptarg)).to_owned()
+                // SAFETY: `expand_command_line_file` requires a valid
+                // NUL-terminated C string (`coptarg`, as above) and returns
+                // one.
+                unsafe { ::core::ffi::CStr::from_ptr(expand_command_line_file(ctx, coptarg)) }
+                    .to_owned()
             };
             list.push(stored);
             if let Some(oc) = cs_origin {
@@ -4095,10 +4159,10 @@ unsafe fn apply_value_switch(
     }
 }
 
-unsafe fn decode_switches(
+fn decode_switches(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
-    tokens: &[String],
+    tokens: &[::std::ffi::OsString],
     origin: variable_origin,
 ) {
     let mut bad: i32 = 0;
@@ -4116,7 +4180,9 @@ unsafe fn decode_switches(
                 // an unrelated valid switch elsewhere on the same command
                 // line (or MAKEFLAGS-derived token list) still applies.
                 let culprit = e.get(clap::error::ContextKind::InvalidArg).map(|v| v.to_string());
-                if let Some(c) = culprit.and_then(|c| retry_tokens.iter().position(|t| *t == c)) {
+                if let Some(c) =
+                    culprit.and_then(|c| retry_tokens.iter().position(|t| t.to_str() == Some(c.as_str())))
+                {
                     retry_tokens.remove(c);
                     continue;
                 }
@@ -4129,7 +4195,12 @@ unsafe fn decode_switches(
         // another option's value) -- nothing more to recover from this
         // batch.
         if bad != 0 && origin == o_command {
-            print_usage(ctx, options, bad);
+            // SAFETY: `print_usage` prints the built-in usage table and
+            // exits; it takes no raw pointers and imposes no precondition
+            // beyond a valid `&ExecContext`/`&Options`, which we have.
+            unsafe {
+                print_usage(ctx, options, bad);
+            }
         }
         return;
     };
@@ -4229,7 +4300,7 @@ unsafe fn decode_switches(
             continue;
         }
         let id = format!("c{}", cs.c);
-        let Some(values) = matches.get_many::<String>(&id) else {
+        let Some(values) = matches.get_many::<::std::ffi::OsString>(&id) else {
             continue;
         };
         let cs_origin = opt_origin_cell(options, cs.c);
@@ -4254,7 +4325,7 @@ unsafe fn decode_switches(
             continue;
         }
         let id = format!("c{}", cs.c);
-        let Some(mut values) = matches.get_many::<String>(&id) else {
+        let Some(mut values) = matches.get_many::<::std::ffi::OsString>(&id) else {
             continue;
         };
         let cs_origin = opt_origin_cell(options, cs.c);
@@ -4270,33 +4341,49 @@ unsafe fn decode_switches(
             if !doit {
                 continue;
             }
+            use std::os::unix::ffi::OsStrExt;
+            let is_sentinel = raw_value.as_os_str() == ::std::ffi::OsStr::new(NOARG_SENTINEL);
             if cs.c == 'j' as i32 {
-                if raw_value.is_empty() {
-                    let n = *(cs.noarg_value as *const ::core::ffi::c_uint);
+                if is_sentinel {
+                    // SAFETY: `-j`'s table entry's `noarg_value` is always
+                    // set (to `&inf_jobs`), a valid `c_uint`.
+                    let n = unsafe { *(cs.noarg_value as *const ::core::ffi::c_uint) };
                     options.arg_job_slots.set(Some(n));
                 } else {
-                    let cstr = ::std::ffi::CString::new(raw_value.as_str()).unwrap_or_default();
+                    let cstr =
+                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
                     let n = make_toui(&cstr).unwrap_or(0);
                     if n == 0 {
-                        error(
-                            ctx,
-                            NILF,
-                            0,
-                            b"the '-%c' option requires a positive integer argument\0"
-                                as *const u8 as *const ::core::ffi::c_char,
-                            &[FmtArg::Int(cs.c as i64)],
-                        );
+                        // SAFETY: `error` requires a valid NUL-terminated
+                        // format string with args matching its `%`
+                        // conversions; this literal has one `%c` matched by
+                        // one `FmtArg::Int`.
+                        unsafe {
+                            error(
+                                ctx,
+                                NILF,
+                                0,
+                                b"the '-%c' option requires a positive integer argument\0"
+                                    as *const u8 as *const ::core::ffi::c_char,
+                                &[FmtArg::Int(cs.c as i64)],
+                            );
+                        }
                         bad = 1;
                     } else {
                         options.arg_job_slots.set(Some(n));
                     }
                 }
             } else {
-                let v = if raw_value.is_empty() {
-                    *(cs.noarg_value as *const ::core::ffi::c_double)
+                let v = if is_sentinel {
+                    // SAFETY: `-l`'s table entry's `noarg_value` is always
+                    // set (to `&default_load_average`), a valid `c_double`.
+                    unsafe { *(cs.noarg_value as *const ::core::ffi::c_double) }
                 } else {
-                    let cstr = ::std::ffi::CString::new(raw_value.as_str()).unwrap_or_default();
-                    atof(cstr.as_ptr())
+                    let cstr =
+                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
+                    // SAFETY: `atof` requires a valid NUL-terminated C
+                    // string; `cstr` is a live `CString`.
+                    unsafe { atof(cstr.as_ptr()) }
                 };
                 options.max_load_average.set(v);
             }
@@ -4307,12 +4394,15 @@ unsafe fn decode_switches(
     }
 
     // Non-switch tokens (targets, `VAR=value`), in original relative order.
-    if let Some(rest) = matches.get_many::<String>("__rest") {
+    if let Some(rest) = matches.get_many::<::std::ffi::OsString>("__rest") {
+        use std::os::unix::ffi::OsStrExt;
         let mut found_wait: ::core::ffi::c_uint = 0;
         for tok in rest {
-            let ctok = ::std::ffi::CString::new(tok.as_str()).unwrap_or_default();
+            let ctok = ::std::ffi::CString::new(tok.as_bytes()).unwrap_or_default();
             let prior_found_wait = found_wait;
-            found_wait = handle_non_switch_argument(ctx, options, ctok.as_ptr(), origin);
+            // SAFETY: `handle_non_switch_argument` requires a valid
+            // NUL-terminated C string; `ctok` is a live `CString`.
+            found_wait = unsafe { handle_non_switch_argument(ctx, options, ctok.as_ptr(), origin) };
             if prior_found_wait != 0 {
                 if let Some(last) = options.goals.borrow_mut().last_mut() {
                     last.dep.wait_here = true;
@@ -4321,11 +4411,16 @@ unsafe fn decode_switches(
         }
     }
 
-    if bad != 0 && origin == o_command {
-        print_usage(ctx, options, bad);
+    // SAFETY: none of these take raw pointers or impose a precondition
+    // beyond a valid `&ExecContext`/`&Options`, which we have; `print_usage`
+    // exits without returning when reached.
+    unsafe {
+        if bad != 0 && origin == o_command {
+            print_usage(ctx, options, bad);
+        }
+        decode_debug_flags(ctx, options);
+        decode_output_sync_flags(ctx, options);
     }
-    decode_debug_flags(ctx, options);
-    decode_output_sync_flags(ctx, options);
     if options.warn_undefined_variables.get() {
         crate::warning::decode_actions(ctx, "undefined-var", None);
         options.warn_undefined_variables.set(false);
@@ -4338,7 +4433,11 @@ unsafe fn decode_switches(
         }
     }
     options.run_silent.set(options.silent.get());
-    reset_env_override(ctx);
+    // SAFETY: `reset_env_override` takes no raw pointers and imposes no
+    // precondition beyond a valid `&ExecContext`, which we have.
+    unsafe {
+        reset_env_override(ctx);
+    }
 }
 /// Tokenizes an already-expanded `MAKEFLAGS`/`GNUMAKEFLAGS` value on
 /// whitespace (per [`stopchar_map`]'s `MAP_BLANK` bit), honoring
@@ -4389,18 +4488,22 @@ unsafe fn decode_env_switches(
     if bytes.is_empty() {
         return;
     }
+    use std::os::unix::ffi::OsStrExt;
     let words = split_makeflags_value(bytes);
-    let mut tokens: Vec<String> = words
+    let mut tokens: Vec<::std::ffi::OsString> = words
         .iter()
-        .map(|w| String::from_utf8_lossy(w).into_owned())
+        .map(|w| ::std::ffi::OsStr::from_bytes(w).to_os_string())
         .collect();
     // Legacy dash-optional rewrite: a `MAKEFLAGS` value written without a
     // leading dash (e.g. `MAKEFLAGS=ik`) is bundled as short flags, but only
     // when its first word has no `=` (so `FOO=bar`-shaped content is left
     // alone).
     if let Some(first) = tokens.first_mut() {
-        if !first.starts_with('-') && !first.contains('=') {
-            *first = format!("-{first}");
+        let raw = first.as_bytes();
+        if !raw.starts_with(b"-") && !raw.contains(&b'=') {
+            let mut rewritten = vec![b'-'];
+            rewritten.extend_from_slice(raw);
+            *first = ::std::ffi::OsStr::from_bytes(&rewritten).to_os_string();
         }
     }
     decode_switches(ctx, options, &tokens, origin);
@@ -5057,9 +5160,10 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
 pub const __CHAR_BIT__: i32 = 8;
 pub const __SCHAR_MAX__: i32 = 127;
 pub fn main() {
-    let mut args_strings: Vec<Vec<u8>> = ::std::env::args()
+    use std::os::unix::ffi::OsStrExt;
+    let mut args_strings: Vec<Vec<u8>> = ::std::env::args_os()
         .map(|arg| {
-            ::std::ffi::CString::new(arg)
+            ::std::ffi::CString::new(arg.as_bytes())
                 .expect("Failed to convert argument into CString.")
                 .into_bytes_with_nul()
         })
@@ -6772,8 +6876,9 @@ mod decode_switches_clap_vs_getopt_tests {
         let ctx_new = ExecContext::default();
         unsafe { init_hash_global_variable_set(&ctx_new) };
         let options_new = Options::new();
-        let owned_tokens: Vec<String> = tokens.iter().map(|s| s.to_string()).collect();
-        unsafe { decode_switches(&ctx_new, &options_new, &owned_tokens, origin) };
+        let owned_tokens: Vec<::std::ffi::OsString> =
+            tokens.iter().map(::std::ffi::OsString::from).collect();
+        decode_switches(&ctx_new, &options_new, &owned_tokens, origin);
 
         let ctx_oracle = ExecContext::default();
         unsafe { init_hash_global_variable_set(&ctx_oracle) };
@@ -6824,6 +6929,8 @@ mod decode_switches_clap_vs_getopt_tests {
         check(&["--no-silent"], o_command);
         check(&["-s", "--no-silent"], o_command);
         check(&["--no-silent", "-s"], o_command);
+        check(&["-kS"], o_command);
+        check(&["-Sk"], o_command);
     }
 
     #[test]
@@ -6848,6 +6955,10 @@ mod decode_switches_clap_vs_getopt_tests {
         check(&["--jobs", "4"], o_command);
         check(&["-j", "target"], o_command); // non-numeric next: -j stays bare, "target" is a target
         check(&["-j4", "-j8"], o_command); // repeats: last wins
+        // o_env, not o_command: an explicit empty value is a real error
+        // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
+        // which exits the whole test process.
+        check(&["--jobs="], o_env); // explicit empty value (distinct from bare --jobs): error
     }
 
     #[test]
@@ -6860,6 +6971,7 @@ mod decode_switches_clap_vs_getopt_tests {
         check(&["--load-average=2"], o_command);
         check(&["--max-load", "2"], o_command);
         check(&["-l", "target"], o_command); // non-numeric, non-dot next: -l stays bare
+        check(&["--load-average="], o_command); // explicit empty value
     }
 
     #[test]
@@ -6875,6 +6987,12 @@ mod decode_switches_clap_vs_getopt_tests {
         check(&["--debug=b", "--debug=b"], o_command); // exact-dup skipped
         check(&["--shuffle"], o_command);
         check(&["--shuffle=reverse"], o_command);
+        // o_env, not o_command: an explicit empty value is a real error
+        // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
+        // which exits the whole test process.
+        check(&["--debug="], o_env); // explicit empty value: error
+        check(&["--output-sync="], o_env); // explicit empty value: error
+        check(&["--shuffle="], o_env); // explicit empty value: error
     }
 
     #[test]
@@ -6895,6 +7013,33 @@ mod decode_switches_clap_vs_getopt_tests {
         // print_usage(), which exits the whole test process.
         check(&["-f", ""], o_env);
         check(&["--file="], o_env);
+    }
+
+    /// A non-UTF-8 filename argument (e.g. from a byte-oriented POSIX
+    /// filesystem) must round-trip through `decode_switches` exactly, not
+    /// get replaced with U+FFFD -- unlike `check()`'s other cases, this
+    /// bypasses the oracle comparison (its harness only accepts `&str`
+    /// tokens) and asserts directly on the stored bytes.
+    #[test]
+    fn non_utf8_filename_argument_round_trips_exact_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        super::initialize_stopchar_map();
+        install_default_options_for_test();
+        let ctx = ExecContext::default();
+        unsafe { init_hash_global_variable_set(&ctx) };
+        let options = Options::new();
+
+        let raw_name: &[u8] = b"weird-\xffname.mk";
+        let tokens: Vec<::std::ffi::OsString> = vec![
+            ::std::ffi::OsString::from("-f"),
+            ::std::ffi::OsStr::from_bytes(raw_name).to_os_string(),
+        ];
+        decode_switches(&ctx, &options, &tokens, o_command);
+
+        let makefiles = options.makefiles.borrow();
+        assert_eq!(makefiles.len(), 1);
+        assert_eq!(makefiles[0].as_bytes(), raw_name);
     }
 
     #[test]
