@@ -1348,11 +1348,13 @@ impl Default for RecipeReadingFloc {
 
 impl Clone for RecipeReadingFloc {
     fn clone(&self) -> Self {
-        // Transient scratch storage rebuilt by `install_file_context_id` on
-        // every call; never meaningfully shared, so a clone gets its own
-        // fresh (and not yet written) record rather than aliasing the
-        // original's.
-        Self::default()
+        // A real copy: `Clone`'s contract is that the result equals the
+        // original, so this must copy the current `Floc` data into a
+        // freshly boxed cell -- not reset it to zeroed placeholder data.
+        // The fresh `Box` still means the clone owns independent storage
+        // (never aliasing the original's address), matching `reading_file`
+        // pointing into `self`'s box, not the clone's.
+        Self(Box::new(::core::cell::Cell::new(self.0.get())))
     }
 }
 
@@ -1865,6 +1867,31 @@ mod tests {
             ctx.expanding_var_floc(),
             &floc_b as *const crate::floc::Floc,
             "override cleared: falls back to reading_file's current value again"
+        );
+    }
+
+    /// `Clone` must copy the current `Floc`, not reset it to the zeroed
+    /// placeholder -- the same "Clone must equal the original" contract
+    /// `VariableGlobals::clone` upholds.
+    #[test]
+    fn recipe_reading_floc_clone_preserves_the_current_value() {
+        let ctx = ExecContext::default();
+        ctx.recipe_reading_floc.0.set(crate::floc::Floc {
+            filenm: ::core::ptr::null(),
+            lineno: 42,
+            offset: 7,
+        });
+        let cloned = ctx.clone();
+        let value = cloned.recipe_reading_floc.0.get();
+        assert_eq!(
+            (value.lineno, value.offset),
+            (42, 7),
+            "clone must copy the current value, not reset it"
+        );
+        assert_ne!(
+            cloned.recipe_reading_floc.as_ptr(),
+            ctx.recipe_reading_floc.as_ptr(),
+            "clone must own independent storage, never alias the original's box"
         );
     }
 
