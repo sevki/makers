@@ -9,7 +9,7 @@ use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
-    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, putchar, realloc, sleep,
+    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, realloc, sleep,
     sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, unlink, EINTR,
 };
 
@@ -261,10 +261,11 @@ pub unsafe fn collapse_continuations(line: *mut c_char) {
 /// Write `n` spaces to stdout.
 /// # Safety
 /// Always safe; unsafe only for C-API signature compatibility.
-pub unsafe fn print_spaces(n: c_uint) {
-    for _ in 0..n {
-        putchar(' ' as i32);
-    }
+pub fn print_spaces(n: c_uint) {
+    use std::io::Write;
+    // No flush: the caller's trace line follows in the same Rust stdout
+    // buffer and flushes both together, as the C putchar+printf+fflush did.
+    let _ = std::io::stdout().write_all(&vec![b' '; n as usize]);
 }
 
 /// Concatenate byte strings, returning the joined bytes as an owned,

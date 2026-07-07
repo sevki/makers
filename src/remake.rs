@@ -8,10 +8,9 @@ use crate::file::{
 };
 use crate::misc::{find_next_token, print_spaces};
 use crate::output::FmtArg;
-use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use libc::{
-    __errno_location, abort, close, free, open, printf, puts, sprintf, strcmp, strcpy, strerror,
+    __errno_location, abort, close, free, open, sprintf, strcmp, strcpy, strerror,
     strrchr,
 };
 extern "C" {
@@ -26,8 +25,6 @@ extern "C" {
         __buf: *mut ::core::ffi::c_char,
         __len: size_t,
     ) -> ssize_t;
-    static mut stdout: *mut FILE;
-    fn fflush(__stream: *mut FILE) -> i32;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
 pub use crate::sys_stat::stat;
@@ -184,6 +181,12 @@ fn new_mtime() -> uintmax_t {
 
 /// Read the debug level via the `make_main` accessor.
 #[inline]
+/// `-d` trace line `<pre><name><post>`, where `name` is a `cname`-style
+/// NUL-terminated buffer (the NUL is dropped) — one printf `%s` site.
+fn trace_name(pre: &[u8], name: &[u8], post: &[u8]) {
+    crate::output::trace_parts(&[pre, &name[..name.len().saturating_sub(1)], post]);
+}
+
 fn dbg(ctx: &crate::execctx::ExecContext) -> i32 {
     db_level(ctx)
 }
@@ -357,15 +360,8 @@ pub fn update_goal_chain(
                 if 0x2_i32 & dbg(ctx) != 0 {
                     let head_name = node_name(ctx, head);
                     let cn = cname(&head_name);
-                    unsafe {
-                        print_spaces(depth);
-                        printf(
-                            b".WAIT is blocking '%s'.\n\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            cn.as_ptr() as *const ::core::ffi::c_char,
-                        );
-                        fflush(stdout);
-                    }
+                    print_spaces(depth);
+                    trace_name(b".WAIT is blocking '", &cn, b"'.\n");
                 }
                 break;
             }
@@ -581,14 +577,8 @@ pub fn update_file(
             drop(n);
             if 0x2_i32 & dbg(ctx) != 0 {
                 let cn = cname(&name);
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        b"Pruning file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                trace_name(b"Pruning file '", &cn, b"'.\n");
             }
             return if cs as i32 == cs_finished as i32 {
                 ustatus
@@ -785,27 +775,14 @@ fn update_file_1(
     });
     let cn = cname(&name);
     if 0x2_i32 & dbg(ctx) != 0 {
-        unsafe {
-            print_spaces(depth);
-            printf(
-                b"Considering target file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                cn.as_ptr() as *const ::core::ffi::c_char,
-            );
-            fflush(stdout);
-        }
+        print_spaces(depth);
+        trace_name(b"Considering target file '", &cn, b"'.\n");
     }
     if updated {
         if ustatus as i32 > us_none as i32 {
             if 0x2_i32 & dbg(ctx) != 0 {
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        b"Recently tried and failed to update file '%s'.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                trace_name(b"Recently tried and failed to update file '", &cn, b"'.\n");
             }
             let (no_diag, dontcare) = with_entry!(n, { (n.no_diag, n.dontcare) });
             if no_diag && !dontcare {
@@ -814,15 +791,8 @@ fn update_file_1(
             return ustatus;
         }
         if 0x2_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"File '%s' was considered already.\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"File '", &cn, b"' was considered already.\n");
         }
         return UpdateStatus::Success;
     }
@@ -830,28 +800,15 @@ fn update_file_1(
         0 | 1 => {}
         2 => {
             if 0x2_i32 & dbg(ctx) != 0 {
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        b"Still updating file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                trace_name(b"Still updating file '", &cn, b"'.\n");
             }
             return UpdateStatus::Success;
         }
         3 => {
             if 0x2_i32 & dbg(ctx) != 0 {
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        b"Finished updating file '%s'.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                trace_name(b"Finished updating file '", &cn, b"'.\n");
             }
             return ustatus;
         }
@@ -873,17 +830,11 @@ fn update_file_1(
     let mut noexist = (this_mtime == NONEXISTENT_MTIME as uintmax_t) as i32;
     if noexist != 0 {
         if 0x1_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    if is_phony {
-                        b"Target '%s' is phony.\n\0" as *const u8 as *const ::core::ffi::c_char
-                    } else {
-                        b"File '%s' does not exist.\n\0" as *const u8 as *const ::core::ffi::c_char
-                    },
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
+            print_spaces(depth);
+            if is_phony {
+                trace_name(b"Target '", &cn, b"' is phony.\n");
+            } else {
+                trace_name(b"File '", &cn, b"' does not exist.\n");
             }
         }
     } else if this_mtime >= ORDINARY_MTIME_MIN as uintmax_t
@@ -938,21 +889,18 @@ fn update_file_1(
                 .unwrap_or((false, Vec::new()));
             if 0x1_i32 & dbg(ctx) != 0 {
                 let adcn = cname(&ad_name);
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        if ad_phony {
-                            b"Grouped target peer '%s' of file '%s' is phony.\n\0" as *const u8
-                                as *const ::core::ffi::c_char
-                        } else {
-                            b"Grouped target peer '%s' of file '%s' does not exist.\n\0"
-                                as *const u8 as *const ::core::ffi::c_char
-                        },
-                        adcn.as_ptr() as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                crate::output::trace_parts(&[
+                    b"Grouped target peer '",
+                    &adcn[..adcn.len() - 1],
+                    b"' of file '",
+                    &cn[..cn.len() - 1],
+                    if ad_phony {
+                        b"' is phony.\n"
+                    } else {
+                        b"' does not exist.\n"
+                    },
+                ]);
             }
         } else if fmtime < this_mtime {
             this_mtime = fmtime;
@@ -980,14 +928,8 @@ fn update_file_1(
         // copied `default_file->cmds`; with the recipe owned inline we leave the
         // diagnostic but defer the actual inheritance to the recipe layer.
         if 0x8_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"Using default recipe for '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"Using default recipe for '", &cn, b"'.\n");
         }
     }
 
@@ -1237,28 +1179,14 @@ fn update_file_1(
     if running != 0 {
         set_command_state_id(ctx, file, cs_deps_running);
         if 0x2_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"The prerequisites of '%s' are being made.\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"The prerequisites of '", &cn, b"' are being made.\n");
         }
         return UpdateStatus::Success;
     }
     if 0x2_i32 & dbg(ctx) != 0 {
-        unsafe {
-            print_spaces(depth);
-            printf(
-                b"Finished prerequisites of target file '%s'.\n\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                cn.as_ptr() as *const ::core::ffi::c_char,
-            );
-            fflush(stdout);
-        }
+        print_spaces(depth);
+        trace_name(b"Finished prerequisites of target file '", &cn, b"'.\n");
     }
     if dep_status as u64 != 0 {
         with_entry!(n, {
@@ -1272,14 +1200,8 @@ fn update_file_1(
         });
         notice_finished_file(ctx, file, entry);
         if 0x2_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"Giving up on target file '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"Giving up on target file '", &cn, b"'.\n");
         }
         if depth == 0
             && crate::make_main::opt_keep_going()
@@ -1353,15 +1275,8 @@ fn update_file_1(
     if is_dc && deps_empty {
         must_make = 1;
         if 0x1_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"Target '%s' is double-colon and has no prerequisites.\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"Target '", &cn, b"' is double-colon and has no prerequisites.\n");
         }
     } else if noexist == 0
         && file_is_target
@@ -1371,41 +1286,20 @@ fn update_file_1(
     {
         must_make = 0;
         if 0x2_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"No recipe for '%s' and no prerequisites actually changed.\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"No recipe for '", &cn, b"' and no prerequisites actually changed.\n");
         }
     } else if must_make == 0 && file_has_recipe2 && ctx.always_make_flag.get() {
         must_make = 1;
         if 0x2_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"Making '%s' due to always-make flag.\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"Making '", &cn, b"' due to always-make flag.\n");
         }
     }
     if must_make == 0 {
         if 0x2_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"No need to remake target '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                puts(b".\0" as *const u8 as *const ::core::ffi::c_char);
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"No need to remake target '", &cn, b"'.\n");
         }
         if !file_notintermediate && !ctx.no_intermediates.get() {
             with_entry!(n, {
@@ -1421,27 +1315,15 @@ fn update_file_1(
         return UpdateStatus::Success;
     }
     if 0x1_i32 & dbg(ctx) != 0 {
-        unsafe {
-            print_spaces(depth);
-            printf(
-                b"Must remake target '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                cn.as_ptr() as *const ::core::ffi::c_char,
-            );
-            fflush(stdout);
-        }
+        print_spaces(depth);
+        trace_name(b"Must remake target '", &cn, b"'.\n");
     }
     // VPATH-name divergence check.
     let (nm, hn) = with_entry!(n, { (n.name.clone(), n.hname.clone()) });
     if nm != hn {
         if 0x1_i32 & dbg(ctx) != 0 {
             let hncn = cname(&hn);
-            unsafe {
-                printf(
-                    b"  Ignoring VPATH name '%s'.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    hncn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            trace_name(b"  Ignoring VPATH name '", &hncn, b"'.\n");
         }
         with_entry!(n, {
             n.ignore_vpath = true;
@@ -1451,14 +1333,8 @@ fn update_file_1(
     let cstate2 = with_entry!(n, { n.command_state });
     if cstate2 as i32 != cs_finished as i32 {
         if 0x2_i32 & dbg(ctx) != 0 {
-            unsafe {
-                print_spaces(depth);
-                printf(
-                    b"Recipe of '%s' is being run.\n\0" as *const u8 as *const ::core::ffi::c_char,
-                    cn.as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
-            }
+            print_spaces(depth);
+            trace_name(b"Recipe of '", &cn, b"' is being run.\n");
         }
         return UpdateStatus::Success;
     }
@@ -1466,41 +1342,20 @@ fn update_file_1(
     match ustatus2 as i32 {
         3 => {
             if 0x1_i32 & dbg(ctx) != 0 {
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        b"Failed to remake target file '%s'.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                trace_name(b"Failed to remake target file '", &cn, b"'.\n");
             }
         }
         0 => {
             if 0x1_i32 & dbg(ctx) != 0 {
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        b"Successfully remade target file '%s'.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                trace_name(b"Successfully remade target file '", &cn, b"'.\n");
             }
         }
         2 => {
             if 0x1_i32 & dbg(ctx) != 0 {
-                unsafe {
-                    print_spaces(depth);
-                    printf(
-                        b"Target file '%s' needs to be remade under -q.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        cn.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
-                }
+                print_spaces(depth);
+                trace_name(b"Target file '", &cn, b"' needs to be remade under -q.\n");
             }
         }
         1 | _ => {}

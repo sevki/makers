@@ -11,13 +11,6 @@
 //! rather than by `*mut Rule`. No `*mut File`/`*mut Dep`/`*mut Commands`.
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::stdio::FILE;
-use libc::printf;
-extern "C" {
-    static mut stdout: *mut FILE;
-    fn fflush(__stream: *mut FILE) -> i32;
-}
-
 use crate::ar::ar_name;
 use crate::dep::{DepFlags, DepNode};
 use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
@@ -44,16 +37,9 @@ fn stop_set(c: u8, mask: i32) -> bool {
 /// `DBS (DB_IMPLICIT, ...)`: print an indented trace line when implicit-rule
 /// debugging is enabled. Takes the depth and a preformatted byte string.
 fn dbs(ctx: &crate::execctx::ExecContext, depth: u32, msg: &[u8]) {
-    // SAFETY: tracing only; `print_spaces`/`printf` are the established trace
-    // sinks.
-    unsafe {
-        if DB_IMPLICIT & db_level(ctx) != 0 {
-            print_spaces(depth);
-            let mut s = msg.to_vec();
-            s.push(0);
-            printf(c"%s".as_ptr(), s.as_ptr());
-            fflush(stdout);
-        }
+    if DB_IMPLICIT & db_level(ctx) != 0 {
+        print_spaces(depth);
+        crate::output::trace_out(msg);
     }
 }
 
