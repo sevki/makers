@@ -33,14 +33,9 @@ use rustc_hash::FxHashMap;
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, exit, kill, printf, puts, signal, unlink, EINTR, ENOENT, SIGHUP, SIGINT,
-    SIGQUIT, SIGTERM, SIG_DFL, S_IFMT, S_IFREG,
+    __errno_location, exit, kill, signal, unlink, EINTR, ENOENT, SIGHUP, SIGINT, SIGQUIT,
+    SIGTERM, SIG_DFL, S_IFMT, S_IFREG,
 };
-
-extern "C" {
-    static mut stdout: *mut crate::stdio::FILE;
-    fn fputs(s: *const c_char, stream: *mut crate::stdio::FILE) -> i32;
-}
 
 pub const MAKE_TROUBLE: i32 = 1;
 
@@ -752,23 +747,17 @@ pub unsafe fn delete_child_targets(ctx: &ExecContext, child: *mut child) {
 /// prefix.
 pub fn print_commands(recipe: &Recipe) {
     // SAFETY: stdout/printf/fputs are the C stdio handles; the format buffers
-    // below are NUL-terminated and outlive the calls.
-    unsafe {
-        fputs(c"#  recipe to execute".as_ptr(), stdout);
-        match &recipe.defined_in {
-            None => {
-                puts(c" (built-in):".as_ptr());
-            }
-            Some(filenm) => {
-                let mut nm = filenm.clone();
-                nm.push(0);
-                printf(
-                    c" (from '%s', line %lu):\n".as_ptr(),
-                    nm.as_ptr() as *const c_char,
-                    recipe.defined_lineno as ::core::ffi::c_ulong,
-                );
-            }
-        }
+    match &recipe.defined_in {
+        None => crate::output::trace_out(b"#  recipe to execute (built-in):\n"),
+        Some(filenm) => crate::output::trace_parts(&[
+            b"#  recipe to execute (from '",
+            filenm,
+            b"', line ",
+            (recipe.defined_lineno as ::core::ffi::c_ulong)
+                .to_string()
+                .as_bytes(),
+            b"):\n",
+        ]),
     }
 
     let prefix = crate::make_main::opt_cmd_prefix() as u8;
@@ -790,15 +779,7 @@ fn print_recipe_lines(bytes: &[u8], prefix: u8) {
             bs = if bytes[end] == b'\\' { !bs } else { false };
             end += 1;
         }
-        // SAFETY: `printf` with %c/%.*s over the in-bounds slice [s, end).
-        unsafe {
-            printf(
-                c"%c%.*s\n".as_ptr(),
-                prefix as i32,
-                (end - s) as i32,
-                bytes[s..].as_ptr() as *const c_char,
-            );
-        }
+        crate::output::trace_parts(&[&[prefix], &bytes[s..end], b"\n"]);
         s = end + (end < bytes.len()) as usize;
     }
 }

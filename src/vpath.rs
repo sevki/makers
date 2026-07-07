@@ -8,7 +8,7 @@
 use ::core::ffi::{c_char, c_uint, c_void, CStr};
 use ::core::ptr::{null, null_mut};
 
-use libc::{__errno_location, free, printf, puts, strcmp, strlen};
+use libc::{__errno_location, free, strcmp, strlen};
 
 use crate::dir::{dir_file_exists_p, dir_name};
 use crate::expand::expand_variable_buf;
@@ -18,14 +18,11 @@ use crate::function::pattern_matches;
 use crate::make_main::stopchar_map;
 use crate::misc::xmalloc;
 use crate::read::find_percent;
-use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_len};
 use crate::sys_stat::stat;
 
 extern "C" {
     fn stat(file: *const c_char, buf: *mut stat) -> i32;
-    static mut stdout: *mut FILE;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
 }
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
@@ -662,10 +659,9 @@ pub unsafe fn vpath_search(
 /// Print the data base of VPATH search paths.
 ///
 /// # Safety
-/// Must run single-threaded: it reads the module's vpath chains and writes
-/// to the C `stdout` stream.
+/// Must run single-threaded: it reads the module's vpath chains.
 pub unsafe fn print_vpath_data_base(ctx: &crate::execctx::ExecContext) {
-    puts(c"\n# VPATH Search Paths\n".as_ptr());
+    crate::output::trace_out(b"\n# VPATH Search Paths\n\n");
 
     let vpaths = ctx.vpaths.0.get();
     let general_vpath = ctx.general_vpath.0.get();
@@ -673,24 +669,29 @@ pub unsafe fn print_vpath_data_base(ctx: &crate::execctx::ExecContext) {
     let mut v = vpaths;
     while !v.is_null() {
         nvpaths += 1;
-        printf(c"vpath %s ".as_ptr(), (*v).pattern);
+        crate::output::trace_parts(&[
+            b"vpath ",
+            CStr::from_ptr((*v).pattern).to_bytes(),
+            b" ",
+        ]);
         print_search_path(v);
         v = (*v).next;
     }
 
     if vpaths.is_null() {
-        puts(c"# No 'vpath' search paths.".as_ptr());
+        crate::output::trace_out(b"# No 'vpath' search paths.\n");
     } else {
-        printf(c"\n# %u 'vpath' search paths.\n".as_ptr(), nvpaths);
+        crate::output::trace_parts(&[
+            b"\n# ",
+            nvpaths.to_string().as_bytes(),
+            b" 'vpath' search paths.\n",
+        ]);
     }
 
     if general_vpath.is_null() {
-        puts(c"\n# No general ('VPATH' variable) search path.".as_ptr());
+        crate::output::trace_out(b"\n# No general ('VPATH' variable) search path.\n");
     } else {
-        fputs(
-            c"\n# General ('VPATH' variable) search path:\n# ".as_ptr(),
-            stdout,
-        );
+        crate::output::trace_out(b"\n# General ('VPATH' variable) search path:\n# ");
         print_search_path(general_vpath);
     }
 }
@@ -701,10 +702,10 @@ unsafe fn print_search_path(path: *const Vpath) {
     let entries = searchpath_entries(path);
     for (idx, &entry) in entries.iter().enumerate() {
         let sep = if idx + 1 == entries.len() {
-            '\n' as i32
+            b'\n'
         } else {
-            PATH_SEPARATOR_CHAR
+            PATH_SEPARATOR_CHAR as u8
         };
-        printf(c"%s%c".as_ptr(), entry, sep);
+        crate::output::trace_parts(&[CStr::from_ptr(entry).to_bytes(), &[sep]]);
     }
 }
