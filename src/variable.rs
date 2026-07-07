@@ -3,11 +3,11 @@ use crate::file::{file, Commands, Dep, FileId, TargetVariable, VarExport, VarFla
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 use crate::stdio::FILE;
 use c2rust_bitfields;
-use libc::{abort, free, printf, putchar, puts, sprintf, strchr, strcmp, strcpy, strstr};
+use libc::{abort, free, sprintf, strchr, strcmp, strcpy, strstr};
 extern "C" {
     static mut stdout: *mut FILE;
     fn putc(__c: i32, __stream: *mut FILE) -> i32;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
+    fn fflush(__stream: *mut FILE) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -2724,63 +2724,68 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
         }
         _ => {}
     }
-    fputs(b"# \0" as *const u8 as *const ::core::ffi::c_char, stdout);
-    fputs(origin, stdout);
+    crate::output::trace_parts(&[b"# ", ::core::ffi::CStr::from_ptr(origin).to_bytes()]);
     if (*v).private_var() != 0 {
-        fputs(
-            b" private\0" as *const u8 as *const ::core::ffi::c_char,
-            stdout,
-        );
+        crate::output::trace_out(b" private");
     }
     if !(*v).fileinfo.filenm.is_null() {
-        printf(
-            b" (from '%s', line %lu)\0" as *const u8 as *const ::core::ffi::c_char,
-            (*v).fileinfo.filenm,
-            (*v).fileinfo.lineno.wrapping_add((*v).fileinfo.offset),
-        );
+        crate::output::trace_parts(&[
+            b" (from '",
+            ::core::ffi::CStr::from_ptr((*v).fileinfo.filenm).to_bytes(),
+            b"', line ",
+            (*v).fileinfo.lineno.wrapping_add((*v).fileinfo.offset).to_string().as_bytes(),
+            b")",
+        ]);
     }
-    putchar('\n' as i32);
-    fputs(prefix, stdout);
+    crate::output::trace_out(b"\n");
+    crate::output::trace_out(::core::ffi::CStr::from_ptr(prefix).to_bytes());
     if (*v).recursive() as i32 != 0 && !strchr((*v).value, '\n' as i32).is_null() {
-        printf(
-            b"define %s\n%s\nendef\n\0" as *const u8 as *const ::core::ffi::c_char,
-            (*v).name,
-            (*v).value,
-        );
+        crate::output::trace_parts(&[
+            b"define ",
+            ::core::ffi::CStr::from_ptr((*v).name).to_bytes(),
+            b"\n",
+            ::core::ffi::CStr::from_ptr((*v).value).to_bytes(),
+            b"\nendef\n",
+        ]);
     } else {
         let mut p: *mut ::core::ffi::c_char;
-        printf(
-            b"%s %s= \0" as *const u8 as *const ::core::ffi::c_char,
-            (*v).name,
-            if (*v).recursive() as i32 != 0 {
-                if (*v).append() as i32 != 0 {
-                    b"+\0" as *const u8 as *const ::core::ffi::c_char
-                } else {
-                    b"\0" as *const u8 as *const ::core::ffi::c_char
-                }
+        let assign: &[u8] = if (*v).recursive() as i32 != 0 {
+            if (*v).append() as i32 != 0 {
+                b"+"
             } else {
-                b":\0" as *const u8 as *const ::core::ffi::c_char
-            },
-        );
+                b""
+            }
+        } else {
+            b":"
+        };
+        crate::output::trace_parts(&[
+            ::core::ffi::CStr::from_ptr((*v).name).to_bytes(),
+            b" ",
+            assign,
+            b"= ",
+        ]);
         p = next_token((*v).value);
         if p != (*v).value && *p as i32 == 0 {
-            printf(
-                b"$(subst ,,%s)\0" as *const u8 as *const ::core::ffi::c_char,
-                (*v).value,
-            );
+            crate::output::trace_parts(&[
+                b"$(subst ,,",
+                ::core::ffi::CStr::from_ptr((*v).value).to_bytes(),
+                b")",
+            ]);
         } else if (*v).recursive() != 0 {
-            fputs((*v).value, stdout);
+            crate::output::trace_out(::core::ffi::CStr::from_ptr((*v).value).to_bytes());
         } else {
+            let mut escaped: Vec<u8> = Vec::new();
             p = (*v).value;
             while *p as i32 != 0 {
                 if *p as i32 == '$' as i32 {
-                    putchar('$' as i32);
+                    escaped.push(b'$');
                 }
-                putchar(*p as i32);
+                escaped.push(*p as u8);
                 p = p.offset(1_i32 as isize);
             }
+            crate::output::trace_out(&escaped);
         }
-        putchar('\n' as i32);
+        crate::output::trace_out(b"\n");
     };
 }
 unsafe fn print_auto_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
@@ -2803,35 +2808,35 @@ unsafe extern "C" fn print_variable_set(
         },
         prefix as *mut ::core::ffi::c_void,
     );
-    fputs(
-        b"# variable set hash-table stats:\n\0" as *const u8 as *const ::core::ffi::c_char,
-        stdout,
-    );
-    fputs(b"# \0" as *const u8 as *const ::core::ffi::c_char, stdout);
+    crate::output::trace_out(b"# variable set hash-table stats:\n# ");
     hash_print_stats(&raw mut (*set).table, stdout);
     putc('\n' as i32, stdout);
+    // `hash_print_stats` still writes through the buffered C `stdout` stream;
+    // flush it so its bytes land before any subsequent Rust-stdout writes.
+    fflush(stdout);
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_variable_data_base(ctx: &ExecContext) {
-    puts(b"\n# Variables\n\0" as *const u8 as *const ::core::ffi::c_char);
+    crate::output::trace_out(b"\n# Variables\n\n");
     print_variable_set(
         ctx.variable_globals.global_variable_set.as_ptr(),
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         0,
     );
-    puts(b"\n# Pattern-specific Variable Values\0" as *const u8 as *const ::core::ffi::c_char);
+    crate::output::trace_out(b"\n# Pattern-specific Variable Values\n");
     let mut p: *mut pattern_var;
     let mut rules: ::core::ffi::c_uint = 0;
     p = ctx.pattern_vars.0.get();
     while !p.is_null() {
         rules = rules.wrapping_add(1);
-        printf(
-            b"\n%s :\n\0" as *const u8 as *const ::core::ffi::c_char,
-            (*p).target,
-        );
+        crate::output::trace_parts(&[
+            b"\n",
+            ::core::ffi::CStr::from_ptr((*p).target).to_bytes(),
+            b" :\n",
+        ]);
         print_variable(
             &raw mut (*p).variable as *const ::core::ffi::c_void,
             b"# \0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_void,
@@ -2839,15 +2844,13 @@ pub unsafe fn print_variable_data_base(ctx: &ExecContext) {
         p = (*p).next;
     }
     if rules == 0 {
-        puts(
-            b"\n# No pattern-specific variable values.\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_out(b"\n# No pattern-specific variable values.\n");
     } else {
-        printf(
-            b"\n# %u pattern-specific variable values\0" as *const u8 as *const ::core::ffi::c_char,
-            rules,
-        );
+        crate::output::trace_parts(&[
+            b"\n# ",
+            rules.to_string().as_bytes(),
+            b" pattern-specific variable values",
+        ]);
     };
 }
 /// Print the per-target variable set of `file` (the automatic variables), each

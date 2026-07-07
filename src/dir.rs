@@ -10,7 +10,6 @@ use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::xrealloc;
 use crate::output::{fatal, FmtArg};
-use crate::stdio::FILE;
 use crate::strcache::strcache_add_len;
 
 use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void};
@@ -18,8 +17,7 @@ use ::core::ptr::{null, null_mut};
 use rustc_hash::FxHashMap;
 
 use libc::{
-    __errno_location, closedir, memcpy, opendir, printf, puts, readdir, strerror, strlen, DIR,
-    EINTR,
+    __errno_location, closedir, memcpy, opendir, readdir, strerror, strlen, DIR, EINTR,
 };
 
 pub use crate::sys_stat::{stat, timespec};
@@ -27,9 +25,6 @@ pub use crate::sys_stat::{stat, timespec};
 extern "C" {
     fn stat(file: *const c_char, buf: *mut stat) -> i32;
     fn lstat(file: *const c_char, buf: *mut stat) -> i32;
-    static mut stdout: *mut FILE;
-    fn fflush(stream: *mut FILE) -> i32;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
 }
 
 /// `glob_t` as laid out by gnulib's glob with `GLOB_ALTDIRFUNC` support;
@@ -158,13 +153,15 @@ pub unsafe fn find_directory(
                 return (&mut **boxed) as *mut directory;
             }
             if DB_VERBOSE & db_level(ctx) != 0 {
-                printf(
-                    c"Directory %s cache invalidated (count %lu != command %lu)\n".as_ptr(),
-                    name,
-                    ctr,
-                    crate::make_main::opt_command_count(),
-                );
-                fflush(stdout);
+                crate::output::trace_parts(&[
+                    b"Directory ",
+                    ::core::ffi::CStr::from_ptr(name).to_bytes(),
+                    b" cache invalidated (count ",
+                    ctr.to_string().as_bytes(),
+                    b" != command ",
+                    crate::make_main::opt_command_count().to_string().as_bytes(),
+                    b")\n",
+                ]);
             }
             if let Some(contents) = boxed.contents.as_mut() {
                 clear_directory_contents(ctx, contents);
@@ -487,11 +484,11 @@ pub unsafe fn dir_name(ctx: &crate::execctx::ExecContext, dir: *const c_char) ->
 
 /// Print `n`, or `word` when `n` is zero (the "No files" / "no
 /// impossibilities" phrasing in the data base dump).
-unsafe fn print_count(n: c_uint, zero_word: *const c_char) {
+fn print_count(n: c_uint, zero_word: &[u8]) {
     if n == 0 {
-        fputs(zero_word, stdout);
+        crate::output::trace_out(zero_word);
     } else {
-        printf(c"%u".as_ptr(), n);
+        crate::output::trace_out(n.to_string().as_bytes());
     }
 }
 
@@ -499,9 +496,9 @@ unsafe fn print_count(n: c_uint, zero_word: *const c_char) {
 ///
 /// # Safety
 ///
-/// The directory tables must be initialized and stdout valid.
+/// The directory tables must be initialized.
 pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
-    puts(c"\n# Directories\n".as_ptr());
+    crate::output::trace_out(b"\n# Directories\n\n");
 
     let mut files: c_uint = 0;
     let mut impossible: c_uint = 0;
@@ -510,17 +507,24 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
     for boxed in table.values() {
         let dir: &directory = boxed;
         if dir.contents.is_null() {
-            printf(c"# %s: could not be stat'd.\n".as_ptr(), dir.name);
+            crate::output::trace_parts(&[
+                b"# ",
+                ::core::ffi::CStr::from_ptr(dir.name).to_bytes(),
+                b": could not be stat'd.\n",
+            ]);
             continue;
         }
         let dc = dir.contents.as_ref().expect("checked non-null above");
         let Some(dirfiles) = dc.dirfiles.as_ref() else {
-            printf(
-                c"# %s (device %ld, inode %ld): could not be opened.\n".as_ptr(),
-                dir.name,
-                dc.dev as c_long,
-                dc.ino as c_long,
-            );
+            crate::output::trace_parts(&[
+                b"# ",
+                ::core::ffi::CStr::from_ptr(dir.name).to_bytes(),
+                b" (device ",
+                (dc.dev as c_long).to_string().as_bytes(),
+                b", inode ",
+                (dc.ino as c_long).to_string().as_bytes(),
+                b"): could not be opened.\n",
+            ]);
             continue;
         };
 
@@ -533,33 +537,37 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
                 f += 1;
             }
         }
-        printf(
-            c"# %s (device %ld, inode %ld): ".as_ptr(),
-            dir.name,
-            dc.dev as c_long,
-            dc.ino as c_long,
-        );
-        print_count(f, c"No".as_ptr());
-        fputs(c" files, ".as_ptr(), stdout);
-        print_count(im, c"no".as_ptr());
-        fputs(c" impossibilities".as_ptr(), stdout);
+        crate::output::trace_parts(&[
+            b"# ",
+            ::core::ffi::CStr::from_ptr(dir.name).to_bytes(),
+            b" (device ",
+            (dc.dev as c_long).to_string().as_bytes(),
+            b", inode ",
+            (dc.ino as c_long).to_string().as_bytes(),
+            b"): ",
+        ]);
+        print_count(f, b"No");
+        crate::output::trace_out(b" files, ");
+        print_count(im, b"no");
+        crate::output::trace_out(b" impossibilities");
         if dc.dirstream.is_null() {
-            puts(c".".as_ptr());
+            crate::output::trace_out(b".\n");
         } else {
-            puts(c" so far.".as_ptr());
+            crate::output::trace_out(b" so far.\n");
         }
         files += f;
         impossible += im;
     }
 
-    fputs(c"\n# ".as_ptr(), stdout);
-    print_count(files, c"No".as_ptr());
-    fputs(c" files, ".as_ptr(), stdout);
-    print_count(impossible, c"no".as_ptr());
-    printf(
-        c" impossibilities in %lu directories.\n".as_ptr(),
-        table.len() as c_ulong,
-    );
+    crate::output::trace_out(b"\n# ");
+    print_count(files, b"No");
+    crate::output::trace_out(b" files, ");
+    print_count(impossible, b"no");
+    crate::output::trace_parts(&[
+        b" impossibilities in ",
+        (table.len() as c_ulong).to_string().as_bytes(),
+        b" directories.\n",
+    ]);
 }
 
 /// glob `opendir` callback: position a cursor over the cached contents of

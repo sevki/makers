@@ -121,10 +121,13 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
       flush kept at entry until the printf callers convert)
 - [ ] makefile reading: `ebuf.fp` `fopen`/`fdopen`/`fclose` + `readline`
       (read.rs) → `BufReader`-style owned reader
-- [ ] the `-p` data-base printers: `printf`/`fputs`/`putchar` in
-      variable.rs, file.rs, dir.rs, vpath.rs, strcache.rs, main.rs
-      (`print_version`/`print_data_base`) → one shared safe byte-writer
-      (rule.rs already is; its flush ordering is the pattern to follow)
+- [x] the `-p` data-base printers + `--version`: every stdout printer in
+      variable.rs, file.rs, dir.rs, vpath.rs, strcache.rs, commands.rs
+      (recipe printers), and main.rs (`print_version`, data-base
+      header/footer, usage banner) goes through `output::trace_out`/
+      `trace_parts`; hash.rs `hash_print_stats` still writes via `FILE*`
+      (an fflush keeps its bytes ordered) and moves with the
+      stdout-plumbing slice
 - [x] posixos.rs: the `tmpfile()` fallback in `os_anontmp` is a std::fs
       create-and-unlink helper (`anon_unlinked_tmp`), and its two debug
       traces write through the new shared `output::trace_out`

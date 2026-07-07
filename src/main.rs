@@ -21,8 +21,8 @@ use crate::vpath::{build_vpath_lists, print_vpath_data_base};
 use c2rust_bitfields;
 use libc;
 use libc::{
-    __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putenv,
-    setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
+    __errno_location, _exit, abort, atof, chdir, exit, free, isatty, putenv, setlocale,
+    sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
 use std::sync::atomic::Ordering;
 
@@ -55,7 +55,6 @@ extern "C" {
         __modes: i32,
         __n: size_t,
     ) -> i32;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn ferror(__stream: *mut FILE) -> i32;
     fn fileno(__stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
@@ -1790,9 +1789,8 @@ pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i3
         // be block-buffered here (the `setvbuf` in `main_0` runs later).
         unsafe {
             print_version(ctx);
-            fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
-            fflush(stdout);
         }
+        crate::output::trace_out(b"\n");
     }
     let mut text = format!(
         "Usage: {} [options] [target] ...\n",
@@ -4941,48 +4939,38 @@ pub fn should_print_dir(ctx: &crate::execctx::ExecContext, options: &Options) ->
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_version(ctx: &crate::execctx::ExecContext) {
-    let precede: *const ::core::ffi::c_char = if opt_print_data_base() {
-        b"# \0" as *const u8 as *const ::core::ffi::c_char
-    } else {
-        b"\0" as *const u8 as *const ::core::ffi::c_char
-    };
+    let precede: &[u8] = if opt_print_data_base() { b"# " } else { b"" };
     if ctx.printed_version.0.swap(true, Ordering::Relaxed) {
         return;
     }
-    printf(
-        b"%sGNU Make %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-        precede,
-        crate::version::version_string(),
+    let mut msg = Vec::with_capacity(512);
+    msg.extend_from_slice(precede);
+    msg.extend_from_slice(b"GNU Make ");
+    msg.extend_from_slice(
+        ::core::ffi::CStr::from_ptr(crate::version::version_string()).to_bytes(),
     );
-    match ctx.remote_backend.0.description() {
-        None => {
-            printf(
-                b"%sBuilt for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                precede,
-                crate::version::make_host(),
-            );
-        }
-        Some(desc) => {
-            printf(
-                b"%sBuilt for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
-                precede,
-                crate::version::make_host(),
-                desc.as_ptr(),
-            );
-        }
+    msg.extend_from_slice(b"\n");
+    msg.extend_from_slice(precede);
+    msg.extend_from_slice(b"Built for ");
+    msg.extend_from_slice(::core::ffi::CStr::from_ptr(crate::version::make_host()).to_bytes());
+    if let Some(desc) = ctx.remote_backend.0.description() {
+        msg.extend_from_slice(b" (");
+        msg.extend_from_slice(desc.to_bytes());
+        msg.extend_from_slice(b")");
     }
-    printf(
-        b"%sCopyright (C) 1988-2025 Free Software Foundation, Inc.\n\0" as *const u8
-            as *const ::core::ffi::c_char,
-        precede,
-    );
-    printf(
-        b"%sLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>\n%sThis is free software: you are free to change and redistribute it.\n%sThere is NO WARRANTY, to the extent permitted by law.\n\0"
-            as *const u8 as *const ::core::ffi::c_char,
-        precede,
-        precede,
-        precede,
-    );
+    msg.extend_from_slice(b"\n");
+    msg.extend_from_slice(precede);
+    msg.extend_from_slice(b"Copyright (C) 1988-2025 Free Software Foundation, Inc.\n");
+    for line in [
+        b"License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>\n"
+            .as_slice(),
+        b"This is free software: you are free to change and redistribute it.\n",
+        b"There is NO WARRANTY, to the extent permitted by law.\n",
+    ] {
+        msg.extend_from_slice(precede);
+        msg.extend_from_slice(line);
+    }
+    crate::output::trace_out(&msg);
 }
 /// # Safety
 ///
@@ -4992,10 +4980,7 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx).0))
         .expect("formatted timestamp never contains an interior NUL");
     print_version(ctx);
-    printf(
-        b"\n# Make data base, printed on %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-        stamp.as_ptr(),
-    );
+    crate::output::trace_parts(&[b"\n# Make data base, printed on ", stamp.to_bytes(), b"\n"]);
     print_variable_data_base(ctx);
     print_dir_data_base(ctx);
     print_rule_data_base(ctx);
@@ -5004,10 +4989,11 @@ pub unsafe fn print_data_base(ctx: &crate::execctx::ExecContext) {
     strcache_print_stats(b"#\0" as *const u8 as *const ::core::ffi::c_char);
     let stamp = ::std::ffi::CString::new(file_timestamp_string(file_timestamp_now(ctx).0))
         .expect("formatted timestamp never contains an interior NUL");
-    printf(
-        b"\n# Finished Make data base on %s\n\n\0" as *const u8 as *const ::core::ffi::c_char,
-        stamp.as_ptr(),
-    );
+    crate::output::trace_parts(&[
+        b"\n# Finished Make data base on ",
+        stamp.to_bytes(),
+        b"\n\n",
+    ]);
 }
 /// # Safety
 ///

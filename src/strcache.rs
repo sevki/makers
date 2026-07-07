@@ -188,13 +188,13 @@ pub unsafe fn strcache_print_stats(prefix: *const c_char) {
     } else {
         0
     };
-    // Route through C stdio (like the rest of make's output) so the stats
-    // interleave correctly with the surrounding `make -p` dump.
+    // Route through the flushed Rust stdout sink so the stats interleave
+    // correctly with the surrounding `make -p` dump.
     let out = format!(
         "\n{prefix} strcache: strings = {strings} / nul-buf = {bytes} B / avg = {avg} B\n\
-         {prefix} strcache performance: lookups = {adds} / hit rate = {hit_rate}%\n\0",
+         {prefix} strcache performance: lookups = {adds} / hit rate = {hit_rate}%\n",
     );
-    libc::printf(b"%s\0".as_ptr().cast(), out.as_ptr());
+    crate::output::trace_out(out.as_bytes());
 }
 
 #[cfg(test)]

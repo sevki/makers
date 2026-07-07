@@ -17,16 +17,12 @@ pub use crate::ffi_types::{
 };
 use crate::misc::free_ns_chain;
 use crate::misc::{xcalloc, xrealloc};
-use crate::stdio::FILE;
-use libc::{__errno_location, free, printf, putchar, puts, unlink};
+use libc::{__errno_location, free, unlink};
 #[cfg(test)]
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 extern "C" {
-    static mut stdout: *mut FILE;
-    fn fflush(__stream: *mut FILE) -> i32;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
     fn memmove(
         __dest: *mut ::core::ffi::c_void,
@@ -1300,28 +1296,22 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                         );
                     } else {
                         if doneany == 0 && 0x1_i32 & db_level(ctx) != 0 {
-                            printf(
-                                b"Removing intermediate files...\n\0" as *const u8
-                                    as *const ::core::ffi::c_char,
-                            );
-                            fflush(stdout);
+                            crate::output::trace_out(b"Removing intermediate files...\n");
                         }
                         if !crate::make_main::opt_run_silent() {
                             if doneany == 0 {
-                                fputs(b"rm \0" as *const u8 as *const ::core::ffi::c_char, stdout);
+                                crate::output::trace_out(b"rm ");
                                 doneany = 1;
                             } else {
-                                putchar(' ' as i32);
+                                crate::output::trace_out(b" ");
                             }
-                            fputs(cname_ptr, stdout);
-                            fflush(stdout);
+                            crate::output::trace_out(&name);
                         }
                     }
                     if status < 0 {
                         if doneany != 0 {
-                            fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
+                            crate::output::trace_out(b"\n");
                         }
-                        fflush(stdout);
                         perror_with_name(
                             ctx,
                             b"unlink: \0" as *const u8 as *const ::core::ffi::c_char,
@@ -1334,8 +1324,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
         }
     }
     if doneany != 0 && sig == 0 {
-        putchar('\n' as i32);
-        fflush(stdout);
+        crate::output::trace_out(b"\n");
     }
 }
 /// # Safety
@@ -2253,38 +2242,29 @@ pub fn file_timestamp_string(ts: uintmax_t) -> String {
 pub unsafe fn print_prereqs(deps: &[DepNode]) {
     // Print one prerequisite: optional `.WAIT ` marker plus its name.
     unsafe fn print_one(d: &DepNode, leading: &[u8]) {
-        let mut name = dep_name_bytes(d);
-        name.push(0);
-        let wait = if d.wait_here {
-            b".WAIT \0".as_ptr() as *const ::core::ffi::c_char
-        } else {
-            b"\0".as_ptr() as *const ::core::ffi::c_char
-        };
-        printf(
-            leading.as_ptr() as *const ::core::ffi::c_char,
-            wait,
-            name.as_ptr() as *const ::core::ffi::c_char,
-        );
+        let name = dep_name_bytes(d);
+        let wait: &[u8] = if d.wait_here { b".WAIT " } else { b"" };
+        crate::output::trace_parts(&[leading, wait, &name]);
     }
     // Normal prerequisites first; the first order-only prereq starts the `|`
     // block.
     let mut first_ood: Option<usize> = None;
     for (i, d) in deps.iter().enumerate() {
         if !d.ignore_mtime {
-            print_one(d, b" %s%s\0");
+            print_one(d, b" ");
         } else if first_ood.is_none() {
             first_ood = Some(i);
         }
     }
     if let Some(start) = first_ood {
-        print_one(&deps[start], b" | %s%s\0");
+        print_one(&deps[start], b" | ");
         for d in &deps[start + 1..] {
             if d.ignore_mtime {
-                print_one(d, b" %s%s\0");
+                print_one(d, b" ");
             }
         }
     }
-    putchar('\n' as i32);
+    crate::output::trace_out(b"\n");
 }
 /// # Safety
 ///
@@ -2320,157 +2300,105 @@ unsafe fn print_file_node(
     if crate::make_main::opt_no_builtin_rules() && f.builtin {
         return;
     }
-    putchar('\n' as i32);
+    crate::output::trace_out(b"\n");
     if let Some(recipe) = f.recipe.as_ref() {
         if recipe.recipe_prefix as i32 != crate::make_main::opt_cmd_prefix() as i32 {
-            fputs(
-                b".RECIPEPREFIX = \0" as *const u8 as *const ::core::ffi::c_char,
-                stdout,
-            );
+            crate::output::trace_out(b".RECIPEPREFIX = ");
             let new_prefix = recipe.recipe_prefix as ::core::ffi::c_char;
             with_options(|o| o.cmd_prefix.set(new_prefix));
             if new_prefix as i32 != RECIPEPREFIX_DEFAULT {
-                putchar(new_prefix as i32);
+                crate::output::trace_out(&[new_prefix as u8]);
             }
-            putchar('\n' as i32);
+            crate::output::trace_out(b"\n");
         }
     }
     if !f.variables.is_empty() {
         print_target_variables(ctx, fid);
     }
     if !f.is_target {
-        puts(b"# Not a target:\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::output::trace_out(b"# Not a target:\n");
     }
-    let mut name_c = f.name.clone();
-    name_c.push(0);
-    printf(
-        b"%s:%s\0" as *const u8 as *const ::core::ffi::c_char,
-        name_c.as_ptr() as *const ::core::ffi::c_char,
-        if has_double_colon {
-            b":\0" as *const u8 as *const ::core::ffi::c_char
-        } else {
-            b"\0" as *const u8 as *const ::core::ffi::c_char
-        },
-    );
+    crate::output::trace_parts(&[&f.name, if has_double_colon { b"::" } else { b":" }]);
     print_prereqs(&f.deps);
     if f.precious {
-        puts(
-            b"#  Precious file (prerequisite of .PRECIOUS).\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_out(b"#  Precious file (prerequisite of .PRECIOUS).\n");
     }
     if f.phony {
-        puts(
-            b"#  Phony target (prerequisite of .PHONY).\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_out(b"#  Phony target (prerequisite of .PHONY).\n");
     }
     if f.cmd_target {
-        puts(b"#  Command line target.\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::output::trace_out(b"#  Command line target.\n");
     }
     if f.dontcare {
-        puts(
-            b"#  A default, MAKEFILES, or -include/sinclude makefile.\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_out(b"#  A default, MAKEFILES, or -include/sinclude makefile.\n");
     }
     if f.builtin {
-        puts(b"#  Builtin rule\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::output::trace_out(b"#  Builtin rule\n");
     }
-    puts(if f.tried_implicit {
-        b"#  Implicit rule search has been done.\0" as *const u8 as *const ::core::ffi::c_char
+    crate::output::trace_out(if f.tried_implicit {
+        b"#  Implicit rule search has been done.\n"
     } else {
-        b"#  Implicit rule search has not been done.\0" as *const u8 as *const ::core::ffi::c_char
+        b"#  Implicit rule search has not been done.\n"
     });
     if let Some(stem) = f.stem.as_ref() {
-        let mut stem_c = stem.clone().into_bytes();
-        stem_c.push(0);
-        printf(
-            b"#  Implicit/static pattern stem: '%s'\n\0" as *const u8 as *const ::core::ffi::c_char,
-            stem_c.as_ptr() as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_parts(&[
+            b"#  Implicit/static pattern stem: '",
+            stem.as_bytes(),
+            b"'\n",
+        ]);
     }
     if f.intermediate {
-        puts(
-            b"#  File is an intermediate prerequisite.\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_out(b"#  File is an intermediate prerequisite.\n");
     }
     if f.notintermediate {
-        puts(
-            b"#  File is a prerequisite of .NOTINTERMEDIATE.\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_out(b"#  File is a prerequisite of .NOTINTERMEDIATE.\n");
     }
     if f.secondary {
-        puts(
-            b"#  File is secondary (prerequisite of .SECONDARY).\0" as *const u8
-                as *const ::core::ffi::c_char,
-        );
+        crate::output::trace_out(b"#  File is secondary (prerequisite of .SECONDARY).\n");
     }
     if f.is_explicit {
-        puts(b"#  File is explicitly mentioned.\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::output::trace_out(b"#  File is explicitly mentioned.\n");
     }
     if !f.also_make.is_empty() {
-        fputs(
-            b"#  Also makes:\0" as *const u8 as *const ::core::ffi::c_char,
-            stdout,
-        );
+        crate::output::trace_out(b"#  Also makes:");
         for d in &f.also_make {
-            let mut nm = dep_name_bytes(d);
-            nm.push(0);
-            printf(
-                b" %s\0" as *const u8 as *const ::core::ffi::c_char,
-                nm.as_ptr() as *const ::core::ffi::c_char,
-            );
+            let nm = dep_name_bytes(d);
+            crate::output::trace_parts(&[b" ", &nm]);
         }
-        putchar('\n' as i32);
+        crate::output::trace_out(b"\n");
     }
     if f.last_mtime == UNKNOWN_MTIME as u64 {
-        puts(b"#  Modification time never checked.\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::output::trace_out(b"#  Modification time never checked.\n");
     } else if f.last_mtime == NONEXISTENT_MTIME as u64 {
-        puts(b"#  File does not exist.\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::output::trace_out(b"#  File does not exist.\n");
     } else if f.last_mtime == OLD_MTIME as u64 {
-        puts(b"#  File is very old.\0" as *const u8 as *const ::core::ffi::c_char);
+        crate::output::trace_out(b"#  File is very old.\n");
     } else {
-        let stamp = CString::new(file_timestamp_string(f.last_mtime))
-            .expect("formatted timestamp never contains an interior NUL");
-        printf(
-            b"#  Last modified %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            stamp.as_ptr(),
-        );
+        let stamp = file_timestamp_string(f.last_mtime);
+        crate::output::trace_parts(&[b"#  Last modified ", stamp.as_bytes(), b"\n"]);
     }
-    puts(if f.updated {
-        b"#  File has been updated.\0" as *const u8 as *const ::core::ffi::c_char
+    crate::output::trace_out(if f.updated {
+        b"#  File has been updated.\n"
     } else {
-        b"#  File has not been updated.\0" as *const u8 as *const ::core::ffi::c_char
+        b"#  File has not been updated.\n"
     });
     match f.command_state {
         CommandState::Running => {
-            puts(
-                b"#  Recipe currently running (THIS IS A BUG).\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            crate::output::trace_out(b"#  Recipe currently running (THIS IS A BUG).\n");
         }
         CommandState::DepsRunning => {
-            puts(
-                b"#  Dependencies recipe running (THIS IS A BUG).\0" as *const u8
-                    as *const ::core::ffi::c_char,
-            );
+            crate::output::trace_out(b"#  Dependencies recipe running (THIS IS A BUG).\n");
         }
         CommandState::NotStarted | CommandState::Finished => match f.update_status {
             UpdateStatus::Success => {
-                puts(b"#  Successfully updated.\0" as *const u8 as *const ::core::ffi::c_char);
+                crate::output::trace_out(b"#  Successfully updated.\n");
             }
             UpdateStatus::Question => {
                 if crate::make_main::opt_question() {
                 } else {
                     panic!("assertion failed: question_flag");
                 };
-                puts(
-                    b"#  Needs to be updated (-q is set).\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
+                crate::output::trace_out(b"#  Needs to be updated (-q is set).\n");
             }
             _ => {}
         },
@@ -2487,7 +2415,7 @@ unsafe fn print_file_node(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_file_data_base(ctx: &crate::execctx::ExecContext) {
-    puts(b"\n# Files\0" as *const u8 as *const ::core::ffi::c_char);
+    crate::output::trace_out(b"\n# Files\n");
     // Snapshot the arena's `FileId`s under the map lock, drop it, then print
     // each (`print_file` walks the node's inline double-colon entries). Any
     // files entered while printing are not re-processed.
@@ -2501,10 +2429,11 @@ pub unsafe fn print_file_data_base(ctx: &crate::execctx::ExecContext) {
         .collect();
     let count = ids.len();
     ids.into_iter().for_each(|fid| print_file(ctx, fid));
-    printf(
-        b"\n# %lu files in the file table.\n\0" as *const u8 as *const ::core::ffi::c_char,
-        count as ::core::ffi::c_ulong,
-    );
+    crate::output::trace_parts(&[
+        b"\n# ",
+        (count as ::core::ffi::c_ulong).to_string().as_bytes(),
+        b" files in the file table.\n",
+    ]);
 }
 /// # Safety
 ///
@@ -2521,7 +2450,7 @@ pub unsafe fn print_target(item: *const ::core::ffi::c_void) {
     if name.len() >= 2 && name[0] == b'.' && name[1..].iter().all(u8::is_ascii_uppercase) {
         return;
     }
-    puts((*f).name);
+    crate::output::trace_parts(&[name, b"\n"]);
 }
 /// # Safety
 ///
@@ -2540,19 +2469,13 @@ pub unsafe fn print_targets(ctx: &crate::execctx::ExecContext) {
         .values()
         .map(::std::sync::Arc::clone)
         .collect();
-    nodes
-        .iter()
-        .for_each(|node| unsafe { print_one_target(node) });
+    nodes.iter().for_each(|node| print_one_target(node));
 }
 
 /// Print a single target's name for `print_targets` (the `make -p` `# Files`
 /// stanza's target list). Skips non-targets, suffix-rule files, and the
 /// built-in special targets (a dot followed by all-uppercase letters).
-///
-/// # Safety
-///
-/// Calls the C `puts`; `node` must be a live arena handle.
-unsafe fn print_one_target(node: &::std::sync::Mutex<FileNode>) {
+fn print_one_target(node: &::std::sync::Mutex<FileNode>) {
     let name = {
         let n = node.lock().expect("file node lock poisoned");
         if !n.is_target || n.suffix {
@@ -2565,9 +2488,7 @@ unsafe fn print_one_target(node: &::std::sync::Mutex<FileNode>) {
     if name.len() >= 2 && name[0] == b'.' && name[1..].iter().all(u8::is_ascii_uppercase) {
         return;
     }
-    let mut cname = name;
-    cname.push(0);
-    puts(cname.as_ptr() as *const ::core::ffi::c_char);
+    crate::output::trace_parts(&[&name, b"\n"]);
 }
 /// # Safety
 ///
