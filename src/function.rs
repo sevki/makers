@@ -176,21 +176,6 @@ pub union C2RustUnnamed {
     pub alloc_func_ptr: gmk_func_ptr,
     pub safe_func_ptr: Option<SafeFunc>,
 }
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct a_word {
-    pub chain: *mut a_word,
-    pub str_0: *mut ::core::ffi::c_char,
-    pub length: size_t,
-    pub matched: i32,
-}
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct a_pattern {
-    pub str_0: *mut ::core::ffi::c_char,
-    pub percent: *mut ::core::ffi::c_char,
-    pub length: size_t,
-}
 pub const EOF: i32 = -1_i32;
 pub const ENOENT: i32 = 2;
 pub const EINTR: i32 = 4;
@@ -2163,6 +2148,302 @@ fn func_findstring(
     o
 }
 #[cfg(test)]
+mod filter_filterout_tests {
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` body of
+    //! `func_filter_filterout` — which tokenized both arguments with the raw
+    //! `find_next_token` pointer walk into xcalloc'd `a_word`/`a_pattern`
+    //! arrays, matched wildcard patterns via `pattern_matches`, literal
+    //! patterns via a hash table of raw pointers (above a size threshold) or a
+    //! linear `memcmp` scan otherwise, and emitted directly into the variable
+    //! buffer with a trailing-space-then-`o -= 1` fixup — is preserved
+    //! verbatim below (with its two now-file-private helper structs
+    //! re-declared locally) as `func_filter_filterout_unsafe_oracle`, driven
+    //! through the real variable-output buffer alongside the converted safe
+    //! handler, asserting byte-identical output for both `filter` and
+    //! `filter-out`.
+    use super::{
+        find_next_token, find_percent, func_filter_filterout, memcmp, pattern_matches, size_t,
+        strlen, variable_buffer_output, SafeFunc,
+    };
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::make_main::initialize_stopchar_map;
+    use rustc_hash::FxHashMap;
+    use std::ffi::{c_char, c_void, CString};
+
+    type Handler =
+        unsafe fn(&crate::execctx::ExecContext, *mut c_char, *mut *mut c_char, *const c_char) -> *mut c_char;
+
+    #[derive(Default)]
+    struct AWord {
+        chain: *mut AWord,
+        str_0: *mut c_char,
+        length: size_t,
+        matched: i32,
+    }
+
+    #[derive(Copy, Clone, Default)]
+    struct APattern {
+        str_0: *mut c_char,
+        percent: *mut c_char,
+        length: size_t,
+    }
+
+    unsafe fn func_filter_filterout_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut c_char,
+        argv: *mut *mut c_char,
+        funcname: *const c_char,
+    ) -> *mut c_char {
+        let words: *mut AWord;
+        let word_end: *mut AWord;
+        let mut wp: *mut AWord;
+        let patterns: *mut APattern;
+        let pat_end: *mut APattern;
+        let mut pp: *mut APattern;
+        let mut pat_count: ::core::ffi::c_ulong = 0;
+        let mut word_count: ::core::ffi::c_ulong = 0;
+        let mut a_word_table: FxHashMap<Box<[u8]>, *mut AWord> = FxHashMap::default();
+        let is_filter: i32 = (*funcname.offset(
+            (::core::mem::size_of::<[c_char; 7]>() as usize).wrapping_sub(1_usize) as isize,
+        ) as i32
+            == 0) as i32;
+        let mut cp: *const c_char;
+        let mut literals: i32 = 0;
+        let hashing: i32;
+        let mut p: *mut c_char;
+        let mut len: size_t = 0;
+        let mut doneany: i32 = 0;
+        cp = *argv.offset(1_i32 as isize);
+        loop {
+            p = find_next_token(&raw mut cp, ::core::ptr::null_mut::<size_t>());
+            if p.is_null() {
+                break;
+            }
+            word_count = word_count.wrapping_add(1);
+        }
+        if word_count == 0 {
+            return o;
+        }
+        let mut words_vec: Vec<AWord> = Vec::with_capacity(word_count as usize);
+        words_vec.resize_with(word_count as usize, Default::default);
+        words = words_vec.as_mut_ptr();
+        word_end = words.offset(word_count as isize);
+        cp = *argv.offset(0_i32 as isize);
+        loop {
+            p = find_next_token(&raw mut cp, ::core::ptr::null_mut::<size_t>());
+            if p.is_null() {
+                break;
+            }
+            pat_count = pat_count.wrapping_add(1);
+        }
+        let mut patterns_vec: Vec<APattern> = Vec::with_capacity(pat_count as usize);
+        patterns_vec.resize_with(pat_count as usize, Default::default);
+        patterns = patterns_vec.as_mut_ptr();
+        pat_end = patterns.offset(pat_count as isize);
+        cp = *argv.offset(0_i32 as isize);
+        pp = patterns;
+        loop {
+            p = find_next_token(&raw mut cp, &raw mut len);
+            if p.is_null() {
+                break;
+            }
+            if *cp as i32 != 0 {
+                cp = cp.offset(1_i32 as isize);
+            }
+            *p.offset(len as isize) = 0;
+            (*pp).str_0 = p;
+            (*pp).percent = find_percent(p);
+            if (*pp).percent.is_null() {
+                literals += 1;
+            }
+            (*pp).length = strlen((*pp).str_0) as size_t;
+            pp = pp.offset(1_i32 as isize);
+        }
+        cp = *argv.offset(1_i32 as isize);
+        wp = words;
+        loop {
+            p = find_next_token(&raw mut cp, &raw mut len);
+            if p.is_null() {
+                break;
+            }
+            if *cp as i32 != 0 {
+                cp = cp.offset(1_i32 as isize);
+            }
+            *p.offset(len as isize) = 0;
+            (*wp).str_0 = p;
+            (*wp).length = len;
+            wp = wp.offset(1_i32 as isize);
+        }
+        hashing = (literals > 1 && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10)
+            as i32;
+        if hashing != 0 {
+            a_word_table.reserve(word_count as usize);
+            wp = words;
+            while wp < word_end {
+                let key: Box<[u8]> =
+                    ::core::slice::from_raw_parts((*wp).str_0 as *const u8, (*wp).length).into();
+                if let Some(owp) = a_word_table.insert(key, wp) {
+                    (*wp).chain = owp;
+                }
+                wp = wp.offset(1_i32 as isize);
+            }
+        }
+        pp = patterns;
+        while pp < pat_end {
+            if !(*pp).percent.is_null() {
+                wp = words;
+                while wp < word_end {
+                    (*wp).matched |= pattern_matches((*pp).str_0, (*pp).percent, (*wp).str_0);
+                    wp = wp.offset(1_i32 as isize);
+                }
+            } else if hashing != 0 {
+                let key = ::core::slice::from_raw_parts((*pp).str_0 as *const u8, (*pp).length);
+                if let Some(&head) = a_word_table.get(key) {
+                    wp = head;
+                    while let Some(wpref) = wp.as_mut() {
+                        wpref.matched |= 1;
+                        wp = wpref.chain;
+                    }
+                }
+            } else {
+                wp = words;
+                while wp < word_end {
+                    (*wp).matched |= ((*wp).length == (*pp).length
+                        && memcmp(
+                            (*pp).str_0 as *const c_void,
+                            (*wp).str_0 as *const c_void,
+                            (*wp).length as size_t,
+                        ) == 0) as i32;
+                    wp = wp.offset(1_i32 as isize);
+                }
+            }
+            pp = pp.offset(1_i32 as isize);
+        }
+        wp = words;
+        while wp < word_end {
+            if if is_filter != 0 {
+                (*wp).matched
+            } else {
+                ((*wp).matched == 0) as i32
+            } != 0
+            {
+                o = variable_buffer_output(ctx, o, (*wp).str_0, strlen((*wp).str_0) as size_t);
+                o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const c_char, 1);
+                doneany = 1;
+            }
+            wp = wp.offset(1_i32 as isize);
+        }
+        if doneany != 0 {
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+
+    /// Drive `handler` with a patterns arg (argv[0]) and a words arg (argv[1])
+    /// plus a real function name through a freshly initialized
+    /// variable-output buffer and return the bytes it wrote.
+    unsafe fn emit(handler: Handler, funcname: &[u8], patterns: &[u8], words: &[u8]) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let patterns_c = CString::new(patterns).unwrap();
+        let words_c = CString::new(words).unwrap();
+        let mut argv: [*mut c_char; 3] = [
+            patterns_c.as_ptr() as *mut c_char,
+            words_c.as_ptr() as *mut c_char,
+            ::core::ptr::null_mut(),
+        ];
+        let name = CString::new(funcname).unwrap();
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr());
+        let base = ctx.variable_buffer.ptr();
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        let out = ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec();
+        drop(patterns_c);
+        drop(words_c);
+        out
+    }
+
+    fn assert_matches(safe: SafeFunc, oracle: Handler, funcname: &[u8], patterns: &[u8], words: &[u8]) {
+        let got = safe(funcname, &[patterns, words]);
+        let want = unsafe { emit(oracle, funcname, patterns, words) };
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for {funcname:?} patterns {patterns:?} words {words:?}"
+        );
+    }
+
+    const CASES: &[(&[u8], &[u8])] = &[
+        (b"", b"a b c"),
+        (b"a b c", b""),
+        (b"a", b"a b c"),
+        (b"b", b"a b c"),
+        (b"%.c", b"a.c b.o c.c"),
+        (b"%.c %.o", b"a.c b.o c.h"),
+        (b"a\\%", b"a% b c"),
+        (b"lit1 lit2 lit3", b"lit1 lit2 lit3 lit4 lit5 lit6 lit7 lit8 lit9 lit10 lit11"),
+    ];
+
+    #[test]
+    fn filter_matches_unsafe_oracle() {
+        initialize_stopchar_map();
+        for &(patterns, words) in CASES {
+            assert_matches(
+                func_filter_filterout,
+                func_filter_filterout_unsafe_oracle,
+                b"filter",
+                patterns,
+                words,
+            );
+        }
+        assert_eq!(func_filter_filterout(b"filter", &[b"%.c", b"a.c b.o c.c"]), b"a.c c.c");
+        assert!(func_filter_filterout(b"filter", &[b"", b"a b c"]).is_empty());
+    }
+
+    #[test]
+    fn filter_out_matches_unsafe_oracle() {
+        initialize_stopchar_map();
+        for &(patterns, words) in CASES {
+            assert_matches(
+                func_filter_filterout,
+                func_filter_filterout_unsafe_oracle,
+                b"filter-out",
+                patterns,
+                words,
+            );
+        }
+        assert_eq!(
+            func_filter_filterout(b"filter-out", &[b"%.c", b"a.c b.o c.c"]),
+            b"b.o"
+        );
+    }
+
+    #[test]
+    fn filter_hashing_threshold_matches_unsafe_oracle() {
+        initialize_stopchar_map();
+        let patterns: &[u8] = b"w1 w2 w3 w4 w5";
+        let words: &[u8] = b"w1 w2 w3 w4 w5 w6 w7 w8 w9 w10";
+        assert_matches(
+            func_filter_filterout,
+            func_filter_filterout_unsafe_oracle,
+            b"filter",
+            patterns,
+            words,
+        );
+        assert_matches(
+            func_filter_filterout,
+            func_filter_filterout_unsafe_oracle,
+            b"filter-out",
+            patterns,
+            words,
+        );
+    }
+}
+#[cfg(test)]
 mod selection_tests {
     //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_findstring`,
     //! `func_word` and `func_wordlist` are preserved verbatim below as
@@ -2511,174 +2792,92 @@ unsafe fn func_let(
     pop_variable_scope(ctx);
     o.offset(strlen(o) as isize)
 }
-unsafe fn func_filter_filterout(
-    ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    argv: *mut *mut ::core::ffi::c_char,
-    funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
-    let words: *mut a_word;
-    let word_end: *mut a_word;
-    let mut wp: *mut a_word;
-    let patterns: *mut a_pattern;
-    let pat_end: *mut a_pattern;
-    let mut pp: *mut a_pattern;
-    let mut pat_count: ::core::ffi::c_ulong = 0;
-    let mut word_count: ::core::ffi::c_ulong = 0;
+/// A pattern from `$(filter ...)`/`$(filter-out ...)`'s first argument: its
+/// literal bytes (with any escaped `%` already collapsed) plus the index of
+/// the first unescaped `%`, if any. `None` means a plain literal pattern.
+struct FilterPattern {
+    bytes: Vec<u8>,
+    percent: Option<usize>,
+}
+
+fn func_filter_filterout(name: &[u8], args: &[&[u8]]) -> Vec<u8> {
+    let is_filter = name == b"filter";
+
+    let words: Vec<&[u8]> = tokens(args[1]).collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+
+    let mut literals = 0usize;
+    let patterns: Vec<FilterPattern> = tokens(args[0])
+        .map(|tok| {
+            let (bytes, percent) = match crate::parser::find_percent_cached(tok) {
+                crate::parser::FindPercentCached::AsIs(idx) => (tok.to_vec(), idx),
+                crate::parser::FindPercentCached::Collapsed { mut buf, idx } => {
+                    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                    buf.truncate(end);
+                    (buf, idx)
+                }
+            };
+            if percent.is_none() {
+                literals += 1;
+            }
+            FilterPattern { bytes, percent }
+        })
+        .collect();
+
+    // Matches the C threshold for switching the literal-pattern fast path
+    // from a linear scan to a hash-table lookup.
+    let hashing = literals > 1 && literals.saturating_mul(words.len()) >= 10;
+
+    let mut matched = vec![false; words.len()];
+
     // Word lookup table for the literal-pattern fast path, built only when
-    // `hashing` (see below). Keyed by word content bytes; the value is the head
-    // of a `chain` linking every word with identical content, so a matched
-    // literal pattern can mark them all. Replaces the c2rust gnulib `hash_table`
-    // plus the `a_word_hash_1/2/cmp` callbacks.
-    let mut a_word_table: FxHashMap<Box<[u8]>, *mut a_word> = FxHashMap::default();
-    let is_filter: i32 = (*funcname.offset(
-        (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as usize).wrapping_sub(1_usize)
-            as isize,
-    ) as i32
-        == 0) as i32;
-    let mut cp: *const ::core::ffi::c_char;
-    let mut literals: i32 = 0;
-    let hashing: i32;
-    let mut p: *mut ::core::ffi::c_char;
-    let mut len: size_t = 0;
-    let mut doneany: i32 = 0;
-    cp = *argv.offset(1_i32 as isize);
-    loop {
-        p = find_next_token(&raw mut cp, ::core::ptr::null_mut::<size_t>());
-        if p.is_null() {
-            break;
-        }
-        word_count = word_count.wrapping_add(1);
-    }
-    if word_count == 0 {
-        return o;
-    }
-    // Owned, zero-initialized word table (was an xcalloc'd array freed at
-    // the end). Fixed capacity keeps the backing pointer stable while the
-    // hash table below stores pointers into it.
-    let mut words_vec: Vec<a_word> = Vec::with_capacity(word_count as usize);
-    words_vec.resize_with(word_count as usize, || unsafe { ::core::mem::zeroed() });
-    words = words_vec.as_mut_ptr();
-    word_end = words.offset(word_count as isize);
-    cp = *argv.offset(0_i32 as isize);
-    loop {
-        p = find_next_token(&raw mut cp, ::core::ptr::null_mut::<size_t>());
-        if p.is_null() {
-            break;
-        }
-        pat_count = pat_count.wrapping_add(1);
-    }
-    let mut patterns_vec: Vec<a_pattern> = Vec::with_capacity(pat_count as usize);
-    patterns_vec.resize_with(pat_count as usize, || unsafe { ::core::mem::zeroed() });
-    patterns = patterns_vec.as_mut_ptr();
-    pat_end = patterns.offset(pat_count as isize);
-    cp = *argv.offset(0_i32 as isize);
-    pp = patterns;
-    loop {
-        p = find_next_token(&raw mut cp, &raw mut len);
-        if p.is_null() {
-            break;
-        }
-        if *cp as i32 != 0 {
-            cp = cp.offset(1_i32 as isize);
-        }
-        *p.offset(len as isize) = 0;
-        (*pp).str_0 = p;
-        (*pp).percent = find_percent(p);
-        if (*pp).percent.is_null() {
-            literals += 1;
-        }
-        (*pp).length = strlen((*pp).str_0) as size_t;
-        pp = pp.offset(1_i32 as isize);
-    }
-    cp = *argv.offset(1_i32 as isize);
-    wp = words;
-    loop {
-        p = find_next_token(&raw mut cp, &raw mut len);
-        if p.is_null() {
-            break;
-        }
-        if *cp as i32 != 0 {
-            cp = cp.offset(1_i32 as isize);
-        }
-        *p.offset(len as isize) = 0;
-        (*wp).str_0 = p;
-        (*wp).length = len;
-        wp = wp.offset(1_i32 as isize);
-    }
-    hashing =
-        (literals > 1 && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10) as i32;
-    if hashing != 0 {
-        a_word_table.reserve(word_count as usize);
-        wp = words;
-        while wp < word_end {
-            let key: Box<[u8]> =
-                ::core::slice::from_raw_parts((*wp).str_0 as *const u8, (*wp).length).into();
-            // Insert replaces any equal-content word and returns the previous
-            // head, which the new word then chains to (matching the C
-            // `hash_insert`: stored slot holds the latest, `chain` links back).
-            if let Some(owp) = a_word_table.insert(key, wp) {
-                (*wp).chain = owp;
-            }
-            wp = wp.offset(1_i32 as isize);
+    // `hashing`: keyed by word content, valued by every index sharing that
+    // content, so a matching literal pattern marks them all at once.
+    let mut word_table: FxHashMap<&[u8], Vec<usize>> = FxHashMap::default();
+    if hashing {
+        word_table.reserve(words.len());
+        for (i, w) in words.iter().enumerate() {
+            word_table.entry(*w).or_default().push(i);
         }
     }
-    pp = patterns;
-    while pp < pat_end {
-        if !(*pp).percent.is_null() {
-            wp = words;
-            while wp < word_end {
-                (*wp).matched |= pattern_matches((*pp).str_0, (*pp).percent, (*wp).str_0);
-                wp = wp.offset(1_i32 as isize);
-            }
-        } else if hashing != 0 {
-            // Mark every word whose content equals this literal pattern: look up
-            // the chain head by the pattern's bytes and walk the `chain`.
-            let key = ::core::slice::from_raw_parts((*pp).str_0 as *const u8, (*pp).length);
-            if let Some(&head) = a_word_table.get(key) {
-                wp = head;
-                while let Some(wpref) = wp.as_mut() {
-                    wpref.matched |= 1;
-                    wp = wpref.chain;
+
+    for pat in &patterns {
+        match pat.percent {
+            Some(pi) => {
+                let prefix = &pat.bytes[..pi];
+                let suffix = &pat.bytes[pi + 1..];
+                for (i, w) in words.iter().enumerate() {
+                    matched[i] |= pattern_matches_parts(prefix, suffix, w);
                 }
             }
-        } else {
-            wp = words;
-            while wp < word_end {
-                (*wp).matched |= ((*wp).length == (*pp).length
-                    && memcmp(
-                        (*pp).str_0 as *const ::core::ffi::c_void,
-                        (*wp).str_0 as *const ::core::ffi::c_void,
-                        (*wp).length as size_t,
-                    ) == 0) as i32;
-                wp = wp.offset(1_i32 as isize);
+            None if hashing => {
+                if let Some(indices) = word_table.get(pat.bytes.as_slice()) {
+                    for &i in indices {
+                        matched[i] = true;
+                    }
+                }
+            }
+            None => {
+                for (i, w) in words.iter().enumerate() {
+                    matched[i] |= *w == pat.bytes.as_slice();
+                }
             }
         }
-        pp = pp.offset(1_i32 as isize);
     }
-    wp = words;
-    while wp < word_end {
-        if if is_filter != 0 {
-            (*wp).matched
-        } else {
-            ((*wp).matched == 0) as i32
-        } != 0
-        {
-            o = variable_buffer_output(ctx, o, (*wp).str_0, strlen((*wp).str_0) as size_t);
-            o = variable_buffer_output(
-                ctx,
-                o,
-                b" \0" as *const u8 as *const ::core::ffi::c_char,
-                1,
-            );
-            doneany = 1;
+
+    let mut out = Vec::new();
+    for (i, w) in words.iter().enumerate() {
+        if matched[i] == is_filter {
+            out.extend_from_slice(w);
+            out.push(b' ');
         }
-        wp = wp.offset(1_i32 as isize);
     }
-    if doneany != 0 {
-        o = o.offset(-1_i32 as isize);
+    if !out.is_empty() {
+        out.pop();
     }
-    o
+    out
 }
 /// Collapse `bytes` to its whitespace-separated words rejoined by single
 /// spaces — the transformation `$(strip ...)` performs. Word boundaries use
@@ -4365,8 +4564,8 @@ const function_table_init: [function_table_entry; 38] = [
     ft_entry(b"error\0", 0, 1, 1, func_error),
     ft_entry(b"eval\0", 0, 1, 1, func_eval),
     ft_entry(b"file\0", 1, 2, 1, func_file),
-    ft_entry(b"filter\0", 2, 2, 1, func_filter_filterout),
-    ft_entry(b"filter-out\0", 2, 2, 1, func_filter_filterout),
+    ft_entry_safe(b"filter\0", 2, 2, 1, func_filter_filterout),
+    ft_entry_safe(b"filter-out\0", 2, 2, 1, func_filter_filterout),
     ft_entry(b"findstring\0", 2, 2, 1, func_findstring),
     ft_entry_safe(b"firstword\0", 0, 1, 1, func_firstword),
     ft_entry(b"flavor\0", 0, 1, 1, func_flavor),
