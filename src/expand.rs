@@ -193,15 +193,22 @@ pub fn set_variable_buffer_byte(
     ctx.variable_buffer.set_byte_at(off, b);
 }
 /// The `-d` verbose line for a self-referencing variable being exported to
-/// a `$(shell …)` function. A missing file name renders as `(null)`, exactly
+/// a `$(shell …)` function. A NULL file name renders as `(null)`, exactly
 /// as glibc printf did for built-in and environment variables.
-fn no_recursive_expand_msg(
-    filenm: Option<&[u8]>,
+/// # Safety
+/// `filenm` must be NULL or a valid NUL-terminated string; `name` likewise
+/// valid for the call.
+unsafe fn no_recursive_expand_msg(
+    filenm: *const ::core::ffi::c_char,
     lineno: ::core::ffi::c_ulong,
     name: &[u8],
 ) -> Vec<u8> {
     let mut msg = Vec::with_capacity(64);
-    msg.extend_from_slice(filenm.unwrap_or(b"(null)"));
+    msg.extend_from_slice(if filenm.is_null() {
+        b"(null)"
+    } else {
+        ::core::ffi::CStr::from_ptr(filenm).to_bytes()
+    });
     msg.extend_from_slice(b":");
     msg.extend_from_slice(lineno.to_string().as_bytes());
     msg.extend_from_slice(b": not recursively expanding ");
@@ -227,13 +234,8 @@ pub unsafe fn recursively_expand_for_file(
         // A self-referencing variable being exported to a $(shell ...)
         // function: hand back the unexpanded environment value instead.
         if DB_VERBOSE & db_level(ctx) != 0 {
-            let fnm = (*v).fileinfo.filenm;
             crate::output::trace_out(&no_recursive_expand_msg(
-                if fnm.is_null() {
-                    None
-                } else {
-                    Some(::core::ffi::CStr::from_ptr(fnm).to_bytes())
-                },
+                (*v).fileinfo.filenm,
                 (*v).fileinfo.lineno,
                 ::core::ffi::CStr::from_ptr((*v).name).to_bytes(),
             ));
@@ -824,16 +826,21 @@ mod no_recursive_expand_msg_tests {
     use super::no_recursive_expand_msg;
 
     /// Named and unnamed (built-in/env) variables format like the C
-    /// printf did, including the glibc "(null)" for a missing file name.
+    /// printf did, including the glibc "(null)" for a NULL file name.
     #[test]
     fn formats_with_and_without_file_name() {
-        assert_eq!(
-            no_recursive_expand_msg(Some(b"Makefile"), 12, b"FOO"),
-            b"Makefile:12: not recursively expanding FOO to export to shell function\n".to_vec()
-        );
-        assert_eq!(
-            no_recursive_expand_msg(None, 0, b"PATH"),
-            b"(null):0: not recursively expanding PATH to export to shell function\n".to_vec()
-        );
+        // SAFETY: valid NUL-terminated pointer / NULL, as the contract asks.
+        unsafe {
+            assert_eq!(
+                no_recursive_expand_msg(c"Makefile".as_ptr(), 12, b"FOO"),
+                b"Makefile:12: not recursively expanding FOO to export to shell function\n"
+                    .to_vec()
+            );
+            assert_eq!(
+                no_recursive_expand_msg(::core::ptr::null(), 0, b"PATH"),
+                b"(null):0: not recursively expanding PATH to export to shell function\n"
+                    .to_vec()
+            );
+        }
     }
 }
