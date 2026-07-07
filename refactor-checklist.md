@@ -112,12 +112,16 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
 - [x] `$(file <…)`/`$(file >…)` (function.rs) and the `dbg` debug log
       (misc.rs) — `std::fs::File`/`OpenOptions`, EINTR retries preserved,
       fatal messages byte-identical; `file_func` fixture pins it
-- [ ] temp files: `get_tmpfile`/`fdopen` (misc.rs), the `-f -` stdin spool
-      `fread`/`fwrite` loop (main.rs), jobserver temp `fclose` (posixos.rs)
+- [x] temp files: `get_tmpfile` returns `std::fs::File` (misc.rs), the
+      `-f -` stdin spool reads `std::io::stdin` (main.rs); still libc:
+      the `tmpfile()` fallback in posixos.rs `os_anontmp`
+- [x] output.rs: `_outputs`' non-synced fallback writes through Rust
+      stdout/stderr (every make message), and `pump_from_tmp` pumps the
+      output-sync temp fd via `std::fs::File`/`Read`/`Write` (libc-stream
+      flush kept at entry until the printf callers convert); still libc:
+      the raw-fd `writebuf`/`readbuf` helpers (misc.rs) → BorrowedFd io
 - [ ] makefile reading: `ebuf.fp` `fopen`/`fdopen`/`fclose` + `readline`
       (read.rs) → `BufReader`-style owned reader
-- [ ] output.rs: the `fwrite` dump in `output_write`, `fputs`/`fflush` in
-      the message writers
 - [ ] the `-p` data-base printers: `printf`/`fputs`/`putchar` in
       variable.rs, file.rs, dir.rs, vpath.rs, strcache.rs, main.rs
       (`print_version`/`print_data_base`) → one shared safe byte-writer

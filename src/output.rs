@@ -6,17 +6,17 @@
 //! are called with printf-style argument lists from all over the crate; the
 //! [`msg`] submodule provides native-Rust counterparts.
 
-use ::core::ffi::{c_char, c_uint, c_void};
+use ::core::ffi::c_uint;
 use ::core::ptr::{null, null_mut};
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, close, ftruncate, lseek, perror, read, strerror, strlen, EINTR, SEEK_END,
+    __errno_location, close, ftruncate, lseek, strerror, strlen, EINTR, SEEK_END,
     SEEK_SET,
 };
 
 use crate::execctx::ExecContext;
-use crate::ffi_types::{__off_t, size_t, uintmax_t};
+use crate::ffi_types::{size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::die;
 use crate::misc::{open_anon_tmpfd, writebuf};
@@ -30,8 +30,6 @@ extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(stream: *mut FILE) -> i32;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
-    fn fwrite(ptr: *const c_void, size: size_t, n: size_t, s: *mut FILE) -> ::core::ffi::c_ulong;
     fn fileno(stream: *mut FILE) -> i32;
 }
 
@@ -115,9 +113,21 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
             return;
         }
     }
-    let f: *mut FILE = if is_err != 0 { stderr } else { stdout };
-    fputs(msg, f);
-    fflush(f);
+    // Every non-synced make message lands here: write it through Rust's
+    // stdout/stderr and flush, exactly the fputs+fflush the C did. The libc
+    // streams stay line-buffered elsewhere, so per-message flushing on both
+    // sides keeps interleaving stable while the printf callers convert.
+    use std::io::Write;
+    let bytes = ::core::ffi::CStr::from_ptr(msg).to_bytes();
+    if is_err != 0 {
+        let mut f = std::io::stderr();
+        let _ = f.write_all(bytes);
+        let _ = f.flush();
+    } else {
+        let mut f = std::io::stdout();
+        let _ = f.write_all(bytes);
+        let _ = f.flush();
+    }
 }
 /// Print an entering/leaving-directory line (returns 1).
 ///
@@ -181,47 +191,64 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     _outputs(null_mut(), 0, line.as_ptr() as *const ::core::ffi::c_char);
     1
 }
-/// Copy everything from fd `from` to stream `to`, from the beginning.
+/// `perror`'s exact output — `<what>: <strerror(errno)>\n` to stderr — for
+/// the pump's error paths, sourcing errno from the `io::Error`.
+fn pump_perror(what: &str, err: &std::io::Error) {
+    use std::io::Write;
+    // SAFETY: `strerror` returns a static NUL-terminated message for any
+    // errno value.
+    let es = unsafe {
+        ::core::ffi::CStr::from_ptr(strerror(err.raw_os_error().unwrap_or(0)))
+    };
+    let mut e = std::io::stderr();
+    let _ = e.write_all(what.as_bytes());
+    let _ = e.write_all(b": ");
+    let _ = e.write_all(es.to_bytes());
+    let _ = e.write_all(b"\n");
+}
+/// Copy everything from fd `from` to stdout or stderr, from the beginning.
 ///
 /// # Safety
-/// `from` must be an open, seekable fd and `to` an open stream; uses a
-/// static buffer, so must run single-threaded.
-pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
-    // Plain per-call scratch (the former `static mut buffer`): nothing reads
-    // it across calls, the static only existed to keep the C frame small.
-    let mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
-    if lseek(from, 0, SEEK_SET) == -1 as __off_t {
-        perror(c"lseek()".as_ptr());
+/// `from` must be an open, seekable fd this function may read (ownership is
+/// borrowed, not taken).
+pub unsafe fn pump_from_tmp(from: i32, to_stderr: bool) {
+    use std::io::{Read, Seek, Write};
+    use std::os::fd::FromRawFd;
+    // Anything a libc printer buffered for this stream must land before our
+    // raw writes; flush it once up front (the C fwrite went through that
+    // same buffer, so ordering was inherent there).
+    fflush(if to_stderr { stderr } else { stdout });
+    // Borrow the fd as a File without taking ownership.
+    let mut src = ::core::mem::ManuallyDrop::new(std::fs::File::from_raw_fd(from));
+    if let Err(e) = src.seek(std::io::SeekFrom::Start(0)) {
+        pump_perror("lseek()", &e);
     }
+    let mut buffer = [0u8; 8192];
     loop {
-        let mut len: i32;
-        loop {
-            len = read(
-                from,
-                buffer.as_mut_ptr() as *mut ::core::ffi::c_void,
-                ::core::mem::size_of::<[::core::ffi::c_char; 8192]>() as size_t,
-            ) as i32;
-            if !(len == -1 && *__errno_location() == EINTR) {
-                break;
+        // The C loop retried EINTR and perror'd + stopped on other errors.
+        let len = loop {
+            match src.read(&mut buffer) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    pump_perror("read()", &e);
+                    break 0;
+                }
             }
-        }
-        if len < 0 {
-            perror(c"read()".as_ptr());
-        }
-        if len <= 0 {
+        };
+        if len == 0 {
             break;
         }
-        if fwrite(
-            buffer.as_ptr() as *const ::core::ffi::c_void,
-            len as size_t,
-            1,
-            to,
-        ) < 1
-        {
-            perror(c"fwrite()".as_ptr());
-            break;
+        // Keep the C error text: the write is what fwrite() did.
+        let write_result = if to_stderr {
+            std::io::stderr().write_all(&buffer[..len])
         } else {
-            fflush(to);
+            let mut o = std::io::stdout();
+            o.write_all(&buffer[..len]).and_then(|()| o.flush())
+        };
+        if let Err(e) = write_result {
+            pump_perror("fwrite()", &e);
+            break;
         }
     }
 }
@@ -320,10 +347,10 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             traced = log_working_directory(ctx, 1);
         }
         if outfd_not_empty != 0 {
-            pump_from_tmp((*out).out, stdout);
+            pump_from_tmp((*out).out, false);
         }
         if errfd_not_empty != 0 && (*out).err != (*out).out {
-            pump_from_tmp((*out).err, stderr);
+            pump_from_tmp((*out).err, true);
         }
         if traced != 0 {
             log_working_directory(ctx, 0);
