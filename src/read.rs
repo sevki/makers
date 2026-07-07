@@ -19,13 +19,11 @@ use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_bytes};
 use c2rust_bitfields;
 use libc::{
-    __errno_location, free, getenv, getlogin, printf, puts, strchr, strcpy, strerror, strpbrk,
+    __errno_location, free, getenv, getlogin, strchr, strcpy, strerror, strpbrk,
 };
 pub use lines::{readline, readstring};
 extern "C" {
-    static mut stdout: *mut FILE;
     fn fclose(__stream: *mut FILE) -> i32;
-    fn fflush(__stream: *mut FILE) -> i32;
     fn fopen(
         __filename: *const ::core::ffi::c_char,
         __modes: *const ::core::ffi::c_char,
@@ -270,8 +268,7 @@ pub unsafe fn read_all_makefiles(
         NILF,
     );
     if 0x1_i32 & db_level(ctx) != 0 {
-        printf(b"Reading makefiles...\n\0" as *const u8 as *const ::core::ffi::c_char);
-        fflush(stdout);
+        crate::output::trace_out(b"Reading makefiles...\n");
     }
     let value: *mut ::core::ffi::c_char;
     let mut name: *mut ::core::ffi::c_char;
@@ -430,23 +427,24 @@ unsafe fn eval_makefile(
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
     if 0x2_i32 & db_level(ctx) != 0 {
-        printf(
-            b"Reading makefile '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            filename,
-        );
+        let mut msg = Vec::with_capacity(64);
+        msg.extend_from_slice(b"Reading makefile '");
+        msg.extend_from_slice(::core::ffi::CStr::from_ptr(filename).to_bytes());
+        msg.extend_from_slice(b"'");
         if flags as i32 & RM_NO_DEFAULT_GOAL != 0 {
-            printf(b" (no default goal)\0" as *const u8 as *const ::core::ffi::c_char);
+            msg.extend_from_slice(b" (no default goal)");
         }
         if flags as i32 & RM_INCLUDED != 0 {
-            printf(b" (search path)\0" as *const u8 as *const ::core::ffi::c_char);
+            msg.extend_from_slice(b" (search path)");
         }
         if flags as i32 & RM_DONTCARE != 0 {
-            printf(b" (don't care)\0" as *const u8 as *const ::core::ffi::c_char);
+            msg.extend_from_slice(b" (don't care)");
         }
         if flags as i32 & RM_NO_TILDE != 0 {
-            printf(b" (no ~ expansion)\0" as *const u8 as *const ::core::ffi::c_char);
+            msg.extend_from_slice(b" (no ~ expansion)");
         }
-        puts(b"...\0" as *const u8 as *const ::core::ffi::c_char);
+        msg.extend_from_slice(b"...\n");
+        crate::output::trace_out(&msg);
     }
     if flags as i32 & RM_NO_TILDE == 0 && *filename.offset(0_i32 as isize) as i32 == '~' as i32 {
         expanded = tilde_expand(ctx, filename);
@@ -799,16 +797,13 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                 line = line.offset(3_i32 as isize);
                 if 0x1_i32 & db_level(ctx) != 0 {
                     if !(*ebuf).floc.filenm.is_null() {
-                        printf(
-                            b"Skipping UTF-8 BOM in makefile '%s'\n\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            (*ebuf).floc.filenm,
-                        );
+                        crate::output::trace_parts(&[
+                            b"Skipping UTF-8 BOM in makefile '",
+                            ::core::ffi::CStr::from_ptr((*ebuf).floc.filenm).to_bytes(),
+                            b"'\n",
+                        ]);
                     } else {
-                        printf(
-                            b"Skipping UTF-8 BOM in makefile buffer\n\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                        );
+                        crate::output::trace_out(b"Skipping UTF-8 BOM in makefile buffer\n");
                     }
                 }
             }

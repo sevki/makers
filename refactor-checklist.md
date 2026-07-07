@@ -133,8 +133,11 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
 - [x] debug traces, batch 1: remake.rs (all 23 sites incl. the printf+puts
       combo), job.rs (all 15), implicit.rs (`dbs`), and `print_spaces`
       (misc.rs) route through `output::trace_out`/`trace_parts`
-- [ ] debug traces, batch 2: the remaining `printf`+`fflush(stdout)` pairs
-      in expand.rs, function.rs, commands.rs, read.rs, main.rs
+- [x] debug traces, batch 2: expand.rs (shell-export recursion), function.rs
+      (batch-file cleanup), read.rs (Reading makefiles/makefile, BOM), and
+      main.rs (jobserver/mutex/shuffle/updating/loop/Re-executing) route
+      through `output::trace_out`/`trace_parts`; commands.rs's two printf
+      sites are `-p` recipe printers and move with that slice
 - [ ] stdout plumbing: `setvbuf`/`fileno`/`check_io_state` (main.rs),
       `close_stdout` atexit handler — last, once no libc writers remain
 - [ ] file ops with all-Rust callers: `unlink`/`chdir`/`getcwd` →

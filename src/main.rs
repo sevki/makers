@@ -21,7 +21,7 @@ use crate::vpath::{build_vpath_lists, print_vpath_data_base};
 use c2rust_bitfields;
 use libc;
 use libc::{
-    __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putchar, putenv,
+    __errno_location, _exit, abort, atof, chdir, exit, free, isatty, printf, putenv,
     setlocale, sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
 };
 use std::sync::atomic::Ordering;
@@ -2911,20 +2911,16 @@ unsafe fn main_0(
     if options.jobserver_auth.borrow().is_some() && (0x2_i32 | 0x4_i32) & db_level(&ctx) != 0 {
         let auth = options.jobserver_auth.borrow().clone().unwrap();
         let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
-        printf(
-            b"Using jobserver controller %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            auth_c.as_ptr(),
-        );
-        fflush(stdout);
+        crate::output::trace_parts(&[
+            b"Using jobserver controller ",
+            auth_c.to_bytes(),
+            b"\n",
+        ]);
     }
     if options.sync_mutex.borrow().is_some() && 0x2_i32 & db_level(&ctx) != 0 {
         let mtx = options.sync_mutex.borrow().clone().unwrap();
         let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
-        printf(
-            b"Using output-sync mutex %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            mtx_c.as_ptr(),
-        );
-        fflush(stdout);
+        crate::output::trace_parts(&[b"Using output-sync mutex ", mtx_c.to_bytes(), b"\n"]);
     }
     define_makeflags(&ctx, &options, 0);
     snap_deps(&ctx);
@@ -2969,11 +2965,7 @@ unsafe fn main_0(
     if options.shuffle_mode.borrow().is_some() && 0x1_i32 & db_level(&ctx) != 0 {
         let sm = options.shuffle_mode.borrow().clone().unwrap();
         let sm_c = ::std::ffi::CString::new(sm.as_bytes()).unwrap_or_default();
-        printf(
-            b"Enabled shuffle mode: %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-            sm_c.as_ptr(),
-        );
-        fflush(stdout);
+        crate::output::trace_parts(&[b"Enabled shuffle mode: ", sm_c.to_bytes(), b"\n"]);
     }
     if !read_files.is_empty() {
         let mut skipped_makefiles: Vec<crate::dep::GoalDepNode> = Vec::new();
@@ -2981,8 +2973,7 @@ unsafe fn main_0(
         let mut any_failed: i32 = 0;
         let mut status: UpdateStatus;
         if 0x1_i32 & db_level(&ctx) != 0 {
-            printf(b"Updating makefiles....\n\0" as *const u8 as *const ::core::ffi::c_char);
-            fflush(stdout);
+            crate::output::trace_out(b"Updating makefiles....\n");
         }
         // The c2rust list re-reversed `read_files` here (it had been built by
         // front-pushing); mirror that so makefiles are remade in source order.
@@ -3031,14 +3022,11 @@ unsafe fn main_0(
                 kept.push(g);
             } else {
                 if 0x2_i32 & db_level(&ctx) != 0 {
-                    let mut nm = name.clone();
-                    nm.push(0);
-                    printf(
-                        b"Makefile '%s' might loop; not remaking it.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        nm.as_ptr() as *const ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
+                    crate::output::trace_parts(&[
+                        b"Makefile '",
+                        &name,
+                        b"' might loop; not remaking it.\n",
+                    ]);
                 }
                 if g.error != 0 && !g.dep.flags.contains(crate::dep::DepFlags::DONTCARE) {
                     skipped_makefiles.push(g);
@@ -3409,17 +3397,15 @@ unsafe fn main_0(
             restarts = restarts.wrapping_add(1);
             if 0x1_i32 & db_level(&ctx) != 0 {
                 let mut p_3: *mut *const ::core::ffi::c_char;
-                printf(
-                    b"Re-executing[%u]:\0" as *const u8 as *const ::core::ffi::c_char,
-                    restarts,
-                );
+                let mut msg = format!("Re-executing[{restarts}]:").into_bytes();
                 p_3 = nargv;
                 while !(*p_3).is_null() {
-                    printf(b" %s\0" as *const u8 as *const ::core::ffi::c_char, *p_3);
+                    msg.push(b' ');
+                    msg.extend_from_slice(::core::ffi::CStr::from_ptr(*p_3).to_bytes());
                     p_3 = p_3.offset(1_i32 as isize);
                 }
-                putchar('\n' as i32);
-                fflush(stdout);
+                msg.push(b'\n');
+                crate::output::trace_out(&msg);
             }
             let mut p_4: *mut *mut ::core::ffi::c_char;
             p_4 = environ;
@@ -3604,8 +3590,7 @@ unsafe fn main_0(
     crate::depgraph::dump_graph_if_requested(&ctx, &options.goals.borrow());
     crate::shuffle::shuffle_goals_recursive(&ctx, &mut options.goals.borrow_mut());
     if 0x1_i32 & db_level(&ctx) != 0 {
-        printf(b"Updating goal targets....\n\0" as *const u8 as *const ::core::ffi::c_char);
-        fflush(stdout);
+        crate::output::trace_out(b"Updating goal targets....\n");
     }
     match update_goal_chain(&ctx, &mut options.goals.borrow_mut()) as ::core::ffi::c_uint {
         2 => {

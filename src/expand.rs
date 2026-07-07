@@ -8,12 +8,9 @@ pub use crate::ffi_types::size_t;
 use crate::file::{File, VariableSet, VariableSetList};
 use crate::misc::{lindex, xstrdup, xstrndup};
 use crate::output::FmtArg;
-use crate::stdio::FILE;
-use libc::{free, memcpy, printf, strchr, strlen, strncmp};
+use libc::{free, memcpy, strchr, strlen, strncmp};
 extern "C" {
     static mut environ: *mut *mut ::core::ffi::c_char;
-    static mut stdout: *mut FILE;
-    fn fflush(stream: *mut FILE) -> i32;
 }
 
 /// Owns a `malloc`ed C string and frees it on drop, replacing the manual
@@ -212,13 +209,21 @@ pub unsafe fn recursively_expand_for_file(
         // A self-referencing variable being exported to a $(shell ...)
         // function: hand back the unexpanded environment value instead.
         if DB_VERBOSE & db_level(ctx) != 0 {
-            printf(
-                c"%s:%lu: not recursively expanding %s to export to shell function\n".as_ptr(),
-                (*v).fileinfo.filenm,
-                (*v).fileinfo.lineno,
-                (*v).name,
-            );
-            fflush(stdout);
+            // glibc printf renders a NULL %s as "(null)"; built-in and
+            // environment variables have no file location.
+            let fnm = (*v).fileinfo.filenm;
+            crate::output::trace_parts(&[
+                if fnm.is_null() {
+                    b"(null)".as_slice()
+                } else {
+                    ::core::ffi::CStr::from_ptr(fnm).to_bytes()
+                },
+                b":",
+                (*v).fileinfo.lineno.to_string().as_bytes(),
+                b": not recursively expanding ",
+                ::core::ffi::CStr::from_ptr((*v).name).to_bytes(),
+                b" to export to shell function\n",
+            ]);
         }
         let mut ep = environ;
         while !(*ep).is_null() {
