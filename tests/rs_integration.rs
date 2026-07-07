@@ -1275,6 +1275,27 @@ fn canonical_exit_codes_reach_the_os() {
 }
 
 #[test]
+fn file_function_reads_writes_and_reports_errors() {
+    // Paired with the `file_func` fixture, which byte-diffs the happy paths
+    // (write, append, read, CRLF trim, missing file) and the written tree
+    // against the C oracle in fixtures-diff. func_file goes through std::fs
+    // now; pin the fatal paths' exit codes here.
+    let (stdout, code) = run_make(
+        "$(file >f.txt,hi)\nX := $(file <f.txt)\nall: ; @echo got=$(X)\n",
+        &[],
+        &[],
+    );
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("got=hi"), "wrote then read back the file");
+    let (_, code) = run_make("Z := $(file @bad)\nall: ;\n", &[], &[]);
+    assert_eq!(code, Some(2), "invalid file operation is fatal");
+    let (_, code) = run_make("Z := $(file <)\nall: ;\n", &[], &[]);
+    assert_eq!(code, Some(2), "missing filename is fatal");
+    let (_, code) = run_make("Z := $(file <f,extra)\nall: ;\n", &[], &[]);
+    assert_eq!(code, Some(2), "read with a second argument is fatal");
+}
+
+#[test]
 fn print_data_base_rule_count_lands_before_files_section() {
     // rule.rs print_rule_data_base writes through Rust's line-buffered stdout
     // while the surrounding sections use libc printf; its final line has no

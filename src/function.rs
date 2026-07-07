@@ -14,24 +14,9 @@ use libc::{__errno_location, abort, close, free, pipe, printf, remove, sprintf, 
 use std::sync::atomic::Ordering;
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
+    fn fflush(__stream: *mut FILE) -> i32;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
-    fn fclose(__stream: *mut FILE) -> i32;
-    fn fflush(__stream: *mut FILE) -> i32;
-    fn fopen(
-        __filename: *const ::core::ffi::c_char,
-        __modes: *const ::core::ffi::c_char,
-    ) -> *mut FILE;
-    fn fputc(__c: i32, __stream: *mut FILE) -> i32;
-    fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
-    fn fread(
-        __ptr: *mut ::core::ffi::c_void,
-        __size: size_t,
-        __n: size_t,
-        __stream: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn feof(__stream: *mut FILE) -> i32;
-    fn ferror(__stream: *mut FILE) -> i32;
     fn fileno(__stream: *mut FILE) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
@@ -3945,26 +3930,39 @@ unsafe fn func_realpath(
     }
     o
 }
+/// Fatal error on a `$(file ...)` io failure, byte-identical to the C
+/// oracle's `OS(fatal, ...)` calls: `<op>: <name>: <strerror(errno)>`.
+unsafe fn file_io_fatal(
+    ctx: &crate::execctx::ExecContext,
+    fmt: *const ::core::ffi::c_char,
+    name: &::std::ffi::CStr,
+    err: &::std::io::Error,
+) -> ! {
+    let es: *const ::core::ffi::c_char = strerror(err.raw_os_error().unwrap_or(0));
+    fatal(
+        ctx,
+        ctx.reading_file.0.get(),
+        (name.to_bytes().len() as size_t).wrapping_add(strlen(es) as size_t),
+        fmt,
+        &[
+            FmtArg::Str(name.as_ptr()),
+            FmtArg::Str(es as *const ::core::ffi::c_char),
+        ],
+    );
+}
 unsafe fn func_file(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let mut fn_0: *mut ::core::ffi::c_char = *argv.offset(0_i32 as isize);
+    use ::std::io::{Read, Write};
+    use ::std::os::unix::ffi::OsStrExt;
+    let fn_0: *mut ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     if *fn_0.offset(0_i32 as isize) as i32 == '>' as i32 {
-        let start: *const ::core::ffi::c_char;
-        let nm: *mut ::core::ffi::c_char;
-        let mut fp: *mut FILE;
-        let mut mode: *const ::core::ffi::c_char =
-            b"w\0" as *const u8 as *const ::core::ffi::c_char;
-        fn_0 = fn_0.offset(1_i32 as isize);
-        if *fn_0.offset(0_i32 as isize) as i32 == '>' as i32 {
-            mode = b"a\0" as *const u8 as *const ::core::ffi::c_char;
-            fn_0 = fn_0.offset(1_i32 as isize);
-        }
-        start = next_token(fn_0);
+        let append = *fn_0.offset(1_i32 as isize) as i32 == '>' as i32;
+        let start: *const ::core::ffi::c_char =
+            next_token(fn_0.offset(1 + append as isize));
         if *start.offset(0_i32 as isize) as i32 == 0 {
             fatal(
                 ctx,
@@ -3974,81 +3972,62 @@ unsafe fn func_file(
                 &[],
             );
         }
-        // Bridge to the safe `end_of_token`: the returned offset of the first
-        // whitespace/NUL within `[start, NUL)` is exactly the token length.
-        let len = end_of_token(::core::slice::from_raw_parts(
-            start as *const u8,
-            strlen(start),
-        )) as size_t;
-        alloca_allocations.push(::std::vec::from_elem(0, len.wrapping_add(1) as usize));
-        nm = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-        memcpy(
-            nm as *mut ::core::ffi::c_void,
-            start as *const ::core::ffi::c_void,
-            len as size_t,
-        );
-        *nm.offset(len as isize) = 0;
-        loop {
-            *__errno_location() = 0;
-            fp = fopen(nm, mode) as *mut FILE;
-            if !(fp.is_null() && *__errno_location() == EINTR) {
-                break;
+        // The filename is the first token: everything up to the first
+        // whitespace byte (`end_of_token` is the safe offset form).
+        let start_bytes = ::core::ffi::CStr::from_ptr(start).to_bytes();
+        let name = &start_bytes[..end_of_token(start_bytes)];
+        let name_c = ::std::ffi::CString::new(name)
+            .expect("token bytes come from a C string and contain no NUL");
+        let path = ::std::path::Path::new(::std::ffi::OsStr::from_bytes(name));
+        // fopen("w"/"a") equivalents; retry EINTR like the C loop did.
+        let mut opts = ::std::fs::OpenOptions::new();
+        opts.write(true).create(true);
+        if append {
+            opts.append(true);
+        } else {
+            opts.truncate(true);
+        }
+        let mut file = loop {
+            match opts.open(path) {
+                Ok(f) => break f,
+                Err(e) if e.raw_os_error() == Some(EINTR) => continue,
+                Err(e) => file_io_fatal(
+                    ctx,
+                    b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &name_c,
+                    &e,
+                ),
             }
-        }
-        if fp.is_null() {
-            fatal(
-                ctx,
-                ctx.reading_file.0.get(),
-                (strlen(nm) as size_t)
-                    .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[
-                    FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
-                ],
-            );
-        }
+        };
         crate::make_main::bump_command_count();
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            let l: size_t = strlen(*argv.offset(1_i32 as isize)) as size_t;
-            let nl: i32 = (l == 0
-                || *(*argv.offset(1_i32 as isize)).offset(l.wrapping_sub(1) as isize) as i32
-                    != '\n' as i32) as i32;
-            if fputs(*argv.offset(1_i32 as isize), fp) == EOF
-                || nl != 0 && fputc('\n' as i32, fp) == EOF
-            {
-                fatal(
+            let text =
+                ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
+            // The C code appends a newline unless the text already ends in
+            // one — including for empty text, which writes just "\n".
+            let write_result = file.write_all(text).and_then(|()| {
+                if text.last() != Some(&b'\n') {
+                    file.write_all(b"\n")
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(e) = write_result {
+                file_io_fatal(
                     ctx,
-                    ctx.reading_file.0.get(),
-                    (strlen(nm) as size_t)
-                        .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
                     b"write: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &[
-                        FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                        FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
-                    ],
+                    &name_c,
+                    &e,
                 );
             }
         }
-        if fclose(fp) != 0 {
-            fatal(
-                ctx,
-                ctx.reading_file.0.get(),
-                (strlen(nm) as size_t)
-                    .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[
-                    FmtArg::Str((nm) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
-                ],
-            );
-        }
+        // `File` is unbuffered, so every write error already surfaced above;
+        // dropping it is the C `fclose` (whose flush-at-close error path has
+        // nothing left to report here).
+        drop(file);
     } else if *fn_0.offset(0_i32 as isize) as i32 == '<' as i32 {
         let mut n: size_t = 0;
-        let start_0: *const ::core::ffi::c_char;
-        let nm_0: *mut ::core::ffi::c_char;
-        let mut fp_0: *mut FILE;
-        start_0 = next_token(fn_0.offset(1_i32 as isize));
+        let start_0: *const ::core::ffi::c_char = next_token(fn_0.offset(1_i32 as isize));
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
             fatal(
                 ctx,
@@ -4067,94 +4046,63 @@ unsafe fn func_file(
                 &[],
             );
         }
-        // Bridge to the safe `end_of_token`: the returned offset of the first
-        // whitespace/NUL within `[start_0, NUL)` is exactly the token length.
-        let len_0 = end_of_token(::core::slice::from_raw_parts(
-            start_0 as *const u8,
-            strlen(start_0),
-        )) as size_t;
-        alloca_allocations.push(::std::vec::from_elem(0, len_0.wrapping_add(1) as usize));
-        nm_0 = alloca_allocations.last_mut().unwrap().as_mut_ptr() as *mut ::core::ffi::c_char;
-        memcpy(
-            nm_0 as *mut ::core::ffi::c_void,
-            start_0 as *const ::core::ffi::c_void,
-            len_0 as size_t,
-        );
-        *nm_0.offset(len_0 as isize) = 0;
-        loop {
-            *__errno_location() = 0;
-            fp_0 = fopen(nm_0, b"r\0" as *const u8 as *const ::core::ffi::c_char) as *mut FILE;
-            if !(fp_0.is_null() && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        if fp_0.is_null() {
-            if *__errno_location() == ENOENT {
-                if 0x2_i32 & db_level(ctx) != 0 {
-                    printf(
-                        b"file: Failed to open '%s': %s\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        nm_0,
-                        strerror(*__errno_location()),
-                    );
-                    fflush(stdout);
+        let start_bytes = ::core::ffi::CStr::from_ptr(start_0).to_bytes();
+        let name = &start_bytes[..end_of_token(start_bytes)];
+        let name_c = ::std::ffi::CString::new(name)
+            .expect("token bytes come from a C string and contain no NUL");
+        let path = ::std::path::Path::new(::std::ffi::OsStr::from_bytes(name));
+        let mut file = loop {
+            match ::std::fs::File::open(path) {
+                Ok(f) => break f,
+                Err(e) if e.raw_os_error() == Some(EINTR) => continue,
+                Err(e) if e.raw_os_error() == Some(ENOENT) => {
+                    if 0x2_i32 & db_level(ctx) != 0 {
+                        // The C path printf'd and fflush'd stdout; write the
+                        // same bytes through Rust's stdout and flush so the
+                        // trace interleaves identically with libc printers.
+                        let mut out = ::std::io::stdout();
+                        let _ = out.write_all(b"file: Failed to open '");
+                        let _ = out.write_all(name);
+                        let _ = out.write_all(b"': ");
+                        let _ = out.write_all(
+                            ::core::ffi::CStr::from_ptr(strerror(ENOENT)).to_bytes(),
+                        );
+                        let _ = out.write_all(b"\n");
+                        let _ = out.flush();
+                    }
+                    return o;
                 }
-                return o;
-            }
-            fatal(
-                ctx,
-                ctx.reading_file.0.get(),
-                (strlen(nm_0) as size_t)
-                    .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[
-                    FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
-                ],
-            );
-        }
-        loop {
-            let mut buf: [::core::ffi::c_char; 1024] = [0; 1024];
-            let l_0: size_t = fread(
-                &raw mut buf as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                1,
-                ::core::mem::size_of::<[::core::ffi::c_char; 1024]>() as size_t,
-                fp_0,
-            ) as size_t;
-            if l_0 > 0 {
-                o = variable_buffer_output(ctx, o, &raw mut buf as *mut ::core::ffi::c_char, l_0);
-                n = n.wrapping_add(l_0);
-            }
-            if ferror(fp_0) != 0 && *__errno_location() != EINTR {
-                fatal(
+                Err(e) => file_io_fatal(
                     ctx,
-                    ctx.reading_file.0.get(),
-                    (strlen(nm_0) as size_t)
-                        .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
+                    b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                    &name_c,
+                    &e,
+                ),
+            }
+        };
+        let mut buf = [0u8; 1024];
+        loop {
+            match file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(l) => {
+                    o = variable_buffer_output(
+                        ctx,
+                        o,
+                        buf.as_ptr() as *const ::core::ffi::c_char,
+                        l as size_t,
+                    );
+                    n = n.wrapping_add(l as size_t);
+                }
+                Err(e) if e.kind() == ::std::io::ErrorKind::Interrupted => continue,
+                Err(e) => file_io_fatal(
+                    ctx,
                     b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &[
-                        FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-                        FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
-                    ],
-                );
-            }
-            if feof(fp_0) != 0 {
-                break;
+                    &name_c,
+                    &e,
+                ),
             }
         }
-        if fclose(fp_0) != 0 {
-            fatal(
-                ctx,
-                ctx.reading_file.0.get(),
-                (strlen(nm_0) as size_t)
-                    .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                b"close: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                &[
-                    FmtArg::Str((nm_0) as *const ::core::ffi::c_char),
-                    FmtArg::Str((strerror(*__errno_location())) as *const ::core::ffi::c_char),
-                ],
-            );
-        }
+        drop(file);
         if n != 0 && *o.offset(-1_i32 as isize) as i32 == '\n' as i32 {
             o = o.offset(
                 -((1 + (n > 1 && *o.offset(-2_i32 as isize) as i32 == '\r' as i32) as i32)

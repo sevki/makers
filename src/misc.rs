@@ -26,9 +26,6 @@ use crate::sys_stat::stat;
 extern "C" {
     fn stat(file: *const c_char, buf: *mut stat) -> i32;
     static mut stderr: *mut FILE;
-    fn fclose(stream: *mut FILE) -> i32;
-    fn fflush(stream: *mut FILE) -> i32;
-    fn fopen(filename: *const c_char, modes: *const c_char) -> *mut FILE;
     fn fdopen(fd: i32, modes: *const c_char) -> *mut FILE;
     fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> i32;
 }
@@ -586,18 +583,18 @@ fn or_null_sentinel(msg: *const c_char) -> *const c_char {
 }
 
 pub unsafe fn dbg(msg: *const c_char) {
-    let fp: *mut FILE = fopen(c"/tmp/gmkdebug.log".as_ptr(), c"a+".as_ptr());
-    if fp.is_null() {
+    use std::io::Write;
+    let Ok(mut fp) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/gmkdebug.log")
+    else {
         return;
-    }
-    fprintf(
-        fp,
-        c"%u: %s\n".as_ptr(),
-        make_pid() as c_uint,
-        or_null_sentinel(msg),
-    );
-    fflush(fp);
-    fclose(fp);
+    };
+    let text = ::core::ffi::CStr::from_ptr(or_null_sentinel(msg)).to_bytes();
+    let _ = write!(fp, "{}: ", make_pid() as c_uint);
+    let _ = fp.write_all(text);
+    let _ = fp.write_all(b"\n");
 }
 
 const DEFAULT_TMPDIR: &::core::ffi::CStr = c"/tmp";
