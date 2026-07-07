@@ -143,5 +143,8 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
       sites are `-p` recipe printers and move with that slice
 - [ ] stdout plumbing: `setvbuf`/`fileno`/`check_io_state` (main.rs),
       `close_stdout` atexit handler — last, once no libc writers remain
-- [ ] file ops with all-Rust callers: `unlink`/`chdir`/`getcwd` →
-      `std::fs`/`std::env`
+- [x] file ops with all-Rust callers: every `unlink` goes through
+      `misc::unlink_c` (std::fs::remove_file with the C EINTR retry and
+      errno preserved for perror paths); main.rs `chdir`/`getcwd` go
+      through `chdir_c`/`getcwd_into` (std::env, errno preserved, the
+      fixed `current_directory` buffer semantics kept)

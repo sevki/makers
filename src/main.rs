@@ -21,8 +21,8 @@ use crate::vpath::{build_vpath_lists, print_vpath_data_base};
 use c2rust_bitfields;
 use libc;
 use libc::{
-    __errno_location, _exit, abort, atof, chdir, exit, free, isatty, putenv, setlocale,
-    sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname, unlink,
+    __errno_location, _exit, abort, atof, exit, free, isatty, putenv, setlocale,
+    sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname,
 };
 use std::sync::atomic::Ordering;
 
@@ -43,7 +43,6 @@ extern "C" {
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
     fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
     fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
-    fn getcwd(__buf: *mut ::core::ffi::c_char, __size: size_t) -> *mut ::core::ffi::c_char;
     static mut environ: *mut *mut ::core::ffi::c_char;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
@@ -1847,6 +1846,51 @@ pub unsafe fn reset_jobserver_mirror() {
     jobserver_clear();
     with_options(|o| *o.jobserver_auth.borrow_mut() = None);
 }
+/// chdir(2) via `std::env::set_current_dir`: 0/-1 like the C call, errno set
+/// on failure for the callers' perror/pfatal paths.
+/// # Safety
+/// `dir` must be a valid NUL-terminated path.
+unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
+    use std::os::unix::ffi::OsStrExt;
+    let os = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(dir).to_bytes());
+    match ::std::env::set_current_dir(os) {
+        Ok(()) => 0,
+        Err(e) => {
+            *__errno_location() = e.raw_os_error().unwrap_or(0);
+            -1
+        }
+    }
+}
+
+/// getcwd(3) via `std::env::current_dir`, copied into the fixed buffer the
+/// callers keep long-lived pointers into. Returns false with errno set on
+/// failure — including ERANGE when the path cannot fit, as getcwd did.
+/// # Safety
+/// `buf` must be valid for writes of `size` bytes.
+unsafe fn getcwd_into(buf: *mut ::core::ffi::c_char, size: usize) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    match ::std::env::current_dir() {
+        Ok(p) => {
+            let b = p.as_os_str().as_bytes();
+            if b.len() + 1 > size {
+                *__errno_location() = libc::ERANGE;
+                return false;
+            }
+            ::core::ptr::copy_nonoverlapping(
+                b.as_ptr() as *const ::core::ffi::c_char,
+                buf,
+                b.len(),
+            );
+            *buf.add(b.len()) = 0;
+            true
+        }
+        Err(e) => {
+            *__errno_location() = e.raw_os_error().unwrap_or(0);
+            false
+        }
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -1854,14 +1898,8 @@ pub unsafe fn reset_jobserver_mirror() {
 pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
     if opt_stdin_offset() >= 0 && !ctx.temp_stdin_name.0.get().is_null() {
         let nm: *const ::core::ffi::c_char = ctx.temp_stdin_name.0.get();
-        let mut r: i32;
         with_options(|o| o.stdin_offset.set(-1));
-        loop {
-            r = unlink(nm);
-            if !(r == -1_i32 && *__errno_location() == EINTR) {
-                break;
-            }
-        }
+        let r = crate::misc::unlink_c(nm);
         if r < 0 && *__errno_location() != ENOENT && !handling_fatal_signal(ctx) {
             perror_with_name(
                 ctx,
@@ -1945,12 +1983,10 @@ unsafe fn main_0(
     }
     initialize_global_hash_tables(&ctx);
     get_tmpdir(&ctx);
-    if getcwd(
+    if !getcwd_into(
         &raw mut current_directory as *mut ::core::ffi::c_char,
-        GET_PATH_MAX as size_t,
-    )
-    .is_null()
-    {
+        GET_PATH_MAX as usize,
+    ) {
         perror_with_name(
             &ctx,
             b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2410,18 +2446,16 @@ unsafe fn main_0(
     if !options.directories.borrow().is_empty() {
         for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
-            if chdir(dir) < 0 {
+            if chdir_c(dir) < 0 {
                 pfatal_with_name(&ctx, dir);
             }
         }
     }
     if !options.directories.borrow().is_empty() {
-        if getcwd(
+        if !getcwd_into(
             &raw mut current_directory as *mut ::core::ffi::c_char,
-            GET_PATH_MAX as size_t,
-        )
-        .is_null()
-        {
+            GET_PATH_MAX as usize,
+        ) {
             perror_with_name(
                 &ctx,
                 b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3371,7 +3405,7 @@ unsafe fn main_0(
             if !options.directories.borrow().is_empty() {
                 let mut bad: i32 = 1;
                 if !ctx.directory_before_chdir.0.get().is_null() {
-                    if chdir(ctx.directory_before_chdir.0.get()) < 0 {
+                    if chdir_c(ctx.directory_before_chdir.0.get()) < 0 {
                         perror_with_name(
                             &ctx,
                             b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
@@ -5104,8 +5138,7 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
         crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
         osync_clear();
         if !ctx.directory_before_chdir.0.get().is_null() {
-            let mut _x: i32 = 0;
-            _x = chdir(ctx.directory_before_chdir.0.get());
+            let _ = chdir_c(ctx.directory_before_chdir.0.get());
         }
     }
 }

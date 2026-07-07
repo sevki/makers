@@ -10,7 +10,7 @@ use ::core::ptr::{null, null_mut};
 
 use libc::{
     __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, realloc, sleep,
-    sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, unlink, EINTR,
+    sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, EINTR,
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
@@ -485,6 +485,26 @@ unsafe fn end_of_token_raw(mut p: *const c_char) -> *mut c_char {
     p as *mut c_char
 }
 
+/// unlink(2) via `std::fs::remove_file`, with the C call sites' EINTR retry
+/// folded in. Returns 0/-1 like the C call and leaves errno set on failure so
+/// the callers' perror-style paths print identical bytes.
+/// # Safety
+/// `name` must be a valid NUL-terminated path.
+pub unsafe fn unlink_c(name: *const c_char) -> i32 {
+    use std::os::unix::ffi::OsStrExt;
+    let os = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(name).to_bytes());
+    loop {
+        match ::std::fs::remove_file(os) {
+            Ok(()) => return 0,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                *__errno_location() = e.raw_os_error().unwrap_or(0);
+                return -1;
+            }
+        }
+    }
+}
+
 /// Write `len` bytes from `buffer` to `fd`, retrying on EINTR and short
 /// writes (`write_all`'s exact contract). Returns `len` on success or -1 on
 /// failure; errno is left set by the failing write(2).
@@ -788,13 +808,7 @@ pub unsafe fn open_anon_tmpfd(ctx: &crate::execctx::ExecContext) -> i32 {
     // Unlink immediately so the file has no name; `umask` only affects the
     // already-completed creation, so restoring it before the unlink (as
     // `open_named_tmpfd` does) is equivalent to the original's order.
-    let mut r: i32;
-    loop {
-        r = unlink(tmpnm);
-        if !(r == -1 && *__errno_location() == EINTR) {
-            break;
-        }
-    }
+    let r = unlink_c(tmpnm);
     if r < 0 {
         error(
             ctx,
