@@ -26,10 +26,6 @@ use crate::sys_stat::stat;
 extern "C" {
     fn stat(file: *const c_char, buf: *mut stat) -> i32;
     static mut stderr: *mut FILE;
-    fn fclose(stream: *mut FILE) -> i32;
-    fn fflush(stream: *mut FILE) -> i32;
-    fn fopen(filename: *const c_char, modes: *const c_char) -> *mut FILE;
-    fn fdopen(fd: i32, modes: *const c_char) -> *mut FILE;
     fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> i32;
 }
 
@@ -586,18 +582,18 @@ fn or_null_sentinel(msg: *const c_char) -> *const c_char {
 }
 
 pub unsafe fn dbg(msg: *const c_char) {
-    let fp: *mut FILE = fopen(c"/tmp/gmkdebug.log".as_ptr(), c"a+".as_ptr());
-    if fp.is_null() {
+    use std::io::Write;
+    let Ok(mut fp) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/gmkdebug.log")
+    else {
         return;
-    }
-    fprintf(
-        fp,
-        c"%u: %s\n".as_ptr(),
-        make_pid() as c_uint,
-        or_null_sentinel(msg),
-    );
-    fflush(fp);
-    fclose(fp);
+    };
+    let text = ::core::ffi::CStr::from_ptr(or_null_sentinel(msg)).to_bytes();
+    let _ = write!(fp, "{}: ", make_pid() as c_uint);
+    let _ = fp.write_all(text);
+    let _ = fp.write_all(b"\n");
 }
 
 const DEFAULT_TMPDIR: &::core::ffi::CStr = c"/tmp";
@@ -823,55 +819,29 @@ pub unsafe fn open_anon_tmpfd(ctx: &crate::execctx::ExecContext) -> i32 {
     fd
 }
 
-/// Create a temporary `FILE *` opened `"wb+"`; `*name` receives the
-/// `xmalloc`'d file name. Returns null on failure (after reporting an
-/// error).
+/// Create a read-write temporary file (the former `fopen "wb+"`); `*name`
+/// receives the `xmalloc`'d file name. Returns `None` on failure (after
+/// `open_named_tmpfd` reported the error). The C version's separate
+/// `fdopen` failure path is gone: wrapping an already-open fd in a
+/// `std::fs::File` cannot fail.
 ///
 /// # Safety
 /// `name` must be non-null and valid for writes; the caller takes ownership
 /// of `*name`.
-pub unsafe fn get_tmpfile(ctx: &crate::execctx::ExecContext, name: *mut *mut c_char) -> *mut FILE {
-    let tmpfile_mode: *const c_char = c"wb+".as_ptr();
-
+pub unsafe fn get_tmpfile(
+    ctx: &crate::execctx::ExecContext,
+    name: *mut *mut c_char,
+) -> Option<std::fs::File> {
     let name = name.as_mut().expect("get_tmpfile: name must be non-null");
 
     let (fd, tmpnm) = open_named_tmpfd(ctx);
     *name = tmpnm;
     if fd < 0 {
-        return null_mut();
+        return None;
     }
-
-    assert!(
-        !name.is_null(),
-        "get_tmpfile: temporary file name must be set"
-    );
-
-    let mut file: *mut FILE;
-    loop {
-        *__errno_location() = 0;
-        file = fdopen(fd, tmpfile_mode);
-        if !(file.is_null() && *__errno_location() == EINTR) {
-            break;
-        }
-    }
-    if file.is_null() {
-        let tmp_name_for_err: *const ::core::ffi::c_char = if name.is_null() || (*name).is_null() {
-            b"(unknown)\0" as *const u8 as *const ::core::ffi::c_char
-        } else {
-            *name as *const ::core::ffi::c_char
-        };
-        error(
-            ctx,
-            null::<Floc>(),
-            0,
-            c"fdopen: temporary file %s: %s".as_ptr(),
-            &[
-                FmtArg::Str(tmp_name_for_err),
-                FmtArg::Str(strerror(*__errno_location())),
-            ],
-        );
-    }
-    file
+    // SAFETY: `open_named_tmpfd` hands back exclusive ownership of an open
+    // fd; the `File` now owns it and closes it on drop.
+    Some(<std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd))
 }
 
 #[cfg(test)]
@@ -881,30 +851,28 @@ mod tmpfile_tests {
     use ::core::ptr::null_mut;
 
     // `get_tmpfile` drives the whole temp-file chain (`open_named_tmpfd` ->
-    // `get_tmptemplate` -> `get_tmpdir`): it must hand back a writable
-    // `FILE *` and an owned, non-null name. Round-trip a write through it to
-    // prove the descriptor is real, then clean up.
+    // `get_tmptemplate` -> `get_tmpdir`): it must hand back a read-write
+    // `std::fs::File` and an owned, non-null name. Round-trip a write
+    // through it to prove the descriptor is real, then clean up.
     #[test]
     fn get_tmpfile_round_trips_and_names_the_file() {
+        use std::io::{Read, Seek, Write};
         let ctx = crate::execctx::ExecContext::default();
         let mut name: *mut c_char = null_mut();
         unsafe {
-            let fp = get_tmpfile(&ctx, &mut name);
-            assert!(!fp.is_null(), "get_tmpfile returned null");
+            let mut fp =
+                get_tmpfile(&ctx, &mut name).expect("get_tmpfile returned no file");
             assert!(!name.is_null(), "get_tmpfile left the name unset");
 
             let data = b"crap-coverage-probe\n";
-            let wrote = libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp.cast());
-            assert_eq!(wrote, data.len());
-            libc::fflush(fp.cast());
-            libc::rewind(fp.cast());
+            fp.write_all(data).expect("write to temp file");
+            fp.rewind().expect("rewind temp file");
 
             let mut buf = [0u8; 32];
-            let read = libc::fread(buf.as_mut_ptr().cast(), 1, data.len(), fp.cast());
-            assert_eq!(read, data.len());
+            fp.read_exact(&mut buf[..data.len()]).expect("read back");
             assert_eq!(&buf[..data.len()], data);
 
-            libc::fclose(fp.cast());
+            drop(fp);
             assert_eq!(
                 libc::unlink(name),
                 0,

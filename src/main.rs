@@ -45,7 +45,6 @@ extern "C" {
     fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
     fn getcwd(__buf: *mut ::core::ffi::c_char, __size: size_t) -> *mut ::core::ffi::c_char;
     static mut environ: *mut *mut ::core::ffi::c_char;
-    static mut stdin: *mut FILE;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fclose(__stream: *mut FILE) -> i32;
@@ -57,19 +56,6 @@ extern "C" {
         __n: size_t,
     ) -> i32;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
-    fn fread(
-        __ptr: *mut ::core::ffi::c_void,
-        __size: size_t,
-        __n: size_t,
-        __stream: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn fwrite(
-        __ptr: *const ::core::ffi::c_void,
-        __size: size_t,
-        __n: size_t,
-        __s: *mut FILE,
-    ) -> ::core::ffi::c_ulong;
-    fn feof(__stream: *mut FILE) -> i32;
     fn ferror(__stream: *mut FILE) -> i32;
     fn fileno(__stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
@@ -2594,7 +2580,6 @@ unsafe fn main_0(
         i_1 = 0;
         while i_1 < options.makefiles.borrow().len() {
             if options.makefiles.borrow()[i_1].as_bytes() == b"-" {
-                let outfile: *mut FILE;
                 let mut newnm: *mut ::core::ffi::c_char =
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
                 if options.stdin_offset.get() >= 0 {
@@ -2607,8 +2592,7 @@ unsafe fn main_0(
                         &[],
                     );
                 }
-                outfile = get_tmpfile(&ctx, &raw mut newnm);
-                if outfile.is_null() {
+                let Some(mut outfile) = get_tmpfile(&ctx, &raw mut newnm) else {
                     fatal(
                         &ctx,
                         ::core::ptr::null_mut::<Floc>(),
@@ -2617,41 +2601,37 @@ unsafe fn main_0(
                             as *const ::core::ffi::c_char,
                         &[],
                     );
-                }
-                while feof(stdin) == 0 && ferror(stdin) == 0 {
-                    let mut buf: [::core::ffi::c_char; 2048] = [0; 2048];
-                    let n: size_t = fread(
-                        &raw mut buf as *mut ::core::ffi::c_char as *mut ::core::ffi::c_void,
-                        1,
-                        ::core::mem::size_of::<[::core::ffi::c_char; 2048]>() as size_t,
-                        stdin,
-                    ) as size_t;
-                    if n > 0
-                        && fwrite(
-                            &raw mut buf as *mut ::core::ffi::c_char as *const ::core::ffi::c_void,
-                            1,
-                            n as size_t,
-                            outfile,
-                        ) as size_t
-                            != n
-                    {
-                        fatal(
-                            &ctx,
-                            ::core::ptr::null_mut::<Floc>(),
-                            (strlen(newnm) as size_t)
-                                .wrapping_add(strlen(strerror(*__errno_location())) as size_t),
-                            b"fwrite: temporary file %s: %s\0" as *const u8
-                                as *const ::core::ffi::c_char,
-                            &[
-                                FmtArg::Str((newnm) as *const ::core::ffi::c_char),
-                                FmtArg::Str(
-                                    (strerror(*__errno_location())) as *const ::core::ffi::c_char,
-                                ),
-                            ],
-                        );
+                };
+                {
+                    use ::std::io::{Read, Write};
+                    let mut sin = ::std::io::stdin().lock();
+                    let mut buf = [0u8; 2048];
+                    loop {
+                        // The C loop stopped on EOF *or* any read error
+                        // (ferror, EINTR included) without reporting; mirror
+                        // that by breaking on Err.
+                        let n = match sin.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => n,
+                        };
+                        if let Err(e) = outfile.write_all(&buf[..n]) {
+                            let es: *const ::core::ffi::c_char =
+                                strerror(e.raw_os_error().unwrap_or(0));
+                            fatal(
+                                &ctx,
+                                ::core::ptr::null_mut::<Floc>(),
+                                (strlen(newnm) as size_t).wrapping_add(strlen(es) as size_t),
+                                b"fwrite: temporary file %s: %s\0" as *const u8
+                                    as *const ::core::ffi::c_char,
+                                &[
+                                    FmtArg::Str((newnm) as *const ::core::ffi::c_char),
+                                    FmtArg::Str(es as *const ::core::ffi::c_char),
+                                ],
+                            );
+                        }
                     }
                 }
-                fclose(outfile);
+                drop(outfile);
                 let cached = strcache_add(&ctx, newnm);
                 options.makefiles.borrow_mut()[i_1] =
                     ::core::ffi::CStr::from_ptr(cached).to_owned();

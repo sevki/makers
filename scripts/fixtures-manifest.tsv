@@ -126,3 +126,4 @@ sigint-cleanup	ordered	-	INT			signal
 sigterm-cleanup	ordered	-	TERM			signal
 ar-glob-member-sort	ordered	-	-		known divergence #460: $(wildcard lib.a(*.o)) name form differs from the C oracle	ar_glob
 usage_help	ordered	01_basic.mk	all	-h		simple
+file_func	ordered	94_file_func.mk	check			simple
