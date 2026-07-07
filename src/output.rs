@@ -97,6 +97,15 @@ pub fn set_stdio_traced(value: bool) {
     crate::make_main::with_options(|o| o.stdio_traced.set(value));
 }
 pub const OUTPUT_NONE: i32 = -1;
+/// Emit a debug/trace line on stdout through Rust io and flush — the C
+/// `printf` + `fflush(stdout)` pattern of the `-d` traces. Callers format
+/// the bytes themselves.
+pub fn trace_out(bytes: &[u8]) {
+    use std::io::Write;
+    let mut o = std::io::stdout();
+    let _ = o.write_all(bytes);
+    let _ = o.flush();
+}
 unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
     if !out.is_null() && (*out).syncout() as i32 != 0 {
         let fd: i32 = if is_err != 0 { (*out).err } else { (*out).out };

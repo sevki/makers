@@ -12,15 +12,14 @@ use ::core::ptr::{null, null_mut};
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, close, dup, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, printf,
-    pselect, read, sigemptyset, sigset_t, sprintf, sscanf, strcmp, strerror, strlen, strncmp,
-    timespec, tmpfile, umask, unlink, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO,
+    __errno_location, close, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, pselect, read,
+    sigemptyset, sigset_t, sprintf, sscanf, strcmp, strerror, strlen, strncmp,
+    timespec, unlink, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO,
     F_GETFD, F_GETFL, F_SETFD, F_SETFL, F_SETLKW, F_UNLCK, F_WRLCK, O_APPEND, O_EXCL, O_NONBLOCK,
     O_RDONLY, O_RDWR, O_TMPFILE, O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
 };
 
 use crate::commands::handling_fatal_signal;
-use crate::ffi_types::mode_t;
 use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup};
@@ -31,7 +30,6 @@ extern "C" {
     static mut stdin: *mut FILE;
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
-    fn fflush(stream: *mut FILE) -> i32;
     fn fileno(stream: *mut FILE) -> i32;
 }
 
@@ -534,8 +532,9 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
     }
 
     if 0x4 & db_level(ctx) != 0 {
-        printf(c"Acquired all %u jobserver tokens.\n".as_ptr(), tokens);
-        fflush(stdout);
+        crate::output::trace_out(
+            format!("Acquired all {} jobserver tokens.\n", tokens).as_bytes(),
+        );
     }
 
     jobserver_clear();
@@ -911,62 +910,97 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
             return fd;
         }
         if 0x1 & db_level(ctx) != 0 {
-            printf(
-                c"Cannot open '%s' with O_TMPFILE: %s.\n".as_ptr(),
-                tdir,
-                strerror(*__errno_location()),
-            );
-            fflush(stdout);
+            let err = ::core::ffi::CStr::from_ptr(strerror(*__errno_location()));
+            let mut msg = Vec::with_capacity(64);
+            msg.extend_from_slice(b"Cannot open '");
+            msg.extend_from_slice(::core::ffi::CStr::from_ptr(tdir).to_bytes());
+            msg.extend_from_slice(b"' with O_TMPFILE: ");
+            msg.extend_from_slice(err.to_bytes());
+            msg.extend_from_slice(b".\n");
+            crate::output::trace_out(&msg);
         }
         ctx.tmpfile_works.0.store(false, Ordering::Relaxed);
     }
 
-    // tmpfile() uses the system default temp dir, so only fall back to it
-    // when that's where we want the file anyway.
+    // tmpfile() used the system default temp dir, so only fall back to this
+    // when that's where we want the file anyway. The std replacement does
+    // what tmpfile(3) does — create an unnamed (immediately unlinked) file
+    // in /tmp, mode 0600 — and keeps the C 'tmpfile: <strerror>' error
+    // bytes. The separate 'dup:' error path is gone: we own the fd, so no
+    // dup happens (C could hit it only by exhausting fds on the dup after
+    // a successful tmpfile; that now fails at the open with 'tmpfile:').
     if strcmp(tdir, c"/tmp".as_ptr()) == 0 {
-        let mask: mode_t = umask(0o77);
-        let mut tfile: *mut libc::FILE;
-        loop {
-            *__errno_location() = 0;
-            tfile = tmpfile();
-            if !(tfile.is_null() && *__errno_location() == EINTR) {
-                break;
+        match anon_unlinked_tmp() {
+            Ok(file) => fd = <std::fs::File as std::os::fd::IntoRawFd>::into_raw_fd(file),
+            Err(e) => {
+                error(
+                    ctx,
+                    null::<Floc>(),
+                    0,
+                    c"tmpfile: %s".as_ptr(),
+                    &[FmtArg::Str(strerror(e.raw_os_error().unwrap_or(0)))],
+                );
+                return -1;
             }
         }
-        if tfile.is_null() {
-            error(
-                ctx,
-                null::<Floc>(),
-                0,
-                c"tmpfile: %s".as_ptr(),
-                &[FmtArg::Str(strerror(*__errno_location()))],
-            );
-            return -1;
-        }
-        umask(mask);
-        loop {
-            fd = dup(libc::fileno(tfile));
-            if !(fd == -1 && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        if fd < 0 {
-            error(
-                ctx,
-                null::<Floc>(),
-                0,
-                c"dup: %s".as_ptr(),
-                &[FmtArg::Str(strerror(*__errno_location()))],
-            );
-        }
-        libc::fclose(tfile);
     }
     fd
+}
+
+/// tmpfile(3) via std::fs: create a fresh 0600 file in /tmp with a pid- and
+/// counter-qualified name (create_new retries collisions), then unlink it so
+/// only the descriptor remains.
+fn anon_unlinked_tmp() -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    static SEQ: ::core::sync::atomic::AtomicU32 = ::core::sync::atomic::AtomicU32::new(0);
+    let pid = std::process::id();
+    loop {
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = format!("/tmp/GmAnon{pid}-{seq}");
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(f) => {
+                let _ = std::fs::remove_file(&path);
+                return Ok(f);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tmpfile(3) replacement hands back a read-write descriptor whose
+    /// path is already gone: data round-trips through the fd, and /tmp
+    /// holds no GmAnon file for this pid afterwards.
+    #[test]
+    fn anon_unlinked_tmp_round_trips_and_leaves_no_name() {
+        use std::io::{Read, Seek, Write};
+        let mut f = anon_unlinked_tmp().expect("anon tmp file");
+        f.write_all(b"osync probe").expect("write");
+        f.rewind().expect("rewind");
+        let mut back = String::new();
+        f.read_to_string(&mut back).expect("read");
+        assert_eq!(back, "osync probe");
+        let pid = std::process::id();
+        let leftover = std::fs::read_dir("/tmp")
+            .expect("read /tmp")
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(&format!("GmAnon{pid}-"))
+            });
+        assert!(!leftover, "temp name should be unlinked immediately");
+    }
 
     /// `osync_enabled` reflects the sign of the output-sync handle: a
     /// negative handle (the unset default) means disabled, a non-negative

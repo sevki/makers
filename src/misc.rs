@@ -9,9 +9,8 @@ use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
-    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, putchar, read, realloc,
-    sleep, sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, unlink, write,
-    EINTR,
+    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, putchar, realloc, sleep,
+    sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, unlink, EINTR,
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
@@ -486,53 +485,45 @@ unsafe fn end_of_token_raw(mut p: *const c_char) -> *mut c_char {
 }
 
 /// Write `len` bytes from `buffer` to `fd`, retrying on EINTR and short
-/// writes. Returns `len` on success or -1 on failure.
+/// writes (`write_all`'s exact contract). Returns `len` on success or -1 on
+/// failure; errno is left set by the failing write(2).
 /// # Safety
 /// `buffer` must be valid for reads of `len` bytes; `fd` must be open.
 pub unsafe fn writebuf(fd: i32, buffer: *const c_void, len: size_t) -> ssize_t {
-    let mut msg: *const c_char = buffer as *const c_char;
-    let mut l = len;
-    while l != 0 {
-        let mut r: ssize_t;
-        loop {
-            r = write(fd, msg as *const c_void, l);
-            if !(r == -1 && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        if r < 0 {
-            return -1;
-        }
-        l -= r as size_t;
-        msg = msg.add(r as usize);
+    use std::io::Write;
+    let bytes = ::core::slice::from_raw_parts(buffer as *const u8, len);
+    // Borrow the fd as a File without taking ownership.
+    let mut f = ::core::mem::ManuallyDrop::new(
+        <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd),
+    );
+    match f.write_all(bytes) {
+        Ok(()) => len as ssize_t,
+        Err(_) => -1,
     }
-    len as ssize_t
 }
 
 /// Read up to `len` bytes from `fd` into `buffer`, retrying on EINTR and
-/// short reads. Returns the number of bytes read, or -1 on failure.
+/// short reads. Returns the number of bytes read (stopping early only at
+/// EOF), or -1 on any failure — even after a partial read, like the C loop.
 /// # Safety
 /// `buffer` must be valid for writes of `len` bytes; `fd` must be open.
-pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, mut len: size_t) -> ssize_t {
-    let mut msg: *mut c_char = buffer as *mut c_char;
-    while len != 0 {
-        let mut r: ssize_t;
-        loop {
-            r = read(fd, msg as *mut c_void, len);
-            if !(r == -1 && *__errno_location() == EINTR) {
-                break;
-            }
+pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, len: size_t) -> ssize_t {
+    use std::io::Read;
+    let buf = ::core::slice::from_raw_parts_mut(buffer as *mut u8, len);
+    // Borrow the fd as a File without taking ownership.
+    let mut f = ::core::mem::ManuallyDrop::new(
+        <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd),
+    );
+    let mut done = 0usize;
+    while done < buf.len() {
+        match f.read(&mut buf[done..]) {
+            Ok(0) => break,
+            Ok(n) => done += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return -1,
         }
-        if r < 0 {
-            return -1;
-        }
-        if r == 0 {
-            break;
-        }
-        len -= r as size_t;
-        msg = msg.add(r as usize);
     }
-    msg.offset_from(buffer as *mut c_char) as ssize_t
+    done as ssize_t
 }
 
 /// Free a chain of `nameseq` structures (the names themselves are cached and
@@ -842,6 +833,54 @@ pub unsafe fn get_tmpfile(
     // SAFETY: `open_named_tmpfd` hands back exclusive ownership of an open
     // fd; the `File` now owns it and closes it on drop.
     Some(<std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd))
+}
+
+#[cfg(test)]
+mod bufio_tests {
+    use super::{readbuf, writebuf};
+    use std::os::fd::AsRawFd;
+
+    /// writebuf writes everything and readbuf reads it back, stopping at
+    /// EOF with a short count (the C loops' contract, now write_all/read).
+    #[test]
+    fn writebuf_readbuf_round_trip_and_short_read_at_eof() {
+        use std::io::Seek;
+        let mut f = tempfile_for_test();
+        let data = b"raw fd round trip";
+        unsafe {
+            let n = writebuf(f.as_raw_fd(), data.as_ptr().cast(), data.len());
+            assert_eq!(n, data.len() as isize);
+            f.rewind().expect("rewind");
+            let mut buf = [0u8; 64];
+            let n = readbuf(f.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len());
+            assert_eq!(n, data.len() as isize, "short count at EOF, not -1");
+            assert_eq!(&buf[..data.len()], data);
+        }
+    }
+
+    /// Both return -1 on a descriptor opened the wrong way (EBADF from the
+    /// kernel — the C loops' failure path), without touching valid fds.
+    #[test]
+    fn writebuf_readbuf_report_failure_as_minus_one() {
+        let rd = std::fs::File::open("/dev/null").expect("open ro");
+        let wr = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .expect("open wo");
+        let mut buf = [0u8; 4];
+        unsafe {
+            assert_eq!(writebuf(rd.as_raw_fd(), buf.as_ptr().cast(), buf.len()), -1);
+            assert_eq!(readbuf(wr.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()), -1);
+        }
+    }
+
+    fn tempfile_for_test() -> std::fs::File {
+        let ctx = crate::execctx::ExecContext::default();
+        let fd = unsafe { super::open_anon_tmpfd(&ctx) };
+        assert!(fd >= 0, "open_anon_tmpfd failed");
+        // SAFETY: fresh fd owned by this test.
+        unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd) }
+    }
 }
 
 #[cfg(test)]

@@ -118,16 +118,21 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
 - [x] output.rs: `_outputs`' non-synced fallback writes through Rust
       stdout/stderr (every make message), and `pump_from_tmp` pumps the
       output-sync temp fd via `std::fs::File`/`Read`/`Write` (libc-stream
-      flush kept at entry until the printf callers convert); still libc:
-      the raw-fd `writebuf`/`readbuf` helpers (misc.rs) → BorrowedFd io
+      flush kept at entry until the printf callers convert)
 - [ ] makefile reading: `ebuf.fp` `fopen`/`fdopen`/`fclose` + `readline`
       (read.rs) → `BufReader`-style owned reader
 - [ ] the `-p` data-base printers: `printf`/`fputs`/`putchar` in
       variable.rs, file.rs, dir.rs, vpath.rs, strcache.rs, main.rs
       (`print_version`/`print_data_base`) → one shared safe byte-writer
       (rule.rs already is; its flush ordering is the pattern to follow)
+- [x] posixos.rs: the `tmpfile()` fallback in `os_anontmp` is a std::fs
+      create-and-unlink helper (`anon_unlinked_tmp`), and its two debug
+      traces write through the new shared `output::trace_out`
+- [x] raw-fd helpers: `writebuf`/`readbuf` (misc.rs) are `write_all` /
+      an EINTR-retrying `Read` loop over a borrowed `std::fs::File`
 - [ ] debug traces: `printf`+`fflush(stdout)` pairs in remake.rs, job.rs,
-      implicit.rs, expand.rs, function.rs, commands.rs, read.rs, posixos.rs
+      implicit.rs, expand.rs, function.rs, commands.rs, read.rs — route
+      through `output::trace_out` (posixos.rs done)
 - [ ] stdout plumbing: `setvbuf`/`fileno`/`check_io_state` (main.rs),
       `close_stdout` atexit handler — last, once no libc writers remain
 - [ ] file ops with all-Rust callers: `unlink`/`chdir`/`getcwd` →
