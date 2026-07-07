@@ -10,12 +10,10 @@ use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
-use libc::{__errno_location, abort, close, free, pipe, printf, remove, sprintf, strerror, strstr};
+use libc::{__errno_location, abort, close, free, pipe, remove, sprintf, strerror, strstr};
 use std::sync::atomic::Ordering;
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
-    fn fflush(__stream: *mut FILE) -> i32;
-    static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fileno(__stream: *mut FILE) -> i32;
     fn memcpy(
@@ -3934,12 +3932,11 @@ pub unsafe fn func_shell_base(
             }
             if !batch_filename.is_null() {
                 if 0x2_i32 & db_level(ctx) != 0 {
-                    printf(
-                        b"Cleaning up temporary batch file %s\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        batch_filename,
-                    );
-                    fflush(stdout);
+                    crate::output::trace_parts(&[
+                        b"Cleaning up temporary batch file ",
+                        ::core::ffi::CStr::from_ptr(batch_filename).to_bytes(),
+                        b"\n",
+                    ]);
                 }
                 remove(batch_filename);
                 free(batch_filename as *mut ::core::ffi::c_void);
