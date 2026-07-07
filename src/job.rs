@@ -47,7 +47,6 @@ use {
         getenv,
         getloadavg,
         open,
-        printf,
         remove,
         sprintf,
         stpcpy,
@@ -314,6 +313,16 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const COMMANDS_RECURSE: i32 = 1;
 pub const COMMANDS_SILENT: i32 = 2;
 pub const NONEXISTENT_MTIME: i32 = 1;
+/// glibc `%p` bytes of a pointer, for `-d` trace lines.
+fn ptr_bytes<T>(p: *const T) -> Vec<u8> {
+    format!("{p:p}").into_bytes()
+}
+
+/// The `%lu` bytes `pid2str` formats, without the C buffer.
+fn pid_bytes(pid: pid_t) -> Vec<u8> {
+    (pid as ::core::ffi::c_ulong).to_string().into_bytes()
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -757,19 +766,18 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 break;
             } else {
                 if 0x4_i32 & db_level(ctx) != 0 {
-                    printf(
-                        b"Live child %p (%s) PID %s %s\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        c,
-                        file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
-                        pid2str(ctx, (*c).pid),
-                        if (*c).remote() as i32 != 0 {
-                            b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
-                        } else {
-                            b"\0" as *const u8 as *const ::core::ffi::c_char
-                        },
-                    );
-                    fflush(stdout);
+                    let fname = file_name_cstr(ctx, (*c).file);
+                    crate::output::trace_parts(&[
+                        b"Live child ",
+                        &ptr_bytes(c),
+                        b" (",
+                        &fname[..fname.len() - 1],
+                        b") PID ",
+                        &pid_bytes((*c).pid),
+                        b" ",
+                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        b"\n",
+                    ]);
                 }
                 lastc = c;
                 c = (*c).next;
@@ -860,23 +868,19 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     continue;
                 }
                 if 0x4_i32 & db_level(ctx) != 0 {
-                    printf(
+                    crate::output::trace_parts(&[
                         if exit_sig == 0 && exit_code == 0 {
-                            b"Reaping winning child %p PID %s %s\n\0" as *const u8
-                                as *const ::core::ffi::c_char
+                            b"Reaping winning child ".as_slice()
                         } else {
-                            b"Reaping losing child %p PID %s %s\n\0" as *const u8
-                                as *const ::core::ffi::c_char
+                            b"Reaping losing child ".as_slice()
                         },
-                        c,
-                        pid2str(ctx, (*c).pid),
-                        if (*c).remote() as i32 != 0 {
-                            b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
-                        } else {
-                            b"\0" as *const u8 as *const ::core::ffi::c_char
-                        },
-                    );
-                    fflush(stdout);
+                        &ptr_bytes(c),
+                        b" PID ",
+                        &pid_bytes((*c).pid),
+                        b" ",
+                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        b"\n",
+                    ]);
                 }
                 if ctx.job_counter.0.load(Ordering::Relaxed) != 0 {
                     ctx.job_counter.0.fetch_sub(1, Ordering::Relaxed);
@@ -954,23 +958,22 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         if !(*c).sh_batch_file.is_null() {
             let rm_status: i32;
             if 0x4_i32 & db_level(ctx) != 0 {
-                printf(
-                    b"Cleaning up temp batch file %s\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    (*c).sh_batch_file,
-                );
-                fflush(stdout);
+                crate::output::trace_parts(&[
+                    b"Cleaning up temp batch file ",
+                    ::core::ffi::CStr::from_ptr((*c).sh_batch_file).to_bytes(),
+                    b"\n",
+                ]);
             }
             *__errno_location() = 0;
             rm_status = remove((*c).sh_batch_file);
             if rm_status != 0 && 0x4_i32 & db_level(ctx) != 0 {
-                printf(
-                    b"Cleaning up temp batch file %s failed (%d)\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    (*c).sh_batch_file,
-                    *__errno_location(),
-                );
-                fflush(stdout);
+                crate::output::trace_parts(&[
+                    b"Cleaning up temp batch file ",
+                    ::core::ffi::CStr::from_ptr((*c).sh_batch_file).to_bytes(),
+                    b" failed (",
+                    (*__errno_location()).to_string().as_bytes(),
+                    b")\n",
+                ]);
             }
             free((*c).sh_batch_file as *mut ::core::ffi::c_void);
             (*c).sh_batch_file = ::core::ptr::null_mut::<::core::ffi::c_char>();
@@ -1047,18 +1050,14 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         }
         block_sigs(ctx);
         if (*c).pid > 0 && 0x4_i32 & db_level(ctx) != 0 {
-            printf(
-                b"Removing child %p PID %s%s from chain.\n\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                c,
-                pid2str(ctx, (*c).pid),
-                if (*c).remote() as i32 != 0 {
-                    b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
-                } else {
-                    b"\0" as *const u8 as *const ::core::ffi::c_char
-                },
-            );
-            fflush(stdout);
+            crate::output::trace_parts(&[
+                b"Removing child ",
+                &ptr_bytes(c),
+                b" PID ",
+                &pid_bytes((*c).pid),
+                if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                b" from chain.\n",
+            ]);
         }
         if job_slots_used(ctx) > 0 {
             ctx.job_slots_used.0.store(
@@ -1149,12 +1148,13 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
     if jobserver_enabled(ctx) != 0 && jobserver_tokens(ctx) > 1 {
         jobserver_release(ctx, 1);
         if 0x4_i32 & db_level(ctx) != 0 {
-            printf(
-                b"Released token for child %p (%s).\n\0" as *const u8 as *const ::core::ffi::c_char,
-                child,
-                name,
-            );
-            fflush(stdout);
+            crate::output::trace_parts(&[
+                b"Released token for child ",
+                &ptr_bytes(child),
+                b" (",
+                ::core::ffi::CStr::from_ptr(name).to_bytes(),
+                b").\n",
+            ]);
         }
     }
     ctx.jobserver_tokens.0.fetch_sub(1, Ordering::Relaxed);
@@ -1444,19 +1444,17 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
             (*c).next = ctx.children.0.get();
             if (*c).pid > 0 {
                 if 0x4_i32 & db_level(ctx) != 0 {
-                    printf(
-                        b"Putting child %p (%s) PID %s%s on the chain.\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        c,
-                        file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
-                        pid2str(ctx, (*c).pid),
-                        if (*c).remote() as i32 != 0 {
-                            b" (remote)\0" as *const u8 as *const ::core::ffi::c_char
-                        } else {
-                            b"\0" as *const u8 as *const ::core::ffi::c_char
-                        },
-                    );
-                    fflush(stdout);
+                    let fname = file_name_cstr(ctx, (*c).file);
+                    crate::output::trace_parts(&[
+                        b"Putting child ",
+                        &ptr_bytes(c),
+                        b" (",
+                        &fname[..fname.len() - 1],
+                        b") PID ",
+                        &pid_bytes((*c).pid),
+                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        b" on the chain.\n",
+                    ]);
                 }
                 ctx.job_slots_used.0.fetch_add(1, Ordering::Relaxed);
                 if (*c).jobslot() as i32 == 0 {
@@ -1739,16 +1737,11 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
     } else if jobserver_enabled(ctx) != 0 {
         loop {
             if 0x4_i32 & db_level(ctx) != 0 {
-                printf(
-                    b"Need a job token; we %shave children\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    if !ctx.children.0.get().is_null() {
-                        b"\0" as *const u8 as *const ::core::ffi::c_char
-                    } else {
-                        b"don't \0" as *const u8 as *const ::core::ffi::c_char
-                    },
-                );
-                fflush(stdout);
+                crate::output::trace_parts(&[
+                    b"Need a job token; we ",
+                    if !ctx.children.0.get().is_null() { b"" } else { b"don't ".as_slice() },
+                    b"have children\n",
+                ]);
             }
             if jobserver_tokens(ctx) == 0 {
                 break;
@@ -1776,13 +1769,14 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                 continue;
             }
             if 0x4_i32 & db_level(ctx) != 0 {
-                printf(
-                    b"Obtained token for child %p (%s).\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                    c,
-                    file_name_cstr(ctx, (*c).file).as_ptr() as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
+                let fname = file_name_cstr(ctx, (*c).file);
+                crate::output::trace_parts(&[
+                    b"Obtained token for child ",
+                    &ptr_bytes(c),
+                    b" (",
+                    &fname[..fname.len() - 1],
+                    b").\n",
+                ]);
             }
             break;
         }
@@ -2058,19 +2052,11 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
         }
         if proc_fd.get() < 0 {
             if 0x4_i32 & db_level(ctx) != 0 {
-                printf(
-                    b"Using system load detection method.\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
+                crate::output::trace_out(b"Using system load detection method.\n");
             }
         } else {
             if 0x4_i32 & db_level(ctx) != 0 {
-                printf(
-                    b"Using /proc/loadavg load detection method.\n\0" as *const u8
-                        as *const ::core::ffi::c_char,
-                );
-                fflush(stdout);
+                crate::output::trace_out(b"Using /proc/loadavg load detection method.\n");
             }
             fd_noinherit(proc_fd.get());
         }
@@ -2101,35 +2087,35 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                 let contents = ::core::ffi::CStr::from_ptr(avg.as_ptr()).to_bytes();
                 if let Some(cnt) = loadavg_running_jobs(contents) {
                     if 0x4_i32 & db_level(ctx) != 0 {
-                        printf(
-                            b"Running: system = %u / make = %u (max requested = %f)\n\0"
-                                as *const u8
-                                as *const ::core::ffi::c_char,
-                            cnt,
-                            job_slots_used(ctx),
-                            crate::make_main::opt_max_load_average(),
-                        );
-                        fflush(stdout);
+                        crate::output::trace_parts(&[
+                            b"Running: system = ",
+                            cnt.to_string().as_bytes(),
+                            b" / make = ",
+                            job_slots_used(ctx).to_string().as_bytes(),
+                            b" (max requested = ",
+                            format!("{:.6}", crate::make_main::opt_max_load_average()).as_bytes(),
+                            b")\n",
+                        ]);
                     }
                     return (cnt as ::core::ffi::c_double > crate::make_main::opt_max_load_average())
                         as i32;
                 }
                 if 0x4_i32 & db_level(ctx) != 0 {
-                    printf(
-                        b"Failed to parse /proc/loadavg: %s\n\0" as *const u8
-                            as *const ::core::ffi::c_char,
-                        &raw mut avg as *mut ::core::ffi::c_char,
-                    );
-                    fflush(stdout);
+                    crate::output::trace_parts(&[
+                        b"Failed to parse /proc/loadavg: ",
+                        ::core::ffi::CStr::from_ptr(&raw const avg as *const ::core::ffi::c_char)
+                            .to_bytes(),
+                        b"\n",
+                    ]);
                 }
             }
         }
         if r < 0 && 0x4_i32 & db_level(ctx) != 0 {
-            printf(
-                b"Failed to read /proc/loadavg: %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                strerror(*__errno_location()),
-            );
-            fflush(stdout);
+            crate::output::trace_parts(&[
+                b"Failed to read /proc/loadavg: ",
+                ::core::ffi::CStr::from_ptr(strerror(*__errno_location())).to_bytes(),
+                b"\n",
+            ]);
         }
         close(proc_fd.get());
         proc_fd.set(-1_i32);
@@ -2172,14 +2158,15 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     ctx.load_prev_weight.set(next_prev_weight);
     ctx.job_counter.0.store(next_job_counter, Ordering::Relaxed);
     if 0x4_i32 & db_level(ctx) != 0 {
-        printf(
-            b"Estimated system load = %f (actual = %f) (max requested = %f)\n\0" as *const u8
-                as *const ::core::ffi::c_char,
-            guess,
-            load,
-            crate::make_main::opt_max_load_average(),
-        );
-        fflush(stdout);
+        crate::output::trace_parts(&[
+            b"Estimated system load = ",
+            format!("{guess:.6}").as_bytes(),
+            b" (actual = ",
+            format!("{load:.6}").as_bytes(),
+            b") (max requested = ",
+            format!("{:.6}", crate::make_main::opt_max_load_average()).as_bytes(),
+            b")\n",
+        ]);
     }
     (guess >= crate::make_main::opt_max_load_average()) as i32
 }

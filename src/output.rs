@@ -106,6 +106,16 @@ pub fn trace_out(bytes: &[u8]) {
     let _ = o.write_all(bytes);
     let _ = o.flush();
 }
+
+/// Concatenate byte pieces into one line and emit it via [`trace_out`] —
+/// the multi-argument `printf` debug-trace shape.
+pub fn trace_parts(parts: &[&[u8]]) {
+    let mut msg = Vec::with_capacity(parts.iter().map(|p| p.len()).sum());
+    for p in parts {
+        msg.extend_from_slice(p);
+    }
+    trace_out(&msg);
+}
 unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
     if !out.is_null() && (*out).syncout() as i32 != 0 {
         let fd: i32 = if is_err != 0 { (*out).err } else { (*out).out };

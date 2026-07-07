@@ -130,9 +130,11 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
       traces write through the new shared `output::trace_out`
 - [x] raw-fd helpers: `writebuf`/`readbuf` (misc.rs) are `write_all` /
       an EINTR-retrying `Read` loop over a borrowed `std::fs::File`
-- [ ] debug traces: `printf`+`fflush(stdout)` pairs in remake.rs, job.rs,
-      implicit.rs, expand.rs, function.rs, commands.rs, read.rs — route
-      through `output::trace_out` (posixos.rs done)
+- [x] debug traces, batch 1: remake.rs (all 23 sites incl. the printf+puts
+      combo), job.rs (all 15), implicit.rs (`dbs`), and `print_spaces`
+      (misc.rs) route through `output::trace_out`/`trace_parts`
+- [ ] debug traces, batch 2: the remaining `printf`+`fflush(stdout)` pairs
+      in expand.rs, function.rs, commands.rs, read.rs, main.rs
 - [ ] stdout plumbing: `setvbuf`/`fileno`/`check_io_state` (main.rs),
       `close_stdout` atexit handler — last, once no libc writers remain
 - [ ] file ops with all-Rust callers: `unlink`/`chdir`/`getcwd` →
