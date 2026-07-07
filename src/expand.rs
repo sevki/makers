@@ -192,6 +192,24 @@ pub fn set_variable_buffer_byte(
 ) {
     ctx.variable_buffer.set_byte_at(off, b);
 }
+/// The `-d` verbose line for a self-referencing variable being exported to
+/// a `$(shell …)` function. A missing file name renders as `(null)`, exactly
+/// as glibc printf did for built-in and environment variables.
+fn no_recursive_expand_msg(
+    filenm: Option<&[u8]>,
+    lineno: ::core::ffi::c_ulong,
+    name: &[u8],
+) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(64);
+    msg.extend_from_slice(filenm.unwrap_or(b"(null)"));
+    msg.extend_from_slice(b":");
+    msg.extend_from_slice(lineno.to_string().as_bytes());
+    msg.extend_from_slice(b": not recursively expanding ");
+    msg.extend_from_slice(name);
+    msg.extend_from_slice(b" to export to shell function\n");
+    msg
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -209,21 +227,16 @@ pub unsafe fn recursively_expand_for_file(
         // A self-referencing variable being exported to a $(shell ...)
         // function: hand back the unexpanded environment value instead.
         if DB_VERBOSE & db_level(ctx) != 0 {
-            // glibc printf renders a NULL %s as "(null)"; built-in and
-            // environment variables have no file location.
             let fnm = (*v).fileinfo.filenm;
-            crate::output::trace_parts(&[
+            crate::output::trace_out(&no_recursive_expand_msg(
                 if fnm.is_null() {
-                    b"(null)".as_slice()
+                    None
                 } else {
-                    ::core::ffi::CStr::from_ptr(fnm).to_bytes()
+                    Some(::core::ffi::CStr::from_ptr(fnm).to_bytes())
                 },
-                b":",
-                (*v).fileinfo.lineno.to_string().as_bytes(),
-                b": not recursively expanding ",
+                (*v).fileinfo.lineno,
                 ::core::ffi::CStr::from_ptr((*v).name).to_bytes(),
-                b" to export to shell function\n",
-            ]);
+            ));
         }
         let mut ep = environ;
         while !(*ep).is_null() {
@@ -803,5 +816,24 @@ mod percent_prefixed_unsafe_oracle {
             let oracle = unsafe { percent_prefixed(beg, end) };
             assert_eq!(safe, oracle, "mismatch for input {s:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod no_recursive_expand_msg_tests {
+    use super::no_recursive_expand_msg;
+
+    /// Named and unnamed (built-in/env) variables format like the C
+    /// printf did, including the glibc "(null)" for a missing file name.
+    #[test]
+    fn formats_with_and_without_file_name() {
+        assert_eq!(
+            no_recursive_expand_msg(Some(b"Makefile"), 12, b"FOO"),
+            b"Makefile:12: not recursively expanding FOO to export to shell function\n".to_vec()
+        );
+        assert_eq!(
+            no_recursive_expand_msg(None, 0, b"PATH"),
+            b"(null):0: not recursively expanding PATH to export to shell function\n".to_vec()
+        );
     }
 }
