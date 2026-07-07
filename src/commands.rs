@@ -33,7 +33,7 @@ use rustc_hash::FxHashMap;
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, exit, kill, signal, unlink, EINTR, ENOENT, SIGHUP, SIGINT, SIGQUIT,
+    __errno_location, exit, kill, signal, EINTR, ENOENT, SIGHUP, SIGINT, SIGQUIT,
     SIGTERM, SIG_DFL, S_IFMT, S_IFREG,
 };
 
@@ -706,7 +706,7 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
                     &[FmtArg::Str(name_ptr)],
                 );
             }
-            if unlink(name_ptr) < 0 && *__errno_location() != ENOENT {
+            if crate::misc::unlink_c(name_ptr) < 0 && *__errno_location() != ENOENT {
                 perror_with_name(ctx, c"unlink: ".as_ptr(), name_ptr);
             }
         }

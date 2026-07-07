@@ -17,7 +17,7 @@ pub use crate::ffi_types::{
 };
 use crate::misc::free_ns_chain;
 use crate::misc::{xcalloc, xrealloc};
-use libc::{__errno_location, free, unlink};
+use libc::{__errno_location, free};
 #[cfg(test)]
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -1281,7 +1281,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                     status = 0;
                     skip = false;
                 } else {
-                    status = unlink(cname_ptr);
+                    status = crate::misc::unlink_c(cname_ptr);
                     skip = status < 0 && *__errno_location() == ENOENT;
                 }
                 if !skip && !dontcare {

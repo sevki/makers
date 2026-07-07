@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use libc::{
     __errno_location, close, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, pselect, read,
     sigemptyset, sigset_t, sprintf, sscanf, strcmp, strerror, strlen, strncmp,
-    timespec, unlink, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO,
+    timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO,
     F_GETFD, F_GETFL, F_SETFD, F_SETFL, F_SETLKW, F_UNLCK, F_WRLCK, O_APPEND, O_EXCL, O_NONBLOCK,
     O_RDONLY, O_RDWR, O_TMPFILE, O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
 };
@@ -454,13 +454,7 @@ pub unsafe fn jobserver_clear() {
         let fifo_name = ctx.fifo_name.0.get();
         if !fifo_name.is_null() {
             if ctx.job_root.0.load(Ordering::Relaxed) {
-                let mut r: i32;
-                loop {
-                    r = unlink(fifo_name);
-                    if !(r == -1 && *__errno_location() == EINTR) {
-                        break;
-                    }
-                }
+                let _ = crate::misc::unlink_c(fifo_name);
             }
             if !handling_fatal_signal(ctx) {
                 free(fifo_name as *mut c_void);
@@ -753,13 +747,7 @@ pub unsafe fn osync_clear() {
         }
         let osync_tmpfile = ctx.osync_tmpfile.0.get();
         if ctx.sync_root.0.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
-            let mut r: i32;
-            loop {
-                r = unlink(osync_tmpfile);
-                if !(r == -1 && *__errno_location() == EINTR) {
-                    break;
-                }
-            }
+            let _ = crate::misc::unlink_c(osync_tmpfile);
             free(osync_tmpfile as *mut c_void);
             ctx.osync_tmpfile.0.set(null_mut());
         }
