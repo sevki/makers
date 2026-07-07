@@ -56,7 +56,6 @@ extern "C" {
         __modes: i32,
         __n: size_t,
     ) -> i32;
-    fn fprintf(__stream: *mut FILE, __format: *const ::core::ffi::c_char, ...) -> i32;
     fn fputs(__s: *const ::core::ffi::c_char, __stream: *mut FILE) -> i32;
     fn fread(
         __ptr: *mut ::core::ffi::c_void,
@@ -1753,124 +1752,95 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
         osync_parse_mutex(ctx, c.as_ptr());
     }
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i32) -> ! {
-    // The usage text, one option per line; NULL-terminated like the C table.
-    // A function-local (not a `static mut`): only this printer reads it.
-    let usage: [*const ::core::ffi::c_char; 36] = [
-    b"Options:\n\0" as *const u8 as *const ::core::ffi::c_char,
-    b"  -b, -m                      Ignored for compatibility.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -B, --always-make           Unconditionally make all targets.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -C DIRECTORY, --directory=DIRECTORY\n                              Change to DIRECTORY before doing anything.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -d                          Print lots of debugging information.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --debug[=FLAGS]             Print various types of debugging information.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -e, --environment-overrides\n                              Environment variables override makefiles.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -E STRING, --eval=STRING    Evaluate STRING as a makefile statement.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -f FILE, --file=FILE, --makefile=FILE\n                              Read FILE as a makefile.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -h, --help                  Print this message and exit.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -i, --ignore-errors         Ignore errors from recipes.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -I DIRECTORY, --include-dir=DIRECTORY\n                              Search DIRECTORY for included makefiles.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -j [N], --jobs[=N]          Allow N jobs at once; infinite jobs with no arg.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --jobserver-style=STYLE     Select the style of jobserver to use.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -k, --keep-going            Keep going when some targets can't be made.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -l [N], --load-average[=N], --max-load[=N]\n                              Don't start multiple jobs unless load is below N.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -L, --check-symlink-times   Use the latest mtime between symlinks and target.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -n, --just-print, --dry-run, --recon\n                              Don't actually run any recipe; just print them.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -o FILE, --old-file=FILE, --assume-old=FILE\n                              Consider FILE to be very old and don't remake it.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -O[TYPE], --output-sync[=TYPE]\n                              Synchronize output of parallel jobs by TYPE.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -p, --print-data-base       Print make's internal database.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -q, --question              Run no recipe; exit status says if up to date.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -r, --no-builtin-rules      Disable the built-in implicit rules.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -R, --no-builtin-variables  Disable the built-in variable settings.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --shuffle[={SEED|random|reverse|none}]\n                              Perform shuffle of prerequisites and goals.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -s, --silent, --quiet       Don't echo recipes.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  --no-silent                 Echo recipes (disable --silent mode).\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -S, --no-keep-going, --stop\n                              Turns off -k.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -t, --touch                 Touch targets instead of remaking them.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --trace                     Print tracing information.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  -v, --version               Print the version number of make and exit.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -w, --print-directory       Print the current directory.\n\0" as *const u8
-        as *const ::core::ffi::c_char,
-    b"  --no-print-directory        Turn off -w, even if it was turned on implicitly.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  -W FILE, --what-if=FILE, --new-file=FILE, --assume-new=FILE\n                              Consider FILE to be infinitely new.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    b"  --warn[=CONTROL]            Control warnings for makefile issues.\n\0"
-        as *const u8 as *const ::core::ffi::c_char,
-    ::core::ptr::null::<::core::ffi::c_char>(),
+/// Print the usage table — to stdout for `-h`, to stderr for a bad switch —
+/// byte-identical to the C oracle's hand-written table. Safe Rust throughout
+/// the text assembly; the only libc touch left is the `-v`-with-`-h` version
+/// banner, which prints through `print_version`'s printf path.
+pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i32) {
+    use std::io::Write;
+    // The usage text, one option per line, in the C table's order.
+    const USAGE: [&str; 35] = [
+        "Options:\n",
+        "  -b, -m                      Ignored for compatibility.\n",
+        "  -B, --always-make           Unconditionally make all targets.\n",
+        "  -C DIRECTORY, --directory=DIRECTORY\n                              Change to DIRECTORY before doing anything.\n",
+        "  -d                          Print lots of debugging information.\n",
+        "  --debug[=FLAGS]             Print various types of debugging information.\n",
+        "  -e, --environment-overrides\n                              Environment variables override makefiles.\n",
+        "  -E STRING, --eval=STRING    Evaluate STRING as a makefile statement.\n",
+        "  -f FILE, --file=FILE, --makefile=FILE\n                              Read FILE as a makefile.\n",
+        "  -h, --help                  Print this message and exit.\n",
+        "  -i, --ignore-errors         Ignore errors from recipes.\n",
+        "  -I DIRECTORY, --include-dir=DIRECTORY\n                              Search DIRECTORY for included makefiles.\n",
+        "  -j [N], --jobs[=N]          Allow N jobs at once; infinite jobs with no arg.\n",
+        "  --jobserver-style=STYLE     Select the style of jobserver to use.\n",
+        "  -k, --keep-going            Keep going when some targets can't be made.\n",
+        "  -l [N], --load-average[=N], --max-load[=N]\n                              Don't start multiple jobs unless load is below N.\n",
+        "  -L, --check-symlink-times   Use the latest mtime between symlinks and target.\n",
+        "  -n, --just-print, --dry-run, --recon\n                              Don't actually run any recipe; just print them.\n",
+        "  -o FILE, --old-file=FILE, --assume-old=FILE\n                              Consider FILE to be very old and don't remake it.\n",
+        "  -O[TYPE], --output-sync[=TYPE]\n                              Synchronize output of parallel jobs by TYPE.\n",
+        "  -p, --print-data-base       Print make's internal database.\n",
+        "  -q, --question              Run no recipe; exit status says if up to date.\n",
+        "  -r, --no-builtin-rules      Disable the built-in implicit rules.\n",
+        "  -R, --no-builtin-variables  Disable the built-in variable settings.\n",
+        "  --shuffle[={SEED|random|reverse|none}]\n                              Perform shuffle of prerequisites and goals.\n",
+        "  -s, --silent, --quiet       Don't echo recipes.\n",
+        "  --no-silent                 Echo recipes (disable --silent mode).\n",
+        "  -S, --no-keep-going, --stop\n                              Turns off -k.\n",
+        "  -t, --touch                 Touch targets instead of remaking them.\n",
+        "  --trace                     Print tracing information.\n",
+        "  -v, --version               Print the version number of make and exit.\n",
+        "  -w, --print-directory       Print the current directory.\n",
+        "  --no-print-directory        Turn off -w, even if it was turned on implicitly.\n",
+        "  -W FILE, --what-if=FILE, --new-file=FILE, --assume-new=FILE\n                              Consider FILE to be infinitely new.\n",
+        "  --warn[=CONTROL]            Control warnings for makefile issues.\n",
     ];
-    let mut cpp: *const *const ::core::ffi::c_char;
-    let usageto: *mut FILE;
     if options.print_version.get() {
-        print_version(ctx);
-        fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
+        // SAFETY: `print_version`/`fputs` write the banner through libc's
+        // stdio; both take the valid `ctx` and constant NUL-terminated
+        // strings. The `fflush` empties libc's stdout buffer so the banner
+        // lands before the Rust-buffered usage text below — stdout may still
+        // be block-buffered here (the `setvbuf` in `main_0` runs later).
+        unsafe {
+            print_version(ctx);
+            fputs(b"\n\0" as *const u8 as *const ::core::ffi::c_char, stdout);
+            fflush(stdout);
+        }
     }
-    usageto = if bad != 0 { stderr } else { stdout };
-    fprintf(
-        usageto,
-        b"Usage: %s [options] [target] ...\n\0" as *const u8 as *const ::core::ffi::c_char,
-        ctx.program.0.get(),
+    let mut text = format!(
+        "Usage: {} [options] [target] ...\n",
+        crate::output::msg::program_name(ctx)
     );
-    cpp = usage.as_ptr();
-    while !(*cpp).is_null() {
-        fputs(*cpp, usageto);
-        cpp = cpp.offset(1_i32 as isize);
+    for line in USAGE {
+        text.push_str(line);
     }
+    let host = crate::version::MAKE_HOST.trim_end_matches('\0');
     match ctx.remote_backend.0.description() {
         None => {
-            fprintf(
-                usageto,
-                b"\nThis program built for %s\n\0" as *const u8 as *const ::core::ffi::c_char,
-                crate::version::make_host(),
-            );
+            text.push_str(&format!("\nThis program built for {}\n", host));
         }
         Some(desc) => {
-            fprintf(
-                usageto,
-                b"\nThis program built for %s (%s)\n\0" as *const u8 as *const ::core::ffi::c_char,
-                crate::version::make_host(),
-                desc.as_ptr(),
-            );
+            text.push_str(&format!(
+                "\nThis program built for {} ({})\n",
+                host,
+                String::from_utf8_lossy(desc.to_bytes())
+            ));
         }
     }
-    fprintf(
-        usageto,
-        b"Report bugs to <bug-make@gnu.org>\n\0" as *const u8 as *const ::core::ffi::c_char,
-    );
-    die(ctx, if bad != 0 { MAKE_FAILURE } else { MAKE_SUCCESS });
+    text.push_str("Report bugs to <bug-make@gnu.org>\n");
+    // Flush explicitly: the run may keep printing through libc after this
+    // (die_cleanup's -p data base, decode_switches diagnostics), and a fatal
+    // path ending in libc `exit()` would drop an unflushed Rust buffer.
+    if bad != 0 {
+        let mut err = std::io::stderr();
+        let _ = err.write_all(text.as_bytes());
+        let _ = err.flush();
+    } else {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(text.as_bytes());
+        let _ = out.flush();
+    }
 }
 /// # Safety
 ///
@@ -1921,7 +1891,8 @@ unsafe fn main_0(
     argc: i32,
     argv: *mut *mut ::core::ffi::c_char,
     envp: *mut *mut ::core::ffi::c_char,
-) -> i32 {
+) -> Result<crate::build_result::BuildReport, crate::build_result::BuildError> {
+    use crate::build_result::{BuildError, BuildReport};
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut makefile_status: i32 = MAKE_SUCCESS;
     let mut read_files: Vec<crate::dep::GoalDepNode>;
@@ -2207,10 +2178,13 @@ unsafe fn main_0(
     }
     if options.print_usage.get() {
         print_usage(&ctx, &options, 0);
+        die_cleanup(&ctx, MAKE_SUCCESS);
+        return Ok(BuildReport);
     }
     if options.print_version.get() {
         print_version(&ctx);
-        die(&ctx, MAKE_SUCCESS);
+        die_cleanup(&ctx, MAKE_SUCCESS);
+        return Ok(BuildReport);
     }
     setvbuf(
         stdout,
@@ -2995,7 +2969,8 @@ unsafe fn main_0(
     }
     if options.print_targets.get() {
         print_targets(&ctx);
-        die(&ctx, EXIT_SUCCESS);
+        die_cleanup(&ctx, EXIT_SUCCESS);
+        return Ok(BuildReport);
     }
     if restarts == 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
@@ -3544,7 +3519,8 @@ unsafe fn main_0(
             _exit(127);
         }
         if any_failed != 0 {
-            die(&ctx, MAKE_FAILURE);
+            die_cleanup(&ctx, MAKE_FAILURE);
+            return Err(BuildError::Failure);
         }
     }
     define_makeflags(&ctx, &options, 0);
@@ -3673,7 +3649,8 @@ unsafe fn main_0(
             &[],
         );
     }
-    die(&ctx, makefile_status);
+    die_cleanup(&ctx, makefile_status);
+    crate::build_result::result_from_status(makefile_status)
 }
 unsafe fn handle_non_switch_argument(
     ctx: &crate::execctx::ExecContext,
@@ -4195,12 +4172,10 @@ fn decode_switches(
         // another option's value) -- nothing more to recover from this
         // batch.
         if bad != 0 && origin == o_command {
-            // SAFETY: `print_usage` prints the built-in usage table and
-            // exits; it takes no raw pointers and imposes no precondition
-            // beyond a valid `&ExecContext`/`&Options`, which we have.
-            unsafe {
-                print_usage(ctx, options, bad);
-            }
+            // `die` still exits here: bubbling a bad-switch error out of
+            // `decode_switches` is a later #432 subtask.
+            print_usage(ctx, options, bad);
+            die(ctx, MAKE_FAILURE);
         }
         return;
     };
@@ -4412,11 +4387,13 @@ fn decode_switches(
     }
 
     // SAFETY: none of these take raw pointers or impose a precondition
-    // beyond a valid `&ExecContext`/`&Options`, which we have; `print_usage`
-    // exits without returning when reached.
+    // beyond a valid `&ExecContext`/`&Options`, which we have. `die` still
+    // exits on the bad-switch path: bubbling that error out of
+    // `decode_switches` is a later #432 subtask.
     unsafe {
         if bad != 0 && origin == o_command {
             print_usage(ctx, options, bad);
+            die(ctx, MAKE_FAILURE);
         }
         decode_debug_flags(ctx, options);
         decode_output_sync_flags(ctx, options);
@@ -5116,8 +5093,33 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
+pub fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
+    die_cleanup(ctx, status);
+    // The legacy fatal-path exit; retiring it (so the bin shim's exit is the
+    // only one left) is the remainder of #432.
+    ::std::process::exit(status);
+}
+/// The end-of-run cleanup `die` performs before exiting — reaping children,
+/// removing intermediates, closing output sync, releasing jobserver tokens,
+/// chdir-ing back — split out so `main_0`'s own terminal paths can run it and
+/// then *return* their status (Phase B, #432) instead of exiting from inside
+/// the library. Guarded by `ctx.dying`: only the first caller cleans up.
+pub fn die_cleanup(ctx: &crate::execctx::ExecContext, status: i32) {
     if !ctx.dying.0.swap(true, Ordering::Relaxed) {
+        // SAFETY: every call below takes the valid `ctx` this function was
+        // handed (plus constants and pointers `ctx` itself owns: `make_sync`,
+        // `directory_before_chdir`); none imposes a precondition the caller
+        // must uphold beyond that. The block shrinks as the cleanup helpers
+        // convert to safe fns.
+        unsafe { die_cleanup_body(ctx, status) }
+    }
+}
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; `ctx` must be the live run's context.
+unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
+    {
         let err: i32;
         if opt_print_version() {
             print_version(ctx);
@@ -5155,11 +5157,12 @@ pub unsafe fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
             _x = chdir(ctx.directory_before_chdir.0.get());
         }
     }
-    exit(status);
 }
 pub const __CHAR_BIT__: i32 = 8;
 pub const __SCHAR_MAX__: i32 = 127;
-pub fn main() {
+/// Run make and report the process exit code. The `bin/make.rs` shim is the
+/// only caller and the single `std::process::exit` point (Phase B, #432).
+pub fn main() -> i32 {
     use std::os::unix::ffi::OsStrExt;
     let mut args_strings: Vec<Vec<u8>> = ::std::env::args_os()
         .map(|arg| {
@@ -5173,23 +5176,29 @@ pub fn main() {
         .map(|arg| arg.as_mut_ptr() as *mut ::core::ffi::c_char)
         .chain(::core::iter::once(::core::ptr::null_mut()))
         .collect();
-    let mut vars: Vec<*mut ::core::ffi::c_char> = Vec::new();
-    for (var_name, var_value) in ::std::env::vars() {
-        let var: String = format!("{}={}", var_name, var_value);
-        vars.push(
-            ::std::ffi::CString::new(var)
+    // Own the env strings like the args above so they are reclaimed when this
+    // function returns — `main_0` copies what it keeps (`xstrndup`/`xstrdup`
+    // in `define_variable_in_set`), and libc `environ` never aliases these.
+    let mut vars_strings: Vec<Vec<u8>> = ::std::env::vars()
+        .map(|(var_name, var_value)| {
+            ::std::ffi::CString::new(format!("{}={}", var_name, var_value))
                 .expect("Failed to convert environment variable into CString.")
-                .into_raw(),
-        );
-    }
-    vars.push(::core::ptr::null_mut());
-    unsafe {
-        ::std::process::exit(main_0(
+                .into_bytes_with_nul()
+        })
+        .collect();
+    let mut vars: Vec<*mut ::core::ffi::c_char> = vars_strings
+        .iter_mut()
+        .map(|var| var.as_mut_ptr() as *mut ::core::ffi::c_char)
+        .chain(::core::iter::once(::core::ptr::null_mut()))
+        .collect();
+    let result = unsafe {
+        main_0(
             (args_ptrs.len() - 1) as i32,
             args_ptrs.as_mut_ptr() as *mut *mut ::core::ffi::c_char,
             vars.as_mut_ptr() as *mut *mut ::core::ffi::c_char,
-        ) as i32)
-    }
+        )
+    };
+    crate::build_result::exit_code(result)
 }
 /// The command-line switch table, freshly built with its real contents — the
 /// former `.init_array` `run_static_initializers` body that populated the
