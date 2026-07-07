@@ -104,3 +104,27 @@ per-file panics (`index out of bounds` in control-flow parsing) — rerun or
 fall back to manual edit for that file. Not expressible in cocci: struct
 redefinition + trait/generic introduction (SeqNode/ShuffleNode), extern-block
 decl removal with import insertion (scripts/depgraph_extern_cleanup.py).
+
+## libc stdio/file io → std::io / std::fs (campaign)
+Each slice is its own PR, byte-identical against the C oracle (the split-
+buffer hazard between libc `FILE` buffers and Rust's `std::io` buffers is
+exactly why this goes clump by clump, never file-by-file mixing streams).
+- [x] `$(file <…)`/`$(file >…)` (function.rs) and the `dbg` debug log
+      (misc.rs) — `std::fs::File`/`OpenOptions`, EINTR retries preserved,
+      fatal messages byte-identical; `file_func` fixture pins it
+- [ ] temp files: `get_tmpfile`/`fdopen` (misc.rs), the `-f -` stdin spool
+      `fread`/`fwrite` loop (main.rs), jobserver temp `fclose` (posixos.rs)
+- [ ] makefile reading: `ebuf.fp` `fopen`/`fdopen`/`fclose` + `readline`
+      (read.rs) → `BufReader`-style owned reader
+- [ ] output.rs: the `fwrite` dump in `output_write`, `fputs`/`fflush` in
+      the message writers
+- [ ] the `-p` data-base printers: `printf`/`fputs`/`putchar` in
+      variable.rs, file.rs, dir.rs, vpath.rs, strcache.rs, main.rs
+      (`print_version`/`print_data_base`) → one shared safe byte-writer
+      (rule.rs already is; its flush ordering is the pattern to follow)
+- [ ] debug traces: `printf`+`fflush(stdout)` pairs in remake.rs, job.rs,
+      implicit.rs, expand.rs, function.rs, commands.rs, read.rs, posixos.rs
+- [ ] stdout plumbing: `setvbuf`/`fileno`/`check_io_state` (main.rs),
+      `close_stdout` atexit handler — last, once no libc writers remain
+- [ ] file ops with all-Rust callers: `unlink`/`chdir`/`getcwd` →
+      `std::fs`/`std::env`
