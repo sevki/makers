@@ -6,17 +6,17 @@
 //! are called with printf-style argument lists from all over the crate; the
 //! [`msg`] submodule provides native-Rust counterparts.
 
-use ::core::ffi::{c_char, c_uint, c_void};
+use ::core::ffi::c_uint;
 use ::core::ptr::{null, null_mut};
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, close, ftruncate, lseek, perror, read, strerror, strlen, EINTR, SEEK_END,
+    __errno_location, close, ftruncate, lseek, strerror, strlen, EINTR, SEEK_END,
     SEEK_SET,
 };
 
 use crate::execctx::ExecContext;
-use crate::ffi_types::{__off_t, size_t, uintmax_t};
+use crate::ffi_types::{size_t, uintmax_t};
 use crate::floc::Floc;
 use crate::make_main::die;
 use crate::misc::{open_anon_tmpfd, writebuf};
@@ -30,8 +30,6 @@ extern "C" {
     static mut stdout: *mut FILE;
     static mut stderr: *mut FILE;
     fn fflush(stream: *mut FILE) -> i32;
-    fn fputs(s: *const c_char, stream: *mut FILE) -> i32;
-    fn fwrite(ptr: *const c_void, size: size_t, n: size_t, s: *mut FILE) -> ::core::ffi::c_ulong;
     fn fileno(stream: *mut FILE) -> i32;
 }
 
@@ -115,9 +113,21 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
             return;
         }
     }
-    let f: *mut FILE = if is_err != 0 { stderr } else { stdout };
-    fputs(msg, f);
-    fflush(f);
+    // Every non-synced make message lands here: write it through Rust's
+    // stdout/stderr and flush, exactly the fputs+fflush the C did. The libc
+    // streams stay line-buffered elsewhere, so per-message flushing on both
+    // sides keeps interleaving stable while the printf callers convert.
+    use std::io::Write;
+    let bytes = ::core::ffi::CStr::from_ptr(msg).to_bytes();
+    if is_err != 0 {
+        let mut f = std::io::stderr();
+        let _ = f.write_all(bytes);
+        let _ = f.flush();
+    } else {
+        let mut f = std::io::stdout();
+        let _ = f.write_all(bytes);
+        let _ = f.flush();
+    }
 }
 /// Print an entering/leaving-directory line (returns 1).
 ///
@@ -181,48 +191,72 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     _outputs(null_mut(), 0, line.as_ptr() as *const ::core::ffi::c_char);
     1
 }
-/// Copy everything from fd `from` to stream `to`, from the beginning.
+/// `perror`'s exact output — `<what>: <strerror(errno)>\n` to stderr — for
+/// the pump's error paths, sourcing errno from the `io::Error`.
+fn pump_perror(what: &str, err: &std::io::Error) {
+    use std::io::Write;
+    // SAFETY: `strerror` returns a static NUL-terminated message for any
+    // errno value.
+    let es = unsafe {
+        ::core::ffi::CStr::from_ptr(strerror(err.raw_os_error().unwrap_or(0)))
+    };
+    let mut e = std::io::stderr();
+    let _ = e.write_all(what.as_bytes());
+    let _ = e.write_all(b": ");
+    let _ = e.write_all(es.to_bytes());
+    let _ = e.write_all(b"\n");
+}
+/// The pump's copy loop over any seekable reader and writer: rewind, then
+/// copy 8 KiB chunks until EOF, retrying `Interrupted` reads and stopping
+/// (after a perror-style line) on any other read or write error — exactly
+/// the C `lseek`/`read`/`fwrite` loop's behavior and error text.
+fn pump_copy<R, W>(src: &mut R, dst: &mut W)
+where
+    R: std::io::Read + std::io::Seek,
+    W: std::io::Write,
+{
+    if let Err(e) = src.seek(std::io::SeekFrom::Start(0)) {
+        pump_perror("lseek()", &e);
+    }
+    let mut buffer = [0u8; 8192];
+    loop {
+        let len = loop {
+            match src.read(&mut buffer) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    pump_perror("read()", &e);
+                    break 0;
+                }
+            }
+        };
+        if len == 0 {
+            break;
+        }
+        // Keep the C error text: the write is what fwrite() did.
+        if let Err(e) = dst.write_all(&buffer[..len]).and_then(|()| dst.flush()) {
+            pump_perror("fwrite()", &e);
+            break;
+        }
+    }
+}
+/// Copy everything from fd `from` to stdout or stderr, from the beginning.
 ///
 /// # Safety
-/// `from` must be an open, seekable fd and `to` an open stream; uses a
-/// static buffer, so must run single-threaded.
-pub unsafe fn pump_from_tmp(from: i32, to: *mut FILE) {
-    // Plain per-call scratch (the former `static mut buffer`): nothing reads
-    // it across calls, the static only existed to keep the C frame small.
-    let mut buffer: [::core::ffi::c_char; 8192] = [0; 8192];
-    if lseek(from, 0, SEEK_SET) == -1 as __off_t {
-        perror(c"lseek()".as_ptr());
-    }
-    loop {
-        let mut len: i32;
-        loop {
-            len = read(
-                from,
-                buffer.as_mut_ptr() as *mut ::core::ffi::c_void,
-                ::core::mem::size_of::<[::core::ffi::c_char; 8192]>() as size_t,
-            ) as i32;
-            if !(len == -1 && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        if len < 0 {
-            perror(c"read()".as_ptr());
-        }
-        if len <= 0 {
-            break;
-        }
-        if fwrite(
-            buffer.as_ptr() as *const ::core::ffi::c_void,
-            len as size_t,
-            1,
-            to,
-        ) < 1
-        {
-            perror(c"fwrite()".as_ptr());
-            break;
-        } else {
-            fflush(to);
-        }
+/// `from` must be an open, seekable fd this function may read (ownership is
+/// borrowed, not taken).
+pub unsafe fn pump_from_tmp(from: i32, to_stderr: bool) {
+    use std::os::fd::FromRawFd;
+    // Anything a libc printer buffered for this stream must land before our
+    // raw writes; flush it once up front (the C fwrite went through that
+    // same buffer, so ordering was inherent there).
+    fflush(if to_stderr { stderr } else { stdout });
+    // Borrow the fd as a File without taking ownership.
+    let mut src = ::core::mem::ManuallyDrop::new(std::fs::File::from_raw_fd(from));
+    if to_stderr {
+        pump_copy(&mut *src, &mut std::io::stderr());
+    } else {
+        pump_copy(&mut *src, &mut std::io::stdout());
     }
 }
 /// Create an anonymous temp fd in append mode for output sync.
@@ -320,10 +354,10 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             traced = log_working_directory(ctx, 1);
         }
         if outfd_not_empty != 0 {
-            pump_from_tmp((*out).out, stdout);
+            pump_from_tmp((*out).out, false);
         }
         if errfd_not_empty != 0 && (*out).err != (*out).out {
-            pump_from_tmp((*out).err, stderr);
+            pump_from_tmp((*out).err, true);
         }
         if traced != 0 {
             log_working_directory(ctx, 0);
@@ -905,8 +939,112 @@ mod output_context_tests {
 
 #[cfg(test)]
 mod outputs_tests {
-    use super::{_outputs, output, OUTPUT_NONE};
+    use super::{_outputs, output, pump_copy, OUTPUT_NONE};
     use std::ffi::CString;
+
+    /// `pump_copy` rewinds first and copies everything: a cursor left
+    /// mid-stream still yields the full content, matching the C pump's
+    /// `lseek(0)`-then-read loop.
+    #[test]
+    fn pump_copy_rewinds_and_copies_everything() {
+        let mut src = std::io::Cursor::new(b"synced child output\n".to_vec());
+        src.set_position(7);
+        let mut dst: Vec<u8> = Vec::new();
+        pump_copy(&mut src, &mut dst);
+        assert_eq!(dst, b"synced child output\n");
+    }
+
+    /// A reader that yields Interrupted once, then data, then EOF: the
+    /// EINTR retry keeps pumping (the C loop's `errno == EINTR` retry).
+    #[test]
+    fn pump_copy_retries_interrupted_reads() {
+        struct EintrOnce {
+            hits: u32,
+            data: std::io::Cursor<Vec<u8>>,
+        }
+        impl std::io::Read for EintrOnce {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.hits == 0 {
+                    self.hits = 1;
+                    return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+                }
+                self.data.read(buf)
+            }
+        }
+        impl std::io::Seek for EintrOnce {
+            fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+                self.data.seek(pos)
+            }
+        }
+        let mut src = EintrOnce {
+            hits: 0,
+            data: std::io::Cursor::new(b"after-eintr".to_vec()),
+        };
+        let mut dst: Vec<u8> = Vec::new();
+        pump_copy(&mut src, &mut dst);
+        assert_eq!(dst, b"after-eintr");
+    }
+
+    /// A failing writer stops the pump after the perror line, like the C
+    /// loop's `fwrite() < 1` break; partial output stays written.
+    #[test]
+    fn pump_copy_stops_on_write_error() {
+        struct FailAfterFirst {
+            wrote: bool,
+            sink: Vec<u8>,
+        }
+        impl std::io::Write for FailAfterFirst {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                if self.wrote {
+                    return Err(std::io::Error::from_raw_os_error(libc::ENOSPC));
+                }
+                self.wrote = true;
+                self.sink.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        // Two >8KiB-boundary chunks force two writes; the second fails.
+        let mut src = std::io::Cursor::new(vec![b'x'; 8192 + 16]);
+        let mut dst = FailAfterFirst {
+            wrote: false,
+            sink: Vec::new(),
+        };
+        pump_copy(&mut src, &mut dst);
+        assert_eq!(dst.sink.len(), 8192, "first chunk written, then stopped");
+    }
+
+    /// A read error (not EINTR) ends the pump after the perror line, like
+    /// the C loop's `len < 0` break.
+    #[test]
+    fn pump_copy_stops_on_read_error() {
+        struct BadRead;
+        impl std::io::Read for BadRead {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from_raw_os_error(libc::EIO))
+            }
+        }
+        impl std::io::Seek for BadRead {
+            fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
+                Err(std::io::Error::from_raw_os_error(libc::ESPIPE))
+            }
+        }
+        let mut dst: Vec<u8> = Vec::new();
+        pump_copy(&mut BadRead, &mut dst);
+        assert!(dst.is_empty(), "nothing pumped from a failing reader");
+    }
+
+    /// The non-synced fallback writes through Rust stderr when is_err is
+    /// set; an empty message keeps the test's real stderr clean while
+    /// covering the branch.
+    #[test]
+    fn outputs_fallback_writes_stderr_branch() {
+        unsafe {
+            _outputs(std::ptr::null_mut(), 1, c"".as_ptr());
+        }
+    }
 
     /// A unique temp path; the file is created by `open_temp_fd`.
     fn temp_path(tag: &str) -> std::path::PathBuf {
