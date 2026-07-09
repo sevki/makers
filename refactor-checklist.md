@@ -128,8 +128,7 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
       variable.rs, file.rs, dir.rs, vpath.rs, strcache.rs, commands.rs
       (recipe printers), and main.rs (`print_version`, data-base
       header/footer, usage banner) goes through `output::trace_out`/
-      `trace_parts`; hash.rs `hash_print_stats` still writes via `FILE*`
-      (an fflush keeps its bytes ordered) and moves with the
+      `trace_parts`; hash.rs `hash_print_stats` moved with the
       stdout-plumbing slice
 - [x] posixos.rs: the `tmpfile()` fallback in `os_anontmp` is a std::fs
       create-and-unlink helper (`anon_unlinked_tmp`), and its two debug
@@ -144,8 +143,13 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
       main.rs (jobserver/mutex/shuffle/updating/loop/Re-executing) route
       through `output::trace_out`/`trace_parts`; commands.rs's two printf
       sites are `-p` recipe printers and move with that slice
-- [ ] stdout plumbing: `setvbuf`/`fileno`/`check_io_state` (main.rs),
-      `close_stdout` atexit handler — last, once no libc writers remain
+- [x] stdout plumbing: hash.rs `hash_print_stats` (the last libc stdout
+      writer) formats via `output::trace_out`; `close_stdout` flushes Rust
+      stdout and reads a sticky write-errno (`output::record_stdout_error`,
+      fed by every Rust stdout writer — the `ferror` equivalent); `setvbuf`
+      dropped (Rust stdout is a `LineWriter`); `fileno(stdout/stderr)` →
+      the constant fds in main.rs/output.rs/`check_io_state` (job.rs keeps
+      its child-fd `fileno` plumbing, a separate concern)
 - [x] file ops with all-Rust callers: every `unlink` goes through
       `misc::unlink_c` (std::fs::remove_file with the C EINTR retry and
       errno preserved for perror paths); main.rs `chdir`/`getcwd` go

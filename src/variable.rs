@@ -1,13 +1,9 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{file, Commands, Dep, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin};
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
-use crate::stdio::FILE;
 use c2rust_bitfields;
 use libc::{abort, free, sprintf, strchr, strcmp, strcpy, strstr};
 extern "C" {
-    static mut stdout: *mut FILE;
-    fn putc(__c: i32, __stream: *mut FILE) -> i32;
-    fn fflush(__stream: *mut FILE) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -2809,11 +2805,8 @@ unsafe extern "C" fn print_variable_set(
         prefix as *mut ::core::ffi::c_void,
     );
     crate::output::trace_out(b"# variable set hash-table stats:\n# ");
-    hash_print_stats(&raw mut (*set).table, stdout);
-    putc('\n' as i32, stdout);
-    // `hash_print_stats` still writes through the buffered C `stdout` stream;
-    // flush it so its bytes land before any subsequent Rust-stdout writes.
-    fflush(stdout);
+    hash_print_stats(&raw mut (*set).table);
+    crate::output::trace_out(b"\n");
 }
 /// # Safety
 ///

@@ -7,22 +7,13 @@
 //! through `#[repr(C)]`.
 
 use ::core::{
-    ffi::{c_char, c_double, c_uint, c_ulong, c_void},
+    ffi::{c_double, c_uint, c_ulong, c_void},
     ptr::null_mut,
 };
 
 use libc::{exit, free};
 
-use crate::{
-    ffi_types::size_t,
-    misc::xcalloc,
-    stdio::FILE,
-};
-
-extern "C" {
-    static mut stderr: *mut FILE;
-    fn fprintf(stream: *mut FILE, format: *const c_char, ...) -> i32;
-}
+use crate::{ffi_types::size_t, misc::xcalloc};
 
 pub type __compar_fn_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> i32>;
 pub type hash_func_t = Option<unsafe fn(*const c_void) -> c_ulong>;
@@ -105,9 +96,10 @@ pub unsafe fn hash_init(
     (*ht).ht_vec = xcalloc(::core::mem::size_of::<*mut c_void>() * (*ht).ht_size as size_t)
         as *mut *mut c_void;
     if (*ht).ht_vec.is_null() {
-        fprintf(
-            stderr,
-            c"can't allocate %lu bytes for hash table: memory exhausted".as_ptr(),
+        use std::io::Write;
+        let _ = write!(
+            std::io::stderr(),
+            "can't allocate {} bytes for hash table: memory exhausted",
             (*ht).ht_size * ::core::mem::size_of::<*mut c_void>() as c_ulong,
         );
         exit(MAKE_TROUBLE);
@@ -447,31 +439,45 @@ pub unsafe fn hash_rehash(ht: *mut hash_table) {
     free(old_vec as *mut c_void);
 }
 
-/// Print load/rehash/collision statistics to `out_file` (used by
-/// `make -p`).
-///
-/// # Safety
-/// `ht` must be initialized and `out_file` an open stream.
-pub unsafe fn hash_print_stats(ht: *mut hash_table, out_file: *mut FILE) {
-    fprintf(
-        out_file,
-        c"Load=%lu/%lu=%.0f%%, ".as_ptr(),
-        (*ht).ht_fill,
-        (*ht).ht_size,
-        100.0f64 * (*ht).ht_fill as c_double / (*ht).ht_size as c_double,
-    );
-    fprintf(out_file, c"Rehash=%u, ".as_ptr(), (*ht).ht_rehashes);
-    fprintf(
-        out_file,
-        c"Collisions=%lu/%lu=%.0f%%".as_ptr(),
-        (*ht).ht_collisions,
-        (*ht).ht_lookups,
-        if (*ht).ht_lookups != 0 {
-            100.0f64 * (*ht).ht_collisions as c_double / (*ht).ht_lookups as c_double
+/// The `hash_print_stats` line for the given counters. `{:.0}` rounds
+/// half-to-even exactly like the C `%.0f` these lines were printed with.
+fn hash_stats_string(
+    fill: c_ulong,
+    size: c_ulong,
+    rehashes: c_uint,
+    collisions: c_ulong,
+    lookups: c_ulong,
+) -> String {
+    format!(
+        "Load={}/{}={:.0}%, Rehash={}, Collisions={}/{}={:.0}%",
+        fill,
+        size,
+        100.0f64 * fill as c_double / size as c_double,
+        rehashes,
+        collisions,
+        lookups,
+        if lookups != 0 {
+            100.0f64 * collisions as c_double / lookups as c_double
         } else {
             0.0f64
         },
+    )
+}
+
+/// Print load/rehash/collision statistics to stdout (used by `make -p`);
+/// the caller supplies surrounding prefix/newline bytes.
+///
+/// # Safety
+/// `ht` must be initialized.
+pub unsafe fn hash_print_stats(ht: *mut hash_table) {
+    let stats = hash_stats_string(
+        (*ht).ht_fill,
+        (*ht).ht_size,
+        (*ht).ht_rehashes,
+        (*ht).ht_collisions,
+        (*ht).ht_lookups,
     );
+    crate::output::trace_out(stats.as_bytes());
 }
 
 /// Round up to the next power of two by bit-smearing. Note this is NOT
@@ -637,6 +643,41 @@ mod tests {
         let local = 0u8;
         let real = (&raw const local).cast::<c_void>();
         assert!(is_real_item(real));
+    }
+
+    #[test]
+    fn hash_stats_string_matches_c_percent_formatting() {
+        // The exact `Load=%lu/%lu=%.0f%%, Rehash=%u, Collisions=%lu/%lu=%.0f%%`
+        // bytes glibc printed, including rounding of the percentages.
+        assert_eq!(
+            hash_stats_string(219, 1024, 0, 31, 251),
+            "Load=219/1024=21%, Rehash=0, Collisions=31/251=12%"
+        );
+        assert_eq!(
+            hash_stats_string(1, 2, 3, 2, 3),
+            "Load=1/2=50%, Rehash=3, Collisions=2/3=67%"
+        );
+    }
+
+    #[test]
+    fn hash_stats_string_zero_lookups_prints_zero_percent() {
+        // The lookups==0 guard takes the 0.0 branch instead of dividing.
+        assert_eq!(
+            hash_stats_string(0, 16, 0, 0, 0),
+            "Load=0/16=0%, Rehash=0, Collisions=0/0=0%"
+        );
+    }
+
+    #[test]
+    fn hash_print_stats_reads_the_table_counters() {
+        // Exercise the unsafe wrapper over a real table: it must read the
+        // counters without touching the item vector.
+        unsafe {
+            let mut ht: hash_table = ::core::mem::zeroed();
+            hash_init(&raw mut ht, 4, None, None, None);
+            hash_print_stats(&raw mut ht);
+            hash_free(&raw mut ht, 0);
+        }
     }
 
     #[test]
