@@ -8,6 +8,67 @@
 - [ ] Coverage delta is `>= 0`: `./scripts/coverage-delta.sh --enforce` passes.
       See [coverage.md](coverage.md).
 
+## Generic output sink on `ExecContext<W: Write>` (multi-tenant groundwork)
+Follows directly from the libc-stdio campaign above: with every make writer
+already on `std::io`, the next process global to retire is *which* stdout/
+stderr a write goes to, so a future host can run several sessions in one
+process with each session's recipe/trace/diagnostic output landing in its
+own buffer instead of the real process stdout. `execctx.rs`'s existing
+per-context state (`remote_backend`, `handling_fatal_signal`, ...) already
+called this out as a "future multi-tenant host" concern; this is that slice
+for output.
+
+- [x] Core type: `ExecContext<W: Write = StdioChannel>` — `stdout`/`stderr`
+      fields are `Rc<RefCell<W>>` (cheap-clone handle, matches
+      `remote_backend`'s rationale). `StdioChannel` is the default sink,
+      reproducing today's exact behavior (re-fetches real
+      `std::io::stdout()`/`stderr()` per write, feeds the sticky
+      `output::record_stdout_error`). The default type parameter means every
+      existing `&ExecContext` site in the crate (399 signatures, 28 files)
+      keeps compiling and behaving identically — **no call site needed to
+      change** for this slice to land.
+  - `ExecContext<StdioChannel>` can't derive `Default` (stdout/stderr must
+    start as *different* sink values — a single generic `W::default()`
+    can't express that), so it's a hand-written concrete impl instead.
+  - `ExecContext<W>::with_sinks(stdout: W2, stderr: W2) -> ExecContext<W2>`
+    is the escape hatch for a non-default `W` without hand-listing every
+    field at each call site: build a normal `ExecContext::new(...)`/
+    `::default()` for config/startup, then convert.
+- [x] Proof-of-concept consumer: `output::trace_out_ctx(&ExecContext<W>, &[u8])`
+      writes through `ctx.stdout`. The existing ctx-less `output::trace_out`
+      becomes a compatibility wrapper that reaches the live session's context
+      through the `try_with_exec_context` borrow channel (same one
+      `output_context`/`stdio_traced` already use) and falls back to real
+      stdout only when no context is installed (startup, bare unit tests) —
+      so it now honors a buffer-backed session's sink too, not just the
+      process's real stdout.
+- [ ] Convert the rest of the direct `std::io::stdout()`/`stderr()` call
+      sites in output.rs onto `ctx.stdout`/`ctx.stderr` (`_outputs`'s
+      non-synced path, `pump_from_tmp`, the usage/version printer in
+      main.rs, `close_stdout`) — each needs a live `&ExecContext<W>` at the
+      call site, which most already carry; the exceptions (the `atexit`
+      handler, a couple of C-ABI callbacks) go through the borrow channel
+      like `trace_out` now does.
+- [ ] Per-context sticky write-error tracking: `output::STDOUT_ERRNO` is
+      still one process-global atomic. Move it onto `ExecContext` (a `Cell`,
+      following `clock_skew_detected`'s pattern) so two sessions' write
+      failures don't clobber each other; `StdioChannel::write`/`flush` need
+      a `ctx` reference to record into instead of the free function.
+  - Actively wanted before real multi-tenant use, not just tidiness: today
+        a second buffer-backed session's write failure has nowhere per-context
+        to land.
+- [ ] hash.rs `hash_print_stats` and any other bare `trace_out(...)` callers
+      that have a `&ExecContext` available at the call site convert to
+      `trace_out_ctx` directly instead of going through the borrow-channel
+      fallback (cheaper, and correct even when called from a thread/session
+      that isn't "the" installed context in a multi-tenant host).
+- [ ] Decide + document the concurrency story before any real multi-tenant
+      use: `Rc<RefCell<W>>` is intentionally not `Send`/`Sync` — fine for one
+      session per `ExecContext` clone tree, wrong for sharing one sink
+      across threads. A host running sessions on separate threads (not just
+      separate `ExecContext`s in one thread) needs `Arc<Mutex<W>>` instead,
+      which is a mechanical follow-up once the shape above is proven out.
+
 ## Shared FILE / `_IO_FILE` cleanup
 - [x] Replace local `_IO_FILE` clones / `FILE` aliases with `crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE}` in:
   - [x] `src/vpath.rs`

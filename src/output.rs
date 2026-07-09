@@ -110,10 +110,31 @@ pub fn stdout_error() -> i32 {
     STDOUT_ERRNO.load(Ordering::Relaxed)
 }
 
-/// Emit a debug/trace line on stdout through Rust io and flush — the C
-/// `printf` + `fflush(stdout)` pattern of the `-d` traces. Callers format
-/// the bytes themselves.
+/// Emit a debug/trace line through `ctx`'s stdout sink and flush — the C
+/// `printf` + `fflush(stdout)` pattern of the `-d` traces. Callers format the
+/// bytes themselves. This is the entry point a host running several sessions
+/// in one process wants: give each session's `ExecContext` its own `W`
+/// (an in-memory buffer, a per-connection socket, ...) and its trace/recipe
+/// output never touches another session's.
+pub fn trace_out_ctx<W: std::io::Write>(ctx: &ExecContext<W>, bytes: &[u8]) {
+    let mut o = ctx.stdout.borrow_mut();
+    // `StdioChannel::write`/`flush` already feed `record_stdout_error` for
+    // the default sink; a non-default `W` reports its own failures how it
+    // sees fit; there is no process-wide stdout to be sticky about there.
+    let _ = o.write_all(bytes).and_then(|()| o.flush());
+}
+
+/// Ctx-less compatibility wrapper for the callers not yet converted to carry
+/// an `&ExecContext` (hash.rs, misc.rs's `spin`, ...). Reaches the live
+/// `main_0` context through the same borrow channel `output_context`/
+/// `stdio_traced` use, so it lands on the *installed* session's sink rather
+/// than always meaning "the process's real stdout"; falls back to a bare
+/// default sink only when no context is installed at all (startup, bare unit
+/// tests).
 pub fn trace_out(bytes: &[u8]) {
+    if crate::make_main::try_with_exec_context(|ctx| trace_out_ctx(ctx, bytes)).is_some() {
+        return;
+    }
     use std::io::Write;
     let mut o = std::io::stdout();
     if let Err(e) = o.write_all(bytes).and_then(|()| o.flush()) {

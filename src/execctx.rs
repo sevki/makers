@@ -74,11 +74,58 @@ impl Default for Config {
     }
 }
 
+/// The default output sink: real process stdout/stderr. Each write re-fetches
+/// `std::io::stdout()`/`stderr()` (matching how the pre-generic printers
+/// worked), and a failed stdout write feeds the sticky write-error tracked in
+/// [`crate::output::record_stdout_error`] — the same `ferror(stdout)`
+/// equivalent `close_stdout` reads at exit. A future multi-tenant host swaps
+/// [`ExecContext`]'s `W` for an in-memory buffer (or any other
+/// [`std::io::Write`]) per session instead of this process-wide default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdioChannel {
+    Out,
+    Err,
+}
+
+impl ::std::io::Write for StdioChannel {
+    fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
+        match self {
+            StdioChannel::Out => {
+                let r = ::std::io::Write::write(&mut ::std::io::stdout(), buf);
+                if let Err(e) = &r {
+                    crate::output::record_stdout_error(e);
+                }
+                r
+            }
+            StdioChannel::Err => ::std::io::Write::write(&mut ::std::io::stderr(), buf),
+        }
+    }
+    fn flush(&mut self) -> ::std::io::Result<()> {
+        match self {
+            StdioChannel::Out => {
+                let r = ::std::io::Write::flush(&mut ::std::io::stdout());
+                if let Err(e) = &r {
+                    crate::output::record_stdout_error(e);
+                }
+                r
+            }
+            StdioChannel::Err => ::std::io::Write::flush(&mut ::std::io::stderr()),
+        }
+    }
+}
+
 /// The owned execution context, created in `main` and threaded by reference
 /// into the call graph. Holds the immutable [`Config`] plus (as the migration
 /// proceeds) the mutable runtime state that used to live in `static mut`s.
-#[derive(Debug, Default, Clone)]
-pub struct ExecContext {
+///
+/// Generic over its output sink `W` (any [`std::io::Write`]), defaulting to
+/// [`StdioChannel`] so every existing `&ExecContext` site in the crate keeps
+/// meaning "the real process stdout/stderr" without any change. A host that
+/// wants to capture a session's output into a buffer instead constructs
+/// `ExecContext<MyBuffer>` explicitly; nothing here forces that choice on the
+/// rest of the call graph.
+#[derive(Debug, Clone)]
+pub struct ExecContext<W: ::std::io::Write = StdioChannel> {
     /// Read-only process configuration.
     pub config: Config,
 
@@ -732,6 +779,125 @@ pub struct ExecContext {
     /// [`VariableBuffer`]'s doc for why this is `Vec<u8>`-backed rather than
     /// a raw pointer + length pair.
     pub variable_buffer: VariableBuffer,
+
+    /// The sink every recipe/trace/diagnostic stdout write goes through —
+    /// `output::trace_out`/`_outputs`'s non-synced path, `hash_print_stats`,
+    /// the usage/version printers. `Rc<RefCell<_>>` rather than a bare `W`
+    /// so [`ExecContext::clone`] stays a cheap handle-copy (matching
+    /// [`Self::remote_backend`]'s rationale) while every clone still writes
+    /// to the *same* sink — the point of a per-session buffer.
+    pub stdout: ::std::rc::Rc<::core::cell::RefCell<W>>,
+    /// Same as [`Self::stdout`] for stderr — `error`/`fatal`'s output and the
+    /// `-h`/bad-flag usage banner.
+    pub stderr: ::std::rc::Rc<::core::cell::RefCell<W>>,
+}
+
+// A blanket `impl<W: Write + Default> Default for ExecContext<W>` can't be
+// generated: `stdout` and `stderr` must start as *different* sink values
+// (real stdout vs. real stderr), which a single generic `W::default()` can't
+// express. So this concrete impl covers only the default instantiation used
+// everywhere in the crate today (`ExecContext` unparameterized ==
+// `ExecContext<StdioChannel>`); a host constructing `ExecContext<MyBuffer>`
+// builds it with its own constructor instead of `Default`/`ExecContext::new`.
+impl Default for ExecContext<StdioChannel> {
+    fn default() -> Self {
+        Self {
+            config: Default::default(),
+            db: Default::default(),
+            mtime_adjusted_now: Default::default(),
+            clock_skew_detected: Default::default(),
+            load_sample_second: Default::default(),
+            load_prev_weight: Default::default(),
+            no_intermediates: Default::default(),
+            all_secondary: Default::default(),
+            always_make_flag: Default::default(),
+            num_pattern_rules: Default::default(),
+            max_pattern_targets: Default::default(),
+            max_pattern_deps: Default::default(),
+            max_pattern_dep_length: Default::default(),
+            rules: Default::default(),
+            commands_started: Default::default(),
+            considered: Default::default(),
+            good_stdin_used: Default::default(),
+            open_directories: Default::default(),
+            load_proc_fd: Default::default(),
+            temp_stdin_name: Default::default(),
+            directory_before_chdir: Default::default(),
+            program: Default::default(),
+            tmpdir: Default::default(),
+            shuffle: Default::default(),
+            remote_backend: Default::default(),
+            starting_directory: Default::default(),
+            load_lossage: Default::default(),
+            shell_var: Default::default(),
+            command_variables: Default::default(),
+            default_goal_var: Default::default(),
+            fatal_signal_set: Default::default(),
+            make_sync: Default::default(),
+            output_context: Default::default(),
+            pid_string: Default::default(),
+            children: Default::default(),
+            waiting_jobs: Default::default(),
+            directories: Default::default(),
+            directory_contents: Default::default(),
+            filenodes: Default::default(),
+            read_dirstream_buf: Default::default(),
+            read_dirstream_bufsz: Default::default(),
+            file_seq_tmpbuf: Default::default(),
+            read_files: Default::default(),
+            conditionals: Default::default(),
+            job_fds: Default::default(),
+            fifo_name: Default::default(),
+            osync_tmpfile: Default::default(),
+            library_search_cache: Default::default(),
+            job_slots_used: Default::default(),
+            job_counter: Default::default(),
+            jobserver_tokens: Default::default(),
+            dead_children: Default::default(),
+            handling_fatal_signal: Default::default(),
+            shell_function_pid: Default::default(),
+            shell_function_completed: Default::default(),
+            js_type: Default::default(),
+            job_root: Default::default(),
+            job_rfd: Default::default(),
+            osync_handle: Default::default(),
+            sync_root: Default::default(),
+            bad_stdin: Default::default(),
+            tmpfile_works: Default::default(),
+            last_targ_count: Default::default(),
+            wpre_warned: Default::default(),
+            wcmd_warned: Default::default(),
+            reap_children_printed: Default::default(),
+            delete_on_error: Default::default(),
+            max_args: Default::default(),
+            printed_version: Default::default(),
+            dying: Default::default(),
+            output_in_setup: Default::default(),
+            stdout_flags: Default::default(),
+            stderr_flags: Default::default(),
+            io_state: Default::default(),
+            env_recursion: Default::default(),
+            variable_changenum: Default::default(),
+            last_changenum: Default::default(),
+            pattern_vars: Default::default(),
+            last_pattern_vars: Default::default(),
+            goal_list: Default::default(),
+            goal_dep: Default::default(),
+            function_table: Default::default(),
+            vpaths: Default::default(),
+            general_vpath: Default::default(),
+            gpaths: Default::default(),
+            warning_state: Default::default(),
+            db_level: Default::default(),
+            variable_globals: Default::default(),
+            reading_file: Default::default(),
+            expanding_var: Default::default(),
+            recipe_reading_floc: Default::default(),
+            variable_buffer: Default::default(),
+            stdout: ::std::rc::Rc::new(::core::cell::RefCell::new(StdioChannel::Out)),
+            stderr: ::std::rc::Rc::new(::core::cell::RefCell::new(StdioChannel::Err)),
+        }
+    }
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1833,7 +1999,9 @@ impl ExecContext {
             ..Self::default()
         }
     }
+}
 
+impl<W: ::std::io::Write> ExecContext<W> {
     /// `$(MAKELEVEL)` for this make process.
     pub fn makelevel(&self) -> u32 {
         self.config.makelevel
@@ -1858,9 +2026,118 @@ impl ExecContext {
     }
 }
 
+impl<W: ::std::io::Write> ExecContext<W> {
+    /// Rebuild this context with different output sinks, moving every other
+    /// field across unchanged. The one way to get an `ExecContext<W2>` for a
+    /// `W2` other than the default [`StdioChannel`] without hand-listing
+    /// every field at the call site: a host builds a plain
+    /// `ExecContext::default()` (or `::new`) for startup/config, reads the
+    /// makefile-independent state it needs from it if any, then converts to
+    /// its own sink type — an in-memory buffer, a per-connection socket,
+    /// whatever `W2: Write` it wants — before running the build on it.
+    pub fn with_sinks<W2: ::std::io::Write>(self, stdout: W2, stderr: W2) -> ExecContext<W2> {
+        ExecContext {
+            config: self.config,
+            db: self.db,
+            mtime_adjusted_now: self.mtime_adjusted_now,
+            clock_skew_detected: self.clock_skew_detected,
+            load_sample_second: self.load_sample_second,
+            load_prev_weight: self.load_prev_weight,
+            no_intermediates: self.no_intermediates,
+            all_secondary: self.all_secondary,
+            always_make_flag: self.always_make_flag,
+            num_pattern_rules: self.num_pattern_rules,
+            max_pattern_targets: self.max_pattern_targets,
+            max_pattern_deps: self.max_pattern_deps,
+            max_pattern_dep_length: self.max_pattern_dep_length,
+            rules: self.rules,
+            commands_started: self.commands_started,
+            considered: self.considered,
+            good_stdin_used: self.good_stdin_used,
+            open_directories: self.open_directories,
+            load_proc_fd: self.load_proc_fd,
+            temp_stdin_name: self.temp_stdin_name,
+            directory_before_chdir: self.directory_before_chdir,
+            program: self.program,
+            tmpdir: self.tmpdir,
+            shuffle: self.shuffle,
+            remote_backend: self.remote_backend,
+            starting_directory: self.starting_directory,
+            load_lossage: self.load_lossage,
+            shell_var: self.shell_var,
+            command_variables: self.command_variables,
+            default_goal_var: self.default_goal_var,
+            fatal_signal_set: self.fatal_signal_set,
+            make_sync: self.make_sync,
+            output_context: self.output_context,
+            pid_string: self.pid_string,
+            children: self.children,
+            waiting_jobs: self.waiting_jobs,
+            directories: self.directories,
+            directory_contents: self.directory_contents,
+            filenodes: self.filenodes,
+            read_dirstream_buf: self.read_dirstream_buf,
+            read_dirstream_bufsz: self.read_dirstream_bufsz,
+            file_seq_tmpbuf: self.file_seq_tmpbuf,
+            read_files: self.read_files,
+            conditionals: self.conditionals,
+            job_fds: self.job_fds,
+            fifo_name: self.fifo_name,
+            osync_tmpfile: self.osync_tmpfile,
+            library_search_cache: self.library_search_cache,
+            job_slots_used: self.job_slots_used,
+            job_counter: self.job_counter,
+            jobserver_tokens: self.jobserver_tokens,
+            dead_children: self.dead_children,
+            handling_fatal_signal: self.handling_fatal_signal,
+            shell_function_pid: self.shell_function_pid,
+            shell_function_completed: self.shell_function_completed,
+            js_type: self.js_type,
+            job_root: self.job_root,
+            job_rfd: self.job_rfd,
+            osync_handle: self.osync_handle,
+            sync_root: self.sync_root,
+            bad_stdin: self.bad_stdin,
+            tmpfile_works: self.tmpfile_works,
+            last_targ_count: self.last_targ_count,
+            wpre_warned: self.wpre_warned,
+            wcmd_warned: self.wcmd_warned,
+            reap_children_printed: self.reap_children_printed,
+            delete_on_error: self.delete_on_error,
+            max_args: self.max_args,
+            printed_version: self.printed_version,
+            dying: self.dying,
+            output_in_setup: self.output_in_setup,
+            stdout_flags: self.stdout_flags,
+            stderr_flags: self.stderr_flags,
+            io_state: self.io_state,
+            env_recursion: self.env_recursion,
+            variable_changenum: self.variable_changenum,
+            last_changenum: self.last_changenum,
+            pattern_vars: self.pattern_vars,
+            last_pattern_vars: self.last_pattern_vars,
+            goal_list: self.goal_list,
+            goal_dep: self.goal_dep,
+            function_table: self.function_table,
+            vpaths: self.vpaths,
+            general_vpath: self.general_vpath,
+            gpaths: self.gpaths,
+            warning_state: self.warning_state,
+            db_level: self.db_level,
+            variable_globals: self.variable_globals,
+            reading_file: self.reading_file,
+            expanding_var: self.expanding_var,
+            recipe_reading_floc: self.recipe_reading_floc,
+            variable_buffer: self.variable_buffer,
+            stdout: ::std::rc::Rc::new(::core::cell::RefCell::new(stdout)),
+            stderr: ::std::rc::Rc::new(::core::cell::RefCell::new(stderr)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConditionalsFrame, ExecContext, FileArena};
+    use super::{Config, ConditionalsFrame, ExecContext, FileArena, StdioChannel};
 
     #[test]
     fn context_exposes_makelevel() {
@@ -1873,6 +2150,42 @@ mod tests {
     #[test]
     fn default_makelevel_is_zero() {
         assert_eq!(ExecContext::default().makelevel(), 0);
+    }
+
+    /// `with_sinks` is the escape hatch for a non-default `W`: it must move
+    /// every other field across (not just zero them out) and let the two
+    /// channels be genuinely different sink instances.
+    #[test]
+    fn with_sinks_carries_state_and_swaps_only_the_io() {
+        let ctx = ExecContext::new(Config { makelevel: 5, ..Default::default() });
+        let buffered = ctx.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        // Non-io state survived the conversion untouched.
+        assert_eq!(buffered.makelevel(), 5);
+        use ::std::io::Write;
+        buffered.stdout.borrow_mut().write_all(b"hello").unwrap();
+        buffered.stderr.borrow_mut().write_all(b"oops").unwrap();
+        assert_eq!(&**buffered.stdout.borrow(), b"hello");
+        assert_eq!(&**buffered.stderr.borrow(), b"oops");
+    }
+
+    /// A buffer-backed context's `trace_out_ctx` writes land in the buffer,
+    /// never on the process's real stdout — the multi-tenant point of the
+    /// generic sink.
+    #[test]
+    fn trace_out_ctx_writes_into_a_buffer_sink_not_real_stdout() {
+        let ctx = ExecContext::new(Config::default()).with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        crate::output::trace_out_ctx(&ctx, b"buffered trace line\n");
+        assert_eq!(&**ctx.stdout.borrow(), b"buffered trace line\n");
+        assert!(ctx.stderr.borrow().is_empty());
+    }
+
+    /// The default sink (`StdioChannel`) still exists and its two variants
+    /// stay distinct after a round trip through `Default`/`Clone`.
+    #[test]
+    fn default_context_uses_distinct_stdio_channels() {
+        let ctx = ExecContext::default();
+        assert_eq!(*ctx.stdout.borrow(), StdioChannel::Out);
+        assert_eq!(*ctx.stderr.borrow(), StdioChannel::Err);
     }
 
     /// `make_sync`'s address is captured by `output_context` before the
