@@ -566,7 +566,12 @@ unsafe fn eval_makefile(
             n.last_mtime = 0;
         }
     }
-    fd_noinherit((*ebuf.fp).as_raw_fd());
+    fd_noinherit(
+        ebuf.fp
+            .as_ref()
+            .expect("eval_makefile: reader just opened")
+            .as_raw_fd(),
+    );
     do_variable_definition(
         ctx,
         &raw mut ebuf.floc,

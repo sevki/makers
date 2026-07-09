@@ -133,14 +133,15 @@ pub unsafe fn readline(
     let mut end: *mut ::core::ffi::c_char;
     let mut start: *mut ::core::ffi::c_char;
     let mut nlines: ::core::ffi::c_long = 0;
-    if (*ebuf).fp.is_null() {
-        return readstring(ebuf);
-    }
+    let reader = match (*ebuf).fp.as_mut() {
+        Some(r) => r,
+        None => return readstring(ebuf),
+    };
     start = (*ebuf).bufstart;
     p = start;
     end = p.add((*ebuf).size);
     *p = 0;
-    while (*(*ebuf).fp).fgets(p, end.offset_from(p) as ::core::ffi::c_long as i32) {
+    while reader.fgets(p, end.offset_from(p) as ::core::ffi::c_long as i32) {
         let mut p2: *mut ::core::ffi::c_char;
         let mut len: size_t;
         let mut backslash: i32;
@@ -190,7 +191,7 @@ pub unsafe fn readline(
         end = start.add((*ebuf).size);
         *p = 0;
     }
-    if let Some(e) = (*(*ebuf).fp).error() {
+    if let Some(e) = reader.error() {
         *__errno_location() = e;
         pfatal_with_name(ctx, (*ebuf).floc.filenm);
     }
