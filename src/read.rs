@@ -15,7 +15,6 @@ use crate::misc::{
     collapse_continuations, find_next_token, next_token, xmalloc, xrealloc, xstrdup, xstrndup,
 };
 use crate::output::FmtArg;
-use crate::stdio::FILE;
 use crate::strcache::{strcache_add, strcache_add_bytes};
 use c2rust_bitfields;
 use libc::{
@@ -23,19 +22,6 @@ use libc::{
 };
 pub use lines::{readline, readstring};
 extern "C" {
-    fn fclose(__stream: *mut FILE) -> i32;
-    fn fopen(
-        __filename: *const ::core::ffi::c_char,
-        __modes: *const ::core::ffi::c_char,
-    ) -> *mut FILE;
-    fn fdopen(__fd: i32, __modes: *const ::core::ffi::c_char) -> *mut FILE;
-    fn fgets(
-        __s: *mut ::core::ffi::c_char,
-        __n: i32,
-        __stream: *mut FILE,
-    ) -> *mut ::core::ffi::c_char;
-    fn ferror(__stream: *mut FILE) -> i32;
-    fn fileno(__stream: *mut FILE) -> i32;
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
         __src: *const ::core::ffi::c_void,
@@ -152,7 +138,7 @@ pub struct ebuffer {
     pub bufnext: *mut ::core::ffi::c_char,
     pub bufstart: *mut ::core::ffi::c_char,
     pub size: size_t,
-    pub fp: *mut FILE,
+    pub fp: *mut lines::MakefileReader,
     pub floc: Floc,
 }
 #[derive(Copy, Clone, BitfieldStruct)]
@@ -409,7 +395,7 @@ unsafe fn eval_makefile(
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufstart: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         size: 0,
-        fp: ::core::ptr::null_mut::<FILE>(),
+        fp: ::core::ptr::null_mut::<lines::MakefileReader>(),
         floc: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
@@ -453,11 +439,21 @@ unsafe fn eval_makefile(
         }
     }
     *__errno_location() = 0;
-    loop {
-        *__errno_location() = 0;
-        ebuf.fp = fopen(filename, b"r\0" as *const u8 as *const ::core::ffi::c_char) as *mut FILE;
-        if !(ebuf.fp.is_null() && *__errno_location() == EINTR) {
-            break;
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::OsStr::from_bytes(CStr::from_ptr(filename).to_bytes());
+        loop {
+            match std::fs::File::open(path) {
+                Ok(f) => {
+                    ebuf.fp = lines::MakefileReader::into_raw(f);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    *__errno_location() = e.raw_os_error().unwrap_or(0);
+                    break;
+                }
+            }
         }
     }
     ctx.read_files.borrow_mut()[deps_idx].error = *__errno_location();
@@ -485,7 +481,6 @@ unsafe fn eval_makefile(
             != 0)
     {
         use std::os::unix::ffi::OsStrExt;
-        use std::os::unix::io::IntoRawFd;
         // `filename` is an existing C string supplied by the caller; read its
         // bytes (no new C string constructed) to build candidate paths.
         let filename_bytes = CStr::from_ptr(filename).to_bytes().to_vec();
@@ -510,12 +505,7 @@ unsafe fn eval_makefile(
             };
             match opened {
                 Ok(f) => {
-                    // Hand the descriptor to the C `FILE*` eval machinery; the
-                    // path never becomes a `*const c_char` in our code.
-                    ebuf.fp = fdopen(
-                        f.into_raw_fd(),
-                        b"r\0" as *const u8 as *const ::core::ffi::c_char,
-                    ) as *mut FILE;
+                    ebuf.fp = lines::MakefileReader::into_raw(f);
                     filename =
                         crate::strcache::strcache_add_bytes(ctx, candidate.as_os_str().as_bytes());
                     break;
@@ -576,7 +566,7 @@ unsafe fn eval_makefile(
             n.last_mtime = 0;
         }
     }
-    fd_noinherit(fileno(ebuf.fp));
+    fd_noinherit((*ebuf.fp).as_raw_fd());
     do_variable_definition(
         ctx,
         &raw mut ebuf.floc,
@@ -599,7 +589,7 @@ unsafe fn eval_makefile(
         (flags as i32 & RM_NO_DEFAULT_GOAL == 0) as i32,
     );
     ctx.reading_file.0.set(curfile);
-    fclose(ebuf.fp);
+    drop(Box::from_raw(ebuf.fp));
     free(ebuf.bufstart as *mut ::core::ffi::c_void);
     *__errno_location() = 0;
     deps_idx
@@ -618,7 +608,7 @@ pub unsafe fn eval_buffer(
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufstart: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         size: 0,
-        fp: ::core::ptr::null_mut::<FILE>(),
+        fp: ::core::ptr::null_mut::<lines::MakefileReader>(),
         floc: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
@@ -629,7 +619,7 @@ pub unsafe fn eval_buffer(
     ebuf.bufstart = buffer;
     ebuf.bufnext = ebuf.bufstart;
     ebuf.buffer = ebuf.bufnext;
-    ebuf.fp = ::core::ptr::null_mut::<FILE>();
+    ebuf.fp = ::core::ptr::null_mut::<lines::MakefileReader>();
     if let Some(fl) = flocp.as_ref() {
         ebuf.floc = *fl;
     } else if !ctx.reading_file.0.get().is_null() {
