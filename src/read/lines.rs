@@ -7,6 +7,84 @@
 
 use super::*;
 
+/// Owned, buffered replacement for the `FILE*` a makefile `ebuffer` used to
+/// carry. `ebuffer` stays `Copy`, so it holds a raw pointer to one of these
+/// (`into_raw`/`from_raw`-managed by `eval_makefile`) rather than the reader
+/// itself.
+pub struct MakefileReader {
+    inner: std::io::BufReader<std::fs::File>,
+    err: Option<i32>,
+}
+
+impl MakefileReader {
+    /// Box a freshly opened file and leak it to a raw pointer for `ebuffer.fp`.
+    pub fn into_raw(f: std::fs::File) -> *mut MakefileReader {
+        Box::into_raw(Box::new(MakefileReader {
+            inner: std::io::BufReader::new(f),
+            err: None,
+        }))
+    }
+
+    pub fn as_raw_fd(&self) -> i32 {
+        use std::os::unix::io::AsRawFd;
+        self.inner.get_ref().as_raw_fd()
+    }
+
+    /// fgets(3) over the buffered reader: read at most `n-1` bytes into `p`,
+    /// stopping after a newline, and NUL-terminate. Returns false at EOF with
+    /// nothing read or on a read error (recorded for [`Self::error`], matching
+    /// fgets returning NULL with ferror set).
+    ///
+    /// # Safety
+    /// `p` must be valid for writes of `n` bytes.
+    pub unsafe fn fgets(&mut self, p: *mut ::core::ffi::c_char, n: i32) -> bool {
+        use std::io::BufRead;
+        if n <= 1 {
+            return false;
+        }
+        let max = (n - 1) as usize;
+        let mut i = 0usize;
+        while i < max {
+            let avail = loop {
+                match self.inner.fill_buf() {
+                    Ok(b) => break b,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        self.err = Some(e.raw_os_error().unwrap_or(0));
+                        return false;
+                    }
+                }
+            };
+            if avail.is_empty() {
+                break;
+            }
+            let take = avail.len().min(max - i);
+            let nl = avail[..take].iter().position(|&b| b == b'\n');
+            let cnt = nl.map_or(take, |x| x + 1);
+            ::core::ptr::copy_nonoverlapping(
+                avail.as_ptr() as *const ::core::ffi::c_char,
+                p.add(i),
+                cnt,
+            );
+            self.inner.consume(cnt);
+            i += cnt;
+            if nl.is_some() {
+                break;
+            }
+        }
+        if i == 0 {
+            return false;
+        }
+        *p.add(i) = 0;
+        true
+    }
+
+    /// The errno of the first read error, if any — the ferror(3) check.
+    pub fn error(&self) -> Option<i32> {
+        self.err
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -55,20 +133,15 @@ pub unsafe fn readline(
     let mut end: *mut ::core::ffi::c_char;
     let mut start: *mut ::core::ffi::c_char;
     let mut nlines: ::core::ffi::c_long = 0;
-    if (*ebuf).fp.is_null() {
-        return readstring(ebuf);
-    }
+    let reader = match (*ebuf).fp.as_mut() {
+        Some(r) => r,
+        None => return readstring(ebuf),
+    };
     start = (*ebuf).bufstart;
     p = start;
     end = p.add((*ebuf).size);
     *p = 0;
-    while !fgets(
-        p,
-        end.offset_from(p) as ::core::ffi::c_long as i32,
-        (*ebuf).fp,
-    )
-    .is_null()
-    {
+    while reader.fgets(p, end.offset_from(p) as ::core::ffi::c_long as i32) {
         let mut p2: *mut ::core::ffi::c_char;
         let mut len: size_t;
         let mut backslash: i32;
@@ -118,7 +191,8 @@ pub unsafe fn readline(
         end = start.add((*ebuf).size);
         *p = 0;
     }
-    if ferror((*ebuf).fp) != 0 {
+    if let Some(e) = reader.error() {
+        *__errno_location() = e;
         pfatal_with_name(ctx, (*ebuf).floc.filenm);
     }
     if nlines != 0 {

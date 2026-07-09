@@ -119,8 +119,11 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
       stdout/stderr (every make message), and `pump_from_tmp` pumps the
       output-sync temp fd via `std::fs::File`/`Read`/`Write` (libc-stream
       flush kept at entry until the printf callers convert)
-- [ ] makefile reading: `ebuf.fp` `fopen`/`fdopen`/`fclose` + `readline`
-      (read.rs) → `BufReader`-style owned reader
+- [x] makefile reading: `ebuffer.fp` is a raw pointer to an owned
+      `MakefileReader` (BufReader over std::fs::File; read/lines.rs) with an
+      fgets-compatible method and errno-carrying error() for the ferror
+      path; fopen/fdopen/fclose/fgets/ferror/fileno externs dropped from
+      read.rs
 - [x] the `-p` data-base printers + `--version`: every stdout printer in
       variable.rs, file.rs, dir.rs, vpath.rs, strcache.rs, commands.rs
       (recipe printers), and main.rs (`print_version`, data-base
