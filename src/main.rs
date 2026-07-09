@@ -13,7 +13,6 @@ use crate::load::unload_all;
 use crate::misc::{get_tmpdir, get_tmpfile, spin};
 use crate::misc::{make_toui, xmalloc, xstrdup};
 use crate::read::construct_include_path;
-use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use crate::strcache::{strcache_init, strcache_print_stats};
 use crate::variable::print_variable_data_base;
@@ -44,18 +43,6 @@ extern "C" {
     fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
     fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
     static mut environ: *mut *mut ::core::ffi::c_char;
-    static mut stdout: *mut FILE;
-    static mut stderr: *mut FILE;
-    fn fclose(__stream: *mut FILE) -> i32;
-    fn fflush(__stream: *mut FILE) -> i32;
-    fn setvbuf(
-        __stream: *mut FILE,
-        __buf: *mut ::core::ffi::c_char,
-        __modes: i32,
-        __n: size_t,
-    ) -> i32;
-    fn ferror(__stream: *mut FILE) -> i32;
-    fn fileno(__stream: *mut FILE) -> i32;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
     fn atexit(__func: Option<unsafe extern "C" fn() -> ()>) -> i32;
     fn memcpy(
@@ -315,9 +302,6 @@ pub const SIGCHLD: i32 = 17;
 pub const SIGUSR1: i32 = 10;
 pub const SA_RESTART: i32 = 0x10000000_i32;
 pub const SIG_SETMASK: i32 = 2;
-pub const _IOLBF: i32 = 1;
-pub const BUFSIZ: i32 = 8192_i32;
-pub const EOF: i32 = -1_i32;
 pub const UCHAR_MAX: i32 = __SCHAR_MAX__ * 2 + 1;
 pub const CHAR_BIT: i32 = __CHAR_BIT__;
 pub const CHAR_MAX: i32 = __SCHAR_MAX__;
@@ -1477,15 +1461,21 @@ pub fn initialize_stopchar_map() {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe extern "C" fn close_stdout() {
-    let prev_fail: i32 = ferror(stdout);
-    let fclose_fail: i32 = fclose(stdout);
-    if prev_fail != 0 || fclose_fail != 0 {
+    // The libc pattern was sticky-`ferror` + `fclose`; every make writer now
+    // goes through Rust stdout, whose write failures land in the sticky
+    // errno (`output::record_stdout_error`). The final flush here plays
+    // fclose's part: an error first discovered by it gets the strerror form,
+    // one already recorded during the run the plain form.
+    use std::io::Write;
+    let prev_fail: i32 = crate::output::stdout_error();
+    let flush_err = std::io::stdout().flush().err();
+    if prev_fail != 0 || flush_err.is_some() {
         // This is the `atexit`-registered handler: it cannot be passed the
         // owned `ExecContext` and there is deliberately no global to read it
         // from, so it must not route through a `ctx`-taking printer. Write the
         // bare diagnostic (no `make[N]:` prefix) straight to stderr.
-        let msg = if fclose_fail != 0 {
-            let err = libc::strerror(*__errno_location());
+        let msg = if let Some(e) = flush_err {
+            let err = libc::strerror(e.raw_os_error().unwrap_or(libc::EIO));
             format!(
                 "write error: stdout: {}\n",
                 std::ffi::CStr::from_ptr(err).to_string_lossy()
@@ -1781,11 +1771,9 @@ pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i3
         "  --warn[=CONTROL]            Control warnings for makefile issues.\n",
     ];
     if options.print_version.get() {
-        // SAFETY: `print_version`/`fputs` write the banner through libc's
-        // stdio; both take the valid `ctx` and constant NUL-terminated
-        // strings. The `fflush` empties libc's stdout buffer so the banner
-        // lands before the Rust-buffered usage text below — stdout may still
-        // be block-buffered here (the `setvbuf` in `main_0` runs later).
+        // SAFETY: `print_version` reads the NUL-terminated version/host
+        // strings through the valid `ctx`; it writes and flushes through
+        // Rust stdout, so the banner lands before the usage text below.
         unsafe {
             print_version(ctx);
         }
@@ -1812,17 +1800,17 @@ pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i3
         }
     }
     text.push_str("Report bugs to <bug-make@gnu.org>\n");
-    // Flush explicitly: the run may keep printing through libc after this
-    // (die_cleanup's -p data base, decode_switches diagnostics), and a fatal
-    // path ending in libc `exit()` would drop an unflushed Rust buffer.
+    // Flush explicitly: a fatal path ending in libc `exit()` would drop an
+    // unflushed Rust buffer.
     if bad != 0 {
         let mut err = std::io::stderr();
         let _ = err.write_all(text.as_bytes());
         let _ = err.flush();
     } else {
         let mut out = std::io::stdout();
-        let _ = out.write_all(text.as_bytes());
-        let _ = out.flush();
+        if let Err(e) = out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+            crate::output::record_stdout_error(&e);
+        }
     }
 }
 /// # Safety
@@ -2206,12 +2194,9 @@ unsafe fn main_0(
         die_cleanup(&ctx, MAKE_SUCCESS);
         return Ok(BuildReport);
     }
-    setvbuf(
-        stdout,
-        ::core::ptr::null_mut::<::core::ffi::c_char>(),
-        _IOLBF,
-        BUFSIZ as size_t,
-    );
+    // The C original forced stdout line-buffered here (`setvbuf(stdout, 0,
+    // _IOLBF, BUFSIZ)`); Rust's stdout is always a `LineWriter`, and no libc
+    // stdout writers remain, so there is no stream left to configure.
     {
         let shuffle = options.shuffle_mode.borrow().clone();
         if let Some(arg) = shuffle {
@@ -2219,7 +2204,7 @@ unsafe fn main_0(
             *options.shuffle_mode.borrow_mut() = crate::shuffle::get_mode(&ctx);
         }
     }
-    if isatty(fileno(stdout)) != 0
+    if isatty(libc::STDOUT_FILENO) != 0
         && lookup_variable(
             &ctx,
             b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2227,7 +2212,7 @@ unsafe fn main_0(
         )
         .is_null()
     {
-        let tty: *const ::core::ffi::c_char = ttyname(fileno(stdout));
+        let tty: *const ::core::ffi::c_char = ttyname(libc::STDOUT_FILENO);
         let fresh39 = &mut (*define_variable_in_set(
             &ctx,
             b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2244,7 +2229,7 @@ unsafe fn main_0(
         ));
         (*fresh39).set_export(v_export as variable_export);
     }
-    if isatty(fileno(stderr)) != 0
+    if isatty(libc::STDERR_FILENO) != 0
         && lookup_variable(
             &ctx,
             b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2252,7 +2237,7 @@ unsafe fn main_0(
         )
         .is_null()
     {
-        let tty_0: *const ::core::ffi::c_char = ttyname(fileno(stderr));
+        let tty_0: *const ::core::ffi::c_char = ttyname(libc::STDERR_FILENO);
         let fresh40 = &mut (*define_variable_in_set(
             &ctx,
             b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2422,8 +2407,9 @@ unsafe fn main_0(
         options.no_builtin_rules.set(true);
     }
     if 0x1_i32 & db_level(&ctx) != 0 {
+        // `print_version` writes and flushes through Rust stdout; the C
+        // original's trailing `fflush(stdout)` has no buffer left to empty.
         print_version(&ctx);
-        fflush(stdout);
     }
     if current_directory[0_i32 as usize] as i32 != 0
         && !(*argv.offset(0_i32 as isize)).is_null()
@@ -3507,8 +3493,13 @@ unsafe fn main_0(
                 );
                 putenv(b);
             }
-            fflush(stdout);
-            fflush(stderr);
+            // Empty make's stream buffers before the exec replaces the
+            // process image — the Rust counterpart of the C fflush pair.
+            {
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                let _ = std::io::stderr().flush();
+            }
             osync_clear();
             jobserver_pre_child(&ctx, 1);
             exec_command(&ctx, nargv as *mut *mut ::core::ffi::c_char, environ);

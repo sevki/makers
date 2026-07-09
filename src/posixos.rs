@@ -24,20 +24,6 @@ use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup};
 use crate::output::{error, fatal, perror_with_name, pfatal_with_name, FmtArg, INTSTR_LENGTH};
-use crate::stdio::FILE;
-
-extern "C" {
-    static mut stdin: *mut FILE;
-    static mut stdout: *mut FILE;
-    static mut stderr: *mut FILE;
-    fn fileno(stream: *mut FILE) -> i32;
-}
-
-/// Stream fileno for `crate::stdio::FILE` streams (libc's `fileno` takes
-/// `libc::FILE`, which is a distinct type).
-unsafe fn stream_fd(stream: *mut FILE) -> i32 {
-    fileno(stream)
-}
 
 /// `check_io_state` bits (see os.h).
 pub const IO_UNKNOWN: i32 = 0x1;
@@ -49,20 +35,22 @@ pub const IO_STDERR_OK: i32 = 0x10;
 /// Which validity bits hold for stdin/stdout/stderr, computed once.
 ///
 /// # Safety
-/// Must run after stdio is initialized; reads the C stdio globals.
+/// Reads errno after fcntl; always sound, unsafe for C-API compatibility.
 pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
     let mut state = ctx.io_state.0.load(Ordering::Relaxed);
     if state != IO_UNKNOWN as c_uint {
         return state;
     }
 
-    if fcntl(stream_fd(stdin), F_GETFD) != -1 || *__errno_location() != EBADF {
+    // The C original probed `fileno(stdin/stdout/stderr)`; make never
+    // reopens the standard streams, so those are the process's fds 0/1/2.
+    if fcntl(libc::STDIN_FILENO, F_GETFD) != -1 || *__errno_location() != EBADF {
         state |= IO_STDIN_OK as c_uint;
     }
-    if fcntl(stream_fd(stdout), F_GETFD) != -1 || *__errno_location() != EBADF {
+    if fcntl(libc::STDOUT_FILENO, F_GETFD) != -1 || *__errno_location() != EBADF {
         state |= IO_STDOUT_OK as c_uint;
     }
-    if fcntl(stream_fd(stderr), F_GETFD) != -1 || *__errno_location() != EBADF {
+    if fcntl(libc::STDERR_FILENO, F_GETFD) != -1 || *__errno_location() != EBADF {
         state |= IO_STDERR_OK as c_uint;
     }
 
@@ -71,8 +59,8 @@ pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
     if state & (IO_STDOUT_OK | IO_STDERR_OK) as c_uint == (IO_STDOUT_OK | IO_STDERR_OK) as c_uint {
         let mut stbuf_o: libc::stat = ::core::mem::zeroed();
         let mut stbuf_e: libc::stat = ::core::mem::zeroed();
-        if fstat(stream_fd(stdout), &mut stbuf_o) == 0
-            && fstat(stream_fd(stderr), &mut stbuf_e) == 0
+        if fstat(libc::STDOUT_FILENO, &mut stbuf_o) == 0
+            && fstat(libc::STDERR_FILENO, &mut stbuf_e) == 0
             && stbuf_o.st_dev == stbuf_e.st_dev
             && stbuf_o.st_ino == stbuf_e.st_ino
         {

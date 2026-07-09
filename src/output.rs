@@ -24,14 +24,6 @@ use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
     osync_release,
 };
-use crate::stdio::FILE;
-
-extern "C" {
-    static mut stdout: *mut FILE;
-    static mut stderr: *mut FILE;
-    fn fflush(stream: *mut FILE) -> i32;
-    fn fileno(stream: *mut FILE) -> i32;
-}
 
 /// Per-target output state: temp-file descriptors for stdout/stderr while
 /// output sync is active.
@@ -97,14 +89,36 @@ pub fn set_stdio_traced(value: bool) {
     crate::make_main::with_options(|o| o.stdio_traced.set(value));
 }
 pub const OUTPUT_NONE: i32 = -1;
+/// errno of the first failed write to Rust stdout, 0 if none — the
+/// process-global sticky error libc kept in `ferror(stdout)`, read by the
+/// `close_stdout` atexit handler (which is why this isn't on `ExecContext`).
+static STDOUT_ERRNO: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Record a failed stdout write (keeps the first errno, like `ferror`'s
+/// sticky flag).
+pub fn record_stdout_error(e: &std::io::Error) {
+    let _ = STDOUT_ERRNO.compare_exchange(
+        0,
+        e.raw_os_error().unwrap_or(libc::EIO),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
+}
+
+/// errno of the first failed stdout write, 0 if stdout never failed.
+pub fn stdout_error() -> i32 {
+    STDOUT_ERRNO.load(Ordering::Relaxed)
+}
+
 /// Emit a debug/trace line on stdout through Rust io and flush — the C
 /// `printf` + `fflush(stdout)` pattern of the `-d` traces. Callers format
 /// the bytes themselves.
 pub fn trace_out(bytes: &[u8]) {
     use std::io::Write;
     let mut o = std::io::stdout();
-    let _ = o.write_all(bytes);
-    let _ = o.flush();
+    if let Err(e) = o.write_all(bytes).and_then(|()| o.flush()) {
+        record_stdout_error(&e);
+    }
 }
 
 /// Concatenate byte pieces into one line and emit it via [`trace_out`] —
@@ -144,8 +158,9 @@ unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core:
         let _ = f.flush();
     } else {
         let mut f = std::io::stdout();
-        let _ = f.write_all(bytes);
-        let _ = f.flush();
+        if let Err(e) = f.write_all(bytes).and_then(|()| f.flush()) {
+            record_stdout_error(&e);
+        }
     }
 }
 /// Print an entering/leaving-directory line (returns 1).
@@ -229,7 +244,7 @@ fn pump_perror(what: &str, err: &std::io::Error) {
 /// copy 8 KiB chunks until EOF, retrying `Interrupted` reads and stopping
 /// (after a perror-style line) on any other read or write error — exactly
 /// the C `lseek`/`read`/`fwrite` loop's behavior and error text.
-fn pump_copy<R, W>(src: &mut R, dst: &mut W)
+fn pump_copy<R, W>(src: &mut R, dst: &mut W, dst_is_stdout: bool)
 where
     R: std::io::Read + std::io::Seek,
     W: std::io::Write,
@@ -252,9 +267,14 @@ where
         if len == 0 {
             break;
         }
-        // Keep the C error text: the write is what fwrite() did.
+        // Keep the C error text: the write is what fwrite() did. A failed
+        // stdout write also set `ferror(stdout)` in C; keep that visible to
+        // the `close_stdout` exit check via the sticky errno.
         if let Err(e) = dst.write_all(&buffer[..len]).and_then(|()| dst.flush()) {
             pump_perror("fwrite()", &e);
+            if dst_is_stdout {
+                record_stdout_error(&e);
+            }
             break;
         }
     }
@@ -266,16 +286,16 @@ where
 /// borrowed, not taken).
 pub unsafe fn pump_from_tmp(from: i32, to_stderr: bool) {
     use std::os::fd::FromRawFd;
-    // Anything a libc printer buffered for this stream must land before our
-    // raw writes; flush it once up front (the C fwrite went through that
-    // same buffer, so ordering was inherent there).
-    fflush(if to_stderr { stderr } else { stdout });
+    // No libc printers remain, so there is no libc stream buffer to flush
+    // ahead of the pump; `pump_copy` writes through the same Rust stream the
+    // rest of make uses, which keeps ordering inherent (as the C fwrite's
+    // shared FILE buffer once did).
     // Borrow the fd as a File without taking ownership.
     let mut src = ::core::mem::ManuallyDrop::new(std::fs::File::from_raw_fd(from));
     if to_stderr {
-        pump_copy(&mut *src, &mut std::io::stderr());
+        pump_copy(&mut *src, &mut std::io::stderr(), false);
     } else {
-        pump_copy(&mut *src, &mut std::io::stdout());
+        pump_copy(&mut *src, &mut std::io::stdout(), true);
     }
 }
 /// Create an anonymous temp fd in append mode for output sync.
@@ -421,10 +441,10 @@ pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
     }
     ctx.stdout_flags
         .0
-        .store(fd_set_append(fileno(stdout)), Ordering::Relaxed);
+        .store(fd_set_append(libc::STDOUT_FILENO), Ordering::Relaxed);
     ctx.stderr_flags
         .0
-        .store(fd_set_append(fileno(stderr)), Ordering::Relaxed);
+        .store(fd_set_append(libc::STDERR_FILENO), Ordering::Relaxed);
 }
 /// Dump and close `out`'s temp files (or, when null, restore
 /// stdout/stderr).
@@ -437,8 +457,8 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
         if stdio_traced() {
             log_working_directory(ctx, 0);
         }
-        fd_reset_append(fileno(stdout), ctx.stdout_flags.0.load(Ordering::Relaxed));
-        fd_reset_append(fileno(stderr), ctx.stderr_flags.0.load(Ordering::Relaxed));
+        fd_reset_append(libc::STDOUT_FILENO, ctx.stdout_flags.0.load(Ordering::Relaxed));
+        fd_reset_append(libc::STDERR_FILENO, ctx.stderr_flags.0.load(Ordering::Relaxed));
         return;
     }
     output_dump(ctx, out);
@@ -961,6 +981,18 @@ mod outputs_tests {
     use super::{_outputs, output, pump_copy, OUTPUT_NONE};
     use std::ffi::CString;
 
+    /// The sticky stdout errno keeps the first recorded error, like libc's
+    /// `ferror` flag: a later failure must not overwrite it. One test owns
+    /// the process-global so orderings can't race.
+    #[test]
+    fn record_stdout_error_is_sticky_and_keeps_first_errno() {
+        assert_eq!(super::stdout_error(), 0);
+        super::record_stdout_error(&std::io::Error::from_raw_os_error(libc::ENOSPC));
+        assert_eq!(super::stdout_error(), libc::ENOSPC);
+        super::record_stdout_error(&std::io::Error::from_raw_os_error(libc::EPIPE));
+        assert_eq!(super::stdout_error(), libc::ENOSPC);
+    }
+
     /// `pump_copy` rewinds first and copies everything: a cursor left
     /// mid-stream still yields the full content, matching the C pump's
     /// `lseek(0)`-then-read loop.
@@ -969,7 +1001,7 @@ mod outputs_tests {
         let mut src = std::io::Cursor::new(b"synced child output\n".to_vec());
         src.set_position(7);
         let mut dst: Vec<u8> = Vec::new();
-        pump_copy(&mut src, &mut dst);
+        pump_copy(&mut src, &mut dst, false);
         assert_eq!(dst, b"synced child output\n");
     }
 
@@ -1000,7 +1032,7 @@ mod outputs_tests {
             data: std::io::Cursor::new(b"after-eintr".to_vec()),
         };
         let mut dst: Vec<u8> = Vec::new();
-        pump_copy(&mut src, &mut dst);
+        pump_copy(&mut src, &mut dst, false);
         assert_eq!(dst, b"after-eintr");
     }
 
@@ -1031,7 +1063,7 @@ mod outputs_tests {
             wrote: false,
             sink: Vec::new(),
         };
-        pump_copy(&mut src, &mut dst);
+        pump_copy(&mut src, &mut dst, false);
         assert_eq!(dst.sink.len(), 8192, "first chunk written, then stopped");
     }
 
@@ -1051,7 +1083,7 @@ mod outputs_tests {
             }
         }
         let mut dst: Vec<u8> = Vec::new();
-        pump_copy(&mut BadRead, &mut dst);
+        pump_copy(&mut BadRead, &mut dst, false);
         assert!(dst.is_empty(), "nothing pumped from a failing reader");
     }
 

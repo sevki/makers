@@ -1969,3 +1969,34 @@ fn check_fatal_signal_cleanup(sig: &str, label: &str) {
         "[{label}] expected a 'deleting file' diagnostic for slow, stderr: {stderr}"
     );
 }
+
+/// A failed stdout write must turn into a nonzero exit: the `close_stdout`
+/// atexit handler sees the sticky write error recorded by the Rust stdout
+/// writers and reports `write error: stdout` — the behavior GNU make gets
+/// from `ferror(stdout)` + `fclose(stdout)` (Savannah bug #1328's fix).
+/// `-p -n` guarantees plenty of stdout traffic; /dev/full fails every write
+/// with ENOSPC.
+#[test]
+fn write_error_on_stdout_exits_nonzero() {
+    if !Path::new("/dev/full").exists() {
+        return; // no /dev/full on this platform; covered on Linux CI
+    }
+    let workdir = tempdir();
+    std::fs::write(workdir.join("Makefile"), "all:\n\t@echo done\n").unwrap();
+    let devfull = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let out = Command::new(RUST_MAKE)
+        .args(["-p", "-n"])
+        .current_dir(&workdir)
+        .stdout(devfull)
+        .output()
+        .expect("failed to spawn make");
+    assert_eq!(out.status.code(), Some(1), "status: {:?}", out.status);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("write error: stdout"),
+        "expected the close_stdout diagnostic, stderr: {stderr}"
+    );
+}
