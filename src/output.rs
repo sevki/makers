@@ -7,11 +7,11 @@
 //! [`msg`] submodule provides native-Rust counterparts.
 
 use ::core::ffi::c_uint;
-use ::core::ptr::{null, null_mut};
+use ::core::ptr::null;
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, close, ftruncate, lseek, strerror, strlen, EINTR, SEEK_END,
+    __errno_location, close, ftruncate, lseek, strerror, EINTR, SEEK_END,
     SEEK_SET,
 };
 
@@ -156,34 +156,46 @@ pub fn trace_parts(parts: &[&[u8]]) {
     }
     trace_out(&msg);
 }
-unsafe extern "C" fn _outputs(out: *mut output, is_err: i32, msg: *const ::core::ffi::c_char) {
-    if !out.is_null() && (*out).syncout() as i32 != 0 {
-        let fd: i32 = if is_err != 0 { (*out).err } else { (*out).out };
-        if fd != OUTPUT_NONE {
-            let len: size_t = strlen(msg) as size_t;
-            let mut r: i32;
-            loop {
-                r = lseek(fd, 0, 2) as i32;
-                if !(r == -1 && *__errno_location() == EINTR) {
-                    break;
+/// `msg` and `out` are already-safe Rust types at this boundary (a `&CStr`
+/// and `Option<&mut output>`) — no raw pointers cross into this function, so
+/// unlike its c2rust-translated ancestor it needs no `unsafe fn` marker;
+/// only the sync-fd fast path's raw syscalls (no safe std equivalent for
+/// append-without-a-`File`-handle) stay behind a narrow `unsafe` block.
+fn _outputs(ctx: &ExecContext, out: Option<&mut output>, is_err: bool, msg: &::core::ffi::CStr) {
+    let bytes = msg.to_bytes();
+    if let Some(out) = out {
+        if out.syncout() as i32 != 0 {
+            let fd: i32 = if is_err { out.err } else { out.out };
+            if fd != OUTPUT_NONE {
+                let len: size_t = bytes.len() as size_t;
+                // SAFETY: `fd` is a valid, open descriptor the output-sync
+                // machinery owns for the run's duration.
+                unsafe {
+                    let mut r: i32;
+                    loop {
+                        r = lseek(fd, 0, 2) as i32;
+                        if !(r == -1 && *__errno_location() == EINTR) {
+                            break;
+                        }
+                    }
+                    writebuf(fd, bytes.as_ptr() as *const ::core::ffi::c_void, len);
                 }
+                return;
             }
-            writebuf(fd, msg as *const ::core::ffi::c_void, len);
-            return;
         }
     }
-    // Every non-synced make message lands here: write it through Rust's
-    // stdout/stderr and flush, exactly the fputs+fflush the C did. The libc
-    // streams stay line-buffered elsewhere, so per-message flushing on both
-    // sides keeps interleaving stable while the printf callers convert.
+    // Every non-synced make message lands here: write it through ctx's
+    // stdout/stderr sink and flush, exactly the fputs+fflush the C did.
+    // Reading the sink off `ctx` (rather than a fresh `std::io::stdout()`
+    // handle) is what lets a buffer-backed session's messages land in its
+    // own sink instead of the process's real stdout.
     use std::io::Write;
-    let bytes = ::core::ffi::CStr::from_ptr(msg).to_bytes();
-    if is_err != 0 {
-        let mut f = std::io::stderr();
+    if is_err {
+        let mut f = ctx.stderr.borrow_mut();
         let _ = f.write_all(bytes);
         let _ = f.flush();
     } else {
-        let mut f = std::io::stdout();
+        let mut f = ctx.stdout.borrow_mut();
         if let Err(e) = f.write_all(bytes).and_then(|()| f.flush()) {
             record_stdout_error(&e);
         }
@@ -248,35 +260,49 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     };
     vformat_into(&mut line, fmt, args);
     line.push(0);
-    _outputs(null_mut(), 0, line.as_ptr() as *const ::core::ffi::c_char);
+    // `line` was just built with exactly one trailing NUL and no interior
+    // one (the format strings above never embed one), so this always
+    // succeeds.
+    let line = ::core::ffi::CStr::from_bytes_with_nul(&line).expect("no interior NUL");
+    _outputs(ctx, None, false, line);
     1
 }
-/// `perror`'s exact output — `<what>: <strerror(errno)>\n` to stderr — for
-/// the pump's error paths, sourcing errno from the `io::Error`.
-fn pump_perror(what: &str, err: &std::io::Error) {
-    use std::io::Write;
+/// `perror`'s exact output — `<what>: <strerror(errno)>\n` — for the pump's
+/// error paths, sourcing errno from the `io::Error`. Generic over the
+/// destination (rather than reaching into `ExecContext` itself) so a caller
+/// whose pump destination *is* the stderr sink can reuse that same already
+/// -borrowed handle instead of taking a second, conflicting `RefCell`
+/// borrow of it.
+fn pump_perror<W: std::io::Write>(w: &mut W, what: &str, err: &std::io::Error) {
     // SAFETY: `strerror` returns a static NUL-terminated message for any
     // errno value.
     let es = unsafe {
         ::core::ffi::CStr::from_ptr(strerror(err.raw_os_error().unwrap_or(0)))
     };
-    let mut e = std::io::stderr();
-    let _ = e.write_all(what.as_bytes());
-    let _ = e.write_all(b": ");
-    let _ = e.write_all(es.to_bytes());
-    let _ = e.write_all(b"\n");
+    let _ = w.write_all(what.as_bytes());
+    let _ = w.write_all(b": ");
+    let _ = w.write_all(es.to_bytes());
+    let _ = w.write_all(b"\n");
 }
 /// The pump's copy loop over any seekable reader and writer: rewind, then
 /// copy 8 KiB chunks until EOF, retrying `Interrupted` reads and stopping
-/// (after a perror-style line) on any other read or write error — exactly
-/// the C `lseek`/`read`/`fwrite` loop's behavior and error text.
-fn pump_copy<R, W>(src: &mut R, dst: &mut W, dst_is_stdout: bool)
-where
+/// (after a perror-style line, via the caller-supplied `report_err`) on any
+/// other read or write error — exactly the C `lseek`/`read`/`fwrite` loop's
+/// behavior and error text. `report_err` (rather than a `pump_perror` call
+/// baked in here) lets each caller decide where the diagnostic goes without
+/// `pump_copy` itself needing to know about `ExecContext` or risk a second
+/// borrow of a sink already held as `dst`.
+fn pump_copy<R, W>(
+    src: &mut R,
+    dst: &mut W,
+    dst_is_stdout: bool,
+    mut report_err: impl FnMut(&mut W, &str, &std::io::Error),
+) where
     R: std::io::Read + std::io::Seek,
     W: std::io::Write,
 {
     if let Err(e) = src.seek(std::io::SeekFrom::Start(0)) {
-        pump_perror("lseek()", &e);
+        report_err(dst, "lseek()", &e);
     }
     let mut buffer = [0u8; 8192];
     loop {
@@ -285,7 +311,7 @@ where
                 Ok(n) => break n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => {
-                    pump_perror("read()", &e);
+                    report_err(dst, "read()", &e);
                     break 0;
                 }
             }
@@ -297,7 +323,7 @@ where
         // stdout write also set `ferror(stdout)` in C; keep that visible to
         // the `close_stdout` exit check via the sticky errno.
         if let Err(e) = dst.write_all(&buffer[..len]).and_then(|()| dst.flush()) {
-            pump_perror("fwrite()", &e);
+            report_err(dst, "fwrite()", &e);
             if dst_is_stdout {
                 record_stdout_error(&e);
             }
@@ -310,7 +336,7 @@ where
 /// # Safety
 /// `from` must be an open, seekable fd this function may read (ownership is
 /// borrowed, not taken).
-pub unsafe fn pump_from_tmp(from: i32, to_stderr: bool) {
+pub unsafe fn pump_from_tmp(ctx: &ExecContext, from: i32, to_stderr: bool) {
     use std::os::fd::FromRawFd;
     // No libc printers remain, so there is no libc stream buffer to flush
     // ahead of the pump; `pump_copy` writes through the same Rust stream the
@@ -319,9 +345,17 @@ pub unsafe fn pump_from_tmp(from: i32, to_stderr: bool) {
     // Borrow the fd as a File without taking ownership.
     let mut src = ::core::mem::ManuallyDrop::new(std::fs::File::from_raw_fd(from));
     if to_stderr {
-        pump_copy(&mut *src, &mut std::io::stderr(), false);
+        // `dst` already *is* the borrowed stderr sink; report through it
+        // directly rather than taking a second borrow of `ctx.stderr`.
+        pump_copy(&mut *src, &mut *ctx.stderr.borrow_mut(), false, |dst, what, e| {
+            pump_perror(dst, what, e)
+        });
     } else {
-        pump_copy(&mut *src, &mut std::io::stdout(), true);
+        // `dst` is the stdout sink here, so the stderr diagnostic borrows
+        // the separate `ctx.stderr` `RefCell` freely.
+        pump_copy(&mut *src, &mut *ctx.stdout.borrow_mut(), true, |_dst, what, e| {
+            pump_perror(&mut *ctx.stderr.borrow_mut(), what, e)
+        });
     }
 }
 /// Create an anonymous temp fd in append mode for output sync.
@@ -419,10 +453,10 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             traced = log_working_directory(ctx, 1);
         }
         if outfd_not_empty != 0 {
-            pump_from_tmp((*out).out, false);
+            pump_from_tmp(ctx, (*out).out, false);
         }
         if errfd_not_empty != 0 && (*out).err != (*out).out {
-            pump_from_tmp((*out).err, true);
+            pump_from_tmp(ctx, (*out).err, true);
         }
         if traced != 0 {
             log_working_directory(ctx, 0);
@@ -527,7 +561,12 @@ pub unsafe fn outputs(ctx: &ExecContext, is_err: i32, msg: *const ::core::ffi::c
         return;
     }
     output_start(ctx);
-    _outputs(output_context(), is_err, msg);
+    _outputs(
+        ctx,
+        output_context().as_mut(),
+        is_err != 0,
+        ::core::ffi::CStr::from_ptr(msg),
+    );
 }
 // The former shared, growing printer buffer (`static mut fmtbuf` and its
 // `get_buffer` accessor) is gone: each printer builds its line in an owned
@@ -836,17 +875,25 @@ pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_ch
 /// Print the out-of-memory message without allocating and exit with
 /// `MAKE_FAILURE`.
 pub fn out_of_memory() -> ! {
-    use std::io::Write;
     // Allocation failure carries no `&ExecContext`, so reach the live one
-    // through the borrow channel; this can fire before startup installs a
-    // context, in which case fall back to the plain program name.
-    let prog = crate::make_main::try_with_exec_context(msg::program_name)
-        .unwrap_or_else(|| "make".to_string());
-    let mut out = std::io::stdout().lock();
+    // through the borrow channel (same one `trace_out` falls back through)
+    // and write through its stdout sink; this can fire before startup
+    // installs a context, in which case fall back to the plain program name
+    // and the real process stdout — matching `trace_out`'s own fallback.
+    if crate::make_main::try_with_exec_context(|ctx| {
+        let mut out = ctx.stdout.borrow_mut();
+        write_oom_message(&mut *out, &msg::program_name(ctx));
+    })
+    .is_none()
+    {
+        write_oom_message(&mut std::io::stdout().lock(), "make");
+    }
+    std::process::exit(MAKE_FAILURE)
+}
+fn write_oom_message(out: &mut impl std::io::Write, prog: &str) {
     #[allow(clippy::write_with_newline)]
     let _ = write!(out, "{prog}: *** virtual memory exhausted\n");
     let _ = out.flush();
-    std::process::exit(MAKE_FAILURE)
 }
 
 /// Native-Rust counterparts to the variadic C-ABI `message`/`error`/`fatal`
@@ -974,6 +1021,29 @@ mod log_working_directory_tests {
         let traced = unsafe { super::log_working_directory(&ctx, 1) };
         assert_eq!(traced, 1);
     }
+
+    /// The other three `makelevel`/`starting_directory` format-string
+    /// combinations `tolerates_null_program_context` doesn't reach: a
+    /// non-null `starting_directory` (the `'%s'`-quoted forms) at both
+    /// `makelevel == 0` and `makelevel != 0`, on both `entering` values.
+    #[test]
+    fn covers_every_makelevel_and_directory_combination() {
+        crate::make_main::install_default_options_for_test();
+        let dir = ::std::ffi::CString::new("/tmp/build").unwrap();
+        for makelevel in [0, 2] {
+            let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
+                makelevel,
+                ..Default::default()
+            });
+            ctx.starting_directory.0.set(dir.as_ptr() as *mut ::core::ffi::c_char);
+            for entering in [1, 0] {
+                // SAFETY: single-threaded test; a valid NUL-terminated
+                // `starting_directory` is installed above.
+                let traced = unsafe { super::log_working_directory(&ctx, entering) };
+                assert_eq!(traced, 1);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1004,8 +1074,31 @@ mod output_context_tests {
 
 #[cfg(test)]
 mod outputs_tests {
-    use super::{_outputs, output, pump_copy, OUTPUT_NONE};
+    use super::{
+        _outputs, output, pump_copy, pump_perror, write_oom_message, ExecContext, OUTPUT_NONE,
+    };
     use std::ffi::CString;
+
+    /// `write_oom_message` formats exactly `<prog>: *** virtual memory
+    /// exhausted\n` and flushes — the no-alloc body `out_of_memory` uses on
+    /// both its ctx-found and ctx-less fallback paths.
+    #[test]
+    fn write_oom_message_formats_prog_and_flushes() {
+        let mut out: Vec<u8> = Vec::new();
+        write_oom_message(&mut out, "make");
+        assert_eq!(out, b"make: *** virtual memory exhausted\n");
+    }
+
+    /// `outputs` is a no-op on a null or empty message — the early return
+    /// before it ever reaches `_outputs`.
+    #[test]
+    fn outputs_is_a_noop_on_null_or_empty_message() {
+        let ctx = ExecContext::default();
+        unsafe {
+            super::outputs(&ctx, 0, ::core::ptr::null());
+            super::outputs(&ctx, 0, c"".as_ptr());
+        }
+    }
 
     /// The sticky stdout errno keeps the first recorded error, like libc's
     /// `ferror` flag: a later failure must not overwrite it. One test owns
@@ -1027,7 +1120,7 @@ mod outputs_tests {
         let mut src = std::io::Cursor::new(b"synced child output\n".to_vec());
         src.set_position(7);
         let mut dst: Vec<u8> = Vec::new();
-        pump_copy(&mut src, &mut dst, false);
+        pump_copy(&mut src, &mut dst, false, |_, _, _| {});
         assert_eq!(dst, b"synced child output\n");
     }
 
@@ -1058,7 +1151,7 @@ mod outputs_tests {
             data: std::io::Cursor::new(b"after-eintr".to_vec()),
         };
         let mut dst: Vec<u8> = Vec::new();
-        pump_copy(&mut src, &mut dst, false);
+        pump_copy(&mut src, &mut dst, false, |_, _, _| {});
         assert_eq!(dst, b"after-eintr");
     }
 
@@ -1089,8 +1182,14 @@ mod outputs_tests {
             wrote: false,
             sink: Vec::new(),
         };
-        pump_copy(&mut src, &mut dst, false);
+        let mut errs: Vec<u8> = Vec::new();
+        pump_copy(&mut src, &mut dst, false, |_, what, e| pump_perror(&mut errs, what, e));
         assert_eq!(dst.sink.len(), 8192, "first chunk written, then stopped");
+        assert!(
+            String::from_utf8_lossy(&errs).starts_with("fwrite(): "),
+            "report_err ran for the write failure: {:?}",
+            String::from_utf8_lossy(&errs)
+        );
     }
 
     /// A read error (not EINTR) ends the pump after the perror line, like
@@ -1109,18 +1208,36 @@ mod outputs_tests {
             }
         }
         let mut dst: Vec<u8> = Vec::new();
-        pump_copy(&mut BadRead, &mut dst, false);
+        let mut errs: Vec<u8> = Vec::new();
+        pump_copy(&mut BadRead, &mut dst, false, |_, what, e| pump_perror(&mut errs, what, e));
         assert!(dst.is_empty(), "nothing pumped from a failing reader");
+        // `BadRead` fails both `seek` and `read`, so `report_err` runs for
+        // both the doomed rewind and the read itself.
+        assert!(
+            String::from_utf8_lossy(&errs).contains("read(): "),
+            "report_err ran for the read failure: {:?}",
+            String::from_utf8_lossy(&errs)
+        );
     }
 
-    /// The non-synced fallback writes through Rust stderr when is_err is
-    /// set; an empty message keeps the test's real stderr clean while
-    /// covering the branch.
+    /// `pump_perror` formats exactly `<what>: <strerror(errno)>\n`.
+    #[test]
+    fn pump_perror_formats_what_and_strerror() {
+        let mut out: Vec<u8> = Vec::new();
+        pump_perror(&mut out, "lseek()", &std::io::Error::from_raw_os_error(libc::ENOENT));
+        assert_eq!(out, b"lseek(): No such file or directory\n");
+    }
+
+    /// The non-synced fallback writes through `ctx.stderr` when `is_err` is
+    /// set. `_outputs` is pinned to the default sink type (real stdout/
+    /// stderr) — genericizing it would cascade into `outputs`/`error`/
+    /// `fatal`/`message` and everything *they* call, well beyond this
+    /// slice's scope — so an empty message keeps the test's real stderr
+    /// clean while still covering the branch.
     #[test]
     fn outputs_fallback_writes_stderr_branch() {
-        unsafe {
-            _outputs(std::ptr::null_mut(), 1, c"".as_ptr());
-        }
+        let ctx = ExecContext::default();
+        _outputs(&ctx, None, true, c"");
     }
 
     /// A unique temp path; the file is created by `open_temp_fd`.
@@ -1167,23 +1284,17 @@ mod outputs_tests {
     fn writes_to_sync_descriptor_per_stream() {
         let out_path = temp_path("out");
         let err_path = temp_path("err");
-        unsafe {
+        let ctx = ExecContext::default();
+        let mut o = unsafe {
             let out_fd = open_temp_fd(&out_path);
             let err_fd = open_temp_fd(&err_path);
-            let o = sync_output(out_fd, err_fd);
-
-            _outputs(
-                &o as *const output as *mut output,
-                0,
-                c"to-stdout\n".as_ptr(),
-            );
-            _outputs(
-                &o as *const output as *mut output,
-                1,
-                c"to-stderr\n".as_ptr(),
-            );
-            libc::close(out_fd);
-            libc::close(err_fd);
+            sync_output(out_fd, err_fd)
+        };
+        _outputs(&ctx, Some(&mut o), false, c"to-stdout\n");
+        _outputs(&ctx, Some(&mut o), true, c"to-stderr\n");
+        unsafe {
+            libc::close(o.out);
+            libc::close(o.err);
         }
         assert_eq!(
             read_all(&out_path),
@@ -1200,23 +1311,21 @@ mod outputs_tests {
     }
 
     /// When the selected descriptor is `OUTPUT_NONE`, the sync fast-path is
-    /// skipped and the call falls through to the stdio writer. Driving it with
-    /// an empty message keeps the test output clean while still exercising the
-    /// `fd == OUTPUT_NONE` branch and the `fputs`/`fflush` tail.
+    /// skipped and the call falls through to the stdio writer. Driving it
+    /// with an empty message keeps the test's real stdout clean while still
+    /// exercising the `fd == OUTPUT_NONE` branch and the write/flush tail.
     #[test]
     fn falls_through_when_descriptor_is_none() {
-        unsafe {
-            let o = sync_output(OUTPUT_NONE, OUTPUT_NONE);
-            _outputs(&o as *const output as *mut output, 0, c"".as_ptr());
-        }
+        let ctx = ExecContext::default();
+        let mut o = unsafe { sync_output(OUTPUT_NONE, OUTPUT_NONE) };
+        _outputs(&ctx, Some(&mut o), false, c"");
     }
 
-    /// A null `output` (no sync context) goes straight to the stdio writer.
+    /// A null `output` (no sync context) goes straight to the ctx sink.
     #[test]
     fn null_output_uses_stdio() {
-        unsafe {
-            _outputs(::core::ptr::null_mut(), 0, c"".as_ptr());
-        }
+        let ctx = ExecContext::default();
+        _outputs(&ctx, None, false, c"");
     }
 }
 

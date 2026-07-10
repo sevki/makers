@@ -66,13 +66,49 @@ for output.
     with stdout/stderr given genuinely different concrete types
     (`Cursor<Vec<u8>>` + plain `Vec<u8>`) to exercise the two-parameter
     split directly.
-- [ ] Convert the rest of the direct `std::io::stdout()`/`stderr()` call
-      sites in output.rs onto `ctx.stdout`/`ctx.stderr` (`_outputs`'s
-      non-synced path, `pump_from_tmp`, the usage/version printer in
-      main.rs, `close_stdout`) — each needs a live `&ExecContext<Out, Err>`
-      at the call site, which most already carry; the exceptions (the
-      `atexit` handler, a couple of C-ABI callbacks) go through the borrow
-      channel like `trace_out` now does.
+- [x] Converted the rest of the direct `std::io::stdout()`/`stderr()` call
+      sites in output.rs/main.rs onto `ctx.stdout`/`ctx.stderr`: `_outputs`'s
+      non-synced path, `pump_perror`/`pump_from_tmp`, `out_of_memory` (via
+      the `try_with_exec_context` borrow channel plus a real-stdout
+      fallback), `print_usage`'s stdout/stderr writes, and `main_0`'s
+      pre-`exec` flush pair. `print_version`/`print_usage` also converted
+      their bare `trace_out(...)` calls to `trace_out_ctx(ctx, ...)` since
+      they already carry a `&ExecContext`.
+  - Scoped down from the original "each needs a live `&ExecContext<Out,
+    Err>`" plan: fully genericizing `_outputs`/`outputs`/`error`/`fatal`/
+    `message` would transitively require genericizing everything *they*
+    call too (jobserver/osync helpers with nothing to do with I/O) —
+    scope creep well past this slice. These functions stay pinned to the
+    default sink type (`ctx: &ExecContext`, meaning
+    `ExecContext<StdoutSink, StderrSink>`); a buffer-backed
+    `ExecContext<Out, Err>` still can't call `error()`/`fatal()`/
+    `message()` directly. Full genericization of the printer family is its
+    own future slice (see below).
+  - `pump_copy`'s error-reporting is a caller-supplied `report_err`
+    closure rather than a baked-in `ctx.stderr` access: `pump_from_tmp`'s
+    to-stderr case has the pump destination and the error sink be the
+    *same* `RefCell`, so reporting through a fresh `ctx.stderr.borrow_mut()`
+    from inside `pump_copy` would double-borrow-panic. The closure lets
+    each caller decide — reuse the already-borrowed `dst` when it's the
+    same stream, or borrow the separate one when it isn't.
+  - `_outputs` also dropped its `unsafe fn`/`extern "C"` markers (never
+    used as a function pointer) in favor of safe `Option<&mut output>`/
+    `&CStr` parameters, with only the sync-fd fast path's raw syscalls
+    (lseek/writebuf — no safe std equivalent for append-without-a-`File`
+    pattern) behind a narrow internal `unsafe` block; `outputs` (still
+    `unsafe fn`, taking the raw pointers its own C-ABI callers pass)
+    does the `CStr::from_ptr`/`.as_mut()` conversion at that one boundary.
+- [ ] Genericize the printer family (`outputs`/`error`/`fatal`/`message`/
+      `pfatal_with_name`/`perror_with_name`/`log_working_directory`/
+      `output_start`/`output_dump`) over `<Out: Write, Err: Write>` so a
+      buffer-backed `ExecContext<Out, Err>` can actually use them — the
+      scope cut from the item above. Function-generic inference (not
+      struct-default substitution) means existing call sites shouldn't need
+      to change, the same way `trace_out_ctx` didn't force any; but it
+      pulls in `osync_acquire`/`osync_release`/`setup_tmpfile`
+      (posixos.rs) too, since `output_dump` calls them with a ctx of
+      matching type — verify that chain doesn't spread further before
+      committing to it.
 - [ ] Per-context sticky write-error tracking: `output::STDOUT_ERRNO` is
       still one process-global atomic. Move it onto `ExecContext` (a `Cell`,
       following `clock_skew_detected`'s pattern) so two sessions' write
@@ -81,11 +117,12 @@ for output.
   - Actively wanted before real multi-tenant use, not just tidiness: today
         a second buffer-backed session's write failure has nowhere per-context
         to land.
-- [ ] hash.rs `hash_print_stats` and any other bare `trace_out(...)` callers
-      that have a `&ExecContext` available at the call site convert to
-      `trace_out_ctx` directly instead of going through the borrow-channel
-      fallback (cheaper, and correct even when called from a thread/session
-      that isn't "the" installed context in a multi-tenant host).
+- [x] hash.rs `hash_print_stats` — checked; it already routes through
+      `output::trace_out` (ctx-less) rather than a bare `std::io::stdout()`
+      call, and has no `&ExecContext` at its own call site to upgrade to
+      `trace_out_ctx` (its callers in variable.rs/file.rs don't thread one
+      through either) — leaving it on the borrow-channel fallback is
+      correct as-is; no change needed.
 - [ ] Decide + document the concurrency story before any real multi-tenant
       use: `Rc<RefCell<_>>` is intentionally not `Send`/`Sync` — fine for one
       session per `ExecContext` clone tree, wrong for sharing one sink
