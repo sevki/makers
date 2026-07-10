@@ -917,20 +917,18 @@ fn opt_get_str(options: &Options, c: i32) -> Option<::std::ffi::CString> {
 thread_local! {
     /// Borrow channel to the `Options` owned as a local in `main_0`. This is a
     /// *pointer*, not the option data: the values still live in `main_0`'s
-    /// `let options`. It exists solely so the one deep makefile-time callback
-    /// that re-decodes `MAKEFLAGS` (`set_special_var` -> `reset_makeflags`,
-    /// reached via the high-fan-in `do_variable_definition`) can reach the
-    /// owned `Options` without threading a borrow through the entire
-    /// read/eval engine. Set for the dynamic extent of `main_0`.
+    /// `let options`. Set for the dynamic extent of `main_0`.
     ///
-    /// Phase A disposition (tracking issue #431/#530): accepted as a
-    /// permanent seam, not a migrate-later item. The constraint it works
-    /// around — a C-ABI callback shape with no room for a context parameter
-    /// — is structural, not an artifact of unfinished migration; eliminating
-    /// it would mean threading `&Options` through the read/eval call graph
-    /// (hundreds of sites) for the sole benefit of one callback. Paired with
-    /// `CTX_PTR` below; the acceptance bar is "flat, never grows," and this
-    /// pair is the flat, final state.
+    /// Phase A disposition (tracking issue #431/#530), corrected: this is
+    /// NOT a C-ABI seam. Every one of `with_options`'s ~90 call sites already
+    /// has a `&ExecContext` in scope (including `reset_makeflags`'s own
+    /// caller chain — `set_special_var`/`do_variable_definition` both take
+    /// `ctx` as a plain Rust parameter, no callback involved). This
+    /// thread-local exists only because `Options` isn't reachable through
+    /// `ExecContext` yet, not because of any structural constraint —
+    /// unlike `CTX_PTR` below, which genuinely bridges a C callback
+    /// (`glob(3)`'s `gl_opendir`). Tracked for removal: fold `Options` into
+    /// `ExecContext`, change `with_options` to take `ctx`, delete this.
     static OPTIONS_PTR: ::core::cell::Cell<*const Options> =
         const { ::core::cell::Cell::new(::core::ptr::null()) };
 }
@@ -947,12 +945,11 @@ unsafe fn installed_options<'a>() -> &'a Options {
 }
 
 /// Run `f` with a borrow of `main_0`'s single owned `Options`, reached through
-/// the `OPTIONS_PTR` borrow channel. This is the single source of truth for the
-/// deep, high-fan-in option readers (`job`/`remake`/`file`/`output`/`variable`)
-/// that sit behind hundreds of call sites and some C-ABI callbacks, so they
-/// cannot take an `&Options` parameter. `OPTIONS_PTR` is installed at the very
+/// the `OPTIONS_PTR` borrow channel. `OPTIONS_PTR` is installed at the very
 /// start of `main_0`, before any code that could read options runs, and its
-/// referent outlives every makefile-time/build-time callback.
+/// referent outlives every makefile-time/build-time callback. See
+/// `OPTIONS_PTR`'s doc comment: this channel is slated for removal, not a
+/// permanent seam — every caller already has `ctx` in scope.
 pub fn with_options<R>(f: impl FnOnce(&Options) -> R) -> R {
     f(unsafe { installed_options() })
 }
@@ -967,8 +964,11 @@ thread_local! {
     /// the build-phase rebuild), and is installed for the dynamic extent of
     /// `main_0`.
     ///
-    /// Phase A disposition: accepted as a permanent seam, same reasoning as
-    /// `OPTIONS_PTR` above — see #431/#530.
+    /// Phase A disposition: accepted as a permanent seam — unlike
+    /// `OPTIONS_PTR` above (now known to be a migrate-later item, not a
+    /// structural one), this one really is a C-ABI boundary: `open_dirstream`
+    /// is a real `extern "C" fn` handed to libc's `glob()` as a raw function
+    /// pointer, which cannot carry an `&ExecContext` parameter. See #431/#530.
     static CTX_PTR: ::core::cell::Cell<*const crate::execctx::ExecContext> =
         const { ::core::cell::Cell::new(::core::ptr::null()) };
 }
