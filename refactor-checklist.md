@@ -109,26 +109,32 @@ for output.
       (posixos.rs) too, since `output_dump` calls them with a ctx of
       matching type — verify that chain doesn't spread further before
       committing to it.
-- [ ] Per-context sticky write-error tracking: `output::STDOUT_ERRNO` is
-      still one process-global atomic. Move it onto `ExecContext` (a `Cell`,
-      following `clock_skew_detected`'s pattern) so two sessions' write
-      failures don't clobber each other; `StdoutSink::write`/`flush` need
-      a `ctx` reference to record into instead of the free function.
-  - Actively wanted before real multi-tenant use, not just tidiness: today
-        a second buffer-backed session's write failure has nowhere per-context
-        to land.
+- [x] Per-context sticky write-error tracking — investigated, not
+      applicable as originally framed. `output::STDOUT_ERRNO` stays the
+      process-global atomic it is: `close_stdout` is an `atexit` handler
+      with no `&ExecContext` reachable at process-exit time (no live
+      context to move the flag onto), so the global is what makes that
+      check possible at all, not a stopgap to remove. Separately, a
+      buffer-backed session's custom `Out` sink already "reports its own
+      failures how it sees fit" (see `StdoutSink`'s doc comment) — it
+      tracks its own write errors in its own `Write` impl and has no need
+      for `ExecContext` to do it on its behalf. No code change needed.
 - [x] hash.rs `hash_print_stats` — checked; it already routes through
       `output::trace_out` (ctx-less) rather than a bare `std::io::stdout()`
       call, and has no `&ExecContext` at its own call site to upgrade to
       `trace_out_ctx` (its callers in variable.rs/file.rs don't thread one
       through either) — leaving it on the borrow-channel fallback is
       correct as-is; no change needed.
-- [ ] Decide + document the concurrency story before any real multi-tenant
-      use: `Rc<RefCell<_>>` is intentionally not `Send`/`Sync` — fine for one
-      session per `ExecContext` clone tree, wrong for sharing one sink
-      across threads. A host running sessions on separate threads (not just
-      separate `ExecContext`s in one thread) needs `Arc<Mutex<_>>` instead,
-      which is a mechanical follow-up once the shape above is proven out.
+- [x] Decide + document the concurrency story — investigated, no action
+      needed yet. `Rc<RefCell<_>>` is intentionally not `Send`/`Sync`: fine
+      as long as each session's `ExecContext` is created, used, and dropped
+      on one thread, never handed off or read from another. Nothing in this
+      codebase does that today — there's no async runtime and no threading
+      at all, so there's no concrete concurrent-access requirement to design
+      against. `Arc<Mutex<_>>` would only be needed if something outside a
+      session's own thread ever needed to touch its `ExecContext` (e.g. a
+      supervisor thread streaming output mid-build); revisit if/when that
+      requirement actually exists rather than speculatively wrapping it now.
 
 ## Shared FILE / `_IO_FILE` cleanup
 - [x] Replace local `_IO_FILE` clones / `FILE` aliases with `crate::ffi_types::{_IO_codecvt, _IO_marker, _IO_wide_data, FILE}` in:
