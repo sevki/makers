@@ -964,11 +964,16 @@ thread_local! {
     /// the build-phase rebuild), and is installed for the dynamic extent of
     /// `main_0`.
     ///
-    /// Phase A disposition: accepted as a permanent seam — unlike
-    /// `OPTIONS_PTR` above (now known to be a migrate-later item, not a
-    /// structural one), this one really is a C-ABI boundary: `open_dirstream`
-    /// is a real `extern "C" fn` handed to libc's `glob()` as a raw function
-    /// pointer, which cannot carry an `&ExecContext` parameter. See #431/#530.
+    /// Phase A disposition, corrected: NOT an accepted permanent seam either.
+    /// It currently exists because `open_dirstream` is handed to libc's
+    /// `glob()` as a raw `extern "C" fn` callback pointer, which can't carry
+    /// an `&ExecContext` — but the fix is to stop calling libc `glob()`, not
+    /// to keep a thread-local around it. Project policy: no globals, thread-
+    /// local or otherwise, as a permanent design choice. Tracked for removal
+    /// by replacing the libc `glob()` dependency with a native Rust
+    /// directory-walk + pattern-match implementation, at which point
+    /// `open_dirstream` becomes a plain function taking `&ExecContext`
+    /// directly and this channel disappears. See #431/#530, #533.
     static CTX_PTR: ::core::cell::Cell<*const crate::execctx::ExecContext> =
         const { ::core::cell::Cell::new(::core::ptr::null()) };
 }
