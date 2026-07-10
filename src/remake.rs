@@ -48,7 +48,7 @@ use crate::file::{
 use crate::implicit::try_implicit_rule;
 use crate::job::{reap_children, start_waiting_jobs};
 use crate::make_main::{db_level, opt_rebuilding_makefiles, second_expansion};
-use crate::output::{error, fatal, message, perror_with_name};
+use crate::output::{error, message, perror_with_name};
 use crate::read::find_percent;
 pub use crate::read::goaldep;
 use crate::vpath::{gpath_search, vpath_search};
@@ -477,12 +477,14 @@ pub fn update_goal_chain(
         crate::make_main::set_question_mirror(ctx, q);
         crate::make_main::set_just_print_mirror(ctx, n);
     }
-    // Nothing inside this walk can yet produce an `Err`: the only `fatal()`
-    // calls reachable from here are deep inside `complain()`/`update_file_1`,
-    // which are not converted this pass (see #432 Phase B design notes) and
-    // still exit the process directly. The `Result` signature is added now
-    // so `main_0`'s call sites can use `?`, in preparation for the follow-up
-    // pass that converts `complain()`.
+    // `complain()` and `update_file_1`'s circular-dep check now route through
+    // `fatal_err`/`BuildError` (#432 Phase B), but both still bridge back to
+    // `exit_on_err` at their call sites rather than propagating `Err` up
+    // through `update_file`/`update_file_1` (whose own `UpdateStatus` return
+    // type isn't converted this pass) — so this walk still can't yet produce
+    // an `Err` on its own. The `Result` signature stays so `main_0`'s call
+    // sites can use `?`, in preparation for converting `update_file`/
+    // `update_file_1` themselves to propagate instead of bridging.
     Ok(status)
 }
 
@@ -633,10 +635,20 @@ pub fn update_file(
 /// Lock discipline: the node's deps/parent/name/no_diag are snapshotted under a
 /// brief guard, the guard dropped, then `complain` recurses and `show_goal_error`
 /// runs without any guard held.
-pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
+///
+/// `#432` Phase B: returns `Result` instead of exiting via `fatal()` — the
+/// `!opt_keep_going` branches now go through [`crate::output::fatal_err`] and
+/// propagate `Err` instead of terminating the process directly. Callers not
+/// yet converted to `Result` bridge with
+/// `.unwrap_or_else(crate::output::exit_on_err)`, reproducing today's exact
+/// exit behavior (see read.rs for the same pattern already in use).
+pub fn complain(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+) -> Result<(), crate::build_result::BuildError> {
     let (deps, parent, name, no_diag) = {
         let Some(node) = ctx.filenodes.get(file) else {
-            return;
+            return Ok(());
         };
         let n = node.lock().expect("file node lock poisoned");
         let deps: Vec<Option<FileId>> = n.deps.iter().map(|d| d.file).collect();
@@ -655,13 +667,13 @@ pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
         };
         if updated && ustatus as i32 > us_none as i32 && no_diag {
             // lock: no guard held across this recursion.
-            complain(ctx, df);
+            complain(ctx, df)?;
             recursed = true;
             break;
         }
     }
     if recursed {
-        return;
+        return Ok(());
     }
     show_goal_error(ctx);
     let cn = cname(&name);
@@ -672,7 +684,7 @@ pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
             as *const u8 as *const ::core::ffi::c_char;
         unsafe {
             if !crate::make_main::opt_keep_going(ctx) {
-                fatal(
+                return Err(crate::output::fatal_err(
                     ctx,
                     NILF,
                     0,
@@ -683,7 +695,7 @@ pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
                         FmtArg::Str(pcn.as_ptr() as *const ::core::ffi::c_char),
                         FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
                     ],
-                );
+                ));
             }
             error(
                 ctx,
@@ -703,7 +715,7 @@ pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
             b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
         unsafe {
             if !crate::make_main::opt_keep_going(ctx) {
-                fatal(
+                return Err(crate::output::fatal_err(
                     ctx,
                     NILF,
                     0,
@@ -713,7 +725,7 @@ pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
                         FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
                         FmtArg::Str(b"\0" as *const u8 as *const ::core::ffi::c_char),
                     ],
-                );
+                ));
             }
             error(
                 ctx,
@@ -731,6 +743,7 @@ pub fn complain(ctx: &crate::execctx::ExecContext, file: FileId) {
     if let Some(node) = ctx.filenodes.get(file) {
         node.lock().expect("file node lock poisoned").no_diag = false;
     }
+    Ok(())
 }
 
 /// FileId port of `update_file_1`, processing one entry of a (possibly
@@ -792,7 +805,7 @@ fn update_file_1(
             }
             let (no_diag, dontcare) = with_entry!(n, { (n.no_diag, n.dontcare) });
             if no_diag && !dontcare {
-                complain(ctx, file);
+                complain(ctx, file).unwrap_or_else(|e| crate::output::exit_on_err(e));
             }
             return ustatus;
         }
@@ -998,7 +1011,7 @@ fn update_file_1(
                 if warning::action(ctx, Type::CircularDep) == Action::Error {
                     let dcn = cname(&dep_name);
                     unsafe {
-                        fatal(
+                        crate::output::exit_on_err(crate::output::fatal_err(
                             ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             (name.len() as size_t).wrapping_add(dep_name.len() as size_t),
@@ -1008,7 +1021,7 @@ fn update_file_1(
                                 FmtArg::Str(cn.as_ptr() as *const ::core::ffi::c_char),
                                 FmtArg::Str(dcn.as_ptr() as *const ::core::ffi::c_char),
                             ],
-                        );
+                        ));
                     }
                 }
                 if warning::is_active(ctx, Type::CircularDep) {
@@ -1974,7 +1987,7 @@ fn remake_no_recipe(
     } else {
         if !opt_rebuilding_makefiles(ctx) || !dontcare {
             // lock: no guard held across complain.
-            complain(ctx, file);
+            complain(ctx, file).unwrap_or_else(|e| crate::output::exit_on_err(e));
         }
         if let Some(node) = ctx.filenodes.get(file) {
             let mut g = node.lock().expect("file node lock poisoned");
