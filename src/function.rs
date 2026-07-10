@@ -1073,7 +1073,6 @@ mod func_origin_flavor_tests {
         // `define_variable_in_set` reads `env_overrides()`, which needs a
         // thread-local `Options` installed (there's no `main`-driven startup
         // in a unit-test binary).
-        crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         // `ctx.variable_globals.global_variable_set`'s hash table has no
         // `main`-driven startup in a unit-test binary; initialize it here so
@@ -4195,7 +4194,7 @@ unsafe fn func_file(
                 ),
             }
         };
-        crate::make_main::bump_command_count();
+        crate::make_main::bump_command_count(ctx);
         if !(*argv.offset(1_i32 as isize)).is_null() {
             let text =
                 ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
@@ -4643,7 +4642,7 @@ unsafe fn expand_builtin_function(
         );
     }
     if entry.adds_command() != 0 {
-        crate::make_main::bump_command_count();
+        crate::make_main::bump_command_count(ctx);
     }
     if entry.safe_fn() != 0 {
         // Safe handler: marshal the C `argv`/name into borrowed byte slices at

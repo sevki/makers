@@ -115,7 +115,7 @@ pub fn construct_include_path(ctx: &crate::execctx::ExecContext, arg_dirs: &[std
             );
         }
     }
-    crate::make_main::with_options(|o| {
+    crate::make_main::with_options(ctx, |o| {
         *o.resolved_include_dirs.borrow_mut() = dirs;
     });
 }

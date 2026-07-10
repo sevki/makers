@@ -498,7 +498,7 @@ unsafe fn eval_makefile(
         // it into a local `Vec` so the `RefCell` borrow is released before the
         // file-open work below (which re-enters the eval engine on success).
         let search_dirs: Vec<std::path::PathBuf> =
-            crate::make_main::with_options(|o| o.resolved_include_dirs.borrow().clone());
+            crate::make_main::with_options(ctx, |o| o.resolved_include_dirs.borrow().clone());
         for dir in &search_dirs {
             // Native path construction: PathBuf::join, not the C `concat` helper.
             let candidate = dir.join(filename_os);
@@ -750,7 +750,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
     let mut depstr: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut nlines: ::core::ffi::c_long = 0;
     let mut two_colon: i32 = 0;
-    let mut prefix: ::core::ffi::c_char = crate::make_main::opt_cmd_prefix();
+    let mut prefix: ::core::ffi::c_char = crate::make_main::opt_cmd_prefix(ctx);
     let mut pattern: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut pattern_percent: *const ::core::ffi::c_char;
     let fstart: *mut Floc;
@@ -816,7 +816,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
         let first_byte = *line.offset(0_i32 as isize) as ::core::ffi::c_uchar;
         let line_kind = crate::parser::LineKind::classify(
             first_byte,
-            crate::make_main::opt_cmd_prefix() as ::core::ffi::c_uchar,
+            crate::make_main::opt_cmd_prefix(ctx) as ::core::ffi::c_uchar,
         );
         if line_kind == crate::parser::LineKind::Blank {
             continue;
@@ -858,7 +858,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
             collapsed = xmalloc(collapsed_length) as *mut ::core::ffi::c_char;
         }
         strcpy(collapsed, line);
-        collapse_continuations(collapsed);
+        collapse_continuations(ctx, collapsed);
         remove_comments(collapsed);
         p = collapsed;
         while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
@@ -1041,7 +1041,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
                         if *p2 as i32 == 0 {
-                            crate::make_main::with_options(|o| {
+                            crate::make_main::with_options(ctx, |o| {
                                 o.export_all_variables.set(exporting != 0)
                             });
                         } else {
@@ -1452,7 +1452,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         }
                     } else {
                         if *line.offset(0_i32 as isize) as i32
-                            == crate::make_main::opt_cmd_prefix() as i32
+                            == crate::make_main::opt_cmd_prefix(ctx) as i32
                         {
                             fatal(
                                 ctx,
@@ -1508,7 +1508,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                             semip = fresh12;
                             ::core::slice::from_raw_parts_mut(semip as *mut u8, 1)[0] = 0;
                         }
-                        collapse_continuations(line);
+                        collapse_continuations(ctx, line);
                         wtype = get_next_mword(line, &raw mut lb_next, &raw mut wlen);
                         match wtype as ::core::ffi::c_uint {
                             1 => {
@@ -1603,7 +1603,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     if *p2 as i32 == 0 {
                                         continue;
                                     }
-                                    if crate::make_main::opt_cmd_prefix() as i32 == '\t' as i32
+                                    if crate::make_main::opt_cmd_prefix(ctx) as i32 == '\t' as i32
                                         && crate::parser::starts_with_eight_spaces(
                                             ::std::ffi::CStr::from_ptr(line).to_bytes(),
                                         )
@@ -1713,7 +1713,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                     semip as *mut u8,
                                                     1,
                                                 )[0] = b';';
-                                                collapse_continuations(semip);
+                                                collapse_continuations(ctx, semip);
                                                 variable_buffer_output(
                                                     ctx,
                                                     p2.offset(strlen(p2) as isize),
@@ -1739,7 +1739,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                             filenames = None;
                                         } else {
                                             find_char_unquote(lb_next, '=' as i32);
-                                            prefix = crate::make_main::opt_cmd_prefix();
+                                            prefix = crate::make_main::opt_cmd_prefix(ctx);
                                             no_targets = 0;
                                             if *lb_next as i32 != 0 {
                                                 let l_3: size_t = p2
@@ -2066,8 +2066,8 @@ unsafe fn do_define(
             .lineno
             .wrapping_add(nlines as ::core::ffi::c_ulong);
         line = (*ebuf).buffer;
-        collapse_continuations(line);
-        if *line.offset(0_i32 as isize) as i32 != crate::make_main::opt_cmd_prefix() as i32 {
+        collapse_continuations(ctx, line);
+        if *line.offset(0_i32 as isize) as i32 != crate::make_main::opt_cmd_prefix(ctx) as i32 {
             p = next_token(line);
             // Classify the leading `define`/`endef` keyword through the typed
             // AST layer (token delimited by a blank or NUL, matching make's
@@ -2534,8 +2534,8 @@ pub unsafe fn check_specials(
         nm_buf.push(0);
         let nm: *const ::core::ffi::c_char = nm_buf.as_ptr() as *const ::core::ffi::c_char;
         let special = crate::parser::SpecialTarget::from_name(&entry.name);
-        if !posix_pedantic() && special == Some(crate::parser::SpecialTarget::Posix) {
-            crate::make_main::set_posix_pedantic();
+        if !posix_pedantic(ctx) && special == Some(crate::parser::SpecialTarget::Posix) {
+            crate::make_main::set_posix_pedantic(ctx);
             define_variable_in_set(
                 ctx,
                 b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2606,12 +2606,12 @@ pub unsafe fn check_specials(
                 (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
             );
-        } else if !second_expansion()
+        } else if !second_expansion(ctx)
             && special == Some(crate::parser::SpecialTarget::SecondExpansion)
         {
-            crate::make_main::set_second_expansion();
-        } else if !one_shell() && special == Some(crate::parser::SpecialTarget::OneShell) {
-            crate::make_main::set_one_shell();
+            crate::make_main::set_second_expansion(ctx);
+        } else if !one_shell(ctx) && special == Some(crate::parser::SpecialTarget::OneShell) {
+            crate::make_main::set_one_shell(ctx);
         } else if set_default != 0 && *(*ctx.default_goal_var.0.get()).value.offset(0) as i32 == 0 {
             let mut reject = false;
             // Pattern targets (containing `%`) are never the default goal.
@@ -2877,7 +2877,7 @@ unsafe fn record_files(
     prefix: ::core::ffi::c_char,
     flocp: *const Floc,
 ) -> Result<(), crate::build_result::BuildError> {
-    if opt_snapped_deps() {
+    if opt_snapped_deps(ctx) {
         return Err(crate::output::fatal_err(
             ctx,
             flocp,
@@ -2927,7 +2927,7 @@ unsafe fn record_files(
     let mut deps: Vec<crate::dep::DepNode> = Vec::new();
     if !depstr.is_null() {
         depstr = unescape_char(depstr, ':' as i32);
-        if second_expansion()
+        if second_expansion(ctx)
             && crate::parser::prereq_needs_second_expansion(
                 ::std::ffi::CStr::from_ptr(depstr).to_bytes(),
             )

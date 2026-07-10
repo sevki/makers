@@ -1057,7 +1057,7 @@ mod tests {
     /// read dup is installed (`job_rfd < 0`).
     #[test]
     fn jobserver_signal_is_noop_when_unset() {
-        crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::make_main::install_default_exec_context_for_test();
         crate::make_main::with_exec_context(|ctx| ctx.job_rfd.0.store(-1, Ordering::Relaxed));
 
         jobserver_signal();

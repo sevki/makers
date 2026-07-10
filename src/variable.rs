@@ -587,7 +587,7 @@ pub unsafe fn define_variable_in_set(
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
     v = *var_slot;
-    if crate::make_main::env_overrides()
+    if crate::make_main::env_overrides(ctx)
         && origin as ::core::ffi::c_uint == o_env as i32 as ::core::ffi::c_uint
     {
         origin = o_env_override;
@@ -602,7 +602,7 @@ pub unsafe fn define_variable_in_set(
         let vr = v
             .as_mut()
             .expect("existing variable slot pointer is non-null");
-        if crate::make_main::env_overrides() && vr.origin() as i32 == o_env as i32 {
+        if crate::make_main::env_overrides(ctx) && vr.origin() as i32 == o_env as i32 {
             vr.set_origin(o_env_override as variable_origin);
         }
         if origin as i32 >= vr.origin() as i32 {
@@ -738,7 +738,7 @@ pub unsafe fn undefine_variable_in_set(
         &raw mut set.table,
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
-    if crate::make_main::env_overrides()
+    if crate::make_main::env_overrides(ctx)
         && origin as ::core::ffi::c_uint == o_env as i32 as ::core::ffi::c_uint
     {
         origin = o_env_override;
@@ -747,7 +747,7 @@ pub unsafe fn undefine_variable_in_set(
     if !(v.is_null()
         || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        if crate::make_main::env_overrides() && (*v).origin() as i32 == o_env as i32 {
+        if crate::make_main::env_overrides(ctx) && (*v).origin() as i32 == o_env as i32 {
             (*v).set_origin(o_env_override as variable_origin);
         }
         if origin as i32 >= (*v).origin() as i32 {
@@ -1724,8 +1724,8 @@ fn should_export_decision(
 /// owned `Options` through the `with_options` borrow channel
 /// ([`crate::make_main::opt_export_all_variables`]), so this is fully safe —
 /// no `unsafe` and no global remain.
-pub fn should_export(v: &variable) -> bool {
-    let export_all = crate::make_main::opt_export_all_variables();
+pub fn should_export(ctx: &crate::execctx::ExecContext, v: &variable) -> bool {
+    let export_all = crate::make_main::opt_export_all_variables(ctx);
     should_export_decision(v.export(), v.origin(), v.exportable() != 0, export_all)
 }
 /// # Safety
@@ -1779,7 +1779,7 @@ pub unsafe fn target_environment(
             .0
             .fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
-    if recursive == 0 && crate::make_main::opt_jobserver_auth_present() {
+    if recursive == 0 && crate::make_main::opt_jobserver_auth_present(ctx) {
         invalid = jobserver_get_invalid_auth(ctx);
     }
     if file.is_some() {
@@ -1831,7 +1831,7 @@ pub unsafe fn target_environment(
                     {
                         // `v` is a live, non-null variable taken from an
                         // occupied hash slot just above.
-                        if isglobal == 0 || should_export(vr) {
+                        if isglobal == 0 || should_export(ctx, vr) {
                             hash_insert_at(
                                 &raw mut table,
                                 v as *const ::core::ffi::c_void,
@@ -1869,7 +1869,7 @@ pub unsafe fn target_environment(
             let mut cp: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
             // `v_0` is a live, non-null variable taken from an
             // occupied hash slot just above.
-            if should_export(&*v_0) {
+            if should_export(ctx, &*v_0) {
                 if (*v_0).recursive() as i32 != 0
                     && ((*v_0).origin() as i32 != o_env as i32
                         && (*v_0).origin() as i32 != o_env_override as i32
@@ -2084,7 +2084,7 @@ unsafe fn set_special_var(
         } else {
             *varr.value.offset(0_i32 as isize) as i32
         }) as ::core::ffi::c_char;
-        crate::make_main::with_options(|o| o.cmd_prefix.set(new_prefix));
+        crate::make_main::with_options(ctx, |o| o.cmd_prefix.set(new_prefix));
     } else if vn0 == *(b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
@@ -2662,14 +2662,19 @@ mod warn_undefined_unsafe_oracle {
         }
     }
 }
-unsafe fn set_env_override(item: *const ::core::ffi::c_void, mut _arg: *mut ::core::ffi::c_void) {
+unsafe fn set_env_override(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
+    // SAFETY: `reset_env_override` passes `ctx as *const ExecContext as *mut
+    // c_void` as `arg` for every walk of this callback (no thread-local
+    // needed — the C-style void* arg slot carries context through the
+    // hash-table walk directly).
+    let ctx = &*(arg as *const crate::execctx::ExecContext);
     let v: *mut variable = item as *mut variable;
-    let old: variable_origin = (if crate::make_main::env_overrides() {
+    let old: variable_origin = (if crate::make_main::env_overrides(ctx) {
         o_env as i32
     } else {
         o_env_override as i32
     }) as variable_origin;
-    let new: variable_origin = (if crate::make_main::env_overrides() {
+    let new: variable_origin = (if crate::make_main::env_overrides(ctx) {
         o_env_override as i32
     } else {
         o_env as i32
@@ -2686,7 +2691,7 @@ pub unsafe fn reset_env_override(ctx: &crate::execctx::ExecContext) {
     hash_map_arg(
         &raw mut (*ctx.variable_globals.global_variable_set.as_ptr()).table,
         Some(set_env_override),
-        NULL,
+        ctx as *const crate::execctx::ExecContext as *mut ::core::ffi::c_void,
     );
 }
 unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi::c_void) {
@@ -2963,12 +2968,12 @@ mod should_export_unsafe_oracle {
         should_export, should_export_decision, v_default, v_export, v_ifset, v_noexport, variable,
         variable_export, variable_origin,
     };
-    use crate::make_main::{install_default_options_for_test, with_options};
+    use crate::make_main::{install_default_exec_context_for_test, with_options};
 
     /// Original c2rust implementation, preserved as the behavioral oracle (raw
     /// `*const variable`, `i32` result). The `export_all_variables` flag now
     /// lives on the owned `Options`, read through the `with_options` channel.
-    unsafe fn should_export_oracle(v: *const variable) -> i32 {
+    unsafe fn should_export_oracle(ctx: &crate::execctx::ExecContext, v: *const variable) -> i32 {
         let v = v
             .as_ref()
             .expect("should_export requires a non-null variable");
@@ -2976,7 +2981,7 @@ mod should_export_unsafe_oracle {
             v.export(),
             v.origin(),
             v.exportable() != 0,
-            with_options(|o| o.export_all_variables.get()),
+            with_options(ctx, |o| o.export_all_variables.get()),
         ) as i32
     }
 
@@ -3008,17 +3013,17 @@ mod should_export_unsafe_oracle {
         ];
         // Toggle the owned `Options` flag both ways through the borrow channel,
         // restoring it afterwards so the test leaves no residue in shared state.
-        install_default_options_for_test();
-        let saved = with_options(|o| o.export_all_variables.get());
+        let ctx = install_default_exec_context_for_test();
+        let saved = with_options(ctx, |o| o.export_all_variables.get());
         for &export_all in &[false, true] {
-            with_options(|o| o.export_all_variables.set(export_all));
+            with_options(ctx, |o| o.export_all_variables.set(export_all));
             for &export in &exports {
                 for &origin in &origins {
                     for &exportable in &[false, true] {
                         let v = make_var(export, origin, exportable);
                         // SAFETY: `v` is a live local.
-                        let oracle = unsafe { should_export_oracle(&raw const v) };
-                        let safe = should_export(&v) as i32;
+                        let oracle = unsafe { should_export_oracle(ctx, &raw const v) };
+                        let safe = should_export(ctx, &v) as i32;
                         assert_eq!(
                             safe, oracle,
                             "mismatch: export={export} origin={origin} \
@@ -3029,7 +3034,7 @@ mod should_export_unsafe_oracle {
             }
         }
         // Restore the previous value through the borrow channel.
-        with_options(|o| o.export_all_variables.set(saved));
+        with_options(ctx, |o| o.export_all_variables.set(saved));
     }
 }
 

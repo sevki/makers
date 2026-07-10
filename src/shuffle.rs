@@ -174,7 +174,7 @@ pub fn shuffle_deps_recursive(ctx: &crate::execctx::ExecContext, file: FileId) {
         let cfg = config(ctx);
         (cfg.mode, cfg.seed)
     };
-    if mode == Mode::None || not_parallel() {
+    if mode == Mode::None || not_parallel(ctx) {
         return;
     }
     if mode == Mode::Random {
@@ -195,7 +195,7 @@ pub fn shuffle_goals_recursive(
         let cfg = config(ctx);
         (cfg.mode, cfg.seed)
     };
-    if mode == Mode::None || not_parallel() {
+    if mode == Mode::None || not_parallel(ctx) {
         return;
     }
     if mode == Mode::Random {
@@ -388,7 +388,6 @@ mod tests {
     /// each prerequisite file, reordering its deps too.
     #[test]
     fn shuffle_deps_recursive_reorders_target_and_children() {
-        crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
 
@@ -430,7 +429,6 @@ mod tests {
     /// `was_shuffled` (guards the `mode == None || not_parallel()` short-circuit).
     #[test]
     fn shuffle_deps_recursive_none_mode_is_a_noop() {
-        crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "none");
 
@@ -452,7 +450,6 @@ mod tests {
     /// what makes runs reproducible; without it the second shuffle would diverge.
     #[test]
     fn shuffle_random_reseeds_for_reproducible_order() {
-        crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "424242");
 
@@ -480,7 +477,6 @@ mod tests {
     /// `wait_here` marker is present.
     #[test]
     fn shuffle_goals_recursive_reverse_reorders() {
-        crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
 
@@ -497,7 +493,6 @@ mod tests {
     /// contents shuffle to the same order.
     #[test]
     fn shuffle_goals_recursive_random_reseeds_for_reproducible_order() {
-        crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "424242");
 
@@ -513,6 +508,29 @@ mod tests {
         assert_eq!(
             order1, order2,
             "re-seeding must make the two goal-list shuffles reproduce the same order"
+        );
+        set_mode(&ctx, "none");
+    }
+
+    /// `not_parallel(ctx)` must short-circuit `shuffle_goals_recursive` on its
+    /// own, independent of `mode`: with a mode that would otherwise reorder
+    /// (`reverse`), a `.NOTPARALLEL` run must still leave the goal list
+    /// untouched. Guards the `mode == Mode::None || not_parallel(ctx)` check
+    /// staying `||` rather than collapsing to `&&` (which would only return
+    /// early when *both* conditions hold).
+    #[test]
+    fn shuffle_goals_recursive_not_parallel_is_a_noop_even_with_reorder_mode() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        crate::make_main::set_not_parallel(&ctx);
+
+        let mut goals = vec![goal_named("a"), goal_named("b"), goal_named("c")];
+        shuffle_goals_recursive(&ctx, &mut goals);
+        let names: Vec<String> = goals.iter().map(|g| g.dep.name.clone()).collect();
+        assert_eq!(
+            names,
+            vec!["a", "b", "c"],
+            "not_parallel must short-circuit even though mode requests a reorder"
         );
         set_mode(&ctx, "none");
     }

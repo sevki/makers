@@ -626,7 +626,7 @@ unsafe fn child_error(
     let f_name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
     let mut smode: Option<&::core::ffi::CStr> = None;
     let l: size_t;
-    if ignored != 0 && crate::make_main::opt_run_silent() {
+    if ignored != 0 && crate::make_main::opt_run_silent(ctx) {
         return;
     }
     if exit_sig != 0 && coredump != 0 {
@@ -850,7 +850,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     remote = 1;
                 }
             }
-            crate::make_main::bump_command_count();
+            crate::make_main::bump_command_count(ctx);
             if remote == 0 && pid == shell_function_pid(ctx) {
                 shell_completed(ctx, exit_code, exit_sig);
                 break;
@@ -948,7 +948,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             child_failed = MAKE_SUCCESS;
         } else if exit_sig == 0
             && exit_code == 1
-            && crate::make_main::opt_question()
+            && crate::make_main::opt_question(ctx)
             && (*c).recursive() as i32 != 0
         {
             child_failed = MAKE_TROUBLE;
@@ -982,7 +982,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             ctx.good_stdin_used.set(false);
         }
         dontcare = (*c).dontcare() as i32;
-        if child_failed != 0 && (*c).noerror() == 0 && !crate::make_main::opt_ignore_errors() {
+        if child_failed != 0 && (*c).noerror() == 0 && !crate::make_main::opt_ignore_errors(ctx) {
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(ctx, c, exit_code, exit_sig, coredump, 0);
             }
@@ -1022,7 +1022,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                 if handling_fatal_signal(ctx) {
                     set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_failed);
                 } else {
-                    if crate::make_main::opt_output_sync() == OUTPUT_SYNC_LINE {
+                    if crate::make_main::opt_output_sync(ctx) == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(ctx, &raw mut (*c).output);
                     }
                     (*c).set_remote(
@@ -1075,7 +1075,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         if err == 0
             && child_failed != 0
             && dontcare == 0
-            && !crate::make_main::opt_keep_going()
+            && !crate::make_main::opt_keep_going(ctx)
             && !handling_fatal_signal(ctx)
         {
             die(ctx, child_failed);
@@ -1259,7 +1259,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             *end_ref = 0;
             (*child).command_ptr = end.add(1);
         }
-        if !argv.is_null() && crate::make_main::opt_question() && !(flags & 1 != 0) {
+        if !argv.is_null() && crate::make_main::opt_question(ctx) && !(flags & 1 != 0) {
             if !argv.is_null() {
                 free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
@@ -1268,7 +1268,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             notice_finished_file(ctx, (*child).file, (*child).entry);
             return;
         }
-        if crate::make_main::opt_touch() && !(flags & 1 != 0) {
+        if crate::make_main::opt_touch(ctx) && !(flags & 1 != 0) {
             if !argv.is_null() {
                 free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
@@ -1276,7 +1276,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             argv = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
         }
         if !argv.is_null() {
-            let os = crate::make_main::opt_output_sync();
+            let os = crate::make_main::opt_output_sync(ctx);
             (*child).output.set_syncout(
                 (os != 0 && (os == OUTPUT_SYNC_RECURSE || !(flags & 1 != 0))) as i32
                     as ::core::ffi::c_uint as ::core::ffi::c_uint,
@@ -1289,9 +1289,9 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             if (*child).output.syncout() == 0 {
                 crate::output::output_dump(ctx, &raw mut (*child).output);
             }
-            if crate::make_main::opt_just_print()
+            if crate::make_main::opt_just_print(ctx)
                 || 0x10_i32 & db_level(ctx) != 0
-                || !(flags & 2 != 0) && !crate::make_main::opt_run_silent()
+                || !(flags & 2 != 0) && !crate::make_main::opt_run_silent(ctx)
             {
                 message(
                     ctx,
@@ -1319,7 +1319,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     && *(*argv.offset(2_i32 as isize)).offset(0_i32 as isize) as i32 == ':' as i32
                     && *(*argv.offset(2_i32 as isize)).offset(1_i32 as isize) as i32 == 0)
                 && (*argv.offset(3_i32 as isize)).is_null()
-                || (crate::make_main::opt_just_print() && !(flags & 1 != 0))
+                || (crate::make_main::opt_just_print(ctx) && !(flags & 1 != 0))
             {
                 if !argv.is_null() {
                     free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
@@ -1729,7 +1729,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
     job_next_command(c);
     // `job_slots` is fixed for the run (set only during `main_0` job setup), so
     // snapshot it once rather than reading the borrow channel each spin.
-    let slots = crate::make_main::opt_job_slots();
+    let slots = crate::make_main::opt_job_slots(ctx);
     if slots != 0 {
         while job_slots_used(ctx) == slots {
             reap_children(ctx, 1, 0);
@@ -1930,7 +1930,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
         }
     }
     start_waiting_job(ctx, c);
-    if crate::make_main::opt_job_slots() == 1 || not_parallel() {
+    if crate::make_main::opt_job_slots(ctx) == 1 || not_parallel(ctx) {
         while file_command_state(ctx, file) as i32 == cs_running as i32 {
             reap_children(ctx, 1, 0);
         }
@@ -2037,7 +2037,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     // failed, otherwise the open fd. Per-run state on the build-phase context.
     let proc_fd = &ctx.load_proc_fd.0;
     let mut load: ::core::ffi::c_double = 0.;
-    if crate::make_main::opt_max_load_average() < 0_i32 as ::core::ffi::c_double {
+    if crate::make_main::opt_max_load_average(ctx) < 0_i32 as ::core::ffi::c_double {
         return 0;
     }
     if proc_fd.get() == -2_i32 {
@@ -2093,11 +2093,11 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                             b" / make = ",
                             job_slots_used(ctx).to_string().as_bytes(),
                             b" (max requested = ",
-                            format!("{:.6}", crate::make_main::opt_max_load_average()).as_bytes(),
+                            format!("{:.6}", crate::make_main::opt_max_load_average(ctx)).as_bytes(),
                             b")\n",
                         ]);
                     }
-                    return (cnt as ::core::ffi::c_double > crate::make_main::opt_max_load_average())
+                    return (cnt as ::core::ffi::c_double > crate::make_main::opt_max_load_average(ctx))
                         as i32;
                 }
                 if 0x4_i32 & db_level(ctx) != 0 {
@@ -2164,11 +2164,11 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
             b" (actual = ",
             format!("{load:.6}").as_bytes(),
             b") (max requested = ",
-            format!("{:.6}", crate::make_main::opt_max_load_average()).as_bytes(),
+            format!("{:.6}", crate::make_main::opt_max_load_average(ctx)).as_bytes(),
             b")\n",
         ]);
     }
-    (guess >= crate::make_main::opt_max_load_average()) as i32
+    (guess >= crate::make_main::opt_max_load_average(ctx)) as i32
 }
 /// # Safety
 ///
@@ -2701,7 +2701,7 @@ unsafe fn construct_command_argv_internal(
                 if !strchr(sh_chars, *p as i32).is_null() {
                     break 'fast;
                 }
-                if one_shell() && *p as i32 == '\n' as i32 {
+                if one_shell(ctx) && *p as i32 == '\n' as i32 {
                     break 'fast;
                 }
                 match *p as i32 {
@@ -2842,7 +2842,7 @@ unsafe fn construct_command_argv_internal(
     } else {
         0
     };
-    if one_shell() {
+    if one_shell(ctx) {
         if is_bourne_compatible_shell(path_from_cstr(shell)) {
             let mut f: *const ::core::ffi::c_char = line;
             let mut t: *mut ::core::ffi::c_char = line;
@@ -3132,7 +3132,7 @@ pub unsafe fn construct_command_argv(
             v.push(0);
         }
         v
-    } else if posix_pedantic() && !crate::make_main::opt_ignore_errors() && !(cmd_flags & 4 != 0) {
+    } else if posix_pedantic(ctx) && !crate::make_main::opt_ignore_errors(ctx) && !(cmd_flags & 4 != 0) {
         b"-ec\0".to_vec()
     } else {
         b"-c\0".to_vec()

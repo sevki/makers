@@ -80,13 +80,13 @@ pub fn set_output_context(value: *mut output) {
 /// `output_start` writer runs on the shared output path, reachable from the
 /// `gmk_eval` throwaway-context path, so both ends resolve to `main_0`'s real
 /// run state rather than a throwaway `ExecContext`.
-pub fn stdio_traced() -> bool {
-    crate::make_main::with_options(|o| o.stdio_traced.get())
+pub fn stdio_traced(ctx: &ExecContext) -> bool {
+    crate::make_main::with_options(ctx, |o| o.stdio_traced.get())
 }
 
 /// Record whether the working-directory enter trace has been emitted.
-pub fn set_stdio_traced(value: bool) {
-    crate::make_main::with_options(|o| o.stdio_traced.set(value));
+pub fn set_stdio_traced(ctx: &ExecContext, value: bool) {
+    crate::make_main::with_options(ctx, |o| o.stdio_traced.set(value));
 }
 pub const OUTPUT_NONE: i32 = -1;
 /// errno of the first failed write to Rust stdout, 0 if none — the
@@ -243,7 +243,7 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     // `static mut buf`/`len` pair); `_outputs` copies the bytes before
     // returning, so the local's lifetime is enough.
     let mut line: Vec<u8> = Vec::new();
-    if crate::make_main::opt_print_data_base() {
+    if crate::make_main::opt_print_data_base(ctx) {
         line.extend_from_slice(b"# ");
     }
     // The `%u` slot only exists in the `makelevel != 0` formats and the `%s`
@@ -421,7 +421,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
         &[],
     );
     output_close(ctx, out);
-    crate::make_main::with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
+    crate::make_main::with_options(ctx, |o| o.output_sync.set(OUTPUT_SYNC_NONE));
     osync_clear();
     ctx.output_in_setup.0.store(false, Ordering::Relaxed);
 }
@@ -447,7 +447,7 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             );
             osync_clear();
         }
-        if crate::make_main::opt_output_sync() != OUTPUT_SYNC_RECURSE
+        if crate::make_main::opt_output_sync(ctx) != OUTPUT_SYNC_RECURSE
             && crate::make_main::should_print_dir_mirror(ctx) != 0
         {
             traced = log_working_directory(ctx, 1);
@@ -494,7 +494,7 @@ pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
         (*out).err = OUTPUT_NONE;
         (*out).out = (*out).err;
         (*out).set_syncout(
-            (crate::make_main::opt_output_sync() != 0) as i32 as ::core::ffi::c_uint
+            (crate::make_main::opt_output_sync(ctx) != 0) as i32 as ::core::ffi::c_uint
                 as ::core::ffi::c_uint,
         );
         return;
@@ -514,7 +514,7 @@ pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
 /// single-threaded.
 pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
     if out.is_null() {
-        if stdio_traced() {
+        if stdio_traced(ctx) {
             log_working_directory(ctx, 0);
         }
         fd_reset_append(libc::STDOUT_FILENO, ctx.stdout_flags.0.load(Ordering::Relaxed));
@@ -543,12 +543,12 @@ pub unsafe fn output_start(ctx: &ExecContext) {
     {
         setup_tmpfile(ctx, osync);
     }
-    if (crate::make_main::opt_output_sync() == OUTPUT_SYNC_NONE
-        || crate::make_main::opt_output_sync() == OUTPUT_SYNC_RECURSE)
-        && !stdio_traced()
+    if (crate::make_main::opt_output_sync(ctx) == OUTPUT_SYNC_NONE
+        || crate::make_main::opt_output_sync(ctx) == OUTPUT_SYNC_RECURSE)
+        && !stdio_traced(ctx)
         && crate::make_main::should_print_dir_mirror(ctx) != 0
     {
-        set_stdio_traced(log_working_directory(ctx, 1) != 0);
+        set_stdio_traced(ctx, log_working_directory(ctx, 1) != 0);
     }
 }
 /// Write `msg` to stdout or stderr (or the sync temp file), starting
@@ -1048,7 +1048,6 @@ mod log_working_directory_tests {
 
     #[test]
     fn tolerates_null_program_context() {
-        crate::make_main::install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
         assert!(ctx.program.0.get().is_null());
         // SAFETY: single-threaded test; the options channel is installed above.
@@ -1062,7 +1061,6 @@ mod log_working_directory_tests {
     /// `makelevel == 0` and `makelevel != 0`, on both `entering` values.
     #[test]
     fn covers_every_makelevel_and_directory_combination() {
-        crate::make_main::install_default_options_for_test();
         let dir = ::std::ffi::CString::new("/tmp/build").unwrap();
         for makelevel in [0, 2] {
             let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
@@ -1089,7 +1087,7 @@ mod output_context_tests {
 
     #[test]
     fn accessors_round_trip_through_the_live_context() {
-        crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::make_main::install_default_exec_context_for_test();
         let mut record = super::output {
             out: 7,
             err: 8,

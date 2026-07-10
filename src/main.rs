@@ -215,7 +215,7 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone, Debug, BitfieldStruct)]
 #[repr(C)]
 pub struct command_switch {
     pub c: i32,
@@ -426,10 +426,9 @@ pub const INVALID_JOB_SLOTS: i32 = -1_i32;
 /// Jobserver master slot count (0 when this make is not the jobserver master):
 /// the number of job slots handed to the jobserver when this make is the
 /// master, set once during jobserver setup and read while draining tokens at
-/// exit. The former `MASTER_JOB_SLOTS` global atomic, now read through the
-/// `with_options`/`OPTIONS_PTR` channel off the owned per-run `Options`.
-fn master_job_slots() -> ::core::ffi::c_uint {
-    with_options(|o| o.master_job_slots.get())
+/// exit. The former `MASTER_JOB_SLOTS` global atomic, now read directly off `ctx.options`.
+fn master_job_slots(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_uint {
+    with_options(ctx, |o| o.master_job_slots.get())
 }
 /// Read-only default for the `-j`/`--jobs` option: only ever referenced via
 /// `&raw const` as the option table's `default_value`, never written. Keeping
@@ -451,6 +450,7 @@ static default_load_average: ::core::ffi::c_double = -1.0f64;
 /// owned value is first created (`main_0`). The option-parser sets these fields
 /// through char-keyed helpers (`opt_set_flag`/`opt_set_str`) rather than the
 /// old raw `value_ptr` dispatch.
+#[derive(Debug, Clone)]
 pub struct Options {
     pub silent: ::core::cell::Cell<bool>,
     pub silent_origin: ::core::cell::Cell<variable_origin>,
@@ -584,48 +584,36 @@ pub struct Options {
     /// `job_slots` is saved here and then zeroed (the master holds its slots in
     /// the jobserver rather than in `job_slots`); read once while draining
     /// tokens at exit. The former `MASTER_JOB_SLOTS` global atomic, reached
-    /// through the `with_options`/`OPTIONS_PTR` channel via `master_job_slots()`.
-    /// Both the write (jobserver setup) and the read (exit drain) are on
-    /// `main_0`'s real path, so it lives on `Options` beside its `job_slots`
-    /// companion rather than on the `gmk_eval`-throwaway `ExecContext`.
+    /// via `ctx.options` (through `master_job_slots()`), beside its
+    /// `job_slots` companion field.
     pub master_job_slots: ::core::cell::Cell<::core::ffi::c_uint>,
     /// Monotonic command-generation counter for this run, the former `static
     /// mut command_count`. Bumped once per shell command run (`reap_children`,
     /// `$(shell)`, `$(file)`) via [`bump_command_count`], and read by the
     /// directory cache (`find_directory`) and the `update_goal_chain` loop
     /// through [`opt_command_count`] to invalidate stat/contents entries
-    /// recorded before the latest command. Lives on `Options`, reached through
-    /// the `with_options`/`OPTIONS_PTR` channel, rather than `ExecContext`: the
-    /// `$(shell)`/`$(file)` writers run on the `gmk_eval` throwaway-context
-    /// path, so they must reach `main_0`'s real run state, not the throwaway.
+    /// recorded before the latest command. Reached via `ctx.options`
+    /// (through [`opt_command_count`]).
     pub command_count: ::core::cell::Cell<::core::ffi::c_ulong>,
     /// `snap_deps`-complete latch for this run, the former `file::SNAPPED_DEPS`
     /// global. Set once at the end of `snap_deps` via [`mark_snapped_deps`] and
     /// read by `record_files` through [`opt_snapped_deps`] to reject
     /// prerequisites defined from within a recipe (i.e. after the snapshot).
-    /// Lives on `Options`, reached through the `with_options`/`OPTIONS_PTR`
-    /// channel, rather than `ExecContext`: `record_files` is reached from the
-    /// `gmk_eval` throwaway-context path, so the reader must see `main_0`'s real
-    /// run state, not the throwaway.
+    /// Lives on `ctx.options`, reached via `with_options`.
     pub snapped_deps: ::core::cell::Cell<bool>,
     /// `true` only while `main_0` is remaking the makefiles themselves (the
     /// makefile-remaking `update_goal_chain` pass), so the remake logic can
     /// treat makefile targets specially. Toggled around that pass in `main_0`
     /// and read across the update walk (`update_goal_chain` / `update_file_1` /
     /// `remake_file`, via [`opt_rebuilding_makefiles`]) and by `reset_makeflags`.
-    /// Lives on `Options`, reached through the `with_options`/`OPTIONS_PTR`
-    /// channel, rather than `ExecContext`: `reset_makeflags` is reached from
-    /// `set_special_var` on the `gmk_eval` throwaway-context path, so the reader
-    /// must see `main_0`'s real run state, not the throwaway.
+    /// Lives on `ctx.options`, reached via `with_options`.
     pub rebuilding_makefiles: ::core::cell::Cell<bool>,
     /// The special-target feature latches, each set once when make sees the
     /// matching `.`-target and read widely thereafter — the former
     /// `POSIX_PEDANTIC` / `SECOND_EXPANSION` / `ONE_SHELL` / `NOT_PARALLEL`
-    /// global atomics. Reached through the `with_options`/`OPTIONS_PTR` channel
-    /// (via `posix_pedantic()` / `second_expansion()` / `one_shell()` /
-    /// `not_parallel()` and their `set_*` setters), because the setters in
-    /// `check_specials` / `snap_deps` are reachable from the `gmk_eval`
-    /// throwaway-context path and must reach `main_0`'s real run state.
+    /// global atomics. Reached via `ctx.options` (through `posix_pedantic()` /
+    /// `second_expansion()` / `one_shell()` / `not_parallel()` and their
+    /// `set_*` setters).
     pub posix_pedantic: ::core::cell::Cell<bool>,
     pub second_expansion: ::core::cell::Cell<bool>,
     pub one_shell: ::core::cell::Cell<bool>,
@@ -633,12 +621,8 @@ pub struct Options {
     /// One-shot latch set once make has logged the working-directory "Entering
     /// directory" trace (so the matching "Leaving directory" is emitted and
     /// `MAKE_RESTARTS` is prefixed with `-`) — the former `STDIO_TRACED` global
-    /// atomic. Reached through the `with_options`/`OPTIONS_PTR` channel (via
-    /// `crate::output::stdio_traced()` / `set_stdio_traced()`): the writer in
-    /// `output_start` runs on the shared output path, reachable from the
-    /// `gmk_eval` throwaway-context path (a plugin-eval'd `$(shell)`/`$(info)`
-    /// flushes output), so both ends must resolve to `main_0`'s real run state,
-    /// not the throwaway.
+    /// atomic. Reached via `ctx.options` (through `crate::output::stdio_traced()` /
+    /// `set_stdio_traced()`).
     pub stdio_traced: ::core::cell::Cell<bool>,
     /// The command-line goal targets, in order — the former `static mut goals`
     /// (itself the pointer-free replacement for the c2rust `*mut GoalDep
@@ -914,49 +898,18 @@ fn opt_get_str(options: &Options, c: i32) -> Option<::std::ffi::CString> {
     }
 }
 
-thread_local! {
-    /// Borrow channel to the `Options` owned as a local in `main_0`. This is a
-    /// *pointer*, not the option data: the values still live in `main_0`'s
-    /// `let options`. Set for the dynamic extent of `main_0`.
-    ///
-    /// Phase A disposition (tracking issue #431/#530), corrected: this is
-    /// NOT a C-ABI seam. Every one of `with_options`'s ~90 call sites already
-    /// has a `&ExecContext` in scope (including `reset_makeflags`'s own
-    /// caller chain — `set_special_var`/`do_variable_definition` both take
-    /// `ctx` as a plain Rust parameter, no callback involved). This
-    /// thread-local exists only because `Options` isn't reachable through
-    /// `ExecContext` yet, not because of any structural constraint —
-    /// unlike `CTX_PTR` below, which genuinely bridges a C callback
-    /// (`glob(3)`'s `gl_opendir`). Tracked for removal: fold `Options` into
-    /// `ExecContext`, change `with_options` to take `ctx`, delete this.
-    static OPTIONS_PTR: ::core::cell::Cell<*const Options> =
-        const { ::core::cell::Cell::new(::core::ptr::null()) };
-}
-
-/// Borrow the installed `main_0` `Options`. Only valid while `main_0` is on the
-/// stack (its referent outlives every makefile-time callback).
-unsafe fn installed_options<'a>() -> &'a Options {
-    let p = OPTIONS_PTR.with(|c| c.get());
-    debug_assert!(
-        !p.is_null(),
-        "installed_options called with no Options on the stack"
-    );
-    &*p
-}
-
-/// Run `f` with a borrow of `main_0`'s single owned `Options`, reached through
-/// the `OPTIONS_PTR` borrow channel. `OPTIONS_PTR` is installed at the very
-/// start of `main_0`, before any code that could read options runs, and its
-/// referent outlives every makefile-time/build-time callback. See
-/// `OPTIONS_PTR`'s doc comment: this channel is slated for removal, not a
-/// permanent seam — every caller already has `ctx` in scope.
-pub fn with_options<R>(f: impl FnOnce(&Options) -> R) -> R {
-    f(unsafe { installed_options() })
+/// Run `f` with a borrow of `ctx`'s option/flag state (`ctx.options`). Used
+/// to keep `with_options(ctx, |o| ...)` calls reading the same shape they
+/// did through the former `OPTIONS_PTR` thread-local, now that `Options`
+/// lives directly on `ExecContext` instead of behind a global borrow
+/// channel — every caller already had `ctx` in scope (see #532).
+pub fn with_options<R>(ctx: &crate::execctx::ExecContext, f: impl FnOnce(&Options) -> R) -> R {
+    f(&ctx.options)
 }
 
 thread_local! {
-    /// Borrow channel to the `ExecContext` owned as a local in `main_0`, mirroring
-    /// [`OPTIONS_PTR`]. It exists solely so the glob `gl_opendir` callback
+    /// Borrow channel to the `ExecContext` owned as a local in `main_0`. It
+    /// exists solely so the glob `gl_opendir` callback
     /// (`dir::open_dirstream`), which is invoked through C-ABI glob machinery and
     /// cannot take an `&ExecContext`, can reach the per-run directory cache that
     /// now lives on the context. A *pointer*, not the data: the `ExecContext`
@@ -1014,140 +967,133 @@ pub fn try_with_exec_context<R>(f: impl FnOnce(&crate::execctx::ExecContext) -> 
 
 /// Test-only: install a leaked default `ExecContext` on the current thread's
 /// `CTX_PTR` borrow channel so the glob callback path can run inside
-/// `#[cfg(test)]` unit tests below `main_0`. The context is leaked so the
-/// pointer stays valid for the thread's lifetime; test builds only.
+/// `#[cfg(test)]` unit tests below `main_0`, and return a reference to it for
+/// tests that also need an `&ExecContext` to pass directly (e.g. to
+/// `with_options`). The context is leaked so the pointer stays valid for the
+/// thread's lifetime; test builds only. Idempotent: a second call on the same
+/// thread returns the already-installed context rather than leaking another.
 #[cfg(test)]
-pub fn install_default_exec_context_for_test() {
+pub fn install_default_exec_context_for_test() -> &'static crate::execctx::ExecContext {
     CTX_PTR.with(|p| {
         if p.get().is_null() {
             let leaked: &'static crate::execctx::ExecContext =
                 Box::leak(Box::new(crate::execctx::ExecContext::default()));
             p.set(leaked as *const crate::execctx::ExecContext);
+            leaked
+        } else {
+            // SAFETY: a non-null `CTX_PTR` on this thread always points at a
+            // leaked `'static` context installed by this same function (test
+            // builds only ever install through here).
+            unsafe { &*p.get() }
         }
-    });
+    })
 }
 
-/// Test-only: install a default `Options` on the current thread's
-/// `OPTIONS_PTR` borrow channel so option readers
-/// (`opt_check_symlink`, etc.) can run inside `#[cfg(test)]` unit tests
-/// that exercise code below `main_0`. The `Options` is leaked so the
-/// installed pointer stays valid for the thread's lifetime; this only
-/// affects test binaries and never changes shipping behavior.
-#[cfg(test)]
-pub fn install_default_options_for_test() {
-    OPTIONS_PTR.with(|p| {
-        if p.get().is_null() {
-            let leaked: &'static Options = Box::leak(Box::new(Options::new()));
-            p.set(leaked as *const Options);
-        }
-    });
+pub fn env_overrides(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.env_overrides.get())
 }
-
-pub fn env_overrides() -> bool {
-    with_options(|o| o.env_overrides.get())
+pub fn opt_question(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.question.get())
 }
-pub fn opt_question() -> bool {
-    with_options(|o| o.question.get())
+pub fn opt_touch(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.touch.get())
 }
-pub fn opt_touch() -> bool {
-    with_options(|o| o.touch.get())
-}
-pub fn opt_just_print() -> bool {
-    with_options(|o| o.just_print.get())
+pub fn opt_just_print(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.just_print.get())
 }
 /// Effective recipe-echo suppression (the former `run_silent` global), read
 /// through the `with_options` borrow channel by the deep recipe-echo /
 /// `touch` / `rm` paths in `job`/`remake`/`file` that carry no `&Options`.
-pub fn opt_run_silent() -> bool {
-    with_options(|o| o.run_silent.get())
+pub fn opt_run_silent(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.run_silent.get())
 }
 /// `Options::stdin_offset` read through the `with_options` borrow channel by
 /// `temp_stdin_unlink`, which runs from the deep `die` path with no `&Options`.
-pub fn opt_stdin_offset() -> i32 {
-    with_options(|o| o.stdin_offset.get())
+pub fn opt_stdin_offset(ctx: &crate::execctx::ExecContext) -> i32 {
+    with_options(ctx, |o| o.stdin_offset.get())
 }
 /// Export-everything latch (the former `export_all_variables` global), read
 /// through the `with_options` borrow channel by `should_export`, which carries
 /// no `&Options`.
-pub fn opt_export_all_variables() -> bool {
-    with_options(|o| o.export_all_variables.get())
+pub fn opt_export_all_variables(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.export_all_variables.get())
 }
 /// The recipe-introducing prefix character (the former `cmd_prefix` global),
 /// read through the `with_options` borrow channel by the makefile reader and
 /// the database printers, which carry no `&Options`.
-pub fn opt_cmd_prefix() -> ::core::ffi::c_char {
-    with_options(|o| o.cmd_prefix.get())
+pub fn opt_cmd_prefix(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_char {
+    with_options(ctx, |o| o.cmd_prefix.get())
 }
 /// Resolved output-sync mode (the former `output_sync` global), read through
 /// the `with_options` borrow channel by the `syncing` computation and the
 /// `output`/`job` dump paths, which carry no `&Options`.
-pub fn opt_output_sync() -> i32 {
-    with_options(|o| o.output_sync.get())
+pub fn opt_output_sync(ctx: &crate::execctx::ExecContext) -> i32 {
+    with_options(ctx, |o| o.output_sync.get())
 }
 /// Resolved parallel job-slot count (the former `job_slots` global), read
 /// through the `with_options` borrow channel by the job scheduler, which
 /// carries no `&Options`.
-pub fn opt_job_slots() -> ::core::ffi::c_uint {
-    with_options(|o| o.job_slots.get())
+pub fn opt_job_slots(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_uint {
+    with_options(ctx, |o| o.job_slots.get())
 }
 /// Monotonic command-generation counter (the former `command_count` global),
 /// read through the `with_options` borrow channel by the directory cache
 /// (`find_directory`) and the `update_goal_chain` loop, which carry no
 /// `&Options`.
-pub fn opt_command_count() -> ::core::ffi::c_ulong {
-    with_options(|o| o.command_count.get())
+pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_ulong {
+    with_options(ctx, |o| o.command_count.get())
 }
 /// Bump the command-generation counter, once per shell command run
 /// (`reap_children`, `$(shell)`, `$(file)`). Goes through the `with_options`
 /// channel so it always reaches `main_0`'s real `Options`, even on the
 /// `gmk_eval` throwaway-context path the `$(shell)`/`$(file)` writers take.
-pub fn bump_command_count() {
-    with_options(|o| o.command_count.set(o.command_count.get().wrapping_add(1)));
+pub fn bump_command_count(ctx: &crate::execctx::ExecContext) {
+    with_options(ctx, |o| o.command_count.set(o.command_count.get().wrapping_add(1)));
 }
 /// Whether `snap_deps` has run for this make (the former `file::SNAPPED_DEPS`
 /// global), read through the `with_options` channel by `record_files` — which
 /// is reachable from the `gmk_eval` throwaway-context path and so cannot rely
 /// on its `&ExecContext` being `main_0`'s real run context.
-pub fn opt_snapped_deps() -> bool {
-    with_options(|o| o.snapped_deps.get())
+pub fn opt_snapped_deps(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.snapped_deps.get())
 }
 /// Mark the dependency snapshot complete, once, at the end of `snap_deps`. Goes
 /// through the `with_options` channel so it always sets `main_0`'s real
 /// `Options`.
-pub fn mark_snapped_deps() {
-    with_options(|o| o.snapped_deps.set(true));
+pub fn mark_snapped_deps(ctx: &crate::execctx::ExecContext) {
+    with_options(ctx, |o| o.snapped_deps.set(true));
 }
 /// Whether `main_0` is currently remaking the makefiles themselves (the former
 /// `REBUILDING_MAKEFILES` global), read through the `with_options` channel by
 /// the update walk and by `reset_makeflags` — the latter reached from
 /// `set_special_var` on the `gmk_eval` throwaway path, so it must resolve to
 /// `main_0`'s real run state rather than a throwaway context.
-pub fn opt_rebuilding_makefiles() -> bool {
-    with_options(|o| o.rebuilding_makefiles.get())
+pub fn opt_rebuilding_makefiles(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.rebuilding_makefiles.get())
 }
-pub fn opt_ignore_errors() -> bool {
-    with_options(|o| o.ignore_errors.get())
+pub fn opt_ignore_errors(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.ignore_errors.get())
 }
-pub fn opt_keep_going() -> bool {
-    with_options(|o| o.keep_going.get())
+pub fn opt_keep_going(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.keep_going.get())
 }
-pub fn opt_check_symlink() -> bool {
-    with_options(|o| o.check_symlink.get())
+pub fn opt_check_symlink(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.check_symlink.get())
 }
-pub fn opt_no_builtin_rules() -> bool {
-    with_options(|o| o.no_builtin_rules.get())
+pub fn opt_no_builtin_rules(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.no_builtin_rules.get())
 }
-pub fn opt_print_data_base() -> bool {
-    with_options(|o| o.print_data_base.get())
+pub fn opt_print_data_base(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.print_data_base.get())
 }
-pub fn opt_print_version() -> bool {
-    with_options(|o| o.print_version.get())
+pub fn opt_print_version(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.print_version.get())
 }
-pub fn opt_jobserver_auth_present() -> bool {
-    with_options(|o| o.jobserver_auth.borrow().is_some())
+pub fn opt_jobserver_auth_present(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.jobserver_auth.borrow().is_some())
 }
-pub fn opt_max_load_average() -> f64 {
-    with_options(|o| o.max_load_average.get())
+pub fn opt_max_load_average(ctx: &crate::execctx::ExecContext) -> f64 {
+    with_options(ctx, |o| o.max_load_average.get())
 }
 
 /// `should_print_dir` for callers outside the `Options` borrow chain
@@ -1156,20 +1102,20 @@ pub fn opt_max_load_average() -> f64 {
 /// here once dropped the `-C` clause and silently lost the top-level
 /// `Entering directory` lines (#456), so keep this a pure delegation.
 pub fn should_print_dir_mirror(ctx: &crate::execctx::ExecContext) -> i32 {
-    with_options(|o| should_print_dir(ctx, o) as i32)
+    with_options(ctx, |o| should_print_dir(ctx, o) as i32)
 }
 
-pub fn set_touch_mirror(v: bool) {
-    with_options(|o| o.touch.set(v));
+pub fn set_touch_mirror(ctx: &crate::execctx::ExecContext, v: bool) {
+    with_options(ctx, |o| o.touch.set(v));
 }
-pub fn set_question_mirror(v: bool) {
-    with_options(|o| o.question.set(v));
+pub fn set_question_mirror(ctx: &crate::execctx::ExecContext, v: bool) {
+    with_options(ctx, |o| o.question.set(v));
 }
-pub fn set_just_print_mirror(v: bool) {
-    with_options(|o| o.just_print.set(v));
+pub fn set_just_print_mirror(ctx: &crate::execctx::ExecContext, v: bool) {
+    with_options(ctx, |o| o.just_print.set(v));
 }
-pub fn set_ignore_errors_mirror(v: bool) {
-    with_options(|o| o.ignore_errors.set(v));
+pub fn set_ignore_errors_mirror(ctx: &crate::execctx::ExecContext, v: bool) {
+    with_options(ctx, |o| o.ignore_errors.set(v));
 }
 /// Strcache'd name of the temporary file holding the makefile read from stdin
 /// (or null), paired with `Options::stdin_offset`. Lets `temp_stdin_unlink`
@@ -1316,44 +1262,43 @@ fn goaldep_for_file(file: crate::file::FileId) -> crate::dep::GoalDepNode {
 }
 // The four special-target feature latches — `.POSIX`, `.SECONDEXPANSION`,
 // `.ONESHELL`, `.NOTPARALLEL` — each set once when make sees the corresponding
-// special target and read widely thereafter. They live on the owned per-run
-// `Options` (the former `POSIX_PEDANTIC` / `SECOND_EXPANSION` / `ONE_SHELL` /
-// `NOT_PARALLEL` global atomics), reached through the `with_options`/`OPTIONS_PTR`
-// channel: the setters run in `check_specials` / `snap_deps`, which are reachable
-// from the `gmk_eval` throwaway-context path, so both ends resolve to `main_0`'s
+// special target and read widely thereafter. They live on `ctx.options` (the
+// former `POSIX_PEDANTIC` / `SECOND_EXPANSION` / `ONE_SHELL` / `NOT_PARALLEL`
+// global atomics), reached through `with_options`: the setters run in
+// `check_specials` / `snap_deps`, both resolving to `main_0`'s
 // real run state, not a throwaway.
 
 /// Whether `.POSIX` pedantic mode is in effect.
-pub fn posix_pedantic() -> bool {
-    with_options(|o| o.posix_pedantic.get())
+pub fn posix_pedantic(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.posix_pedantic.get())
 }
 /// Record that the `.POSIX` special target has been seen.
-pub fn set_posix_pedantic() {
-    with_options(|o| o.posix_pedantic.set(true));
+pub fn set_posix_pedantic(ctx: &crate::execctx::ExecContext) {
+    with_options(ctx, |o| o.posix_pedantic.set(true));
 }
 /// Whether `.SECONDEXPANSION` is in effect.
-pub fn second_expansion() -> bool {
-    with_options(|o| o.second_expansion.get())
+pub fn second_expansion(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.second_expansion.get())
 }
 /// Record that the `.SECONDEXPANSION` special target has been seen.
-pub fn set_second_expansion() {
-    with_options(|o| o.second_expansion.set(true));
+pub fn set_second_expansion(ctx: &crate::execctx::ExecContext) {
+    with_options(ctx, |o| o.second_expansion.set(true));
 }
 /// Whether `.ONESHELL` is in effect (each recipe runs in a single shell).
-pub fn one_shell() -> bool {
-    with_options(|o| o.one_shell.get())
+pub fn one_shell(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.one_shell.get())
 }
 /// Record that the `.ONESHELL` special target has been seen.
-pub fn set_one_shell() {
-    with_options(|o| o.one_shell.set(true));
+pub fn set_one_shell(ctx: &crate::execctx::ExecContext) {
+    with_options(ctx, |o| o.one_shell.set(true));
 }
 /// Whether make is running non-parallel (one job at a time).
-pub fn not_parallel() -> bool {
-    with_options(|o| o.not_parallel.get())
+pub fn not_parallel(ctx: &crate::execctx::ExecContext) -> bool {
+    with_options(ctx, |o| o.not_parallel.get())
 }
 /// Record that the `.NOTPARALLEL` special target has been seen.
-pub fn set_not_parallel() {
-    with_options(|o| o.not_parallel.set(true));
+pub fn set_not_parallel(ctx: &crate::execctx::ExecContext) {
+    with_options(ctx, |o| o.not_parallel.set(true));
 }
 /// Per-byte classification bitmap (`MAP_*` flags), computed once at startup by
 /// [`initialize_stopchar_map`]. Held behind a `OnceLock` so it is a safe
@@ -1858,9 +1803,9 @@ pub unsafe fn reset_jobserver(options: &Options) {
 ///
 /// Calls `jobserver_clear`, which closes and resets the live jobserver fds;
 /// must run single-threaded.
-pub unsafe fn reset_jobserver_mirror() {
+pub unsafe fn reset_jobserver_mirror(ctx: &crate::execctx::ExecContext) {
     jobserver_clear();
-    with_options(|o| *o.jobserver_auth.borrow_mut() = None);
+    with_options(ctx, |o| *o.jobserver_auth.borrow_mut() = None);
 }
 /// chdir(2) via `std::env::set_current_dir`: 0/-1 like the C call, errno set
 /// on failure for the callers' perror/pfatal paths.
@@ -1912,9 +1857,9 @@ unsafe fn getcwd_into(buf: *mut ::core::ffi::c_char, size: usize) -> bool {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
-    if opt_stdin_offset() >= 0 && !ctx.temp_stdin_name.0.get().is_null() {
+    if opt_stdin_offset(ctx) >= 0 && !ctx.temp_stdin_name.0.get().is_null() {
         let nm: *const ::core::ffi::c_char = ctx.temp_stdin_name.0.get();
-        with_options(|o| o.stdin_offset.set(-1));
+        with_options(ctx, |o| o.stdin_offset.set(-1));
         let r = crate::misc::unlink_c(nm);
         if r < 0 && *__errno_location() != ENOENT && !handling_fatal_signal(ctx) {
             perror_with_name(
@@ -1938,9 +1883,6 @@ unsafe fn main_0(
     let mut restarts: ::core::ffi::c_uint = 0;
     let mut syncing: ::core::ffi::c_uint;
     let argv_slots: Option<u32>;
-    // Owned option/flag state for this make invocation, borrowed (`&options`)
-    // through the call graph. Replaces the former `static mut FLAGS` global.
-    let options = Options::new();
     // Owned execution context for this make invocation, threaded (`&ctx`) down
     // the call graph in place of the former process-global makelevel. It
     // starts at level 0 (matching the old startup default) and is rebuilt from
@@ -1949,10 +1891,15 @@ unsafe fn main_0(
         makelevel: 0,
         ..Default::default()
     });
-    // Install a borrow channel to `options` for the single deep makefile-time
-    // callback (`set_special_var` -> `reset_makeflags`) that cannot receive an
-    // `&Options` parameter. `options` itself remains the owner.
-    OPTIONS_PTR.with(|p| p.set(&options as *const Options));
+    // Owned option/flag state for this make invocation now lives on `ctx`
+    // directly (`ctx.options`) rather than a separate local reached through
+    // the `OPTIONS_PTR` thread-local — every `&ExecContext` site already
+    // carries it for free. `options` below is a plain reference alias so the
+    // rest of `main_0`'s body (which predates this change) keeps reading/
+    // writing through the familiar `options.field` shape unchanged; it is
+    // re-derived after the build-phase context rebuild further down, since
+    // that rebuild replaces `ctx` wholesale.
+    let options = &ctx.options;
     // Borrow channel to `ctx` for the glob `gl_opendir` callback, which reaches
     // the per-run directory cache held on the context. `ctx`'s stack slot is
     // stable across the build-phase rebuild below, so this install stays valid.
@@ -2119,7 +2066,7 @@ unsafe fn main_0(
                 ) == 0
             {
                 if *ep as i32 == '-' as i32 {
-                    set_stdio_traced(true);
+                    set_stdio_traced(&ctx, true);
                     ep = ep.offset(1_i32 as isize);
                 }
                 restarts = make_toui(::core::ffi::CStr::from_ptr(ep)).unwrap_or(0);
@@ -2163,7 +2110,7 @@ unsafe fn main_0(
     {
         decode_env_switches(
             &ctx,
-            &options,
+            options,
             b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             o_command,
@@ -2181,14 +2128,14 @@ unsafe fn main_0(
     }
     decode_env_switches(
         &ctx,
-        &options,
+        options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         o_command,
     );
     set_make_sync_syncout(
         &ctx,
-        (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET) as i32
+        (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32
             as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
@@ -2207,13 +2154,13 @@ unsafe fn main_0(
             })
             .collect()
     };
-    decode_switches(&ctx, &options, &cli_tokens, o_command);
+    decode_switches(&ctx, options, &cli_tokens, o_command);
     argv_slots = options.arg_job_slots.get();
     if options.arg_job_slots.get().is_none() {
         options.arg_job_slots.set(env_slots);
     }
     if options.print_usage.get() {
-        print_usage(&ctx, &options, 0);
+        print_usage(&ctx, options, 0);
         die_cleanup(&ctx, MAKE_SUCCESS);
         return Ok(BuildReport);
     }
@@ -2282,7 +2229,7 @@ unsafe fn main_0(
         ));
         (*fresh40).set_export(v_export as variable_export);
     }
-    syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
+    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
@@ -2394,7 +2341,12 @@ unsafe fn main_0(
     // invariant the former `static mut variable_buffer` had (and that
     // `read_dirstream_buf` preserves the same way).
     let carried_variable_buffer = ::core::mem::take(&mut ctx.variable_buffer);
+    // `options` holds real accumulated run state (decoded command-line
+    // flags, `goals`, `switches`) that must survive this rebuild rather than
+    // reset to defaults; carry it forward like every other field above.
+    let carried_options = ::core::mem::take(&mut ctx.options);
     ctx = crate::execctx::ExecContext {
+        options: carried_options,
         directories: carried_directories,
         directory_contents: carried_directory_contents,
         read_dirstream_buf: carried_read_dirstream_buf,
@@ -2429,6 +2381,10 @@ unsafe fn main_0(
     // is unchanged — so post-rebuild glob callbacks must read a fresh
     // provenance pointing at the new context.
     CTX_PTR.with(|p| p.set(&ctx as *const crate::execctx::ExecContext));
+    // Re-derive `options` too: the old `&ctx.options` borrow from before the
+    // rebuild is stale (a fresh `ctx` was assigned above), but the data it
+    // points at is the same `carried_options` value moved forward into it.
+    let options = &ctx.options;
     ctx.always_make_flag
         .set(options.always_make.get() && restarts == 0);
     if options.no_builtin_variables.get() {
@@ -2535,7 +2491,7 @@ unsafe fn main_0(
             );
         }
         if do_reset {
-            reset_jobserver(&options);
+            reset_jobserver(options);
         }
     }
     define_variable_in_set(
@@ -2730,11 +2686,11 @@ unsafe fn main_0(
         SIGUSR1,
         Some(debug_signal_handler as unsafe extern "C" fn(i32) -> ()),
     );
-    set_default_suffixes(&ctx, &options);
+    set_default_suffixes(&ctx, options);
     define_automatic_variables(&ctx);
-    let fresh46 = &mut (*define_makeflags(&ctx, &options, 0));
+    let fresh46 = &mut (*define_makeflags(&ctx, options, 0));
     (*fresh46).set_export(v_export as variable_export);
-    define_default_variables(&ctx, &options);
+    define_default_variables(&ctx, options);
     enter_file(&ctx, b".DEFAULT");
     ctx.default_goal_var.0.set(define_variable_in_set(
         &ctx,
@@ -2835,7 +2791,7 @@ unsafe fn main_0(
     options.arg_job_slots.set(None);
     decode_env_switches(
         &ctx,
-        &options,
+        options,
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         o_env,
@@ -2852,7 +2808,7 @@ unsafe fn main_0(
     );
     decode_env_switches(
         &ctx,
-        &options,
+        options,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         o_env,
@@ -2874,9 +2830,9 @@ unsafe fn main_0(
                 )],
             );
         }
-        reset_jobserver(&options);
+        reset_jobserver(options);
     }
-    syncing = (opt_output_sync() == OUTPUT_SYNC_LINE || opt_output_sync() == OUTPUT_SYNC_TARGET)
+    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
@@ -2887,7 +2843,7 @@ unsafe fn main_0(
     } else {
         ::core::ptr::null_mut::<output>()
     });
-    disable_builtins(&ctx, &options);
+    disable_builtins(&ctx, options);
     options
         .job_slots
         .set(if options.jobserver_auth.borrow().is_some() {
@@ -2968,11 +2924,11 @@ unsafe fn main_0(
         let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
         crate::output::trace_parts(&[b"Using output-sync mutex ", mtx_c.to_bytes(), b"\n"]);
     }
-    define_makeflags(&ctx, &options, 0);
+    define_makeflags(&ctx, options, 0);
     snap_deps(&ctx);
-    install_default_suffix_rules(&ctx, &options);
+    install_default_suffix_rules(&ctx, options);
     convert_to_pattern(&ctx);
-    install_default_implicit_rules(&ctx, &options);
+    install_default_implicit_rules(&ctx, options);
     snap_implicit_rules(&ctx);
     build_vpath_lists(&ctx);
     if !options.old_files.borrow().is_empty() {
@@ -3081,7 +3037,7 @@ unsafe fn main_0(
             }
         }
         read_files = kept;
-        define_makeflags(&ctx, &options, 1);
+        define_makeflags(&ctx, options, 1);
         let orig_db_level: i32 = db_level(&ctx);
         if 0x100_i32 & db_level(&ctx) == 0 {
             set_db_level(&ctx, DB_NONE);
@@ -3495,7 +3451,7 @@ unsafe fn main_0(
                     sprintf(
                         *p_4,
                         b"MAKE_RESTARTS=%s%u\0" as *const u8 as *const ::core::ffi::c_char,
-                        if stdio_traced() {
+                        if stdio_traced(&ctx) {
                             b"-\0" as *const u8 as *const ::core::ffi::c_char
                         } else {
                             b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -3516,7 +3472,7 @@ unsafe fn main_0(
                 sprintf(
                     b,
                     b"MAKE_RESTARTS=%s%u\0" as *const u8 as *const ::core::ffi::c_char,
-                    if stdio_traced() {
+                    if stdio_traced(&ctx) {
                         b"-\0" as *const u8 as *const ::core::ffi::c_char
                     } else {
                         b"\0" as *const u8 as *const ::core::ffi::c_char
@@ -3544,7 +3500,7 @@ unsafe fn main_0(
             return Err(BuildError::Failure);
         }
     }
-    define_makeflags(&ctx, &options, 0);
+    define_makeflags(&ctx, options, 0);
     ctx.always_make_flag.set(options.always_make.get());
     if restarts != 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
@@ -3770,10 +3726,9 @@ unsafe fn handle_non_switch_argument(
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 /// `reset_makeflags` for the makefile-time `MAKEFLAGS` reassignment callback
-/// (`set_special_var`), which is reached through `do_variable_definition` and
-/// cannot thread an `&Options`. Uses the `main_0`-installed borrow.
+/// (`set_special_var`), which is reached through `do_variable_definition`.
 pub unsafe fn reset_makeflags_special(ctx: &crate::execctx::ExecContext, origin: variable_origin) {
-    reset_makeflags(ctx, installed_options(), origin);
+    reset_makeflags(ctx, &ctx.options, origin);
 }
 
 pub unsafe fn reset_makeflags(
@@ -3801,7 +3756,7 @@ pub unsafe fn reset_makeflags(
         construct_include_path(ctx, &inc_paths);
     }
     disable_builtins(ctx, options);
-    define_makeflags(ctx, options, opt_rebuilding_makefiles() as i32);
+    define_makeflags(ctx, options, opt_rebuilding_makefiles(ctx) as i32);
 }
 /// Switch chars whose `command_switch.type_0` is `flag`/`flag_off` and which
 /// share their underlying `Options` storage with a counterpart char (the
@@ -4929,7 +4884,7 @@ pub unsafe fn define_makeflags(
             (::core::mem::size_of::<[::core::ffi::c_char; 21]>() as size_t).wrapping_sub(1),
         );
     }
-    let r: *const ::core::ffi::c_char = if posix_pedantic() {
+    let r: *const ::core::ffi::c_char = if posix_pedantic(ctx) {
         &raw const posixref as *const ::core::ffi::c_char
     } else {
         &raw const ref_0 as *const ::core::ffi::c_char
@@ -4996,7 +4951,7 @@ pub fn should_print_dir(ctx: &crate::execctx::ExecContext, options: &Options) ->
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn print_version(ctx: &crate::execctx::ExecContext) {
-    let precede: &[u8] = if opt_print_data_base() { b"# " } else { b"" };
+    let precede: &[u8] = if opt_print_data_base(ctx) { b"# " } else { b"" };
     if ctx.printed_version.0.swap(true, Ordering::Relaxed) {
         return;
     }
@@ -5077,7 +5032,7 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
             }
         }
     }
-    let master_slots = master_job_slots();
+    let master_slots = master_job_slots(ctx);
     if master_slots != 0 {
         let tokens: ::core::ffi::c_uint =
             (1 as ::core::ffi::c_uint).wrapping_add(jobserver_acquire_all(ctx));
@@ -5095,7 +5050,7 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
             );
         }
     }
-    reset_jobserver_mirror();
+    reset_jobserver_mirror(ctx);
 }
 /// # Safety
 ///
@@ -5129,7 +5084,7 @@ pub fn die_cleanup(ctx: &crate::execctx::ExecContext, status: i32) {
 unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
     {
         let err: i32;
-        if opt_print_version() {
+        if opt_print_version(ctx) {
             print_version(ctx);
         }
         temp_stdin_unlink(ctx);
@@ -5139,10 +5094,10 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
         }
         ctx.remote_backend.0.cleanup();
         remove_intermediates(ctx, 0);
-        if opt_print_data_base() {
+        if opt_print_data_base(ctx) {
             print_data_base(ctx);
         }
-        if with_options(|o| o.verify.get()) {
+        if with_options(ctx, |o| o.verify.get()) {
             verify_file_data_base(ctx);
         }
         unload_all();
@@ -5993,7 +5948,7 @@ mod default_load_average_tests {
 
 #[cfg(test)]
 mod job_slots_tests {
-    use super::{install_default_options_for_test, opt_job_slots, with_options, Options};
+    use super::{install_default_exec_context_for_test, opt_job_slots, with_options, Options};
 
     /// `Options::job_slots` (the resolved `-j` width, the former `job_slots`
     /// global) defaults to 0 ("driven by an inherited jobserver / unlimited")
@@ -6011,22 +5966,22 @@ mod job_slots_tests {
     /// `OPTIONS_PTR` borrow channel the job scheduler reads.
     #[test]
     fn opt_job_slots_reads_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.job_slots.set(0));
-        assert_eq!(opt_job_slots(), 0);
+        with_options(ctx, |o| o.job_slots.set(0));
+        assert_eq!(opt_job_slots(ctx), 0);
 
-        with_options(|o| o.job_slots.set(8));
-        assert_eq!(opt_job_slots(), 8);
+        with_options(ctx, |o| o.job_slots.set(8));
+        assert_eq!(opt_job_slots(ctx), 8);
 
-        with_options(|o| o.job_slots.set(0));
+        with_options(ctx, |o| o.job_slots.set(0));
     }
 }
 
 #[cfg(test)]
 mod output_sync_tests {
     use super::{
-        classify_output_sync, install_default_options_for_test, opt_output_sync, with_options,
+        classify_output_sync, install_default_exec_context_for_test, opt_output_sync, with_options,
         Options, OUTPUT_SYNC_LINE, OUTPUT_SYNC_NONE, OUTPUT_SYNC_RECURSE, OUTPUT_SYNC_TARGET,
     };
 
@@ -6062,22 +6017,22 @@ mod output_sync_tests {
     /// the `OPTIONS_PTR` borrow channel the `syncing` / dump readers use.
     #[test]
     fn opt_output_sync_reads_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
-        assert_eq!(opt_output_sync(), OUTPUT_SYNC_NONE);
+        with_options(ctx, |o| o.output_sync.set(OUTPUT_SYNC_NONE));
+        assert_eq!(opt_output_sync(ctx), OUTPUT_SYNC_NONE);
 
-        with_options(|o| o.output_sync.set(OUTPUT_SYNC_LINE));
-        assert_eq!(opt_output_sync(), OUTPUT_SYNC_LINE);
+        with_options(ctx, |o| o.output_sync.set(OUTPUT_SYNC_LINE));
+        assert_eq!(opt_output_sync(ctx), OUTPUT_SYNC_LINE);
 
-        with_options(|o| o.output_sync.set(OUTPUT_SYNC_NONE));
+        with_options(ctx, |o| o.output_sync.set(OUTPUT_SYNC_NONE));
     }
 }
 
 #[cfg(test)]
 mod special_target_latches_tests {
     use super::{
-        install_default_options_for_test, not_parallel, one_shell, posix_pedantic,
+        install_default_exec_context_for_test, not_parallel, one_shell, posix_pedantic,
         second_expansion, set_not_parallel, set_one_shell, set_posix_pedantic,
         set_second_expansion, with_options, Options,
     };
@@ -6101,25 +6056,25 @@ mod special_target_latches_tests {
     /// stays isolated under the parallel test harness.
     #[test]
     fn set_and_read_each_latch_through_channel() {
-        install_default_options_for_test();
-        with_options(|o| {
+        let ctx = install_default_exec_context_for_test();
+        with_options(ctx, |o| {
             o.posix_pedantic.set(false);
             o.second_expansion.set(false);
             o.one_shell.set(false);
             o.not_parallel.set(false);
         });
-        assert!(!posix_pedantic() && !second_expansion() && !one_shell() && !not_parallel());
+        assert!(!posix_pedantic(ctx) && !second_expansion(ctx) && !one_shell(ctx) && !not_parallel(ctx));
 
-        set_posix_pedantic();
-        set_second_expansion();
-        set_one_shell();
-        set_not_parallel();
-        assert!(posix_pedantic(), "enabled by .POSIX");
-        assert!(second_expansion(), "enabled by .SECONDEXPANSION");
-        assert!(one_shell(), "enabled by .ONESHELL");
-        assert!(not_parallel(), "enabled by .NOTPARALLEL");
+        set_posix_pedantic(ctx);
+        set_second_expansion(ctx);
+        set_one_shell(ctx);
+        set_not_parallel(ctx);
+        assert!(posix_pedantic(ctx), "enabled by .POSIX");
+        assert!(second_expansion(ctx), "enabled by .SECONDEXPANSION");
+        assert!(one_shell(ctx), "enabled by .ONESHELL");
+        assert!(not_parallel(ctx), "enabled by .NOTPARALLEL");
 
-        with_options(|o| {
+        with_options(ctx, |o| {
             o.posix_pedantic.set(false);
             o.second_expansion.set(false);
             o.one_shell.set(false);
@@ -6147,7 +6102,7 @@ mod verify_flag_tests {
 
 #[cfg(test)]
 mod run_silent_tests {
-    use super::{install_default_options_for_test, opt_run_silent, with_options, Options};
+    use super::{install_default_exec_context_for_test, opt_run_silent, with_options, Options};
 
     /// `Options::run_silent` carries the former `run_silent` global: false by
     /// default, true once `-s`/`.SILENT` sets it. Distinct storage from
@@ -6171,22 +6126,22 @@ mod run_silent_tests {
     /// the `OPTIONS_PTR` borrow channel the recipe-echo readers use.
     #[test]
     fn opt_run_silent_reads_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.run_silent.set(false));
-        assert!(!opt_run_silent(), "channel reads the cleared flag");
+        with_options(ctx, |o| o.run_silent.set(false));
+        assert!(!opt_run_silent(ctx), "channel reads the cleared flag");
 
-        with_options(|o| o.run_silent.set(true));
-        assert!(opt_run_silent(), "channel reads the set flag");
+        with_options(ctx, |o| o.run_silent.set(true));
+        assert!(opt_run_silent(ctx), "channel reads the set flag");
 
-        with_options(|o| o.run_silent.set(false));
+        with_options(ctx, |o| o.run_silent.set(false));
     }
 }
 
 #[cfg(test)]
 mod export_all_variables_tests {
     use super::{
-        install_default_options_for_test, opt_export_all_variables, with_options, Options,
+        install_default_exec_context_for_test, opt_export_all_variables, with_options, Options,
     };
 
     /// `Options::export_all_variables` carries the former
@@ -6208,24 +6163,24 @@ mod export_all_variables_tests {
     /// that `should_export` reads.
     #[test]
     fn opt_export_all_variables_reads_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.export_all_variables.set(false));
+        with_options(ctx, |o| o.export_all_variables.set(false));
         assert!(
-            !opt_export_all_variables(),
+            !opt_export_all_variables(ctx),
             "channel reads the cleared flag"
         );
 
-        with_options(|o| o.export_all_variables.set(true));
-        assert!(opt_export_all_variables(), "channel reads the set flag");
+        with_options(ctx, |o| o.export_all_variables.set(true));
+        assert!(opt_export_all_variables(ctx), "channel reads the set flag");
 
-        with_options(|o| o.export_all_variables.set(false));
+        with_options(ctx, |o| o.export_all_variables.set(false));
     }
 }
 
 #[cfg(test)]
 mod cmd_prefix_tests {
-    use super::{install_default_options_for_test, opt_cmd_prefix, with_options, Options};
+    use super::{install_default_exec_context_for_test, opt_cmd_prefix, with_options, Options};
 
     /// `Options::cmd_prefix` defaults to a tab (the recipe prefix), *not* the
     /// `Cell`/`Default` `\0`, and is changed by `.RECIPEPREFIX`.
@@ -6242,21 +6197,21 @@ mod cmd_prefix_tests {
     /// the `OPTIONS_PTR` borrow channel that the makefile reader uses.
     #[test]
     fn opt_cmd_prefix_reads_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.cmd_prefix.set(b'\t' as ::core::ffi::c_char));
-        assert_eq!(opt_cmd_prefix(), b'\t' as ::core::ffi::c_char);
+        with_options(ctx, |o| o.cmd_prefix.set(b'\t' as ::core::ffi::c_char));
+        assert_eq!(opt_cmd_prefix(ctx), b'\t' as ::core::ffi::c_char);
 
-        with_options(|o| o.cmd_prefix.set(b'>' as ::core::ffi::c_char));
-        assert_eq!(opt_cmd_prefix(), b'>' as ::core::ffi::c_char);
+        with_options(ctx, |o| o.cmd_prefix.set(b'>' as ::core::ffi::c_char));
+        assert_eq!(opt_cmd_prefix(ctx), b'>' as ::core::ffi::c_char);
 
-        with_options(|o| o.cmd_prefix.set(b'\t' as ::core::ffi::c_char));
+        with_options(ctx, |o| o.cmd_prefix.set(b'\t' as ::core::ffi::c_char));
     }
 }
 
 #[cfg(test)]
 mod stdio_traced_tests {
-    use super::{install_default_options_for_test, with_options, Options};
+    use super::{install_default_exec_context_for_test, with_options, Options};
     use crate::output::{set_stdio_traced, stdio_traced};
 
     /// The trace latch defaults to false on a fresh `Options` (the former
@@ -6273,15 +6228,15 @@ mod stdio_traced_tests {
     /// stays isolated under the parallel test harness.
     #[test]
     fn set_and_read_stdio_traced_through_channel() {
-        install_default_options_for_test();
-        with_options(|o| o.stdio_traced.set(false));
-        assert!(!stdio_traced(), "not yet traced");
+        let ctx = install_default_exec_context_for_test();
+        with_options(ctx, |o| o.stdio_traced.set(false));
+        assert!(!stdio_traced(ctx), "not yet traced");
 
-        set_stdio_traced(true);
-        assert!(stdio_traced(), "trace emitted through the channel");
+        set_stdio_traced(ctx, true);
+        assert!(stdio_traced(ctx), "trace emitted through the channel");
 
-        set_stdio_traced(false);
-        assert!(!stdio_traced(), "false through the channel");
+        set_stdio_traced(ctx, false);
+        assert!(!stdio_traced(ctx), "false through the channel");
     }
 }
 
@@ -6299,7 +6254,7 @@ mod default_job_slots_tests {
 
 #[cfg(test)]
 mod master_job_slots_tests {
-    use super::{install_default_options_for_test, master_job_slots, with_options, Options};
+    use super::{install_default_exec_context_for_test, master_job_slots, with_options, Options};
 
     /// The master jobserver slot count defaults to 0 on a fresh `Options` (the
     /// former `MASTER_JOB_SLOTS` global).
@@ -6313,21 +6268,21 @@ mod master_job_slots_tests {
     /// thread-local, so this stays isolated under the parallel test harness.
     #[test]
     fn master_job_slots_reads_through_channel() {
-        install_default_options_for_test();
-        with_options(|o| o.master_job_slots.set(0));
-        assert_eq!(master_job_slots(), 0, "channel reads the installed value");
+        let ctx = install_default_exec_context_for_test();
+        with_options(ctx, |o| o.master_job_slots.set(0));
+        assert_eq!(master_job_slots(ctx), 0, "channel reads the installed value");
 
-        with_options(|o| o.master_job_slots.set(4));
-        assert_eq!(master_job_slots(), 4, "count through the channel");
+        with_options(ctx, |o| o.master_job_slots.set(4));
+        assert_eq!(master_job_slots(ctx), 4, "count through the channel");
 
-        with_options(|o| o.master_job_slots.set(0));
+        with_options(ctx, |o| o.master_job_slots.set(0));
     }
 }
 
 #[cfg(test)]
 mod command_count_tests {
     use super::{
-        bump_command_count, install_default_options_for_test, opt_command_count, with_options,
+        bump_command_count, install_default_exec_context_for_test, opt_command_count, with_options,
         Options,
     };
 
@@ -6350,23 +6305,23 @@ mod command_count_tests {
     /// channel the dir-cache / job / function paths use.
     #[test]
     fn bump_and_read_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.command_count.set(1));
-        assert_eq!(opt_command_count(), 1, "channel reads the installed value");
+        with_options(ctx, |o| o.command_count.set(1));
+        assert_eq!(opt_command_count(ctx), 1, "channel reads the installed value");
 
-        bump_command_count();
-        bump_command_count();
-        assert_eq!(opt_command_count(), 3, "two bumps through the channel");
+        bump_command_count(ctx);
+        bump_command_count(ctx);
+        assert_eq!(opt_command_count(ctx), 3, "two bumps through the channel");
 
-        with_options(|o| o.command_count.set(1));
+        with_options(ctx, |o| o.command_count.set(1));
     }
 }
 
 #[cfg(test)]
 mod snapped_deps_tests {
     use super::{
-        install_default_options_for_test, mark_snapped_deps, opt_snapped_deps, with_options,
+        install_default_exec_context_for_test, mark_snapped_deps, opt_snapped_deps, with_options,
         Options,
     };
 
@@ -6386,22 +6341,22 @@ mod snapped_deps_tests {
     /// `record_files` uses — including on the `gmk_eval` throwaway-context path.
     #[test]
     fn mark_and_read_snapped_deps_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.snapped_deps.set(false));
-        assert!(!opt_snapped_deps(), "channel reads the installed value");
+        with_options(ctx, |o| o.snapped_deps.set(false));
+        assert!(!opt_snapped_deps(ctx), "channel reads the installed value");
 
-        mark_snapped_deps();
-        assert!(opt_snapped_deps(), "marked through the channel");
+        mark_snapped_deps(ctx);
+        assert!(opt_snapped_deps(ctx), "marked through the channel");
 
-        with_options(|o| o.snapped_deps.set(false));
+        with_options(ctx, |o| o.snapped_deps.set(false));
     }
 }
 
 #[cfg(test)]
 mod rebuilding_makefiles_tests {
     use super::{
-        install_default_options_for_test, opt_rebuilding_makefiles, with_options, Options,
+        install_default_exec_context_for_test, opt_rebuilding_makefiles, with_options, Options,
     };
 
     /// `Options::rebuilding_makefiles` carries the former `REBUILDING_MAKEFILES`
@@ -6421,18 +6376,18 @@ mod rebuilding_makefiles_tests {
     /// throwaway-context path.
     #[test]
     fn read_rebuilding_makefiles_through_channel() {
-        install_default_options_for_test();
+        let ctx = install_default_exec_context_for_test();
 
-        with_options(|o| o.rebuilding_makefiles.set(false));
+        with_options(ctx, |o| o.rebuilding_makefiles.set(false));
         assert!(
-            !opt_rebuilding_makefiles(),
+            !opt_rebuilding_makefiles(ctx),
             "channel reads the installed value"
         );
 
-        with_options(|o| o.rebuilding_makefiles.set(true));
-        assert!(opt_rebuilding_makefiles(), "true through the channel");
+        with_options(ctx, |o| o.rebuilding_makefiles.set(true));
+        assert!(opt_rebuilding_makefiles(ctx), "true through the channel");
 
-        with_options(|o| o.rebuilding_makefiles.set(false));
+        with_options(ctx, |o| o.rebuilding_makefiles.set(false));
     }
 }
 
@@ -6655,25 +6610,24 @@ mod should_print_dir_diff_tests {
 
 #[cfg(test)]
 mod clean_jobserver_tests {
-    use super::{clean_jobserver, install_default_options_for_test, with_options};
+    use super::{clean_jobserver, with_options};
 
     /// The quiet end-of-run path a normal build takes: no live jobserver, no
     /// held tokens, no master slot count. The auth mirror is still cleared
     /// unconditionally (`reset_jobserver_mirror`).
     #[test]
     fn clears_auth_when_no_jobserver_and_no_master_slots() {
-        install_default_options_for_test();
         // A fresh `ExecContext` starts with zero jobserver tokens, so unlike
         // the former global counter there is nothing to reset up front.
         let ctx = crate::execctx::ExecContext::default();
-        with_options(|o| {
+        with_options(&ctx, |o| {
             o.master_job_slots.set(0);
             *o.jobserver_auth.borrow_mut() = Some("fifo:/tmp/x".to_string());
         });
 
         unsafe { clean_jobserver(&ctx, 0) };
 
-        with_options(|o| assert!(o.jobserver_auth.borrow().is_none(), "mirror reset"));
+        with_options(&ctx, |o| assert!(o.jobserver_auth.borrow().is_none(), "mirror reset"));
     }
 
     /// The master-make token accounting: with `master_job_slots` set and no
@@ -6683,22 +6637,21 @@ mod clean_jobserver_tests {
     /// diagnostic — both paths must complete and still reset the mirror.
     #[test]
     fn master_slot_accounting_matches_and_mismatches() {
-        install_default_options_for_test();
         let ctx = crate::execctx::ExecContext::default();
 
         // 1 + acquire_all() == master slots: counts reconcile, no diagnostic.
-        with_options(|o| o.master_job_slots.set(1));
+        with_options(&ctx, |o| o.master_job_slots.set(1));
         unsafe { clean_jobserver(&ctx, 0) };
 
         // 1 + 0 != 2: the mismatch diagnostic runs (prints INTERNAL to
         // stderr) and the cleanup still completes.
-        with_options(|o| {
+        with_options(&ctx, |o| {
             o.master_job_slots.set(2);
             *o.jobserver_auth.borrow_mut() = Some("fifo:/tmp/x".to_string());
         });
         unsafe { clean_jobserver(&ctx, 0) };
 
-        with_options(|o| {
+        with_options(&ctx, |o| {
             assert!(
                 o.jobserver_auth.borrow().is_none(),
                 "mirror reset after mismatch"
@@ -6711,7 +6664,7 @@ mod clean_jobserver_tests {
 #[cfg(test)]
 mod jobserver_and_stdin_cleanup_tests {
     use super::{
-        install_default_options_for_test, reset_jobserver, temp_stdin_unlink, with_options, Options,
+        reset_jobserver, temp_stdin_unlink, with_options, Options,
     };
 
     /// `reset_jobserver` clears the auth field and tears down the (absent)
@@ -6730,13 +6683,12 @@ mod jobserver_and_stdin_cleanup_tests {
     /// also confirms the no-op guard when no temp stdin is registered.
     #[test]
     fn temp_stdin_unlink_removes_file_and_noops() {
-        // `temp_stdin_unlink` reads/clears `stdin_offset` through the
-        // `with_options` channel, so install an `Options` for this thread.
-        install_default_options_for_test();
+        // `temp_stdin_unlink` reads/clears `stdin_offset` through
+        // `with_options`, which now reads `ctx.options` directly.
         // No temp stdin registered (defaults): must be a harmless no-op.
         let ctx = crate::execctx::ExecContext::default();
         unsafe {
-            with_options(|o| o.stdin_offset.set(-1));
+            with_options(&ctx, |o| o.stdin_offset.set(-1));
             ctx.temp_stdin_name.0.set(::core::ptr::null());
             temp_stdin_unlink(&ctx);
         }
@@ -6748,12 +6700,12 @@ mod jobserver_and_stdin_cleanup_tests {
         assert!(path.exists());
         let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
         unsafe {
-            with_options(|o| o.stdin_offset.set(0));
+            with_options(&ctx, |o| o.stdin_offset.set(0));
             ctx.temp_stdin_name.0.set(cpath.as_ptr());
             temp_stdin_unlink(&ctx);
             // Restore globals before `cpath` is dropped to avoid a dangling ptr.
             ctx.temp_stdin_name.0.set(::core::ptr::null());
-            with_options(|o| o.stdin_offset.set(-1));
+            with_options(&ctx, |o| o.stdin_offset.set(-1));
         }
         assert!(!path.exists(), "temp stdin file should have been unlinked");
         drop(cpath);
@@ -6763,7 +6715,7 @@ mod jobserver_and_stdin_cleanup_tests {
 #[cfg(test)]
 mod decode_switches_clap_vs_getopt_tests {
     use super::getopt_oracle_test::decode_switches_oracle;
-    use super::{decode_switches, install_default_options_for_test, o_command, o_env, Options};
+    use super::{decode_switches, install_default_exec_context_for_test, o_command, o_env, Options};
     use crate::execctx::ExecContext;
     use crate::variable::init_hash_global_variable_set;
     use std::ffi::CString;
@@ -6887,7 +6839,7 @@ mod decode_switches_clap_vs_getopt_tests {
         // other test in this codebase that exercises parsing already calls
         // this first for the same reason.
         super::initialize_stopchar_map();
-        install_default_options_for_test();
+        let _ctx = install_default_exec_context_for_test();
 
         let ctx_new = ExecContext::default();
         unsafe { init_hash_global_variable_set(&ctx_new) };
@@ -7041,7 +6993,6 @@ mod decode_switches_clap_vs_getopt_tests {
         use std::os::unix::ffi::OsStrExt;
 
         super::initialize_stopchar_map();
-        install_default_options_for_test();
         let ctx = ExecContext::default();
         unsafe { init_hash_global_variable_set(&ctx) };
         let options = Options::new();
