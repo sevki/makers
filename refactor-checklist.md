@@ -283,3 +283,46 @@ exactly why this goes clump by clump, never file-by-file mixing streams).
       errno preserved for perror paths); main.rs `chdir`/`getcwd` go
       through `chdir_c`/`getcwd_into` (std::env, errno preserved, the
       fixed `current_directory` buffer semantics kept)
+
+## Phase B: `die()`/`fatal()` → `Result` propagation (#432)
+Library-ification: `main_0` already returns `Result<BuildReport, BuildError>`
+and `bin/make.rs` is the single `std::process::exit` point (#440); this is
+the remainder — converting the ~100+ interior `fatal()`/`die()` call sites,
+file by file, to return `Result` instead of exiting. Tracked as sub-issues
+of #432; sliced shallow-first, `job.rs` deliberately last (its fatal sites
+fan in from 7+ entry points in the scheduling loop).
+
+**Hard rule (added 2026-07-10 per review on #540):** `std::process::exit`
+may only be called from `bin/make.rs`'s `main()`. Every diverging wrapper
+elsewhere (`output::fatal`, `output::pfatal_with_name`, `output::msg::fatal`,
+`output::exit_on_err`, `main::die`) is a transitional bridge for callers not
+yet converted to `Result`, not a legitimate home for process termination —
+prefer the `_err`-returning twins and propagate with `?`, or bridge through
+`exit_on_err` at a call site that isn't `Result`-returning yet.
+
+- [x] `output.rs`/`posixos.rs` (#538):
+  - `output::fatal_err`/`output::msg::fatal_err` and
+    `output::pfatal_with_name_err` — non-diverging `BuildError`-returning
+    twins of `fatal`/`msg::fatal`/`pfatal_with_name`, sharing the same
+    formatting+`die_cleanup` path so the diverging originals become thin
+    wrappers (mirrors the existing `fatal`/`fatal_err` split).
+  - `posixos::jobserver_setup`, `osync_parse_mutex`, `jobserver_parse_auth`,
+    `jobserver_pre_acquire`, `jobserver_acquire`, and the `set_blocking`
+    helper now return `Result<_, BuildError>`; their call sites in `main_0`
+    and job.rs's `new_job` propagate with `?`/bridge through
+    `output::exit_on_err` where the caller isn't `Result`-returning yet
+    (`decode_output_sync_flags` in main.rs, `jobserver_acquire_all`'s
+    die-cleanup-path caller in posixos.rs).
+  - `posixos::jobserver_release`'s `is_fatal` path is the one remaining
+    diverging call in this file — deliberately left, since its only caller
+    (job.rs's `release_jobserver_token`) already calls `fatal()` directly
+    itself and sits inside `reap_children`'s 7+-entry-point fan-in, which is
+    job.rs's own pass (#441), not this slice.
+- [ ] `read.rs`/`remake.rs`/`job.rs` (#441) — read.rs/remake.rs converted
+      (do_undefine/do_define, complain()/circular-dep chains); job.rs still
+      outstanding (`release_jobserver_token`, `reap_children`, `new_job`'s
+      own direct `fatal()` call).
+- [ ] `function.rs` (#536)
+- [ ] `main.rs` (#537)
+- [ ] `ar.rs`/`dir.rs`/`expand.rs`/`file.rs`/`variable.rs` (#539)
+- [ ] Single exit point + RAII cleanup on error paths (#442)

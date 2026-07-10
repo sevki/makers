@@ -24,7 +24,7 @@ use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup};
 use crate::output::{
-    error, fatal, fatal_err, perror_with_name, pfatal_with_name, pfatal_with_name_err, FmtArg,
+    error, fatal_err, perror_with_name, pfatal_with_name, pfatal_with_name_err, FmtArg,
     INTSTR_LENGTH,
 };
 
@@ -134,11 +134,17 @@ unsafe fn fcntl_set_retry(fd: i32, cmd: i32, arg: i32) -> i32 {
     }
 }
 
-/// Set or clear `O_NONBLOCK` on `fd`, dying on failure.
-unsafe fn set_blocking(ctx: &crate::execctx::ExecContext, fd: i32, blocking: bool) {
+/// Set or clear `O_NONBLOCK` on `fd`. Returns `Err(BuildError::Failure)`
+/// on a fatal `fcntl` failure instead of exiting (#432 Phase B, #540:
+/// `std::process::exit` belongs only in `bin/make.rs`'s `main()`).
+unsafe fn set_blocking(
+    ctx: &crate::execctx::ExecContext,
+    fd: i32,
+    blocking: bool,
+) -> Result<(), crate::build_result::BuildError> {
     let flags = fcntl_retry(fd, F_GETFL);
     if flags < 0 {
-        return;
+        return Ok(());
     }
     let new_flags = if blocking {
         flags & !O_NONBLOCK
@@ -146,8 +152,9 @@ unsafe fn set_blocking(ctx: &crate::execctx::ExecContext, fd: i32, blocking: boo
         flags | O_NONBLOCK
     };
     if fcntl_set_retry(fd, F_SETFL, new_flags) < 0 {
-        pfatal_with_name(ctx, c"fcntl(O_NONBLOCK)".as_ptr());
+        return Err(pfatal_with_name_err(ctx, c"fcntl(O_NONBLOCK)".as_ptr()));
     }
+    Ok(())
 }
 
 /// Create the jobserver (fifo if possible, else an anonymous pipe) with
@@ -267,7 +274,7 @@ pub unsafe fn jobserver_setup(
 
     // Fill the pipe with tokens, one per slot, without blocking so we can
     // detect when the requested job count exceeds the pipe capacity.
-    set_blocking(ctx, fds[1], false);
+    set_blocking(ctx, fds[1], false)?;
     let token_byte: c_char = token;
     for k in 0..slots {
         loop {
@@ -289,8 +296,8 @@ pub unsafe fn jobserver_setup(
             ));
         }
     }
-    set_blocking(ctx, fds[1], true);
-    set_blocking(ctx, fds[0], false);
+    set_blocking(ctx, fds[1], true)?;
+    set_blocking(ctx, fds[0], false)?;
 
     Ok(1)
 }
@@ -305,7 +312,7 @@ pub unsafe fn jobserver_setup(
 pub unsafe fn jobserver_parse_auth(
     ctx: &crate::execctx::ExecContext,
     auth: *const c_char,
-) -> c_uint {
+) -> Result<c_uint, crate::build_result::BuildError> {
     let mut rfd: i32 = 0;
     let mut wfd: i32 = 0;
 
@@ -331,7 +338,7 @@ pub unsafe fn jobserver_parse_auth(
                     FmtArg::Str(strerror(*__errno_location())),
                 ],
             );
-            return 0;
+            return Ok(0);
         }
         loop {
             fds[1] = open(fifo_name, O_WRONLY);
@@ -351,16 +358,16 @@ pub unsafe fn jobserver_parse_auth(
                     FmtArg::Str(strerror(*__errno_location())),
                 ],
             );
-            return 0;
+            return Ok(0);
         }
         js_type_set(ctx, JsType::Fifo);
     } else if sscanf(auth, c"%d,%d".as_ptr(), &mut rfd, &mut wfd) == 2 {
         // A simple pipe; reject the "invalid" marker and dead descriptors.
         if rfd == -2 || wfd == -2 {
-            return 0;
+            return Ok(0);
         }
         if fcntl(rfd, F_GETFD) == -1 || fcntl(wfd, F_GETFD) == -1 {
-            return 0;
+            return Ok(0);
         }
         ctx.job_fds.0.set([rfd, wfd]);
         js_type_set(ctx, JsType::Pipe);
@@ -372,22 +379,22 @@ pub unsafe fn jobserver_parse_auth(
             c"invalid --jobserver-auth string '%s'".as_ptr(),
             &[FmtArg::Str(auth)],
         );
-        return 0;
+        return Ok(0);
     }
 
     if make_job_rfd() < 0 {
         if *__errno_location() != EBADF {
-            pfatal_with_name(ctx, c"jobserver readfd".as_ptr());
+            return Err(pfatal_with_name_err(ctx, c"jobserver readfd".as_ptr()));
         }
         jobserver_clear();
-        return 0;
+        return Ok(0);
     }
 
     let fds = ctx.job_fds.0.get();
-    set_blocking(ctx, fds[0], false);
+    set_blocking(ctx, fds[0], false)?;
     fd_noinherit(fds[0]);
     fd_noinherit(fds[1]);
-    1
+    Ok(1)
 }
 
 /// Return an `xmalloc`'d `--jobserver-auth` value describing this
@@ -469,6 +476,16 @@ pub unsafe fn jobserver_clear() {
 /// Return a token to the jobserver. When `is_fatal`, die on failure;
 /// otherwise just report it.
 ///
+/// Deliberately left calling the diverging [`pfatal_with_name`] rather than
+/// [`crate::output::pfatal_with_name_err`) — unlike every other call in this
+/// file, its only `is_fatal` caller is job.rs's `release_jobserver_token`
+/// (job.rs:1132), which already calls `fatal()` directly itself and sits in
+/// `reap_children`'s 7+-entry-point fan-in explicitly called out in #432 as
+/// "the hard part — do that last." Converting this one in isolation
+/// wouldn't remove a `process::exit` from that call chain (the caller's own
+/// `fatal()` would still fire), so it stays paired with the job.rs pass
+/// (#441) rather than this slice (#432, #538, #540).
+///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_release(ctx: &crate::execctx::ExecContext, is_fatal: i32) {
@@ -492,6 +509,13 @@ pub unsafe fn jobserver_release(ctx: &crate::execctx::ExecContext, is_fatal: i32
 /// Drain every available token (used before exec'ing a re-invoked make).
 /// Returns the number of tokens read.
 ///
+/// Called from the `die_cleanup`/`clean_jobserver` shutdown path, which
+/// isn't itself `Result`-returning (touching that is out of scope here —
+/// it's shared by every fatal path in the system, not an output.rs/
+/// posixos.rs concern), so `set_blocking`'s fatal condition bridges through
+/// [`crate::output::exit_on_err`] rather than propagating (#432 Phase B,
+/// #540).
+///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint {
@@ -499,7 +523,7 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
 
     // Close the write side so the read below sees EOF once the pipe drains.
     let mut fds = ctx.job_fds.0.get();
-    set_blocking(ctx, fds[0], true);
+    set_blocking(ctx, fds[0], true).unwrap_or_else(|e| crate::output::exit_on_err(e));
     close(fds[1]);
     fds[1] = -1;
     ctx.job_fds.0.set(fds);
@@ -571,33 +595,37 @@ pub fn jobserver_signal() {
     });
 }
 
-/// Re-create the private read dup before waiting for a token.
-///
-/// Deliberately left calling [`pfatal_with_name`] (diverging) rather than
-/// [`crate::output::pfatal_with_name_err`): its only caller is job.rs's
-/// scheduling loop (`start_waiting_jobs`), which isn't `Result`-returning
-/// yet. Converting this fatal path belongs with that pass (#441 Phase B —
-/// job.rs, deliberately done last), not this output.rs/posixos.rs slice
-/// (#432).
+/// Re-create the private read dup before waiting for a token. Returns
+/// `Err(BuildError::Failure)` instead of exiting on a fatal dup failure
+/// (#432 Phase B, per review on #540: `std::process::exit` belongs only in
+/// `bin/make.rs`'s `main()` — no leaf function calls it directly anymore).
+/// Its only caller is job.rs's scheduling loop (`new_job`), which isn't
+/// itself `Result`-returning yet (that's #441's job.rs pass), so the call
+/// site bridges through [`crate::output::exit_on_err`] to keep today's
+/// exact exit behavior.
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_pre_acquire(ctx: &crate::execctx::ExecContext) {
+pub unsafe fn jobserver_pre_acquire(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
     if job_rfd(ctx) < 0 && ctx.job_fds.0.get()[0] >= 0 && make_job_rfd() < 0 {
-        pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
+        return Err(pfatal_with_name_err(ctx, c"duping jobs pipe".as_ptr()));
     }
+    Ok(())
 }
 
 /// Wait (with pselect) for a token; with `timeout` nonzero give up after a
-/// second. Returns 1 if a token was read, 0 on timeout/interrupt.
-///
-/// Same deferral as [`jobserver_pre_acquire`]: its `fatal`/`pfatal_with_name`
-/// sites stay diverging here — the caller is job.rs's scheduling loop, owned
-/// by the job.rs pass (#441), not this slice (#432).
+/// second. Returns `Ok(1)` if a token was read, `Ok(0)` on timeout/
+/// interrupt, or `Err(BuildError::Failure)` on a fatal jobserver failure —
+/// same non-diverging rule as [`jobserver_pre_acquire`] (#432 Phase B, #540).
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
-pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32) -> c_uint {
+pub unsafe fn jobserver_acquire(
+    ctx: &crate::execctx::ExecContext,
+    timeout: i32,
+) -> Result<c_uint, crate::build_result::BuildError> {
     let mut spec = timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -622,16 +650,22 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
         let mut r = pselect(rfd + 1, &mut readfds, null_mut(), null_mut(), specp, &empty);
         if r < 0 {
             match *__errno_location() {
-                EINTR => return 0,
+                EINTR => return Ok(0),
                 EBADF => {
                     // The read side was closed by jobserver_signal().
-                    fatal(ctx, null::<Floc>(), 0, c"job server shut down".as_ptr(), &[]);
+                    return Err(fatal_err(
+                        ctx,
+                        null::<Floc>(),
+                        0,
+                        c"job server shut down".as_ptr(),
+                        &[],
+                    ));
                 }
-                _ => pfatal_with_name(ctx, c"pselect jobs pipe".as_ptr()),
+                _ => return Err(pfatal_with_name_err(ctx, c"pselect jobs pipe".as_ptr())),
             }
         }
         if r == 0 {
-            return 0;
+            return Ok(0);
         }
 
         let mut intake: c_char = 0;
@@ -647,9 +681,9 @@ pub unsafe fn jobserver_acquire(ctx: &crate::execctx::ExecContext, timeout: i32)
             if *__errno_location() == EAGAIN {
                 continue;
             }
-            pfatal_with_name(ctx, c"read jobs pipe".as_ptr());
+            return Err(pfatal_with_name_err(ctx, c"read jobs pipe".as_ptr()));
         }
-        return (r > 0) as c_uint;
+        return Ok((r > 0) as c_uint);
     }
 }
 
@@ -1159,7 +1193,11 @@ mod tests {
             1
         );
 
-        assert_eq!(unsafe { jobserver_acquire(&ctx, 0) }, 1, "token was read");
+        assert_eq!(
+            unsafe { jobserver_acquire(&ctx, 0) },
+            Ok(1),
+            "token was read"
+        );
 
         unsafe {
             close(fds[0]);
@@ -1179,7 +1217,11 @@ mod tests {
         ctx.job_fds.0.set(fds);
         unsafe { close(fds[1]) };
 
-        assert_eq!(unsafe { jobserver_acquire(&ctx, 0) }, 0, "EOF is not a token");
+        assert_eq!(
+            unsafe { jobserver_acquire(&ctx, 0) },
+            Ok(0),
+            "EOF is not a token"
+        );
 
         unsafe { close(fds[0]) };
     }
@@ -1204,7 +1246,7 @@ mod tests {
 
         assert_eq!(
             unsafe { jobserver_acquire(&ctx, 1) },
-            1,
+            Ok(1),
             "token was read under the armed timeout"
         );
 

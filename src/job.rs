@@ -1746,7 +1746,12 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             if jobserver_tokens(ctx) == 0 {
                 break;
             }
-            jobserver_pre_acquire(ctx);
+            // `jobserver_pre_acquire`/`jobserver_acquire` are `Result`-returning
+            // (#432 Phase B, #540: `std::process::exit` belongs only in
+            // `bin/make.rs`'s `main()`); `new_job` itself isn't converted yet
+            // (that's #441's job.rs pass), so bridge through `exit_on_err` to
+            // keep today's exact exit behavior on a fatal jobserver failure.
+            jobserver_pre_acquire(ctx).unwrap_or_else(|e| crate::output::exit_on_err(e));
             reap_children(ctx, 0, 0);
             start_waiting_jobs(ctx);
             if jobserver_tokens(ctx) == 0 {
@@ -1762,9 +1767,11 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                     &[],
                 );
             }
-            let got_token: i32 =
-                jobserver_acquire(ctx, (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32)
-                    as i32;
+            let got_token: i32 = jobserver_acquire(
+                ctx,
+                (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32,
+            )
+            .unwrap_or_else(|e| crate::output::exit_on_err(e)) as i32;
             if !(got_token == 1) {
                 continue;
             }

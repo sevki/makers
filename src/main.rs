@@ -2470,7 +2470,7 @@ unsafe fn main_0(
         if argv_slots.is_none() {
             let auth = options.jobserver_auth.borrow().clone().unwrap();
             let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
-            if jobserver_parse_auth(&ctx, auth_c.as_ptr()) != 0 {
+            if jobserver_parse_auth(&ctx, auth_c.as_ptr())? != 0 {
                 do_reset = false;
             } else {
                 error(
