@@ -826,10 +826,35 @@ pub unsafe fn error(
 pub unsafe fn fatal(
     ctx: &ExecContext,
     flocp: *const Floc,
-    _len: size_t,
+    len: size_t,
     fmt: *const ::core::ffi::c_char,
     args: &[FmtArg],
 ) -> ! {
+    // Share the single formatting+cleanup path with `fatal_err` so the two
+    // entry points can never drift (#432 Phase B): format, write, and run
+    // `die_cleanup` exactly as before, then exit on the returned status.
+    let e = fatal_err(ctx, flocp, len, fmt, args);
+    std::process::exit(e.exit_code());
+}
+
+/// Non-diverging counterpart to [`fatal`]: does byte-identical work through
+/// message formatting/writing, runs the same `die_cleanup` side effects at
+/// the same logical point `fatal` runs them today, then *returns*
+/// [`crate::build_result::BuildError::Failure`] instead of exiting the
+/// process. This lets a leaf function propagate the fatal condition as a
+/// `Result` to a caller that has already been migrated off `process::exit`,
+/// while `fatal` itself becomes a thin wrapper so both entry points share one
+/// formatting+cleanup path and can never drift (#432 Phase B).
+///
+/// # Safety
+/// Same contract as [`error`]/[`fatal`].
+pub unsafe fn fatal_err(
+    ctx: &ExecContext,
+    flocp: *const Floc,
+    _len: size_t,
+    fmt: *const ::core::ffi::c_char,
+    args: &[FmtArg],
+) -> crate::build_result::BuildError {
     let makelevel = ctx.makelevel();
     let mut out: Vec<u8> = Vec::new();
     push_error_prefix(ctx, &mut out, flocp, makelevel, true);
@@ -837,7 +862,18 @@ pub unsafe fn fatal(
     out.extend_from_slice(b".  Stop.\n");
     out.push(0);
     outputs(ctx, 1, out.as_ptr() as *const ::core::ffi::c_char);
-    die(ctx, MAKE_FAILURE);
+    crate::make_main::die_cleanup(ctx, MAKE_FAILURE);
+    crate::build_result::BuildError::Failure
+}
+
+/// Bridge for call sites not yet converted to return `Result` that call an
+/// already-converted leaf: `foo(...).unwrap_or_else(exit_on_err)` reproduces
+/// today's exact exit behavior, since [`fatal_err`] already ran
+/// `die_cleanup` before handing back the error (`ctx.dying`'s swap-once guard
+/// makes a stray double `die_cleanup` call harmless, but every fatal path
+/// only ever calls it once, inside `fatal_err`).
+pub fn exit_on_err(e: crate::build_result::BuildError) -> ! {
+    std::process::exit(e.exit_code())
 }
 
 /// Report `str``name`: strerror(errno) via [`error`].

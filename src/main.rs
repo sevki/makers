@@ -917,11 +917,18 @@ fn opt_get_str(options: &Options, c: i32) -> Option<::std::ffi::CString> {
 thread_local! {
     /// Borrow channel to the `Options` owned as a local in `main_0`. This is a
     /// *pointer*, not the option data: the values still live in `main_0`'s
-    /// `let options`. It exists solely so the one deep makefile-time callback
-    /// that re-decodes `MAKEFLAGS` (`set_special_var` -> `reset_makeflags`,
-    /// reached via the high-fan-in `do_variable_definition`) can reach the
-    /// owned `Options` without threading a borrow through the entire
-    /// read/eval engine. Set for the dynamic extent of `main_0`.
+    /// `let options`. Set for the dynamic extent of `main_0`.
+    ///
+    /// Phase A disposition (tracking issue #431/#530), corrected: this is
+    /// NOT a C-ABI seam. Every one of `with_options`'s ~90 call sites already
+    /// has a `&ExecContext` in scope (including `reset_makeflags`'s own
+    /// caller chain — `set_special_var`/`do_variable_definition` both take
+    /// `ctx` as a plain Rust parameter, no callback involved). This
+    /// thread-local exists only because `Options` isn't reachable through
+    /// `ExecContext` yet, not because of any structural constraint —
+    /// unlike `CTX_PTR` below, which genuinely bridges a C callback
+    /// (`glob(3)`'s `gl_opendir`). Tracked for removal: fold `Options` into
+    /// `ExecContext`, change `with_options` to take `ctx`, delete this.
     static OPTIONS_PTR: ::core::cell::Cell<*const Options> =
         const { ::core::cell::Cell::new(::core::ptr::null()) };
 }
@@ -938,12 +945,11 @@ unsafe fn installed_options<'a>() -> &'a Options {
 }
 
 /// Run `f` with a borrow of `main_0`'s single owned `Options`, reached through
-/// the `OPTIONS_PTR` borrow channel. This is the single source of truth for the
-/// deep, high-fan-in option readers (`job`/`remake`/`file`/`output`/`variable`)
-/// that sit behind hundreds of call sites and some C-ABI callbacks, so they
-/// cannot take an `&Options` parameter. `OPTIONS_PTR` is installed at the very
+/// the `OPTIONS_PTR` borrow channel. `OPTIONS_PTR` is installed at the very
 /// start of `main_0`, before any code that could read options runs, and its
-/// referent outlives every makefile-time/build-time callback.
+/// referent outlives every makefile-time/build-time callback. See
+/// `OPTIONS_PTR`'s doc comment: this channel is slated for removal, not a
+/// permanent seam — every caller already has `ctx` in scope.
 pub fn with_options<R>(f: impl FnOnce(&Options) -> R) -> R {
     f(unsafe { installed_options() })
 }
@@ -957,6 +963,17 @@ thread_local! {
     /// still lives in `main_0`'s `let mut ctx` slot (a stable address even across
     /// the build-phase rebuild), and is installed for the dynamic extent of
     /// `main_0`.
+    ///
+    /// Phase A disposition, corrected: NOT an accepted permanent seam either.
+    /// It currently exists because `open_dirstream` is handed to libc's
+    /// `glob()` as a raw `extern "C" fn` callback pointer, which can't carry
+    /// an `&ExecContext` — but the fix is to stop calling libc `glob()`, not
+    /// to keep a thread-local around it. Project policy: no globals, thread-
+    /// local or otherwise, as a permanent design choice. Tracked for removal
+    /// by replacing the libc `glob()` dependency with a native Rust
+    /// directory-walk + pattern-match implementation, at which point
+    /// `open_dirstream` becomes a plain function taking `&ExecContext`
+    /// directly and this channel disappears. See #431/#530, #533.
     static CTX_PTR: ::core::cell::Cell<*const crate::execctx::ExecContext> =
         const { ::core::cell::Cell::new(::core::ptr::null()) };
 }
@@ -1342,6 +1359,17 @@ pub fn set_not_parallel() {
 /// [`initialize_stopchar_map`]. Held behind a `OnceLock` so it is a safe
 /// `static`; reads before initialization see a zeroed map, matching the C
 /// `static`'s zero-initialized state.
+///
+/// Deliberately stays a process-global rather than an `ExecContext` field
+/// (an accepted Phase A exception, alongside `output::STDOUT_ERRNO`): its
+/// contents are a pure, session-independent function of byte value — the
+/// same classification table for every `make` run there could ever be, with
+/// no per-session, per-thread, or per-build-phase variation possible. Moving
+/// it onto `ExecContext` would force every one of its ~100+ call sites
+/// (file.rs, read.rs, parser.rs, job.rs, function.rs, ...) to thread a `ctx`
+/// reference through purely to reach an unchanging lookup table, for no
+/// behavioral benefit — a multi-tenant host sharing one process across
+/// sessions gets an identical table either way.
 static STOPCHAR_MAP: ::std::sync::OnceLock<[::core::ffi::c_ushort; 256]> =
     ::std::sync::OnceLock::new();
 /// Borrow the classification map. Returns a zeroed map until
@@ -2791,7 +2819,7 @@ unsafe fn main_0(
             mf_ptrs.push(::core::ptr::null());
             mf_ptrs.as_mut_ptr()
         },
-    );
+    )?;
     // `read_all_makefiles` rewrites each array entry in place to the actual
     // (strcache'd) makefile name it resolved/remade. Mirror those updates back
     // into `options.makefiles` so the restart path emits the resolved names.
@@ -3059,9 +3087,13 @@ unsafe fn main_0(
             set_db_level(&ctx, DB_NONE);
         }
         options.rebuilding_makefiles.set(true);
-        status = update_goal_chain(&ctx, &mut read_files);
+        let goal_chain_result = update_goal_chain(&ctx, &mut read_files);
+        // These are `ExecContext`/`Options` resets, not covered by
+        // `die_cleanup`'s side effects — run them before propagating any
+        // error so state stays correctly restored even on an early return.
         options.rebuilding_makefiles.set(false);
         set_db_level(&ctx, orig_db_level);
+        status = goal_chain_result?;
         for d_1 in &skipped_makefiles {
             let err: *const ::core::ffi::c_char = strerror(d_1.error);
             let mut name_bytes = goal_name_bytes(&ctx, d_1);
@@ -3615,7 +3647,7 @@ unsafe fn main_0(
     if 0x1_i32 & db_level(&ctx) != 0 {
         crate::output::trace_out(b"Updating goal targets....\n");
     }
-    match update_goal_chain(&ctx, &mut options.goals.borrow_mut()) as ::core::ffi::c_uint {
+    match update_goal_chain(&ctx, &mut options.goals.borrow_mut())? as ::core::ffi::c_uint {
         2 => {
             makefile_status = MAKE_TROUBLE;
         }

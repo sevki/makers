@@ -241,7 +241,7 @@ pub const NONEXISTENT_MTIME: i32 = 1;
 pub unsafe fn read_all_makefiles(
     ctx: &crate::execctx::ExecContext,
     mut makefiles: *mut *const ::core::ffi::c_char,
-) -> Vec<crate::dep::GoalDepNode> {
+) -> Result<Vec<crate::dep::GoalDepNode>, crate::build_result::BuildError> {
     let mut num_makefiles: ::core::ffi::c_uint = 0;
     define_variable_in_set(
         ctx,
@@ -359,7 +359,15 @@ pub unsafe fn read_all_makefiles(
     // `RefCell::take` mirrors the former `mem::take(&mut read_files)` exactly.
     let mut goals = ctx.read_files.take();
     goals.reverse();
-    goals
+    // Nothing on this path can yet produce an `Err`: the only `fatal()` calls
+    // reachable from here are inside `eval_makefile`'s own I/O-error handling
+    // and deep inside `eval()` (via `record_files`/`do_define`/`do_undefine`/
+    // `record_target_var`, all bridged back to today's exact exit behavior
+    // with `.unwrap_or_else(exit_on_err)` at their call sites — see #432
+    // Phase B design notes), neither of which is converted this pass. The
+    // `Result` signature is added now so `main_0`'s call site can use `?`, in
+    // preparation for the follow-up pass that converts `eval_makefile`.
+    Ok(goals)
 }
 /// Install a fresh, empty conditionals frame for a nested makefile-reading
 /// scope (`include`, `eval_buffer`), returning the frame it replaced so the
@@ -900,7 +908,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                         two_colon,
                         prefix,
                         &raw mut fi,
-                    );
+                    )
+                    .unwrap_or_else(|e| crate::output::exit_on_err(e));
                     filenames = None;
                 }
                 commands_idx = 0;
@@ -908,10 +917,12 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                 pattern = ::core::ptr::null::<::core::ffi::c_char>();
                 also_make_targets = 0;
                 if vmod.undefine_v() != 0 {
-                    do_undefine(ctx, p, origin, ebuf);
+                    do_undefine(ctx, p, origin, ebuf)
+                        .unwrap_or_else(|e| crate::output::exit_on_err(e));
                 } else {
                     if vmod.define_v() != 0 {
-                        v = do_define(ctx, p, origin, ebuf);
+                        v = do_define(ctx, p, origin, ebuf)
+                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
                     } else {
                         v = try_variable_definition(ctx, fstart, p, origin, s_global);
                     }
@@ -1021,7 +1032,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            );
+                            )
+                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1102,7 +1114,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            );
+                            )
+                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1191,7 +1204,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            );
+                            )
+                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1233,7 +1247,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                     two_colon,
                                     prefix,
                                     &raw mut fi,
-                                );
+                                )
+                                .unwrap_or_else(|e| crate::output::exit_on_err(e));
                                 filenames = None;
                             }
                             commands_idx = 0;
@@ -1317,7 +1332,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            );
+                            )
+                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1473,7 +1489,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            );
+                            )
+                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1717,7 +1734,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
                                                     as variable_origin,
                                                 &raw mut vmod,
                                                 fstart,
-                                            );
+                                            )
+                                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
                                             filenames = None;
                                         } else {
                                             find_char_unquote(lb_next, '=' as i32);
@@ -1913,7 +1931,8 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
             two_colon,
             prefix,
             &raw mut fi,
-        );
+        )
+        .unwrap_or_else(|e| crate::output::exit_on_err(e));
     }
     free(collapsed as *mut ::core::ffi::c_void);
     drop(cmd_buf);
@@ -1934,20 +1953,22 @@ unsafe fn do_undefine(
     mut name: *mut ::core::ffi::c_char,
     origin: variable_origin,
     ebuf: *mut ebuffer,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let var: *mut ::core::ffi::c_char =
         allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
     // Isolate the variable name (skip leading blanks, trim trailing blanks) via
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
         Some(s) => s,
-        None => fatal(
-            ctx,
-            &raw mut (*ebuf).floc,
-            0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-            &[],
-        ),
+        None => {
+            return Err(crate::output::fatal_err(
+                ctx,
+                &raw mut (*ebuf).floc,
+                0,
+                b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            ))
+        }
     };
     name = var.add(span.start);
     *var.add(span.end) = 0;
@@ -1960,13 +1981,14 @@ unsafe fn do_undefine(
         ::core::ptr::null_mut::<variable_set>(),
     );
     free(var as *mut ::core::ffi::c_void);
+    Ok(())
 }
 unsafe fn do_define(
     ctx: &crate::execctx::ExecContext,
     mut name: *mut ::core::ffi::c_char,
     origin: variable_origin,
     ebuf: *mut ebuffer,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let v: *mut variable;
     let mut var: variable = variable {
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -2014,13 +2036,15 @@ unsafe fn do_define(
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(n).to_bytes()) {
         Some(s) => s,
-        None => fatal(
-            ctx,
-            &raw mut defstart,
-            0,
-            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
-            &[],
-        ),
+        None => {
+            return Err(crate::output::fatal_err(
+                ctx,
+                &raw mut defstart,
+                0,
+                b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+                &[],
+            ))
+        }
     };
     name = n.add(span.start);
     *n.add(span.end) = 0;
@@ -2028,14 +2052,14 @@ unsafe fn do_define(
         let line: *mut ::core::ffi::c_char;
         let nlines: ::core::ffi::c_long = readline(ctx, ebuf);
         if nlines < 0 {
-            fatal(
+            return Err(crate::output::fatal_err(
                 ctx,
                 &raw mut defstart,
                 0,
                 b"missing 'endef', unterminated 'define'\0" as *const u8
                     as *const ::core::ffi::c_char,
                 &[],
-            );
+            ));
         }
         (*ebuf).floc.lineno = (*ebuf)
             .floc
@@ -2107,7 +2131,7 @@ unsafe fn do_define(
         s_global,
     );
     free(n as *mut ::core::ffi::c_void);
-    v
+    Ok(v)
 }
 /// Map a typed conditional [`crate::parser::Directive`] to make's internal
 /// `cmdtype` code, the discriminant the rest of `conditional_line` switches on.
@@ -2371,7 +2395,7 @@ unsafe fn record_target_var(
     origin: variable_origin,
     vmod: *mut vmodifiers,
     flocp: *const Floc,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let global: *mut variable_set_list = ctx.variable_globals.current_variable_set_list.get();
     for entry in filenames {
         let v: *mut variable;
@@ -2420,14 +2444,14 @@ unsafe fn record_target_var(
             ctx.variable_globals.current_variable_set_list.set(head);
             v = try_variable_definition(ctx, flocp, defn, origin, s_target);
             if v.is_null() {
-                fatal(
+                return Err(crate::output::fatal_err(
                     ctx,
                     flocp,
                     0,
                     b"malformed target-specific variable definition\0" as *const u8
                         as *const ::core::ffi::c_char,
                     &[],
-                );
+                ));
             }
             let vref = v.as_mut().expect("record_target_var: null variable");
             vref.set_per_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -2487,6 +2511,7 @@ unsafe fn record_target_var(
             }
         }
     }
+    Ok(())
 }
 /// The name of a dependency as owned bytes — the idiomatic [`DepNode`] keeps its
 /// `name: String` populated (the resolver no longer nulls it), so this is just
@@ -2851,16 +2876,16 @@ unsafe fn record_files(
     two_colon: i32,
     prefix: ::core::ffi::c_char,
     flocp: *const Floc,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     if opt_snapped_deps() {
-        fatal(
+        return Err(crate::output::fatal_err(
             ctx,
             flocp,
             0,
             b"prerequisites cannot be defined in recipes\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[],
-        );
+        ));
     }
     debug_assert!(!filenames.is_empty(), "record_files: empty filenames");
     // The first target's name; `%` detection rewrites a cached copy in place.
@@ -2886,13 +2911,13 @@ unsafe fn record_files(
             any_recurse: false,
         })
     } else if are_also_makes != 0 {
-        fatal(
+        return Err(crate::output::fatal_err(
             ctx,
             flocp,
             0,
             b"grouped targets must provide a recipe\0" as *const u8 as *const ::core::ffi::c_char,
             &[],
-        )
+        ));
     } else {
         None
     };
@@ -2930,14 +2955,14 @@ unsafe fn record_files(
         // the byte index of its `%`, then hand them to the pointer-free
         // `create_pattern_rule`.
         if !pattern.is_null() {
-            fatal(
+            return Err(crate::output::fatal_err(
                 ctx,
                 flocp,
                 0,
                 b"mixed implicit and static pattern rules\0" as *const u8
                     as *const ::core::ffi::c_char,
                 &[],
-            );
+            ));
         }
         let mut targets: Vec<Vec<u8>> = Vec::with_capacity(filenames.len());
         let mut percents: Vec<usize> = Vec::with_capacity(filenames.len());
@@ -2953,13 +2978,13 @@ unsafe fn record_files(
                 strcache_add(ctx, nb.as_ptr() as *const ::core::ffi::c_char);
             let ip = find_percent_cached(ctx, &raw mut np);
             if ip.is_null() {
-                fatal(
+                return Err(crate::output::fatal_err(
                     ctx,
                     flocp,
                     0,
                     b"mixed implicit and normal rules\0" as *const u8 as *const ::core::ffi::c_char,
                     &[],
-                );
+                ));
             }
             targets.push(::std::ffi::CStr::from_ptr(np).to_bytes().to_vec());
             percents.push(ip.offset_from(np) as usize);
@@ -2975,7 +3000,7 @@ unsafe fn record_files(
             recipe,
             true,
         );
-        return;
+        return Ok(());
     }
 
     // also_make group members, collected as (FileId) of each grouped target.
@@ -3022,8 +3047,10 @@ unsafe fn record_files(
                 let mut n = node.lock().expect("file node lock poisoned");
                 if n.is_double_colon {
                     let nm = n.name.clone();
-                    // `fatal` diverges (aborts); the lock is released by unwind.
-                    fatal(
+                    // Formerly `fatal` (diverges/aborts) with the lock released by
+                    // unwind; `fatal_err` returns instead, so the early `return`
+                    // below drops `n` (and `node`) normally on the way out.
+                    return Err(crate::output::fatal_err(
                         ctx,
                         flocp,
                         nm.len() as size_t,
@@ -3032,7 +3059,7 @@ unsafe fn record_files(
                         &[FmtArg::Str(
                             strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
                         )],
-                    );
+                    ));
                 }
                 if have_cmds && n.recipe.is_some() && n.is_target {
                     let nm = n.name.clone();
@@ -3080,7 +3107,7 @@ unsafe fn record_files(
                 if n.is_target && !n.is_double_colon {
                     let nm = n.name.clone();
                     drop(n);
-                    fatal(
+                    return Err(crate::output::fatal_err(
                         ctx,
                         flocp,
                         nm.len() as size_t,
@@ -3089,7 +3116,7 @@ unsafe fn record_files(
                         &[FmtArg::Str(
                             strcache_add_bytes(ctx, &nm) as *const ::core::ffi::c_char
                         )],
-                    );
+                    ));
                 }
             }
             // Was this target already a `::` head before this rule? If so,
@@ -3267,6 +3294,7 @@ unsafe fn record_files(
         }
         n.also_make = siblings;
     }
+    Ok(())
 }
 
 /// Whether `name` is the special `.SUFFIXES` suffix file (the c2rust
