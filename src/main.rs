@@ -2814,7 +2814,7 @@ unsafe fn main_0(
             mf_ptrs.push(::core::ptr::null());
             mf_ptrs.as_mut_ptr()
         },
-    );
+    )?;
     // `read_all_makefiles` rewrites each array entry in place to the actual
     // (strcache'd) makefile name it resolved/remade. Mirror those updates back
     // into `options.makefiles` so the restart path emits the resolved names.
@@ -3082,9 +3082,13 @@ unsafe fn main_0(
             set_db_level(&ctx, DB_NONE);
         }
         options.rebuilding_makefiles.set(true);
-        status = update_goal_chain(&ctx, &mut read_files);
+        let goal_chain_result = update_goal_chain(&ctx, &mut read_files);
+        // These are `ExecContext`/`Options` resets, not covered by
+        // `die_cleanup`'s side effects — run them before propagating any
+        // error so state stays correctly restored even on an early return.
         options.rebuilding_makefiles.set(false);
         set_db_level(&ctx, orig_db_level);
+        status = goal_chain_result?;
         for d_1 in &skipped_makefiles {
             let err: *const ::core::ffi::c_char = strerror(d_1.error);
             let mut name_bytes = goal_name_bytes(&ctx, d_1);
@@ -3638,7 +3642,7 @@ unsafe fn main_0(
     if 0x1_i32 & db_level(&ctx) != 0 {
         crate::output::trace_out(b"Updating goal targets....\n");
     }
-    match update_goal_chain(&ctx, &mut options.goals.borrow_mut()) as ::core::ffi::c_uint {
+    match update_goal_chain(&ctx, &mut options.goals.borrow_mut())? as ::core::ffi::c_uint {
         2 => {
             makefile_status = MAKE_TROUBLE;
         }

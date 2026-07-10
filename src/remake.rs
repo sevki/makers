@@ -285,7 +285,7 @@ pub fn check_also_make(ctx: &crate::execctx::ExecContext, file: FileId) {
 pub fn update_goal_chain(
     ctx: &crate::execctx::ExecContext,
     goaldeps: &mut Vec<GoalDepNode>,
-) -> UpdateStatus {
+) -> Result<UpdateStatus, crate::build_result::BuildError> {
     let mut last_cmd_count: ::core::ffi::c_ulong = 0;
     let t: bool = crate::make_main::opt_touch();
     let q: bool = crate::make_main::opt_question();
@@ -477,7 +477,13 @@ pub fn update_goal_chain(
         crate::make_main::set_question_mirror(q);
         crate::make_main::set_just_print_mirror(n);
     }
-    status
+    // Nothing inside this walk can yet produce an `Err`: the only `fatal()`
+    // calls reachable from here are deep inside `complain()`/`update_file_1`,
+    // which are not converted this pass (see #432 Phase B design notes) and
+    // still exit the process directly. The `Result` signature is added now
+    // so `main_0`'s call sites can use `?`, in preparation for the follow-up
+    // pass that converts `complain()`.
+    Ok(status)
 }
 
 /// FileId port of `show_goal_error`: emit the deferred goal-read `errno` error
