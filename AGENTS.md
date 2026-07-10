@@ -8,6 +8,13 @@ Github issues should be used to track followups todos and basic project
 maanagement. The [project](https://github.com/users/sevki/projects/7) 
 is to trcack everything.
 
+Do not track cleanup/refactor progress in a markdown checklist file
+committed to the repo (e.g. a `*-checklist.md`). Open a GitHub issue (with
+sub-issues for multi-slice campaigns) instead, and update issue bodies/
+comments as work lands. Issues are the single source of truth for what's
+done and what's left — a checklist file duplicates that and drifts out of
+sync.
+
 ## North Star (the watermark)
 
 Before writing or accepting any change, ask: **"Is this how
