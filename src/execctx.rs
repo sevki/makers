@@ -74,43 +74,49 @@ impl Default for Config {
     }
 }
 
-/// The default output sink: real process stdout/stderr. Each write re-fetches
-/// `std::io::stdout()`/`stderr()` (matching how the pre-generic printers
-/// worked), and a failed stdout write feeds the sticky write-error tracked in
-/// [`crate::output::record_stdout_error`] — the same `ferror(stdout)`
-/// equivalent `close_stdout` reads at exit. A future multi-tenant host swaps
-/// [`ExecContext`]'s `W` for an in-memory buffer (or any other
+/// The default stdout sink: real process stdout. Each write re-fetches
+/// `std::io::stdout()` (matching how the pre-generic printers worked), and a
+/// failed write feeds the sticky write-error tracked in
+/// [`crate::output::record_stdout_error`] — the `ferror(stdout)` equivalent
+/// `close_stdout` reads at exit. A future multi-tenant host swaps
+/// [`ExecContext`]'s `Out` for an in-memory buffer (or any other
 /// [`std::io::Write`]) per session instead of this process-wide default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StdioChannel {
-    Out,
-    Err,
-}
+/// A unit struct (not an enum shared with the stderr sink) so `Out`/`Err`
+/// are independent type parameters on [`ExecContext`]: nothing forces the
+/// two channels to be the same sink type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StdoutSink;
 
-impl ::std::io::Write for StdioChannel {
+impl ::std::io::Write for StdoutSink {
     fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
-        match self {
-            StdioChannel::Out => {
-                let r = ::std::io::Write::write(&mut ::std::io::stdout(), buf);
-                if let Err(e) = &r {
-                    crate::output::record_stdout_error(e);
-                }
-                r
-            }
-            StdioChannel::Err => ::std::io::Write::write(&mut ::std::io::stderr(), buf),
+        let r = ::std::io::Write::write(&mut ::std::io::stdout(), buf);
+        if let Err(e) = &r {
+            crate::output::record_stdout_error(e);
         }
+        r
     }
     fn flush(&mut self) -> ::std::io::Result<()> {
-        match self {
-            StdioChannel::Out => {
-                let r = ::std::io::Write::flush(&mut ::std::io::stdout());
-                if let Err(e) = &r {
-                    crate::output::record_stdout_error(e);
-                }
-                r
-            }
-            StdioChannel::Err => ::std::io::Write::flush(&mut ::std::io::stderr()),
+        let r = ::std::io::Write::flush(&mut ::std::io::stdout());
+        if let Err(e) = &r {
+            crate::output::record_stdout_error(e);
         }
+        r
+    }
+}
+
+/// The default stderr sink: real process stderr. No sticky-error tracking —
+/// the C original never had a `ferror(stderr)` check, only `ferror(stdout)`.
+/// See [`StdoutSink`] for why this is its own type rather than a shared enum
+/// variant.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StderrSink;
+
+impl ::std::io::Write for StderrSink {
+    fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
+        ::std::io::Write::write(&mut ::std::io::stderr(), buf)
+    }
+    fn flush(&mut self) -> ::std::io::Result<()> {
+        ::std::io::Write::flush(&mut ::std::io::stderr())
     }
 }
 
@@ -118,14 +124,18 @@ impl ::std::io::Write for StdioChannel {
 /// into the call graph. Holds the immutable [`Config`] plus (as the migration
 /// proceeds) the mutable runtime state that used to live in `static mut`s.
 ///
-/// Generic over its output sink `W` (any [`std::io::Write`]), defaulting to
-/// [`StdioChannel`] so every existing `&ExecContext` site in the crate keeps
-/// meaning "the real process stdout/stderr" without any change. A host that
-/// wants to capture a session's output into a buffer instead constructs
-/// `ExecContext<MyBuffer>` explicitly; nothing here forces that choice on the
-/// rest of the call graph.
-#[derive(Debug, Clone)]
-pub struct ExecContext<W: ::std::io::Write = StdioChannel> {
+/// Generic over its output sinks — independently over `Out` for stdout
+/// (defaulting to [`StdoutSink`]) and `Err` for stderr (defaulting to
+/// [`StderrSink`]), so every existing `&ExecContext` site in the crate keeps
+/// meaning "the real process stdout/stderr" without any change. Two
+/// independent parameters rather than one shared type: stdout and stderr are
+/// different channels with different content (recipe/trace output vs.
+/// diagnostics) and a host may reasonably want, say, stdout captured into a
+/// per-session buffer while stderr still goes to the real process stderr —
+/// one shared type parameter would force them to be the same concrete sink
+/// even when a caller has no use for that coupling.
+#[derive(Debug, Default, Clone)]
+pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write = StderrSink> {
     /// Read-only process configuration.
     pub config: Config,
 
@@ -782,122 +792,15 @@ pub struct ExecContext<W: ::std::io::Write = StdioChannel> {
 
     /// The sink every recipe/trace/diagnostic stdout write goes through —
     /// `output::trace_out`/`_outputs`'s non-synced path, `hash_print_stats`,
-    /// the usage/version printers. `Rc<RefCell<_>>` rather than a bare `W`
+    /// the usage/version printers. `Rc<RefCell<_>>` rather than a bare `Out`
     /// so [`ExecContext::clone`] stays a cheap handle-copy (matching
     /// [`Self::remote_backend`]'s rationale) while every clone still writes
     /// to the *same* sink — the point of a per-session buffer.
-    pub stdout: ::std::rc::Rc<::core::cell::RefCell<W>>,
+    pub stdout: ::std::rc::Rc<::core::cell::RefCell<Out>>,
     /// Same as [`Self::stdout`] for stderr — `error`/`fatal`'s output and the
-    /// `-h`/bad-flag usage banner.
-    pub stderr: ::std::rc::Rc<::core::cell::RefCell<W>>,
-}
-
-// A blanket `impl<W: Write + Default> Default for ExecContext<W>` can't be
-// generated: `stdout` and `stderr` must start as *different* sink values
-// (real stdout vs. real stderr), which a single generic `W::default()` can't
-// express. So this concrete impl covers only the default instantiation used
-// everywhere in the crate today (`ExecContext` unparameterized ==
-// `ExecContext<StdioChannel>`); a host constructing `ExecContext<MyBuffer>`
-// builds it with its own constructor instead of `Default`/`ExecContext::new`.
-impl Default for ExecContext<StdioChannel> {
-    fn default() -> Self {
-        Self {
-            config: Default::default(),
-            db: Default::default(),
-            mtime_adjusted_now: Default::default(),
-            clock_skew_detected: Default::default(),
-            load_sample_second: Default::default(),
-            load_prev_weight: Default::default(),
-            no_intermediates: Default::default(),
-            all_secondary: Default::default(),
-            always_make_flag: Default::default(),
-            num_pattern_rules: Default::default(),
-            max_pattern_targets: Default::default(),
-            max_pattern_deps: Default::default(),
-            max_pattern_dep_length: Default::default(),
-            rules: Default::default(),
-            commands_started: Default::default(),
-            considered: Default::default(),
-            good_stdin_used: Default::default(),
-            open_directories: Default::default(),
-            load_proc_fd: Default::default(),
-            temp_stdin_name: Default::default(),
-            directory_before_chdir: Default::default(),
-            program: Default::default(),
-            tmpdir: Default::default(),
-            shuffle: Default::default(),
-            remote_backend: Default::default(),
-            starting_directory: Default::default(),
-            load_lossage: Default::default(),
-            shell_var: Default::default(),
-            command_variables: Default::default(),
-            default_goal_var: Default::default(),
-            fatal_signal_set: Default::default(),
-            make_sync: Default::default(),
-            output_context: Default::default(),
-            pid_string: Default::default(),
-            children: Default::default(),
-            waiting_jobs: Default::default(),
-            directories: Default::default(),
-            directory_contents: Default::default(),
-            filenodes: Default::default(),
-            read_dirstream_buf: Default::default(),
-            read_dirstream_bufsz: Default::default(),
-            file_seq_tmpbuf: Default::default(),
-            read_files: Default::default(),
-            conditionals: Default::default(),
-            job_fds: Default::default(),
-            fifo_name: Default::default(),
-            osync_tmpfile: Default::default(),
-            library_search_cache: Default::default(),
-            job_slots_used: Default::default(),
-            job_counter: Default::default(),
-            jobserver_tokens: Default::default(),
-            dead_children: Default::default(),
-            handling_fatal_signal: Default::default(),
-            shell_function_pid: Default::default(),
-            shell_function_completed: Default::default(),
-            js_type: Default::default(),
-            job_root: Default::default(),
-            job_rfd: Default::default(),
-            osync_handle: Default::default(),
-            sync_root: Default::default(),
-            bad_stdin: Default::default(),
-            tmpfile_works: Default::default(),
-            last_targ_count: Default::default(),
-            wpre_warned: Default::default(),
-            wcmd_warned: Default::default(),
-            reap_children_printed: Default::default(),
-            delete_on_error: Default::default(),
-            max_args: Default::default(),
-            printed_version: Default::default(),
-            dying: Default::default(),
-            output_in_setup: Default::default(),
-            stdout_flags: Default::default(),
-            stderr_flags: Default::default(),
-            io_state: Default::default(),
-            env_recursion: Default::default(),
-            variable_changenum: Default::default(),
-            last_changenum: Default::default(),
-            pattern_vars: Default::default(),
-            last_pattern_vars: Default::default(),
-            goal_list: Default::default(),
-            goal_dep: Default::default(),
-            function_table: Default::default(),
-            vpaths: Default::default(),
-            general_vpath: Default::default(),
-            gpaths: Default::default(),
-            warning_state: Default::default(),
-            db_level: Default::default(),
-            variable_globals: Default::default(),
-            reading_file: Default::default(),
-            expanding_var: Default::default(),
-            recipe_reading_floc: Default::default(),
-            variable_buffer: Default::default(),
-            stdout: ::std::rc::Rc::new(::core::cell::RefCell::new(StdioChannel::Out)),
-            stderr: ::std::rc::Rc::new(::core::cell::RefCell::new(StdioChannel::Err)),
-        }
-    }
+    /// `-h`/bad-flag usage banner. An independent type parameter from
+    /// `stdout`'s: nothing requires the two channels to share a sink type.
+    pub stderr: ::std::rc::Rc<::core::cell::RefCell<Err>>,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1999,9 +1902,27 @@ impl ExecContext {
             ..Self::default()
         }
     }
+
+    /// The default context, with real stdout/stderr sinks
+    /// ([`StdoutSink`]/[`StderrSink`]) — identical to `<ExecContext as
+    /// Default>::default()`, but callable as a bare
+    /// `ExecContext::default()` without a type annotation. With two
+    /// independent defaulted type parameters (`Out`, `Err`), rustc's
+    /// default-type-parameter substitution doesn't reliably fire through
+    /// `Default` trait dispatch at an unannotated call site (the
+    /// long-standing single-parameter version of this type didn't hit this;
+    /// splitting stdout/stderr into independent parameters did) — but it
+    /// does fire for a plain inherent method in a non-generic `impl` block,
+    /// which unqualified path calls prefer over the trait method of the
+    /// same name. This keeps every existing bare `ExecContext::default()`
+    /// call site in the crate compiling unchanged.
+    #[allow(clippy::should_implement_trait)]
+    pub fn default() -> Self {
+        <Self as Default>::default()
+    }
 }
 
-impl<W: ::std::io::Write> ExecContext<W> {
+impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
     /// `$(MAKELEVEL)` for this make process.
     pub fn makelevel(&self) -> u32 {
         self.config.makelevel
@@ -2026,16 +1947,21 @@ impl<W: ::std::io::Write> ExecContext<W> {
     }
 }
 
-impl<W: ::std::io::Write> ExecContext<W> {
+impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
     /// Rebuild this context with different output sinks, moving every other
-    /// field across unchanged. The one way to get an `ExecContext<W2>` for a
-    /// `W2` other than the default [`StdioChannel`] without hand-listing
-    /// every field at the call site: a host builds a plain
-    /// `ExecContext::default()` (or `::new`) for startup/config, reads the
-    /// makefile-independent state it needs from it if any, then converts to
-    /// its own sink type — an in-memory buffer, a per-connection socket,
-    /// whatever `W2: Write` it wants — before running the build on it.
-    pub fn with_sinks<W2: ::std::io::Write>(self, stdout: W2, stderr: W2) -> ExecContext<W2> {
+    /// field across unchanged. The one way to get an `ExecContext<Out2,
+    /// Err2>` for sink types other than the defaults ([`StdoutSink`]/
+    /// [`StderrSink`]) without hand-listing every field at the call site: a
+    /// host builds a plain `ExecContext::default()` (or `::new`) for
+    /// startup/config, reads the makefile-independent state it needs from it
+    /// if any, then converts to its own sink types — an in-memory buffer, a
+    /// per-connection socket, whatever `Write` types it wants, independently
+    /// for stdout and stderr — before running the build on it.
+    pub fn with_sinks<Out2: ::std::io::Write, Err2: ::std::io::Write>(
+        self,
+        stdout: Out2,
+        stderr: Err2,
+    ) -> ExecContext<Out2, Err2> {
         ExecContext {
             config: self.config,
             db: self.db,
@@ -2137,7 +2063,7 @@ impl<W: ::std::io::Write> ExecContext<W> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConditionalsFrame, ExecContext, FileArena, StdioChannel};
+    use super::{Config, ConditionalsFrame, ExecContext, FileArena, StderrSink, StdoutSink};
 
     #[test]
     fn context_exposes_makelevel() {
@@ -2152,9 +2078,9 @@ mod tests {
         assert_eq!(ExecContext::default().makelevel(), 0);
     }
 
-    /// `with_sinks` is the escape hatch for a non-default `W`: it must move
-    /// every other field across (not just zero them out) and let the two
-    /// channels be genuinely different sink instances.
+    /// `with_sinks` is the escape hatch for non-default sink types: it must
+    /// move every other field across (not just zero them out) and let the
+    /// two channels be genuinely different sink instances.
     #[test]
     fn with_sinks_carries_state_and_swaps_only_the_io() {
         let ctx = ExecContext::new(Config { makelevel: 5, ..Default::default() });
@@ -2168,24 +2094,52 @@ mod tests {
         assert_eq!(&**buffered.stderr.borrow(), b"oops");
     }
 
-    /// A buffer-backed context's `trace_out_ctx` writes land in the buffer,
-    /// never on the process's real stdout — the multi-tenant point of the
-    /// generic sink.
+    /// `Out` and `Err` are independent type parameters, not one shared `W`:
+    /// this builds a context with a real `std::io::Cursor` for stdout and a
+    /// plain `Vec<u8>` for stderr — two different concrete `Write` types —
+    /// and checks both sinks work through the ordinary `Write` interface a
+    /// caller would use (`write_all`, and for the cursor, seeking back to
+    /// re-read what was written).
     #[test]
-    fn trace_out_ctx_writes_into_a_buffer_sink_not_real_stdout() {
-        let ctx = ExecContext::new(Config::default()).with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
-        crate::output::trace_out_ctx(&ctx, b"buffered trace line\n");
-        assert_eq!(&**ctx.stdout.borrow(), b"buffered trace line\n");
-        assert!(ctx.stderr.borrow().is_empty());
+    fn stdout_and_stderr_sinks_can_be_independent_write_types() {
+        use ::std::io::{Cursor, Read, Seek, SeekFrom, Write};
+
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Cursor::new(Vec::<u8>::new()), Vec::<u8>::new());
+
+        ctx.stdout.borrow_mut().write_all(b"cursor stdout").unwrap();
+        ctx.stderr.borrow_mut().write_all(b"vec stderr").unwrap();
+
+        let mut cursor = ctx.stdout.borrow_mut();
+        cursor.seek(SeekFrom::Start(0)).unwrap();
+        let mut read_back = String::new();
+        cursor.read_to_string(&mut read_back).unwrap();
+        assert_eq!(read_back, "cursor stdout");
+
+        assert_eq!(&**ctx.stderr.borrow(), b"vec stderr");
     }
 
-    /// The default sink (`StdioChannel`) still exists and its two variants
-    /// stay distinct after a round trip through `Default`/`Clone`.
+    /// A `Cursor`-backed context's `trace_out_ctx` writes land in the
+    /// cursor, never on the process's real stdout — the multi-tenant point
+    /// of the generic sink, exercised with the same `std::io::Cursor` type a
+    /// real caller reaches for rather than a bespoke test-only writer.
     #[test]
-    fn default_context_uses_distinct_stdio_channels() {
+    fn trace_out_ctx_writes_into_a_cursor_sink_not_real_stdout() {
+        use ::std::io::Cursor;
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()));
+        crate::output::trace_out_ctx(&ctx, b"buffered trace line\n");
+        assert_eq!(ctx.stdout.borrow().get_ref().as_slice(), b"buffered trace line\n");
+        assert!(ctx.stderr.borrow().get_ref().is_empty());
+    }
+
+    /// The default sinks (`StdoutSink`/`StderrSink`) still exist and stay
+    /// distinct types after a round trip through `Default`/`Clone`.
+    #[test]
+    fn default_context_uses_distinct_stdio_sinks() {
         let ctx = ExecContext::default();
-        assert_eq!(*ctx.stdout.borrow(), StdioChannel::Out);
-        assert_eq!(*ctx.stderr.borrow(), StdioChannel::Err);
+        assert_eq!(*ctx.stdout.borrow(), StdoutSink);
+        assert_eq!(*ctx.stderr.borrow(), StderrSink);
     }
 
     /// `make_sync`'s address is captured by `output_context` before the

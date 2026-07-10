@@ -113,13 +113,18 @@ pub fn stdout_error() -> i32 {
 /// Emit a debug/trace line through `ctx`'s stdout sink and flush — the C
 /// `printf` + `fflush(stdout)` pattern of the `-d` traces. Callers format the
 /// bytes themselves. This is the entry point a host running several sessions
-/// in one process wants: give each session's `ExecContext` its own `W`
+/// in one process wants: give each session's `ExecContext` its own `Out`
 /// (an in-memory buffer, a per-connection socket, ...) and its trace/recipe
-/// output never touches another session's.
-pub fn trace_out_ctx<W: std::io::Write>(ctx: &ExecContext<W>, bytes: &[u8]) {
+/// output never touches another session's. Only `Out` needs a bound here —
+/// this function never touches `ctx.stderr` — but `Err` still has to appear
+/// in the signature since it's part of `ExecContext`'s type.
+pub fn trace_out_ctx<Out: std::io::Write, Err: std::io::Write>(
+    ctx: &ExecContext<Out, Err>,
+    bytes: &[u8],
+) {
     let mut o = ctx.stdout.borrow_mut();
-    // `StdioChannel::write`/`flush` already feed `record_stdout_error` for
-    // the default sink; a non-default `W` reports its own failures how it
+    // `StdoutSink::write`/`flush` already feed `record_stdout_error` for the
+    // default sink; a non-default `Out` reports its own failures how it
     // sees fit; there is no process-wide stdout to be sticky about there.
     let _ = o.write_all(bytes).and_then(|()| o.flush());
 }
