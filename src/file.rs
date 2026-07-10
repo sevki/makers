@@ -340,7 +340,7 @@ use crate::expand::{expand_string_buf, expand_string_for_file, variable_buffer_o
 use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
 use crate::make_main::{db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP};
-use crate::output::{error, fatal, perror_with_name, FmtArg};
+use crate::output::{error, fatal_err, perror_with_name, FmtArg};
 use crate::read::{find_percent, parse_file_seq};
 pub use crate::recipe::Commands;
 use crate::variable::{
@@ -1729,7 +1729,9 @@ fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
+pub unsafe fn snap_deps(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
     crate::make_main::mark_snapped_deps(ctx);
 
     // `.PRECIOUS`: mark each prereq target precious.
@@ -1774,7 +1776,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
             None
         });
         if let Some(name) = conflict {
-            fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .INTERMEDIATE");
+            fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .INTERMEDIATE")?;
         }
     }
 
@@ -1792,7 +1794,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
                     None
                 });
                 if let Some(name) = conflict {
-                    fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY");
+                    fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY")?;
                 }
             }
         }
@@ -1801,14 +1803,14 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     }
 
     if ctx.no_intermediates.get() && ctx.all_secondary.get() {
-        fatal(
+        return Err(fatal_err(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
             b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[],
-        );
+        ));
     }
 
     // `.EXPORT_ALL_VARIABLES`: a target presence enables global export.
@@ -1872,6 +1874,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     for fid in filedump {
         snap_file(ctx, fid, &prereqs);
     }
+    Ok(())
 }
 
 /// Outcome of inspecting a special target (`.PHONY`, `.SECONDARY`, …): it may
@@ -2023,19 +2026,39 @@ unsafe fn fatal_special_conflict(
     ctx: &crate::execctx::ExecContext,
     name: &[u8],
     kinds: &[u8],
-) -> ! {
+) -> Result<(), crate::build_result::BuildError> {
     let mut name_c = name.to_vec();
     name_c.push(0);
     let mut msg = b"%s cannot be both ".to_vec();
     msg.extend_from_slice(kinds);
     msg.push(0);
-    fatal(
+    Err(fatal_err(
         ctx,
         ::core::ptr::null_mut::<Floc>(),
         name.len() as size_t,
         msg.as_ptr() as *const ::core::ffi::c_char,
         &[FmtArg::Str(name_c.as_ptr() as *const ::core::ffi::c_char)],
-    )
+    ))
+}
+
+#[cfg(test)]
+mod fatal_special_conflict_tests {
+    use super::fatal_special_conflict;
+
+    /// [`fatal_special_conflict`] returns `BuildError::Failure` instead of
+    /// aborting the process, and marks the context dying (#432 Phase B,
+    /// #539).
+    #[test]
+    fn returns_failure_and_marks_dying() {
+        let ctx = crate::execctx::ExecContext::default();
+        assert!(!ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+
+        let result =
+            unsafe { fatal_special_conflict(&ctx, b"target", b".NOTINTERMEDIATE and .SECONDARY") };
+
+        assert_eq!(result, Err(crate::build_result::BuildError::Failure));
+        assert!(ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+    }
 }
 /// # Safety
 ///

@@ -48,7 +48,7 @@ pub type variable_set = VariableSet;
 use crate::floc::Floc;
 use crate::function::{handle_function, patsubst_expand_pat};
 use crate::make_main::{db_level, stopchar_map};
-use crate::output::fatal;
+use crate::output::fatal_err;
 use crate::read::find_percent;
 pub use crate::variable::variable;
 use crate::variable::{
@@ -261,13 +261,17 @@ pub unsafe fn recursively_expand_for_file(
     }
     if (*v).expanding() != 0 {
         if (*v).exp_count() == 0 {
-            fatal(
-        ctx,
-        ctx.expanding_var_floc(),
-        strlen((*v).name),
-        c"recursive variable '%s' references itself (eventually)".as_ptr(),
-        &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
-    );
+            // `recursively_expand_for_file` returns a raw pointer with wide
+            // fan-out across the crate; bridge through the shared
+            // `_err`/`exit_on_err` path rather than propagating `Result`
+            // through this whole call chain (#432 Phase B, #539).
+            crate::output::exit_on_err(fatal_err(
+                ctx,
+                ctx.expanding_var_floc(),
+                strlen((*v).name),
+                c"recursive variable '%s' references itself (eventually)".as_ptr(),
+                &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
+            ));
         }
         (*v).set_exp_count((*v).exp_count() - 1);
     }
@@ -446,13 +450,18 @@ pub unsafe fn expand_string_buf(
                 if handle_function(ctx, &raw mut o, &raw mut p) == 0 {
                     end = strchr(beg, closeparen as i32);
                     if end.is_null() {
-                        fatal(
+                        // `expand_string_buf` returns a raw pointer with wide
+                        // fan-out across the crate; bridge through the shared
+                        // `_err`/`exit_on_err` path rather than propagating
+                        // `Result` through this whole call chain (#432 Phase
+                        // B, #539).
+                        crate::output::exit_on_err(fatal_err(
                             ctx,
                             ctx.expanding_var_floc(),
                             0,
                             c"unterminated variable reference".as_ptr(),
                             &[],
-                        );
+                        ));
                     }
                     // Bridge the safe `lindex(&[u8], u8) -> Option<usize>` to
                     // the pointer-walking code below: view `[b, e)` as a byte

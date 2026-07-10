@@ -2928,7 +2928,7 @@ unsafe fn main_0(
         crate::output::trace_parts(&[b"Using output-sync mutex ", mtx_c.to_bytes(), b"\n"]);
     }
     define_makeflags(&ctx, options, 0);
-    snap_deps(&ctx);
+    snap_deps(&ctx)?;
     install_default_suffix_rules(&ctx, options);
     convert_to_pattern(&ctx);
     install_default_implicit_rules(&ctx, options);

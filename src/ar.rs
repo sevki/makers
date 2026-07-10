@@ -43,7 +43,7 @@ use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
 use crate::misc::{alpha_cmp, concat, cstr_bytes_or_empty};
-use crate::output::{error, fatal, out_of_memory, perror_with_name};
+use crate::output::{error, fatal_err, out_of_memory, perror_with_name};
 use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -96,24 +96,38 @@ fn classify_ar_name(bytes: &[u8]) -> ArName {
 
 /// Does `name` refer to an `archive(member)` target?
 ///
-/// Aborts via [`fatal`] on the unsupported nested `archive((member))` form,
-/// matching make's behavior.
+/// Aborts via [`fatal`](crate::output::fatal) on the unsupported nested
+/// `archive((member))` form, matching make's behavior. Thin wrapper around
+/// [`ar_name_err`]; call sites not yet migrated to `Result` propagation
+/// (#432 Phase B) bridge through here.
 pub fn ar_name(ctx: &crate::execctx::ExecContext, name: &::core::ffi::CStr) -> bool {
+    ar_name_err(ctx, name).unwrap_or_else(|e| crate::output::exit_on_err(e))
+}
+
+/// Non-diverging counterpart to [`ar_name`]: returns
+/// [`BuildError::Failure`](crate::build_result::BuildError::Failure) on the
+/// unsupported nested `archive((member))` form instead of exiting the
+/// process (#432 Phase B).
+pub fn ar_name_err(
+    ctx: &crate::execctx::ExecContext,
+    name: &::core::ffi::CStr,
+) -> Result<bool, crate::build_result::BuildError> {
     match classify_ar_name(name.to_bytes()) {
-        ArName::Plain => false,
-        ArName::Member => true,
-        ArName::Unsupported => unsafe {
-            fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        name.to_bytes().len() as size_t,
-        b"attempt to use unsupported feature: '%s'\0" as *const u8
+        ArName::Plain => Ok(false),
+        ArName::Member => Ok(true),
+        ArName::Unsupported => Err(unsafe {
+            fatal_err(
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                name.to_bytes().len() as size_t,
+                b"attempt to use unsupported feature: '%s'\0" as *const u8
                     as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
-    )
-        },
+                &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
+            )
+        }),
     }
 }
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
@@ -124,23 +138,42 @@ pub unsafe fn ar_parse_name(
     arname_p: *mut *mut ::core::ffi::c_char,
     memname_p: *mut *mut ::core::ffi::c_char,
 ) {
+    ar_parse_name_err(ctx, name, arname_p, memname_p)
+        .unwrap_or_else(|e| crate::output::exit_on_err(e))
+}
+
+/// Non-diverging counterpart to [`ar_parse_name`]: returns
+/// [`BuildError::Failure`](crate::build_result::BuildError::Failure) instead
+/// of exiting the process when `name` has no `(` (#432 Phase B).
+///
+/// # Safety
+///
+/// C-style API operating on raw pointers; all pointer arguments must be
+/// valid (NUL-terminated where strings are expected) for the call.
+pub unsafe fn ar_parse_name_err(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+    arname_p: *mut *mut ::core::ffi::c_char,
+    memname_p: *mut *mut ::core::ffi::c_char,
+) -> Result<(), crate::build_result::BuildError> {
     let mut p: *mut ::core::ffi::c_char;
     *arname_p = xstrdup(name);
     p = strchr(*arname_p, '(' as i32);
     if p.is_null() {
-        fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(*arname_p) as size_t,
-        b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*arname_p) as *const ::core::ffi::c_char)],
-    );
+        return Err(fatal_err(
+            ctx,
+            ::core::ptr::null_mut::<Floc>(),
+            strlen(*arname_p) as size_t,
+            b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+            &[FmtArg::Str((*arname_p) as *const ::core::ffi::c_char)],
+        ));
     }
     let fresh0 = p;
     p = p.offset(1_i32 as isize);
     *fresh0 = 0;
     *p.offset(strlen(p).wrapping_sub(1) as isize) = 0;
     *memname_p = p;
+    Ok(())
 }
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
@@ -526,6 +559,80 @@ mod ar_name_tests {
         // Only the unsupported form needs both an inner '(' and a matching
         // inner ')'. A lone inner '(' is treated as part of the member name.
         assert_eq!(kind("lib((member)"), "member");
+    }
+}
+
+#[cfg(test)]
+mod ar_name_err_tests {
+    use super::ar_name_err;
+
+    /// [`ar_name_err`] returns the classification as `Ok` for both the
+    /// plain and well-formed-member cases (#432 Phase B, #539).
+    #[test]
+    fn ok_for_plain_and_member_names() {
+        let ctx = crate::execctx::ExecContext::default();
+        let plain = ::std::ffi::CString::new("foo.o").unwrap();
+        let member = ::std::ffi::CString::new("lib.a(member.o)").unwrap();
+
+        assert_eq!(ar_name_err(&ctx, &plain), Ok(false));
+        assert_eq!(ar_name_err(&ctx, &member), Ok(true));
+    }
+
+    /// The unsupported nested `archive((member))` form returns
+    /// `BuildError::Failure` instead of aborting the process, and marks the
+    /// context dying (same `die_cleanup` contract as every other `_err`
+    /// twin).
+    #[test]
+    fn err_for_unsupported_nested_form() {
+        let ctx = crate::execctx::ExecContext::default();
+        let nested = ::std::ffi::CString::new("lib((member))").unwrap();
+        assert!(!ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+
+        let result = ar_name_err(&ctx, &nested);
+
+        assert_eq!(result, Err(crate::build_result::BuildError::Failure));
+        assert!(ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+    }
+}
+
+#[cfg(test)]
+mod ar_parse_name_err_tests {
+    use super::ar_parse_name_err;
+
+    /// A well-formed `archive(member)` name splits into its two parts and
+    /// returns `Ok` (#432 Phase B, #539).
+    #[test]
+    fn ok_for_well_formed_name() {
+        let ctx = crate::execctx::ExecContext::default();
+        let name = ::std::ffi::CString::new("lib.a(member.o)").unwrap();
+        let mut arname_p: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
+        let mut memname_p: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
+
+        let result =
+            unsafe { ar_parse_name_err(&ctx, name.as_ptr(), &mut arname_p, &mut memname_p) };
+
+        assert_eq!(result, Ok(()));
+        let arname = unsafe { ::core::ffi::CStr::from_ptr(arname_p) }.to_bytes();
+        let memname = unsafe { ::core::ffi::CStr::from_ptr(memname_p) }.to_bytes();
+        assert_eq!(arname, b"lib.a");
+        assert_eq!(memname, b"member.o");
+    }
+
+    /// A name with no '(' at all returns `BuildError::Failure` instead of
+    /// aborting the process, and marks the context dying.
+    #[test]
+    fn err_when_no_open_paren() {
+        let ctx = crate::execctx::ExecContext::default();
+        let name = ::std::ffi::CString::new("plain.o").unwrap();
+        let mut arname_p: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
+        let mut memname_p: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
+        assert!(!ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+
+        let result =
+            unsafe { ar_parse_name_err(&ctx, name.as_ptr(), &mut arname_p, &mut memname_p) };
+
+        assert_eq!(result, Err(crate::build_result::BuildError::Failure));
+        assert!(ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
     }
 }
 

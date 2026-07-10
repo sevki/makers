@@ -69,7 +69,7 @@ use crate::hash::{
 use crate::job::default_shell;
 use crate::make_main::stopchar_map;
 use crate::misc::{concat, cstr_bytes_or_empty};
-use crate::output::fatal;
+use crate::output::fatal_err;
 use crate::output::msg;
 use crate::posixos::jobserver_get_invalid_auth;
 
@@ -497,7 +497,11 @@ fn emit_var_name_warning(
 ) {
     let body = format!("{kind} '{}'", String::from_utf8_lossy(name));
     if is_error {
-        msg::fatal(ctx, loc, &body);
+        // `emit_var_name_warning` has wide, non-`Result` fan-out across this
+        // file; bridge through the shared `_err`/`exit_on_err` path rather
+        // than propagating `Result` through this whole call chain (#432
+        // Phase B, #539).
+        crate::output::exit_on_err(msg::fatal_err(ctx, loc, &body));
     }
     msg::error(ctx, loc, &format!("warning: {body}"));
 }
@@ -2406,7 +2410,17 @@ pub unsafe fn assign_variable_definition(
 /// string, and `ctx` must be valid for diagnostic reporting.
 unsafe fn fatal_on_empty_variable_name(ctx: &crate::execctx::ExecContext, v: *mut variable) {
     if *(*v).name.offset(0_i32 as isize) as i32 == 0 {
-        fatal(ctx, &raw mut (*v).fileinfo, 0, b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char, &[]);
+        // `assign_variable_definition` (this function's only caller) returns
+        // a raw pointer, not `Result`; bridge through the shared
+        // `_err`/`exit_on_err` path rather than propagating `Result` through
+        // this whole call chain (#432 Phase B, #539).
+        crate::output::exit_on_err(fatal_err(
+            ctx,
+            &raw mut (*v).fileinfo,
+            0,
+            b"empty variable name\0" as *const u8 as *const ::core::ffi::c_char,
+            &[],
+        ));
     }
 }
 /// # Safety
