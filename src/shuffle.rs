@@ -511,4 +511,27 @@ mod tests {
         );
         set_mode(&ctx, "none");
     }
+
+    /// `not_parallel(ctx)` must short-circuit `shuffle_goals_recursive` on its
+    /// own, independent of `mode`: with a mode that would otherwise reorder
+    /// (`reverse`), a `.NOTPARALLEL` run must still leave the goal list
+    /// untouched. Guards the `mode == Mode::None || not_parallel(ctx)` check
+    /// staying `||` rather than collapsing to `&&` (which would only return
+    /// early when *both* conditions hold).
+    #[test]
+    fn shuffle_goals_recursive_not_parallel_is_a_noop_even_with_reorder_mode() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        crate::make_main::set_not_parallel(&ctx);
+
+        let mut goals = vec![goal_named("a"), goal_named("b"), goal_named("c")];
+        shuffle_goals_recursive(&ctx, &mut goals);
+        let names: Vec<String> = goals.iter().map(|g| g.dep.name.clone()).collect();
+        assert_eq!(
+            names,
+            vec!["a", "b", "c"],
+            "not_parallel must short-circuit even though mode requests a reorder"
+        );
+        set_mode(&ctx, "none");
+    }
 }
