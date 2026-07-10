@@ -1256,6 +1256,68 @@ mod tests {
         }
     }
 
+    /// A value that's neither `fifo:<path>` nor `<rfd>,<wfd>` is a malformed
+    /// `--jobserver-auth` string, not a fatal condition: `Ok(0)`.
+    #[test]
+    fn jobserver_parse_auth_rejects_malformed_string() {
+        let ctx = crate::execctx::ExecContext::default();
+        let result = unsafe { jobserver_parse_auth(&ctx, c"not-an-auth-string".as_ptr()) };
+        assert_eq!(result, Ok(0));
+    }
+
+    /// `-2,-2` is the sentinel a parent make uses to say "no usable
+    /// jobserver was inherited" — rejected without touching fds, `Ok(0)`.
+    #[test]
+    fn jobserver_parse_auth_rejects_invalid_marker() {
+        let ctx = crate::execctx::ExecContext::default();
+        let result = unsafe { jobserver_parse_auth(&ctx, c"-2,-2".as_ptr()) };
+        assert_eq!(result, Ok(0));
+    }
+
+    /// A syntactically valid `<rfd>,<wfd>` pair naming closed/nonexistent
+    /// descriptors fails the `fcntl(F_GETFD)` liveness check, `Ok(0)`.
+    #[test]
+    fn jobserver_parse_auth_rejects_dead_descriptors() {
+        let ctx = crate::execctx::ExecContext::default();
+        let result = unsafe { jobserver_parse_auth(&ctx, c"12345,12346".as_ptr()) };
+        assert_eq!(result, Ok(0));
+    }
+
+    /// A `fifo:<path>` value naming a path that can't be opened hits the
+    /// "cannot open jobserver" `error()`-then-`Ok(0)` path (not fatal —
+    /// only fcntl-after-open failures reach `pfatal_with_name_err`).
+    #[test]
+    fn jobserver_parse_auth_reports_unopenable_fifo() {
+        let ctx = crate::execctx::ExecContext::default();
+        let result = unsafe {
+            jobserver_parse_auth(&ctx, c"fifo:/nonexistent-dir-for-jobserver-test/fifo".as_ptr())
+        };
+        assert_eq!(result, Ok(0));
+    }
+
+    /// A live `<rfd>,<wfd>` pair (a real pipe) is adopted successfully:
+    /// `Ok(1)`, `job_fds` set to the pair, and the read side left
+    /// non-blocking (exercises the success path through `set_blocking`/
+    /// `fd_noinherit`).
+    #[test]
+    fn jobserver_parse_auth_adopts_a_live_pipe() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut fds = [-1i32; 2];
+        assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+
+        let auth = std::ffi::CString::new(format!("{},{}", fds[0], fds[1])).unwrap();
+        let result = unsafe { jobserver_parse_auth(&ctx, auth.as_ptr()) };
+
+        assert_eq!(result, Ok(1));
+        assert_eq!(ctx.job_fds.0.get(), fds);
+        assert!(js_type_get(&ctx) == JsType::Pipe);
+
+        unsafe {
+            close(fds[0]);
+            close(fds[1]);
+        }
+    }
+
     /// `osync_parse_mutex` rejects a value without the `fnm:` prefix without
     /// touching any state, returning `Ok(0)` (a malformed value, not a fatal
     /// condition).
