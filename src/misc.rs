@@ -247,12 +247,12 @@ fn collapse_continuations_bytes(
 /// Backslash-backslash-newline pairs become backslash-newlines.
 /// # Safety
 /// `line` must be a valid, writable NUL-terminated string.
-pub unsafe fn collapse_continuations(line: *mut c_char) {
+pub unsafe fn collapse_continuations(ctx: &crate::execctx::ExecContext, line: *mut c_char) {
     let len = strlen(line);
     // Include the existing NUL slot so the new terminator is written by
     // indexing rather than raw pointer arithmetic.
     let buf = ::core::slice::from_raw_parts_mut(line as *mut u8, len + 1);
-    let new_len = collapse_continuations_bytes(&mut buf[..len], posix_pedantic(), |c| {
+    let new_len = collapse_continuations_bytes(&mut buf[..len], posix_pedantic(ctx), |c| {
         stop_set(c as c_char, MAP_BLANK)
     });
     buf[new_len] = 0;

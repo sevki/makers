@@ -147,7 +147,7 @@ pub unsafe fn find_directory(
                 Some(dc) => dc.counter,
                 None => boxed.counter,
             };
-            if ctr == crate::make_main::opt_command_count() {
+            if ctr == crate::make_main::opt_command_count(ctx) {
                 // Valid hit. The `Box` keeps the entry at a stable heap address,
                 // so this raw pointer outlives the released map borrow.
                 return (&mut **boxed) as *mut directory;
@@ -159,7 +159,7 @@ pub unsafe fn find_directory(
                     b" cache invalidated (count ",
                     ctr.to_string().as_bytes(),
                     b" != command ",
-                    crate::make_main::opt_command_count().to_string().as_bytes(),
+                    crate::make_main::opt_command_count(ctx).to_string().as_bytes(),
                     b")\n",
                 ]);
             }
@@ -179,7 +179,7 @@ pub unsafe fn find_directory(
     };
     let dir_ref = dir.as_mut().expect("directory entry just selected");
     dir_ref.contents = null_mut();
-    dir_ref.counter = crate::make_main::opt_command_count();
+    dir_ref.counter = crate::make_main::opt_command_count(ctx);
 
     let mut st: stat = ::core::mem::zeroed();
     let mut r;
@@ -219,11 +219,11 @@ pub unsafe fn find_directory(
     let dc = dc.as_mut().expect("directory_contents entry just selected");
     dir_ref.contents = dc;
 
-    if dc.counter != crate::make_main::opt_command_count() {
+    if dc.counter != crate::make_main::opt_command_count(ctx) {
         if dc.counter != 0 {
             clear_directory_contents(ctx, dc);
         }
-        dc.counter = crate::make_main::opt_command_count();
+        dc.counter = crate::make_main::opt_command_count(ctx);
         loop {
             *__errno_location() = 0;
             dc.dirstream = opendir(name);

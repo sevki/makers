@@ -301,7 +301,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
 /// flags, populating `recipe.lines` and `recipe.any_recurse`. Idempotent:
 /// recipes are chopped lazily, so a recipe whose `lines` is already populated
 /// is left untouched.
-pub fn chop_commands(_ctx: &ExecContext, recipe: &mut Recipe) {
+pub fn chop_commands(ctx: &ExecContext, recipe: &mut Recipe) {
     // Recipes are chopped lazily; only do it once.
     if !recipe.lines.is_empty() {
         return;
@@ -309,7 +309,7 @@ pub fn chop_commands(_ctx: &ExecContext, recipe: &mut Recipe) {
 
     let text = &recipe.text;
     let mut raw_lines: Vec<Vec<u8>> = Vec::new();
-    if one_shell() {
+    if one_shell(ctx) {
         // .ONESHELL: the entire recipe is a single line (sans final newline).
         let mut line = text.clone();
         if line.last() == Some(&b'\n') {
@@ -745,7 +745,7 @@ pub unsafe fn delete_child_targets(ctx: &ExecContext, child: *mut child) {
 
 /// Print `recipe` for `make -p`, one line per recipe line with the command
 /// prefix.
-pub fn print_commands(recipe: &Recipe) {
+pub fn print_commands(ctx: &ExecContext, recipe: &Recipe) {
     // SAFETY: stdout/printf/fputs are the C stdio handles; the format buffers
     match &recipe.defined_in {
         None => crate::output::trace_out(b"#  recipe to execute (built-in):\n"),
@@ -760,7 +760,7 @@ pub fn print_commands(recipe: &Recipe) {
         ]),
     }
 
-    let prefix = crate::make_main::opt_cmd_prefix() as u8;
+    let prefix = crate::make_main::opt_cmd_prefix(ctx) as u8;
     print_recipe_lines(recipe.text.as_slice(), prefix);
 }
 
@@ -795,8 +795,8 @@ mod adopt_live_fatal_signal_mask_tests {
 
     #[test]
     fn copies_live_mask_when_context_installed() {
-        crate::make_main::install_default_options_for_test();
-        crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::make_main::install_default_exec_context_for_test();
         // Simulate `install_fatal_signal` adding SIGINT (bit 1 of word 0, as
         // `sigaddset(set, 2)` does on Linux) to the live context's mask.
         crate::make_main::with_exec_context(|live_ctx| {

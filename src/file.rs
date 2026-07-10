@@ -1220,14 +1220,14 @@ pub fn rename_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname:
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) {
     let mut doneany: i32 = 0;
-    if crate::make_main::opt_question()
-        || crate::make_main::opt_touch()
+    if crate::make_main::opt_question(ctx)
+        || crate::make_main::opt_touch(ctx)
         || ctx.all_secondary.get()
         || ctx.no_intermediates.get()
     {
         return;
     }
-    if sig != 0 && crate::make_main::opt_just_print() {
+    if sig != 0 && crate::make_main::opt_just_print(ctx) {
         return;
     }
     // Snapshot the intermediate candidates from the arena: lock the map, grab the
@@ -1277,7 +1277,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                 // ENOENT from unlink means the file was already gone: skip the
                 // diagnostic/bookkeeping below (the C code `continue`d here).
                 let skip: bool;
-                if crate::make_main::opt_just_print() {
+                if crate::make_main::opt_just_print(ctx) {
                     status = 0;
                     skip = false;
                 } else {
@@ -1298,7 +1298,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                         if doneany == 0 && 0x1_i32 & db_level(ctx) != 0 {
                             crate::output::trace_out(b"Removing intermediate files...\n");
                         }
-                        if !crate::make_main::opt_run_silent() {
+                        if !crate::make_main::opt_run_silent(ctx) {
                             if doneany == 0 {
                                 crate::output::trace_out(b"rm ");
                                 doneany = 1;
@@ -1635,7 +1635,7 @@ pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: FileId, deps: &[De
     // The guard is dropped before any reentrant arena call below.
     let (fname, is_target, extra_value, has_variables) = {
         let mut n = node.lock().expect("file node lock poisoned");
-        if !second_expansion() {
+        if !second_expansion(ctx) {
             n.updating = false;
         }
         if ctx.all_secondary.get() && !n.notintermediate {
@@ -1660,7 +1660,7 @@ pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: FileId, deps: &[De
             Some(value) => expand_extra_prereqs_value(ctx, value),
             None => Vec::new(),
         };
-        if second_expansion() {
+        if second_expansion(ctx) {
             let mut pre = pre;
             for d in pre.iter_mut() {
                 // The owned `name` is always populated in the node model, so the
@@ -1730,7 +1730,7 @@ fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
-    crate::make_main::mark_snapped_deps();
+    crate::make_main::mark_snapped_deps(ctx);
 
     // `.PRECIOUS`: mark each prereq target precious.
     for fid in special_dep_targets(ctx, b".PRECIOUS") {
@@ -1813,7 +1813,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
 
     // `.EXPORT_ALL_VARIABLES`: a target presence enables global export.
     if special_target_is_target(ctx, b".EXPORT_ALL_VARIABLES") {
-        with_options(|o| o.export_all_variables.set(true));
+        with_options(ctx, |o| o.export_all_variables.set(true));
     }
 
     // `.IGNORE`: with deps, set per-target NOERROR; with no deps, global.
@@ -1823,7 +1823,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
                 apply_to_file_and_double_colon(ctx, fid, |n| n.command_flags |= COMMANDS_NOERROR);
             }
         }
-        SpecialTargetState::NoDeps => crate::make_main::set_ignore_errors_mirror(true),
+        SpecialTargetState::NoDeps => crate::make_main::set_ignore_errors_mirror(ctx, true),
         SpecialTargetState::Absent => {}
     }
 
@@ -1834,7 +1834,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
                 apply_to_file_and_double_colon(ctx, fid, |n| n.command_flags |= COMMANDS_SILENT);
             }
         }
-        SpecialTargetState::NoDeps => with_options(|o| o.run_silent.set(true)),
+        SpecialTargetState::NoDeps => with_options(ctx, |o| o.run_silent.set(true)),
         SpecialTargetState::Absent => {}
     }
 
@@ -1846,7 +1846,7 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
                 mark_notparallel(ctx, fid);
             }
         }
-        SpecialTargetState::NoDeps => crate::make_main::set_not_parallel(),
+        SpecialTargetState::NoDeps => crate::make_main::set_not_parallel(ctx),
         SpecialTargetState::Absent => {}
     }
 
@@ -2297,15 +2297,15 @@ unsafe fn print_file_node(
     f: &FileNode,
     has_double_colon: bool,
 ) {
-    if crate::make_main::opt_no_builtin_rules() && f.builtin {
+    if crate::make_main::opt_no_builtin_rules(ctx) && f.builtin {
         return;
     }
     crate::output::trace_out(b"\n");
     if let Some(recipe) = f.recipe.as_ref() {
-        if recipe.recipe_prefix as i32 != crate::make_main::opt_cmd_prefix() as i32 {
+        if recipe.recipe_prefix as i32 != crate::make_main::opt_cmd_prefix(ctx) as i32 {
             crate::output::trace_out(b".RECIPEPREFIX = ");
             let new_prefix = recipe.recipe_prefix as ::core::ffi::c_char;
-            with_options(|o| o.cmd_prefix.set(new_prefix));
+            with_options(ctx, |o| o.cmd_prefix.set(new_prefix));
             if new_prefix as i32 != RECIPEPREFIX_DEFAULT {
                 crate::output::trace_out(&[new_prefix as u8]);
             }
@@ -2394,7 +2394,7 @@ unsafe fn print_file_node(
                 crate::output::trace_out(b"#  Successfully updated.\n");
             }
             UpdateStatus::Question => {
-                if crate::make_main::opt_question() {
+                if crate::make_main::opt_question(ctx) {
                 } else {
                     panic!("assertion failed: question_flag");
                 };
@@ -2407,7 +2407,7 @@ unsafe fn print_file_node(
         print_file_variables(ctx, fid);
     }
     if let Some(recipe) = f.recipe.as_ref() {
-        print_commands(recipe);
+        print_commands(ctx, recipe);
     }
 }
 /// # Safety
@@ -2858,7 +2858,6 @@ mod tests {
     fn snap_file_plain_target_clears_updating() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
             let fid = enter_file(&ctx, b"snap_plain_probe");
@@ -2882,7 +2881,6 @@ mod tests {
     fn snap_file_target_copies_extra_prereqs() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
             let fid = enter_file(&ctx, b"snapself");
@@ -2909,7 +2907,6 @@ mod tests {
     fn enter_prereqs_resolves_files_for_plain_deps() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
 
@@ -2944,7 +2941,7 @@ mod tests {
     #[test]
     fn file_table_is_per_context_not_global() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::make_main::install_default_options_for_test();
+        let _ctx = crate::make_main::install_default_exec_context_for_test();
         initialize_stopchar_map();
         let a = crate::execctx::ExecContext::default();
         let b = crate::execctx::ExecContext::default();
@@ -2968,7 +2965,6 @@ mod tests {
     fn enter_prereqs_static_pattern_without_percent() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
 
@@ -3005,7 +3001,6 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         unsafe {
-            crate::make_main::install_default_options_for_test();
             initialize_stopchar_map();
             let ctx = crate::execctx::ExecContext::default();
             crate::expand::initialize_variable_output(&ctx);
@@ -3096,7 +3091,6 @@ mod tests {
     fn file_timestamp_cons_low_out_of_range_substitutes() {
         let _g = TIMESTAMP_ERR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            crate::make_main::install_default_options_for_test();
             let ctx = crate::execctx::ExecContext::default();
             // s = 0 <= OLD_MTIME (2): below the encodable range.
             let ts = file_timestamp_cons(&ctx, c"too_old".as_ptr(), system_time_from_unix(0, 0));
@@ -3115,7 +3109,6 @@ mod tests {
     fn file_timestamp_cons_high_out_of_range_substitutes() {
         let _g = TIMESTAMP_ERR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            crate::make_main::install_default_options_for_test();
             // A stamp near time_t::MAX overflows the 30-bit left shift, so it
             // is above the encodable range and clamps to the upper bound.
             let ctx = crate::execctx::ExecContext::default();

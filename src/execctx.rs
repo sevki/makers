@@ -139,6 +139,16 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// Read-only process configuration.
     pub config: Config,
 
+    /// Option/flag values for this run — the former `OPTIONS_PTR`
+    /// thread-local borrow channel's referent, now owned here directly so
+    /// every `&ExecContext` site (which is nearly everywhere) reaches it for
+    /// free instead of through a global. `main_0` builds this once; the
+    /// build-phase context rebuild ([`crate::make_main::main_0`]) carries it
+    /// forward explicitly rather than letting it reset to defaults, since it
+    /// holds real accumulated run state (`goals`, `switches`, decoded
+    /// command-line flags) that must survive the rebuild.
+    pub options: crate::make_main::Options,
+
     /// The session salsa database ([`crate::makedb::MakeDb`]) — hosts the
     /// string interner, the parser's interned AST nodes, and dependency-graph
     /// inputs in one database with shared revisions. Owned here (not in
@@ -1964,6 +1974,7 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
     ) -> ExecContext<Out2, Err2> {
         ExecContext {
             config: self.config,
+            options: self.options,
             db: self.db,
             mtime_adjusted_now: self.mtime_adjusted_now,
             clock_skew_detected: self.clock_skew_detected,

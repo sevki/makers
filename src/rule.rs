@@ -311,7 +311,7 @@ fn suffix_rule_applies(
     if !has_prereqs {
         return true;
     }
-    if posix_pedantic() {
+    if posix_pedantic(ctx) {
         return false;
     }
     crate::error!(
