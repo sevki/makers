@@ -880,15 +880,13 @@ pub fn out_of_memory() -> ! {
     // and write through its stdout sink; this can fire before startup
     // installs a context, in which case fall back to the plain program name
     // and the real process stdout — matching `trace_out`'s own fallback.
-    if crate::make_main::try_with_exec_context(|ctx| {
-        let mut out = ctx.stdout.borrow_mut();
-        write_oom_message(&mut *out, &msg::program_name(ctx));
-    })
-    .is_none()
-    {
-        write_oom_message(&mut std::io::stdout().lock(), "make");
-    }
+    crate::make_main::try_with_exec_context(write_oom_message_from_ctx)
+        .unwrap_or_else(|| write_oom_message(&mut std::io::stdout().lock(), "make"));
     std::process::exit(MAKE_FAILURE)
+}
+fn write_oom_message_from_ctx(ctx: &crate::execctx::ExecContext) {
+    let mut out = ctx.stdout.borrow_mut();
+    write_oom_message(&mut *out, &msg::program_name(ctx));
 }
 fn write_oom_message(out: &mut impl std::io::Write, prog: &str) {
     #[allow(clippy::write_with_newline)]
