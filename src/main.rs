@@ -922,6 +922,15 @@ thread_local! {
     /// reached via the high-fan-in `do_variable_definition`) can reach the
     /// owned `Options` without threading a borrow through the entire
     /// read/eval engine. Set for the dynamic extent of `main_0`.
+    ///
+    /// Phase A disposition (tracking issue #431/#530): accepted as a
+    /// permanent seam, not a migrate-later item. The constraint it works
+    /// around — a C-ABI callback shape with no room for a context parameter
+    /// — is structural, not an artifact of unfinished migration; eliminating
+    /// it would mean threading `&Options` through the read/eval call graph
+    /// (hundreds of sites) for the sole benefit of one callback. Paired with
+    /// `CTX_PTR` below; the acceptance bar is "flat, never grows," and this
+    /// pair is the flat, final state.
     static OPTIONS_PTR: ::core::cell::Cell<*const Options> =
         const { ::core::cell::Cell::new(::core::ptr::null()) };
 }
@@ -957,6 +966,9 @@ thread_local! {
     /// still lives in `main_0`'s `let mut ctx` slot (a stable address even across
     /// the build-phase rebuild), and is installed for the dynamic extent of
     /// `main_0`.
+    ///
+    /// Phase A disposition: accepted as a permanent seam, same reasoning as
+    /// `OPTIONS_PTR` above — see #431/#530.
     static CTX_PTR: ::core::cell::Cell<*const crate::execctx::ExecContext> =
         const { ::core::cell::Cell::new(::core::ptr::null()) };
 }
@@ -1342,6 +1354,17 @@ pub fn set_not_parallel() {
 /// [`initialize_stopchar_map`]. Held behind a `OnceLock` so it is a safe
 /// `static`; reads before initialization see a zeroed map, matching the C
 /// `static`'s zero-initialized state.
+///
+/// Deliberately stays a process-global rather than an `ExecContext` field
+/// (an accepted Phase A exception, alongside `output::STDOUT_ERRNO`): its
+/// contents are a pure, session-independent function of byte value — the
+/// same classification table for every `make` run there could ever be, with
+/// no per-session, per-thread, or per-build-phase variation possible. Moving
+/// it onto `ExecContext` would force every one of its ~100+ call sites
+/// (file.rs, read.rs, parser.rs, job.rs, function.rs, ...) to thread a `ctx`
+/// reference through purely to reach an unchanging lookup table, for no
+/// behavioral benefit — a multi-tenant host sharing one process across
+/// sessions gets an identical table either way.
 static STOPCHAR_MAP: ::std::sync::OnceLock<[::core::ffi::c_ushort; 256]> =
     ::std::sync::OnceLock::new();
 /// Borrow the classification map. Returns a zeroed map until
