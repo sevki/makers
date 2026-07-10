@@ -1174,6 +1174,24 @@ mod tests {
         }
     }
 
+    /// A closed read fd makes `pselect` fail with `EBADF` — the
+    /// "jobserver_signal() closed the read side" case — which is fatal:
+    /// `Err(BuildError::Failure)`, not a plain `Ok(0)`.
+    #[test]
+    fn jobserver_acquire_fatals_on_closed_read_fd() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mut fds = [-1i32; 2];
+        assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+        unsafe { close(fds[0]) };
+        ctx.job_fds.0.set(fds);
+
+        let result = unsafe { jobserver_acquire(&ctx, 0) };
+
+        assert_eq!(result, Err(crate::build_result::BuildError::Failure));
+
+        unsafe { close(fds[1]) };
+    }
+
     /// `jobserver_acquire` reads a token byte off `ctx.job_fds`'s read end. A
     /// byte already sitting in the pipe makes `pselect` return immediately
     /// readable, and the following `read` picks it up: a token was
