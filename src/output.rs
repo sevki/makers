@@ -18,7 +18,6 @@ use libc::{
 use crate::execctx::ExecContext;
 use crate::ffi_types::{size_t, uintmax_t};
 use crate::floc::Floc;
-use crate::make_main::die;
 use crate::misc::{open_anon_tmpfd, writebuf};
 use crate::posixos::{
     check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
@@ -894,19 +893,33 @@ pub unsafe fn perror_with_name(
         &[FmtArg::Str(str), FmtArg::Str(name), FmtArg::Str(err)],
     );
 }
-/// Report `name`: strerror(errno) via [`fatal`] and die.
+/// Non-diverging counterpart to [`pfatal_with_name`]: same message, but
+/// returns the fatal condition as a [`crate::build_result::BuildError`]
+/// (via [`fatal_err`]) instead of exiting, for callers already migrated off
+/// `process::exit` (#432 Phase B).
 ///
 /// # Safety
 /// `name` must be a valid NUL-terminated string.
-pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_char) -> ! {
+pub unsafe fn pfatal_with_name_err(
+    ctx: &ExecContext,
+    name: *const ::core::ffi::c_char,
+) -> crate::build_result::BuildError {
     let err: *const ::core::ffi::c_char = strerror(*__errno_location());
-    fatal(
+    fatal_err(
         ctx,
         null::<Floc>(),
         0,
         c"%s: %s".as_ptr(),
         &[FmtArg::Str(name), FmtArg::Str(err)],
-    );
+    )
+}
+/// Report `name`: strerror(errno) via [`fatal`] and die.
+///
+/// # Safety
+/// `name` must be a valid NUL-terminated string.
+pub unsafe fn pfatal_with_name(ctx: &ExecContext, name: *const ::core::ffi::c_char) -> ! {
+    let e = pfatal_with_name_err(ctx, name);
+    std::process::exit(e.exit_code());
 }
 /// Print the out-of-memory message without allocating and exit with
 /// `MAKE_FAILURE`.
@@ -938,7 +951,7 @@ fn write_oom_message(out: &mut impl std::io::Write, prog: &str) {
 /// Compatibility note: the variadic extern "C" versions still live above
 /// for legacy call sites; both produce identical output formats.
 pub mod msg {
-    use super::{die, outputs, MAKE_FAILURE};
+    use super::{outputs, MAKE_FAILURE};
     use crate::execctx::ExecContext;
     use crate::floc::Floc;
 
@@ -1011,13 +1024,28 @@ pub mod msg {
         write_line(ctx, line, true);
     }
 
+    /// Non-diverging counterpart to [`fatal`]: does byte-identical
+    /// formatting/writing and runs the same `die_cleanup` side effects, then
+    /// *returns* [`crate::build_result::BuildError::Failure`] instead of
+    /// exiting, for callers already migrated off `process::exit` (#432
+    /// Phase B). `fatal` becomes a thin wrapper so both share one path.
+    pub fn fatal_err(
+        ctx: &ExecContext,
+        loc: Option<&Floc>,
+        msg: &str,
+    ) -> crate::build_result::BuildError {
+        let line = format!("{}{msg}.  Stop.\n", build_prefix(ctx, loc, true));
+        write_line(ctx, line, true);
+        crate::make_main::die_cleanup(ctx, MAKE_FAILURE);
+        crate::build_result::BuildError::Failure
+    }
+
     /// Print `msg` to stderr with the make program/file:line prefix plus
     /// the `*** ` fatal marker, append `.  Stop.\n`, and exit with
     /// `MAKE_FAILURE`.
     pub fn fatal(ctx: &ExecContext, loc: Option<&Floc>, msg: &str) -> ! {
-        let line = format!("{}{msg}.  Stop.\n", build_prefix(ctx, loc, true));
-        write_line(ctx, line, true);
-        die(ctx, MAKE_FAILURE)
+        let e = fatal_err(ctx, loc, msg);
+        ::std::process::exit(e.exit_code())
     }
 }
 
@@ -1038,6 +1066,40 @@ macro_rules! fatal {
     ($ctx:expr, $loc:expr, $($arg:tt)*) => {
         $crate::output::msg::fatal($ctx, $loc, &::std::format!($($arg)*))
     };
+}
+
+#[cfg(test)]
+mod fatal_err_tests {
+    use super::*;
+
+    /// [`pfatal_with_name_err`] runs the same `die_cleanup` side effects as
+    /// diverging [`pfatal_with_name`] but returns
+    /// `BuildError::Failure` instead of exiting, and marks the context
+    /// dying (the swap-once guard `die_cleanup` uses to run cleanup exactly
+    /// once) — the #432 Phase B non-diverging leaf this slice adds.
+    #[test]
+    fn pfatal_with_name_err_returns_failure_and_marks_dying() {
+        let ctx = ExecContext::default();
+        assert!(!ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+
+        let e = unsafe { pfatal_with_name_err(&ctx, c"probe".as_ptr()) };
+
+        assert_eq!(e, crate::build_result::BuildError::Failure);
+        assert!(ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+    }
+
+    /// [`msg::fatal_err`] (the safe-API counterpart) likewise returns
+    /// `BuildError::Failure` and runs cleanup exactly once, without
+    /// exiting the test process the way diverging [`msg::fatal`] would.
+    #[test]
+    fn msg_fatal_err_returns_failure_and_marks_dying() {
+        let ctx = ExecContext::default();
+
+        let e = msg::fatal_err(&ctx, None, "probe");
+
+        assert_eq!(e, crate::build_result::BuildError::Failure);
+        assert!(ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+    }
 }
 
 #[cfg(test)]

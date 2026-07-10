@@ -23,7 +23,10 @@ use crate::commands::handling_fatal_signal;
 use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup};
-use crate::output::{error, fatal, perror_with_name, pfatal_with_name, FmtArg, INTSTR_LENGTH};
+use crate::output::{
+    error, fatal, fatal_err, perror_with_name, pfatal_with_name, pfatal_with_name_err, FmtArg,
+    INTSTR_LENGTH,
+};
 
 /// `check_io_state` bits (see os.h).
 pub const IO_UNKNOWN: i32 = 0x1;
@@ -148,7 +151,10 @@ unsafe fn set_blocking(ctx: &crate::execctx::ExecContext, fd: i32, blocking: boo
 }
 
 /// Create the jobserver (fifo if possible, else an anonymous pipe) with
-/// `slots` available tokens. Returns 1.
+/// `slots` available tokens. Returns `Ok(1)` on success, or the
+/// [`crate::build_result::BuildError`] a fatal setup failure produced
+/// (#432 Phase B: this only runs once at startup, from a single call site
+/// already inside `main_0`'s `Result` chain).
 ///
 /// # Safety
 /// `style` must be null or a valid NUL-terminated string; must run
@@ -157,7 +163,7 @@ pub unsafe fn jobserver_setup(
     ctx: &crate::execctx::ExecContext,
     slots: i32,
     style: *const c_char,
-) -> c_uint {
+) -> Result<c_uint, crate::build_result::BuildError> {
     let mut r: i32;
 
     ctx.job_root.0.store(true, Ordering::Relaxed);
@@ -194,7 +200,7 @@ pub unsafe fn jobserver_setup(
             }
             ctx.job_fds.0.set(fds);
             if fds[0] < 0 {
-                fatal(
+                return Err(fatal_err(
                     ctx,
                     null::<Floc>(),
                     0,
@@ -203,7 +209,7 @@ pub unsafe fn jobserver_setup(
                         FmtArg::Str(fifo_name),
                         FmtArg::Str(strerror(*__errno_location())),
                     ],
-                );
+                ));
             }
             loop {
                 fds[1] = open(fifo_name, O_WRONLY);
@@ -213,7 +219,7 @@ pub unsafe fn jobserver_setup(
             }
             ctx.job_fds.0.set(fds);
             if fds[0] < 0 {
-                fatal(
+                return Err(fatal_err(
                     ctx,
                     null::<Floc>(),
                     0,
@@ -222,7 +228,7 @@ pub unsafe fn jobserver_setup(
                         FmtArg::Str(fifo_name),
                         FmtArg::Str(strerror(*__errno_location())),
                     ],
-                );
+                ));
             }
             js_type_set(ctx, JsType::Fifo);
         }
@@ -230,13 +236,13 @@ pub unsafe fn jobserver_setup(
 
     if js_type_get(ctx) == JsType::None {
         if !style.is_null() && strcmp(style, c"pipe".as_ptr()) != 0 {
-            fatal(
+            return Err(fatal_err(
                 ctx,
                 null::<Floc>(),
                 0,
                 c"unknown jobserver auth style '%s'".as_ptr(),
                 &[FmtArg::Str(style)],
-            );
+            ));
         }
         let mut fds = ctx.job_fds.0.get();
         loop {
@@ -247,7 +253,7 @@ pub unsafe fn jobserver_setup(
         }
         ctx.job_fds.0.set(fds);
         if r < 0 {
-            pfatal_with_name(ctx, c"creating jobs pipe".as_ptr());
+            return Err(pfatal_with_name_err(ctx, c"creating jobs pipe".as_ptr()));
         }
         js_type_set(ctx, JsType::Pipe);
     }
@@ -256,7 +262,7 @@ pub unsafe fn jobserver_setup(
     fd_noinherit(fds[0]);
     fd_noinherit(fds[1]);
     if make_job_rfd() < 0 {
-        pfatal_with_name(ctx, c"duping jobs pipe".as_ptr());
+        return Err(pfatal_with_name_err(ctx, c"duping jobs pipe".as_ptr()));
     }
 
     // Fill the pipe with tokens, one per slot, without blocking so we can
@@ -272,21 +278,21 @@ pub unsafe fn jobserver_setup(
         }
         if r != 1 {
             if *__errno_location() != EAGAIN {
-                pfatal_with_name(ctx, c"init jobserver pipe".as_ptr());
+                return Err(pfatal_with_name_err(ctx, c"init jobserver pipe".as_ptr()));
             }
-            fatal(
+            return Err(fatal_err(
                 ctx,
                 null::<Floc>(),
                 0,
                 c"requested job count (%d) is larger than system limit (%d)".as_ptr(),
                 &[FmtArg::Int((slots + 1) as i64), FmtArg::Int(k as i64)],
-            );
+            ));
         }
     }
     set_blocking(ctx, fds[1], true);
     set_blocking(ctx, fds[0], false);
 
-    1
+    Ok(1)
 }
 
 /// Adopt the jobserver described by an inherited `--jobserver-auth` value
@@ -567,6 +573,13 @@ pub fn jobserver_signal() {
 
 /// Re-create the private read dup before waiting for a token.
 ///
+/// Deliberately left calling [`pfatal_with_name`] (diverging) rather than
+/// [`crate::output::pfatal_with_name_err`): its only caller is job.rs's
+/// scheduling loop (`start_waiting_jobs`), which isn't `Result`-returning
+/// yet. Converting this fatal path belongs with that pass (#441 Phase B —
+/// job.rs, deliberately done last), not this output.rs/posixos.rs slice
+/// (#432).
+///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_pre_acquire(ctx: &crate::execctx::ExecContext) {
@@ -577,6 +590,10 @@ pub unsafe fn jobserver_pre_acquire(ctx: &crate::execctx::ExecContext) {
 
 /// Wait (with pselect) for a token; with `timeout` nonzero give up after a
 /// second. Returns 1 if a token was read, 0 on timeout/interrupt.
+///
+/// Same deferral as [`jobserver_pre_acquire`]: its `fatal`/`pfatal_with_name`
+/// sites stay diverging here — the caller is job.rs's scheduling loop, owned
+/// by the job.rs pass (#441), not this slice (#432).
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
@@ -674,12 +691,20 @@ pub unsafe fn osync_get_mutex(ctx: &crate::execctx::ExecContext) -> *mut c_char 
 }
 
 /// Adopt the output-sync mutex described by an inherited `--sync-mutex`
-/// value. Returns 1 on success, 0 on a malformed value.
+/// value. Returns `Ok(1)` on success, `Ok(0)` on a malformed value, or the
+/// [`crate::build_result::BuildError`] a fatal open failure produced (#432
+/// Phase B). Both call sites are startup-only; the one inside `main_0`
+/// propagates with `?`, the other (`decode_output_sync_flags`, not yet
+/// `Result`-returning) bridges through [`crate::output::exit_on_err`] to
+/// keep today's exact exit behavior.
 ///
 /// # Safety
 /// `mutex` must be a valid NUL-terminated string; must run single-threaded
 /// during startup.
-pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const c_char) -> c_uint {
+pub unsafe fn osync_parse_mutex(
+    ctx: &crate::execctx::ExecContext,
+    mutex: *const c_char,
+) -> Result<c_uint, crate::build_result::BuildError> {
     if strncmp(mutex, MUTEX_PREFIX.as_ptr(), MUTEX_PREFIX.to_bytes().len()) != 0 {
         error(
             ctx,
@@ -688,7 +713,7 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
             c"invalid --sync-mutex string '%s'".as_ptr(),
             &[FmtArg::Str(mutex)],
         );
-        return 0;
+        return Ok(0);
     }
 
     free(ctx.osync_tmpfile.0.get() as *mut c_void);
@@ -703,7 +728,7 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
         }
     }
     if ctx.osync_handle.0.load(Ordering::Relaxed) < 0 {
-        fatal(
+        return Err(fatal_err(
             ctx,
             null::<Floc>(),
             0,
@@ -712,10 +737,10 @@ pub unsafe fn osync_parse_mutex(ctx: &crate::execctx::ExecContext, mutex: *const
                 FmtArg::Str(osync_tmpfile),
                 FmtArg::Str(strerror(*__errno_location())),
             ],
-        );
+        ));
     }
     fd_noinherit(ctx.osync_handle.0.load(Ordering::Relaxed));
-    1
+    Ok(1)
 }
 
 /// Close the output-sync mutex, unlinking the file if we created it.
@@ -1187,5 +1212,47 @@ mod tests {
             close(fds[0]);
             close(fds[1]);
         }
+    }
+
+    /// `osync_parse_mutex` rejects a value without the `fnm:` prefix without
+    /// touching any state, returning `Ok(0)` (a malformed value, not a fatal
+    /// condition).
+    #[test]
+    fn osync_parse_mutex_rejects_missing_prefix() {
+        let ctx = crate::execctx::ExecContext::default();
+        let result = unsafe { osync_parse_mutex(&ctx, c"not-a-mutex-string".as_ptr()) };
+        assert_eq!(result, Ok(0));
+    }
+
+    /// A well-formed `fnm:<path>` value whose path can't be opened (parent
+    /// directory doesn't exist) hits the `fatal_err` path (#432 Phase B):
+    /// `osync_parse_mutex` returns `Err(BuildError::Failure)` instead of
+    /// exiting, and the context is marked dying by the shared `die_cleanup`
+    /// it runs on the way out.
+    #[test]
+    fn osync_parse_mutex_fatals_on_unopenable_path() {
+        let ctx = crate::execctx::ExecContext::default();
+        let mutex = c"fnm:/nonexistent-dir-for-osync-test/mutex";
+
+        let result = unsafe { osync_parse_mutex(&ctx, mutex.as_ptr()) };
+
+        assert_eq!(result, Err(crate::build_result::BuildError::Failure));
+        assert!(ctx.dying.0.load(Ordering::Relaxed));
+    }
+
+    /// `jobserver_setup` with a `style` that is neither `fifo` nor `pipe`
+    /// (and null-style is the fifo default, so this only fires once fifo
+    /// setup was skipped by naming an unknown style) hits the "unknown
+    /// jobserver auth style" `fatal_err` path (#432 Phase B) — the one
+    /// `jobserver_setup` failure controllable without forcing a real fd
+    /// exhaustion.
+    #[test]
+    fn jobserver_setup_rejects_unknown_style() {
+        let ctx = crate::execctx::ExecContext::default();
+
+        let result = unsafe { jobserver_setup(&ctx, 1, c"bogus-style".as_ptr()) };
+
+        assert_eq!(result, Err(crate::build_result::BuildError::Failure));
+        assert!(ctx.dying.0.load(Ordering::Relaxed));
     }
 }

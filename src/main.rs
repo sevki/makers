@@ -1696,7 +1696,10 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
     }
     if let Some(mtx) = options.sync_mutex.borrow().as_ref() {
         let c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
-        osync_parse_mutex(ctx, c.as_ptr());
+        // `decode_output_sync_flags` isn't `Result`-returning (its own
+        // fatal() call above is main.rs's #537 slice); bridge through
+        // `exit_on_err` to keep today's exact exit behavior for this leaf.
+        let _ = osync_parse_mutex(ctx, c.as_ptr()).unwrap_or_else(|e| crate::output::exit_on_err(e));
     }
 }
 /// Print the usage table — to stdout for `-h`, to stderr for a bad switch —
@@ -2867,7 +2870,7 @@ unsafe fn main_0(
             &ctx,
             options.job_slots.get().wrapping_sub(1) as i32,
             style_ptr,
-        ) != 0
+        )? != 0
         {
             let auth = jobserver_get_auth(&ctx);
             if !auth.is_null() {
@@ -2904,7 +2907,7 @@ unsafe fn main_0(
         } else {
             let mtx = options.sync_mutex.borrow().clone().unwrap();
             let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
-            if osync_parse_mutex(&ctx, mtx_c.as_ptr()) == 0 {
+            if osync_parse_mutex(&ctx, mtx_c.as_ptr())? == 0 {
                 osync_clear();
                 *options.sync_mutex.borrow_mut() = None;
             }
