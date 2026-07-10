@@ -74,11 +74,68 @@ impl Default for Config {
     }
 }
 
+/// The default stdout sink: real process stdout. Each write re-fetches
+/// `std::io::stdout()` (matching how the pre-generic printers worked), and a
+/// failed write feeds the sticky write-error tracked in
+/// [`crate::output::record_stdout_error`] — the `ferror(stdout)` equivalent
+/// `close_stdout` reads at exit. A future multi-tenant host swaps
+/// [`ExecContext`]'s `Out` for an in-memory buffer (or any other
+/// [`std::io::Write`]) per session instead of this process-wide default.
+/// A unit struct (not an enum shared with the stderr sink) so `Out`/`Err`
+/// are independent type parameters on [`ExecContext`]: nothing forces the
+/// two channels to be the same sink type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StdoutSink;
+
+impl ::std::io::Write for StdoutSink {
+    fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
+        let r = ::std::io::Write::write(&mut ::std::io::stdout(), buf);
+        if let Err(e) = &r {
+            crate::output::record_stdout_error(e);
+        }
+        r
+    }
+    fn flush(&mut self) -> ::std::io::Result<()> {
+        let r = ::std::io::Write::flush(&mut ::std::io::stdout());
+        if let Err(e) = &r {
+            crate::output::record_stdout_error(e);
+        }
+        r
+    }
+}
+
+/// The default stderr sink: real process stderr. No sticky-error tracking —
+/// the C original never had a `ferror(stderr)` check, only `ferror(stdout)`.
+/// See [`StdoutSink`] for why this is its own type rather than a shared enum
+/// variant.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StderrSink;
+
+impl ::std::io::Write for StderrSink {
+    fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
+        ::std::io::Write::write(&mut ::std::io::stderr(), buf)
+    }
+    fn flush(&mut self) -> ::std::io::Result<()> {
+        ::std::io::Write::flush(&mut ::std::io::stderr())
+    }
+}
+
 /// The owned execution context, created in `main` and threaded by reference
 /// into the call graph. Holds the immutable [`Config`] plus (as the migration
 /// proceeds) the mutable runtime state that used to live in `static mut`s.
+///
+/// Generic over its output sinks — independently over `Out` for stdout
+/// (defaulting to [`StdoutSink`]) and `Err` for stderr (defaulting to
+/// [`StderrSink`]), so every existing `&ExecContext` site in the crate keeps
+/// meaning "the real process stdout/stderr" without any change. Two
+/// independent parameters rather than one shared type: stdout and stderr are
+/// different channels with different content (recipe/trace output vs.
+/// diagnostics) and a host may reasonably want, say, stdout captured into a
+/// per-session buffer while stderr still goes to the real process stderr —
+/// one shared type parameter would force them to be the same concrete sink
+/// even when a caller has no use for that coupling.
 #[derive(Debug, Default, Clone)]
-pub struct ExecContext {
+pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write = StderrSink> {
     /// Read-only process configuration.
     pub config: Config,
 
@@ -732,6 +789,18 @@ pub struct ExecContext {
     /// [`VariableBuffer`]'s doc for why this is `Vec<u8>`-backed rather than
     /// a raw pointer + length pair.
     pub variable_buffer: VariableBuffer,
+
+    /// The sink every recipe/trace/diagnostic stdout write goes through —
+    /// `output::trace_out`/`_outputs`'s non-synced path, `hash_print_stats`,
+    /// the usage/version printers. `Rc<RefCell<_>>` rather than a bare `Out`
+    /// so [`ExecContext::clone`] stays a cheap handle-copy (matching
+    /// [`Self::remote_backend`]'s rationale) while every clone still writes
+    /// to the *same* sink — the point of a per-session buffer.
+    pub stdout: ::std::rc::Rc<::core::cell::RefCell<Out>>,
+    /// Same as [`Self::stdout`] for stderr — `error`/`fatal`'s output and the
+    /// `-h`/bad-flag usage banner. An independent type parameter from
+    /// `stdout`'s: nothing requires the two channels to share a sink type.
+    pub stderr: ::std::rc::Rc<::core::cell::RefCell<Err>>,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1834,6 +1903,26 @@ impl ExecContext {
         }
     }
 
+    /// The default context, with real stdout/stderr sinks
+    /// ([`StdoutSink`]/[`StderrSink`]) — identical to `<ExecContext as
+    /// Default>::default()`, but callable as a bare
+    /// `ExecContext::default()` without a type annotation. With two
+    /// independent defaulted type parameters (`Out`, `Err`), rustc's
+    /// default-type-parameter substitution doesn't reliably fire through
+    /// `Default` trait dispatch at an unannotated call site (the
+    /// long-standing single-parameter version of this type didn't hit this;
+    /// splitting stdout/stderr into independent parameters did) — but it
+    /// does fire for a plain inherent method in a non-generic `impl` block,
+    /// which unqualified path calls prefer over the trait method of the
+    /// same name. This keeps every existing bare `ExecContext::default()`
+    /// call site in the crate compiling unchanged.
+    #[allow(clippy::should_implement_trait)]
+    pub fn default() -> Self {
+        <Self as Default>::default()
+    }
+}
+
+impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
     /// `$(MAKELEVEL)` for this make process.
     pub fn makelevel(&self) -> u32 {
         self.config.makelevel
@@ -1858,9 +1947,123 @@ impl ExecContext {
     }
 }
 
+impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
+    /// Rebuild this context with different output sinks, moving every other
+    /// field across unchanged. The one way to get an `ExecContext<Out2,
+    /// Err2>` for sink types other than the defaults ([`StdoutSink`]/
+    /// [`StderrSink`]) without hand-listing every field at the call site: a
+    /// host builds a plain `ExecContext::default()` (or `::new`) for
+    /// startup/config, reads the makefile-independent state it needs from it
+    /// if any, then converts to its own sink types — an in-memory buffer, a
+    /// per-connection socket, whatever `Write` types it wants, independently
+    /// for stdout and stderr — before running the build on it.
+    pub fn with_sinks<Out2: ::std::io::Write, Err2: ::std::io::Write>(
+        self,
+        stdout: Out2,
+        stderr: Err2,
+    ) -> ExecContext<Out2, Err2> {
+        ExecContext {
+            config: self.config,
+            db: self.db,
+            mtime_adjusted_now: self.mtime_adjusted_now,
+            clock_skew_detected: self.clock_skew_detected,
+            load_sample_second: self.load_sample_second,
+            load_prev_weight: self.load_prev_weight,
+            no_intermediates: self.no_intermediates,
+            all_secondary: self.all_secondary,
+            always_make_flag: self.always_make_flag,
+            num_pattern_rules: self.num_pattern_rules,
+            max_pattern_targets: self.max_pattern_targets,
+            max_pattern_deps: self.max_pattern_deps,
+            max_pattern_dep_length: self.max_pattern_dep_length,
+            rules: self.rules,
+            commands_started: self.commands_started,
+            considered: self.considered,
+            good_stdin_used: self.good_stdin_used,
+            open_directories: self.open_directories,
+            load_proc_fd: self.load_proc_fd,
+            temp_stdin_name: self.temp_stdin_name,
+            directory_before_chdir: self.directory_before_chdir,
+            program: self.program,
+            tmpdir: self.tmpdir,
+            shuffle: self.shuffle,
+            remote_backend: self.remote_backend,
+            starting_directory: self.starting_directory,
+            load_lossage: self.load_lossage,
+            shell_var: self.shell_var,
+            command_variables: self.command_variables,
+            default_goal_var: self.default_goal_var,
+            fatal_signal_set: self.fatal_signal_set,
+            make_sync: self.make_sync,
+            output_context: self.output_context,
+            pid_string: self.pid_string,
+            children: self.children,
+            waiting_jobs: self.waiting_jobs,
+            directories: self.directories,
+            directory_contents: self.directory_contents,
+            filenodes: self.filenodes,
+            read_dirstream_buf: self.read_dirstream_buf,
+            read_dirstream_bufsz: self.read_dirstream_bufsz,
+            file_seq_tmpbuf: self.file_seq_tmpbuf,
+            read_files: self.read_files,
+            conditionals: self.conditionals,
+            job_fds: self.job_fds,
+            fifo_name: self.fifo_name,
+            osync_tmpfile: self.osync_tmpfile,
+            library_search_cache: self.library_search_cache,
+            job_slots_used: self.job_slots_used,
+            job_counter: self.job_counter,
+            jobserver_tokens: self.jobserver_tokens,
+            dead_children: self.dead_children,
+            handling_fatal_signal: self.handling_fatal_signal,
+            shell_function_pid: self.shell_function_pid,
+            shell_function_completed: self.shell_function_completed,
+            js_type: self.js_type,
+            job_root: self.job_root,
+            job_rfd: self.job_rfd,
+            osync_handle: self.osync_handle,
+            sync_root: self.sync_root,
+            bad_stdin: self.bad_stdin,
+            tmpfile_works: self.tmpfile_works,
+            last_targ_count: self.last_targ_count,
+            wpre_warned: self.wpre_warned,
+            wcmd_warned: self.wcmd_warned,
+            reap_children_printed: self.reap_children_printed,
+            delete_on_error: self.delete_on_error,
+            max_args: self.max_args,
+            printed_version: self.printed_version,
+            dying: self.dying,
+            output_in_setup: self.output_in_setup,
+            stdout_flags: self.stdout_flags,
+            stderr_flags: self.stderr_flags,
+            io_state: self.io_state,
+            env_recursion: self.env_recursion,
+            variable_changenum: self.variable_changenum,
+            last_changenum: self.last_changenum,
+            pattern_vars: self.pattern_vars,
+            last_pattern_vars: self.last_pattern_vars,
+            goal_list: self.goal_list,
+            goal_dep: self.goal_dep,
+            function_table: self.function_table,
+            vpaths: self.vpaths,
+            general_vpath: self.general_vpath,
+            gpaths: self.gpaths,
+            warning_state: self.warning_state,
+            db_level: self.db_level,
+            variable_globals: self.variable_globals,
+            reading_file: self.reading_file,
+            expanding_var: self.expanding_var,
+            recipe_reading_floc: self.recipe_reading_floc,
+            variable_buffer: self.variable_buffer,
+            stdout: ::std::rc::Rc::new(::core::cell::RefCell::new(stdout)),
+            stderr: ::std::rc::Rc::new(::core::cell::RefCell::new(stderr)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConditionalsFrame, ExecContext, FileArena};
+    use super::{Config, ConditionalsFrame, ExecContext, FileArena, StderrSink, StdoutSink};
 
     #[test]
     fn context_exposes_makelevel() {
@@ -1873,6 +2076,70 @@ mod tests {
     #[test]
     fn default_makelevel_is_zero() {
         assert_eq!(ExecContext::default().makelevel(), 0);
+    }
+
+    /// `with_sinks` is the escape hatch for non-default sink types: it must
+    /// move every other field across (not just zero them out) and let the
+    /// two channels be genuinely different sink instances.
+    #[test]
+    fn with_sinks_carries_state_and_swaps_only_the_io() {
+        let ctx = ExecContext::new(Config { makelevel: 5, ..Default::default() });
+        let buffered = ctx.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        // Non-io state survived the conversion untouched.
+        assert_eq!(buffered.makelevel(), 5);
+        use ::std::io::Write;
+        buffered.stdout.borrow_mut().write_all(b"hello").unwrap();
+        buffered.stderr.borrow_mut().write_all(b"oops").unwrap();
+        assert_eq!(&**buffered.stdout.borrow(), b"hello");
+        assert_eq!(&**buffered.stderr.borrow(), b"oops");
+    }
+
+    /// `Out` and `Err` are independent type parameters, not one shared `W`:
+    /// this builds a context with a real `std::io::Cursor` for stdout and a
+    /// plain `Vec<u8>` for stderr — two different concrete `Write` types —
+    /// and checks both sinks work through the ordinary `Write` interface a
+    /// caller would use (`write_all`, and for the cursor, seeking back to
+    /// re-read what was written).
+    #[test]
+    fn stdout_and_stderr_sinks_can_be_independent_write_types() {
+        use ::std::io::{Cursor, Read, Seek, SeekFrom, Write};
+
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Cursor::new(Vec::<u8>::new()), Vec::<u8>::new());
+
+        ctx.stdout.borrow_mut().write_all(b"cursor stdout").unwrap();
+        ctx.stderr.borrow_mut().write_all(b"vec stderr").unwrap();
+
+        let mut cursor = ctx.stdout.borrow_mut();
+        cursor.seek(SeekFrom::Start(0)).unwrap();
+        let mut read_back = String::new();
+        cursor.read_to_string(&mut read_back).unwrap();
+        assert_eq!(read_back, "cursor stdout");
+
+        assert_eq!(&**ctx.stderr.borrow(), b"vec stderr");
+    }
+
+    /// A `Cursor`-backed context's `trace_out_ctx` writes land in the
+    /// cursor, never on the process's real stdout — the multi-tenant point
+    /// of the generic sink, exercised with the same `std::io::Cursor` type a
+    /// real caller reaches for rather than a bespoke test-only writer.
+    #[test]
+    fn trace_out_ctx_writes_into_a_cursor_sink_not_real_stdout() {
+        use ::std::io::Cursor;
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()));
+        crate::output::trace_out_ctx(&ctx, b"buffered trace line\n");
+        assert_eq!(ctx.stdout.borrow().get_ref().as_slice(), b"buffered trace line\n");
+        assert!(ctx.stderr.borrow().get_ref().is_empty());
+    }
+
+    /// The default sinks (`StdoutSink`/`StderrSink`) still exist and stay
+    /// distinct types after a round trip through `Default`/`Clone`.
+    #[test]
+    fn default_context_uses_distinct_stdio_sinks() {
+        let ctx = ExecContext::default();
+        assert_eq!(*ctx.stdout.borrow(), StdoutSink);
+        assert_eq!(*ctx.stderr.borrow(), StderrSink);
     }
 
     /// `make_sync`'s address is captured by `output_context` before the
