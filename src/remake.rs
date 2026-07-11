@@ -37,7 +37,7 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
 
-use crate::ar::{ar_member_date, ar_name, ar_parse_name, ar_touch};
+use crate::ar::{ar_member_date, ar_name, ar_touch, ParsedArName};
 use crate::commands::{chop_commands, execute_file_commands};
 use crate::expand::{allocated_expand_variable, variable_buffer_output};
 pub use crate::file::nameseq;
@@ -2029,11 +2029,13 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
     let mut file = file;
     if unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(name_ptr)) } {
         let memmtime: uintmax_t;
-        let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        // Own the split `archive`/`member` buffer for the rest of this branch
+        // (replacing the old `ar_parse_name` xstrdup + `free`).
+        let parsed = ParsedArName::parse(unsafe { ::core::ffi::CStr::from_ptr(name_ptr) });
+        let arname = parsed.arname();
+        let memname = parsed.memname();
         let member_date: time_t;
         unsafe {
-            ar_parse_name(ctx, name_ptr, &raw mut arname, &raw mut memname);
             memmtime = name_mtime(ctx, memname);
         }
         // Resolve the archive file's FileId (look up or enter by name bytes).
@@ -2069,9 +2071,6 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
                 rehash_file(ctx, file, &newname);
             }
             file = follow_renamed(ctx, file);
-        }
-        unsafe {
-            free(arname as *mut ::core::ffi::c_void);
         }
         file = follow_renamed(ctx, file);
         // file.low_resolution_time = true; capture hname for member-date below.

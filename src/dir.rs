@@ -9,7 +9,7 @@ pub use crate::ffi_types::{__ino_t, __off_t, __size_t, dev_t, ino_t, size_t, tim
 use crate::floc::Floc;
 use crate::make_main::db_level;
 use crate::misc::xrealloc;
-use crate::output::{fatal, FmtArg};
+use crate::output::{fatal_err, FmtArg};
 use crate::strcache::strcache_add_len;
 
 use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void};
@@ -292,7 +292,12 @@ unsafe fn dir_contents_file_exists_p(
         }
         let Some(entry) = d.as_mut() else {
             if *__errno_location() != 0 {
-                fatal(
+                // `dir_contents_file_exists_p` is `i32`-returning with three
+                // non-`Result` callers (dir.rs, plus `dir_file_exists_p`'s own
+                // wide fan-out); bridge through the shared `_err`/`exit_on_err`
+                // path rather than propagating `Result` through this whole
+                // call chain (#432 Phase B, #539).
+                crate::output::exit_on_err(fatal_err(
                     ctx,
                     null::<Floc>(),
                     0,
@@ -301,7 +306,7 @@ unsafe fn dir_contents_file_exists_p(
                         FmtArg::Str(dir.name),
                         FmtArg::Str(strerror(*__errno_location())),
                     ],
-                );
+                ));
             }
             break;
         };

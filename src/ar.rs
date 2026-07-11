@@ -1,9 +1,8 @@
 use crate::output::FmtArg;
-use libc::{fnmatch, free, strchr};
+use libc::fnmatch;
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
 use crate::file::{Dep, File, SeqNode};
-use crate::misc::xstrdup;
 use crate::strcache::strcache_add;
 extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
@@ -43,7 +42,7 @@ use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
 use crate::file::{enter_file, lookup_file};
 use crate::misc::{alpha_cmp, concat, cstr_bytes_or_empty};
-use crate::output::{error, fatal, out_of_memory, perror_with_name};
+use crate::output::{error, fatal_err, out_of_memory, perror_with_name};
 use crate::remake::f_mtime;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -96,52 +95,38 @@ fn classify_ar_name(bytes: &[u8]) -> ArName {
 
 /// Does `name` refer to an `archive(member)` target?
 ///
-/// Aborts via [`fatal`] on the unsupported nested `archive((member))` form,
-/// matching make's behavior.
+/// Aborts via [`fatal`](crate::output::fatal) on the unsupported nested
+/// `archive((member))` form, matching make's behavior. Thin wrapper around
+/// [`ar_name_err`]; call sites not yet migrated to `Result` propagation
+/// (#432 Phase B) bridge through here.
 pub fn ar_name(ctx: &crate::execctx::ExecContext, name: &::core::ffi::CStr) -> bool {
-    match classify_ar_name(name.to_bytes()) {
-        ArName::Plain => false,
-        ArName::Member => true,
-        ArName::Unsupported => unsafe {
-            fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        name.to_bytes().len() as size_t,
-        b"attempt to use unsupported feature: '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-        &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
-    )
-        },
-    }
+    ar_name_err(ctx, name).unwrap_or_else(|e| crate::output::exit_on_err(e))
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers; all pointer arguments must be
-/// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_parse_name(
+
+/// Non-diverging counterpart to [`ar_name`]: returns
+/// [`BuildError::Failure`](crate::build_result::BuildError::Failure) on the
+/// unsupported nested `archive((member))` form instead of exiting the
+/// process (#432 Phase B).
+pub fn ar_name_err(
     ctx: &crate::execctx::ExecContext,
-    name: *const ::core::ffi::c_char,
-    arname_p: *mut *mut ::core::ffi::c_char,
-    memname_p: *mut *mut ::core::ffi::c_char,
-) {
-    let mut p: *mut ::core::ffi::c_char;
-    *arname_p = xstrdup(name);
-    p = strchr(*arname_p, '(' as i32);
-    if p.is_null() {
-        fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(*arname_p) as size_t,
-        b"INTERNAL: ar_parse_name: bad name '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((*arname_p) as *const ::core::ffi::c_char)],
-    );
+    name: &::core::ffi::CStr,
+) -> Result<bool, crate::build_result::BuildError> {
+    match classify_ar_name(name.to_bytes()) {
+        ArName::Plain => Ok(false),
+        ArName::Member => Ok(true),
+        ArName::Unsupported => Err(unsafe {
+            fatal_err(
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                name.to_bytes().len() as size_t,
+                b"attempt to use unsupported feature: '%s'\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
+            )
+        }),
     }
-    let fresh0 = p;
-    p = p.offset(1_i32 as isize);
-    *fresh0 = 0;
-    *p.offset(strlen(p).wrapping_sub(1) as isize) = 0;
-    *memname_p = p;
 }
+
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
 unsafe fn ar_member_date_1(
@@ -170,14 +155,15 @@ unsafe fn ar_member_date_1(
 /// Owns a parsed `archive(member)` name split into two NUL-terminated C
 /// strings inside a single buffer.
 ///
-/// `ar_parse_name` historically did `xstrdup(name)`, overwrote the `(` and the
-/// trailing `)` with NULs in place, and handed the caller back two interior
-/// pointers it then had to `free`. `ParsedArName` replaces that `xstrdup`/`free`
-/// ownership pair with an owned `Vec<u8>` that drops automatically: it holds
-/// `archive\0member\0`, so [`arname`](Self::arname) is the leading C string and
-/// [`memname`](Self::memname) starts at `member_off`. Nothing escapes — the
-/// buffer is allocated, used, and dropped entirely within the calling function.
-struct ParsedArName {
+/// The historical C `ar_parse_name` did `xstrdup(name)`, overwrote the `(` and
+/// the trailing `)` with NULs in place, and handed the caller back two
+/// interior pointers it then had to `free`. `ParsedArName` replaces that
+/// `xstrdup`/`free` ownership pair with an owned `Vec<u8>` that drops
+/// automatically: it holds `archive\0member\0`, so [`arname`](Self::arname) is
+/// the leading C string and [`memname`](Self::memname) starts at
+/// `member_off`. Nothing escapes — the buffer is allocated, used, and dropped
+/// entirely within the calling function.
+pub(crate) struct ParsedArName {
     /// The dup of `name` with `(` and the trailing `)` rewritten as NULs,
     /// i.e. `archive\0member\0`, kept owned so it drops at end of scope.
     buf: Vec<u8>,
@@ -187,12 +173,12 @@ struct ParsedArName {
 
 impl ParsedArName {
     /// Parse `name` (a well-formed `archive(member)` reference, as guaranteed by
-    /// a prior [`ar_name`] check) into an owned buffer. Mirrors `ar_parse_name`:
-    /// split at the first `(`, then drop the trailing `)`.
+    /// a prior [`ar_name`] check) into an owned buffer. Mirrors the historical
+    /// C `ar_parse_name`: split at the first `(`, then drop the trailing `)`.
     ///
     /// Calls [`out_of_memory`] on allocation failure, matching the original
     /// `xstrdup`.
-    fn parse(name: &::core::ffi::CStr) -> Self {
+    pub(crate) fn parse(name: &::core::ffi::CStr) -> Self {
         let src = name.to_bytes_with_nul();
         // Reserve fallibly so OOM routes through make's `out_of_memory()`
         // ("virtual memory exhausted") diagnostic, matching the original
@@ -217,12 +203,12 @@ impl ParsedArName {
     }
 
     /// The archive C string (`archive`).
-    fn arname(&self) -> *const ::core::ffi::c_char {
+    pub(crate) fn arname(&self) -> *const ::core::ffi::c_char {
         self.buf.as_ptr() as *const ::core::ffi::c_char
     }
 
     /// The member C string (`member`).
-    fn memname(&self) -> *const ::core::ffi::c_char {
+    pub(crate) fn memname(&self) -> *const ::core::ffi::c_char {
         self.buf[self.member_off..].as_ptr() as *const ::core::ffi::c_char
     }
 }
@@ -279,10 +265,12 @@ pub unsafe fn ar_member_date(
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::ffi::c_char) -> i32 {
-    let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    // Own the split `archive`/`member` buffer for the call (replacing the old
+    // `ar_parse_name` xstrdup + `free`).
+    let parsed = ParsedArName::parse(::core::ffi::CStr::from_ptr(name));
+    let arname = parsed.arname();
+    let memname = parsed.memname();
     let mut val: i32;
-    ar_parse_name(ctx, name, &raw mut arname, &raw mut memname);
     let arfile = enter_file(ctx, ::core::ffi::CStr::from_ptr(arname).to_bytes());
     f_mtime(ctx, arfile, false);
     val = 1;
@@ -339,7 +327,6 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
             );
         }
     }
-    free(arname as *mut ::core::ffi::c_void);
     val
 }
 // The argument list is the fixed ar_scan callback protocol.
@@ -526,6 +513,39 @@ mod ar_name_tests {
         // Only the unsupported form needs both an inner '(' and a matching
         // inner ')'. A lone inner '(' is treated as part of the member name.
         assert_eq!(kind("lib((member)"), "member");
+    }
+}
+
+#[cfg(test)]
+mod ar_name_err_tests {
+    use super::ar_name_err;
+
+    /// [`ar_name_err`] returns the classification as `Ok` for both the
+    /// plain and well-formed-member cases (#432 Phase B, #539).
+    #[test]
+    fn ok_for_plain_and_member_names() {
+        let ctx = crate::execctx::ExecContext::default();
+        let plain = ::std::ffi::CString::new("foo.o").unwrap();
+        let member = ::std::ffi::CString::new("lib.a(member.o)").unwrap();
+
+        assert_eq!(ar_name_err(&ctx, &plain), Ok(false));
+        assert_eq!(ar_name_err(&ctx, &member), Ok(true));
+    }
+
+    /// The unsupported nested `archive((member))` form returns
+    /// `BuildError::Failure` instead of aborting the process, and marks the
+    /// context dying (same `die_cleanup` contract as every other `_err`
+    /// twin).
+    #[test]
+    fn err_for_unsupported_nested_form() {
+        let ctx = crate::execctx::ExecContext::default();
+        let nested = ::std::ffi::CString::new("lib((member))").unwrap();
+        assert!(!ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
+
+        let result = ar_name_err(&ctx, &nested);
+
+        assert_eq!(result, Err(crate::build_result::BuildError::Failure));
+        assert!(ctx.dying.0.load(::std::sync::atomic::Ordering::Relaxed));
     }
 }
 
