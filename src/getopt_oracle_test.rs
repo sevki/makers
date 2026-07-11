@@ -7,7 +7,7 @@
 #![cfg(test)]
 
 use super::{
-    command_switch, error, expand_command_line_file, flag, handle_non_switch_argument,
+    CommandSwitch, error, expand_command_line_file, flag, handle_non_switch_argument,
     make_toui, opt_origin_cell, opt_set_flag, opt_set_str, option, strcache_add, string, strlist,
     Options, FmtArg, TEMP_STDIN_OPT, WARN_OPT,
 };
@@ -127,7 +127,7 @@ pub unsafe fn decode_switches_oracle(
     use super::o_command;
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut bad: i32 = 0;
-    let mut cs: *mut command_switch;
+    let mut cs: *mut CommandSwitch;
     let mut targets: stringlist_oracle = stringlist_oracle {
         list: ::core::ptr::null_mut::<*const ::core::ffi::c_char>(),
         idx: 0,

@@ -149,7 +149,7 @@ impl Default for File {
 // existing `crate::file::VariableSet` / `VariableSetList` paths — and the
 // `variable_set` / `variable_set_list` aliases — keep resolving.
 pub use crate::variable::{VariableSet, VariableSetList};
-pub type hash_table = crate::hash::hash_table;
+pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 
@@ -895,7 +895,7 @@ pub const OLD_MTIME: i32 = 2;
 pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
 // The file store lives on `ExecContext` (`ctx.filenodes`, the `FileId`-keyed
 // arena of `Arc<Mutex<FileNode>>`); the former `static mut files` gnulib
-// `hash_table` and its `file_hash_1`/`file_hash_2`/`file_hash_cmp` callbacks —
+// `HashTable` and its `file_hash_1`/`file_hash_2`/`file_hash_cmp` callbacks —
 // and the interim raw-pointer `FileTable` — are gone.
 
 fn stop_set_byte(c: u8, mask: i32) -> bool {

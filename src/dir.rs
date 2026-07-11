@@ -65,12 +65,12 @@ pub struct directory {
     /// `Options::command_count` when this name was last stat'd (used only when the
     /// directory could not be stat'd, so there is no `contents`).
     pub counter: c_ulong,
-    pub contents: *mut directory_contents,
+    pub contents: *mut DirectoryContents,
 }
 
 /// One cached directory entry: the file's `d_type` plus whether it is an
 /// "impossible" target (make tried and failed to build it). The name is the
-/// [`directory_contents::dirfiles`] map key, so it is not stored here.
+/// [`DirectoryContents::dirfiles`] map key, so it is not stored here.
 #[derive(Copy, Clone, Debug)]
 pub struct DirFileEntry {
     pub type_0: c_uchar,
@@ -80,10 +80,10 @@ pub struct DirFileEntry {
 /// The actual cached contents of a directory, keyed by device and inode.
 ///
 /// `dirfiles` is an idiomatic [`FxHashMap`] from a directory entry's name bytes
-/// (no NUL) to its [`DirFileEntry`], replacing the c2rust FFI `hash_table` and
+/// (no NUL) to its [`DirFileEntry`], replacing the c2rust FFI `HashTable` and
 /// its `dirfile_hash_*` callbacks. `None` means the directory could not be
 /// opened (the former null `ht_vec`); `Some` (even empty) means it was.
-pub struct directory_contents {
+pub struct DirectoryContents {
     pub dev: dev_t,
     pub ino: ino_t,
     pub dirfiles: Option<FxHashMap<Box<[u8]>, DirFileEntry>>,
@@ -100,7 +100,7 @@ pub struct directory_contents {
 /// map every call, and decouples the cursor from the cache's lifetime. It is
 /// `Box`-allocated and freed by [`close_dirstream`] (not libc `free`), so it
 /// can own heap data.
-pub struct dirstream {
+pub struct DirStream {
     pub entries: Vec<(Box<[u8]>, c_uchar)>,
     pub index: usize,
 }
@@ -111,7 +111,7 @@ const DB_VERBOSE: i32 = 0x2;
 pub const MAX_OPEN_DIRECTORIES: i32 = 10;
 
 /// Forget everything cached about `dc`, closing its stream if open.
-fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut directory_contents) {
+fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut DirectoryContents) {
     dc.counter = 0;
     if !dc.dirstream.is_null() {
         ctx.open_directories.set(ctx.open_directories.get() - 1);
@@ -198,12 +198,12 @@ pub unsafe fn find_directory(
     // the idiomatic `FxHashMap` cache on the context.
     let dev = st.st_dev as dev_t;
     let ino = st.st_ino as ino_t;
-    let dc: *mut directory_contents = {
+    let dc: *mut DirectoryContents = {
         let mut table = ctx.directory_contents.0.borrow_mut();
         let entry = table.entry((dev, ino)).or_insert_with(|| {
             // Freshly created, matching the former `xcalloc`: no file map yet
             // (`None`), no open stream, zero `counter`.
-            Box::new(directory_contents {
+            Box::new(DirectoryContents {
                 dev,
                 ino,
                 dirfiles: None,
@@ -214,9 +214,9 @@ pub unsafe fn find_directory(
         // The `Box` keeps the contents at a stable heap address across later
         // map inserts/rehashes, so this raw pointer (stored in `directory.contents`
         // and handed to the glob dirstream) stays valid for the run.
-        (&mut **entry) as *mut directory_contents
+        (&mut **entry) as *mut DirectoryContents
     };
-    let dc = dc.as_mut().expect("directory_contents entry just selected");
+    let dc = dc.as_mut().expect("DirectoryContents entry just selected");
     dir_ref.contents = dc;
 
     if dc.counter != crate::make_main::opt_command_count(ctx) {
@@ -422,7 +422,7 @@ pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *cons
         // contents entry just to hold impossible names. It is not in the dev/ino
         // table (there is no stat to key it by), so leak it like the former
         // `xcalloc` did — the cache lives for the whole run.
-        dir.contents = Box::into_raw(Box::new(directory_contents {
+        dir.contents = Box::into_raw(Box::new(DirectoryContents {
             dev: 0,
             ino: 0,
             dirfiles: None,
@@ -613,7 +613,7 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
             .filter(|(_, e)| !e.impossible)
             .map(|(name, e)| (name.clone(), e.type_0))
             .collect();
-        Box::into_raw(Box::new(dirstream { entries, index: 0 })).cast()
+        Box::into_raw(Box::new(DirStream { entries, index: 0 })).cast()
     })
 }
 
@@ -631,7 +631,7 @@ pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
     // the live context through the `CTX_PTR` borrow channel, exactly as the
     // sibling `gl_opendir` callback `open_dirstream` does.
     crate::make_main::with_exec_context(|ctx| unsafe {
-        let ds = (stream as *mut dirstream)
+        let ds = (stream as *mut DirStream)
             .as_mut()
             .expect("read_dirstream: null stream");
 
@@ -679,7 +679,7 @@ extern "C" fn close_dirstream(stream: *mut c_void) {
     }
     // SAFETY: a non-null `stream` was produced by `Box::into_raw` in
     // `open_dirstream`; glob hands each one back here exactly once.
-    drop(unsafe { Box::from_raw(stream as *mut dirstream) });
+    drop(unsafe { Box::from_raw(stream as *mut DirStream) });
 }
 
 /// Point `gl` at the directory cache so glob() reads from it instead of

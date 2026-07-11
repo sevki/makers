@@ -4,7 +4,7 @@
 //! that equal strings share a single stable, NUL-terminated buffer and can be
 //! compared by pointer identity. The original C implementation — faithfully
 //! reproduced by the c2rust port — hand-rolled a linked list of fixed-size
-//! buffers plus a separate open-addressed `hash_table`.
+//! buffers plus a separate open-addressed `HashTable`.
 //!
 //! This implementation interns UTF-8 strings through the session salsa
 //! database ([`crate::makedb::MakeDb`], owned by the `ExecContext`) and keeps

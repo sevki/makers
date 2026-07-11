@@ -32,7 +32,7 @@ pub use crate::sys_stat::timespec;
 use crate::warning::{self, Action, Type};
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
+pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
