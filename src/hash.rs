@@ -3,7 +3,7 @@
 //!
 //! Port of `hash.c`. The table stores raw `void *` items and C function
 //! pointers because every consumer (file.rs, variable.rs, dir.rs, ...) is
-//! still keyed on interned C strings; the layout of `hash_table` is shared
+//! still keyed on interned C strings; the layout of `HashTable` is shared
 //! through `#[repr(C)]`.
 
 use ::core::{
@@ -26,7 +26,7 @@ pub type qsort_cmp_t = Option<unsafe extern "C" fn(*const c_void, *const c_void)
 /// slots hold [`hash_deleted_item`]; empty slots hold null.
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
-pub struct hash_table {
+pub struct HashTable {
     pub ht_vec: *mut *mut c_void,
     pub ht_hash_1: hash_func_t,
     pub ht_hash_2: hash_func_t,
@@ -66,13 +66,13 @@ pub fn is_real_item(item: *const c_void) -> bool {
     !item.is_null() && item != hash_deleted_item
 }
 
-pub(crate) unsafe fn table_slots<'a>(ht: *const hash_table) -> &'a [*mut c_void] {
+pub(crate) unsafe fn table_slots<'a>(ht: *const HashTable) -> &'a [*mut c_void] {
     let ht = ht.as_ref().expect("hash table pointer is null");
     assert!(!ht.ht_vec.is_null(), "hash table without a slot vector");
     ::core::slice::from_raw_parts(ht.ht_vec, ht.ht_size as usize)
 }
 
-unsafe fn table_slots_mut<'a>(ht: *mut hash_table) -> &'a mut [*mut c_void] {
+unsafe fn table_slots_mut<'a>(ht: *mut HashTable) -> &'a mut [*mut c_void] {
     let ht = ht.as_mut().expect("hash table pointer is null");
     assert!(!ht.ht_vec.is_null(), "hash table without a slot vector");
     ::core::slice::from_raw_parts_mut(ht.ht_vec, ht.ht_size as usize)
@@ -85,7 +85,7 @@ unsafe fn table_slots_mut<'a>(ht: *mut hash_table) -> &'a mut [*mut c_void] {
 /// `ht` must point to writable storage; the callbacks must be non-null and
 /// valid for the items later stored.
 pub unsafe fn hash_init(
-    ht: *mut hash_table,
+    ht: *mut HashTable,
     size: c_ulong,
     hash_1: hash_func_t,
     hash_2: hash_func_t,
@@ -123,7 +123,7 @@ pub unsafe fn hash_init(
 /// `item_table` must point to `cardinality * size` valid bytes whose rows
 /// are valid items for this table.
 pub unsafe fn hash_load(
-    ht: *mut hash_table,
+    ht: *mut HashTable,
     item_table: *const c_void,
     cardinality: c_ulong,
     size: c_ulong,
@@ -146,7 +146,7 @@ pub unsafe fn hash_load(
 ///
 /// # Safety
 /// `ht` must be initialized and `key` valid for its callbacks.
-pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *mut c_void {
+pub unsafe fn hash_find_slot(ht: *mut HashTable, key: *const c_void) -> *mut *mut c_void {
     // Index of the first deleted slot seen, reused for insertion. Tracking it
     // as an `Option<usize>` rather than a nullable raw pointer keeps the
     // returned slot pointer always valid (never a null sentinel).
@@ -222,7 +222,7 @@ pub unsafe fn hash_find_slot(ht: *mut hash_table, key: *const c_void) -> *mut *m
 ///
 /// # Safety
 /// `ht` must be initialized and `key` valid for its callbacks.
-pub unsafe fn hash_find_item(ht: *mut hash_table, key: *const c_void) -> *mut c_void {
+pub unsafe fn hash_find_item(ht: *mut HashTable, key: *const c_void) -> *mut c_void {
     let slot = hash_find_slot(ht, key)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -238,7 +238,7 @@ pub unsafe fn hash_find_item(ht: *mut hash_table, key: *const c_void) -> *mut c_
 /// # Safety
 /// `ht` must be initialized and `item` valid for its callbacks and for the
 /// table's lifetime.
-pub unsafe fn hash_insert(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
+pub unsafe fn hash_insert(ht: *mut HashTable, item: *const c_void) -> *mut c_void {
     let slot = hash_find_slot(ht, item)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -258,7 +258,7 @@ pub unsafe fn hash_insert(ht: *mut hash_table, item: *const c_void) -> *mut c_vo
 /// `slot` must come from `hash_find_slot` on this table with `item`'s key,
 /// with no intervening modification.
 pub unsafe fn hash_insert_at(
-    ht: *mut hash_table,
+    ht: *mut HashTable,
     item: *const c_void,
     slot: *const c_void,
 ) -> *mut c_void {
@@ -290,7 +290,7 @@ pub unsafe fn hash_insert_at(
 ///
 /// # Safety
 /// `ht` must be initialized and `item` valid for its callbacks.
-pub unsafe fn hash_delete(ht: *mut hash_table, item: *const c_void) -> *mut c_void {
+pub unsafe fn hash_delete(ht: *mut HashTable, item: *const c_void) -> *mut c_void {
     let slot = hash_find_slot(ht, item)
         .as_mut()
         .expect("hash_find_slot always returns a slot");
@@ -303,7 +303,7 @@ pub unsafe fn hash_delete(ht: *mut hash_table, item: *const c_void) -> *mut c_vo
 /// # Safety
 /// `slot` must come from `hash_find_slot` on this table with no
 /// intervening modification.
-pub unsafe fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c_void {
+pub unsafe fn hash_delete_at(ht: *mut HashTable, slot: *const c_void) -> *mut c_void {
     let slot = (slot as *mut *const c_void)
         .as_mut()
         .expect("hash_delete_at: null slot");
@@ -321,7 +321,7 @@ pub unsafe fn hash_delete_at(ht: *mut hash_table, slot: *const c_void) -> *mut c
 ///
 /// # Safety
 /// Every stored item must be an owned `malloc`-family allocation.
-pub unsafe fn hash_free_items(ht: *mut hash_table) {
+pub unsafe fn hash_free_items(ht: *mut HashTable) {
     assert!(
         ht.as_ref().expect("hash table pointer is null").ht_in_map() == 0,
         "hash table modified during mapping"
@@ -341,7 +341,7 @@ pub unsafe fn hash_free_items(ht: *mut hash_table) {
 ///
 /// # Safety
 /// `ht` must be initialized.
-pub unsafe fn hash_delete_items(ht: *mut hash_table) {
+pub unsafe fn hash_delete_items(ht: *mut HashTable) {
     assert!(
         ht.as_ref().expect("hash table pointer is null").ht_in_map() == 0,
         "hash table modified during mapping"
@@ -360,7 +360,7 @@ pub unsafe fn hash_delete_items(ht: *mut hash_table) {
 /// # Safety
 /// `ht` must be initialized; with `free_items` every stored item must be
 /// an owned allocation.
-pub unsafe fn hash_free(ht: *mut hash_table, free_items: i32) {
+pub unsafe fn hash_free(ht: *mut HashTable, free_items: i32) {
     assert!(
         ht.as_ref().expect("hash table pointer is null").ht_in_map() == 0,
         "hash table modified during mapping"
@@ -382,7 +382,7 @@ pub unsafe fn hash_free(ht: *mut hash_table, free_items: i32) {
 ///
 /// # Safety
 /// `ht` must be initialized and `map` non-null.
-pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
+pub unsafe fn hash_map(ht: *mut HashTable, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
     ht.as_mut().expect("hash table pointer is null").set_ht_in_map(1);
     for &item in table_slots(ht) {
@@ -398,7 +398,7 @@ pub unsafe fn hash_map(ht: *mut hash_table, map: hash_map_func_t) {
 ///
 /// # Safety
 /// `ht` must be initialized and `map` non-null.
-pub unsafe fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *mut c_void) {
+pub unsafe fn hash_map_arg(ht: *mut HashTable, map: hash_map_arg_func_t, arg: *mut c_void) {
     let map = map.expect("hash_map_arg without callback");
     (*ht).set_ht_in_map(1);
     for &item in table_slots(ht) {
@@ -414,7 +414,7 @@ pub unsafe fn hash_map_arg(ht: *mut hash_table, map: hash_map_arg_func_t, arg: *
 ///
 /// # Safety
 /// `ht` must be initialized.
-pub unsafe fn hash_rehash(ht: *mut hash_table) {
+pub unsafe fn hash_rehash(ht: *mut HashTable) {
     let old_ht_size = (*ht).ht_size;
     let old_vec = (*ht).ht_vec;
     let old_slots = ::core::slice::from_raw_parts(old_vec, old_ht_size as usize);
@@ -469,7 +469,7 @@ fn hash_stats_string(
 ///
 /// # Safety
 /// `ht` must be initialized.
-pub unsafe fn hash_print_stats(ht: *mut hash_table) {
+pub unsafe fn hash_print_stats(ht: *mut HashTable) {
     let stats = hash_stats_string(
         (*ht).ht_fill,
         (*ht).ht_size,
@@ -673,7 +673,7 @@ mod tests {
         // Exercise the unsafe wrapper over a real table: it must read the
         // counters without touching the item vector.
         unsafe {
-            let mut ht: hash_table = ::core::mem::zeroed();
+            let mut ht: HashTable = ::core::mem::zeroed();
             hash_init(&raw mut ht, 4, None, None, None);
             hash_print_stats(&raw mut ht);
             hash_free(&raw mut ht, 0);

@@ -189,7 +189,7 @@ pub const _ISlower: CTypeMask = 512;
 pub const _ISupper: CTypeMask = 256;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
+pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 pub const o_invalid: variable_origin = 7;
@@ -217,7 +217,7 @@ pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
 #[derive(Copy, Clone, Debug, BitfieldStruct)]
 #[repr(C)]
-pub struct command_switch {
+pub struct CommandSwitch {
     pub c: i32,
     pub type_0: OptionArgKind,
     pub value_ptr: *mut ::core::ffi::c_void,
@@ -278,8 +278,8 @@ use crate::variable::{
 };
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct command_variable {
-    pub next: *mut command_variable,
+pub struct CommandVariable {
+    pub next: *mut CommandVariable,
     pub variable: *mut variable,
 }
 pub type variable_scope = ::core::ffi::c_uint;
@@ -638,7 +638,7 @@ pub struct Options {
     /// mutable per-run state: `decode_switches` sets each entry's `specified`
     /// bit as arguments are decoded, and `define_makeflags` reads those bits
     /// back when rebuilding MAKEFLAGS.
-    pub switches: ::core::cell::RefCell<[command_switch; 42]>,
+    pub switches: ::core::cell::RefCell<[CommandSwitch; 42]>,
 }
 
 impl Options {
@@ -2518,7 +2518,7 @@ unsafe fn main_0(
         NILF,
     );
     if !ctx.command_variables.0.get().is_null() {
-        let mut cv: *mut command_variable;
+        let mut cv: *mut CommandVariable;
         let mut v_1: *mut variable;
         let mut len_0: size_t = 0;
         let mut p: *mut ::core::ffi::c_char;
@@ -3644,7 +3644,7 @@ unsafe fn handle_non_switch_argument(
     }
     v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global);
     if !v.is_null() {
-        let mut cv: *mut command_variable;
+        let mut cv: *mut CommandVariable;
         cv = ctx.command_variables.0.get();
         while !cv.is_null() {
             if (*cv).variable == v {
@@ -3653,8 +3653,8 @@ unsafe fn handle_non_switch_argument(
             cv = (*cv).next;
         }
         if cv.is_null() {
-            cv = xmalloc(::core::mem::size_of::<command_variable>() as size_t)
-                as *mut command_variable;
+            cv = xmalloc(::core::mem::size_of::<CommandVariable>() as size_t)
+                as *mut CommandVariable;
             (*cv).variable = v;
             (*cv).next = ctx.command_variables.0.get();
             ctx.command_variables.0.set(cv);
@@ -3761,7 +3761,7 @@ pub unsafe fn reset_makeflags(
     disable_builtins(ctx, options);
     define_makeflags(ctx, options, opt_rebuilding_makefiles(ctx) as i32);
 }
-/// Switch chars whose `command_switch.type_0` is `flag`/`flag_off` and which
+/// Switch chars whose `CommandSwitch.type_0` is `flag`/`flag_off` and which
 /// share their underlying `Options` storage with a counterpart char (the
 /// negation aliases): whichever of the pair appears *last* on the command
 /// line wins, matching `opt_set_flag`'s "later assignment overwrites" getopt
@@ -3774,7 +3774,7 @@ const FLAG_PAIRS: [(i32, i32); 3] = [
     ('s' as i32, CHAR_MAX + 8),
 ];
 
-/// Every optional-argument switch (`command_switch.noarg_value` non-null) and
+/// Every optional-argument switch (`CommandSwitch.noarg_value` non-null) and
 /// its bare spellings (short + long name + any optional-argument alias). Used
 /// by [`normalize_argv_for_clap`] to recognize a bare occurrence before clap
 /// parses the token stream.
@@ -3789,7 +3789,7 @@ struct OptionalArgSwitch {
     numeric_lookahead: bool,
 }
 
-fn optional_arg_switches(switches: &[command_switch]) -> Vec<OptionalArgSwitch> {
+fn optional_arg_switches(switches: &[CommandSwitch]) -> Vec<OptionalArgSwitch> {
     let mut out = Vec::new();
     for cs in switches {
         if cs.c == 0 || cs.noarg_value.is_null() {
@@ -3850,7 +3850,7 @@ const NOARG_SENTINEL: &str = "\0";
 /// clap records "given, no value" instead of grabbing an unrelated following
 /// token, while staying distinguishable from a real explicit empty value.
 fn normalize_argv_for_clap(
-    switches: &[command_switch],
+    switches: &[CommandSwitch],
     tokens: &[::std::ffi::OsString],
 ) -> Vec<::std::ffi::OsString> {
     use std::os::unix::ffi::OsStrExt;
@@ -3906,7 +3906,7 @@ fn normalize_argv_for_clap(
 /// everything else (targets, `VAR=value` assignments). Replaces the former
 /// `build_getopt_tables`/`getopt_long` pair -- rebuilt fresh on every
 /// `decode_switches` call, same as the table it replaced.
-fn build_clap_command(switches: &[command_switch]) -> clap::Command {
+fn build_clap_command(switches: &[CommandSwitch]) -> clap::Command {
     use clap::builder::OsStringValueParser;
     use clap::{Arg, ArgAction, Command};
     let mut cmd = Command::new("make")
@@ -3970,7 +3970,7 @@ fn build_clap_command(switches: &[command_switch]) -> clap::Command {
 fn apply_value_switch(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
-    cs: &command_switch,
+    cs: &CommandSwitch,
     raw_value: &::std::ffi::OsStr,
     doit: bool,
     cs_origin: Option<&::core::cell::Cell<variable_origin>>,
@@ -4121,7 +4121,7 @@ fn decode_switches(
     origin: variable_origin,
 ) {
     let mut bad: i32 = 0;
-    let switches_snapshot: Vec<command_switch> = options.switches.borrow().to_vec();
+    let switches_snapshot: Vec<CommandSwitch> = options.switches.borrow().to_vec();
 
     let normalized = normalize_argv_for_clap(&switches_snapshot, tokens);
     let mut retry_tokens = normalized;
@@ -4552,7 +4552,7 @@ pub unsafe fn define_makeflags(
     let evalref: [::core::ffi::c_char; 21] =
         ::core::mem::transmute::<[u8; 21], [::core::ffi::c_char; 21]>(*b" $(-*-eval-flags-*-)\0");
     let switches = options.switches.borrow();
-    let mut cs: *const command_switch;
+    let mut cs: *const CommandSwitch;
     let mut v: *mut variable;
     let mut bufsave: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut lensave: size_t = 0;
@@ -5170,10 +5170,10 @@ pub fn main() -> i32 {
 /// process-global `switches` at startup. Each `Options` owns its own
 /// mutable copy (the `specified` bit is set during argument decoding), so two
 /// sessions in one process no longer share switch state.
-fn switches_template() -> [command_switch; 42] {
+fn switches_template() -> [CommandSwitch; 42] {
     [
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'b' as i32,
@@ -5191,7 +5191,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'B' as i32,
@@ -5209,7 +5209,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'd' as i32,
@@ -5227,7 +5227,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'e' as i32,
@@ -5245,7 +5245,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'E' as i32,
@@ -5263,7 +5263,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'h' as i32,
@@ -5281,7 +5281,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'i' as i32,
@@ -5299,7 +5299,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'k' as i32,
@@ -5317,7 +5317,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'L' as i32,
@@ -5335,7 +5335,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'm' as i32,
@@ -5353,7 +5353,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'n' as i32,
@@ -5371,7 +5371,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'p' as i32,
@@ -5389,7 +5389,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'q' as i32,
@@ -5407,7 +5407,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'r' as i32,
@@ -5425,7 +5425,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'R' as i32,
@@ -5443,7 +5443,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 's' as i32,
@@ -5461,7 +5461,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'S' as i32,
@@ -5479,7 +5479,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 't' as i32,
@@ -5497,7 +5497,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'v' as i32,
@@ -5515,7 +5515,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'w' as i32,
@@ -5534,7 +5534,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'C' as i32,
@@ -5552,7 +5552,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'f' as i32,
@@ -5570,7 +5570,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'I' as i32,
@@ -5588,7 +5588,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'j' as i32,
@@ -5606,7 +5606,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'l' as i32,
@@ -5624,7 +5624,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'o' as i32,
@@ -5642,7 +5642,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'O' as i32,
@@ -5661,7 +5661,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 'W' as i32,
@@ -5679,7 +5679,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 1,
@@ -5698,7 +5698,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 2,
@@ -5716,7 +5716,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 3,
@@ -5734,7 +5734,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 4,
@@ -5753,7 +5753,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 5,
@@ -5771,7 +5771,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 7,
@@ -5789,7 +5789,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 8,
@@ -5807,7 +5807,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 9,
@@ -5825,7 +5825,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: TEMP_STDIN_OPT,
@@ -5843,7 +5843,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 11,
@@ -5862,7 +5862,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 12,
@@ -5880,7 +5880,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: WARN_OPT,
@@ -5899,7 +5899,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: CHAR_MAX + 14,
@@ -5917,7 +5917,7 @@ fn switches_template() -> [command_switch; 42] {
             init
         },
         {
-            let mut init = command_switch {
+            let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
                 c: 0,

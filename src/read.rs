@@ -7,7 +7,7 @@ pub use crate::ffi_types::{
 mod include_path;
 pub use include_path::{construct_include_path, tilde_expand};
 
-/// Raw makefile line reading from an `ebuffer` (split out of this file).
+/// Raw makefile line reading from an `EBuffer` (split out of this file).
 mod lines;
 use crate::file::{dep, file, FileId, NameSeq};
 use crate::file::{CommandState, Commands, Dep, File, UpdateStatus, VariableSet, VariableSetList};
@@ -63,7 +63,7 @@ pub struct glob_t {
 }
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
+pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
@@ -133,7 +133,7 @@ use ::core::ffi::CStr;
 pub type goaldep = crate::file::GoalDep;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct ebuffer {
+pub struct EBuffer {
     pub buffer: *mut ::core::ffi::c_char,
     pub bufnext: *mut ::core::ffi::c_char,
     pub bufstart: *mut ::core::ffi::c_char,
@@ -143,7 +143,7 @@ pub struct ebuffer {
 }
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
-pub struct vmodifiers {
+pub struct VModifiers {
     #[bitfield(name = "assign_v", ty = "::core::ffi::c_uint", bits = "0..=0")]
     #[bitfield(name = "define_v", ty = "::core::ffi::c_uint", bits = "1..=1")]
     #[bitfield(name = "undefine_v", ty = "::core::ffi::c_uint", bits = "2..=2")]
@@ -154,7 +154,7 @@ pub struct vmodifiers {
     #[bitfield(padding)]
     pub c2rust_padding: [u8; 3],
 }
-pub use crate::variable::pattern_var;
+pub use crate::variable::PatternVar;
 pub const w_eol: make_word_type = 1;
 pub type make_word_type = ::core::ffi::c_uint;
 pub const w_ampdcolon: make_word_type = 8;
@@ -398,7 +398,7 @@ unsafe fn eval_makefile(
     mut filename: *const ::core::ffi::c_char,
     flags: ::core::ffi::c_ushort,
 ) -> usize {
-    let mut ebuf: ebuffer = ebuffer {
+    let mut ebuf: EBuffer = EBuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufstart: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -616,7 +616,7 @@ pub unsafe fn eval_buffer(
     buffer: *mut ::core::ffi::c_char,
     flocp: *const Floc,
 ) {
-    let mut ebuf: ebuffer = ebuffer {
+    let mut ebuf: EBuffer = EBuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufstart: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -654,12 +654,12 @@ unsafe fn parse_var_assignment(
     line: *const ::core::ffi::c_char,
     targvar: i32,
     flocp: *const Floc,
-    vmod: *mut vmodifiers,
+    vmod: *mut VModifiers,
 ) -> *mut ::core::ffi::c_char {
     memset(
         vmod as *mut ::core::ffi::c_void,
         0,
-        ::core::mem::size_of::<vmodifiers>() as size_t,
+        ::core::mem::size_of::<VModifiers>() as size_t,
     );
     // Scan the leading modifier keywords through the typed AST layer: a pure,
     // offset-based reproduction of make's modifier loop, replacing the
@@ -732,7 +732,7 @@ fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_default: i32) {
+pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_default: i32) {
     let mut collapsed: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut collapsed_length: size_t = 0;
     let mut commands_len: size_t = 200;
@@ -778,7 +778,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut ebuffer, set_de
         let mut p: *mut ::core::ffi::c_char;
         let mut p2: *mut ::core::ffi::c_char;
         let is_rule: ::core::ffi::c_uint;
-        let mut vmod: vmodifiers = vmodifiers {
+        let mut vmod: VModifiers = VModifiers {
             assign_v_define_v_undefine_v_override_v_private_v_export_v: [0; 1],
             c2rust_padding: [0; 3],
         };
@@ -1952,7 +1952,7 @@ unsafe fn do_undefine(
     ctx: &crate::execctx::ExecContext,
     mut name: *mut ::core::ffi::c_char,
     origin: variable_origin,
-    ebuf: *mut ebuffer,
+    ebuf: *mut EBuffer,
 ) -> Result<(), crate::build_result::BuildError> {
     let var: *mut ::core::ffi::c_char =
         allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
@@ -1987,7 +1987,7 @@ unsafe fn do_define(
     ctx: &crate::execctx::ExecContext,
     mut name: *mut ::core::ffi::c_char,
     origin: variable_origin,
-    ebuf: *mut ebuffer,
+    ebuf: *mut EBuffer,
 ) -> Result<*mut variable, crate::build_result::BuildError> {
     let v: *mut variable;
     let mut var: variable = variable {
@@ -2393,7 +2393,7 @@ unsafe fn record_target_var(
     filenames: &[ParsedName],
     defn: *mut ::core::ffi::c_char,
     origin: variable_origin,
-    vmod: *mut vmodifiers,
+    vmod: *mut VModifiers,
     flocp: *const Floc,
 ) -> Result<(), crate::build_result::BuildError> {
     let global: *mut variable_set_list = ctx.variable_globals.current_variable_set_list.get();
@@ -2402,7 +2402,7 @@ unsafe fn record_target_var(
         let mut name_buf = entry.name.clone();
         name_buf.push(0);
         let mut name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
-        let p: *mut pattern_var;
+        let p: *mut PatternVar;
         let percent: *const ::core::ffi::c_char = find_percent_cached(ctx, &raw mut name);
         if !percent.is_null() {
             // `create_pattern_var` stores the `target`/`suffix` pointers
@@ -2487,7 +2487,7 @@ unsafe fn record_target_var(
             crate::variable::free_file_setlist(ctx, head);
             continue;
         }
-        // Pattern-variable branch: the variable was defined on a `pattern_var`,
+        // Pattern-variable branch: the variable was defined on a `PatternVar`,
         // not a file, so finalize its flags directly.
         let vref = v.as_mut().expect("record_target_var: null variable");
         vref.set_per_target(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);

@@ -1,4 +1,4 @@
-//! Raw makefile line reading from an `ebuffer`, split out of `read.rs`.
+//! Raw makefile line reading from an `EBuffer`, split out of `read.rs`.
 //!
 //! [`readline`] reads one logical line (joining backslash-continuations) from a
 //! file-backed buffer, growing it as needed; [`readstring`] does the same for an
@@ -7,8 +7,8 @@
 
 use super::*;
 
-/// Owned, buffered replacement for the `FILE*` a makefile `ebuffer` used to
-/// carry. `ebuffer` stays `Copy`, so it holds a raw pointer to one of these
+/// Owned, buffered replacement for the `FILE*` a makefile `EBuffer` used to
+/// carry. `EBuffer` stays `Copy`, so it holds a raw pointer to one of these
 /// (`into_raw`/`from_raw`-managed by `eval_makefile`) rather than the reader
 /// itself.
 pub struct MakefileReader {
@@ -17,7 +17,7 @@ pub struct MakefileReader {
 }
 
 impl MakefileReader {
-    /// Box a freshly opened file and leak it to a raw pointer for `ebuffer.fp`.
+    /// Box a freshly opened file and leak it to a raw pointer for `EBuffer.fp`.
     pub fn into_raw(f: std::fs::File) -> *mut MakefileReader {
         Box::into_raw(Box::new(MakefileReader {
             inner: std::io::BufReader::new(f),
@@ -89,7 +89,7 @@ impl MakefileReader {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
+pub unsafe fn readstring(ebuf: *mut EBuffer) -> ::core::ffi::c_long {
     let mut eol: *mut ::core::ffi::c_char;
     if (*ebuf).bufnext >= (*ebuf).bufstart.add((*ebuf).size) {
         return -1_i32 as ::core::ffi::c_long;
@@ -127,7 +127,7 @@ pub unsafe fn readstring(ebuf: *mut ebuffer) -> ::core::ffi::c_long {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn readline(
     ctx: &crate::execctx::ExecContext,
-    ebuf: *mut ebuffer,
+    ebuf: *mut EBuffer,
 ) -> ::core::ffi::c_long {
     let mut p: *mut ::core::ffi::c_char;
     let mut end: *mut ::core::ffi::c_char;

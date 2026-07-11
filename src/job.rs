@@ -162,7 +162,7 @@ pub const _CS_V6_WIDTH_RESTRICTED_ENVS: C2RustUnnamed = 1;
 pub const _CS_PATH: C2RustUnnamed = 0;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
+pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
@@ -193,7 +193,7 @@ pub const f_bogus: variable_flavor = 0;
 pub use crate::output::output;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct childbase {
+pub struct ChildBase {
     pub cmd_name: *mut ::core::ffi::c_char,
     pub environment: *mut *mut ::core::ffi::c_char,
     pub output: output,
@@ -201,8 +201,8 @@ pub struct childbase {
 #[derive(BitfieldStruct)]
 #[repr(C)]
 pub struct child {
-    // The first three fields mirror `childbase` (same order, `#[repr(C)]`) so
-    // that `child as *mut childbase` stays a valid prefix cast for
+    // The first three fields mirror `ChildBase` (same order, `#[repr(C)]`) so
+    // that `child as *mut ChildBase` stays a valid prefix cast for
     // `child_execute_job`/`free_childbase`.
     pub cmd_name: *mut ::core::ffi::c_char,
     pub environment: *mut *mut ::core::ffi::c_char,
@@ -1087,7 +1087,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn free_childbase(child: *mut childbase) {
+pub unsafe fn free_childbase(child: *mut ChildBase) {
     if !(*child).environment.is_null() {
         let mut ep: *mut *mut ::core::ffi::c_char = (*child).environment;
         while !(*ep).is_null() {
@@ -1109,10 +1109,10 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
     if handling_fatal_signal(ctx) {
         return;
     }
-    // Free the c2rust-allocated `childbase` members (cmd_name/environment) the
+    // Free the c2rust-allocated `ChildBase` members (cmd_name/environment) the
     // same way as before; the owned `command_lines`/`line_flags`/`command_buf`
     // Vecs are released when the `Box` is dropped below.
-    free_childbase(child as *mut childbase);
+    free_childbase(child as *mut ChildBase);
     // The child was allocated with `Box::into_raw`; reclaim it so its owned
     // fields drop. Takes the place of the former `free(child)`.
     drop(Box::from_raw(child));
@@ -1388,7 +1388,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     jobserver_pre_child(ctx, (flags & 1 != 0) as i32);
                     (*child).pid = child_execute_job(
                         ctx,
-                        child as *mut childbase,
+                        child as *mut ChildBase,
                         (*child).good_stdin() as i32,
                         argv,
                     );
@@ -2201,7 +2201,7 @@ pub unsafe fn start_waiting_jobs(ctx: &crate::execctx::ExecContext) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn child_execute_job(
     ctx: &crate::execctx::ExecContext,
-    child: *mut childbase,
+    child: *mut ChildBase,
     good_stdin: i32,
     argv: *mut *mut ::core::ffi::c_char,
 ) -> pid_t {
@@ -2255,7 +2255,7 @@ pub unsafe fn child_execute_job(
 /// (`ENOEXEC`) is retried as an argument to the default shell, exactly as
 /// the former `posix_spawn` version did.
 unsafe fn spawn_child(
-    child: *mut childbase,
+    child: *mut ChildBase,
     argv: *mut *mut ::core::ffi::c_char,
     fdin: i32,
     fdout: i32,

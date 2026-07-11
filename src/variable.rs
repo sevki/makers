@@ -30,16 +30,16 @@ extern "C" {
 use crate::warning::{self, Action, Type};
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
+pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 
-/// A scoped set of variables: a `hash_table` of `variable` records. Legacy
+/// A scoped set of variables: a `HashTable` of `variable` records. Legacy
 /// c2rust `#[repr(C)]` container; `file.rs` re-exports it for compatibility.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct VariableSet {
-    pub table: hash_table,
+    pub table: HashTable,
 }
 
 /// A stack of [`VariableSet`] scopes, innermost first, linked by `next`. Legacy
@@ -119,8 +119,8 @@ pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct pattern_var {
-    pub next: *mut pattern_var,
+pub struct PatternVar {
+    pub next: *mut PatternVar,
     pub suffix: *const ::core::ffi::c_char,
     pub target: *const ::core::ffi::c_char,
     pub len: size_t,
@@ -134,7 +134,7 @@ pub const s_target: variable_scope = 1;
 pub const s_global: variable_scope = 0;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct defined_vars {
+pub struct DefinedVars {
     pub name: *const ::core::ffi::c_char,
     pub len: size_t,
 }
@@ -215,7 +215,7 @@ unsafe fn c_str_to_vec(p: *const ::core::ffi::c_char) -> Vec<u8> {
 }
 
 /// Build an idiomatic [`TargetVariable`] from a c2rust `variable` record (the
-/// representation held in a `pattern_var`). This is the bridge used when the
+/// representation held in a `PatternVar`). This is the bridge used when the
 /// per-target/pattern variable store moves onto [`FileNode`]'s `Vec`s.
 ///
 /// # Safety
@@ -339,17 +339,17 @@ pub unsafe fn create_pattern_var(
     ctx: &ExecContext,
     target: *const ::core::ffi::c_char,
     suffix: *const ::core::ffi::c_char,
-) -> *mut pattern_var {
+) -> *mut PatternVar {
     let len: size_t = strlen(target) as size_t;
-    let p: *mut pattern_var =
-        xcalloc(::core::mem::size_of::<pattern_var>() as size_t) as *mut pattern_var;
+    let p: *mut PatternVar =
+        xcalloc(::core::mem::size_of::<PatternVar>() as size_t) as *mut PatternVar;
     let last_pattern_vars = ctx.last_pattern_vars.0.as_ptr();
     if !ctx.pattern_vars.0.get().is_null() {
         if len < 256 && !(*last_pattern_vars)[len as usize].is_null() {
             (*p).next = (*(*last_pattern_vars)[len as usize]).next;
             (*(*last_pattern_vars)[len as usize]).next = p;
         } else {
-            let mut v: *mut *mut pattern_var;
+            let mut v: *mut *mut PatternVar;
             v = ctx.pattern_vars.0.as_ptr();
             loop {
                 if (*v).is_null() || (**v).len > len {
@@ -363,7 +363,7 @@ pub unsafe fn create_pattern_var(
         }
     } else {
         ctx.pattern_vars.0.set(p);
-        (*p).next = ::core::ptr::null_mut::<pattern_var>();
+        (*p).next = ::core::ptr::null_mut::<PatternVar>();
     }
     (*p).target = target;
     (*p).len = len;
@@ -375,11 +375,11 @@ pub unsafe fn create_pattern_var(
 }
 unsafe fn lookup_pattern_var(
     ctx: &ExecContext,
-    start: *mut pattern_var,
+    start: *mut PatternVar,
     target: *const ::core::ffi::c_char,
     targlen: size_t,
-) -> *mut pattern_var {
-    let mut p: *mut pattern_var;
+) -> *mut PatternVar {
+    let mut p: *mut PatternVar;
     p = if !start.is_null() {
         (*start).next
     } else {
@@ -890,7 +890,7 @@ pub unsafe fn lookup_variable(
         let set: *const variable_set = (*setlist).set;
         let v: *mut variable;
         v = hash_find_item(
-            &raw const (*set).table as *mut hash_table,
+            &raw const (*set).table as *mut HashTable,
             &raw mut var_key as *const ::core::ffi::c_void,
         ) as *mut variable;
         if !v.is_null() && (is_parent == 0 || (*v).private_var() == 0) {
@@ -933,7 +933,7 @@ pub unsafe fn lookup_variable_in_set(
         return ::core::ptr::null_mut::<variable>();
     };
     hash_find_item(
-        &raw const setr.table as *mut hash_table,
+        &raw const setr.table as *mut HashTable,
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut variable
 }
@@ -982,8 +982,8 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
         name_c.push(0);
         let name_ptr = name_c.as_ptr() as *const ::core::ffi::c_char;
         let targlen: size_t = name.len() as size_t;
-        let mut p: *mut pattern_var =
-            lookup_pattern_var(ctx, ::core::ptr::null_mut::<pattern_var>(), name_ptr, targlen);
+        let mut p: *mut PatternVar =
+            lookup_pattern_var(ctx, ::core::ptr::null_mut::<PatternVar>(), name_ptr, targlen);
         if !p.is_null() {
             // Expand the matched pattern values inside a throwaway scope so the
             // legacy expanders behave exactly as before, then snapshot each
@@ -1754,7 +1754,7 @@ pub unsafe fn target_environment(
         ctx.variable_globals.current_variable_set_list.set(owned_list);
     }
     let mut s: *mut variable_set_list;
-    let mut table: hash_table = hash_table {
+    let mut table: HashTable = HashTable {
         ht_vec: ::core::ptr::null::<*mut ::core::ffi::c_void>() as *mut *mut ::core::ffi::c_void,
         ht_hash_1: None,
         ht_hash_2: None,
@@ -2473,70 +2473,70 @@ pub unsafe fn try_variable_definition(
 // mutated afterward): `const` avoids the `Sync` bound a `static` would need
 // for the raw-pointer `name` fields, and drops the ctor machinery entirely —
 // same treatment as job.rs's `default_shell`/`sh_chars`/`sh_cmds`.
-const defined_vars: [defined_vars; 13] = [
-    defined_vars {
+const DEFINED_VARS: [DefinedVars; 13] = [
+    DefinedVars {
         name: b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"MAKE_RESTARTS\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"MAKEOVERRIDES\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b".DEFAULT\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"-*-command-variables-*-\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"-*-eval-flags-*-\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 17]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"VPATH\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"GPATH\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         len: (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
     },
-    defined_vars {
+    DefinedVars {
         name: ::core::ptr::null::<::core::ffi::c_char>(),
         len: 0,
     },
 ];
 /// Emit a "reference to undefined variable" warning for `name`, unless `name`
-/// is one of the built-in always-defined variables in the `defined_vars`
+/// is one of the built-in always-defined variables in the `DEFINED_VARS`
 /// table, or the warning is inactive.
 pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
     if warning::is_active(ctx, Type::UndefinedVar) {
-        // SAFETY: `defined_vars` is a NUL-terminated table of built-in
+        // SAFETY: `DEFINED_VARS` is a NUL-terminated table of built-in
         // variable names. We only read it here, walking until the sentinel
         // null `name`, and compare each entry's bytes against `name`.
         let is_builtin = unsafe {
-            let mut dp = defined_vars.as_ptr();
+            let mut dp = DEFINED_VARS.as_ptr();
             let mut found = false;
             while !(*dp).name.is_null() {
                 if (*dp).len == name.len()
@@ -2578,8 +2578,8 @@ mod warn_undefined_unsafe_oracle {
         len: size_t,
     ) {
         if warning::is_active(ctx, Type::UndefinedVar) {
-            let mut dp: *const defined_vars;
-            dp = defined_vars.as_ptr();
+            let mut dp: *const DefinedVars;
+            dp = DEFINED_VARS.as_ptr();
             while !(*dp).name.is_null() {
                 if (*dp).len == len
                     && memcmp(
@@ -2609,7 +2609,7 @@ mod warn_undefined_unsafe_oracle {
         // SAFETY: read-only walk of the process-wide built-in table; see
         // `warn_undefined`.
         unsafe {
-            let mut dp = defined_vars.as_ptr();
+            let mut dp = DEFINED_VARS.as_ptr();
             while !(*dp).name.is_null() {
                 if (*dp).len == name.len()
                     && ::core::slice::from_raw_parts((*dp).name as *const u8, (*dp).len) == name
@@ -2626,7 +2626,7 @@ mod warn_undefined_unsafe_oracle {
     fn is_builtin_oracle(name: *const ::core::ffi::c_char, len: size_t) -> bool {
         // SAFETY: read-only walk of the process-wide built-in table.
         unsafe {
-            let mut dp = defined_vars.as_ptr();
+            let mut dp = DEFINED_VARS.as_ptr();
             while !(*dp).name.is_null() {
                 if (*dp).len == len
                     && memcmp(
@@ -2645,7 +2645,7 @@ mod warn_undefined_unsafe_oracle {
 
     /// The observable side effect (whether a warning is emitted) is gated on
     /// the global warning state, which we do not perturb. What this pins down
-    /// is the membership decision against `defined_vars`: the safe version must
+    /// is the membership decision against `DEFINED_VARS`: the safe version must
     /// classify a name as built-in iff the oracle's `memcmp`-based scan would
     /// have early-returned. Both sides read identical bytes (cast through
     /// platform `c_char`), and we assert agreement across representative inputs
@@ -2839,7 +2839,7 @@ pub unsafe fn print_variable_data_base(ctx: &ExecContext) {
         0,
     );
     crate::output::trace_out(b"\n# Pattern-specific Variable Values\n");
-    let mut p: *mut pattern_var;
+    let mut p: *mut PatternVar;
     let mut rules: ::core::ffi::c_uint = 0;
     p = ctx.pattern_vars.0.get();
     while !p.is_null() {

@@ -90,7 +90,7 @@ pub const us_none: update_status_0 = 1;
 pub const us_success: update_status_0 = 0;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-pub type hash_table = crate::hash::hash_table;
+pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
@@ -125,7 +125,7 @@ use crate::expand::{
 pub use crate::file::nameseq;
 use crate::hash::{hash_find_item, hash_init, hash_insert, hash_load, jhash};
 use rustc_hash::FxHashMap;
-pub use crate::job::childbase;
+pub use crate::job::ChildBase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
 use crate::make_main::{db_level, stopchar_map};
 pub use crate::output::output;
@@ -138,7 +138,7 @@ use crate::variable::{
 };
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
-pub struct function_table_entry {
+pub struct FunctionTableEntry {
     pub fptr: C2RustUnnamed,
     pub name: *const ::core::ffi::c_char,
     pub len: ::core::ffi::c_uchar,
@@ -203,7 +203,7 @@ pub const INTSTR_LENGTH: usize = 53_usize
 pub const EXP_COUNT_BITS: i32 = 15;
 pub const EXP_COUNT_MAX: i32 = ((1) << EXP_COUNT_BITS) - 1;
 unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let key: *const function_table_entry = keyv as *const function_table_entry;
+    let key: *const FunctionTableEntry = keyv as *const FunctionTableEntry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     let _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
     _result_ = _result_.wrapping_add(jhash(::core::slice::from_raw_parts(
@@ -213,7 +213,7 @@ unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> ::cor
     _result_
 }
 fn function_table_entry_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
-    let mut _key: *const function_table_entry = keyv as *const function_table_entry;
+    let mut _key: *const FunctionTableEntry = keyv as *const FunctionTableEntry;
     let mut _result_: ::core::ffi::c_ulong = 0;
     _result_
 }
@@ -221,8 +221,8 @@ unsafe fn function_table_entry_hash_cmp(
     xv: *const ::core::ffi::c_void,
     yv: *const ::core::ffi::c_void,
 ) -> i32 {
-    let x: *const function_table_entry = xv as *const function_table_entry;
-    let y: *const function_table_entry = yv as *const function_table_entry;
+    let x: *const FunctionTableEntry = xv as *const FunctionTableEntry;
+    let y: *const FunctionTableEntry = yv as *const FunctionTableEntry;
     let result: i32 = (*x).len as i32 - (*y).len as i32;
     if result != 0 {
         return result;
@@ -448,8 +448,8 @@ pub unsafe fn patsubst_expand(
 unsafe fn lookup_function(
     ctx: &crate::execctx::ExecContext,
     s: *const ::core::ffi::c_char,
-) -> *const function_table_entry {
-    let mut function_table_entry_key: function_table_entry = function_table_entry {
+) -> *const FunctionTableEntry {
+    let mut function_table_entry_key: FunctionTableEntry = FunctionTableEntry {
         fptr: C2RustUnnamed { func_ptr: None },
         name: ::core::ptr::null::<::core::ffi::c_char>(),
         len: 0,
@@ -472,14 +472,14 @@ unsafe fn lookup_function(
             & (0x1_i32 | (0x2_i32 | 0x4_i32))
             != 0)
     {
-        return ::core::ptr::null::<function_table_entry>();
+        return ::core::ptr::null::<FunctionTableEntry>();
     }
     function_table_entry_key.name = s;
     function_table_entry_key.len = e.offset_from(s) as ::core::ffi::c_long as ::core::ffi::c_uchar;
     hash_find_item(
         ctx.function_table.0.as_ptr(),
         &raw mut function_table_entry_key as *const ::core::ffi::c_void,
-    ) as *const function_table_entry
+    ) as *const FunctionTableEntry
 }
 /// Does `s` match a `%`-pattern whose literal text before the `%` is
 /// `prefix` and whose literal text after it is `suffix`? The `%` stands for
@@ -3862,7 +3862,7 @@ pub unsafe fn func_shell_base(
     argv: *mut *mut ::core::ffi::c_char,
     trim_newlines: i32,
 ) -> *mut ::core::ffi::c_char {
-    let mut child: childbase = childbase {
+    let mut child: ChildBase = ChildBase {
         cmd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         environment: ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
         output: output {
@@ -4495,10 +4495,10 @@ mod func_abspath_tests {
         assert!(abspath_result(b"   ", b"").is_empty());
     }
 }
-/// Build a `function_table_entry` at compile time. Replaces the c2rust-
+/// Build a `FunctionTableEntry` at compile time. Replaces the c2rust-
 /// translated `run_static_initializers` constructor that ran ~1000 lines of
 /// runtime bitfield-setter calls. The bitfield byte layout matches
-/// `function_table_entry`'s `BitfieldStruct` derive: bit 0 = `expand_args`,
+/// `FunctionTableEntry`'s `BitfieldStruct` derive: bit 0 = `expand_args`,
 /// bit 1 = `alloc_fn`, bit 2 = `adds_command`. All static-table entries set
 /// only `expand_args`; `alloc_fn` and `adds_command` are zero.
 const fn ft_entry(
@@ -4512,8 +4512,8 @@ const fn ft_entry(
         *mut *mut ::core::ffi::c_char,
         *const ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char,
-) -> function_table_entry {
-    function_table_entry {
+) -> FunctionTableEntry {
+    FunctionTableEntry {
         fptr: C2RustUnnamed {
             func_ptr: Some(func),
         },
@@ -4535,8 +4535,8 @@ const fn ft_entry_safe(
     max: ::core::ffi::c_uchar,
     expand: u8,
     func: SafeFunc,
-) -> function_table_entry {
-    function_table_entry {
+) -> FunctionTableEntry {
+    FunctionTableEntry {
         fptr: C2RustUnnamed {
             safe_func_ptr: Some(func),
         },
@@ -4549,7 +4549,7 @@ const fn ft_entry_safe(
     }
 }
 
-const function_table_init: [function_table_entry; 38] = [
+const function_table_init: [FunctionTableEntry; 38] = [
     ft_entry_safe(b"abspath\0", 0, 1, 1, func_abspath),
     ft_entry_safe(b"addprefix\0", 2, 2, 1, func_addsuffix_addprefix),
     ft_entry_safe(b"addsuffix\0", 2, 2, 1, func_addsuffix_addprefix),
@@ -4606,7 +4606,7 @@ unsafe fn expand_builtin_function(
     mut o: *mut ::core::ffi::c_char,
     argc: ::core::ffi::c_uint,
     argv: *mut *mut ::core::ffi::c_char,
-    entry_p: *const function_table_entry,
+    entry_p: *const FunctionTableEntry,
 ) -> *mut ::core::ffi::c_char {
     let p: *mut ::core::ffi::c_char;
     // SAFETY: `entry_p` is a function-table entry resolved by the caller and is
@@ -4614,7 +4614,7 @@ unsafe fn expand_builtin_function(
     // accesses below go through a provably-valid reference, not raw derefs.
     let entry = entry_p
         .as_ref()
-        .expect("function_table_entry pointer is non-null");
+        .expect("FunctionTableEntry pointer is non-null");
     if argc < entry.minimum_args as ::core::ffi::c_uint {
         fatal(
             ctx,
@@ -4734,7 +4734,7 @@ pub unsafe fn handle_function(
     // go through a provably-valid reference rather than raw pointer derefs.
     let entry = entry_p
         .as_ref()
-        .expect("function_table_entry pointer is non-null");
+        .expect("FunctionTableEntry pointer is non-null");
     beg = beg.offset(entry.len as i32 as isize);
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*beg as ::core::ffi::c_uchar as isize) as i32
@@ -4964,7 +4964,7 @@ pub unsafe fn define_new_function(
     func: gmk_func_ptr,
 ) {
     let mut e: *const ::core::ffi::c_char = name;
-    let mut ent: *mut function_table_entry;
+    let mut ent: *mut FunctionTableEntry;
     let len: size_t;
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
         .offset(*e as ::core::ffi::c_uchar as isize) as i32
@@ -5027,8 +5027,8 @@ pub unsafe fn define_new_function(
             ],
         );
     }
-    ent = xmalloc(::core::mem::size_of::<function_table_entry>() as size_t)
-        as *mut function_table_entry;
+    ent = xmalloc(::core::mem::size_of::<FunctionTableEntry>() as size_t)
+        as *mut FunctionTableEntry;
     (*ent).name = strcache_add(ctx, name);
     (*ent).len = len as ::core::ffi::c_uchar;
     (*ent).minimum_args = min as ::core::ffi::c_uchar;
@@ -5046,7 +5046,7 @@ pub unsafe fn define_new_function(
     ent = hash_insert(
         ctx.function_table.0.as_ptr(),
         ent as *const ::core::ffi::c_void,
-    ) as *mut function_table_entry;
+    ) as *mut FunctionTableEntry;
     free(ent as *mut ::core::ffi::c_void);
 }
 /// # Safety
@@ -5056,8 +5056,8 @@ pub unsafe fn define_new_function(
 pub unsafe fn hash_init_function_table(ctx: &crate::execctx::ExecContext) {
     hash_init(
         ctx.function_table.0.as_ptr(),
-        (::core::mem::size_of::<[function_table_entry; 38]>() as ::core::ffi::c_ulong)
-            .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong)
+        (::core::mem::size_of::<[FunctionTableEntry; 38]>() as ::core::ffi::c_ulong)
+            .wrapping_div(::core::mem::size_of::<FunctionTableEntry>() as ::core::ffi::c_ulong)
             .wrapping_mul(2),
         Some(function_table_entry_hash_1),
         Some(function_table_entry_hash_2),
@@ -5066,9 +5066,9 @@ pub unsafe fn hash_init_function_table(ctx: &crate::execctx::ExecContext) {
     hash_load(
         ctx.function_table.0.as_ptr(),
         function_table_init.as_ptr() as *const ::core::ffi::c_void,
-        (::core::mem::size_of::<[function_table_entry; 38]>() as ::core::ffi::c_ulong)
-            .wrapping_div(::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong),
-        ::core::mem::size_of::<function_table_entry>() as ::core::ffi::c_ulong,
+        (::core::mem::size_of::<[FunctionTableEntry; 38]>() as ::core::ffi::c_ulong)
+            .wrapping_div(::core::mem::size_of::<FunctionTableEntry>() as ::core::ffi::c_ulong),
+        ::core::mem::size_of::<FunctionTableEntry>() as ::core::ffi::c_ulong,
     );
 }
 

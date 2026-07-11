@@ -500,7 +500,7 @@ pub enum ExportMode {
 /// The variable-definition modifiers (`export`/`override`/`private`/`define`/…)
 /// that may stack in front of an assignment or `define` line — the owned,
 /// pure-data result of scanning a line's leading modifier keywords. Mirrors the
-/// `vmodifiers` bitfield make's `parse_var_assignment` fills, but as plain data
+/// `VModifiers` bitfield make's `parse_var_assignment` fills, but as plain data
 /// with no pointers or side effects.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct VarModifiers {

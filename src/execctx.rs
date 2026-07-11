@@ -423,14 +423,14 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// through the build, so `main_0` hands it across the build-phase context
     /// rebuild rather than letting the cache reset (see its use site).
     /// Idiomatic Rust [`rustc_hash::FxHashMap`] keyed by the directory name
-    /// bytes, replacing the c2rust FFI `hash_table` and its `directory_hash_*`
+    /// bytes, replacing the c2rust FFI `HashTable` and its `directory_hash_*`
     /// callbacks.
     pub directories: DirNameTable,
     /// The directory cache's dev/inode-keyed contents table (`struct
-    /// directory_contents`), the former file-scoped `static mut
-    /// dir::directory_contents`. Shares [`Self::directories`]' lifetime and
+    /// DirectoryContents`), the former file-scoped `static mut
+    /// dir::DirectoryContents`. Shares [`Self::directories`]' lifetime and
     /// hand-off. Idiomatic Rust [`rustc_hash::FxHashMap`] keyed by `(dev, ino)`,
-    /// replacing the c2rust FFI `hash_table` and its hash/compare callbacks.
+    /// replacing the c2rust FFI `HashTable` and its hash/compare callbacks.
     pub directory_contents: DirContentsTable,
 
     /// make's central file store: a [`FileId`](crate::file::FileId)-keyed map of
@@ -972,10 +972,10 @@ impl Clone for IoStateCell {
     }
 }
 
-/// A `Cell<*mut pattern_var>` that defaults to null, for the same reason
+/// A `Cell<*mut PatternVar>` that defaults to null, for the same reason
 /// [`ChildChain`] exists: raw pointers have no `Default`.
 #[derive(Debug, Clone)]
-pub struct PatternVarsCell(pub ::core::cell::Cell<*mut crate::variable::pattern_var>);
+pub struct PatternVarsCell(pub ::core::cell::Cell<*mut crate::variable::PatternVar>);
 
 impl Default for PatternVarsCell {
     fn default() -> Self {
@@ -983,11 +983,11 @@ impl Default for PatternVarsCell {
     }
 }
 
-/// A `Cell<[*mut pattern_var; 256]>` that defaults to all-null:
+/// A `Cell<[*mut PatternVar; 256]>` that defaults to all-null:
 /// `create_pattern_var`'s per-target-length fast-insert cache.
 #[derive(Debug, Clone)]
 pub struct LastPatternVarsCell(
-    pub ::core::cell::Cell<[*mut crate::variable::pattern_var; 256]>,
+    pub ::core::cell::Cell<[*mut crate::variable::PatternVar; 256]>,
 );
 
 impl Default for LastPatternVarsCell {
@@ -1020,12 +1020,12 @@ pub struct ConditionalsFrame {
 /// The directory cache's name-keyed table: an idiomatic Rust
 /// [`rustc_hash::FxHashMap`] from the directory name bytes (the interned name,
 /// less its NUL) to an owned, heap-stable [`directory`](crate::dir::directory),
-/// replacing the c2rust FFI `hash_table` (and its `directory_hash_*` callbacks).
+/// replacing the c2rust FFI `HashTable` (and its `directory_hash_*` callbacks).
 ///
 /// Entries are `Box`ed so a `*mut directory` returned by `find_directory` stays
 /// valid across later inserts/rehashes — the map may move the `Box`, never the
 /// heap block it owns. `RefCell` gives the interior mutability the former
-/// `Cell<hash_table>` provided on the shared `&ExecContext`.
+/// `Cell<HashTable>` provided on the shared `&ExecContext`.
 pub struct DirNameTable(
     pub ::core::cell::RefCell<rustc_hash::FxHashMap<Box<[u8]>, Box<crate::dir::directory>>>,
 );
@@ -1057,19 +1057,19 @@ impl ::core::fmt::Debug for DirNameTable {
 
 /// The directory cache's dev/inode-keyed contents table: an idiomatic Rust
 /// [`rustc_hash::FxHashMap`] from `(dev, ino)` to an owned, heap-stable
-/// [`directory_contents`](crate::dir::directory_contents), replacing the
-/// c2rust FFI `hash_table` (and its `directory_contents_hash_*` callbacks).
+/// [`DirectoryContents`](crate::dir::DirectoryContents), replacing the
+/// c2rust FFI `HashTable` (and its `directory_contents_hash_*` callbacks).
 ///
-/// Entries are `Box`ed so a `*mut directory_contents` taken for a
+/// Entries are `Box`ed so a `*mut DirectoryContents` taken for a
 /// [`directory`](crate::dir::directory)'s `contents` (and for the glob
-/// dirstream) stays valid across later inserts/rehashes — the map may move the
+/// DirStream) stays valid across later inserts/rehashes — the map may move the
 /// `Box`, never the heap block it owns. `RefCell` gives the interior mutability
-/// the former `Cell<hash_table>` provided on the shared `&ExecContext`.
+/// the former `Cell<HashTable>` provided on the shared `&ExecContext`.
 pub struct DirContentsTable(
     pub  ::core::cell::RefCell<
         rustc_hash::FxHashMap<
             (crate::ffi_types::dev_t, crate::ffi_types::ino_t),
-            Box<crate::dir::directory_contents>,
+            Box<crate::dir::DirectoryContents>,
         >,
     >,
 );
@@ -1295,10 +1295,10 @@ impl ::core::fmt::Debug for ShellVar {
     }
 }
 
-/// A `Cell<*mut command_variable>` (list head) that defaults to null, for
+/// A `Cell<*mut CommandVariable>` (list head) that defaults to null, for
 /// [`ExecContext::command_variables`] — raw pointers have no `Default`.
 #[derive(Debug, Clone)]
-pub struct CommandVariables(pub ::core::cell::Cell<*mut crate::make_main::command_variable>);
+pub struct CommandVariables(pub ::core::cell::Cell<*mut crate::make_main::CommandVariable>);
 
 impl Default for CommandVariables {
     fn default() -> Self {
@@ -1686,15 +1686,15 @@ impl Clone for VpathChain {
 
 /// The user-defined/built-in function table (`$(call)`-able functions,
 /// including those registered by `gmk_add_function`), the former
-/// `function.rs` `static mut function_table`. `hash_table` is a `Copy`
-/// c2rust record; call sites take `.0.as_ptr()` for the `*mut hash_table`
+/// `function.rs` `static mut function_table`. `HashTable` is a `Copy`
+/// c2rust record; call sites take `.0.as_ptr()` for the `*mut HashTable`
 /// the `hash.rs` FFI-shaped insert/lookup functions expect, the same
 /// raw-pointer-into-`Cell`-interior treatment [`Self::pattern_vars`] gets.
-pub struct FunctionTableCell(pub ::core::cell::Cell<crate::hash::hash_table>);
+pub struct FunctionTableCell(pub ::core::cell::Cell<crate::hash::HashTable>);
 
 impl Default for FunctionTableCell {
     fn default() -> Self {
-        Self(::core::cell::Cell::new(crate::hash::hash_table {
+        Self(::core::cell::Cell::new(crate::hash::HashTable {
             ht_vec: ::core::ptr::null_mut(),
             ht_hash_1: None,
             ht_hash_2: None,
@@ -1716,7 +1716,7 @@ impl Clone for FunctionTableCell {
     fn clone(&self) -> Self {
         // Per-run build state handed across the `main_0` context rebuild by
         // `mem::take`, never by clone; deriving `Clone` would copy the
-        // `hash_table` record's `ht_vec` pointer by value, aliasing the same
+        // `HashTable` record's `ht_vec` pointer by value, aliasing the same
         // slot array across two contexts with independently-mutable
         // `ht_fill`/`ht_size` counters. A fresh empty table is the right (and
         // only sound) snapshot, matching `DirNameTable`/`DirContentsTable`.
@@ -1726,7 +1726,7 @@ impl Clone for FunctionTableCell {
 
 impl ::core::fmt::Debug for FunctionTableCell {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        // `hash_table` has no `Debug`; the fill count is the useful bit.
+        // `HashTable` has no `Debug`; the fill count is the useful bit.
         f.debug_tuple("FunctionTableCell")
             .field(&self.0.get().ht_fill)
             .finish()
@@ -1769,7 +1769,7 @@ impl ::core::convert::AsMut<crate::variable::VariableSet> for GlobalVariableSet 
 impl Default for GlobalVariableSet {
     fn default() -> Self {
         Self(Box::new(::core::cell::Cell::new(crate::variable::VariableSet {
-            table: crate::hash::hash_table {
+            table: crate::hash::HashTable {
                 ht_vec: ::core::ptr::null_mut(),
                 ht_hash_1: None,
                 ht_hash_2: None,
@@ -2623,7 +2623,7 @@ mod tests {
         populated
             .command_variables
             .0
-            .set(0x1 as *mut crate::make_main::command_variable);
+            .set(0x1 as *mut crate::make_main::CommandVariable);
 
         let carried_shell_var = ::core::mem::take(&mut populated.shell_var);
         let carried_command_variables = ::core::mem::take(&mut populated.command_variables);
