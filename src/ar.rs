@@ -1,5 +1,5 @@
 use crate::output::FmtArg;
-use libc::{fnmatch, free, strchr};
+use libc::{fnmatch, strchr};
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
 use crate::file::{Dep, File, SeqNode};
@@ -279,10 +279,13 @@ pub unsafe fn ar_member_date(
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
 pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::ffi::c_char) -> i32 {
-    let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+    // `name` is `archive(member)`; own the split buffer here so it drops on
+    // return (replacing the old `ar_parse_name` xstrdup + `free`), matching
+    // `ar_member_date`'s approach.
+    let parsed = ParsedArName::parse(::core::ffi::CStr::from_ptr(name));
+    let arname = parsed.arname();
+    let memname = parsed.memname();
     let mut val: i32;
-    ar_parse_name(ctx, name, &raw mut arname, &raw mut memname);
     let arfile = enter_file(ctx, ::core::ffi::CStr::from_ptr(arname).to_bytes());
     f_mtime(ctx, arfile, false);
     val = 1;
@@ -339,7 +342,6 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
             );
         }
     }
-    free(arname as *mut ::core::ffi::c_void);
     val
 }
 // The argument list is the fixed ar_scan callback protocol.

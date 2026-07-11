@@ -340,7 +340,8 @@ use crate::expand::{expand_string_buf, expand_string_for_file, variable_buffer_o
 use crate::floc::Floc;
 use crate::function::patsubst_expand_pat;
 use crate::make_main::{db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP};
-use crate::output::{error, fatal, perror_with_name, FmtArg};
+use crate::fatal;
+use crate::output::{error, perror_with_name, FmtArg};
 use crate::read::{find_percent, parse_file_seq};
 pub use crate::recipe::Commands;
 use crate::variable::{
@@ -1725,11 +1726,7 @@ unsafe fn expand_extra_prereqs_value(
 fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
     d.name.clone().into_bytes()
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
+pub fn snap_deps(ctx: &crate::execctx::ExecContext) {
     crate::make_main::mark_snapped_deps(ctx);
 
     // `.PRECIOUS`: mark each prereq target precious.
@@ -1801,13 +1798,10 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     }
 
     if ctx.no_intermediates.get() && ctx.all_secondary.get() {
-        fatal(
+        fatal!(
             ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            0,
-            b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
-                as *const ::core::ffi::c_char,
-            &[],
+            None,
+            ".NOTINTERMEDIATE and .SECONDARY are mutually exclusive"
         );
     }
 
@@ -1851,14 +1845,19 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
     }
 
     // Global `.EXTRA_PREREQS`: expand once, then offer to every snapped file.
-    let prereqs: Vec<DepNode> = expand_extra_prereqs(
-        ctx,
-        lookup_variable(
+    // `lookup_variable`/`expand_extra_prereqs` are C-shaped FFI leaves inherited
+    // from the c2rust translation; contained here rather than propagated as
+    // `unsafe fn` up through `snap_deps` itself.
+    let prereqs: Vec<DepNode> = unsafe {
+        expand_extra_prereqs(
             ctx,
-            b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-        ),
-    );
+            lookup_variable(
+                ctx,
+                b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
+                (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
+            ),
+        )
+    };
     // Snapshot the arena's files, then snap each. Matching the C `hash_dump`,
     // any files entered while snapping are not themselves re-processed here.
     let filedump: Vec<FileId> = ctx
@@ -1870,7 +1869,9 @@ pub unsafe fn snap_deps(ctx: &crate::execctx::ExecContext) {
         .copied()
         .collect();
     for fid in filedump {
-        snap_file(ctx, fid, &prereqs);
+        unsafe {
+            snap_file(ctx, fid, &prereqs);
+        }
     }
 }
 
@@ -2019,23 +2020,10 @@ fn mark_notparallel(ctx: &crate::execctx::ExecContext, fid: FileId) {
 
 /// Emit the byte-identical fatal diagnostic for a target that is both
 /// `.NOTINTERMEDIATE` and `.INTERMEDIATE`/`.SECONDARY`.
-unsafe fn fatal_special_conflict(
-    ctx: &crate::execctx::ExecContext,
-    name: &[u8],
-    kinds: &[u8],
-) -> ! {
-    let mut name_c = name.to_vec();
-    name_c.push(0);
-    let mut msg = b"%s cannot be both ".to_vec();
-    msg.extend_from_slice(kinds);
-    msg.push(0);
-    fatal(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        name.len() as size_t,
-        msg.as_ptr() as *const ::core::ffi::c_char,
-        &[FmtArg::Str(name_c.as_ptr() as *const ::core::ffi::c_char)],
-    )
+fn fatal_special_conflict(ctx: &crate::execctx::ExecContext, name: &[u8], kinds: &[u8]) -> ! {
+    let name = String::from_utf8_lossy(name);
+    let kinds = String::from_utf8_lossy(kinds);
+    fatal!(ctx, None, "{name} cannot be both {kinds}")
 }
 /// # Safety
 ///
