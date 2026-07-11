@@ -1729,7 +1729,7 @@ fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn snap_deps(
+pub fn snap_deps(
     ctx: &crate::execctx::ExecContext,
 ) -> Result<(), crate::build_result::BuildError> {
     crate::make_main::mark_snapped_deps(ctx);
@@ -1776,7 +1776,9 @@ pub unsafe fn snap_deps(
             None
         });
         if let Some(name) = conflict {
-            fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .INTERMEDIATE")?;
+            // SAFETY: `fatal_special_conflict` only formats `ctx`/`name`/`kinds`
+            // into a diagnostic; no raw-pointer precondition beyond that.
+            unsafe { fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .INTERMEDIATE") }?;
         }
     }
 
@@ -1794,7 +1796,8 @@ pub unsafe fn snap_deps(
                     None
                 });
                 if let Some(name) = conflict {
-                    fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY")?;
+                    // SAFETY: see the `.INTERMEDIATE` conflict call above.
+                    unsafe { fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY") }?;
                 }
             }
         }
@@ -1803,14 +1806,18 @@ pub unsafe fn snap_deps(
     }
 
     if ctx.no_intermediates.get() && ctx.all_secondary.get() {
-        return Err(fatal_err(
-            ctx,
-            ::core::ptr::null_mut::<Floc>(),
-            0,
-            b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
-                as *const ::core::ffi::c_char,
-            &[],
-        ));
+        // SAFETY: `fatal_err` only formats a NUL-terminated string literal and
+        // `ctx` into a diagnostic; no other raw-pointer precondition applies.
+        return Err(unsafe {
+            fatal_err(
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                0,
+                b".NOTINTERMEDIATE and .SECONDARY are mutually exclusive\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            )
+        });
     }
 
     // `.EXPORT_ALL_VARIABLES`: a target presence enables global export.
@@ -1853,14 +1860,19 @@ pub unsafe fn snap_deps(
     }
 
     // Global `.EXTRA_PREREQS`: expand once, then offer to every snapped file.
-    let prereqs: Vec<DepNode> = expand_extra_prereqs(
-        ctx,
-        lookup_variable(
+    // SAFETY: `lookup_variable` is passed a NUL-terminated string literal and
+    // its exact byte length; `expand_extra_prereqs` only reads the `variable`
+    // it returns.
+    let prereqs: Vec<DepNode> = unsafe {
+        expand_extra_prereqs(
             ctx,
-            b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-        ),
-    );
+            lookup_variable(
+                ctx,
+                b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
+                (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
+            ),
+        )
+    };
     // Snapshot the arena's files, then snap each. Matching the C `hash_dump`,
     // any files entered while snapping are not themselves re-processed here.
     let filedump: Vec<FileId> = ctx
@@ -1872,7 +1884,9 @@ pub unsafe fn snap_deps(
         .copied()
         .collect();
     for fid in filedump {
-        snap_file(ctx, fid, &prereqs);
+        // SAFETY: `snap_file` is the c2rust-inherited per-file snap step;
+        // `ctx`/`fid`/`prereqs` are all valid owned/arena-backed values.
+        unsafe { snap_file(ctx, fid, &prereqs) };
     }
     Ok(())
 }

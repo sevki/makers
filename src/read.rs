@@ -106,7 +106,7 @@ pub struct passwd {
     pub pw_dir: *mut ::core::ffi::c_char,
     pub pw_shell: *mut ::core::ffi::c_char,
 }
-use crate::ar::{ar_glob, ar_name, ar_parse_name};
+use crate::ar::{ar_glob, ar_name, ParsedArName};
 use crate::dir::{dir_setup_glob, file_exists_p};
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, expand_string_buf,
@@ -3535,8 +3535,11 @@ pub unsafe fn parse_file_seq(
             ::core::ptr::null_mut::<*const ::core::ffi::c_char>();
         let mut tildep: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut globme: i32 = 1;
-        let mut arname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        let mut memname: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
+        let mut memname: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
+        // Owns the split `archive`/`member` buffer for the iteration when
+        // `ar_name` matches below (replacing the old `ar_parse_name`
+        // xstrdup + `free`); stays `None` otherwise.
+        let mut _parsed_ar: Option<ParsedArName> = None;
         let mut s: *mut ::core::ffi::c_char;
         let mut nlen: size_t;
         let mut tot: i32 = 0;
@@ -3655,8 +3658,10 @@ pub unsafe fn parse_file_seq(
                     }
                 }
                 if !(flags & 0x2_i32 != 0) && ar_name(ctx, CStr::from_ptr(name)) {
-                    ar_parse_name(ctx, name, &raw mut arname, &raw mut memname);
-                    name = arname;
+                    let parsed = ParsedArName::parse(CStr::from_ptr(name));
+                    memname = parsed.memname();
+                    name = parsed.arname();
+                    _parsed_ar = Some(parsed);
                 }
                 if !(flags & 0x8_i32 != 0)
                     && strpbrk(name, b"?*[\0" as *const u8 as *const ::core::ffi::c_char).is_null()
@@ -3738,7 +3743,6 @@ pub unsafe fn parse_file_seq(
                 if globme != 0 {
                     globfree(&raw mut gl);
                 }
-                free(arname as *mut ::core::ffi::c_void);
                 free(tildep as *mut ::core::ffi::c_void);
             }
         }
