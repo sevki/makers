@@ -1023,15 +1023,15 @@ impl DepGraphDb {
     }
 
     pub fn topo_order(&self) -> Result<Vec<NodeId>, Cycle> {
-        topo_order_query(&self.db, self.input)
+        topo_order_query(&self.db, self.input).clone()
     }
 
     pub fn find_cycle(&self) -> Option<Cycle> {
-        find_cycle_query(&self.db, self.input)
+        find_cycle_query(&self.db, self.input).clone()
     }
 
     pub fn reachable_from_goals(&self) -> Vec<NodeId> {
-        reachable_from_goals_query(&self.db, self.input)
+        reachable_from_goals_query(&self.db, self.input).to_vec()
     }
 
     /// Union of the per-file memoized reverse-reachability queries, sorted
@@ -1039,7 +1039,7 @@ impl DepGraphDb {
     pub fn affected_by(&self, changed: &[FileId]) -> Vec<FileId> {
         let mut out: Vec<FileId> = changed
             .iter()
-            .flat_map(|&f| affected_by_query(&self.db, self.input, f))
+            .flat_map(|&f| affected_by_query(&self.db, self.input, f).clone())
             .collect();
         out.sort_unstable();
         out.dedup();
@@ -1047,11 +1047,11 @@ impl DepGraphDb {
     }
 
     pub fn to_dot(&self) -> String {
-        dot_query(&self.db, self.input)
+        dot_query(&self.db, self.input).to_string()
     }
 
     pub fn to_mermaid(&self) -> String {
-        mermaid_query(&self.db, self.input)
+        mermaid_query(&self.db, self.input).to_string()
     }
 }
 
