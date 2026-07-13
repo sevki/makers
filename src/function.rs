@@ -129,7 +129,7 @@ pub use crate::job::ChildBase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
 use crate::make_main::{db_level, stopchar_map};
 pub use crate::output::output;
-use crate::output::{error, fatal, out_of_memory, output_context, outputs};
+use crate::output::{error, fatal_err, out_of_memory, output_context, outputs};
 use crate::posixos::fd_noinherit;
 use crate::read::{eval_buffer, find_percent, parse_file_seq};
 use crate::variable::{
@@ -1963,28 +1963,42 @@ fn classify_numeric(s: &[u8]) -> NumParse {
 /// `msg` context) on empty / out-of-range / otherwise-invalid input. The parsing
 /// is done in safe Rust by [`classify_numeric`]; the only `unsafe` here is the
 /// variadic `fatal` reporting, which still needs the C string pointers.
+///
+/// Thin diverging wrapper over [`parse_numeric_err`] for call sites not yet
+/// migrated to `Result` propagation (#432 Phase B).
 unsafe fn parse_numeric(
     ctx: &crate::execctx::ExecContext,
     s: &::core::ffi::CStr,
     msg: &::core::ffi::CStr,
 ) -> i64 {
+    parse_numeric_err(ctx, s, msg).unwrap_or_else(|e| crate::output::exit_on_err(e))
+}
+
+/// Non-diverging counterpart to [`parse_numeric`]: returns
+/// [`BuildError::Failure`](crate::build_result::BuildError::Failure) on
+/// empty / out-of-range / otherwise-invalid input instead of exiting the
+/// process (#432 Phase B).
+unsafe fn parse_numeric_err(
+    ctx: &crate::execctx::ExecContext,
+    s: &::core::ffi::CStr,
+    msg: &::core::ffi::CStr,
+) -> Result<i64, crate::build_result::BuildError> {
     match classify_numeric(s.to_bytes()) {
-        NumParse::Ok(n) => n,
-        // `fatal` diverges (`-> !`), so these arms never produce an `i64`.
-        NumParse::Empty => fatal(
+        NumParse::Ok(n) => Ok(n),
+        NumParse::Empty => Err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             msg.to_bytes().len() as size_t,
             c"%s: empty value".as_ptr(),
             &[FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char)],
-        ),
+        )),
         other => {
             let fmt = if other == NumParse::OutOfRange {
                 c"%s: '%s' out of range"
             } else {
                 c"%s: '%s'"
             };
-            fatal(
+            Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 (msg.to_bytes().len() + s.to_bytes().len()) as size_t,
@@ -1993,7 +2007,7 @@ unsafe fn parse_numeric(
                     FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char),
                     FmtArg::Str((s.as_ptr()) as *const ::core::ffi::c_char),
                 ],
-            )
+            ))
         }
     }
 }
@@ -2014,13 +2028,13 @@ fn func_word(
     };
     if i < 1 {
         unsafe {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
                 c"first argument to 'word' function must be greater than 0".as_ptr(),
                 &[],
-            );
+            ));
         }
     }
     let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes() };
@@ -2061,7 +2075,7 @@ fn func_wordlist(
     };
     if start < 1 {
         unsafe {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 (badfirst.to_bytes().len() as size_t).wrapping_add(
@@ -2075,7 +2089,7 @@ fn func_wordlist(
                             as *const ::core::ffi::c_char,
                     ),
                 ],
-            );
+            ));
         }
     }
     let stop = unsafe {
@@ -2087,7 +2101,7 @@ fn func_wordlist(
     };
     if stop < 0 {
         unsafe {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 (badsecond.to_bytes().len() as size_t).wrapping_add(
@@ -2101,7 +2115,7 @@ fn func_wordlist(
                             as *const ::core::ffi::c_char,
                     ),
                 ],
-            );
+            ));
         }
     }
     let bytes = unsafe { ::core::ffi::CStr::from_ptr(*argv.offset(2_i32 as isize)).to_bytes() };
@@ -2450,9 +2464,10 @@ mod selection_tests {
     //! tested. The conversion is signature-only (moving `unsafe` from the `fn`
     //! signature into blocks), so identical output confirms no behavioral drift.
     use super::{
-        fatal, func_findstring, func_word, func_wordlist, make_lltoa, parse_numeric, size_t,
-        strlen, strstr, tokens, variable_buffer_output, word_span, FmtArg,
+        func_findstring, func_word, func_wordlist, make_lltoa, parse_numeric, size_t, strlen,
+        strstr, tokens, variable_buffer_output, word_span, FmtArg,
     };
+    use crate::output::fatal;
     use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CString};
@@ -2942,7 +2957,7 @@ unsafe fn func_error(
         crate::parser::LogFunction::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes());
     match logfn {
         Some(crate::parser::LogFunction::Error) => {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.reading_file.0.get(),
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
@@ -2950,7 +2965,7 @@ unsafe fn func_error(
                 &[FmtArg::Str(
                     (*argv.offset(0_i32 as isize)) as *const ::core::ffi::c_char,
                 )],
-            );
+            ));
         }
         Some(crate::parser::LogFunction::Warning) => {
             error(
@@ -2975,13 +2990,13 @@ unsafe fn func_error(
             outputs(ctx, 0, msg.as_ptr() as *const ::core::ffi::c_char);
         }
         _ => {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 strlen(funcname) as size_t,
                 b"INTERNAL: func_error: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
                 &[FmtArg::Str((funcname) as *const ::core::ffi::c_char)],
-            );
+            ));
         }
     }
     o
@@ -3264,14 +3279,14 @@ unsafe fn parse_textint(
     let p: *const ::core::ffi::c_char = next_token(number);
     let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
     match classify_textint(t) {
-        TextInt::Empty => fatal(
+        TextInt::Empty => crate::output::exit_on_err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(msg) as size_t,
             b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
             &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
-        ),
-        TextInt::NotNumeric => fatal(
+        )),
+        TextInt::NotNumeric => crate::output::exit_on_err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
@@ -3280,7 +3295,7 @@ unsafe fn parse_textint(
                 FmtArg::Str((msg) as *const ::core::ffi::c_char),
                 FmtArg::Str((number) as *const ::core::ffi::c_char),
             ],
-        ),
+        )),
         TextInt::Parsed {
             sign: s,
             num_start,
@@ -4134,7 +4149,7 @@ unsafe fn file_io_fatal(
     err: &::std::io::Error,
 ) -> ! {
     let es: *const ::core::ffi::c_char = strerror(err.raw_os_error().unwrap_or(0));
-    fatal(
+    crate::output::exit_on_err(fatal_err(
         ctx,
         ctx.reading_file.0.get(),
         (name.to_bytes().len() as size_t).wrapping_add(strlen(es) as size_t),
@@ -4143,7 +4158,7 @@ unsafe fn file_io_fatal(
             FmtArg::Str(name.as_ptr()),
             FmtArg::Str(es as *const ::core::ffi::c_char),
         ],
-    );
+    ))
 }
 unsafe fn func_file(
     ctx: &crate::execctx::ExecContext,
@@ -4159,13 +4174,13 @@ unsafe fn func_file(
         let start: *const ::core::ffi::c_char =
             next_token(fn_0.offset(1 + append as isize));
         if *start.offset(0_i32 as isize) as i32 == 0 {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
                 b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
-            );
+            ));
         }
         // The filename is the first token: everything up to the first
         // whitespace byte (`end_of_token` is the safe offset form).
@@ -4224,22 +4239,22 @@ unsafe fn func_file(
         let mut n: size_t = 0;
         let start_0: *const ::core::ffi::c_char = next_token(fn_0.offset(1_i32 as isize));
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
                 b"file: missing filename\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
-            );
+            ));
         }
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            fatal(
+            crate::output::exit_on_err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
                 b"file: too many arguments\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
-            );
+            ));
         }
         let start_bytes = ::core::ffi::CStr::from_ptr(start_0).to_bytes();
         let name = &start_bytes[..end_of_token(start_bytes)];
@@ -4305,13 +4320,13 @@ unsafe fn func_file(
             );
         }
     } else {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(fn_0) as size_t,
             b"file: invalid file operation: %s\0" as *const u8 as *const ::core::ffi::c_char,
             &[FmtArg::Str((fn_0) as *const ::core::ffi::c_char)],
-        );
+        ));
     }
     o
 }
@@ -4616,7 +4631,7 @@ unsafe fn expand_builtin_function(
         .as_ref()
         .expect("FunctionTableEntry pointer is non-null");
     if argc < entry.minimum_args as ::core::ffi::c_uint {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(entry.name) as size_t,
@@ -4626,20 +4641,20 @@ unsafe fn expand_builtin_function(
                 FmtArg::Uint((argc) as u32 as u64),
                 FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
             ],
-        );
+        ));
     }
     if argc == 0 && entry.alloc_fn() == 0 {
         return o;
     }
     if entry.fptr.func_ptr.is_none() {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(entry.name) as size_t,
             b"unimplemented on this platform: function '%s'\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[FmtArg::Str((entry.name) as *const ::core::ffi::c_char)],
-        );
+        ));
     }
     if entry.adds_command() != 0 {
         crate::make_main::bump_command_count(ctx);
@@ -4765,7 +4780,7 @@ pub unsafe fn handle_function(
         end = end.offset(1_i32 as isize);
     }
     if count >= 0 {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(entry.name) as size_t,
@@ -4775,7 +4790,7 @@ pub unsafe fn handle_function(
                 FmtArg::Str((entry.name) as *const ::core::ffi::c_char),
                 FmtArg::Int((closeparen as i32) as i64),
             ],
-        );
+        ));
     }
     *stringp = end;
     alloca_allocations.push(::std::vec::from_elem(
@@ -4975,34 +4990,34 @@ pub unsafe fn define_new_function(
     }
     len = e.offset_from(name) as ::core::ffi::c_long as size_t;
     if len == 0 {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             flocp,
             0,
             b"empty function name\0" as *const u8 as *const ::core::ffi::c_char,
             &[],
-        );
+        ));
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             flocp,
             strlen(name) as size_t,
             b"invalid function name: %s\0" as *const u8 as *const ::core::ffi::c_char,
             &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-        );
+        ));
     }
     if len > 255 {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             flocp,
             strlen(name) as size_t,
             b"function name too long: %s\0" as *const u8 as *const ::core::ffi::c_char,
             &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-        );
+        ));
     }
     if min > 255 {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             flocp,
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
@@ -5012,10 +5027,10 @@ pub unsafe fn define_new_function(
                 FmtArg::Uint((min) as u32 as u64),
                 FmtArg::Str((name) as *const ::core::ffi::c_char),
             ],
-        );
+        ));
     }
     if max > 255 || max != 0 && max < min {
-        fatal(
+        crate::output::exit_on_err(fatal_err(
             ctx,
             flocp,
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
@@ -5025,7 +5040,7 @@ pub unsafe fn define_new_function(
                 FmtArg::Uint((max) as u32 as u64),
                 FmtArg::Str((name) as *const ::core::ffi::c_char),
             ],
-        );
+        ));
     }
     ent = xmalloc(::core::mem::size_of::<FunctionTableEntry>() as size_t)
         as *mut FunctionTableEntry;
