@@ -24,7 +24,7 @@ use crate::make_main::{stopchar_map, MAP_BLANK, MAP_COMMENT, MAP_NEWLINE, MAP_NU
 use crate::variable::{f_append, f_expand, f_recursive, f_shell, f_simple, variable_flavor};
 
 /// The assignment operator's flavor, mirroring make's `variable_flavor`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, salsa::Update)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Flavor {
     /// `=` — recursively expanded.
     Recursive,
@@ -55,7 +55,7 @@ impl Flavor {
 /// A parsed variable assignment, expressed as byte offsets into the source line
 /// so the caller can point make's `struct variable` straight at the original
 /// buffer (matching `parse_variable_definition`, which never copies the name).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, salsa::Update)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Assignment {
     /// Start offset of the variable name within the line.
     pub name_start: usize,
@@ -1423,12 +1423,12 @@ pub fn assignment_ast(db: &crate::makedb::MakeDb, bytes: &[u8]) -> Option<Assign
         parsed.value_start,
     );
     Some(Assignment {
-        name_start: node.name_start(db),
-        name_len: node.name_len(db),
-        flavor: node.flavor(db),
-        conditional: node.conditional(db),
-        op_end: node.op_end(db),
-        value_start: node.value_start(db),
+        name_start: *node.name_start(db),
+        name_len: *node.name_len(db),
+        flavor: *node.flavor(db),
+        conditional: *node.conditional(db),
+        op_end: *node.op_end(db),
+        value_start: *node.value_start(db),
     })
 }
 
@@ -1493,15 +1493,15 @@ fn var_def(db: &crate::makedb::MakeDb, scan: VarModScan) -> LineClass {
     );
     LineClass::VarDef(VarLine {
         mods: VarModifiers {
-            export: node.export(db),
-            over: node.over(db),
-            private: node.private(db),
-            define: node.define(db),
-            undefine: node.undefine(db),
+            export: *node.export(db),
+            over: *node.over(db),
+            private: *node.private(db),
+            define: *node.define(db),
+            undefine: *node.undefine(db),
         },
-        had_modifier: node.had_modifier(db),
-        assign: node.assign(db),
-        rest: node.rest(db),
+        had_modifier: *node.had_modifier(db),
+        assign: *node.assign(db),
+        rest: *node.rest(db),
     })
 }
 
