@@ -1353,6 +1353,53 @@ fn startup_fatal_paths_keep_their_message_and_status() {
 }
 
 #[test]
+fn makefile_parse_fatals_keep_their_message_and_status() {
+    // read.rs's 15 fatals now report through `fatal_err` and bridge to the
+    // exit via `exit_on_err` (#441). Unlike job.rs's internal errors, these
+    // are reachable from an ordinary bad makefile, so they are also covered
+    // by the `missing_separator`, `extraneous_endif`, `double_else`, and
+    // `missing_endif` fixtures, which byte-diff the same four runs against
+    // the C oracle in fixtures-diff. This pins the `<file>:<line>: *** ` shape
+    // — the floc prefix is what distinguishes these from main.rs's `make: ***`
+    // fatals, and it is threaded through `fatal_err`'s `flocp` argument.
+    let cases: &[(&str, &str, u32)] = &[
+        // eval: a recipe line indented with spaces instead of a TAB.
+        (
+            "all:\n        @echo eight spaces\n",
+            "missing separator (did you mean TAB instead of 8 spaces?)",
+            2,
+        ),
+        // conditional_line: `endif` with no open conditional.
+        ("all: ; @echo hi\nendif\n", "extraneous 'endif'", 2),
+        // conditional_line: a second `else` in one conditional.
+        (
+            "ifeq (a,a)\nall: ; @echo one\nelse\nall: ; @echo two\nelse\nall: ; @echo three\nendif\n",
+            "only one 'else' per conditional",
+            5,
+        ),
+        // eval: EOF with a conditional still open.
+        ("ifeq (a,a)\nall: ; @echo unterminated\n", "missing 'endif'", 3),
+    ];
+
+    for (makefile, message, line) in cases {
+        let dir = tempdir();
+        let mk = dir.join("Makefile");
+        std::fs::write(&mk, makefile).unwrap();
+        let out = Command::new(RUST_MAKE)
+            .args(["--no-print-directory", "all"])
+            .current_dir(&dir)
+            .output()
+            .expect("failed to spawn make");
+        assert_eq!(out.status.code(), Some(2), "case {message:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stderr),
+            format!("Makefile:{line}: *** {message}.  Stop.\n"),
+            "case {message:?}"
+        );
+    }
+}
+
+#[test]
 fn goal_selection_fatal_paths_keep_their_message_and_status() {
     // The three goal-selection fatals at the end of `main_0` — an ambiguous
     // `.DEFAULT_GOAL`, a makefile with no rules, and no makefile at all — now

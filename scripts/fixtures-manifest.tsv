@@ -130,3 +130,7 @@ file_func	ordered	94_file_func.mk	check			simple
 bad_debug_level	ordered	01_basic.mk	all	--debug=z		simple
 bad_output_sync_type	ordered	01_basic.mk	all	--output-sync=bogus		simple
 chdir_missing_dir	ordered	01_basic.mk	all	-Cno_such_dir_xyz		simple
+missing_separator	ordered	95_missing_separator.mk	all			simple
+extraneous_endif	ordered	96_extraneous_endif.mk	all			simple
+double_else	ordered	97_double_else.mk	all			simple
+missing_endif	ordered	98_missing_endif.mk	all			simple
