@@ -1276,6 +1276,33 @@ fn canonical_exit_codes_reach_the_os() {
 }
 
 #[test]
+fn reap_children_preserves_the_failing_child_status() {
+    // `reap_children`'s terminal path used to call `die(ctx, child_failed)`,
+    // which exits with *the child's* status, not a fixed one; it now runs
+    // `die_cleanup` and bridges through `exit_on_err` (#441). `child_failed`
+    // is MAKE_FAILURE for an ordinary failed recipe but MAKE_TROUBLE for the
+    // narrow `-q` + recursive sub-make case (job.rs: exit_code == 1 &&
+    // opt_question && c->recursive), so a blanket BuildError::Failure would
+    // silently turn that 1 into a 2. Pin both.
+    let (_, code) = run_make("fail:\n\tfalse\n", &[], &["fail"]);
+    assert_eq!(code, Some(2), "a failed recipe still exits MAKE_FAILURE");
+
+    let dir = tempdir();
+    std::fs::write(dir.join("Makefile"), "all:\n\t@$(MAKE) -f sub.mk sub\n").unwrap();
+    std::fs::write(dir.join("sub.mk"), "sub: ; @echo building\n").unwrap();
+    let out = Command::new(RUST_MAKE)
+        .args(["--no-print-directory", "-q"])
+        .current_dir(&dir)
+        .output()
+        .expect("failed to spawn make");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "-q with a recursive sub-make that has work to do exits MAKE_TROUBLE"
+    );
+}
+
+#[test]
 fn startup_fatal_paths_keep_their_message_and_status() {
     // main.rs's startup fatals now report through the non-diverging
     // `fatal_err`/`pfatal_with_name_err` and reach the process exit via
