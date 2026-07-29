@@ -14,9 +14,9 @@ use crate::file::{
 use crate::floc::Floc;
 use crate::job::{child, job_slots_used, new_job, reap_children};
 use crate::load::unload_file;
-use crate::make_main::{one_shell, stopchar_map, temp_stdin_unlink};
+use crate::make_main::{die_cleanup, one_shell, stopchar_map, temp_stdin_unlink};
 use crate::misc::make_pid;
-use crate::output::{error, perror_with_name, FmtArg};
+use crate::output::{error, exit_on_err, perror_with_name, FmtArg};
 use crate::posixos::{jobserver_clear, osync_clear};
 use crate::recipe::{Recipe, RecipeLine, RecipeLineFlags};
 use crate::remake::notice_finished_file;
@@ -596,10 +596,14 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         let mut bytes = msg.into_bytes();
         bytes.push(0);
         crate::output::outputs(&ctx, 1, bytes.as_ptr() as *const ::core::ffi::c_char);
-        // `die` reaps the children chain and unwinds run state, so it must run
-        // on the live context (the throwaway one has an empty chain and would
-        // spin waiting for job slots that never free).
-        crate::make_main::with_exec_context(|live_ctx| crate::make_main::die(live_ctx, MAKE_TROUBLE));
+        // The end-of-run cleanup reaps the children chain and unwinds run
+        // state, so it must run on the live context (the throwaway one has an
+        // empty chain and would spin waiting for job slots that never free).
+        // This is a kernel-invoked signal handler with nowhere to propagate a
+        // `Result` to, so it bridges through `exit_on_err` — the sanctioned
+        // stand-in for the retired diverging `die` (#432 Phase B, #440).
+        crate::make_main::with_exec_context(|live_ctx| die_cleanup(live_ctx, MAKE_TROUBLE));
+        exit_on_err(crate::build_result::BuildError::Trouble);
     }
 }
 

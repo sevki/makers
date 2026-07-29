@@ -490,7 +490,7 @@ pub struct Options {
     /// `static mut stdin_offset`. It indexes the owned `makefiles` list, so it
     /// belongs here on the run-owner `Options` rather than shadowing that list
     /// in a global; readers without an `&Options` (e.g. `temp_stdin_unlink` on
-    /// the deep `die` path) reach it through the `with_options` channel
+    /// the deep cleanup path) reach it through the `with_options` channel
     /// ([`opt_stdin_offset`]). Kept as the C `i32` with its `-1` sentinel so
     /// every index/compare stays byte-identical.
     pub stdin_offset: ::core::cell::Cell<i32>,
@@ -524,7 +524,8 @@ pub struct Options {
     /// the end-of-run `verify_file_data_base` pass. Set when debugging is
     /// requested and unconditionally during startup in this maintainer build;
     /// owned here in `main_0`'s `Options` and read through the `with_options`
-    /// borrow channel by `enter_file` and `die`, which carry no `&Options`.
+    /// borrow channel by `enter_file` and `die_cleanup`, which carry no
+    /// `&Options`.
     pub verify: ::core::cell::Cell<bool>,
     /// Effective recipe-echo suppression, the former `static mut run_silent`:
     /// `options.silent` (the `-s`/`--silent` switch) OR'd with a bare `.SILENT`
@@ -1008,7 +1009,8 @@ pub fn opt_run_silent(ctx: &crate::execctx::ExecContext) -> bool {
     with_options(ctx, |o| o.run_silent.get())
 }
 /// `Options::stdin_offset` read through the `with_options` borrow channel by
-/// `temp_stdin_unlink`, which runs from the deep `die` path with no `&Options`.
+/// `temp_stdin_unlink`, which runs from the deep cleanup path with no
+/// `&Options`.
 pub fn opt_stdin_offset(ctx: &crate::execctx::ExecContext) -> i32 {
     with_options(ctx, |o| o.stdin_offset.get())
 }
@@ -1119,7 +1121,7 @@ pub fn set_ignore_errors_mirror(ctx: &crate::execctx::ExecContext, v: bool) {
 }
 /// Strcache'd name of the temporary file holding the makefile read from stdin
 /// (or null), paired with `Options::stdin_offset`. Lets `temp_stdin_unlink`
-/// run from the deep `die` path without an `&Options` borrow; the pointer is
+/// run from the deep cleanup path without an `&Options` borrow; the pointer is
 /// into the strcache, which lives for the whole run.
 pub const TEMP_STDIN_OPT: i32 = CHAR_MAX + 10;
 pub const WARN_OPT: i32 = CHAR_MAX + 13;
@@ -1799,7 +1801,8 @@ pub unsafe fn reset_jobserver(options: &Options) {
     *options.jobserver_auth.borrow_mut() = None;
 }
 
-/// Jobserver reset for the end-of-run `clean_jobserver`/`die` path, which has
+/// Jobserver reset for the end-of-run `clean_jobserver`/`die_cleanup` path,
+/// which has
 /// no `&Options` borrow. Reaches the owned `Options` through the borrow channel
 /// (still installed for the dynamic extent of `main_0`).
 ///
@@ -2278,7 +2281,8 @@ unsafe fn main_0(
     // build, so carry it across the rebuild just like the directory cache;
     // otherwise every file entered while reading makefiles would be lost.
     let carried_files = ::core::mem::take(&mut ctx.filenodes);
-    // Cleanup state recorded before the rebuild (`die`/re-exec read it after).
+    // Cleanup state recorded before the rebuild (`die_cleanup`/re-exec read it
+    // after).
     let carried_temp_stdin = ::core::mem::take(&mut ctx.temp_stdin_name);
     let carried_dir_before_chdir = ::core::mem::take(&mut ctx.directory_before_chdir);
     // The program name is derived from argv[0] at startup and prefixes every
@@ -2310,7 +2314,7 @@ unsafe fn main_0(
     let carried_make_sync = ::core::mem::take(&mut ctx.make_sync);
     let carried_output_context = ::core::mem::take(&mut ctx.output_context);
     // `output_init(&ctx, null)` above (the stdio-append-mode branch) saved the
-    // original stdout/stderr `O_APPEND` flags so `output_close`/`die` can
+    // original stdout/stderr `O_APPEND` flags so `output_close`/`die_cleanup` can
     // restore them at exit; carrying them keeps that restoration working
     // after this rebuild instead of silently reverting to the "unset" -1
     // sentinel and making `fd_reset_append` a no-op.
@@ -4156,7 +4160,7 @@ fn decode_switches(
         if bad != 0 && origin == o_command {
             // The process still exits here: bubbling a bad-switch error out
             // of `decode_switches` is a later #432 subtask. Run the same
-            // cleanup `die` did, then bridge through `exit_on_err` so the
+            // cleanup the retired `die` did, then bridge through `exit_on_err` so the
             // exit stays behind the one shared helper (#537).
             print_usage(ctx, options, bad);
             die_cleanup(ctx, MAKE_FAILURE);
@@ -4374,7 +4378,7 @@ fn decode_switches(
     // SAFETY: none of these take raw pointers or impose a precondition
     // beyond a valid `&ExecContext`/`&Options`, which we have. The
     // bad-switch path still exits: bubbling that error out of
-    // `decode_switches` is a later #432 subtask, so it runs `die`'s cleanup
+    // `decode_switches` is a later #432 subtask, so it runs the same cleanup
     // and bridges through `exit_on_err` (#537).
     unsafe {
         if bad != 0 && origin == o_command {
@@ -5064,21 +5068,12 @@ pub unsafe fn clean_jobserver(ctx: &crate::execctx::ExecContext, status: i32) {
     }
     reset_jobserver_mirror(ctx);
 }
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub fn die(ctx: &crate::execctx::ExecContext, status: i32) -> ! {
-    die_cleanup(ctx, status);
-    // The legacy fatal-path exit; retiring it (so the bin shim's exit is the
-    // only one left) is the remainder of #432.
-    ::std::process::exit(status);
-}
-/// The end-of-run cleanup `die` performs before exiting — reaping children,
-/// removing intermediates, closing output sync, releasing jobserver tokens,
-/// chdir-ing back — split out so `main_0`'s own terminal paths can run it and
-/// then *return* their status (Phase B, #432) instead of exiting from inside
-/// the library. Guarded by `ctx.dying`: only the first caller cleans up.
+/// The end-of-run cleanup the retired `die` performed before exiting —
+/// reaping children, removing intermediates, closing output sync, releasing
+/// jobserver tokens, chdir-ing back — split out so `main_0`'s own terminal
+/// paths can run it and then *return* their status (Phase B, #432) instead of
+/// exiting from inside the library. Guarded by `ctx.dying`: only the first
+/// caller cleans up.
 pub fn die_cleanup(ctx: &crate::execctx::ExecContext, status: i32) {
     if !ctx.dying.0.swap(true, Ordering::Relaxed) {
         // SAFETY: every call below takes the valid `ctx` this function was
@@ -5114,7 +5109,7 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
         }
         unload_all();
         clean_jobserver(ctx, status);
-        // `die` is always reached with the live run's context (the signal
+        // Cleanup is always reached with the live run's context (the signal
         // handler routes here through the CTX_PTR channel), so `ctx.make_sync`
         // is the record `output_context` may be pointing at.
         let osync = output_context();
