@@ -120,7 +120,9 @@ use crate::make_main::{
     db_level, one_shell, opt_snapped_deps, posix_pedantic, second_expansion, stopchar_map,
 };
 use crate::misc::{concat, cstr_bytes_or_empty};
-use crate::output::{error, fatal, out_of_memory, perror_with_name, pfatal_with_name};
+use crate::output::{
+    error, exit_on_err, fatal_err, out_of_memory, perror_with_name, pfatal_with_name,
+};
 use crate::posixos::fd_noinherit;
 use crate::rule::create_pattern_rule;
 use crate::variable::{
@@ -469,13 +471,13 @@ unsafe fn eval_makefile(
     match open_error {
         EMFILE | ENFILE | ENOMEM => {
             let err: *const ::core::ffi::c_char = strerror(open_error);
-            fatal(
+            exit_on_err(fatal_err(
                 ctx,
                 ctx.reading_file.0.get(),
                 strlen(err) as size_t,
                 b"%s\0" as *const u8 as *const ::core::ffi::c_char,
                 &[FmtArg::Str((err) as *const ::core::ffi::c_char)],
-            );
+            ));
         }
         _ => {}
     }
@@ -956,14 +958,14 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                 let i: i32 = conditional_line(ctx, p, wlen, fstart, initial_tab);
                 if i != -2_i32 {
                     if i == -1_i32 {
-                        fatal(
+                        exit_on_err(fatal_err(
                             ctx,
                             fstart,
                             0,
                             b"invalid syntax in conditional\0" as *const u8
                                 as *const ::core::ffi::c_char,
                             &[],
-                        );
+                        ));
                     }
                     ignoring = i;
                 } else {
@@ -1415,14 +1417,14 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                 file.name = name;
                                 r = load_file(ctx, &raw mut (*ebuf).floc, &raw mut file, noerror_0);
                                 if r == 0 && noerror_0 == 0 {
-                                    fatal(
+                                    exit_on_err(fatal_err(
                                         ctx,
                                         &raw mut (*ebuf).floc,
                                         strlen(name) as size_t,
                                         b"%s: failed to load\0" as *const u8
                                             as *const ::core::ffi::c_char,
                                         &[FmtArg::Str((name) as *const ::core::ffi::c_char)],
-                                    );
+                                    ));
                                 }
                                 name = file.name;
                                 let name_bytes = CStr::from_ptr(name).to_bytes().to_vec();
@@ -1454,14 +1456,14 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                         if *line.offset(0_i32 as isize) as i32
                             == crate::make_main::opt_cmd_prefix(ctx) as i32
                         {
-                            fatal(
+                            exit_on_err(fatal_err(
                                 ctx,
                                 fstart,
                                 0,
                                 b"recipe commences before first target\0" as *const u8
                                     as *const ::core::ffi::c_char,
                                 &[],
-                            );
+                            ));
                         }
                         let mut wtype: make_word_type;
                         let mut cmdleft: *mut ::core::ffi::c_char;
@@ -1513,14 +1515,14 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                         match wtype as ::core::ffi::c_uint {
                             1 => {
                                 if !cmdleft.is_null() {
-                                    fatal(
+                                    exit_on_err(fatal_err(
                                         ctx,
                                         fstart,
                                         0,
                                         b"missing rule before recipe\0" as *const u8
                                             as *const ::core::ffi::c_char,
                                         &[],
-                                    );
+                                    ));
                                 }
                             }
                             4 | 5 | 7 | 8 => {
@@ -1608,14 +1610,14 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                             ::std::ffi::CStr::from_ptr(line).to_bytes(),
                                         )
                                     {
-                                        fatal(
+                                        exit_on_err(fatal_err(
                                             ctx,
                                             fstart,
                                             0,
                                             b"missing separator (did you mean TAB instead of 8 spaces?)\0"
                                                 as *const u8 as *const ::core::ffi::c_char,
         &[],
-    );
+    ));
                                     }
                                     p2 = next_token(line);
                                     // The more specific "ifeq/ifneq must be
@@ -1626,23 +1628,23 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                     if crate::parser::ifeq_ifneq_without_separator(
                                         ::std::ffi::CStr::from_ptr(p2).to_bytes(),
                                     ) {
-                                        fatal(
+                                        exit_on_err(fatal_err(
                                             ctx,
                                             fstart,
                                             0,
                                             b"missing separator (ifeq/ifneq must be followed by whitespace)\0"
                                                 as *const u8 as *const ::core::ffi::c_char,
         &[],
-    );
+    ));
                                     }
-                                    fatal(
+                                    exit_on_err(fatal_err(
                                         ctx,
                                         fstart,
                                         0,
                                         b"missing separator\0" as *const u8
                                             as *const ::core::ffi::c_char,
                                         &[],
-                                    );
+                                    ));
                                 } else {
                                     let colon_off: size_t = colonp
                                         .offset_from(ctx.variable_buffer.ptr())
@@ -1813,23 +1815,23 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                                 );
                                                 p2 = p2.offset(1_i32 as isize);
                                                 if target.is_empty() {
-                                                    fatal(
+                                                    exit_on_err(fatal_err(
                                                         ctx,
                                                         fstart,
                                                         0,
                                                         b"missing target pattern\0" as *const u8
                                                             as *const ::core::ffi::c_char,
                                                         &[],
-                                                    );
+                                                    ));
                                                 } else if target.len() > 1 {
-                                                    fatal(
+                                                    exit_on_err(fatal_err(
                                                         ctx,
                                                         fstart,
                                                         0,
                                                         b"multiple target patterns\0" as *const u8
                                                             as *const ::core::ffi::c_char,
                                                         &[],
-                                                    );
+                                                    ));
                                                 }
                                                 // Intern the single pattern target name so
                                                 // `pattern`/`pattern_percent` remain stable
@@ -1838,7 +1840,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                                 pattern_percent =
                                                     find_percent_cached(ctx, &raw mut pattern);
                                                 if pattern_percent.is_null() {
-                                                    fatal(
+                                                    exit_on_err(fatal_err(
                                                         ctx,
                                                         fstart,
                                                         0,
@@ -1846,7 +1848,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                                             as *const u8
                                                             as *const ::core::ffi::c_char,
                                                         &[],
-                                                    );
+                                                    ));
                                                 }
                                             } else {
                                                 pattern =
@@ -1907,13 +1909,13 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
         }
     }
     if !ctx.conditionals.borrow().ignoring.is_empty() {
-        fatal(
+        exit_on_err(fatal_err(
             ctx,
             fstart,
             0,
             b"missing 'endif'\0" as *const u8 as *const ::core::ffi::c_char,
             &[],
-        );
+        ));
     }
     if filenames.is_some() {
         fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -2196,13 +2198,13 @@ unsafe fn conditional_line(
             );
         }
         if ctx.conditionals.borrow().ignoring.is_empty() {
-            fatal(
+            exit_on_err(fatal_err(
                 ctx,
                 flocp,
                 strlen(cmdname) as size_t,
                 b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
                 &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
-            );
+            ));
         }
         let mut cf = ctx.conditionals.borrow_mut();
         cf.ignoring.pop();
@@ -2210,23 +2212,23 @@ unsafe fn conditional_line(
     } else if cmdtype as ::core::ffi::c_uint == c_else as i32 as ::core::ffi::c_uint {
         let mut p: *const ::core::ffi::c_char;
         if ctx.conditionals.borrow().ignoring.is_empty() {
-            fatal(
+            exit_on_err(fatal_err(
                 ctx,
                 flocp,
                 strlen(cmdname) as size_t,
                 b"extraneous '%s'\0" as *const u8 as *const ::core::ffi::c_char,
                 &[FmtArg::Str((cmdname) as *const ::core::ffi::c_char)],
-            );
+            ));
         }
         let o: usize = ctx.conditionals.borrow().ignoring.len() - 1;
         if ctx.conditionals.borrow().seen_else[o] != 0 {
-            fatal(
+            exit_on_err(fatal_err(
                 ctx,
                 flocp,
                 0,
                 b"only one 'else' per conditional\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
-            );
+            ));
         }
         {
             let mut cf = ctx.conditionals.borrow_mut();
