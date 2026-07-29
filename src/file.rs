@@ -15,7 +15,6 @@ pub use crate::ffi_types::{
     __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
     intmax_t, size_t, time_t, uintmax_t,
 };
-use crate::misc::free_ns_chain;
 use crate::misc::{xcalloc, xrealloc};
 use libc::{__errno_location, free};
 #[cfg(test)]
@@ -868,27 +867,6 @@ impl File {
     }
 }
 
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn free_ns(n: *mut nameseq) {
-    free(n as *mut ::core::ffi::c_void);
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn free_dep(d: *mut dep) {
-    free_ns(d as *mut nameseq);
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn free_dep_chain(d: *mut dep) {
-    free_ns_chain(d as *mut nameseq);
-}
 pub const UNKNOWN_MTIME: i32 = 0;
 pub const NONEXISTENT_MTIME: i32 = 1;
 pub const OLD_MTIME: i32 = 2;
