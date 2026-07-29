@@ -276,7 +276,7 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// Path of the temporary file holding piped-in stdin makefile text, the
     /// former main.rs `static mut temp_stdin_name`. Written during argument
     /// decoding (`--temp-stdin`, or when `-f -` spools stdin to a temp file)
-    /// and read by `temp_stdin_unlink` on the `die`/fatal-signal paths, which
+    /// and read by `temp_stdin_unlink` on the cleanup/fatal-signal paths, which
     /// carry only `&ExecContext`. Carried across the `main_0` build-phase
     /// context rebuild: the name is recorded before the rebuild and must
     /// survive until cleanup. Interned or 'static storage backs the pointer.
@@ -284,7 +284,7 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
 
     /// The working directory before any `-C` chdir, the former main.rs
     /// `pub static mut directory_before_chdir` — restored on re-exec and in
-    /// `die`, both of which carry only `&ExecContext`. Set once during
+    /// `die_cleanup`, both of which carry only `&ExecContext`. Set once during
     /// startup (before the build-phase context rebuild), so it is carried
     /// across it. Heap storage from `xstrdup` backs the pointer.
     pub directory_before_chdir: MutPtrCell,
@@ -376,7 +376,8 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// make_sync`): the `output` record that captures make's *own* messages
     /// into temp files while `-O` output sync is active. Boxed so its heap
     /// address is stable — [`Self::output_context`] captures the address
-    /// before the `main_0` build-phase context rebuild and `die` compares
+    /// before the `main_0` build-phase context rebuild and `die_cleanup`
+    /// compares
     /// against it after, so `main_0` carries the same allocation across the
     /// rebuild rather than letting a fresh default reset it.
     pub make_sync: MakeSync,
@@ -657,9 +658,9 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// function-local `static PRINTED_VERSION` atomic.
     pub printed_version: AtomicBoolCell,
 
-    /// `die`'s re-entrancy guard (only the first caller actually runs the
-    /// cleanup/exit path), the former `main.rs` function-local `static
-    /// DYING` atomic.
+    /// `die_cleanup`'s re-entrancy guard (only the first caller actually runs
+    /// the cleanup path), the former `main.rs` function-local `static DYING`
+    /// atomic.
     pub dying: AtomicBoolCell,
 
     /// `setup_tmpfile`'s re-entrancy guard, the former `output.rs`

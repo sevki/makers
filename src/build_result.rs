@@ -8,10 +8,12 @@
 //! target is not up to date" under `-q`), and `MAKE_FAILURE` (2, a target
 //! failed to build or a fatal error was raised).
 //!
-//! Fatal errors (`fatal()`/`pfatal_with_name`/`out_of_memory`) still
-//! terminate via `die()` today; converting those chains to `Result`
-//! propagation is the remainder of #432, at which point they surface here as
-//! [`BuildError::Failure`].
+//! Fatal errors (`fatal()`/`pfatal_with_name`/`out_of_memory`) surface here
+//! as [`BuildError::Failure`]. Call sites that already return a `Result` use
+//! the non-diverging `_err` twins and propagate; the handful that cannot yet
+//! (signal handlers, `decode_switches`) run the shared end-of-run cleanup and
+//! bridge through `output::exit_on_err`, which is the last stop before the
+//! shim's single exit.
 
 use core::fmt;
 
