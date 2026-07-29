@@ -259,8 +259,8 @@ use crate::load::load_file;
 use crate::misc::{concat, cstr_bytes_or_empty};
 pub use crate::output::output;
 use crate::output::{
-    error, fatal, output_context, perror_with_name, pfatal_with_name, set_output_context,
-    set_stdio_traced,
+    error, exit_on_err, fatal_err, output_context, perror_with_name, pfatal_with_name_err,
+    set_output_context, set_stdio_traced,
     stdio_traced, FmtArg,
 };
 use crate::posixos::{
@@ -1474,13 +1474,13 @@ unsafe fn expand_command_line_file(
 ) -> *const ::core::ffi::c_char {
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0_i32 as isize) as i32 == 0 {
-        fatal(
+        exit_on_err(fatal_err(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
             b"empty string invalid as file name\0" as *const u8 as *const ::core::ffi::c_char,
             &[],
-        );
+        ));
     }
     if *name.offset(0_i32 as isize) as i32 == '~' as i32 {
         expanded = tilde_expand(ctx, name);
@@ -1628,14 +1628,14 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
                         set_db_level(ctx, db_level(ctx) | DB_WHY);
                     }
                     _ => {
-                        fatal(
+                        exit_on_err(fatal_err(
                             ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             strlen(p) as size_t,
                             b"unknown debug level specification '%s'\0" as *const u8
                                 as *const ::core::ffi::c_char,
                             &[FmtArg::Str((p) as *const ::core::ffi::c_char)],
-                        );
+                        ));
                     }
                 }
                 loop {
@@ -1684,22 +1684,23 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
             Some(mode) => options.output_sync.set(mode),
             None => {
                 let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
-                fatal(
+                exit_on_err(fatal_err(
                     ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     opt.len() as size_t,
                     b"unknown output-sync type '%s'\0" as *const u8 as *const ::core::ffi::c_char,
                     &[FmtArg::Str((c.as_ptr()) as *const ::core::ffi::c_char)],
-                );
+                ));
             }
         }
     }
     if let Some(mtx) = options.sync_mutex.borrow().as_ref() {
         let c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
-        // `decode_output_sync_flags` isn't `Result`-returning (its own
-        // fatal() call above is main.rs's #537 slice); bridge through
-        // `exit_on_err` to keep today's exact exit behavior for this leaf.
-        let _ = osync_parse_mutex(ctx, c.as_ptr()).unwrap_or_else(|e| crate::output::exit_on_err(e));
+        // `decode_output_sync_flags` isn't `Result`-returning (it is reached
+        // from `decode_switches`, which still has a `void` C-shaped
+        // signature); bridge through `exit_on_err` to keep today's exact exit
+        // behavior for this leaf.
+        let _ = osync_parse_mutex(ctx, c.as_ptr()).unwrap_or_else(|e| exit_on_err(e));
     }
 }
 /// Print the usage table — to stdout for `-h`, to stderr for a bad switch —
@@ -2420,7 +2421,7 @@ unsafe fn main_0(
         for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
             if chdir_c(dir) < 0 {
-                pfatal_with_name(&ctx, dir);
+                return Err(pfatal_with_name_err(&ctx, dir));
             }
         }
     }
@@ -2588,24 +2589,24 @@ unsafe fn main_0(
                 let mut newnm: *mut ::core::ffi::c_char =
                     ::core::ptr::null_mut::<::core::ffi::c_char>();
                 if options.stdin_offset.get() >= 0 {
-                    fatal(
+                    return Err(fatal_err(
                         &ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         0,
                         b"Makefile from standard input specified twice\0" as *const u8
                             as *const ::core::ffi::c_char,
                         &[],
-                    );
+                    ));
                 }
                 let Some(mut outfile) = get_tmpfile(&ctx, &raw mut newnm) else {
-                    fatal(
+                    return Err(fatal_err(
                         &ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         0,
                         b"cannot store makefile from stdin to a temporary file\0" as *const u8
                             as *const ::core::ffi::c_char,
                         &[],
-                    );
+                    ));
                 };
                 {
                     use ::std::io::{Read, Write};
@@ -2622,7 +2623,7 @@ unsafe fn main_0(
                         if let Err(e) = outfile.write_all(&buf[..n]) {
                             let es: *const ::core::ffi::c_char =
                                 strerror(e.raw_os_error().unwrap_or(0));
-                            fatal(
+                            return Err(fatal_err(
                                 &ctx,
                                 ::core::ptr::null_mut::<Floc>(),
                                 (strlen(newnm) as size_t).wrapping_add(strlen(es) as size_t),
@@ -2632,7 +2633,7 @@ unsafe fn main_0(
                                     FmtArg::Str((newnm) as *const ::core::ffi::c_char),
                                     FmtArg::Str(es as *const ::core::ffi::c_char),
                                 ],
-                            );
+                            ));
                         }
                     }
                 }
@@ -2680,10 +2681,10 @@ unsafe fn main_0(
         ::core::ptr::null_mut::<sigset_t>(),
     ) < 0
     {
-        pfatal_with_name(
+        return Err(pfatal_with_name_err(
             &ctx,
             b"sigprocmask(SIG_SETMASK, SIGCHLD)\0" as *const u8 as *const ::core::ffi::c_char,
-        );
+        ));
     }
     bsd_signal(
         SIGUSR1,
@@ -3097,14 +3098,14 @@ unsafe fn main_0(
                         {
                             let mut nm = goal_name_bytes(&ctx, d_2);
                             nm.push(0);
-                            fatal(
+                            return Err(fatal_err(
                                 &ctx,
                                 floc.as_ref()
                                     .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
                                 strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
                                 b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
                                 &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
-                            );
+                            ));
                         }
                         if let Some(node) = ctx.filenodes.get(fid) {
                             let mut guard = node.lock().expect("file node poisoned");
@@ -3393,14 +3394,14 @@ unsafe fn main_0(
                     }
                 }
                 if bad != 0 {
-                    fatal(
+                    return Err(fatal_err(
                         &ctx,
                         ::core::ptr::null_mut::<Floc>(),
                         0,
                         b"couldn't change back to original directory\0" as *const u8
                             as *const ::core::ffi::c_char,
                         &[],
-                    );
+                    ));
                 }
             }
             restarts = restarts.wrapping_add(1);
@@ -3555,14 +3556,14 @@ unsafe fn main_0(
                 );
                 if !names.is_empty() {
                     if names.len() > 1 {
-                        fatal(
+                        return Err(fatal_err(
                             &ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             0,
                             b".DEFAULT_GOAL contains more than one target\0" as *const u8
                                 as *const ::core::ffi::c_char,
                             &[],
-                        );
+                        ));
                     }
                     f_6 = Some(enter_file(&ctx, &names[0].name));
                 }
@@ -3582,22 +3583,22 @@ unsafe fn main_0(
             && !(*v_2).value.is_null()
             && *(*v_2).value.offset(0_i32 as isize) as i32 != 0
         {
-            fatal(
+            return Err(fatal_err(
                 &ctx,
                 ::core::ptr::null_mut::<Floc>(),
                 0,
                 b"No targets\0" as *const u8 as *const ::core::ffi::c_char,
                 &[],
-            );
+            ));
         }
-        fatal(
+        return Err(fatal_err(
             &ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
             b"No targets specified and no makefile found\0" as *const u8
                 as *const ::core::ffi::c_char,
             &[],
-        );
+        ));
     }
     // Diagnostics tap (MAKERS_DEPGRAPH): snapshot the fully-read graph before
     // shuffling touches goal order and before the update walk mutates state.
@@ -4077,18 +4078,21 @@ fn apply_value_switch(
                 resolved.clone()
             } else if cs.c == TEMP_STDIN_OPT {
                 if options.stdin_offset.get() > 0 {
-                    // SAFETY: `fatal` requires a valid NUL-terminated format
-                    // string with no `%` conversions beyond the given args;
-                    // this literal has none.
+                    // SAFETY: `fatal_err` requires a valid NUL-terminated
+                    // format string with no `%` conversions beyond the given
+                    // args; this literal has none. `apply_value_switch` is
+                    // driven by the clap decode loop and isn't
+                    // `Result`-returning yet, so bridge back to today's exit
+                    // behavior through `exit_on_err` (#432 Phase B).
                     unsafe {
-                        fatal(
+                        exit_on_err(fatal_err(
                             ctx,
                             NILF,
                             0,
                             b"INTERNAL: multiple --temp-stdin options provided!\0" as *const u8
                                 as *const ::core::ffi::c_char,
                             &[],
-                        );
+                        ));
                     }
                 }
                 options.stdin_offset.set(list.len() as i32);
@@ -4150,10 +4154,13 @@ fn decode_switches(
         // another option's value) -- nothing more to recover from this
         // batch.
         if bad != 0 && origin == o_command {
-            // `die` still exits here: bubbling a bad-switch error out of
-            // `decode_switches` is a later #432 subtask.
+            // The process still exits here: bubbling a bad-switch error out
+            // of `decode_switches` is a later #432 subtask. Run the same
+            // cleanup `die` did, then bridge through `exit_on_err` so the
+            // exit stays behind the one shared helper (#537).
             print_usage(ctx, options, bad);
-            die(ctx, MAKE_FAILURE);
+            die_cleanup(ctx, MAKE_FAILURE);
+            exit_on_err(crate::build_result::BuildError::Failure);
         }
         return;
     };
@@ -4365,13 +4372,15 @@ fn decode_switches(
     }
 
     // SAFETY: none of these take raw pointers or impose a precondition
-    // beyond a valid `&ExecContext`/`&Options`, which we have. `die` still
-    // exits on the bad-switch path: bubbling that error out of
-    // `decode_switches` is a later #432 subtask.
+    // beyond a valid `&ExecContext`/`&Options`, which we have. The
+    // bad-switch path still exits: bubbling that error out of
+    // `decode_switches` is a later #432 subtask, so it runs `die`'s cleanup
+    // and bridges through `exit_on_err` (#537).
     unsafe {
         if bad != 0 && origin == o_command {
             print_usage(ctx, options, bad);
-            die(ctx, MAKE_FAILURE);
+            die_cleanup(ctx, MAKE_FAILURE);
+            exit_on_err(crate::build_result::BuildError::Failure);
         }
         decode_debug_flags(ctx, options);
         decode_output_sync_flags(ctx, options);

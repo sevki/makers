@@ -1249,8 +1249,9 @@ fn canonical_exit_codes_reach_the_os() {
     // main_0 returns Result<BuildReport, BuildError> and bin/make.rs maps it
     // onto the process exit status (#432); each canonical code still reaches
     // the OS. The bad-switch case is the exception: decode_switches still
-    // terminates via die() until a later #432 subtask bubbles that error out —
-    // this pins its exit code so that conversion stays observable too. Not
+    // exits from inside the library (now via die_cleanup + exit_on_err rather
+    // than die()) until a later #432 subtask bubbles that error out — this
+    // pins its exit code so that conversion stays observable too. Not
     // differential — the fixture suite diffs richer behavior; this pins the
     // plumbing itself.
     // Paired with the `usage_help` fixture, which byte-diffs the full usage
@@ -1272,6 +1273,100 @@ fn canonical_exit_codes_reach_the_os() {
     assert_eq!(code, Some(0), "-q with everything current exits MAKE_SUCCESS");
     let (_, code) = run_make("fail:\n\tfalse\n", &[], &["fail"]);
     assert_eq!(code, Some(2), "a failed recipe exits MAKE_FAILURE");
+}
+
+#[test]
+fn startup_fatal_paths_keep_their_message_and_status() {
+    // main.rs's startup fatals now report through the non-diverging
+    // `fatal_err`/`pfatal_with_name_err` and reach the process exit via
+    // `main_0`'s `Result` (the `-C` case) or the shared `exit_on_err` bridge
+    // (the option-decoding cases) instead of calling the diverging
+    // `fatal`/`die` (#537). Paired with the `bad_debug_level`,
+    // `bad_output_sync_type`, and `chdir_missing_dir` fixtures, which byte-diff
+    // the same three runs against the C oracle in fixtures-diff; this pins the
+    // message and status locally.
+    let dir = tempdir();
+    std::fs::write(dir.join("Makefile"), "all:\n\t@echo hi\n").unwrap();
+    let fatal_run = |args: &[&str]| -> (String, Option<i32>) {
+        let out = Command::new(RUST_MAKE)
+            .arg("--no-print-directory")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("failed to spawn make");
+        (
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code(),
+        )
+    };
+
+    // decode_debug_flags: unknown letter in --debug's argument.
+    let (stderr, code) = fatal_run(&["--debug=z", "all"]);
+    assert_eq!(code, Some(2));
+    assert_eq!(
+        stderr,
+        "make: *** unknown debug level specification 'z'.  Stop.\n"
+    );
+
+    // decode_output_sync_flags: unrecognized --output-sync mode.
+    let (stderr, code) = fatal_run(&["--output-sync=bogus", "all"]);
+    assert_eq!(code, Some(2));
+    assert_eq!(
+        stderr,
+        "make: *** unknown output-sync type 'bogus'.  Stop.\n"
+    );
+
+    // main_0: a -C directory that can't be entered, reported by errno.
+    let (stderr, code) = fatal_run(&["-C", "no_such_dir_xyz", "all"]);
+    assert_eq!(code, Some(2));
+    assert_eq!(
+        stderr,
+        "make: *** no_such_dir_xyz: No such file or directory.  Stop.\n"
+    );
+}
+
+#[test]
+fn goal_selection_fatal_paths_keep_their_message_and_status() {
+    // The three goal-selection fatals at the end of `main_0` — an ambiguous
+    // `.DEFAULT_GOAL`, a makefile with no rules, and no makefile at all — now
+    // return `Err(fatal_err(..))` up through `main_0`'s `Result` instead of
+    // exiting from inside the library (#537). Message and status must not
+    // move.
+    let run_in = |dir: &std::path::Path| -> (String, Option<i32>) {
+        let out = Command::new(RUST_MAKE)
+            .arg("--no-print-directory")
+            .current_dir(dir)
+            .output()
+            .expect("failed to spawn make");
+        (
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code(),
+        )
+    };
+
+    let dir = tempdir();
+    std::fs::write(dir.join("Makefile"), ".DEFAULT_GOAL := a b\na b: ;\n").unwrap();
+    let (stderr, code) = run_in(&dir);
+    assert_eq!(code, Some(2));
+    assert_eq!(
+        stderr,
+        "make: *** .DEFAULT_GOAL contains more than one target.  Stop.\n"
+    );
+
+    // A makefile was read (MAKEFILE_LIST is non-empty) but defines no rule.
+    std::fs::write(dir.join("Makefile"), "X := 1\n").unwrap();
+    let (stderr, code) = run_in(&dir);
+    assert_eq!(code, Some(2));
+    assert_eq!(stderr, "make: *** No targets.  Stop.\n");
+
+    // No makefile at all.
+    std::fs::remove_file(dir.join("Makefile")).unwrap();
+    let (stderr, code) = run_in(&dir);
+    assert_eq!(code, Some(2));
+    assert_eq!(
+        stderr,
+        "make: *** No targets specified and no makefile found.  Stop.\n"
+    );
 }
 
 #[test]

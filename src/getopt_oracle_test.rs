@@ -294,7 +294,12 @@ pub unsafe fn decode_switches_oracle(
                                                 ::core::ffi::CStr::from_ptr(coptarg).to_owned()
                                             } else if (*cs).c == TEMP_STDIN_OPT {
                                                 if options.stdin_offset.get() > 0 {
-                                                    super::fatal(ctx, super::NILF, 0, b"INTERNAL: multiple --temp-stdin options provided!\0"
+                                                    // The oracle keeps the
+                                                    // pre-#537 diverging
+                                                    // `fatal`; the production
+                                                    // path now bridges through
+                                                    // `fatal_err`/`exit_on_err`.
+                                                    crate::output::fatal(ctx, super::NILF, 0, b"INTERNAL: multiple --temp-stdin options provided!\0"
                                                                     as *const u8 as *const ::core::ffi::c_char, &[]);
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
