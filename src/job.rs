@@ -256,13 +256,16 @@ use crate::{
     file::lookup_file,
     findprog::find_in_given_path,
     function::{shell_completed, shell_function_pid},
-    make_main::{db_level, die, not_parallel, one_shell, posix_pedantic, stopchar_map},
+    make_main::{
+        db_level, die_cleanup, not_parallel, one_shell, posix_pedantic, stopchar_map,
+    },
     output::{
         error,
-        fatal,
+        exit_on_err,
+        fatal_err,
         message,
         perror_with_name,
-        pfatal_with_name,
+        pfatal_with_name_err,
         set_output_context,
         FmtArg,
     },
@@ -797,10 +800,10 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             if pid > 0 {
                 remote = 1;
             } else if pid < 0 {
-                pfatal_with_name(
+                exit_on_err(pfatal_with_name_err(
                     ctx,
                     b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
-                );
+                ));
             } else {
                 if any_local != 0 {
                     if block == 0 {
@@ -817,7 +820,10 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     pid = 0_i32 as pid_t;
                 }
                 if pid < 0 {
-                    pfatal_with_name(ctx, b"wait\0" as *const u8 as *const ::core::ffi::c_char);
+                    exit_on_err(pfatal_with_name_err(
+                        ctx,
+                        b"wait\0" as *const u8 as *const ::core::ffi::c_char,
+                    ));
                 } else if pid > 0 {
                     exit_code = (status & 0xff00_i32) >> 8;
                     exit_sig = if ((status & 0x7f_i32) + 1) as ::core::ffi::c_schar as i32 >> 1 > 0
@@ -839,10 +845,10 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         false,
                     ) as pid_t;
                     if pid < 0 {
-                        pfatal_with_name(
+                        exit_on_err(pfatal_with_name_err(
                             ctx,
                             b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
-                        );
+                        ));
                     }
                     if pid == 0 {
                         break;
@@ -1078,7 +1084,17 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             && !crate::make_main::opt_keep_going(ctx)
             && !handling_fatal_signal(ctx)
         {
-            die(ctx, child_failed);
+            // `child_failed` is one of make's canonical statuses (set to
+            // MAKE_SUCCESS/MAKE_TROUBLE/MAKE_FAILURE above) and the guard
+            // rules out MAKE_SUCCESS, so this always takes the error arm and
+            // exits with the same status the legacy `die` did. `reap_children`
+            // is reached from `main_0`, `remake`, and `function`, none of
+            // which carry a `Result` yet, so the exit bridges through the one
+            // shared helper (#441).
+            if let Err(e) = crate::build_result::result_from_status(child_failed) {
+                die_cleanup(ctx, child_failed);
+                exit_on_err(e);
+            }
         }
         block = 0;
     }
@@ -1133,7 +1149,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
     let name_buf = file_name_cstr(ctx, (*child).file);
     let name = name_buf.as_ptr() as *const ::core::ffi::c_char;
     if jobserver_tokens(ctx) == 0 {
-        fatal(
+        exit_on_err(fatal_err(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
@@ -1143,7 +1159,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
                 FmtArg::Ptr((child) as *const ::core::ffi::c_void),
                 FmtArg::Str((name) as *const ::core::ffi::c_char),
             ],
-        );
+        ));
     }
     if jobserver_enabled(ctx) != 0 && jobserver_tokens(ctx) > 1 {
         jobserver_release(ctx, 1);
@@ -1758,14 +1774,14 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
                 break;
             }
             if ctx.children.0.get().is_null() {
-                fatal(
+                exit_on_err(fatal_err(
                     ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     0,
                     b"INTERNAL: no children as we go to sleep on read\0" as *const u8
                         as *const ::core::ffi::c_char,
                     &[],
-                );
+                ));
             }
             let got_token: i32 = jobserver_acquire(
                 ctx,
@@ -3062,7 +3078,7 @@ unsafe fn construct_command_argv_internal(
             ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
         );
     } else {
-        fatal(
+        exit_on_err(fatal_err(
             ctx,
             NILF,
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
@@ -3077,7 +3093,7 @@ unsafe fn construct_command_argv_internal(
                 ),
                 FmtArg::Int((3621_i32) as i64),
             ],
-        );
+        ));
     }
     free(new_line as *mut ::core::ffi::c_void);
     new_argv
