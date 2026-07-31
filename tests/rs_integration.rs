@@ -1400,6 +1400,59 @@ fn makefile_parse_fatals_keep_their_message_and_status() {
 }
 
 #[test]
+fn parse_fatals_unwind_from_every_entry_into_eval() {
+    // `eval` and `eval_makefile` now return `Result` (#442), so a parse fatal
+    // unwinds instead of exiting where it is raised. `eval` has four distinct
+    // entry points and each one has to carry the error out the same way the
+    // retired diverging `fatal` did — same diagnostic, same status 2:
+    //
+    //   * a makefile named in the `MAKEFILES` environment variable, which
+    //     `read_all_makefiles` evaluates before the default makefile;
+    //   * `--eval`, evaluated by `main_0` through `eval_buffer`;
+    //   * `$(eval …)`, whose expander is not `Result`-returning yet and so
+    //     bridges through `exit_on_err` after restoring the variable buffer.
+    //
+    // The fourth — the default makefile — is what
+    // `makefile_parse_fatals_keep_their_message_and_status` above covers.
+    let dir = tempdir();
+    std::fs::write(dir.join("Makefile"), "all:\n\t@echo hi\n").unwrap();
+    std::fs::write(dir.join("bad.mk"), "all: ; @echo hi\nendif\n").unwrap();
+
+    let run = |args: &[&str], makefiles: Option<&str>| -> (String, Option<i32>) {
+        let mut cmd = Command::new(RUST_MAKE);
+        cmd.arg("--no-print-directory").args(args).current_dir(&dir);
+        match makefiles {
+            Some(v) => cmd.env("MAKEFILES", v),
+            None => cmd.env_remove("MAKEFILES"),
+        };
+        let out = cmd.output().expect("failed to spawn make");
+        (
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code(),
+        )
+    };
+
+    // read_all_makefiles -> eval_makefile, via the MAKEFILES environment
+    // variable. The diagnostic names bad.mk, not the default makefile.
+    let (stderr, code) = run(&["all"], Some("bad.mk"));
+    assert_eq!(code, Some(2));
+    assert_eq!(stderr, "bad.mk:2: *** extraneous 'endif'.  Stop.\n");
+
+    // main_0 -> eval_buffer, via --eval. A command-line buffer has no floc, so
+    // the diagnostic carries the `make: ` prefix instead of `<file>:<line>: `.
+    let (stderr, code) = run(&["--eval=endif", "all"], None);
+    assert_eq!(code, Some(2));
+    assert_eq!(stderr, "make: *** extraneous 'endif'.  Stop.\n");
+
+    // func_eval -> eval_buffer, via $(eval …) during expansion — the one
+    // caller that still bridges through `exit_on_err`.
+    std::fs::write(dir.join("eval.mk"), "$(eval endif)\nall: ; @echo hi\n").unwrap();
+    let (stderr, code) = run(&["-f", "eval.mk", "all"], None);
+    assert_eq!(code, Some(2));
+    assert_eq!(stderr, "eval.mk:1: *** extraneous 'endif'.  Stop.\n");
+}
+
+#[test]
 fn goal_selection_fatal_paths_keep_their_message_and_status() {
     // The three goal-selection fatals at the end of `main_0` — an ambiguous
     // `.DEFAULT_GOAL`, a makefile with no rules, and no makefile at all — now

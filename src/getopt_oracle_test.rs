@@ -123,7 +123,7 @@ pub unsafe fn decode_switches_oracle(
     argc: i32,
     argv: *mut *const ::core::ffi::c_char,
     origin: super::variable_origin,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     use super::o_command;
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let mut bad: i32 = 0;
@@ -308,7 +308,7 @@ pub unsafe fn decode_switches_oracle(
                                                 ::core::ffi::CStr::from_ptr(cached).to_owned()
                                             } else {
                                                 ::core::ffi::CStr::from_ptr(
-                                                    expand_command_line_file(ctx, coptarg),
+                                                    expand_command_line_file(ctx, coptarg)?,
                                                 )
                                                 .to_owned()
                                             };
@@ -416,7 +416,7 @@ pub unsafe fn decode_switches_oracle(
     a = targets.list;
     while !(*a).is_null() {
         let prior_found_wait: i32 = found_wait as i32;
-        found_wait = handle_non_switch_argument(ctx, options, *a, origin);
+        found_wait = handle_non_switch_argument(ctx, options, *a, origin)?;
         if prior_found_wait != 0 {
             if let Some(last) = options.goals.borrow_mut().last_mut() {
                 last.dep.wait_here = true;
@@ -429,8 +429,8 @@ pub unsafe fn decode_switches_oracle(
         // differential harness checks `bad`/`Options` state directly instead
         // of calling the diverging `print_usage(..) -> !`.
     }
-    super::decode_debug_flags(ctx, options);
-    super::decode_output_sync_flags(ctx, options);
+    super::decode_debug_flags(ctx, options)?;
+    super::decode_output_sync_flags(ctx, options)?;
     if options.warn_undefined_variables.get() {
         crate::warning::decode_actions(ctx, "undefined-var", None);
         options.warn_undefined_variables.set(false);
@@ -444,4 +444,5 @@ pub unsafe fn decode_switches_oracle(
     }
     options.run_silent.set(options.silent.get());
     super::reset_env_override(ctx);
+    Ok(())
 }

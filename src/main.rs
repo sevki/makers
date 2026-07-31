@@ -20,7 +20,7 @@ use crate::vpath::{build_vpath_lists, print_vpath_data_base};
 use c2rust_bitfields;
 use libc;
 use libc::{
-    __errno_location, _exit, abort, atof, exit, free, isatty, putenv, setlocale,
+    __errno_location, _exit, atof, exit, free, isatty, putenv, setlocale,
     sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname,
 };
 use std::sync::atomic::Ordering;
@@ -1473,10 +1473,10 @@ pub unsafe extern "C" fn close_stdout() {
 unsafe fn expand_command_line_file(
     ctx: &crate::execctx::ExecContext,
     mut name: *const ::core::ffi::c_char,
-) -> *const ::core::ffi::c_char {
+) -> Result<*const ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut expanded: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     if *name.offset(0_i32 as isize) as i32 == 0 {
-        exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
             0,
@@ -1502,7 +1502,7 @@ unsafe fn expand_command_line_file(
     }
     let cp = strcache_add(ctx, name);
     free(expanded as *mut ::core::ffi::c_void);
-    cp
+    Ok(cp)
 }
 #[cfg(test)]
 mod expand_command_line_file_tests {
@@ -1589,7 +1589,10 @@ pub unsafe extern "C" fn debug_signal_handler(mut _sig: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Options) {
+pub unsafe fn decode_debug_flags(
+    ctx: &crate::execctx::ExecContext,
+    options: &Options,
+) -> Result<(), crate::build_result::BuildError> {
     if options.debug_flag.get() {
         set_db_level(ctx, DB_ALL);
     }
@@ -1630,7 +1633,7 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
                         set_db_level(ctx, db_level(ctx) | DB_WHY);
                     }
                     _ => {
-                        exit_on_err(fatal_err(
+                        return Err(fatal_err(
                             ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             strlen(p) as size_t,
@@ -1663,6 +1666,7 @@ pub unsafe fn decode_debug_flags(ctx: &crate::execctx::ExecContext, options: &Op
     if db_level(ctx) == 0 {
         options.debug_flag.set(false);
     }
+    Ok(())
 }
 /// Map an `--output-sync` argument value to its `OUTPUT_SYNC_*` mode, or
 /// `None` if it names no known mode.
@@ -1680,13 +1684,16 @@ fn classify_output_sync(value: &[u8]) -> Option<i32> {
 /// Reads the global `FLAGS.output_sync_option` / `FLAGS.sync_mutex` C strings; both must be
 /// null or valid NUL-terminated strings, and this must run single-threaded
 /// during option decoding.
-pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, options: &Options) {
+pub unsafe fn decode_output_sync_flags(
+    ctx: &crate::execctx::ExecContext,
+    options: &Options,
+) -> Result<(), crate::build_result::BuildError> {
     if let Some(opt) = options.output_sync_option.borrow().as_ref() {
         match classify_output_sync(opt.as_bytes()) {
             Some(mode) => options.output_sync.set(mode),
             None => {
                 let c = ::std::ffi::CString::new(opt.as_bytes()).unwrap_or_default();
-                exit_on_err(fatal_err(
+                return Err(fatal_err(
                     ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     opt.len() as size_t,
@@ -1698,12 +1705,9 @@ pub unsafe fn decode_output_sync_flags(ctx: &crate::execctx::ExecContext, option
     }
     if let Some(mtx) = options.sync_mutex.borrow().as_ref() {
         let c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
-        // `decode_output_sync_flags` isn't `Result`-returning (it is reached
-        // from `decode_switches`, which still has a `void` C-shaped
-        // signature); bridge through `exit_on_err` to keep today's exact exit
-        // behavior for this leaf.
-        let _ = osync_parse_mutex(ctx, c.as_ptr()).unwrap_or_else(|e| exit_on_err(e));
+        osync_parse_mutex(ctx, c.as_ptr())?;
     }
+    Ok(())
 }
 /// Print the usage table — to stdout for `-h`, to stderr for a bad switch —
 /// byte-identical to the C oracle's hand-written table. Safe Rust throughout
@@ -2121,7 +2125,7 @@ unsafe fn main_0(
             b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             o_command,
-        );
+        )?;
         define_variable_in_set(
             &ctx,
             b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2139,7 +2143,7 @@ unsafe fn main_0(
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         o_command,
-    );
+    )?;
     set_make_sync_syncout(
         &ctx,
         (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32
@@ -2161,7 +2165,7 @@ unsafe fn main_0(
             })
             .collect()
     };
-    decode_switches(&ctx, options, &cli_tokens, o_command);
+    decode_switches(&ctx, options, &cli_tokens, o_command)?;
     argv_slots = options.arg_job_slots.get();
     if options.arg_job_slots.get().is_none() {
         options.arg_job_slots.set(env_slots);
@@ -2729,7 +2733,7 @@ unsafe fn main_0(
                 &ctx,
                 owned.as_mut_ptr() as *mut ::core::ffi::c_char,
                 ::core::ptr::null::<Floc>(),
-            );
+            )?;
         }
         let mut value_0_buf: Vec<u8> = Vec::with_capacity(len_1 as usize);
         let value_0 = value_0_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
@@ -2803,7 +2807,7 @@ unsafe fn main_0(
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         o_env,
-    );
+    )?;
     define_variable_in_set(
         &ctx,
         b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2820,7 +2824,7 @@ unsafe fn main_0(
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         o_env,
-    );
+    )?;
     if options.arg_job_slots.get().is_none() || argv_slots.is_some() {
         options.arg_job_slots.set(old_arg_job_slots);
     } else if options.jobserver_auth.borrow().is_some()
@@ -3641,11 +3645,11 @@ unsafe fn handle_non_switch_argument(
     options: &Options,
     arg: *const ::core::ffi::c_char,
     origin: variable_origin,
-) -> ::core::ffi::c_uint {
+) -> Result<::core::ffi::c_uint, crate::build_result::BuildError> {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let v: *mut variable;
     if *arg.offset(0_i32 as isize) as i32 == '-' as i32 && *arg.offset(1_i32 as isize) as i32 == 0 {
-        return 0;
+        return Ok(0);
     }
     v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global);
     if !v.is_null() {
@@ -3668,9 +3672,9 @@ unsafe fn handle_non_switch_argument(
         && origin as ::core::ffi::c_uint == o_command as i32 as ::core::ffi::c_uint
     {
         if strcmp(arg, b".WAIT\0" as *const u8 as *const ::core::ffi::c_char) == 0 {
-            return 1;
+            return Ok(1);
         }
-        let fname_bytes = ::std::ffi::CStr::from_ptr(expand_command_line_file(ctx, arg))
+        let fname_bytes = ::std::ffi::CStr::from_ptr(expand_command_line_file(ctx, arg)?)
             .to_bytes()
             .to_vec();
         let f = enter_file(ctx, &fname_bytes);
@@ -3727,7 +3731,7 @@ unsafe fn handle_non_switch_argument(
             NILF,
         );
     }
-    0
+    Ok(0)
 }
 /// # Safety
 ///
@@ -3735,15 +3739,20 @@ unsafe fn handle_non_switch_argument(
 /// translation; all pointer arguments must be valid for the call.
 /// `reset_makeflags` for the makefile-time `MAKEFLAGS` reassignment callback
 /// (`set_special_var`), which is reached through `do_variable_definition`.
+///
+/// `set_special_var` is a `void` variable-definition callback with wide
+/// non-`Result` fan-out through the makefile reader, so a bad switch in a
+/// makefile-assigned `MAKEFLAGS` bridges through `exit_on_err` here rather
+/// than propagating a `Result` through that whole chain (#432 Phase B).
 pub unsafe fn reset_makeflags_special(ctx: &crate::execctx::ExecContext, origin: variable_origin) {
-    reset_makeflags(ctx, &ctx.options, origin);
+    reset_makeflags(ctx, &ctx.options, origin).unwrap_or_else(|e| exit_on_err(e));
 }
 
 pub unsafe fn reset_makeflags(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
     origin: variable_origin,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     options.env_overrides.set(false);
     decode_env_switches(
         ctx,
@@ -3751,7 +3760,7 @@ pub unsafe fn reset_makeflags(
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
         origin,
-    );
+    )?;
     {
         let include_dirs = options.include_dirs.borrow();
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
@@ -3765,6 +3774,7 @@ pub unsafe fn reset_makeflags(
     }
     disable_builtins(ctx, options);
     define_makeflags(ctx, options, opt_rebuilding_makefiles(ctx) as i32);
+    Ok(())
 }
 /// Switch chars whose `CommandSwitch.type_0` is `flag`/`flag_off` and which
 /// share their underlying `Options` storage with a counterpart char (the
@@ -3981,10 +3991,10 @@ fn apply_value_switch(
     cs_origin: Option<&::core::cell::Cell<variable_origin>>,
     origin: variable_origin,
     bad: &mut i32,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     use std::os::unix::ffi::OsStrExt;
     if !doit {
-        return;
+        return Ok(());
     }
     // Resolve the option argument. A bare occurrence (no value given at
     // all -- flagged by `NOARG_SENTINEL`, see `normalize_argv_for_clap`)
@@ -4032,7 +4042,7 @@ fn apply_value_switch(
             );
         }
         *bad = 1;
-        return;
+        return Ok(());
     } else {
         ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default()
     };
@@ -4084,20 +4094,17 @@ fn apply_value_switch(
                 if options.stdin_offset.get() > 0 {
                     // SAFETY: `fatal_err` requires a valid NUL-terminated
                     // format string with no `%` conversions beyond the given
-                    // args; this literal has none. `apply_value_switch` is
-                    // driven by the clap decode loop and isn't
-                    // `Result`-returning yet, so bridge back to today's exit
-                    // behavior through `exit_on_err` (#432 Phase B).
-                    unsafe {
-                        exit_on_err(fatal_err(
+                    // args; this literal has none.
+                    return Err(unsafe {
+                        fatal_err(
                             ctx,
                             NILF,
                             0,
                             b"INTERNAL: multiple --temp-stdin options provided!\0" as *const u8
                                 as *const ::core::ffi::c_char,
                             &[],
-                        ));
-                    }
+                        )
+                    });
                 }
                 options.stdin_offset.set(list.len() as i32);
                 // SAFETY: `strcache_add` requires a valid NUL-terminated C
@@ -4111,7 +4118,7 @@ fn apply_value_switch(
                 // SAFETY: `expand_command_line_file` requires a valid
                 // NUL-terminated C string (`coptarg`, as above) and returns
                 // one.
-                unsafe { ::core::ffi::CStr::from_ptr(expand_command_line_file(ctx, coptarg)) }
+                unsafe { ::core::ffi::CStr::from_ptr(expand_command_line_file(ctx, coptarg)?) }
                     .to_owned()
             };
             list.push(stored);
@@ -4120,6 +4127,7 @@ fn apply_value_switch(
             }
         }
     }
+    Ok(())
 }
 
 fn decode_switches(
@@ -4127,7 +4135,7 @@ fn decode_switches(
     options: &Options,
     tokens: &[::std::ffi::OsString],
     origin: variable_origin,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let mut bad: i32 = 0;
     let switches_snapshot: Vec<CommandSwitch> = options.switches.borrow().to_vec();
 
@@ -4158,15 +4166,16 @@ fn decode_switches(
         // another option's value) -- nothing more to recover from this
         // batch.
         if bad != 0 && origin == o_command {
-            // The process still exits here: bubbling a bad-switch error out
-            // of `decode_switches` is a later #432 subtask. Run the same
-            // cleanup the retired `die` did, then bridge through `exit_on_err` so the
-            // exit stays behind the one shared helper (#537).
+            // Bad switch: print the usage table and run the same end-of-run
+            // cleanup the retired `die` did, then hand the failure back to
+            // `main_0` instead of exiting here (#432 Phase B, #537). The
+            // cleanup still runs at this point rather than in the caller, so
+            // the ordering of its output against the usage table is unchanged.
             print_usage(ctx, options, bad);
             die_cleanup(ctx, MAKE_FAILURE);
-            exit_on_err(crate::build_result::BuildError::Failure);
+            return Err(crate::build_result::BuildError::Failure);
         }
-        return;
+        return Ok(());
     };
 
     // Flags (`flag`/`flag_off`/`ignore`): a bare switch applies once; one of
@@ -4277,7 +4286,7 @@ fn decode_switches(
                     [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
                 .set_specified(1);
             }
-            apply_value_switch(ctx, options, cs, raw_value, doit, cs_origin, origin, &mut bad);
+            apply_value_switch(ctx, options, cs, raw_value, doit, cs_origin, origin, &mut bad)?;
         }
     }
 
@@ -4366,7 +4375,8 @@ fn decode_switches(
             let prior_found_wait = found_wait;
             // SAFETY: `handle_non_switch_argument` requires a valid
             // NUL-terminated C string; `ctok` is a live `CString`.
-            found_wait = unsafe { handle_non_switch_argument(ctx, options, ctok.as_ptr(), origin) };
+            found_wait =
+                unsafe { handle_non_switch_argument(ctx, options, ctok.as_ptr(), origin)? };
             if prior_found_wait != 0 {
                 if let Some(last) = options.goals.borrow_mut().last_mut() {
                     last.dep.wait_here = true;
@@ -4377,17 +4387,16 @@ fn decode_switches(
 
     // SAFETY: none of these take raw pointers or impose a precondition
     // beyond a valid `&ExecContext`/`&Options`, which we have. The
-    // bad-switch path still exits: bubbling that error out of
-    // `decode_switches` is a later #432 subtask, so it runs the same cleanup
-    // and bridges through `exit_on_err` (#537).
+    // bad-switch path runs the same end-of-run cleanup the retired `die`
+    // did and then returns the failure to `main_0` (#432 Phase B, #537).
     unsafe {
         if bad != 0 && origin == o_command {
             print_usage(ctx, options, bad);
             die_cleanup(ctx, MAKE_FAILURE);
-            exit_on_err(crate::build_result::BuildError::Failure);
+            return Err(crate::build_result::BuildError::Failure);
         }
-        decode_debug_flags(ctx, options);
-        decode_output_sync_flags(ctx, options);
+        decode_debug_flags(ctx, options)?;
+        decode_output_sync_flags(ctx, options)?;
     }
     if options.warn_undefined_variables.get() {
         crate::warning::decode_actions(ctx, "undefined-var", None);
@@ -4406,6 +4415,7 @@ fn decode_switches(
     unsafe {
         reset_env_override(ctx);
     }
+    Ok(())
 }
 /// Tokenizes an already-expanded `MAKEFLAGS`/`GNUMAKEFLAGS` value on
 /// whitespace (per [`stopchar_map`]'s `MAP_BLANK` bit), honoring
@@ -4447,14 +4457,14 @@ unsafe fn decode_env_switches(
     envar: *const ::core::ffi::c_char,
     len: size_t,
     origin: variable_origin,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let value = expand_variable_buf(ctx, ::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len);
     let mut bytes = ::core::ffi::CStr::from_ptr(value).to_bytes();
     while !bytes.is_empty() && stopchar_map()[bytes[0] as usize] & (0x2 | 0x4) != 0 {
         bytes = &bytes[1..];
     }
     if bytes.is_empty() {
-        return;
+        return Ok(());
     }
     use std::os::unix::ffi::OsStrExt;
     let words = split_makeflags_value(bytes);
@@ -4474,7 +4484,7 @@ unsafe fn decode_env_switches(
             *first = ::std::ffi::OsStr::from_bytes(&rewritten).to_os_string();
         }
     }
-    decode_switches(ctx, options, &tokens, origin);
+    decode_switches(ctx, options, &tokens, origin)
 }
 unsafe extern "C" fn quote_for_env(
     mut out: *mut ::core::ffi::c_char,
@@ -4859,9 +4869,9 @@ pub unsafe fn define_makeflags(
                         }
                     }
                 }
-                _ => {
-                    abort();
-                }
+                // Every `command_switch` in the table carries one of the
+                // handled types; a new one added without a case lands here.
+                t => unreachable!("unhandled command_switch type {t} in MAKEFLAGS encoding"),
             }
         }
         cs = cs.offset(1_i32 as isize);
@@ -5097,7 +5107,12 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
         temp_stdin_unlink(ctx);
         err = (status != 0) as i32;
         while job_slots_used(ctx) > 0 {
-            reap_children(ctx, 1, err);
+            // This is the end-of-run cleanup itself, reached once `ctx.dying` is
+            // already set — there is no caller left to hand a `Result` to, and
+            // `reap_children`'s own error arm finds `die_cleanup` guarded out,
+            // so a reap failure here exits with that child's status exactly as
+            // it did before the conversion (#432 Phase B, #441).
+            reap_children(ctx, 1, err).unwrap_or_else(|e| crate::output::exit_on_err(e));
         }
         ctx.remote_backend.0.cleanup();
         remove_intermediates(ctx, 0);
@@ -6853,7 +6868,7 @@ mod decode_switches_clap_vs_getopt_tests {
         let options_new = Options::new();
         let owned_tokens: Vec<::std::ffi::OsString> =
             tokens.iter().map(::std::ffi::OsString::from).collect();
-        decode_switches(&ctx_new, &options_new, &owned_tokens, origin);
+        let result_new = decode_switches(&ctx_new, &options_new, &owned_tokens, origin);
 
         let ctx_oracle = ExecContext::default();
         unsafe { init_hash_global_variable_set(&ctx_oracle) };
@@ -6866,7 +6881,7 @@ mod decode_switches_clap_vs_getopt_tests {
             .collect();
         let argv_ptrs: Vec<*const ::core::ffi::c_char> =
             cstrings.iter().map(|s| s.as_ptr()).collect();
-        {
+        let result_oracle = {
             let _guard = ORACLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             unsafe {
                 decode_switches_oracle(
@@ -6876,9 +6891,16 @@ mod decode_switches_clap_vs_getopt_tests {
                     argv_ptrs.as_ptr() as *mut *const ::core::ffi::c_char,
                     origin,
                 )
-            };
-        }
+            }
+        };
 
+        // Both sides now report a fatal switch error as `Err` instead of
+        // exiting, so the outcome itself is part of the differential
+        // comparison rather than something only one side could express.
+        assert_eq!(
+            result_new, result_oracle,
+            "result mismatch for tokens {tokens:?} (origin {origin})"
+        );
         let snap_new = snapshot(&options_new);
         let snap_oracle = snapshot(&options_oracle);
         assert_eq!(snap_new, snap_oracle, "mismatch for tokens {tokens:?} (origin {origin})");
@@ -6984,8 +7006,9 @@ mod decode_switches_clap_vs_getopt_tests {
 
     #[test]
     fn required_arg_empty_value_is_an_error() {
-        // o_env, not o_command: bad=1 with origin==o_command triggers
-        // print_usage(), which exits the whole test process.
+        // o_env, not o_command: bad=1 with origin==o_command runs
+        // print_usage() and the end-of-run cleanup before returning `Err`,
+        // none of which the oracle mirrors, so the two sides would diverge.
         check(&["-f", ""], o_env);
         check(&["--file="], o_env);
     }
@@ -7009,7 +7032,7 @@ mod decode_switches_clap_vs_getopt_tests {
             ::std::ffi::OsString::from("-f"),
             ::std::ffi::OsStr::from_bytes(raw_name).to_os_string(),
         ];
-        decode_switches(&ctx, &options, &tokens, o_command);
+        decode_switches(&ctx, &options, &tokens, o_command).expect("valid -f switch");
 
         let makefiles = options.makefiles.borrow();
         assert_eq!(makefiles.len(), 1);
@@ -7031,8 +7054,9 @@ mod decode_switches_clap_vs_getopt_tests {
 
     #[test]
     fn unknown_option_mixed_with_valid_ones() {
-        // o_env, not o_command: bad=1 with origin==o_command triggers
-        // print_usage(), which exits the whole test process.
+        // o_env, not o_command: bad=1 with origin==o_command runs
+        // print_usage() and the end-of-run cleanup before returning `Err`,
+        // none of which the oracle mirrors, so the two sides would diverge.
         check(&["-j2", "-Q", "target"], o_env);
         check(&["-Q", "-j2", "target"], o_env);
         check(&["--bogus-long", "-k", "target"], o_env);
@@ -7053,5 +7077,116 @@ mod decode_switches_clap_vs_getopt_tests {
         // separately (it runs before `decode_switches`); here we just check
         // that an already-dashed bundle behaves the same through both paths.
         check(&["-ik"], o_command);
+    }
+}
+
+/// The switch-decoding fatals that used to end the process now come back as
+/// [`BuildError`](crate::build_result::BuildError), so they are reachable from
+/// a unit test for the first time (#432 Phase B, #442). Each case asserts both
+/// that the error is reported *and* that it is reported as a value rather than
+/// an exit — the whole point of the conversion.
+#[cfg(test)]
+mod decode_switches_error_paths {
+    use super::{
+        decode_debug_flags, decode_output_sync_flags, decode_switches, expand_command_line_file,
+        install_default_exec_context_for_test, o_env, Options,
+    };
+    use crate::build_result::BuildError;
+    use crate::execctx::ExecContext;
+
+    #[test]
+    fn unknown_debug_level_is_an_error_not_an_exit() {
+        let _ctx = install_default_exec_context_for_test();
+        let ctx = ExecContext::default();
+        let options = Options::new();
+        options
+            .db_flags
+            .borrow_mut()
+            .push(::std::ffi::CString::new("zzz").unwrap());
+        // SAFETY: `decode_debug_flags` reads `options.db_flags`, whose entries
+        // are live NUL-terminated `CString`s, and needs a valid `&ExecContext`.
+        let r = unsafe { decode_debug_flags(&ctx, &options) };
+        assert_eq!(r, Err(BuildError::Failure));
+    }
+
+    #[test]
+    fn every_known_debug_level_still_succeeds() {
+        for level in ["a", "b", "i", "j", "m", "n", "p", "v", "w", "b,i", "j m"] {
+            let _ctx = install_default_exec_context_for_test();
+            let ctx = ExecContext::default();
+            let options = Options::new();
+            options
+                .db_flags
+                .borrow_mut()
+                .push(::std::ffi::CString::new(level).unwrap());
+            // SAFETY: as above.
+            let r = unsafe { decode_debug_flags(&ctx, &options) };
+            assert_eq!(r, Ok(()), "debug level {level:?} should be accepted");
+        }
+    }
+
+    #[test]
+    fn unknown_output_sync_type_is_an_error_not_an_exit() {
+        let _ctx = install_default_exec_context_for_test();
+        let ctx = ExecContext::default();
+        let options = Options::new();
+        *options.output_sync_option.borrow_mut() = Some("bogus".to_string());
+        // SAFETY: `decode_output_sync_flags` reads the two option strings,
+        // both of which are live `String`s here, and needs a valid context.
+        let r = unsafe { decode_output_sync_flags(&ctx, &options) };
+        assert_eq!(r, Err(BuildError::Failure));
+    }
+
+    #[test]
+    fn known_output_sync_types_still_succeed() {
+        for (name, mode) in [
+            ("none", super::OUTPUT_SYNC_NONE),
+            ("line", super::OUTPUT_SYNC_LINE),
+            ("target", super::OUTPUT_SYNC_TARGET),
+            ("recurse", super::OUTPUT_SYNC_RECURSE),
+        ] {
+            let _ctx = install_default_exec_context_for_test();
+            let ctx = ExecContext::default();
+            let options = Options::new();
+            *options.output_sync_option.borrow_mut() = Some(name.to_string());
+            // SAFETY: as above.
+            let r = unsafe { decode_output_sync_flags(&ctx, &options) };
+            assert_eq!(r, Ok(()), "output-sync {name:?} should be accepted");
+            assert_eq!(options.output_sync.get(), mode);
+        }
+    }
+
+    #[test]
+    fn empty_file_name_is_an_error_not_an_exit() {
+        let _ctx = install_default_exec_context_for_test();
+        let ctx = ExecContext::default();
+        // SAFETY: `c""` is a valid NUL-terminated C string.
+        let r = unsafe { expand_command_line_file(&ctx, c"".as_ptr()) };
+        assert_eq!(r.err(), Some(BuildError::Failure));
+    }
+
+    #[test]
+    fn empty_switch_argument_propagates_out_of_decode_switches() {
+        // `-f ''` reaches `expand_command_line_file`'s empty-name fatal only
+        // after clap accepts the (present but empty) value, so this exercises
+        // the whole `decode_switches` -> `apply_value_switch` ->
+        // `expand_command_line_file` chain as one `Result`. `o_env` keeps the
+        // bad-switch branch (which runs `die_cleanup`) out of the picture.
+        super::initialize_stopchar_map();
+        let _ctx = install_default_exec_context_for_test();
+        let ctx = ExecContext::default();
+        // SAFETY: initializes the global variable set this context needs
+        // before any variable lookup runs.
+        unsafe { crate::variable::init_hash_global_variable_set(&ctx) };
+        let options = Options::new();
+        let tokens = vec![
+            ::std::ffi::OsString::from("-f"),
+            ::std::ffi::OsString::from(""),
+        ];
+        // An explicitly empty value is rejected by `apply_value_switch` before
+        // it ever reaches the file expander, so this records `bad` and returns
+        // `Ok` -- the error surface stays exactly where it was pre-conversion.
+        assert_eq!(decode_switches(&ctx, &options, &tokens, o_env), Ok(()));
+        assert!(options.makefiles.borrow().is_empty());
     }
 }

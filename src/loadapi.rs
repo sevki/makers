@@ -79,12 +79,20 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
     // same `ctx`, so it moves inside the closure alongside `eval_buffer`.
     crate::make_main::with_exec_context(|ctx| unsafe {
         install_variable_buffer(ctx, &raw mut pbuf, &raw mut plen);
-        eval_buffer(
+        // `gmk_eval` is a C-ABI entry point called from a loaded plugin: there
+        // is no Rust frame between here and the plugin to carry a `Result`, so
+        // a failed eval bridges through `exit_on_err` (#432 Phase B, #442).
+        // The variable buffer is restored first so the bridge does not leave
+        // it swapped out.
+        let evaluated = eval_buffer(
             ctx,
             eval_input.as_mut_ptr() as *mut ::core::ffi::c_char,
             flp,
         );
         restore_variable_buffer(ctx, pbuf, plen);
+        if let Err(e) = evaluated {
+            crate::output::exit_on_err(e);
+        }
     });
 }
 /// # Safety

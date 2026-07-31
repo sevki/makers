@@ -134,3 +134,5 @@ missing_separator	ordered	95_missing_separator.mk	all			simple
 extraneous_endif	ordered	96_extraneous_endif.mk	all			simple
 double_else	ordered	97_double_else.mk	all			simple
 missing_endif	ordered	98_missing_endif.mk	all			simple
+eval_func_endif	ordered	99_eval_func_endif.mk	all			simple
+eval_option_endif	ordered	100_eval_option.mk	all	--eval=endif		simple

@@ -1039,8 +1039,8 @@ pub fn rehash_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname:
         }
     }
 
-    // The walked node must still carry the original hash-name (the c2rust
-    // `abort()` invariant).
+    // The walked node must still carry the original hash-name (the invariant
+    // the c2rust translation asserted with `abort()`).
     let walked = match ctx.filenodes.get(walked_id) {
         Some(n) => n,
         None => return,

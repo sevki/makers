@@ -10,7 +10,7 @@ use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
-use libc::{__errno_location, abort, close, free, pipe, remove, sprintf, strerror, strstr};
+use libc::{__errno_location, close, free, pipe, remove, sprintf, strerror, strstr};
 use std::sync::atomic::Ordering;
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
@@ -854,9 +854,9 @@ fn func_origin(
         // `variable` returned by `lookup_variable`.
         Some(unsafe { (*v).origin() as i32 })
     };
+    // o_invalid: never stored on a live variable (the C original aborts here).
     if origin == Some(7) {
-        // SAFETY: matches the original C `case o_invalid: abort()`.
-        unsafe { abort() };
+        unreachable!("variable has the invalid origin");
     }
     if let Some(msg) = origin_message(origin) {
         // SAFETY: `o` is the caller's variable-buffer output cursor and
@@ -936,7 +936,7 @@ mod func_origin_flavor_tests {
         assert_eq!(origin_message(Some(4)), Some(&b"command line"[..]));
         assert_eq!(origin_message(Some(5)), Some(&b"override"[..]));
         assert_eq!(origin_message(Some(6)), Some(&b"automatic"[..]));
-        // `o_invalid` (7) is handled by the caller via `abort()` before
+        // `o_invalid` (7) is rejected by the caller (`unreachable!`) before
         // reaching this table; any other out-of-range value is the C
         // switch's silent-no-output default.
         assert_eq!(origin_message(Some(8)), None);
@@ -970,9 +970,8 @@ mod func_origin_flavor_tests {
             o = variable_buffer_output(ctx, o, b"undefined\0" as *const u8 as *const c_char, 9);
         } else {
             match (*v).origin() as i32 {
-                7 => {
-                    super::abort();
-                }
+                // o_invalid: never stored on a live variable.
+                7 => unreachable!("variable has the invalid origin"),
                 0 => {
                     o = variable_buffer_output(
                         ctx,
@@ -3601,12 +3600,19 @@ unsafe fn func_eval(
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     install_variable_buffer(ctx, &raw mut buf, &raw mut len);
-    eval_buffer(
+    // The expander's signature is not `Result`-returning yet, so a failed
+    // `$(eval …)` bridges through `exit_on_err` — the sanctioned stand-in
+    // until this call chain is converted (#432 Phase B, #442). The variable
+    // buffer is restored first: the bridge must not leave it swapped out.
+    let evaluated = eval_buffer(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<Floc>(),
     );
     restore_variable_buffer(ctx, buf, len);
+    if let Err(e) = evaluated {
+        crate::output::exit_on_err(e);
+    }
     o
 }
 unsafe fn func_value(
@@ -3942,7 +3948,11 @@ pub unsafe fn func_shell_base(
             let (mut buffer, mut i) = read_all_pipe(pipedes[0_i32 as usize]);
             close(pipedes[0_i32 as usize]);
             while shell_function_completed(ctx) == 0 {
-                reap_children(ctx, 1, 0);
+                // `func_shell_base` returns a raw output pointer and sits under
+                // the expander's crate-wide non-`Result` fan-out, so a reap
+                // failure inside `$(shell ...)` bridges through `exit_on_err`
+                // rather than propagating (#432 Phase B, #441, #539).
+                reap_children(ctx, 1, 0).unwrap_or_else(|e| crate::output::exit_on_err(e));
             }
             if !batch_filename.is_null() {
                 if 0x2_i32 & db_level(ctx) != 0 {

@@ -509,12 +509,18 @@ pub unsafe fn jobserver_release(ctx: &crate::execctx::ExecContext, is_fatal: i32
 /// Drain every available token (used before exec'ing a re-invoked make).
 /// Returns the number of tokens read.
 ///
-/// Called from the `die_cleanup`/`clean_jobserver` shutdown path, which
-/// isn't itself `Result`-returning (touching that is out of scope here —
-/// it's shared by every fatal path in the system, not an output.rs/
-/// posixos.rs concern), so `set_blocking`'s fatal condition bridges through
-/// [`crate::output::exit_on_err`] rather than propagating (#432 Phase B,
-/// #540).
+/// Called from the `die_cleanup`/`clean_jobserver` shutdown path — make is
+/// already on its way out by the time this runs.
+///
+/// `set_blocking`'s failure is therefore *reported, not fatal*: it has
+/// already printed its `fcntl(O_NONBLOCK)` diagnostic (via
+/// `pfatal_with_name_err`, which formats and prints before returning the
+/// error), and terminating the process here would take down every other
+/// tenant of an embedded `Session` — the exit belongs to `bin/make.rs`
+/// alone (#442). Draining continues on the fds we have; a jobserver pipe we
+/// could not put back into blocking mode at worst returns fewer tokens,
+/// which the caller already diagnoses ("exiting with %u jobserver tokens
+/// available; should be %u!").
 ///
 /// # Safety
 /// The jobserver must be set up; must run single-threaded.
@@ -523,7 +529,9 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
 
     // Close the write side so the read below sees EOF once the pipe drains.
     let mut fds = ctx.job_fds.0.get();
-    set_blocking(ctx, fds[0], true).unwrap_or_else(|e| crate::output::exit_on_err(e));
+    // Diagnostic already emitted by `pfatal_with_name_err`; see above for why
+    // this does not exit.
+    let _blocking = set_blocking(ctx, fds[0], true);
     close(fds[1]);
     fds[1] = -1;
     ctx.job_fds.0.set(fds);
@@ -1098,6 +1106,69 @@ mod tests {
         }
     }
 
+    /// `jobserver_acquire_all` drains every token sitting in the jobserver
+    /// pipe and reports how many it got, closing the write side first so the
+    /// read loop sees EOF once the pipe is empty.
+    ///
+    /// Also pins the teardown-path contract from #442: the function returns a
+    /// count rather than terminating, so a `set_blocking` failure on the way
+    /// out can be reported without taking the process (and, in an embedded
+    /// `Session`, every other tenant) down with it.
+    #[test]
+    fn jobserver_acquire_all_drains_the_pipe_and_counts_tokens() {
+        let ctx = crate::execctx::ExecContext::default();
+
+        let mut fds: [i32; 2] = [-1, -1];
+        assert_eq!(
+            unsafe { libc::pipe(fds.as_mut_ptr()) },
+            0,
+            "pipe() for the fake jobserver"
+        );
+
+        // Seed the pipe the way `jobserver_setup` would: one byte per token.
+        const TOKENS: usize = 5;
+        let seed = [b'+'; TOKENS];
+        assert_eq!(
+            unsafe { libc::write(fds[1], seed.as_ptr() as *const libc::c_void, TOKENS) },
+            TOKENS as isize,
+            "seed the jobserver tokens"
+        );
+
+        // `-d`'s jobserver bit (0x4) also exercises the trace line.
+        crate::make_main::set_db_level(&ctx, 0x4);
+
+        ctx.job_fds.0.set(fds);
+        let tokens = unsafe { jobserver_acquire_all(&ctx) };
+        assert_eq!(tokens as usize, TOKENS, "every seeded token is drained");
+
+        // The write side is closed by the drain; only the read side is left.
+        let left = ctx.job_fds.0.get();
+        assert_eq!(left[1], -1, "write side closed and recorded as -1");
+        unsafe { libc::close(left[0]) };
+    }
+
+    /// An empty jobserver pipe drains to zero tokens rather than blocking:
+    /// closing the write side first makes the very first read see EOF. The
+    /// untraced (`-d` off) path is the default here, covering the other side
+    /// of the debug branch above.
+    #[test]
+    fn jobserver_acquire_all_reports_zero_for_an_empty_pipe() {
+        let ctx = crate::execctx::ExecContext::default();
+
+        let mut fds: [i32; 2] = [-1, -1];
+        assert_eq!(
+            unsafe { libc::pipe(fds.as_mut_ptr()) },
+            0,
+            "pipe() for the fake jobserver"
+        );
+
+        ctx.job_fds.0.set(fds);
+        let tokens = unsafe { jobserver_acquire_all(&ctx) };
+        assert_eq!(tokens, 0, "nothing to drain");
+
+        unsafe { libc::close(ctx.job_fds.0.get()[0]) };
+    }
+
     /// `job_rfd()` reflects `ctx.job_rfd`: negative when there is no private
     /// read dup (the default), the fd value once set.
     #[test]
@@ -1177,12 +1248,24 @@ mod tests {
     /// A closed read fd makes `pselect` fail with `EBADF` — the
     /// "jobserver_signal() closed the read side" case — which is fatal:
     /// `Err(BuildError::Failure)`, not a plain `Ok(0)`.
+    ///
+    /// The read end is first moved to a high descriptor number and closed
+    /// *there*: `pipe()`/`open()` always hand back the lowest free fd, so
+    /// closing a low one and expecting it to stay invalid races any test
+    /// that opens a descriptor concurrently (which is how this used to flake
+    /// once posixos grew a second pipe-driving test).
     #[test]
     fn jobserver_acquire_fatals_on_closed_read_fd() {
         let ctx = crate::execctx::ExecContext::default();
         let mut fds = [-1i32; 2];
         assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
-        unsafe { close(fds[0]) };
+        let high = unsafe { libc::fcntl(fds[0], libc::F_DUPFD, 900) };
+        assert!(high >= 900, "relocate the read end above the busy range");
+        unsafe {
+            close(fds[0]);
+            close(high);
+        }
+        fds[0] = high;
         ctx.job_fds.0.set(fds);
 
         let result = unsafe { jobserver_acquire(&ctx, 0) };
