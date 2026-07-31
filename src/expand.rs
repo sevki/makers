@@ -447,7 +447,16 @@ pub unsafe fn expand_string_buf(
                 let mut abeg: Option<OwnedCStr> = None;
                 let mut end: *const ::core::ffi::c_char;
                 let mut colon: *const ::core::ffi::c_char;
-                if handle_function(ctx, &raw mut o, &raw mut p) == 0 {
+                // Since #442 the builtin dispatch chain (`handle_function` →
+                // `expand_builtin_function` → the raw handlers) hands its
+                // diagnostics back as `BuildError` values instead of exiting in
+                // place. `expand_string_buf` still returns a raw pointer with
+                // wide fan-out across the crate, so this is where they bridge —
+                // the same deferral as the `unterminated variable reference`
+                // arm below, and it retires with it (#432 Phase B, #539).
+                let handled = handle_function(ctx, &raw mut o, &raw mut p)
+                    .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                if handled == 0 {
                     end = strchr(beg, closeparen as i32);
                     if end.is_null() {
                         // `expand_string_buf` returns a raw pointer with wide
