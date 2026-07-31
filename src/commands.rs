@@ -408,9 +408,13 @@ fn entry_node(guard: &mut FileNode, entry: usize) -> &mut FileNode {
     }
 }
 
-pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
+pub fn execute_file_commands(
+    ctx: &ExecContext,
+    file: FileId,
+    entry: usize,
+) -> Result<(), crate::build_result::BuildError> {
     let Some(node) = ctx.filenodes.get(file) else {
-        return;
+        return Ok(());
     };
 
     // A recipe of nothing but whitespace and `-`/`@`/`+` prefixes means there
@@ -441,7 +445,7 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
             en.update_status = UpdateStatus::Success;
         }
         notice_finished_file(ctx, file, entry);
-        return;
+        return Ok(());
     }
 
     initialize_file_variables(ctx, file, 0);
@@ -466,9 +470,7 @@ pub fn execute_file_commands(ctx: &ExecContext, file: FileId, entry: usize) {
 
     // SAFETY: `new_job` enters the job machinery, which is still the c2rust
     // pointer-based scheduler; `file` is a valid arena handle.
-    unsafe {
-        new_job(ctx, file, entry);
-    }
+    unsafe { new_job(ctx, file, entry) }
 }
 
 /// Read whether a fatal signal is currently being handled; checked by code
@@ -563,12 +565,20 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         }
         // Wait for them all to die before cleaning up. Reaping walks the live
         // children chain, so it too runs on the live context.
+        //
+        // `fatal_error_signal` is a signal handler: there is no Rust frame
+        // between here and the interrupted code to carry a `Result`, and the
+        // handler is already committed to tearing the run down, so a reap
+        // failure bridges through `exit_on_err` rather than propagating
+        // (#432 Phase B, #441).
         while crate::make_main::with_exec_context(job_slots_used) > 0 {
-            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 0));
+            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 0))
+                .unwrap_or_else(|e| exit_on_err(e));
         }
     } else {
         while crate::make_main::with_exec_context(job_slots_used) > 0 {
-            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 1));
+            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 1))
+                .unwrap_or_else(|e| exit_on_err(e));
         }
     }
 

@@ -714,7 +714,11 @@ pub extern "C" fn child_handler(mut _sig: i32) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, err: i32) {
+pub unsafe fn reap_children(
+    ctx: &crate::execctx::ExecContext,
+    mut block: i32,
+    err: i32,
+) -> Result<(), crate::build_result::BuildError> {
     let mut status: i32 = 0;
     let mut reap_more: i32 = 1;
     while (!ctx.children.0.get().is_null() || shell_function_pid(ctx) != 0)
@@ -800,7 +804,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
             if pid > 0 {
                 remote = 1;
             } else if pid < 0 {
-                exit_on_err(pfatal_with_name_err(
+                return Err(pfatal_with_name_err(
                     ctx,
                     b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
                 ));
@@ -820,7 +824,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                     pid = 0_i32 as pid_t;
                 }
                 if pid < 0 {
-                    exit_on_err(pfatal_with_name_err(
+                    return Err(pfatal_with_name_err(
                         ctx,
                         b"wait\0" as *const u8 as *const ::core::ffi::c_char,
                     ));
@@ -845,7 +849,7 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
                         false,
                     ) as pid_t;
                     if pid < 0 {
-                        exit_on_err(pfatal_with_name_err(
+                        return Err(pfatal_with_name_err(
                             ctx,
                             b"remote_status\0" as *const u8 as *const ::core::ffi::c_char,
                         ));
@@ -1076,8 +1080,12 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         } else {
             ctx.children.0.set((*c).next);
         }
-        free_child(ctx, c);
+        // Signals are blocked across the child-list splice, so unblock them
+        // before handing a teardown failure back — the caller must not keep
+        // running with the fatal-signal set still masked (#441).
+        let freed = free_child(ctx, c);
         unblock_sigs(ctx);
+        freed?;
         if err == 0
             && child_failed != 0
             && dontcare == 0
@@ -1086,18 +1094,19 @@ pub unsafe fn reap_children(ctx: &crate::execctx::ExecContext, mut block: i32, e
         {
             // `child_failed` is one of make's canonical statuses (set to
             // MAKE_SUCCESS/MAKE_TROUBLE/MAKE_FAILURE above) and the guard
-            // rules out MAKE_SUCCESS, so this always takes the error arm and
-            // exits with the same status the legacy `die` did. `reap_children`
-            // is reached from `main_0`, `remake`, and `function`, none of
-            // which carry a `Result` yet, so the exit bridges through the one
-            // shared helper (#441).
+            // rules out MAKE_SUCCESS, so this always takes the error arm. The
+            // end-of-run cleanup still runs here rather than in the caller so
+            // its output ordering is unchanged; only the exit itself moved out,
+            // and the failure is now handed back as a value (#432 Phase B,
+            // #441).
             if let Err(e) = crate::build_result::result_from_status(child_failed) {
                 die_cleanup(ctx, child_failed);
-                exit_on_err(e);
+                return Err(e);
             }
         }
         block = 0;
     }
+    Ok(())
 }
 /// # Safety
 ///
@@ -1119,11 +1128,14 @@ pub unsafe fn free_childbase(child: *mut ChildBase) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
+pub unsafe fn free_child(
+    ctx: &crate::execctx::ExecContext,
+    child: *mut child,
+) -> Result<(), crate::build_result::BuildError> {
     crate::output::output_close(ctx, &raw mut (*child).output);
-    release_jobserver_token(ctx, child);
+    release_jobserver_token(ctx, child)?;
     if handling_fatal_signal(ctx) {
-        return;
+        return Ok(());
     }
     // Free the c2rust-allocated `ChildBase` members (cmd_name/environment) the
     // same way as before; the owned `command_lines`/`line_flags`/`command_buf`
@@ -1132,6 +1144,7 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
     // The child was allocated with `Box::into_raw`; reclaim it so its owned
     // fields drop. Takes the place of the former `free(child)`.
     drop(Box::from_raw(child));
+    Ok(())
 }
 
 /// Account for this child's jobserver token as it is freed: assert a token is
@@ -1145,11 +1158,14 @@ pub unsafe fn free_child(ctx: &crate::execctx::ExecContext, child: *mut child) {
 ///
 /// `child` must be a valid `child` whose `file` is live; the jobserver globals
 /// must be initialized.
-unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut child) {
+unsafe fn release_jobserver_token(
+    ctx: &crate::execctx::ExecContext,
+    child: *mut child,
+) -> Result<(), crate::build_result::BuildError> {
     let name_buf = file_name_cstr(ctx, (*child).file);
     let name = name_buf.as_ptr() as *const ::core::ffi::c_char;
     if jobserver_tokens(ctx) == 0 {
-        exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             ::core::ptr::null_mut::<Floc>(),
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
@@ -1174,6 +1190,7 @@ unsafe fn release_jobserver_token(ctx: &crate::execctx::ExecContext, child: *mut
         }
     }
     ctx.jobserver_tokens.0.fetch_sub(1, Ordering::Relaxed);
+    Ok(())
 }
 
 /// # Safety
@@ -1441,7 +1458,10 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child) -> i32 {
+pub unsafe fn start_waiting_job(
+    ctx: &crate::execctx::ExecContext,
+    c: *mut child,
+) -> Result<i32, crate::build_result::BuildError> {
     let f: FileId = (*c).file;
     let e: usize = (*c).entry;
     (*c).set_remote(ctx.remote_backend.0.can_start_job(true) as ::core::ffi::c_uint);
@@ -1449,7 +1469,7 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
         set_file_command_state_entry(ctx, f, e, cs_running);
         (*c).next = ctx.waiting_jobs.0.get();
         ctx.waiting_jobs.0.set(c);
-        return 0;
+        return Ok(0);
     }
     start_job_command(ctx, c);
     // Finished states (cs_not_started reset to success, cs_finished) need the
@@ -1498,9 +1518,9 @@ pub unsafe fn start_waiting_job(ctx: &crate::execctx::ExecContext, c: *mut child
     }
     if finish {
         notice_finished_file(ctx, f, e);
-        free_child(ctx, c);
+        free_child(ctx, c)?;
     }
-    1
+    Ok(1)
 }
 /// Fold one unescaped backslash-newline (and the whitespace around it) inside a
 /// `$(...)`/`${...}` reference to a single space — or, when the backslash is
@@ -1651,9 +1671,13 @@ unsafe fn collapse_dollar_refs(line: *mut ::core::ffi::c_char) {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize) {
-    start_waiting_jobs(ctx);
-    reap_children(ctx, 0, 0);
+pub unsafe fn new_job(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+) -> Result<(), crate::build_result::BuildError> {
+    start_waiting_jobs(ctx)?;
+    reap_children(ctx, 0, 0)?;
 
     // Chop the target's recipe into per-line text + flags. We clone the recipe,
     // chop the clone, then write the chopped lines back so the node's recipe is
@@ -1748,7 +1772,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
     let slots = crate::make_main::opt_job_slots(ctx);
     if slots != 0 {
         while job_slots_used(ctx) == slots {
-            reap_children(ctx, 1, 0);
+            reap_children(ctx, 1, 0)?;
         }
     } else if jobserver_enabled(ctx) != 0 {
         loop {
@@ -1764,17 +1788,16 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             }
             // `jobserver_pre_acquire`/`jobserver_acquire` are `Result`-returning
             // (#432 Phase B, #540: `std::process::exit` belongs only in
-            // `bin/make.rs`'s `main()`); `new_job` itself isn't converted yet
-            // (that's #441's job.rs pass), so bridge through `exit_on_err` to
-            // keep today's exact exit behavior on a fatal jobserver failure.
-            jobserver_pre_acquire(ctx).unwrap_or_else(|e| crate::output::exit_on_err(e));
-            reap_children(ctx, 0, 0);
-            start_waiting_jobs(ctx);
+            // `bin/make.rs`'s `main()`), and `new_job` now returns one too, so a
+            // fatal jobserver failure propagates instead of bridging (#441).
+            jobserver_pre_acquire(ctx)?;
+            reap_children(ctx, 0, 0)?;
+            start_waiting_jobs(ctx)?;
             if jobserver_tokens(ctx) == 0 {
                 break;
             }
             if ctx.children.0.get().is_null() {
-                exit_on_err(fatal_err(
+                return Err(fatal_err(
                     ctx,
                     ::core::ptr::null_mut::<Floc>(),
                     0,
@@ -1786,8 +1809,7 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             let got_token: i32 = jobserver_acquire(
                 ctx,
                 (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32,
-            )
-            .unwrap_or_else(|e| crate::output::exit_on_err(e)) as i32;
+            )? as i32;
             if !(got_token == 1) {
                 continue;
             }
@@ -1952,13 +1974,20 @@ pub unsafe fn new_job(ctx: &crate::execctx::ExecContext, file: FileId, entry: us
             }
         }
     }
-    start_waiting_job(ctx, c);
+    start_waiting_job(ctx, c)?;
     if crate::make_main::opt_job_slots(ctx) == 1 || not_parallel(ctx) {
         while file_command_state(ctx, file) as i32 == cs_running as i32 {
-            reap_children(ctx, 1, 0);
+            // Restore the output context before handing a reap failure back, so
+            // the caller's diagnostics are not written into this job's captured
+            // output block (#441).
+            if let Err(e) = reap_children(ctx, 1, 0) {
+                set_output_context(::core::ptr::null_mut::<output>());
+                return Err(e);
+            }
         }
     }
     set_output_context(::core::ptr::null_mut::<output>());
+    Ok(())
 }
 /// # Safety
 ///
@@ -2197,19 +2226,22 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn start_waiting_jobs(ctx: &crate::execctx::ExecContext) {
+pub unsafe fn start_waiting_jobs(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
     let mut job: *mut child;
     if ctx.waiting_jobs.0.get().is_null() {
-        return;
+        return Ok(());
     }
     loop {
-        reap_children(ctx, 0, 0);
+        reap_children(ctx, 0, 0)?;
         job = ctx.waiting_jobs.0.get();
         ctx.waiting_jobs.0.set((*job).next);
-        if !(start_waiting_job(ctx, job) != 0 && !ctx.waiting_jobs.0.get().is_null()) {
+        if !(start_waiting_job(ctx, job)? != 0 && !ctx.waiting_jobs.0.get().is_null()) {
             break;
         }
     }
+    Ok(())
 }
 /// # Safety
 ///

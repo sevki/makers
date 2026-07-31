@@ -308,12 +308,12 @@ pub fn update_goal_chain(
         let mut running: i32 = 0;
         let mut wait: i32 = 0;
         unsafe {
-            start_waiting_jobs(ctx);
+            start_waiting_jobs(ctx)?;
             reap_children(
                 ctx,
                 (last_cmd_count == crate::make_main::opt_command_count(ctx)) as i32,
                 0,
-            );
+            )?;
         }
         last_cmd_count = crate::make_main::opt_command_count(ctx);
         // Walk the goals by index; finished goals are removed from `goals`.
@@ -1958,8 +1958,7 @@ pub fn remake_file(
         }
         if !crate::make_main::opt_touch(ctx) || any_recurse {
             // lock: no guard held across execute_file_commands.
-            execute_file_commands(ctx, file, entry);
-            return Ok(());
+            return execute_file_commands(ctx, file, entry);
         }
         if let Some(node) = ctx.filenodes.get(file) {
             let mut g = node.lock().expect("file node lock poisoned");

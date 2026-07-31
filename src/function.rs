@@ -3948,7 +3948,11 @@ pub unsafe fn func_shell_base(
             let (mut buffer, mut i) = read_all_pipe(pipedes[0_i32 as usize]);
             close(pipedes[0_i32 as usize]);
             while shell_function_completed(ctx) == 0 {
-                reap_children(ctx, 1, 0);
+                // `func_shell_base` returns a raw output pointer and sits under
+                // the expander's crate-wide non-`Result` fan-out, so a reap
+                // failure inside `$(shell ...)` bridges through `exit_on_err`
+                // rather than propagating (#432 Phase B, #441, #539).
+                reap_children(ctx, 1, 0).unwrap_or_else(|e| crate::output::exit_on_err(e));
             }
             if !batch_filename.is_null() {
                 if 0x2_i32 & db_level(ctx) != 0 {

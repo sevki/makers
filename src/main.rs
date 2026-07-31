@@ -5107,7 +5107,12 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
         temp_stdin_unlink(ctx);
         err = (status != 0) as i32;
         while job_slots_used(ctx) > 0 {
-            reap_children(ctx, 1, err);
+            // This is the end-of-run cleanup itself, reached once `ctx.dying` is
+            // already set — there is no caller left to hand a `Result` to, and
+            // `reap_children`'s own error arm finds `die_cleanup` guarded out,
+            // so a reap failure here exits with that child's status exactly as
+            // it did before the conversion (#432 Phase B, #441).
+            reap_children(ctx, 1, err).unwrap_or_else(|e| crate::output::exit_on_err(e));
         }
         ctx.remote_backend.0.cleanup();
         remove_intermediates(ctx, 0);
