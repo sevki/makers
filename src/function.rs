@@ -160,17 +160,28 @@ pub struct FunctionTableEntry {
 /// append to the variable buffer. All raw-pointer/FFI marshalling lives in the
 /// dispatcher, never in the handler itself.
 pub type SafeFunc = fn(name: &[u8], args: &[&[u8]]) -> Vec<u8>;
+/// A builtin handler still written against the c2rust raw-pointer ABI: it
+/// appends to the variable buffer itself and returns the new write position.
+///
+/// The `Result` is the #442 conversion — handlers that used to call
+/// `output::exit_on_err` in place now return the [`BuildError`] and let
+/// `expand_builtin_function` → `handle_function` carry it out to the expander.
+///
+/// [`BuildError`]: crate::build_result::BuildError
+pub type RawFunc = unsafe fn(
+    &crate::execctx::ExecContext,
+    *mut ::core::ffi::c_char,
+    *mut *mut ::core::ffi::c_char,
+    *const ::core::ffi::c_char,
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError>;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub union C2RustUnnamed {
-    pub func_ptr: Option<
-        unsafe fn(
-            &crate::execctx::ExecContext,
-            *mut ::core::ffi::c_char,
-            *mut *mut ::core::ffi::c_char,
-            *const ::core::ffi::c_char,
-        ) -> *mut ::core::ffi::c_char,
-    >,
+    /// A raw-ABI builtin handler. Since #442 it hands a diagnostic back as a
+    /// [`BuildError`](crate::build_result::BuildError) instead of ending the
+    /// process, so a bad `$(word …)` argument in one tenant's makefile unwinds
+    /// to that tenant rather than exiting for everyone (#432 Phase B).
+    pub func_ptr: Option<RawFunc>,
     pub alloc_func_ptr: gmk_func_ptr,
     pub safe_func_ptr: Option<SafeFunc>,
 }
@@ -657,7 +668,7 @@ unsafe fn func_patsubst(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     o = patsubst_expand(
         ctx,
         o,
@@ -665,7 +676,7 @@ unsafe fn func_patsubst(
         *argv.offset(0_i32 as isize),
         *argv.offset(1_i32 as isize),
     );
-    o
+    Ok(o)
 }
 /// make's `$(join list1,list2)`: concatenate the i-th word of `list1` with the
 /// i-th word of `list2`, for every row up to the longer list, space-separated
@@ -701,7 +712,7 @@ fn func_join(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // A safe `fn` still coerces to the function table's `unsafe fn` pointer; the
     // only unsafe is the FFI at the edges. SAFETY: the dispatcher passes an
     // `argv` of at least `maximum_args` NUL-terminated C strings (`join` has
@@ -725,7 +736,7 @@ fn func_join(
             )
         };
     }
-    o
+    Ok(o)
 }
 
 #[cfg(test)]
@@ -836,7 +847,7 @@ fn func_origin(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // SAFETY: the dispatcher passes an `argv` of at least `maximum_args`
     // NUL-terminated C strings (`origin` has min = max = 1), so `argv[0]`
     // and its `strlen` are valid inputs to `lookup_variable`.
@@ -870,7 +881,7 @@ fn func_origin(
             )
         };
     }
-    o
+    Ok(o)
 }
 /// `$(flavor NAME)` result text: `None` for a lookup miss, `Some(true)`/
 /// `Some(false)` for a recursively/simply expanded variable.
@@ -886,7 +897,7 @@ fn func_flavor(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // SAFETY: as in `func_origin`, `argv[0]` is a valid NUL-terminated
     // string owned by the dispatcher for the call's duration.
     let v: *mut variable = unsafe {
@@ -914,18 +925,41 @@ fn func_flavor(
             msg.len() as size_t,
         )
     };
-    o
+    Ok(o)
 }
 
 #[cfg(test)]
 mod func_origin_flavor_tests {
+
+
+    // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
+    // oracles they are compared against still return the bare output cursor
+    // (AGENTS.md rule 3 keeps those byte-identical to the translated source).
+    // These shims bridge the two shapes. Every input this harness drives is a
+    // valid, non-fatal one — the rejection paths are covered separately — so
+    // `Ok` is the only reachable arm.
+    unsafe fn func_origin_checked(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut c_char,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+    ) -> *mut c_char {
+        super::func_origin(ctx, o, argv, name).expect("harness drives only valid inputs")
+    }
+    unsafe fn func_flavor_checked(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut c_char,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+    ) -> *mut c_char {
+        super::func_flavor(ctx, o, argv, name).expect("harness drives only valid inputs")
+    }
     use super::{
         define_variable_in_set, flavor_message, lookup_variable, o_override, origin_message,
         size_t, strlen, variable, variable_buffer_output, variable_origin,
     };
     use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use std::ffi::{c_char, CString};
-
     #[test]
     fn origin_message_matches_c_switch() {
         assert_eq!(origin_message(None), Some(&b"undefined"[..]));
@@ -1141,19 +1175,19 @@ mod func_origin_flavor_tests {
     #[test]
     fn func_origin_matches_unsafe_oracle() {
         assert_matches(
-            super::func_origin,
+            func_origin_checked,
             func_origin_unsafe_oracle,
             b"CODEX_ORACLE_UNDEFINED",
             None,
         );
         assert_matches(
-            super::func_origin,
+            func_origin_checked,
             func_origin_unsafe_oracle,
             b"CODEX_ORACLE_FILE",
             Some((super::o_file, true)),
         );
         assert_matches(
-            super::func_origin,
+            func_origin_checked,
             func_origin_unsafe_oracle,
             b"CODEX_ORACLE_OVERRIDE",
             Some((super::o_override, true)),
@@ -1163,19 +1197,19 @@ mod func_origin_flavor_tests {
     #[test]
     fn func_flavor_matches_unsafe_oracle() {
         assert_matches(
-            super::func_flavor,
+            func_flavor_checked,
             func_flavor_unsafe_oracle,
             b"CODEX_ORACLE_UNDEFINED_2",
             None,
         );
         assert_matches(
-            super::func_flavor,
+            func_flavor_checked,
             func_flavor_unsafe_oracle,
             b"CODEX_ORACLE_RECURSIVE",
             Some((super::o_file, true)),
         );
         assert_matches(
-            super::func_flavor,
+            func_flavor_checked,
             func_flavor_unsafe_oracle,
             b"CODEX_ORACLE_SIMPLE",
             Some((super::o_file, false)),
@@ -1292,7 +1326,7 @@ unsafe fn func_subst(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     o = subst_expand(
         ctx,
         o,
@@ -1303,7 +1337,7 @@ unsafe fn func_subst(
         strlen(*argv.offset(1_i32 as isize)) as size_t,
         0,
     );
-    o
+    Ok(o)
 }
 /// Iterate the whitespace-separated tokens of `s`, matching make's
 /// `find_next_token`/`next_token`/`end_of_token`: each token is a maximal run
@@ -1963,8 +1997,13 @@ fn classify_numeric(s: &[u8]) -> NumParse {
 /// is done in safe Rust by [`classify_numeric`]; the only `unsafe` here is the
 /// variadic `fatal` reporting, which still needs the C string pointers.
 ///
-/// Thin diverging wrapper over [`parse_numeric_err`] for call sites not yet
-/// migrated to `Result` propagation (#432 Phase B).
+/// Thin diverging wrapper over [`parse_numeric_err`].
+///
+/// Test-only since #442: the `$(word …)`/`$(wordlist …)` handlers propagate the
+/// `BuildError` now, and the sole remaining callers are the verbatim-C oracles
+/// in `selection_tests`, which must keep the original diverging behaviour to
+/// stay faithful to the translated source (AGENTS.md rule 3).
+#[cfg(test)]
 unsafe fn parse_numeric(
     ctx: &crate::execctx::ExecContext,
     s: &::core::ffi::CStr,
@@ -2015,19 +2054,19 @@ fn func_word(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // SAFETY: `argv[0]`/`argv[1]` are NUL-terminated C strings from the
     // dispatcher; `parse_numeric`/`fatal` are the c2rust FFI-edge helpers.
     let i = unsafe {
-        parse_numeric(
+        parse_numeric_err(
             ctx,
             ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
             c"invalid first argument to 'word' function",
         )
-    };
+    }?;
     if i < 1 {
         unsafe {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
@@ -2052,29 +2091,29 @@ fn func_word(
             )
         };
     }
-    o
+    Ok(o)
 }
 fn func_wordlist(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut buf: [::core::ffi::c_char; 23] = [0; 23];
     let badfirst = c"invalid first argument to 'wordlist' function";
     let badsecond = c"invalid second argument to 'wordlist' function";
     // SAFETY: `argv[0..=2]` are NUL-terminated C strings from the dispatcher;
     // `parse_numeric`/`fatal`/`make_lltoa`/`strlen` are the c2rust FFI helpers.
     let start = unsafe {
-        parse_numeric(
+        parse_numeric_err(
             ctx,
             ::core::ffi::CStr::from_ptr(*argv.offset(0_i32 as isize)),
             badfirst,
         )
-    };
+    }?;
     if start < 1 {
         unsafe {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 (badfirst.to_bytes().len() as size_t).wrapping_add(
@@ -2092,15 +2131,15 @@ fn func_wordlist(
         }
     }
     let stop = unsafe {
-        parse_numeric(
+        parse_numeric_err(
             ctx,
             ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)),
             badsecond,
         )
-    };
+    }?;
     if stop < 0 {
         unsafe {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 (badsecond.to_bytes().len() as size_t).wrapping_add(
@@ -2134,14 +2173,14 @@ fn func_wordlist(
             )
         };
     }
-    o
+    Ok(o)
 }
 fn func_findstring(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // A safe `fn` still coerces to the function table's `unsafe fn` pointer; the
     // only unsafe is the FFI. SAFETY: `argv[0]`/`argv[1]` are NUL-terminated C
     // strings from the dispatcher (`findstring` has min = max = 2).
@@ -2155,7 +2194,7 @@ fn func_findstring(
             );
         }
     }
-    o
+    Ok(o)
 }
 #[cfg(test)]
 mod filter_filterout_tests {
@@ -2455,6 +2494,8 @@ mod filter_filterout_tests {
 }
 #[cfg(test)]
 mod selection_tests {
+
+
     //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_findstring`,
     //! `func_word` and `func_wordlist` are preserved verbatim below as
     //! `*_unsafe_oracle` and driven through the real variable-output buffer
@@ -2471,6 +2512,36 @@ mod selection_tests {
     use crate::make_main::initialize_stopchar_map;
     use std::ffi::{c_char, CString};
 
+    // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
+    // oracles they are compared against still return the bare output cursor
+    // (AGENTS.md rule 3 keeps those byte-identical to the translated source).
+    // These shims bridge the two shapes. Every input this harness drives is a
+    // valid, non-fatal one — the rejection paths are covered separately — so
+    // `Ok` is the only reachable arm.
+    unsafe fn func_findstring_checked(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut c_char,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+    ) -> *mut c_char {
+        func_findstring(ctx, o, argv, name).expect("harness drives only valid inputs")
+    }
+    unsafe fn func_word_checked(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut c_char,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+    ) -> *mut c_char {
+        func_word(ctx, o, argv, name).expect("harness drives only valid inputs")
+    }
+    unsafe fn func_wordlist_checked(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut c_char,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+    ) -> *mut c_char {
+        func_wordlist(ctx, o, argv, name).expect("harness drives only valid inputs")
+    }
     type Handler = unsafe fn(
         &crate::execctx::ExecContext,
         *mut c_char,
@@ -2626,10 +2697,10 @@ mod selection_tests {
             &[b"xaby", b"xaby"],
         ];
         for c in cases {
-            assert_matches(func_findstring, func_findstring_unsafe_oracle, c);
+            assert_matches(func_findstring_checked, func_findstring_unsafe_oracle, c);
         }
-        assert_eq!(unsafe { emit(func_findstring, &[b"ab", b"xaby"]) }, b"ab");
-        assert!(unsafe { emit(func_findstring, &[b"z", b"xaby"]) }.is_empty());
+        assert_eq!(unsafe { emit(func_findstring_checked, &[b"ab", b"xaby"]) }, b"ab");
+        assert!(unsafe { emit(func_findstring_checked, &[b"z", b"xaby"]) }.is_empty());
     }
 
     #[test]
@@ -2642,10 +2713,10 @@ mod selection_tests {
             &[b"2", b"  a   b  "],
         ];
         for c in cases {
-            assert_matches(func_word, func_word_unsafe_oracle, c);
+            assert_matches(func_word_checked, func_word_unsafe_oracle, c);
         }
-        assert_eq!(unsafe { emit(func_word, &[b"2", b"a b c"]) }, b"b");
-        assert!(unsafe { emit(func_word, &[b"9", b"a b c"]) }.is_empty());
+        assert_eq!(unsafe { emit(func_word_checked, &[b"2", b"a b c"]) }, b"b");
+        assert!(unsafe { emit(func_word_checked, &[b"9", b"a b c"]) }.is_empty());
     }
 
     #[test]
@@ -2658,10 +2729,10 @@ mod selection_tests {
             &[b"1", b"0", b"a b c d"], // stop 0 -> empty
         ];
         for c in cases {
-            assert_matches(func_wordlist, func_wordlist_unsafe_oracle, c);
+            assert_matches(func_wordlist_checked, func_wordlist_unsafe_oracle, c);
         }
-        assert_eq!(unsafe { emit(func_wordlist, &[b"2", b"3", b"a b c d"]) }, b"b c");
-        assert!(unsafe { emit(func_wordlist, &[b"3", b"2", b"a b c d"]) }.is_empty());
+        assert_eq!(unsafe { emit(func_wordlist_checked, &[b"2", b"3", b"a b c d"]) }, b"b c");
+        assert!(unsafe { emit(func_wordlist_checked, &[b"3", b"2", b"a b c d"]) }.is_empty());
     }
 }
 unsafe fn func_foreach(
@@ -2669,7 +2740,7 @@ unsafe fn func_foreach(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let varname = ExpandedArg::new(
         ctx,
         *argv.offset(0_i32 as isize),
@@ -2725,14 +2796,14 @@ unsafe fn func_foreach(
         o = o.offset(-1_i32 as isize);
     }
     pop_variable_scope(ctx);
-    o
+    Ok(o)
 }
 unsafe fn func_let(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let varnames = ExpandedArg::new(
         ctx,
         *argv.offset(0_i32 as isize),
@@ -2801,7 +2872,7 @@ unsafe fn func_let(
     }
     o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t);
     pop_variable_scope(ctx);
-    o.offset(strlen(o) as isize)
+    Ok(o.offset(strlen(o) as isize))
 }
 /// A pattern from `$(filter ...)`/`$(filter-out ...)`'s first argument: its
 /// literal bytes (with any escaped `%` already collapsed) plus the index of
@@ -2922,7 +2993,7 @@ fn func_strip(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // A safe `fn` still coerces to the function table's `unsafe fn` pointer; the
     // only unsafe is the FFI at the edges. SAFETY: the dispatcher passes an
     // `argv` of at least `maximum_args` NUL-terminated C strings (`strip` has
@@ -2942,21 +3013,21 @@ fn func_strip(
             )
         };
     }
-    o
+    Ok(o)
 }
 unsafe fn func_error(
     ctx: &crate::execctx::ExecContext,
     o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // Classify the diagnostic function (`error`/`warning`/`info`) through the
     // typed AST layer instead of switching on the raw first byte of the name.
     let logfn =
         crate::parser::LogFunction::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes());
     match logfn {
         Some(crate::parser::LogFunction::Error) => {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.reading_file.0.get(),
                 strlen(*argv.offset(0_i32 as isize)) as size_t,
@@ -2989,7 +3060,7 @@ unsafe fn func_error(
             outputs(ctx, 0, msg.as_ptr() as *const ::core::ffi::c_char);
         }
         _ => {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 strlen(funcname) as size_t,
@@ -2998,7 +3069,7 @@ unsafe fn func_error(
             ));
         }
     }
-    o
+    Ok(o)
 }
 /// Alphabetically sort the whitespace-separated words of `bytes`, drop
 /// duplicates, and rejoin single-space-separated — the transformation
@@ -3024,7 +3095,7 @@ fn func_sort(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // A safe `fn` still coerces to the function table's `unsafe fn` pointer; the
     // only unsafe is the FFI at the edges. SAFETY: the dispatcher passes an
     // `argv` of at least `maximum_args` NUL-terminated C strings (`sort` has
@@ -3043,10 +3114,12 @@ fn func_sort(
             )
         };
     }
-    o
+    Ok(o)
 }
 #[cfg(test)]
 mod strip_sort_tests {
+
+
     //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_strip`
     //! and `func_sort` are preserved *verbatim* below as `*_unsafe_oracle` and
     //! driven through the real variable-output buffer alongside the converted
@@ -3059,6 +3132,28 @@ mod strip_sort_tests {
     use crate::misc::alpha_cmp;
     use std::ffi::{c_char, CString};
 
+    // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
+    // oracles they are compared against still return the bare output cursor
+    // (AGENTS.md rule 3 keeps those byte-identical to the translated source).
+    // These shims bridge the two shapes. Every input this harness drives is a
+    // valid, non-fatal one — the rejection paths are covered separately — so
+    // `Ok` is the only reachable arm.
+    unsafe fn func_strip_checked(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut c_char,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+    ) -> *mut c_char {
+        func_strip(ctx, o, argv, name).expect("harness drives only valid inputs")
+    }
+    unsafe fn func_sort_checked(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut c_char,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+    ) -> *mut c_char {
+        func_sort(ctx, o, argv, name).expect("harness drives only valid inputs")
+    }
     type Handler = unsafe fn(
         &crate::execctx::ExecContext,
         *mut c_char,
@@ -3179,11 +3274,11 @@ mod strip_sort_tests {
             b"\ta\t",
         ];
         for &c in cases {
-            assert_matches(func_strip, func_strip_unsafe_oracle, c);
+            assert_matches(func_strip_checked, func_strip_unsafe_oracle, c);
         }
         // Exact bytes for the documented collapse.
-        assert_eq!(unsafe { emit(func_strip, b"  a   b  ") }, b"a b");
-        assert!(unsafe { emit(func_strip, b"   ") }.is_empty());
+        assert_eq!(unsafe { emit(func_strip_checked, b"  a   b  ") }, b"a b");
+        assert!(unsafe { emit(func_strip_checked, b"   ") }.is_empty());
     }
 
     #[test]
@@ -3198,11 +3293,11 @@ mod strip_sort_tests {
             b"2 10 1",          // byte order, not numeric
         ];
         for &c in cases {
-            assert_matches(func_sort, func_sort_unsafe_oracle, c);
+            assert_matches(func_sort_checked, func_sort_unsafe_oracle, c);
         }
         // Exact bytes: sorted, de-duplicated, single-space-joined.
-        assert_eq!(unsafe { emit(func_sort, b"foo foo bar") }, b"bar foo");
-        assert!(unsafe { emit(func_sort, b"") }.is_empty());
+        assert_eq!(unsafe { emit(func_sort_checked, b"foo foo bar") }, b"bar foo");
+        assert!(unsafe { emit(func_sort_checked, b"") }.is_empty());
     }
 }
 /// Is `c` whitespace in make's `MAP_SPACE` class (`next_token`'s skip set):
@@ -3267,25 +3362,28 @@ fn classify_textint(t: &[u8]) -> TextInt {
 ///
 /// C-style API operating on raw pointers; `number` and `msg` must be valid
 /// NUL-terminated strings and the out-parameters must be valid for writes.
-/// Aborts via [`fatal`] on an empty or non-numeric value.
+/// Returns [`BuildError`](crate::build_result::BuildError) on an empty or
+/// non-numeric value rather than ending the process; the sole caller
+/// (`func_intcmp`) propagates it out through the dispatch ABI (#432 Phase B,
+/// #442).
 unsafe fn parse_textint(
     ctx: &crate::execctx::ExecContext,
     number: *const ::core::ffi::c_char,
     msg: *const ::core::ffi::c_char,
     sign: *mut i32,
     numstart: *mut *const ::core::ffi::c_char,
-) -> *const ::core::ffi::c_char {
+) -> Result<*const ::core::ffi::c_char, crate::build_result::BuildError> {
     let p: *const ::core::ffi::c_char = next_token(number);
     let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
     match classify_textint(t) {
-        TextInt::Empty => crate::output::exit_on_err(fatal_err(
+        TextInt::Empty => Err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(msg) as size_t,
             b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
             &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
         )),
-        TextInt::NotNumeric => crate::output::exit_on_err(fatal_err(
+        TextInt::NotNumeric => Err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
@@ -3302,7 +3400,7 @@ unsafe fn parse_textint(
         } => {
             *sign = s;
             *numstart = p.add(num_start);
-            p.add(num_end)
+            Ok(p.add(num_end))
         }
     }
 }
@@ -3335,7 +3433,7 @@ unsafe fn func_intcmp(
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut lsign: i32 = 0;
     let mut rsign: i32 = 0;
     let mut lnum: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
@@ -3357,7 +3455,7 @@ unsafe fn func_intcmp(
             as *const ::core::ffi::c_char,
         &raw mut lsign,
         &raw mut lnum,
-    );
+    )?;
     let rlim: *const ::core::ffi::c_char = parse_textint(
         ctx,
         rhs_str.as_ptr(),
@@ -3365,7 +3463,7 @@ unsafe fn func_intcmp(
             as *const ::core::ffi::c_char,
         &raw mut rsign,
         &raw mut rnum,
-    );
+    )?;
     // `parse_textint` hands back end pointers; form the digit spans once at the
     // boundary and let the pure comparator do the rest.
     let ldigits = ::core::slice::from_raw_parts(lnum as *const u8, llim.offset_from(lnum) as usize);
@@ -3404,7 +3502,7 @@ unsafe fn func_intcmp(
             strlen(expansion.as_ptr()) as size_t,
         );
     }
-    o
+    Ok(o)
 }
 /// Byte offsets `[start, end)` of the make-whitespace-trimmed content of
 /// `bytes`, or `None` when the span is empty (an empty or all-whitespace
@@ -3453,7 +3551,7 @@ unsafe fn func_if(
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     // The condition is true when its trimmed, expanded text is non-empty (first
     // byte is not the terminating NUL), matching the C `*expansion != '\0'`.
     let condition =
@@ -3470,14 +3568,14 @@ unsafe fn func_if(
             strlen(expansion.as_ptr()) as size_t,
         );
     }
-    o
+    Ok(o)
 }
 unsafe fn func_or(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     while !(*argv).is_null() {
         if let Some(expansion) = expand_trimmed(ctx, *argv) {
             let result = strlen(expansion.as_ptr()) as size_t;
@@ -3488,19 +3586,19 @@ unsafe fn func_or(
         }
         argv = argv.offset(1_i32 as isize);
     }
-    o
+    Ok(o)
 }
 unsafe fn func_and(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     loop {
         // An empty argument (empty trimmed span) makes the whole `$(and ...)`
         // empty, matching the C `begp > endp` early return.
         let Some(expansion) = expand_trimmed(ctx, *argv) else {
-            return o;
+            return Ok(o);
         };
         let result = strlen(expansion.as_ptr()) as size_t;
         if result == 0 {
@@ -3513,7 +3611,7 @@ unsafe fn func_and(
         }
         // More arguments remain: drop this expansion and evaluate the next.
     }
-    o
+    Ok(o)
 }
 #[cfg(test)]
 mod trimmed_span_tests {
@@ -3581,7 +3679,7 @@ unsafe fn func_wildcard(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let names = string_glob(ctx, *argv.offset(0_i32 as isize));
     o = variable_buffer_output(
         ctx,
@@ -3589,38 +3687,37 @@ unsafe fn func_wildcard(
         names.as_ptr() as *const ::core::ffi::c_char,
         names.len() as size_t,
     );
-    o
+    Ok(o)
 }
 unsafe fn func_eval(
     ctx: &crate::execctx::ExecContext,
     o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     install_variable_buffer(ctx, &raw mut buf, &raw mut len);
-    // The expander's signature is not `Result`-returning yet, so a failed
-    // `$(eval …)` bridges through `exit_on_err` — the sanctioned stand-in
-    // until this call chain is converted (#432 Phase B, #442). The variable
-    // buffer is restored first: the bridge must not leave it swapped out.
+    // #563 left this bridging through `exit_on_err` because the dispatch ABI
+    // could not carry a `Result`; since #442 flipped it, a failed `$(eval …)`
+    // propagates instead. The result is still held rather than `?`-ed on the
+    // spot so the variable buffer is restored first — the error path must not
+    // leave it swapped out (#432 Phase B).
     let evaluated = eval_buffer(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<Floc>(),
     );
     restore_variable_buffer(ctx, buf, len);
-    if let Err(e) = evaluated {
-        crate::output::exit_on_err(e);
-    }
-    o
+    evaluated?;
+    Ok(o)
 }
 unsafe fn func_value(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let v: *mut variable = lookup_variable(
         ctx,
         *argv.offset(0_i32 as isize),
@@ -3629,7 +3726,7 @@ unsafe fn func_value(
     if !v.is_null() {
         o = variable_buffer_output(ctx, o, (*v).value, strlen((*v).value) as size_t);
     }
-    o
+    Ok(o)
 }
 /// Fold the first `buf.len()` bytes in place: each `\n` becomes a single space
 /// and the `\r` of a `\r\n` pair is dropped. The write cursor never overtakes
@@ -3948,10 +4045,14 @@ pub unsafe fn func_shell_base(
             let (mut buffer, mut i) = read_all_pipe(pipedes[0_i32 as usize]);
             close(pipedes[0_i32 as usize]);
             while shell_function_completed(ctx) == 0 {
-                // `func_shell_base` returns a raw output pointer and sits under
-                // the expander's crate-wide non-`Result` fan-out, so a reap
-                // failure inside `$(shell ...)` bridges through `exit_on_err`
-                // rather than propagating (#432 Phase B, #441, #539).
+                // The last `exit_on_err` left in this module. #442 made the
+                // builtin dispatch ABI `Result`-carrying, so `func_shell` above
+                // could propagate — but `func_shell_base` itself still returns a
+                // raw output pointer and has a second caller in `variable.rs`
+                // (`$(shell …)` via `do_variable_definition`), so converting it
+                // would push a fresh bridge into that module instead of
+                // retiring one. It retires with the expander sub-stack, which
+                // reaches that caller too (#432 Phase B, #441, #539).
                 reap_children(ctx, 1, 0).unwrap_or_else(|e| crate::output::exit_on_err(e));
             }
             if !batch_filename.is_null() {
@@ -3986,8 +4087,8 @@ unsafe fn func_shell(
     o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
-    func_shell_base(ctx, o, argv, 1)
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
+    Ok(func_shell_base(ctx, o, argv, 1))
 }
 pub const ROOT_LEN: i32 = 1;
 /// Normalize a path into `out`, mirroring GNU make's `abspath`.
@@ -4115,7 +4216,7 @@ unsafe fn func_realpath(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut p: *const ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     let mut path: *const ::core::ffi::c_char;
     let mut doneany: i32 = 0;
@@ -4148,18 +4249,23 @@ unsafe fn func_realpath(
     if doneany != 0 {
         o = o.offset(-1_i32 as isize);
     }
-    o
+    Ok(o)
 }
-/// Fatal error on a `$(file ...)` io failure, byte-identical to the C
+/// Build the diagnostic for a `$(file ...)` io failure, byte-identical to the C
 /// oracle's `OS(fatal, ...)` calls: `<op>: <name>: <strerror(errno)>`.
+///
+/// Returns the [`BuildError`](crate::build_result::BuildError) rather than
+/// exiting; `func_file` hands it back through the dispatch ABI (#432 Phase B,
+/// #442). The message is still printed here, at the point of failure, so
+/// output ordering is unchanged.
 unsafe fn file_io_fatal(
     ctx: &crate::execctx::ExecContext,
     fmt: *const ::core::ffi::c_char,
     name: &::std::ffi::CStr,
     err: &::std::io::Error,
-) -> ! {
+) -> crate::build_result::BuildError {
     let es: *const ::core::ffi::c_char = strerror(err.raw_os_error().unwrap_or(0));
-    crate::output::exit_on_err(fatal_err(
+    fatal_err(
         ctx,
         ctx.reading_file.0.get(),
         (name.to_bytes().len() as size_t).wrapping_add(strlen(es) as size_t),
@@ -4168,14 +4274,14 @@ unsafe fn file_io_fatal(
             FmtArg::Str(name.as_ptr()),
             FmtArg::Str(es as *const ::core::ffi::c_char),
         ],
-    ))
+    )
 }
 unsafe fn func_file(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     use ::std::io::{Read, Write};
     use ::std::os::unix::ffi::OsStrExt;
     let fn_0: *mut ::core::ffi::c_char = *argv.offset(0_i32 as isize);
@@ -4184,7 +4290,7 @@ unsafe fn func_file(
         let start: *const ::core::ffi::c_char =
             next_token(fn_0.offset(1 + append as isize));
         if *start.offset(0_i32 as isize) as i32 == 0 {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
@@ -4211,12 +4317,12 @@ unsafe fn func_file(
             match opts.open(path) {
                 Ok(f) => break f,
                 Err(e) if e.raw_os_error() == Some(EINTR) => continue,
-                Err(e) => file_io_fatal(
+                Err(e) => return Err(file_io_fatal(
                     ctx,
                     b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                     &name_c,
                     &e,
-                ),
+                )),
             }
         };
         crate::make_main::bump_command_count(ctx);
@@ -4233,12 +4339,12 @@ unsafe fn func_file(
                 }
             });
             if let Err(e) = write_result {
-                file_io_fatal(
+                return Err(file_io_fatal(
                     ctx,
                     b"write: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                     &name_c,
                     &e,
-                );
+                ));
             }
         }
         // `File` is unbuffered, so every write error already surfaced above;
@@ -4249,7 +4355,7 @@ unsafe fn func_file(
         let mut n: size_t = 0;
         let start_0: *const ::core::ffi::c_char = next_token(fn_0.offset(1_i32 as isize));
         if *start_0.offset(0_i32 as isize) as i32 == 0 {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
@@ -4258,7 +4364,7 @@ unsafe fn func_file(
             ));
         }
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            crate::output::exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 0,
@@ -4290,14 +4396,14 @@ unsafe fn func_file(
                         let _ = out.write_all(b"\n");
                         let _ = out.flush();
                     }
-                    return o;
+                    return Ok(o);
                 }
-                Err(e) => file_io_fatal(
+                Err(e) => return Err(file_io_fatal(
                     ctx,
                     b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                     &name_c,
                     &e,
-                ),
+                )),
             }
         };
         let mut buf = [0u8; 1024];
@@ -4314,12 +4420,12 @@ unsafe fn func_file(
                     n = n.wrapping_add(l as size_t);
                 }
                 Err(e) if e.kind() == ::std::io::ErrorKind::Interrupted => continue,
-                Err(e) => file_io_fatal(
+                Err(e) => return Err(file_io_fatal(
                     ctx,
                     b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                     &name_c,
                     &e,
-                ),
+                )),
             }
         }
         drop(file);
@@ -4330,7 +4436,7 @@ unsafe fn func_file(
             );
         }
     } else {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(fn_0) as size_t,
@@ -4338,7 +4444,7 @@ unsafe fn func_file(
             &[FmtArg::Str((fn_0) as *const ::core::ffi::c_char)],
         ));
     }
-    o
+    Ok(o)
 }
 /// `$(abspath ...)`: for each whitespace-separated word, resolve it to an
 /// absolute path lexically (`abspath_into`, no filesystem access), relative to
@@ -4531,12 +4637,7 @@ const fn ft_entry(
     min: ::core::ffi::c_uchar,
     max: ::core::ffi::c_uchar,
     expand: u8,
-    func: unsafe fn(
-        &crate::execctx::ExecContext,
-        *mut ::core::ffi::c_char,
-        *mut *mut ::core::ffi::c_char,
-        *const ::core::ffi::c_char,
-    ) -> *mut ::core::ffi::c_char,
+    func: RawFunc,
 ) -> FunctionTableEntry {
     FunctionTableEntry {
         fptr: C2RustUnnamed {
@@ -4632,7 +4733,7 @@ unsafe fn expand_builtin_function(
     argc: ::core::ffi::c_uint,
     argv: *mut *mut ::core::ffi::c_char,
     entry_p: *const FunctionTableEntry,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let p: *mut ::core::ffi::c_char;
     // SAFETY: `entry_p` is a function-table entry resolved by the caller and is
     // valid for the duration of the call. Bind a checked reference so the field
@@ -4641,7 +4742,7 @@ unsafe fn expand_builtin_function(
         .as_ref()
         .expect("FunctionTableEntry pointer is non-null");
     if argc < entry.minimum_args as ::core::ffi::c_uint {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(entry.name) as size_t,
@@ -4654,10 +4755,10 @@ unsafe fn expand_builtin_function(
         ));
     }
     if argc == 0 && entry.alloc_fn() == 0 {
-        return o;
+        return Ok(o);
     }
     if entry.fptr.func_ptr.is_none() {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(entry.name) as size_t,
@@ -4686,7 +4787,7 @@ unsafe fn expand_builtin_function(
                 result.len() as size_t,
             );
         }
-        return o;
+        return Ok(o);
     }
     if entry.alloc_fn() == 0 {
         return entry.fptr.func_ptr.expect("non-null function pointer")(ctx, o, argv, entry.name);
@@ -4698,7 +4799,7 @@ unsafe fn expand_builtin_function(
     if !p.is_null() {
         o = output_owned_result(ctx, o, p);
     }
-    o
+    Ok(o)
 }
 /// Build the owned, NUL-terminated working buffer that `handle_function` uses
 /// to split a non-`expand_args` function's argument list in place.
@@ -4735,7 +4836,7 @@ pub unsafe fn handle_function(
     ctx: &crate::execctx::ExecContext,
     op: *mut *mut ::core::ffi::c_char,
     stringp: *mut *const ::core::ffi::c_char,
-) -> i32 {
+) -> Result<i32, crate::build_result::BuildError> {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let openparen: ::core::ffi::c_char = *(*stringp).offset(0_i32 as isize);
     let closeparen: ::core::ffi::c_char = (if openparen as i32 == '(' as i32 {
@@ -4752,7 +4853,7 @@ pub unsafe fn handle_function(
     beg = (*stringp).offset(1_i32 as isize);
     let entry_p = lookup_function(ctx, beg);
     if entry_p.is_null() {
-        return 0;
+        return Ok(0);
     }
     // SAFETY: `entry_p` was just checked non-null and points to a valid
     // function-table entry. Bind a checked reference so the field reads below
@@ -4790,7 +4891,7 @@ pub unsafe fn handle_function(
         end = end.offset(1_i32 as isize);
     }
     if count >= 0 {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             ctx.expanding_var_floc(),
             strlen(entry.name) as size_t,
@@ -4874,7 +4975,11 @@ pub unsafe fn handle_function(
         }
     }
     *argvp = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    *op = expand_builtin_function(ctx, *op, nargs, argv, entry_p);
+    // Hold the dispatch result rather than using `?`: the expanded `argv`
+    // entries are `malloc`ed and must be released on the error path too, so the
+    // free loop below has to run before the `BuildError` leaves this frame
+    // (the cleanup-paths-report contract established in #561).
+    let expanded = expand_builtin_function(ctx, *op, nargs, argv, entry_p);
     if entry.expand_args() != 0 {
         argvp = argv;
         while !(*argvp).is_null() {
@@ -4882,16 +4987,17 @@ pub unsafe fn handle_function(
             argvp = argvp.offset(1_i32 as isize);
         }
     }
+    *op = expanded?;
     // In the non-expand-args branch the former `free(abeg)` is now handled by
     // `alloca_allocations` dropping at end of scope (RAII).
-    1
+    Ok(1)
 }
 unsafe fn func_call(
     ctx: &crate::execctx::ExecContext,
     mut o: *mut ::core::ffi::c_char,
     mut argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let fname: *mut ::core::ffi::c_char;
     let flen: size_t;
     let mut i: ::core::ffi::c_uint;
@@ -4905,7 +5011,7 @@ unsafe fn func_call(
     )));
     *fname_eot = 0;
     if *fname as i32 == 0 {
-        return o;
+        return Ok(o);
     }
     let entry_p = lookup_function(ctx, fname);
     if !entry_p.is_null() {
@@ -4923,7 +5029,7 @@ unsafe fn func_call(
         warn_undefined(ctx, ::core::slice::from_raw_parts(fname as *const u8, flen));
     }
     if v.is_null() || *(*v).value as i32 == 0 {
-        return o;
+        return Ok(o);
     }
     push_new_variable_scope(ctx);
     i = 0;
@@ -4973,7 +5079,7 @@ unsafe fn func_call(
         .store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
     (*v).set_exp_count(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     pop_variable_scope(ctx);
-    o.offset(strlen(o) as isize)
+    Ok(o.offset(strlen(o) as isize))
 }
 /// Register a plugin-supplied builtin under `name`.
 ///
@@ -5766,7 +5872,10 @@ mod subst_and_strip_tests {
             // argv is a NULL-terminated vector of arg pointers.
             let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
             let name = CString::new("strip").unwrap();
-            let out = with_output(|ctx, o| func_strip(ctx, o, argv.as_mut_ptr(), name.as_ptr()));
+            let out = with_output(|ctx, o| {
+                func_strip(ctx, o, argv.as_mut_ptr(), name.as_ptr())
+                    .expect("`$(strip …)` cannot fail on a valid argument")
+            });
             // Words separated by single spaces, no leading/trailing space.
             assert_eq!(out, b"a b c");
             // Keep `arg` alive until after the call.
@@ -5780,7 +5889,10 @@ mod subst_and_strip_tests {
             let arg = CString::new("   \t  ").unwrap();
             let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, std::ptr::null_mut()];
             let name = CString::new("strip").unwrap();
-            let out = with_output(|ctx, o| func_strip(ctx, o, argv.as_mut_ptr(), name.as_ptr()));
+            let out = with_output(|ctx, o| {
+                func_strip(ctx, o, argv.as_mut_ptr(), name.as_ptr())
+                    .expect("`$(strip …)` cannot fail on a valid argument")
+            });
             assert_eq!(out, b"");
         }
     }
@@ -6007,5 +6119,123 @@ mod define_new_function_tests {
         assert!(rejects("myfunc", 256, 0), "minimum above u8 range");
         assert!(rejects("myfunc", 0, 256), "maximum above u8 range");
         assert!(rejects("myfunc", 3, 2), "maximum below minimum");
+    }
+}
+
+#[cfg(test)]
+mod builtin_rejection_tests {
+    //! Since #442 the raw-ABI dispatch chain returns `Result`, so the argument
+    //! validations inside the builtins hand a `BuildError` back instead of
+    //! ending the process. That makes every one of them reachable from a unit
+    //! test for the first time — previously reaching any of these lines aborted
+    //! the test binary, which is why they sat at 0% coverage.
+    //!
+    //! Each case asserts the *rejection*, and each rejecting builtin is also
+    //! driven over a valid input so the success path stays pinned alongside it.
+
+    use super::{
+        expand_builtin_function, func_intcmp, func_word, func_wordlist, function_table_init,
+        RawFunc,
+    };
+    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::{c_char, CString};
+
+    /// Drive `handler` with `args` through a real variable-output buffer and
+    /// return the bytes it wrote, or the `BuildError` it rejected with.
+    unsafe fn drive(
+        handler: RawFunc,
+        funcname: &str,
+        args: &[&str],
+    ) -> Result<Vec<u8>, crate::build_result::BuildError> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        let cargs: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap()).collect();
+        let mut argv: Vec<*mut c_char> =
+            cargs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+        argv.push(::core::ptr::null_mut());
+        let name = CString::new(funcname).unwrap();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr())?;
+        // `variable_buffer_output` may `xrealloc` and move the buffer, so
+        // measure from the current base rather than the possibly-stale `start`.
+        let base = ctx.variable_buffer.ptr();
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        Ok(::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec())
+    }
+
+    #[test]
+    fn intcmp_rejects_non_numeric_operands() {
+        // Both `parse_textint` diagnostics — first and second argument — plus
+        // the empty-value arm, which is a distinct branch from non-numeric.
+        assert!(unsafe { drive(func_intcmp, "intcmp", &["x", "2"]) }.is_err());
+        assert!(unsafe { drive(func_intcmp, "intcmp", &["1", "y"]) }.is_err());
+        assert!(unsafe { drive(func_intcmp, "intcmp", &["", "2"]) }.is_err());
+        assert!(unsafe { drive(func_intcmp, "intcmp", &["1", "  "]) }.is_err());
+    }
+
+    #[test]
+    fn intcmp_compares_valid_operands() {
+        // The three-way result: `$(intcmp lhs,rhs)` echoes `lhs` when the
+        // comparison holds and expands to nothing otherwise.
+        let eq = unsafe { drive(func_intcmp, "intcmp", &["7", "7"]) }.expect("7 == 7 is valid");
+        assert_eq!(eq, b"7", "equal operands echo the left-hand side");
+        let lt = unsafe { drive(func_intcmp, "intcmp", &["2", "10"]) }.expect("2 < 10 is valid");
+        assert!(lt.is_empty(), "a failed comparison expands to nothing");
+        // Signed and whitespace-padded operands take the sign/skip branches in
+        // `parse_textint`. Only the branch taken is asserted here, not the
+        // echoed bytes: make normalises the operand it echoes (` +4 ` comes
+        // back as `4`), which is `parse_textint`'s span handling rather than
+        // anything this conversion touches.
+        let neg = unsafe { drive(func_intcmp, "intcmp", &["-3", "-3"]) }.expect("-3 == -3");
+        assert_eq!(neg, b"-3", "a negative operand still compares equal");
+        let pad = unsafe { drive(func_intcmp, "intcmp", &[" +4 ", "4"]) }.expect("+4 == 4");
+        assert!(!pad.is_empty(), "sign and padding do not defeat the compare");
+    }
+
+    #[test]
+    fn word_rejects_a_zero_index() {
+        // `$(word 0,…)` — "must be greater than 0". The non-numeric index goes
+        // through `parse_numeric_err`, a separate diagnostic.
+        assert!(unsafe { drive(func_word, "word", &["0", "a b c"]) }.is_err());
+        assert!(unsafe { drive(func_word, "word", &["x", "a b c"]) }.is_err());
+        let ok = unsafe { drive(func_word, "word", &["2", "a b c"]) }.expect("index 2 is valid");
+        assert_eq!(ok, b"b");
+    }
+
+    #[test]
+    fn wordlist_rejects_out_of_range_bounds() {
+        // Both bounds have their own diagnostic: start < 1 and stop < 0.
+        assert!(unsafe { drive(func_wordlist, "wordlist", &["0", "2", "a b c"]) }.is_err());
+        assert!(unsafe { drive(func_wordlist, "wordlist", &["1", "-1", "a b c"]) }.is_err());
+        let ok = unsafe { drive(func_wordlist, "wordlist", &["2", "3", "a b c"]) }
+            .expect("2..3 is in range");
+        assert_eq!(ok, b"b c");
+    }
+
+    #[test]
+    fn dispatcher_rejects_too_few_arguments() {
+        // `expand_builtin_function`'s arity check, which fires before the
+        // handler runs at all. `$(word)` has `minimum_args == 2`.
+        let entry = function_table_init
+            .iter()
+            .find(|e| unsafe { ::core::ffi::CStr::from_ptr(e.name) }.to_bytes() == b"word")
+            .expect("`word` is in the builtin table");
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        let arg = CString::new("1").unwrap();
+        let mut argv: [*mut c_char; 2] =
+            [arg.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let o = initialize_variable_output(&ctx);
+        let got = unsafe { expand_builtin_function(&ctx, o, 1, argv.as_mut_ptr(), entry) };
+        assert!(got.is_err(), "one argument is below `word`'s minimum of two");
     }
 }
