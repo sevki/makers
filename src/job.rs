@@ -3879,3 +3879,97 @@ mod spawn_via_std_tests {
         assert_eq!(pid, -1, "pid must stay unset on spawn failure");
     }
 }
+
+#[cfg(test)]
+mod start_waiting_jobs_tests {
+    //! `start_waiting_jobs` drains the postponed-job chain, and since #441 it
+    //! hands a reap/start failure back as a `Result` instead of exiting. These
+    //! cover both of its exits: the empty-chain short circuit, and one pass of
+    //! the drain loop whose `start_waiting_job` re-queues the job (the
+    //! load-limit path) and so stops the loop.
+
+    use {
+        super::{child, start_waiting_jobs},
+        crate::{
+            execctx::{Config, ExecContext},
+            file::{FileId, FileNode},
+            output::output,
+        },
+        std::sync::atomic::Ordering,
+    };
+
+    fn test_ctx() -> ExecContext {
+        ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        })
+    }
+
+    /// Allocate a bare postponed child for `file`, matching the `Box::into_raw`
+    /// ownership `new_job` gives every child.
+    fn boxed_child(file: FileId) -> *mut child {
+        Box::into_raw(Box::new(child {
+            cmd_name: ::core::ptr::null_mut(),
+            environment: ::core::ptr::null_mut(),
+            output: output {
+                out: 0,
+                err: 0,
+                syncout: [0; 1],
+                c2rust_padding: [0; 3],
+            },
+            next: ::core::ptr::null_mut(),
+            file,
+            entry: 0,
+            sh_batch_file: ::core::ptr::null_mut(),
+            command_lines: Vec::new(),
+            line_flags: Vec::new(),
+            command_line: 0,
+            command_buf: Vec::new(),
+            command_ptr: ::core::ptr::null_mut(),
+            pid: 0,
+            remote_noerror_good_stdin_deleted_recursive_jobslot_dontcare: [0; 1],
+            c2rust_padding: [0; 7],
+        }))
+    }
+
+    /// With nothing postponed there is no work and no way to fail: the
+    /// short circuit reports success rather than entering the drain loop.
+    #[test]
+    fn empty_chain_is_a_no_op() {
+        let ctx = test_ctx();
+        // SAFETY: the chain is empty, so no child pointer is dereferenced.
+        unsafe { start_waiting_jobs(&ctx) }.expect("empty chain cannot fail");
+        assert!(ctx.waiting_jobs.0.get().is_null(), "chain still empty");
+    }
+
+    /// One pass of the drain loop: with a job already running and the load
+    /// limit pinned at zero, `start_waiting_job` puts the job straight back on
+    /// the chain and returns 0, which ends the loop. The reap it does first
+    /// finds no children, so the whole pass succeeds — the point being that
+    /// success now travels back as `Ok(())` through the same `?` path a
+    /// failure would take.
+    #[test]
+    fn load_limit_requeues_the_job_and_stops_the_loop() {
+        let ctx = test_ctx();
+        let file = ctx.filenodes.intern(FileNode::new(b"postponed\0".to_vec()));
+        let c = boxed_child(file);
+        ctx.waiting_jobs.0.set(c);
+        // A slot in use plus a zero load ceiling is what makes `load_too_high`
+        // fire; without a running job `start_waiting_job` would try to spawn.
+        ctx.job_slots_used.0.fetch_add(1, Ordering::Relaxed);
+        ctx.options.max_load_average.set(0.0);
+
+        // SAFETY: `c` is a live, fully-initialized child owned by this test and
+        // reachable only through the chain we just installed.
+        unsafe { start_waiting_jobs(&ctx) }.expect("re-queueing a job is not a failure");
+
+        assert_eq!(
+            ctx.waiting_jobs.0.get(),
+            c,
+            "the job went back on the chain rather than starting"
+        );
+        // Reclaim it: the re-queue path deliberately does not free the child.
+        // SAFETY: nothing else owns `c`, and the chain is dropped with the ctx.
+        unsafe { drop(Box::from_raw(c)) };
+    }
+}
