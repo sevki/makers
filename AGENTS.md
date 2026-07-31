@@ -15,6 +15,34 @@ comments as work lands. Issues are the single source of truth for what's
 done and what's left — a checklist file duplicates that and drifts out of
 sync.
 
+## Pull requests: always stack
+
+Multi-slice campaigns here (Phase A/B, the module splits, the per-module
+`fatal()` conversions) are naturally a *sequence* of dependent changes. Land
+them as a **stack of pull requests** using GitHub's
+[stacked pull requests](https://github.blog/changelog/2026-07-30-stacked-pull-requests-are-now-in-public-preview/)
+(public preview, announced 2026-07-30) — not as a chain of branches each
+retargeted by hand, and not as one omnibus PR.
+
+**Rules:**
+- Any campaign with more than one slice **must** be opened as a stack. Each
+  slice keeps the properties the rest of this file already demands — one
+  module per PR, behavior-preserving, coverage delta `>= 0`, differential
+  tests green — and the stack makes the dependency order explicit instead of
+  leaving reviewers to infer it from merge timing.
+- Keep each PR in the stack independently reviewable. A stack is not a licence
+  to make individual slices bigger; if a slice only makes sense read together
+  with the one below it, the seam is in the wrong place.
+- Do **not** collapse a stack into a single PR to dodge the review of an
+  awkward middle slice, and do not stack unrelated work just because it is in
+  flight at the same time — a stack encodes a real dependency.
+- The base of the stack is `main`. Rebase the whole stack when `main` moves
+  rather than merging `main` into individual entries, so each PR's diff stays
+  the slice and nothing else.
+
+Single, self-contained changes (a dependency bump, a one-file fix) stay
+ordinary standalone PRs.
+
 ## North Star (the watermark)
 
 Before writing or accepting any change, ask: **"Is this how
