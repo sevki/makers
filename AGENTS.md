@@ -15,6 +15,34 @@ comments as work lands. Issues are the single source of truth for what's
 done and what's left — a checklist file duplicates that and drifts out of
 sync.
 
+## Pull requests: always stack
+
+Multi-slice campaigns here (Phase A/B, the module splits, the per-module
+`fatal()` conversions) are naturally a *sequence* of dependent changes. Land
+them as a **stack of pull requests** using GitHub's
+[stacked pull requests](https://github.blog/changelog/2026-07-30-stacked-pull-requests-are-now-in-public-preview/)
+(public preview, announced 2026-07-30) — not as a chain of branches each
+retargeted by hand, and not as one omnibus PR.
+
+**Rules:**
+- Any campaign with more than one slice **must** be opened as a stack. Each
+  slice keeps the properties the rest of this file already demands — one
+  module per PR, behavior-preserving, coverage delta `>= 0`, differential
+  tests green — and the stack makes the dependency order explicit instead of
+  leaving reviewers to infer it from merge timing.
+- Keep each PR in the stack independently reviewable. A stack is not a licence
+  to make individual slices bigger; if a slice only makes sense read together
+  with the one below it, the seam is in the wrong place.
+- Do **not** collapse a stack into a single PR to dodge the review of an
+  awkward middle slice, and do not stack unrelated work just because it is in
+  flight at the same time — a stack encodes a real dependency.
+- The base of the stack is `main`. Rebase the whole stack when `main` moves
+  rather than merging `main` into individual entries, so each PR's diff stays
+  the slice and nothing else.
+
+Single, self-contained changes (a dependency bump, a one-file fix) stay
+ordinary standalone PRs.
+
 ## North Star (the watermark)
 
 Before writing or accepting any change, ask: **"Is this how
@@ -91,8 +119,8 @@ tracks the divergence. Keep the fixture's manifest row in sync with its test
 **Regression fixes land test-first.** When a C↔Rust output divergence is
 found, the history must prove it: first a commit adding a differential
 test that *fails* against the broken code (state that in the commit
-message), then a separate commit with the fix that turns it green — as
-separate PRs, so CI records the red run. Never land the fix and the test
+message), then a separate commit with the fix that turns it green — as a
+two-PR stack (red below, green above), so CI records the red run. Never land the fix and the test
 in one commit — a test that has never been seen red proves nothing.
 Fixing a quarantined divergence works the same way: un-ignore the test
 (red), then fix (green).
@@ -233,13 +261,14 @@ boundaries between concerns — split them as you go.
   caller and the `make` C-ABI surface compiles unchanged. A pure file split must
   not alter behavior, signatures, or the differential-test results.
 - One module per pass. A split is its own change — do **not** combine it with a
-  c2rust→idiomatic conversion in the same PR, so the diff stays reviewable and
+  c2rust→idiomatic conversion in the same PR. Land the split as its own entry in
+  the stack with the conversion stacked on top, so the diff stays reviewable and
   the "no behavior change" claim is easy to verify.
 - Carry tests with the code they exercise, and keep the coverage delta `>= 0`.
 
 When a conversion pass lands in a file that is already over the threshold,
-prefer either splitting first (separate PR) or keeping the conversion small so
-the giant file at least stops growing.
+prefer either splitting first (its own entry below the conversion in the stack)
+or keeping the conversion small so the giant file at least stops growing.
 
 ## Migration Strategy
 Phase 1:
