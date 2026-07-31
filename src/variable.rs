@@ -2,7 +2,7 @@ pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{file, Commands, Dep, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin};
 use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
 use c2rust_bitfields;
-use libc::{abort, free, sprintf, strchr, strcmp, strcpy, strstr};
+use libc::{free, sprintf, strchr, strcmp, strcpy, strstr};
 extern "C" {
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
@@ -2301,9 +2301,9 @@ pub unsafe fn do_variable_definition(
                 }
             }
         }
-        0 | _ => {
-            abort();
-        }
+        // `flavor` comes from the parser's own `variable_flavor` set; a
+        // value outside it means the caller built a malformed assignment.
+        0 | _ => unreachable!("unhandled variable flavor {flavor}"),
     }
     if do_define {
         if newval.is_null() {
@@ -2734,9 +2734,8 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
         5 => {
             origin = b"'override' directive\0" as *const u8 as *const ::core::ffi::c_char;
         }
-        7 => {
-            abort();
-        }
+        // o_invalid: never stored on a live variable.
+        7 => unreachable!("variable has the invalid origin"),
         _ => {}
     }
     crate::output::trace_parts(&[b"# ", ::core::ffi::CStr::from_ptr(origin).to_bytes()]);

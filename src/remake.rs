@@ -10,7 +10,7 @@ use crate::misc::{find_next_token, print_spaces};
 use crate::output::FmtArg;
 use crate::strcache::strcache_add;
 use libc::{
-    __errno_location, abort, close, free, open, sprintf, strcmp, strcpy, strerror,
+    __errno_location, close, free, open, sprintf, strcmp, strcpy, strerror,
     strrchr,
 };
 extern "C" {
@@ -831,7 +831,9 @@ fn update_file_1(
             }
             return ustatus;
         }
-        _ => unsafe { abort() },
+        // `cs_not_started`/`cs_deps_running`/`cs_running`/`cs_finished` are
+        // the only states a file node carries.
+        cs => unreachable!("unhandled command_state {cs}"),
     }
     // no_diag <- dontcare; mark updating on the entry.
     with_entry!(n, {

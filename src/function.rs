@@ -10,7 +10,7 @@ use crate::output::FmtArg;
 use crate::stdio::FILE;
 use crate::strcache::strcache_add;
 use c2rust_bitfields;
-use libc::{__errno_location, abort, close, free, pipe, remove, sprintf, strerror, strstr};
+use libc::{__errno_location, close, free, pipe, remove, sprintf, strerror, strstr};
 use std::sync::atomic::Ordering;
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
@@ -854,9 +854,9 @@ fn func_origin(
         // `variable` returned by `lookup_variable`.
         Some(unsafe { (*v).origin() as i32 })
     };
+    // o_invalid: never stored on a live variable (the C original aborts here).
     if origin == Some(7) {
-        // SAFETY: matches the original C `case o_invalid: abort()`.
-        unsafe { abort() };
+        unreachable!("variable has the invalid origin");
     }
     if let Some(msg) = origin_message(origin) {
         // SAFETY: `o` is the caller's variable-buffer output cursor and
@@ -936,7 +936,7 @@ mod func_origin_flavor_tests {
         assert_eq!(origin_message(Some(4)), Some(&b"command line"[..]));
         assert_eq!(origin_message(Some(5)), Some(&b"override"[..]));
         assert_eq!(origin_message(Some(6)), Some(&b"automatic"[..]));
-        // `o_invalid` (7) is handled by the caller via `abort()` before
+        // `o_invalid` (7) is rejected by the caller (`unreachable!`) before
         // reaching this table; any other out-of-range value is the C
         // switch's silent-no-output default.
         assert_eq!(origin_message(Some(8)), None);
@@ -970,9 +970,8 @@ mod func_origin_flavor_tests {
             o = variable_buffer_output(ctx, o, b"undefined\0" as *const u8 as *const c_char, 9);
         } else {
             match (*v).origin() as i32 {
-                7 => {
-                    super::abort();
-                }
+                // o_invalid: never stored on a live variable.
+                7 => unreachable!("variable has the invalid origin"),
                 0 => {
                     o = variable_buffer_output(
                         ctx,

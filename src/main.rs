@@ -20,7 +20,7 @@ use crate::vpath::{build_vpath_lists, print_vpath_data_base};
 use c2rust_bitfields;
 use libc;
 use libc::{
-    __errno_location, _exit, abort, atof, exit, free, isatty, putenv, setlocale,
+    __errno_location, _exit, atof, exit, free, isatty, putenv, setlocale,
     sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname,
 };
 use std::sync::atomic::Ordering;
@@ -4859,9 +4859,9 @@ pub unsafe fn define_makeflags(
                         }
                     }
                 }
-                _ => {
-                    abort();
-                }
+                // Every `command_switch` in the table carries one of the
+                // handled types; a new one added without a case lands here.
+                t => unreachable!("unhandled command_switch type {t} in MAKEFLAGS encoding"),
             }
         }
         cs = cs.offset(1_i32 as isize);
