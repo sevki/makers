@@ -3600,12 +3600,19 @@ unsafe fn func_eval(
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     install_variable_buffer(ctx, &raw mut buf, &raw mut len);
-    eval_buffer(
+    // The expander's signature is not `Result`-returning yet, so a failed
+    // `$(eval …)` bridges through `exit_on_err` — the sanctioned stand-in
+    // until this call chain is converted (#432 Phase B, #442). The variable
+    // buffer is restored first: the bridge must not leave it swapped out.
+    let evaluated = eval_buffer(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<Floc>(),
     );
     restore_variable_buffer(ctx, buf, len);
+    if let Err(e) = evaluated {
+        crate::output::exit_on_err(e);
+    }
     o
 }
 unsafe fn func_value(

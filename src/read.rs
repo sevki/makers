@@ -121,7 +121,7 @@ use crate::make_main::{
 };
 use crate::misc::{concat, cstr_bytes_or_empty};
 use crate::output::{
-    error, exit_on_err, fatal_err, out_of_memory, perror_with_name, pfatal_with_name,
+    error, fatal_err, out_of_memory, perror_with_name, pfatal_with_name,
 };
 use crate::posixos::fd_noinherit;
 use crate::rule::create_pattern_rule;
@@ -285,12 +285,12 @@ pub unsafe fn read_all_makefiles(
             ctx,
             strcache_add(ctx, name),
             (RM_NO_DEFAULT_GOAL | RM_INCLUDED | RM_DONTCARE) as ::core::ffi::c_ushort,
-        );
+        )?;
     }
     free(value as *mut ::core::ffi::c_void);
     if !makefiles.is_null() {
         while let Some(mref) = makefiles.as_mut().filter(|m| !m.is_null()) {
-            let d: usize = eval_makefile(ctx, *mref, 0);
+            let d: usize = eval_makefile(ctx, *mref, 0)?;
             if *__errno_location() != 0 {
                 perror_with_name(ctx, b"\0" as *const u8 as *const ::core::ffi::c_char, *mref);
             }
@@ -340,7 +340,7 @@ pub unsafe fn read_all_makefiles(
             p_0 = p_0.offset(1_i32 as isize);
         }
         if !(*p_0).is_null() {
-            eval_makefile(ctx, *p_0, 0);
+            eval_makefile(ctx, *p_0, 0)?;
             if *__errno_location() != 0 {
                 perror_with_name(ctx, b"\0" as *const u8 as *const ::core::ffi::c_char, *p_0);
             }
@@ -399,7 +399,7 @@ unsafe fn eval_makefile(
     ctx: &crate::execctx::ExecContext,
     mut filename: *const ::core::ffi::c_char,
     flags: ::core::ffi::c_ushort,
-) -> usize {
+) -> Result<usize, crate::build_result::BuildError> {
     let mut ebuf: EBuffer = EBuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -471,7 +471,7 @@ unsafe fn eval_makefile(
     match open_error {
         EMFILE | ENFILE | ENOMEM => {
             let err: *const ::core::ffi::c_char = strerror(open_error);
-            exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 ctx.reading_file.0.get(),
                 strlen(err) as size_t,
@@ -563,7 +563,7 @@ unsafe fn eval_makefile(
             .get(file_id)
             .expect("eval_makefile: missing file");
         node.lock().expect("file node lock poisoned").last_mtime = NONEXISTENT_MTIME as u64;
-        return deps_idx;
+        return Ok(deps_idx);
     }
     ctx.read_files.borrow_mut()[deps_idx].error = 0;
     {
@@ -598,7 +598,9 @@ unsafe fn eval_makefile(
     ebuf.buffer = ebuf.bufnext;
     let curfile = ctx.reading_file.0.get();
     ctx.reading_file.0.set(&raw mut ebuf.floc);
-    eval(
+    // Hold the result: `reading_file`, the reader and the line buffer must be
+    // torn down on the error path too, so this cannot be a bare `?`.
+    let evaluated = eval(
         ctx,
         &raw mut ebuf,
         (flags as i32 & RM_NO_DEFAULT_GOAL == 0) as i32,
@@ -606,8 +608,9 @@ unsafe fn eval_makefile(
     ctx.reading_file.0.set(curfile);
     drop(Box::from_raw(ebuf.fp));
     free(ebuf.bufstart as *mut ::core::ffi::c_void);
+    evaluated?;
     *__errno_location() = 0;
-    deps_idx
+    Ok(deps_idx)
 }
 /// # Safety
 ///
@@ -617,7 +620,7 @@ pub unsafe fn eval_buffer(
     ctx: &crate::execctx::ExecContext,
     buffer: *mut ::core::ffi::c_char,
     flocp: *const Floc,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let mut ebuf: EBuffer = EBuffer {
         buffer: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         bufnext: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -647,9 +650,12 @@ pub unsafe fn eval_buffer(
     let curfile = ctx.reading_file.0.get();
     ctx.reading_file.0.set(&raw mut ebuf.floc);
     let saved = install_conditionals(ctx);
-    eval(ctx, &raw mut ebuf, 1);
+    // Hold the result: the conditional stack and `reading_file` must be
+    // restored on the error path too, so this cannot be a bare `?`.
+    let evaluated = eval(ctx, &raw mut ebuf, 1);
     restore_conditionals(ctx, saved);
     ctx.reading_file.0.set(curfile);
+    evaluated
 }
 unsafe fn parse_var_assignment(
     ctx: &crate::execctx::ExecContext,
@@ -734,7 +740,11 @@ fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_default: i32) {
+pub unsafe fn eval(
+    ctx: &crate::execctx::ExecContext,
+    ebuf: *mut EBuffer,
+    set_default: i32,
+) -> Result<(), crate::build_result::BuildError> {
     let mut collapsed: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut collapsed_length: size_t = 0;
     let mut commands_len: size_t = 200;
@@ -911,7 +921,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                         prefix,
                         &raw mut fi,
                     )
-                    .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                    ?;
                     filenames = None;
                 }
                 commands_idx = 0;
@@ -920,11 +930,11 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                 also_make_targets = 0;
                 if vmod.undefine_v() != 0 {
                     do_undefine(ctx, p, origin, ebuf)
-                        .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                        ?;
                 } else {
                     if vmod.define_v() != 0 {
                         v = do_define(ctx, p, origin, ebuf)
-                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                            ?;
                     } else {
                         v = try_variable_definition(ctx, fstart, p, origin, s_global);
                     }
@@ -955,10 +965,10 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                     in_ignored_define = 0;
                 }
             } else {
-                let i: i32 = conditional_line(ctx, p, wlen, fstart, initial_tab);
+                let i: i32 = conditional_line(ctx, p, wlen, fstart, initial_tab)?;
                 if i != -2_i32 {
                     if i == -1_i32 {
-                        exit_on_err(fatal_err(
+                        return Err(fatal_err(
                             ctx,
                             fstart,
                             0,
@@ -1035,7 +1045,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                 prefix,
                                 &raw mut fi,
                             )
-                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                            ?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1117,7 +1127,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                 prefix,
                                 &raw mut fi,
                             )
-                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                            ?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1207,7 +1217,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                 prefix,
                                 &raw mut fi,
                             )
-                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                            ?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1250,7 +1260,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                     prefix,
                                     &raw mut fi,
                                 )
-                                .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                                ?;
                                 filenames = None;
                             }
                             commands_idx = 0;
@@ -1273,7 +1283,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                     ctx,
                                     nb.as_ptr() as *const ::core::ffi::c_char,
                                     flags,
-                                );
+                                )?;
                                 // Record the goal's source location (the former
                                 // `(*d)->floc = *fstart`).
                                 let (defined_in, lineno, offset) = floc_owned(fstart);
@@ -1335,7 +1345,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                 prefix,
                                 &raw mut fi,
                             )
-                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                            ?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1417,7 +1427,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                 file.name = name;
                                 r = load_file(ctx, &raw mut (*ebuf).floc, &raw mut file, noerror_0);
                                 if r == 0 && noerror_0 == 0 {
-                                    exit_on_err(fatal_err(
+                                    return Err(fatal_err(
                                         ctx,
                                         &raw mut (*ebuf).floc,
                                         strlen(name) as size_t,
@@ -1456,7 +1466,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                         if *line.offset(0_i32 as isize) as i32
                             == crate::make_main::opt_cmd_prefix(ctx) as i32
                         {
-                            exit_on_err(fatal_err(
+                            return Err(fatal_err(
                                 ctx,
                                 fstart,
                                 0,
@@ -1492,7 +1502,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                 prefix,
                                 &raw mut fi,
                             )
-                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                            ?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1515,7 +1525,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                         match wtype as ::core::ffi::c_uint {
                             1 => {
                                 if !cmdleft.is_null() {
-                                    exit_on_err(fatal_err(
+                                    return Err(fatal_err(
                                         ctx,
                                         fstart,
                                         0,
@@ -1610,7 +1620,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                             ::std::ffi::CStr::from_ptr(line).to_bytes(),
                                         )
                                     {
-                                        exit_on_err(fatal_err(
+                                        return Err(fatal_err(
                                             ctx,
                                             fstart,
                                             0,
@@ -1628,7 +1638,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                     if crate::parser::ifeq_ifneq_without_separator(
                                         ::std::ffi::CStr::from_ptr(p2).to_bytes(),
                                     ) {
-                                        exit_on_err(fatal_err(
+                                        return Err(fatal_err(
                                             ctx,
                                             fstart,
                                             0,
@@ -1637,7 +1647,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
         &[],
     ));
                                     }
-                                    exit_on_err(fatal_err(
+                                    return Err(fatal_err(
                                         ctx,
                                         fstart,
                                         0,
@@ -1737,7 +1747,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                                 &raw mut vmod,
                                                 fstart,
                                             )
-                                            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                                            ?;
                                             filenames = None;
                                         } else {
                                             find_char_unquote(lb_next, '=' as i32);
@@ -1815,7 +1825,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                                 );
                                                 p2 = p2.offset(1_i32 as isize);
                                                 if target.is_empty() {
-                                                    exit_on_err(fatal_err(
+                                                    return Err(fatal_err(
                                                         ctx,
                                                         fstart,
                                                         0,
@@ -1824,7 +1834,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                                         &[],
                                                     ));
                                                 } else if target.len() > 1 {
-                                                    exit_on_err(fatal_err(
+                                                    return Err(fatal_err(
                                                         ctx,
                                                         fstart,
                                                         0,
@@ -1840,7 +1850,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
                                                 pattern_percent =
                                                     find_percent_cached(ctx, &raw mut pattern);
                                                 if pattern_percent.is_null() {
-                                                    exit_on_err(fatal_err(
+                                                    return Err(fatal_err(
                                                         ctx,
                                                         fstart,
                                                         0,
@@ -1909,7 +1919,7 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
         }
     }
     if !ctx.conditionals.borrow().ignoring.is_empty() {
-        exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             fstart,
             0,
@@ -1934,10 +1944,11 @@ pub unsafe fn eval(ctx: &crate::execctx::ExecContext, ebuf: *mut EBuffer, set_de
             prefix,
             &raw mut fi,
         )
-        .unwrap_or_else(|e| crate::output::exit_on_err(e));
+        ?;
     }
     free(collapsed as *mut ::core::ffi::c_void);
     drop(cmd_buf);
+    Ok(())
 }
 /// # Safety
 ///
@@ -2154,7 +2165,7 @@ unsafe fn conditional_line(
     mut len: size_t,
     flocp: *const Floc,
     initial_tab: ::core::ffi::c_uint,
-) -> i32 {
+) -> Result<i32, crate::build_result::BuildError> {
     let cmdname: *const ::core::ffi::c_char;
     let cmdtype: C2RustUnnamed;
     // Classify the directive keyword (the line's first `len` bytes) via the
@@ -2166,7 +2177,7 @@ unsafe fn conditional_line(
             cmdtype = directive_cmdtype(d);
             cmdname = d.name().as_ptr();
         }
-        None => return -2_i32,
+        None => return Ok(-2_i32),
     }
     if initial_tab != 0 {
         error(
@@ -2198,7 +2209,7 @@ unsafe fn conditional_line(
             );
         }
         if ctx.conditionals.borrow().ignoring.is_empty() {
-            exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 flocp,
                 strlen(cmdname) as size_t,
@@ -2212,7 +2223,7 @@ unsafe fn conditional_line(
     } else if cmdtype as ::core::ffi::c_uint == c_else as i32 as ::core::ffi::c_uint {
         let mut p: *const ::core::ffi::c_char;
         if ctx.conditionals.borrow().ignoring.is_empty() {
-            exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 flocp,
                 strlen(cmdname) as size_t,
@@ -2222,7 +2233,7 @@ unsafe fn conditional_line(
         }
         let o: usize = ctx.conditionals.borrow().ignoring.len() - 1;
         if ctx.conditionals.borrow().seen_else[o] != 0 {
-            exit_on_err(fatal_err(
+            return Err(fatal_err(
                 ctx,
                 flocp,
                 0,
@@ -2264,7 +2275,7 @@ unsafe fn conditional_line(
             if matches!(
                 next,
                 Some(crate::parser::Directive::Else | crate::parser::Directive::Endif)
-            ) || conditional_line(ctx, line, len, flocp, 0) < 0
+            ) || conditional_line(ctx, line, len, flocp, 0)? < 0
             {
                 error(
                     ctx,
@@ -2300,7 +2311,7 @@ unsafe fn conditional_line(
             .any(|&x| x != 0)
         {
             ctx.conditionals.borrow_mut().ignoring[o] = 1;
-            return 1;
+            return Ok(1);
         }
         if cmdtype as ::core::ffi::c_uint == c_ifdef as i32 as ::core::ffi::c_uint
             || cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint
@@ -2314,7 +2325,7 @@ unsafe fn conditional_line(
             let l: size_t =
                 match crate::parser::lone_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
                     Some(l) => l as size_t,
-                    None => return -1_i32,
+                    None => return Ok(-1_i32),
                 };
             *var.add(l) = 0;
             v = lookup_variable(ctx, var, l);
@@ -2344,12 +2355,12 @@ unsafe fn conditional_line(
             };
             match crate::parser::parse_conditional_args(::std::ffi::CStr::from_ptr(line).to_bytes())
             {
-                ConditionalArgs::Error => return -1_i32,
+                ConditionalArgs::Error => return Ok(-1_i32),
                 ConditionalArgs::FirstArgOnly { arg1 } => {
                     // make expands the first argument (for its side effects)
                     // before reporting the second-argument syntax error.
                     expand_arg(arg1);
-                    return -1_i32;
+                    return Ok(-1_i32);
                 }
                 ConditionalArgs::Both {
                     arg1,
@@ -2379,9 +2390,9 @@ unsafe fn conditional_line(
         }
     }
     if ctx.conditionals.borrow().ignoring.iter().any(|&x| x != 0) {
-        return 1;
+        return Ok(1);
     }
-    0
+    Ok(0)
 }
 // NOTE (slice-5 boundary): the body still drives the variable layer through
 // raw `*mut File` / `*mut variable_set_list` (`initialize_file_variables`,

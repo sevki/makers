@@ -2729,7 +2729,7 @@ unsafe fn main_0(
                 &ctx,
                 owned.as_mut_ptr() as *mut ::core::ffi::c_char,
                 ::core::ptr::null::<Floc>(),
-            );
+            )?;
         }
         let mut value_0_buf: Vec<u8> = Vec::with_capacity(len_1 as usize);
         let value_0 = value_0_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
