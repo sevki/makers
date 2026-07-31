@@ -366,7 +366,7 @@ pub fn update_goal_chain(
                 break;
             }
             // lock: guard dropped — update_file locks internally.
-            let fail = update_file(ctx, head, depth);
+            let fail = update_file(ctx, head, depth)?;
             let head = follow_renamed(ctx, head);
             // Copy out the post-update state under a brief guard.
             let (cs, updated, ustatus, last_mtime, mtime_before_update, dontcare, phony, has_recipe) = {
@@ -477,14 +477,11 @@ pub fn update_goal_chain(
         crate::make_main::set_question_mirror(ctx, q);
         crate::make_main::set_just_print_mirror(ctx, n);
     }
-    // `complain()` and `update_file_1`'s circular-dep check now route through
-    // `fatal_err`/`BuildError` (#432 Phase B), but both still bridge back to
-    // `exit_on_err` at their call sites rather than propagating `Err` up
-    // through `update_file`/`update_file_1` (whose own `UpdateStatus` return
-    // type isn't converted this pass) — so this walk still can't yet produce
-    // an `Err` on its own. The `Result` signature stays so `main_0`'s call
-    // sites can use `?`, in preparation for converting `update_file`/
-    // `update_file_1` themselves to propagate instead of bridging.
+    // `complain()` and `update_file_1`'s circular-dep check route through
+    // `fatal_err`/`BuildError` and now propagate all the way up through
+    // `update_file`/`update_file_1` rather than bridging back to `exit_on_err`
+    // at their call sites (#432 Phase B, #442), so an `Err` reaching here is a
+    // real build failure on its way out to `main_0`.
     Ok(status)
 }
 
@@ -554,12 +551,12 @@ pub fn update_file(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
     depth: ::core::ffi::c_uint,
-) -> UpdateStatus {
+) -> Result<UpdateStatus, crate::build_result::BuildError> {
     let mut status: UpdateStatus = us_success;
     // Snapshot the chain shape: whether double-colon, and how many entries.
     let (is_dc, n_entries) = {
         let Some(node) = ctx.filenodes.get(file) else {
-            return us_success;
+            return Ok(us_success);
         };
         let n = node.lock().expect("file node lock poisoned");
         (n.is_double_colon, 1 + n.double_colon.len())
@@ -567,7 +564,7 @@ pub fn update_file(
     // Prune check (c2rust: the leading `considered`/`finished`/`prev` test).
     {
         let Some(node) = ctx.filenodes.get(file) else {
-            return us_success;
+            return Ok(us_success);
         };
         let n = node.lock().expect("file node lock poisoned");
         let pruned = n.considered == ctx.considered.get()
@@ -588,11 +585,11 @@ pub fn update_file(
                 print_spaces(depth);
                 trace_name(b"Pruning file '", &cn, b"'.\n");
             }
-            return if cs as i32 == cs_finished as i32 {
+            return Ok(if cs as i32 == cs_finished as i32 {
                 ustatus
             } else {
                 us_success
-            };
+            });
         }
     }
     // Process each double-colon entry by index (0 = head). For single-colon
@@ -605,11 +602,11 @@ pub fn update_file(
                 node.lock().expect("file node lock poisoned").considered = ctx.considered.get();
             }
         }
-        let new = update_file_1(ctx, file, depth, entry);
+        let new = update_file_1(ctx, file, depth, entry)?;
         // Follow any rename that happened.
         let live = follow_renamed(ctx, file);
         if new as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx) {
-            return new;
+            return Ok(new);
         }
         let cs = ctx
             .filenodes
@@ -620,13 +617,13 @@ pub fn update_file(
             })
             .unwrap_or(cs_finished);
         if cs as i32 == cs_running as i32 || cs as i32 == cs_deps_running as i32 {
-            return UpdateStatus::Success;
+            return Ok(UpdateStatus::Success);
         }
         if new as ::core::ffi::c_uint > status as ::core::ffi::c_uint {
             status = new;
         }
     }
-    status
+    Ok(status)
 }
 
 /// FileId port of `complain`: recurse to the deepest still-failing prerequisite
@@ -637,11 +634,10 @@ pub fn update_file(
 /// runs without any guard held.
 ///
 /// `#432` Phase B: returns `Result` instead of exiting via `fatal()` — the
-/// `!opt_keep_going` branches now go through [`crate::output::fatal_err`] and
-/// propagate `Err` instead of terminating the process directly. Callers not
-/// yet converted to `Result` bridge with
-/// `.unwrap_or_else(crate::output::exit_on_err)`, reproducing today's exact
-/// exit behavior (see read.rs for the same pattern already in use).
+/// `!opt_keep_going` branches go through [`crate::output::fatal_err`] and
+/// propagate `Err` instead of terminating the process directly. Every caller
+/// now propagates too, so the error reaches `main_0` without any library frame
+/// deciding to exit on its own (#442).
 pub fn complain(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
@@ -759,7 +755,7 @@ fn update_file_1(
     file: FileId,
     mut depth: ::core::ffi::c_uint,
     entry: usize,
-) -> UpdateStatus {
+) -> Result<UpdateStatus, crate::build_result::BuildError> {
     let mut dep_status: UpdateStatus = us_success;
     let mut running: i32 = 0;
 
@@ -805,15 +801,15 @@ fn update_file_1(
             }
             let (no_diag, dontcare) = with_entry!(n, { (n.no_diag, n.dontcare) });
             if no_diag && !dontcare {
-                complain(ctx, file).unwrap_or_else(|e| crate::output::exit_on_err(e));
+                complain(ctx, file)?;
             }
-            return ustatus;
+            return Ok(ustatus);
         }
         if 0x2_i32 & dbg(ctx) != 0 {
             print_spaces(depth);
             trace_name(b"File '", &cn, b"' was considered already.\n");
         }
-        return UpdateStatus::Success;
+        return Ok(UpdateStatus::Success);
     }
     match cstate as i32 {
         0 | 1 => {}
@@ -822,14 +818,14 @@ fn update_file_1(
                 print_spaces(depth);
                 trace_name(b"Still updating file '", &cn, b"'.\n");
             }
-            return UpdateStatus::Success;
+            return Ok(UpdateStatus::Success);
         }
         3 => {
             if 0x2_i32 & dbg(ctx) != 0 {
                 print_spaces(depth);
                 trace_name(b"Finished updating file '", &cn, b"'.\n");
             }
-            return ustatus;
+            return Ok(ustatus);
         }
         // `cs_not_started`/`cs_deps_running`/`cs_running`/`cs_finished` are
         // the only states a file node carries.
@@ -1013,7 +1009,7 @@ fn update_file_1(
                 if warning::action(ctx, Type::CircularDep) == Action::Error {
                     let dcn = cname(&dep_name);
                     unsafe {
-                        crate::output::exit_on_err(crate::output::fatal_err(
+                        return Err(crate::output::fatal_err(
                             ctx,
                             ::core::ptr::null_mut::<Floc>(),
                             (name.len() as size_t).wrapping_add(dep_name.len() as size_t),
@@ -1065,7 +1061,7 @@ fn update_file_1(
                 }
                 let mut maybe_make = must_make != 0;
                 // lock: no guard held across check_dep.
-                let new = check_dep(ctx, dfile, depth, this_mtime, &mut maybe_make);
+                let new = check_dep(ctx, dfile, depth, this_mtime, &mut maybe_make)?;
                 if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new;
                 }
@@ -1158,7 +1154,7 @@ fn update_file_1(
                     }
                 }
                 // lock: no guard held across update_file.
-                let new_0 = update_file(ctx, dfile, depth);
+                let new_0 = update_file(ctx, dfile, depth)?;
                 if new_0 as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                     dep_status = new_0;
                 }
@@ -1203,7 +1199,7 @@ fn update_file_1(
             print_spaces(depth);
             trace_name(b"The prerequisites of '", &cn, b"' are being made.\n");
         }
-        return UpdateStatus::Success;
+        return Ok(UpdateStatus::Success);
     }
     if 0x2_i32 & dbg(ctx) != 0 {
         print_spaces(depth);
@@ -1240,7 +1236,7 @@ fn update_file_1(
                 );
             }
         }
-        return dep_status;
+        return Ok(dep_status);
     }
     if with_entry!(n, { n.command_state }) as i32 == cs_deps_running as i32 {
         set_command_state_id(ctx, file, CommandState::NotStarted);
@@ -1333,7 +1329,7 @@ fn update_file_1(
         with_entry!(n, {
             n.name = n.hname.clone();
         });
-        return UpdateStatus::Success;
+        return Ok(UpdateStatus::Success);
     }
     if 0x1_i32 & dbg(ctx) != 0 {
         print_spaces(depth);
@@ -1350,14 +1346,14 @@ fn update_file_1(
             n.ignore_vpath = true;
         });
     }
-    remake_file(ctx, file, entry);
+    remake_file(ctx, file, entry)?;
     let cstate2 = with_entry!(n, { n.command_state });
     if cstate2 as i32 != cs_finished as i32 {
         if 0x2_i32 & dbg(ctx) != 0 {
             print_spaces(depth);
             trace_name(b"Recipe of '", &cn, b"' is being run.\n");
         }
-        return UpdateStatus::Success;
+        return Ok(UpdateStatus::Success);
     }
     let ustatus2 = with_entry!(n, { n.update_status });
     match ustatus2 as i32 {
@@ -1384,7 +1380,7 @@ fn update_file_1(
     with_entry!(n, {
         n.updated = true;
     });
-    ustatus2
+    Ok(ustatus2)
 }
 
 /// Resolve a (possibly double-colon) entry within a locked head node: `0` is
@@ -1600,7 +1596,7 @@ pub fn check_dep(
     depth: ::core::ffi::c_uint,
     this_mtime: uintmax_t,
     must_make: &mut bool,
-) -> UpdateStatus {
+) -> Result<UpdateStatus, crate::build_result::BuildError> {
     let mut dep_status: UpdateStatus = us_success;
     // Mark this file (and its double-colon head, which is the same node) updating.
     if let Some(node) = ctx.filenodes.get(file) {
@@ -1616,7 +1612,7 @@ pub fn check_dep(
         .unwrap_or((false, false));
     if phony || !intermediate {
         // lock: guard dropped before update_file / f_mtime.
-        dep_status = update_file(ctx, file, depth);
+        dep_status = update_file(ctx, file, depth)?;
         let live = follow_renamed(ctx, file);
         let last_mtime = ctx
             .filenodes
@@ -1744,7 +1740,7 @@ pub fn check_dep(
                         depth.wrapping_add(1),
                         this_mtime,
                         &mut maybe_make,
-                    );
+                    )?;
                     if new as ::core::ffi::c_uint > dep_status as ::core::ffi::c_uint {
                         dep_status = new;
                     }
@@ -1779,7 +1775,7 @@ pub fn check_dep(
     if let Some(node) = ctx.filenodes.get(file) {
         node.lock().expect("file node lock poisoned").updating = false;
     }
-    dep_status
+    Ok(dep_status)
 }
 
 /// FileId port of `touch_file`: touch the target's file on disk (or its archive
@@ -1929,7 +1925,11 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
 ///
 /// Lock discipline: the node is locked only for brief field reads/writes; never
 /// across `complain`, `execute_file_commands`, or `notice_finished_file`.
-pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize) {
+pub fn remake_file(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+) -> Result<(), crate::build_result::BuildError> {
     let (has_recipe, phony, is_target, dontcare, any_recurse) = ctx
         .filenodes
         .get(file)
@@ -1946,7 +1946,7 @@ pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize
         })
         .unwrap_or((false, false, false, false, false));
     if !has_recipe {
-        remake_no_recipe(ctx, file, entry, phony, is_target, dontcare);
+        remake_no_recipe(ctx, file, entry, phony, is_target, dontcare)?;
     } else {
         // chop_commands needs &mut Recipe; lock briefly to chop in place.
         if let Some(node) = ctx.filenodes.get(file) {
@@ -1959,7 +1959,7 @@ pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize
         if !crate::make_main::opt_touch(ctx) || any_recurse {
             // lock: no guard held across execute_file_commands.
             execute_file_commands(ctx, file, entry);
-            return;
+            return Ok(());
         }
         if let Some(node) = ctx.filenodes.get(file) {
             let mut g = node.lock().expect("file node lock poisoned");
@@ -1967,6 +1967,7 @@ pub fn remake_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize
         }
     }
     notice_finished_file(ctx, file, entry);
+    Ok(())
 }
 
 /// Handle the recipe-less case of [`remake_file`]: a phony or explicit target
@@ -1980,7 +1981,7 @@ fn remake_no_recipe(
     phony: bool,
     is_target: bool,
     dontcare: bool,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     if phony || is_target {
         if let Some(node) = ctx.filenodes.get(file) {
             let mut g = node.lock().expect("file node lock poisoned");
@@ -1989,13 +1990,14 @@ fn remake_no_recipe(
     } else {
         if !opt_rebuilding_makefiles(ctx) || !dontcare {
             // lock: no guard held across complain.
-            complain(ctx, file).unwrap_or_else(|e| crate::output::exit_on_err(e));
+            complain(ctx, file)?;
         }
         if let Some(node) = ctx.filenodes.get(file) {
             let mut g = node.lock().expect("file node lock poisoned");
             entry_node_mut(&mut g, entry).update_status = UpdateStatus::Failed;
         }
     }
+    Ok(())
 }
 
 /// Refresh `f_mtime`'s cached "adjusted now" from a freshly sampled clock.
