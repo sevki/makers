@@ -15,7 +15,12 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "*" ]
+    # `**`, not `*`: GitHub's branch filter treats `*` as "any characters except
+    # `/`", so `*` matches `main` but not the `claude/…` bases that stacked PRs
+    # sit on (AGENTS.md requires any multi-slice campaign to be opened as a
+    # stack). With `*` these analyses simply never ran on the upper entries of a
+    # stack, and a required check that never starts blocks the PR forever.
+    branches: [ "**" ]
   schedule:
     - cron: '22 21 * * 6'
 

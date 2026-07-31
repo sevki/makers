@@ -13,8 +13,10 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    # The branches below must be a subset of the branches above
-    branches: [ "main" ]
+    # Every PR, whatever its base. Stacked PRs (AGENTS.md) are based on
+    # `claude/…` branches rather than `main`, so a `main`-only filter meant
+    # clippy never ran on any entry above the bottom of a stack.
+    branches: [ "**" ]
   schedule:
     - cron: '29 3 * * 5'
 
