@@ -119,8 +119,8 @@ tracks the divergence. Keep the fixture's manifest row in sync with its test
 **Regression fixes land test-first.** When a C↔Rust output divergence is
 found, the history must prove it: first a commit adding a differential
 test that *fails* against the broken code (state that in the commit
-message), then a separate commit with the fix that turns it green — as
-separate PRs, so CI records the red run. Never land the fix and the test
+message), then a separate commit with the fix that turns it green — as a
+two-PR stack (red below, green above), so CI records the red run. Never land the fix and the test
 in one commit — a test that has never been seen red proves nothing.
 Fixing a quarantined divergence works the same way: un-ignore the test
 (red), then fix (green).
@@ -261,13 +261,14 @@ boundaries between concerns — split them as you go.
   caller and the `make` C-ABI surface compiles unchanged. A pure file split must
   not alter behavior, signatures, or the differential-test results.
 - One module per pass. A split is its own change — do **not** combine it with a
-  c2rust→idiomatic conversion in the same PR, so the diff stays reviewable and
+  c2rust→idiomatic conversion in the same PR. Land the split as its own entry in
+  the stack with the conversion stacked on top, so the diff stays reviewable and
   the "no behavior change" claim is easy to verify.
 - Carry tests with the code they exercise, and keep the coverage delta `>= 0`.
 
 When a conversion pass lands in a file that is already over the threshold,
-prefer either splitting first (separate PR) or keeping the conversion small so
-the giant file at least stops growing.
+prefer either splitting first (its own entry below the conversion in the stack)
+or keeping the conversion small so the giant file at least stops growing.
 
 ## Migration Strategy
 Phase 1:
