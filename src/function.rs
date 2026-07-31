@@ -2872,7 +2872,7 @@ unsafe fn func_let(
     }
     o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t);
     pop_variable_scope(ctx);
-    Ok(o.offset(strlen(o) as isize))
+    Ok(o.add(strlen(o)))
 }
 /// A pattern from `$(filter ...)`/`$(filter-out ...)`'s first argument: its
 /// literal bytes (with any escaped `%` already collapsed) plus the index of
@@ -5079,7 +5079,7 @@ unsafe fn func_call(
         .store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
     (*v).set_exp_count(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     pop_variable_scope(ctx);
-    Ok(o.offset(strlen(o) as isize))
+    Ok(o.add(strlen(o)))
 }
 /// Register a plugin-supplied builtin under `name`.
 ///
