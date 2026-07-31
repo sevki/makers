@@ -4975,6 +4975,13 @@ unsafe fn func_call(
     pop_variable_scope(ctx);
     o.offset(strlen(o) as isize)
 }
+/// Register a plugin-supplied builtin under `name`.
+///
+/// The five name/arity validations reject the definition by returning
+/// [`BuildError`](crate::build_result::BuildError) rather than ending the
+/// process; the sole caller (`gmk_add_function`) is a C-ABI boundary and
+/// bridges there (#432 Phase B, #442).
+///
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -4987,7 +4994,7 @@ pub unsafe fn define_new_function(
     max: ::core::ffi::c_uint,
     flags: ::core::ffi::c_uint,
     func: gmk_func_ptr,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let mut e: *const ::core::ffi::c_char = name;
     let mut ent: *mut FunctionTableEntry;
     let len: size_t;
@@ -5000,7 +5007,7 @@ pub unsafe fn define_new_function(
     }
     len = e.offset_from(name) as ::core::ffi::c_long as size_t;
     if len == 0 {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             flocp,
             0,
@@ -5009,7 +5016,7 @@ pub unsafe fn define_new_function(
         ));
     }
     if *name as i32 == '.' as i32 || *e as i32 != 0 {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             flocp,
             strlen(name) as size_t,
@@ -5018,7 +5025,7 @@ pub unsafe fn define_new_function(
         ));
     }
     if len > 255 {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             flocp,
             strlen(name) as size_t,
@@ -5027,7 +5034,7 @@ pub unsafe fn define_new_function(
         ));
     }
     if min > 255 {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             flocp,
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
@@ -5040,7 +5047,7 @@ pub unsafe fn define_new_function(
         ));
     }
     if max > 255 || max != 0 && max < min {
-        crate::output::exit_on_err(fatal_err(
+        return Err(fatal_err(
             ctx,
             flocp,
             INTSTR_LENGTH.wrapping_add(strlen(name) as size_t),
@@ -5073,6 +5080,7 @@ pub unsafe fn define_new_function(
         ent as *const ::core::ffi::c_void,
     ) as *mut FunctionTableEntry;
     free(ent as *mut ::core::ffi::c_void);
+    Ok(())
 }
 /// # Safety
 ///
@@ -5924,5 +5932,80 @@ mod find_next_argument_tests {
         // after the outer close is still found (depth must reach 0, not just
         // decrease, before a comma counts).
         assert_eq!(find_next_argument(b'(', b')', b"((a)),b"), Some(5));
+    }
+}
+
+#[cfg(test)]
+mod define_new_function_tests {
+    //! Since #442 the five name/arity validations in
+    //! [`define_new_function`](super::define_new_function) hand their
+    //! diagnostic back as a `BuildError` instead of ending the process, so
+    //! each rejection is reachable from a test. Every case returns before the
+    //! function table is touched, so no registration is observable.
+
+    use {
+        super::define_new_function,
+        crate::execctx::{Config, ExecContext},
+        std::ffi::CString,
+    };
+
+    fn ctx() -> ExecContext {
+        ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        })
+    }
+
+    /// Attempt a definition of `name` with the given arity, returning whether
+    /// it was rejected. `func` is null throughout: every case under test bails
+    /// out before the pointer is stored.
+    fn rejects(name: &str, min: u32, max: u32) -> bool {
+        let ctx = ctx();
+        crate::make_main::initialize_stopchar_map();
+        let cname = CString::new(name).unwrap();
+        // SAFETY: `cname` outlives the call and `flocp` is the documented null
+        // ("no source location") case; no table entry is created on any path
+        // this test exercises.
+        unsafe {
+            define_new_function(
+                &ctx,
+                ::core::ptr::null::<crate::floc::Floc>(),
+                cname.as_ptr(),
+                min,
+                max,
+                0,
+                None,
+            )
+        }
+        .is_err()
+    }
+
+    /// An empty name has no characters to scan, so the length check rejects it.
+    #[test]
+    fn empty_name_is_rejected() {
+        assert!(rejects("", 0, 0));
+    }
+
+    /// A leading `.` is reserved and rejected, as is a name carrying a
+    /// character outside the function-name class.
+    #[test]
+    fn malformed_names_are_rejected() {
+        assert!(rejects(".hidden", 0, 0));
+        assert!(rejects("has space", 0, 0));
+    }
+
+    /// The name length is stored in a `u8`, so 256 characters overflow it.
+    #[test]
+    fn overlong_name_is_rejected() {
+        assert!(rejects(&"a".repeat(256), 0, 0));
+    }
+
+    /// Both arity bounds are stored in a `u8`; either exceeding 255 is a
+    /// rejection, as is a maximum below the minimum.
+    #[test]
+    fn out_of_range_arity_is_rejected() {
+        assert!(rejects("myfunc", 256, 0), "minimum above u8 range");
+        assert!(rejects("myfunc", 0, 256), "maximum above u8 range");
+        assert!(rejects("myfunc", 3, 2), "maximum below minimum");
     }
 }

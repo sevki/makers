@@ -131,7 +131,16 @@ pub unsafe extern "C" fn gmk_add_function(
     flags: ::core::ffi::c_uint,
 ) {
     with_live_or_default_ctx(|ctx| unsafe {
-        define_new_function(ctx, ctx.reading_file.0.get(), name, min, max, flags, func);
+        // `gmk_add_function` is a C-ABI entry point called from a loaded
+        // plugin: there is no Rust frame between here and the plugin to carry
+        // a `Result`, so a rejected function definition bridges through
+        // `exit_on_err` rather than propagating (#432 Phase B, #442). The five
+        // name/arity validations inside `define_new_function` now hand their
+        // diagnostic back as a value; this is the one place it still exits.
+        if let Err(e) = define_new_function(ctx, ctx.reading_file.0.get(), name, min, max, flags, func)
+        {
+            crate::output::exit_on_err(e);
+        }
     });
 }
 
