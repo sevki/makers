@@ -2870,7 +2870,7 @@ unsafe fn func_let(
             NILF,
         );
     }
-    o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t);
+    o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t)?;
     pop_variable_scope(ctx);
     Ok(o.add(strlen(o)))
 }

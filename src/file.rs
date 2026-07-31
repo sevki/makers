@@ -1574,9 +1574,9 @@ fn rewrite_static_pattern_name(name: &[u8]) -> Vec<u8> {
 pub unsafe fn expand_extra_prereqs(
     ctx: &crate::execctx::ExecContext,
     extra: *const variable,
-) -> Vec<DepNode> {
+) -> Result<Vec<DepNode>, crate::build_result::BuildError> {
     if extra.is_null() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     // Expand the `.EXTRA_PREREQS` value, then split it into prerequisites.
     //
@@ -1585,12 +1585,17 @@ pub unsafe fn expand_extra_prereqs(
     // exactly as the C `variable_expand` returns the shared `variable_buffer`
     // and leaves ownership with the caller's context. The `allocated_*`
     // wrappers are the ones that swap the buffer out and transfer ownership.
+    //
+    // Since #442 a malformed reference in `.EXTRA_PREREQS` — an unterminated
+    // `$(`, or a bad builtin call — comes back as a `BuildError` rather than
+    // ending the process; `snap_deps` already returns `Result`, so it carries
+    // out from here with no bridge.
     let expanded = expand_string_buf(
         ctx,
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
         (*extra).value,
         SIZE_MAX as size_t,
-    );
+    )?;
     let mut prereqs = split_prereqs(ctx, expanded);
     // Resolve each prerequisite to a target and flag it so automatic variables
     // are ignored when it is evaluated.
@@ -1600,15 +1605,19 @@ pub unsafe fn expand_extra_prereqs(
         d.file = Some(fid);
         d.ignore_automatic_vars = true;
     }
-    prereqs
+    Ok(prereqs)
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: FileId, deps: &[DepNode]) {
+pub unsafe fn snap_file(
+    ctx: &crate::execctx::ExecContext,
+    f: FileId,
+    deps: &[DepNode],
+) -> Result<(), crate::build_result::BuildError> {
     let Some(node) = ctx.filenodes.get(f) else {
-        return;
+        return Ok(());
     };
 
     // First pass over the node's flags: reset `updating`, fold in the global
@@ -1639,7 +1648,7 @@ pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: FileId, deps: &[De
     // `.EXTRA_PREREQS`; otherwise a target file copies the shared `deps`.
     let mut prereqs: Vec<DepNode> = if has_variables {
         let pre = match &extra_value {
-            Some(value) => expand_extra_prereqs_value(ctx, value),
+            Some(value) => expand_extra_prereqs_value(ctx, value)?,
             None => Vec::new(),
         };
         if second_expansion(ctx) {
@@ -1660,18 +1669,19 @@ pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: FileId, deps: &[De
     };
 
     if prereqs.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Skip circular dependencies: if any prereq names this file, drop the whole
     // batch (matching the C early-break + free_dep_chain).
     let circular = prereqs.iter().any(|d| dep_name_bytes(d) == fname);
     if circular {
-        return;
+        return Ok(());
     }
 
     let mut n = node.lock().expect("file node lock poisoned");
     n.deps.append(&mut prereqs);
+    Ok(())
 }
 
 /// Expand an `.EXTRA_PREREQS` variable value, split it into prerequisites, and
@@ -1682,7 +1692,7 @@ pub unsafe fn snap_file(ctx: &crate::execctx::ExecContext, f: FileId, deps: &[De
 unsafe fn expand_extra_prereqs_value(
     ctx: &crate::execctx::ExecContext,
     value: &[u8],
-) -> Vec<DepNode> {
+) -> Result<Vec<DepNode>, crate::build_result::BuildError> {
     let mut value_c: Vec<u8> = value.to_vec();
     value_c.push(0);
     let expanded = expand_string_buf(
@@ -1690,7 +1700,7 @@ unsafe fn expand_extra_prereqs_value(
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
         value_c.as_ptr() as *const ::core::ffi::c_char,
         SIZE_MAX as size_t,
-    );
+    )?;
     // Borrowed from `ctx.variable_buffer`, not owned — see the note in
     // `expand_extra_prereqs`.
     let mut prereqs = split_prereqs(ctx, expanded);
@@ -1700,7 +1710,7 @@ unsafe fn expand_extra_prereqs_value(
         d.file = Some(fid);
         d.ignore_automatic_vars = true;
     }
-    prereqs
+    Ok(prereqs)
 }
 
 /// The name of a dependency as owned bytes: the [`DepNode`] keeps its `name`
@@ -1854,7 +1864,7 @@ pub fn snap_deps(
                 b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
                 (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
             ),
-        )
+        )?
     };
     // Snapshot the arena's files, then snap each. Matching the C `hash_dump`,
     // any files entered while snapping are not themselves re-processed here.
@@ -1869,7 +1879,7 @@ pub fn snap_deps(
     for fid in filedump {
         // SAFETY: `snap_file` is the c2rust-inherited per-file snap step;
         // `ctx`/`fid`/`prereqs` are all valid owned/arena-backed values.
-        unsafe { snap_file(ctx, fid, &prereqs) };
+        unsafe { snap_file(ctx, fid, &prereqs)? };
     }
     Ok(())
 }
@@ -2885,7 +2895,7 @@ mod tests {
                 let node = ctx.filenodes.get(fid).unwrap();
                 node.lock().unwrap().updating = true;
             }
-            snap_file(&ctx, fid, &[]);
+            snap_file(&ctx, fid, &[]).expect("snap_file on a fixed dep set cannot fail");
             let node = ctx.filenodes.get(fid).unwrap();
             assert!(
                 !node.lock().unwrap().updating,
@@ -2910,7 +2920,7 @@ mod tests {
             }
             // A one-element shared dep list whose dep name equals the target name.
             let deps = vec![dep_node_from_name(b"snapself".to_vec(), false, false)];
-            snap_file(&ctx, fid, &deps);
+            snap_file(&ctx, fid, &deps).expect("snap_file on a fixed dep set cannot fail");
             // The self-referential prereq is dropped, so deps stays empty.
             let node = ctx.filenodes.get(fid).unwrap();
             assert!(

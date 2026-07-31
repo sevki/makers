@@ -397,7 +397,7 @@ pub unsafe fn expand_string_buf(
     mut buf: *mut ::core::ffi::c_char,
     string: *const ::core::ffi::c_char,
     length: size_t,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut p: *const ::core::ffi::c_char;
     let mut p1: *const ::core::ffi::c_char;
     let mut o: *mut ::core::ffi::c_char;
@@ -407,7 +407,7 @@ pub unsafe fn expand_string_buf(
     o = buf;
     let line_offset = buf.offset_from(ctx.variable_buffer.ptr()) as usize;
     if length == 0 {
-        return ctx.variable_buffer.ptr();
+        return Ok(ctx.variable_buffer.ptr());
     }
     // Work on a stable copy: expansion may reuse the variable buffer the
     // input could be pointing into.
@@ -447,24 +447,16 @@ pub unsafe fn expand_string_buf(
                 let mut abeg: Option<OwnedCStr> = None;
                 let mut end: *const ::core::ffi::c_char;
                 let mut colon: *const ::core::ffi::c_char;
-                // Since #442 the builtin dispatch chain (`handle_function` →
-                // `expand_builtin_function` → the raw handlers) hands its
-                // diagnostics back as `BuildError` values instead of exiting in
-                // place. `expand_string_buf` still returns a raw pointer with
-                // wide fan-out across the crate, so this is where they bridge —
-                // the same deferral as the `unterminated variable reference`
-                // arm below, and it retires with it (#432 Phase B, #539).
-                let handled = handle_function(ctx, &raw mut o, &raw mut p)
-                    .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                // #570 made the builtin dispatch chain (`handle_function` →
+                // `expand_builtin_function` → the raw handlers) hand its
+                // diagnostics back as `BuildError` values, and left this
+                // bridge naming `expand_string_buf` as the thing it waited on.
+                // That is now this function, so the error propagates.
+                let handled = handle_function(ctx, &raw mut o, &raw mut p)?;
                 if handled == 0 {
                     end = strchr(beg, closeparen as i32);
                     if end.is_null() {
-                        // `expand_string_buf` returns a raw pointer with wide
-                        // fan-out across the crate; bridge through the shared
-                        // `_err`/`exit_on_err` path rather than propagating
-                        // `Result` through this whole call chain (#432 Phase
-                        // B, #539).
-                        crate::output::exit_on_err(fatal_err(
+                        return Err(fatal_err(
                             ctx,
                             ctx.expanding_var_floc(),
                             0,
@@ -630,7 +622,7 @@ pub unsafe fn expand_string_buf(
         }
         p = p.add(1);
     }
-    ctx.variable_buffer.ptr().add(line_offset)
+    Ok(ctx.variable_buffer.ptr().add(line_offset))
 }
 /// # Safety
 ///
@@ -670,14 +662,24 @@ pub unsafe fn expand_string_for_file_c(
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
+        // `expand_string_for_file_c` still returns a bare output pointer, and
+        // its cone (`allocated_expand_string_for_file`, 19 call sites, of which
+        // `do_variable_definition` and `assign_variable_definition` in
+        // `variable.rs` are the blockers) is the next slice. Until those
+        // callers return `Result` there is no frame here to propagate into, so
+        // the expander's diagnostics bridge (#432 Phase B, #442).
         return expand_string_buf(
             ctx,
             ::core::ptr::null_mut::<::core::ffi::c_char>(),
             string,
             SIZE_MAX,
-        );
+        )
+        .unwrap_or_else(|e| crate::output::exit_on_err(e));
     }
     install_file_context(ctx, file, &raw mut savev, &raw mut savef);
+    // Held rather than `?`-ed: the file context must be restored before the
+    // error leaves this frame, per the cleanup-paths-report contract (#561).
+    // The bridge below retires with the same slice as the one above.
     let result = expand_string_buf(
         ctx,
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -685,7 +687,7 @@ pub unsafe fn expand_string_for_file_c(
         SIZE_MAX,
     );
     restore_file_context(ctx, savev, savef);
-    result
+    result.unwrap_or_else(|e| crate::output::exit_on_err(e))
 }
 
 /// FileId-based string expansion in a target's variable context.
@@ -711,7 +713,11 @@ pub fn expand_string_for_file(
         let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut olen: size_t = 0;
         install_variable_buffer(ctx, &raw mut obuf, &raw mut olen);
-        expand_string_buf(
+        // Held rather than `?`-ed so the variable buffer is swapped back before
+        // the error leaves this frame. `expand_string_for_file` returns
+        // `Vec<u8>` and its callers include `expand_deps`/`second_expansion_deps`,
+        // which the following slices convert; it bridges until then (#442).
+        let expanded = expand_string_buf(
             ctx,
             ::core::ptr::null_mut::<::core::ffi::c_char>(),
             string.as_ptr() as *const ::core::ffi::c_char,
@@ -719,6 +725,7 @@ pub fn expand_string_for_file(
         );
         let result = swap_variable_buffer(ctx, obuf, olen);
         crate::variable::restore_file_context_id(ctx, cur, savev, savef);
+        expanded.unwrap_or_else(|e| crate::output::exit_on_err(e));
         if result.is_null() {
             vec![0]
         } else {
@@ -775,7 +782,11 @@ unsafe fn variable_append(
     if (*v).recursive() == 0 {
         return variable_buffer_output(ctx, buf, (*v).value, strlen((*v).value));
     }
-    buf = expand_string_buf(ctx, buf, (*v).value, strlen((*v).value));
+    // `variable_append` recurses on itself and feeds `allocated_variable_append`,
+    // whose only callers are in `recursively_expand_for_file` — still a bare
+    // pointer-returning function. It converts with the wrapper slice (#442).
+    buf = expand_string_buf(ctx, buf, (*v).value, strlen((*v).value))
+        .unwrap_or_else(|e| crate::output::exit_on_err(e));
     buf.add(strlen(buf) as usize)
 }
 /// # Safety
@@ -859,6 +870,150 @@ mod no_recursive_expand_msg_tests {
                 b"(null):0: not recursively expanding PATH to export to shell function\n"
                     .to_vec()
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod expander_rejection_tests {
+    //! Since #442 `expand_string_buf` returns `Result`, so a malformed variable
+    //! reference hands a `BuildError` back instead of ending the process. That
+    //! makes the `unterminated variable reference` arm reachable from a unit
+    //! test for the first time — reaching it used to abort the test binary,
+    //! which is why it sat at 0% coverage.
+    //!
+    //! Each rejection is asserted next to a well-formed input, so the success
+    //! path stays pinned alongside it.
+
+    use super::{expand_string_buf, initialize_variable_output, SIZE_MAX, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::build_result::BuildError;
+    use crate::make_main::initialize_stopchar_map;
+    use std::ffi::CString;
+
+    /// Expand `input` in a fresh context and return the expanded bytes, or the
+    /// `BuildError` the expander rejected it with.
+    unsafe fn expand(input: &str) -> Result<Vec<u8>, BuildError> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        // `$(word …)` and friends are looked up in the builtin table, and
+        // `$(FOO)` in the variable sets; both are hash tables that must be
+        // constructed before the expander walks a `$(` reference.
+        let ctx = crate::execctx::ExecContext::default();
+        crate::function::hash_init_function_table(&ctx);
+        crate::variable::init_hash_global_variable_set(&ctx);
+        let src = CString::new(input).unwrap();
+        initialize_variable_output(&ctx);
+        let end = expand_string_buf(
+            &ctx,
+            ::core::ptr::null_mut::<::core::ffi::c_char>(),
+            src.as_ptr(),
+            SIZE_MAX,
+        )?;
+        assert!(!end.is_null(), "expansion returned a null cursor");
+        Ok(::std::ffi::CStr::from_ptr(end).to_bytes().to_vec())
+    }
+
+    /// A reference opened with `$(` or `${` and never closed is a fatal error.
+    /// Before #442 this line exited the process from inside the expander.
+    #[test]
+    fn rejects_unterminated_variable_reference() {
+        // SAFETY: single-threaded under the shared variable-buffer lock; the
+        // inputs are NUL-terminated `CString`s.
+        unsafe {
+            for bad in ["$(FOO", "${FOO", "text $(unclosed"] {
+                assert!(
+                    matches!(expand(bad), Err(BuildError::Failure)),
+                    "expected {bad:?} to be rejected, not expanded"
+                );
+            }
+        }
+    }
+
+    /// The matching well-formed references still expand. An undefined variable
+    /// is empty, not an error — only the *syntax* above is fatal.
+    #[test]
+    fn expands_terminated_variable_reference() {
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(expand("$(FOO)").expect("well-formed"), b"".to_vec());
+            assert_eq!(expand("${FOO}").expect("well-formed"), b"".to_vec());
+            assert_eq!(
+                expand("text $(FOO) tail").expect("well-formed"),
+                b"text  tail".to_vec()
+            );
+        }
+    }
+
+    /// A builtin's own rejection now travels out through the dispatch ABI
+    /// (#570) and then through `expand_string_buf` (this change), rather than
+    /// stopping at the bridge that used to sit between them.
+    #[test]
+    fn propagates_builtin_rejection_through_the_expander() {
+        // SAFETY: as above.
+        unsafe {
+            assert!(
+                matches!(expand("$(word 0,a b c)"), Err(BuildError::Failure)),
+                "a bad $(word ...) index must reach the caller as a value"
+            );
+            assert_eq!(
+                expand("$(word 2,a b c)").expect("valid index"),
+                b"b".to_vec()
+            );
+        }
+    }
+
+    /// `$(let …)` binds its names to the words of the list, then expands its
+    /// body in that scope. It is exercised here because it is one of the
+    /// builtins whose body now carries the expander's `Result` out through
+    /// `?` — the branch count went up, so the success path is pinned.
+    #[test]
+    fn expands_let_bindings() {
+        // SAFETY: as above.
+        unsafe {
+            // Each name takes one word; the last name absorbs the remainder.
+            assert_eq!(
+                expand("$(let a b,1 2 3,$(a)-$(b))").expect("well-formed let"),
+                b"1-2 3".to_vec()
+            );
+            // Fewer words than names leaves the surplus names empty.
+            assert_eq!(
+                expand("$(let a b,1,[$(a)][$(b)])").expect("well-formed let"),
+                b"[1][]".to_vec()
+            );
+            // The bindings are scoped to the body and do not leak out.
+            assert_eq!(
+                expand("$(let x,inner,$(x))[$(x)]").expect("well-formed let"),
+                b"inner[]".to_vec()
+            );
+        }
+    }
+
+    /// `$(foreach …)` is the other list-binding builtin reached through the
+    /// same converted path.
+    #[test]
+    fn expands_foreach_bindings() {
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(
+                expand("$(foreach v,a b c,<$(v)>)").expect("well-formed foreach"),
+                b"<a> <b> <c>".to_vec()
+            );
+            assert_eq!(
+                expand("$(foreach v,,<$(v)>)").expect("empty list"),
+                b"".to_vec()
+            );
+        }
+    }
+
+    /// Literal text and `$$` escapes are untouched by the conversion.
+    #[test]
+    fn expands_literal_text_unchanged() {
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(expand("plain text").expect("literal"), b"plain text".to_vec());
+            assert_eq!(expand("a$$b").expect("escape"), b"a$b".to_vec());
         }
     }
 }
