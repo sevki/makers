@@ -2930,6 +2930,62 @@ mod tests {
         }
     }
 
+    /// `expand_extra_prereqs` returns an empty list for a NULL variable and,
+    /// for a real one, expands the value and resolves each word to a file.
+    ///
+    /// Since #442 it returns `Result`, because a malformed reference in
+    /// `.EXTRA_PREREQS` travels out through `snap_deps` rather than ending the
+    /// process. Driving it at all only became possible once the borrowed
+    /// expansion buffer stopped being freed — before that fix any call reached
+    /// a double free and aborted the test binary.
+    #[test]
+    fn expand_extra_prereqs_resolves_each_word() {
+        let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _b = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            initialize_stopchar_map();
+            let ctx = crate::execctx::ExecContext::default();
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+
+            // A NULL variable is "no extra prerequisites", not an error.
+            assert!(
+                expand_extra_prereqs(&ctx, ::core::ptr::null())
+                    .expect("a NULL variable is not an error")
+                    .is_empty(),
+                "a NULL .EXTRA_PREREQS yields no prereqs"
+            );
+
+            // A real value is expanded and split; each word becomes a resolved
+            // dep flagged to ignore automatic variables.
+            let name = ::std::ffi::CString::new(".EXTRA_PREREQS").unwrap();
+            let value = ::std::ffi::CString::new("alpha beta").unwrap();
+            let v = crate::variable::define_variable_in_set(
+                &ctx,
+                name.as_ptr(),
+                strlen(name.as_ptr()),
+                value.as_ptr(),
+                crate::variable::o_file,
+                0,
+                ::core::ptr::null_mut(),
+                ::core::ptr::null::<crate::floc::Floc>(),
+            );
+            let prereqs = expand_extra_prereqs(&ctx, v).expect("well-formed value");
+            let names: Vec<Vec<u8>> = prereqs.iter().map(dep_name_bytes).collect();
+            assert_eq!(names, vec![b"alpha".to_vec(), b"beta".to_vec()]);
+            assert!(
+                prereqs.iter().all(|d| d.ignore_automatic_vars),
+                "extra prereqs ignore automatic variables"
+            );
+            assert!(
+                prereqs.iter().all(|d| d.file.is_some()),
+                "each extra prereq resolves to a file"
+            );
+        }
+    }
+
     /// `enter_prereqs(deps, None)` resolves each prerequisite to a file via
     /// `enter_file` and (with no stem) marks the entered file explicit. Drives
     /// the common no-pattern path.
