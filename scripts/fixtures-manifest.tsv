@@ -136,3 +136,5 @@ double_else	ordered	97_double_else.mk	all			simple
 missing_endif	ordered	98_missing_endif.mk	all			simple
 eval_func_endif	ordered	99_eval_func_endif.mk	all			simple
 eval_option_endif	ordered	100_eval_option.mk	all	--eval=endif		simple
+extra_prereqs	ordered	101_extra_prereqs.mk	all			simple
+extra_prereqs_scoped	ordered	101_extra_prereqs.mk	scoped			simple
