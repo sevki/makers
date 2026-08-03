@@ -225,7 +225,7 @@ pub unsafe fn recursively_expand_for_file(
     ctx: &crate::execctx::ExecContext,
     v: *mut variable,
     file: *mut File,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut set_reading: i32 = 0;
     let nl: size_t = strlen((*v).name) as size_t;
@@ -245,11 +245,11 @@ pub unsafe fn recursively_expand_for_file(
             if strncmp(*ep, (*v).name, nl) == 0
                 && *(*ep).add(nl as usize) == b'=' as ::core::ffi::c_char
             {
-                return xstrdup((*ep).add(nl as usize + 1));
+                return Ok(xstrdup((*ep).add(nl as usize + 1)));
             }
             ep = ep.add(1);
         }
-        return xstrdup(c"".as_ptr());
+        return Ok(xstrdup(c"".as_ptr()));
     }
     let saved_varp = ctx.expanding_var.get();
     if !(*v).fileinfo.filenm.is_null() {
@@ -261,17 +261,24 @@ pub unsafe fn recursively_expand_for_file(
     }
     if (*v).expanding() != 0 {
         if (*v).exp_count() == 0 {
-            // `recursively_expand_for_file` returns a raw pointer with wide
-            // fan-out across the crate; bridge through the shared
-            // `_err`/`exit_on_err` path rather than propagating `Result`
-            // through this whole call chain (#432 Phase B, #539).
-            crate::output::exit_on_err(fatal_err(
+            // Built before the unwind below, because the diagnostic reports the
+            // location this frame installed into `ctx.expanding_var`.
+            let err = fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
                 strlen((*v).name),
                 c"recursive variable '%s' references itself (eventually)".as_ptr(),
                 &[FmtArg::Str(((*v).name) as *const ::core::ffi::c_char)],
-            ));
+            );
+            // The old `exit_on_err` made unwinding moot — the process ended
+            // here. Now the error travels back to a caller that keeps running,
+            // so the context this frame installed has to come back off first,
+            // exactly as the success path does at the tail (#442).
+            if set_reading != 0 {
+                ctx.reading_file.0.set(::core::ptr::null::<Floc>());
+            }
+            ctx.expanding_var.set(saved_varp);
+            return Err(err);
         }
         (*v).set_exp_count((*v).exp_count() - 1);
     }
@@ -290,18 +297,30 @@ pub unsafe fn recursively_expand_for_file(
             sl = (*sl).next;
         }
     }
-    let value: *mut ::core::ffi::c_char = if let Some(pref) = parent.as_ref() {
+    // Held rather than `?`-ed on the spot: the four restorations below have to
+    // run on the error path too, or a rejected expansion would leave `v`
+    // flagged as expanding and the file context installed (the cleanup-paths
+    // contract from #561).
+    let value = if let Some(pref) = parent.as_ref() {
         if (*v).origin() == o_override {
             allocated_variable_append(ctx, v)
         } else {
-            xstrdup(pref.value)
+            Ok(xstrdup(pref.value))
         }
     } else if (*v).origin() == o_command || (*v).origin() == o_env_override {
-        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
+        Ok(allocated_expand_string_for_file(
+            ctx,
+            (*v).value,
+            ::core::ptr::null_mut::<file>(),
+        ))
     } else if (*v).append() != 0 {
         allocated_variable_append(ctx, v)
     } else {
-        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
+        Ok(allocated_expand_string_for_file(
+            ctx,
+            (*v).value,
+            ::core::ptr::null_mut::<file>(),
+        ))
     };
     (*v).set_expanding(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if set_reading != 0 {
@@ -338,12 +357,17 @@ pub unsafe fn expand_variable_output(
     // A recursive variable's value is freshly expanded and owned here; an
     // `OwnedCStr` reclaims it on drop instead of the manual `free` the C code
     // did. A non-recursive variable's value is borrowed from the variable.
+    //
+    // `expand_variable_output` still returns a bare pointer, and its cone
+    // (`expand_variable_buf` and `allocated_expand_variable`, whose callers
+    // include `set_special_var`, `follow_symlink_mtime`, `tilde_expand` and
+    // `vpath_from_variable` — none of which return `Result` yet) is a later
+    // slice. Until then the recursion's diagnostics bridge (#432 Phase B, #442).
     let owned = ((*v).recursive() != 0).then(|| {
-        OwnedCStr(recursively_expand_for_file(
-            ctx,
-            v,
-            ::core::ptr::null_mut::<file>(),
-        ))
+        OwnedCStr(
+            recursively_expand_for_file(ctx, v, ::core::ptr::null_mut::<file>())
+                .unwrap_or_else(|e| crate::output::exit_on_err(e)),
+        )
     });
     let value = owned.as_ref().map_or((*v).value, OwnedCStr::as_ptr);
     ptr = variable_buffer_output(ctx, ptr, value, strlen(value) as size_t);
@@ -549,13 +573,16 @@ pub unsafe fn expand_string_buf(
                                 // Recursive values are freshly expanded and
                                 // owned; `OwnedCStr` frees on drop in place of
                                 // the manual `free` below.
-                                let owned = (v.recursive() != 0).then(|| {
-                                    OwnedCStr(recursively_expand_for_file(
-                                        ctx,
-                                        &raw mut *v,
-                                        ::core::ptr::null_mut::<file>(),
-                                    ))
-                                });
+                                let owned = (v.recursive() != 0)
+                                    .then(|| {
+                                        recursively_expand_for_file(
+                                            ctx,
+                                            &raw mut *v,
+                                            ::core::ptr::null_mut::<file>(),
+                                        )
+                                        .map(OwnedCStr)
+                                    })
+                                    .transpose()?;
                                 let value: *mut ::core::ffi::c_char =
                                     owned.as_ref().map_or(v.value, OwnedCStr::as_ptr);
 
@@ -760,9 +787,9 @@ unsafe fn variable_append(
     length: size_t,
     set: *const variable_set_list,
     local: i32,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     if set.is_null() {
-        return initialize_variable_output(ctx);
+        return Ok(initialize_variable_output(ctx));
     }
     let nextlocal = (local != 0 && (*set).next_is_parent == 0) as i32;
     let v: *const variable = lookup_variable_in_set(ctx, name, length, (*set).set);
@@ -772,7 +799,7 @@ unsafe fn variable_append(
 
     // An appending definition stacks on whatever the outer sets produce.
     let mut buf = if (*v).append() != 0 {
-        variable_append(ctx, name, length, (*set).next, nextlocal)
+        variable_append(ctx, name, length, (*set).next, nextlocal)?
     } else {
         initialize_variable_output(ctx)
     };
@@ -780,14 +807,13 @@ unsafe fn variable_append(
         buf = variable_buffer_output(ctx, buf, c" ".as_ptr(), 1);
     }
     if (*v).recursive() == 0 {
-        return variable_buffer_output(ctx, buf, (*v).value, strlen((*v).value));
+        return Ok(variable_buffer_output(ctx, buf, (*v).value, strlen((*v).value)));
     }
-    // `variable_append` recurses on itself and feeds `allocated_variable_append`,
-    // whose only callers are in `recursively_expand_for_file` — still a bare
-    // pointer-returning function. It converts with the wrapper slice (#442).
-    buf = expand_string_buf(ctx, buf, (*v).value, strlen((*v).value))
-        .unwrap_or_else(|e| crate::output::exit_on_err(e));
-    buf.add(strlen(buf) as usize)
+    // A malformed reference inside an appended definition — say
+    // `FOO += $(word 1)` — now travels out through the recursion and through
+    // `allocated_variable_append` instead of ending the process (#442).
+    buf = expand_string_buf(ctx, buf, (*v).value, strlen((*v).value))?;
+    Ok(buf.add(strlen(buf) as usize))
 }
 /// # Safety
 ///
@@ -796,18 +822,28 @@ unsafe fn variable_append(
 pub unsafe fn allocated_variable_append(
     ctx: &crate::execctx::ExecContext,
     v: *const variable,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(ctx, &raw mut obuf, &raw mut olen);
-    variable_append(
+    // Held rather than `?`-ed on the spot: the swap has to run on the error
+    // path too, or a failed append would leave the caller's variable buffer
+    // swapped out (the cleanup-paths contract from #561).
+    let appended = variable_append(
         ctx,
         (*v).name,
         strlen((*v).name) as size_t,
         ctx.variable_globals.current_variable_set_list.get(),
         1,
     );
-    swap_variable_buffer(ctx, obuf, olen)
+    let produced = swap_variable_buffer(ctx, obuf, olen);
+    if let Err(e) = appended {
+        // Ownership of the partial expansion transferred out with the swap and
+        // no caller will claim it, so it is released here rather than leaked.
+        free(produced as *mut ::core::ffi::c_void);
+        return Err(e);
+    }
+    Ok(produced)
 }
 
 #[cfg(test)]
@@ -1014,6 +1050,117 @@ mod expander_rejection_tests {
         unsafe {
             assert_eq!(expand("plain text").expect("literal"), b"plain text".to_vec());
             assert_eq!(expand("a$$b").expect("escape"), b"a$b".to_vec());
+        }
+    }
+}
+
+#[cfg(test)]
+mod recursive_expansion_tests {
+    //! Since #442 `recursively_expand_for_file` returns `Result`, so the
+    //! `recursive variable '%s' references itself (eventually)` diagnostic is a
+    //! value rather than a `process::exit`. That makes the arm reachable from a
+    //! unit test for the first time — reaching it used to abort the test
+    //! binary, which is why it sat at 0% coverage.
+    //!
+    //! Both tests go in through a substitution reference (`$(NAME:a=b)`),
+    //! because that is the branch of `expand_string_buf` that propagates; the
+    //! plain `$(NAME)` branch still runs through `expand_variable_output`,
+    //! which bridges until its own cone converts.
+
+    use super::{expand_string_buf, initialize_variable_output, SIZE_MAX, VARIABLE_BUFFER_TEST_LOCK};
+    use crate::build_result::BuildError;
+    use crate::make_main::initialize_stopchar_map;
+    use crate::variable::{define_variable_in_set, o_file};
+    use std::ffi::CString;
+
+    /// Define `name` as a recursive variable holding `value`, then expand
+    /// `input` in the same context. `appending` marks the definition `+=`,
+    /// which routes the lookup through `variable_append` instead of straight
+    /// into `allocated_expand_string_for_file`.
+    unsafe fn expand_with(
+        name: &str,
+        value: &str,
+        input: &str,
+        appending: bool,
+    ) -> Result<Vec<u8>, BuildError> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        crate::function::hash_init_function_table(&ctx);
+        crate::variable::init_hash_global_variable_set(&ctx);
+        let cname = CString::new(name).unwrap();
+        let cvalue = CString::new(value).unwrap();
+        let v = define_variable_in_set(
+            &ctx,
+            cname.as_ptr(),
+            name.len() as libc::size_t,
+            cvalue.as_ptr(),
+            o_file,
+            // Recursive: the value is expanded on reference, which is what
+            // routes the lookup through `recursively_expand_for_file`.
+            1,
+            ctx.variable_globals.global_variable_set.as_ptr(),
+            ::core::ptr::null::<crate::floc::Floc>(),
+        );
+        if appending {
+            (*v).set_append(1);
+        }
+        let src = CString::new(input).unwrap();
+        initialize_variable_output(&ctx);
+        let end = expand_string_buf(
+            &ctx,
+            ::core::ptr::null_mut::<::core::ffi::c_char>(),
+            src.as_ptr(),
+            SIZE_MAX,
+        )?;
+        assert!(!end.is_null(), "expansion returned a null cursor");
+        Ok(::std::ffi::CStr::from_ptr(end).to_bytes().to_vec())
+    }
+
+    /// A recursive variable whose value references itself never terminates, so
+    /// the expander refuses it. Before #442 this line ended the process from
+    /// inside `recursively_expand_for_file`.
+    ///
+    /// The definition has to be an appending one to be observable here: the
+    /// non-appending route re-enters through `allocated_expand_string_for_file`,
+    /// which is still one of the bridges #573 left behind, so the nested
+    /// rejection would exit before it could be returned. `variable_append`
+    /// calls `expand_string_buf` directly, so this route is `Result` end to end.
+    #[test]
+    fn rejects_self_referencing_recursive_variable() {
+        // SAFETY: single-threaded under the shared variable-buffer lock; every
+        // string handed across is a NUL-terminated `CString`.
+        unsafe {
+            assert!(
+                matches!(
+                    expand_with("SELF", "$(SELF:x=y)", "$(SELF:x=y)", true),
+                    Err(BuildError::Failure)
+                ),
+                "a self-referencing recursive variable must come back as a value"
+            );
+        }
+    }
+
+    /// The same route with a value that terminates still expands, so the
+    /// rejection above is about the recursion and not about substitution
+    /// references in general. This pins the success path of the arms that now
+    /// carry a `Result` back out of `recursively_expand_for_file` — the
+    /// appending case through `allocated_variable_append`, and the plain one
+    /// through the expander.
+    #[test]
+    fn expands_substitution_reference_on_a_recursive_variable() {
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(
+                expand_with("SRCS", "a.c b.c", "$(SRCS:.c=.o)", false).expect("well-formed"),
+                b"a.o b.o".to_vec()
+            );
+            assert_eq!(
+                expand_with("SRCS", "a.c b.c", "$(SRCS:.c=.o)", true).expect("well-formed"),
+                b"a.o b.o".to_vec()
+            );
         }
     }
 }
