@@ -1756,7 +1756,7 @@ pub unsafe fn new_job(
         // BOUNDARY: `expand_string_for_file` is converging on the FileId form
         // (see implicit.rs); call it that way even though the expand layer is
         // still mid-flip. Returns the expanded bytes (NUL-terminated).
-        let mut expanded: Vec<u8> = crate::expand::expand_string_for_file(ctx, &buf, file);
+        let mut expanded: Vec<u8> = crate::expand::expand_string_for_file(ctx, &buf, file)?;
         // Drop the trailing NUL so each stored command line is NUL-free.
         if expanded.last() == Some(&0) {
             expanded.pop();
@@ -1924,7 +1924,7 @@ pub unsafe fn new_job(
             } else {
                 // The set of newer prerequisites ($?), expanded for this file.
                 // BOUNDARY: FileId-convention expand (see implicit.rs).
-                let newer: Vec<u8> = crate::expand::expand_string_for_file(ctx, b"$?\0", file);
+                let newer: Vec<u8> = crate::expand::expand_string_for_file(ctx, b"$?\0", file)?;
                 if newer.first().is_some_and(|&b| b != 0) {
                     let mut newer_buf = newer.clone();
                     if newer_buf.last() != Some(&0) {
@@ -3143,14 +3143,21 @@ unsafe fn expand_for_opt_file(
     string: &[u8],
     file: Option<FileId>,
 ) -> Vec<u8> {
+    // `expand_for_opt_file` is reached only from `construct_command_argv`,
+    // which returns a bare `char **`; its own callers are `func_shell_base`
+    // (returns a raw pointer) and `start_job_command` (returns `()`), so there
+    // is no frame here to propagate into. The shell/argv-construction cone is
+    // its own slice, and this bridge retires with it (#432 Phase B, #442).
     match file {
-        Some(f) => crate::expand::expand_string_for_file(ctx, string, f),
+        Some(f) => crate::expand::expand_string_for_file(ctx, string, f)
+            .unwrap_or_else(|e| crate::output::exit_on_err(e)),
         None => {
             let p = crate::expand::allocated_expand_string_for_file(
                 ctx,
                 string.as_ptr() as *const ::core::ffi::c_char,
                 ::core::ptr::null_mut::<crate::file::File>(),
-            );
+            )
+            .unwrap_or_else(|e| crate::output::exit_on_err(e));
             if p.is_null() {
                 return vec![0];
             }

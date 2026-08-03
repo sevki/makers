@@ -2192,12 +2192,12 @@ pub unsafe fn do_variable_definition(
     match flavor as ::core::ffi::c_uint {
         1 => {
             alloc_value =
-                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>());
+                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>())?;
             newval = alloc_value;
         }
         3 => {
             let t: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>());
+                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>())?;
             alloc_value = xmalloc((strlen(t) as size_t).wrapping_mul(2).wrapping_add(1))
                 as *mut ::core::ffi::c_char;
             let mut np: *mut ::core::ffi::c_char = alloc_value;
@@ -2220,7 +2220,7 @@ pub unsafe fn do_variable_definition(
         }
         5 => {
             let q: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>());
+                allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>())?;
             alloc_value = shell_result(ctx, q);
             free(q as *mut ::core::ffi::c_void);
             flavor = f_recursive;
@@ -2275,7 +2275,7 @@ pub unsafe fn do_variable_definition(
                     != f_append_value as i32 as ::core::ffi::c_uint
                 {
                     tp =
-                        allocated_expand_string_for_file(ctx, val, ::core::ptr::null_mut::<file>());
+                        allocated_expand_string_for_file(ctx, val, ::core::ptr::null_mut::<file>())?;
                     val = tp;
                 }
                 vallen = strlen(val) as size_t;
@@ -2424,9 +2424,25 @@ pub unsafe fn assign_variable_definition(
         (*v).length as size_t,
     );
     *name.offset((*v).length as isize) = 0;
-    (*v).name = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
-    fatal_on_empty_variable_name(ctx, v)?;
+    install_expanded_variable_name(ctx, v, name)?;
     Ok(v)
+}
+
+/// Expand `name` in the global context, install it as `v`'s name, and reject an
+/// empty result. Paired with [`fatal_on_empty_variable_name`] here rather than
+/// at the call site so `assign_variable_definition` stays the flat sequence it
+/// was before the expander started returning `Result` (#442).
+///
+/// # Safety
+///
+/// `name` must be a live NUL-terminated string and `v` a valid `variable`.
+unsafe fn install_expanded_variable_name(
+    ctx: &crate::execctx::ExecContext,
+    v: *mut variable,
+    name: *const ::core::ffi::c_char,
+) -> Result<(), crate::build_result::BuildError> {
+    (*v).name = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>())?;
+    fatal_on_empty_variable_name(ctx, v)
 }
 
 /// Abort with "empty variable name" when `v`'s (already expanded) name is the
@@ -3173,6 +3189,63 @@ mod initialize_file_variables_tests {
         initialize_file_variables(&ctx, f, 0).expect("initialize_file_variables rejected");
         let node = ctx.filenodes.get(f).expect("interned");
         assert!(node.lock().unwrap().pat_searched);
+    }
+
+    /// A pattern-specific definition whose value cannot be expanded is now a
+    /// rejection travelling out of `initialize_file_variables`, not a
+    /// `process::exit` from inside the variable layer. #577 wired the arm but
+    /// could not reach it: `do_variable_definition` had no `Err` return of its
+    /// own until this slice made `allocated_expand_string_for_file` fallible.
+    ///
+    /// The teardown is checked alongside the verdict: the search runs inside a
+    /// throwaway variable scope, and the error path has to put the caller's set
+    /// list back before returning (the cleanup-paths contract from #561).
+    #[test]
+    fn rejected_pattern_variable_propagates_and_restores_the_scope() {
+        let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: the pattern-var database and the function table are the
+        // legacy pointer machinery; every string handed across is a
+        // NUL-terminated `CString`, and the context is fresh.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            let target = ::std::ffi::CString::new("%.o").unwrap();
+            let pv = super::create_pattern_var(
+                &ctx,
+                target.as_ptr(),
+                target.as_ptr().add(0),
+            );
+            let name = ::std::ffi::CString::new("IFV_BAD").unwrap();
+            // `$(word 1)` is a well-formed reference to a builtin called with
+            // the wrong number of arguments, so expanding it is refused.
+            let value = ::std::ffi::CString::new("$(word 1)").unwrap();
+            (*pv).variable.name = name.as_ptr() as *mut ::core::ffi::c_char;
+            (*pv).variable.value = value.as_ptr() as *mut ::core::ffi::c_char;
+            (*pv).variable.set_origin(super::o_file);
+            // `f_expand` (`::=`) rather than `f_simple`: the simple flavour is
+            // routed straight to `define_variable_in_set`, which never expands.
+            (*pv).variable.set_flavor(super::f_expand);
+
+            let before = ctx.variable_globals.current_variable_set_list.get();
+            let f = enter_file(&ctx, b"ifv_reject_probe.o");
+            let outcome = initialize_file_variables(&ctx, f, 0);
+
+            assert!(
+                matches!(outcome, Err(crate::build_result::BuildError::Failure)),
+                "a rejected pattern-specific definition must come back as a value"
+            );
+            assert_eq!(
+                ctx.variable_globals.current_variable_set_list.get(),
+                before,
+                "the throwaway scope must be torn down on the error path too"
+            );
+            assert!(
+                !ctx.filenodes.get(f).unwrap().lock().unwrap().pat_searched,
+                "an incomplete search must not be recorded as done"
+            );
+        }
     }
 
     /// A file with a `parent` recurses into the parent first, latching the
