@@ -1038,8 +1038,11 @@ pub unsafe fn reap_children(
                     (*c).set_remote(
                         ctx.remote_backend.0.can_start_job(false) as ::core::ffi::c_uint,
                     );
-                    start_job_command(ctx, c);
+                    // The signal mask this loop blocked has to come back before
+                    // a rejection leaves the reaper.
+                    let started = start_job_command(ctx, c);
                     unblock_sigs(ctx);
+                    started?;
                     if file_command_state_entry(ctx, (*c).file, (*c).entry) as i32
                         == cs_running as i32
                     {
@@ -1197,7 +1200,10 @@ unsafe fn release_jobserver_token(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut child) {
+pub unsafe fn start_job_command(
+    ctx: &crate::execctx::ExecContext,
+    child: *mut child,
+) -> Result<(), crate::build_result::BuildError> {
     let mut flags: i32;
     let mut p: *mut ::core::ffi::c_char;
     let mut argv: *mut *mut ::core::ffi::c_char;
@@ -1282,7 +1288,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             Some((*child).file),
             argv_line_flags | command_flags,
             &raw mut (*child).sh_batch_file,
-        );
+        )?;
         if end.is_null() {
             (*child).command_ptr = ::core::ptr::null_mut::<::core::ffi::c_char>();
         } else {
@@ -1299,7 +1305,7 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
             }
             set_file_update_status_entry(ctx, (*child).file, (*child).entry, us_question);
             notice_finished_file(ctx, (*child).file, (*child).entry);
-            return;
+            return Ok(());
         }
         if crate::make_main::opt_touch(ctx) && !(flags & 1 != 0) {
             if !argv.is_null() {
@@ -1382,7 +1388,18 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                         None => false,
                     };
                     (*child).environment =
-                        target_environment(ctx, Some((*child).file), any_recurse as i32);
+                        match target_environment(ctx, Some((*child).file), any_recurse as i32) {
+                            Ok(env) => env,
+                            Err(e) => {
+                                // The recipe never launched, so the argv block is
+                                // released and the sync-output context installed
+                                // above is torn down before unwinding.
+                                free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
+                                free(argv as *mut ::core::ffi::c_void);
+                                set_output_context(::core::ptr::null_mut::<output>());
+                                return Err(e);
+                            }
+                        };
                 }
                 // Run the job locally unless it is successfully handed off to a
                 // remote executor.
@@ -1441,18 +1458,22 @@ pub unsafe fn start_job_command(ctx: &crate::execctx::ExecContext, child: *mut c
                     free(argv as *mut ::core::ffi::c_void);
                 }
                 set_output_context(::core::ptr::null_mut::<output>());
-                return;
+                return Ok(());
             }
         }
     }
-    if job_next_command(child) != 0 {
-        start_job_command(ctx, child);
+    // The tail always tears the output context down, so a rejection raised by
+    // the next recipe line is held until that has run.
+    let outcome = if job_next_command(child) != 0 {
+        start_job_command(ctx, child)
     } else {
         set_file_command_state_entry(ctx, (*child).file, (*child).entry, cs_running);
         set_file_update_status_entry(ctx, (*child).file, (*child).entry, us_success);
         notice_finished_file(ctx, (*child).file, (*child).entry);
-    }
+        Ok(())
+    };
     set_output_context(::core::ptr::null_mut::<output>());
+    outcome
 }
 /// # Safety
 ///
@@ -1471,7 +1492,7 @@ pub unsafe fn start_waiting_job(
         ctx.waiting_jobs.0.set(c);
         return Ok(0);
     }
-    start_job_command(ctx, c);
+    start_job_command(ctx, c)?;
     // Finished states (cs_not_started reset to success, cs_finished) need the
     // file noticed and the child freed; a still-running job does not.
     let mut finish = false;
@@ -3142,30 +3163,23 @@ unsafe fn expand_for_opt_file(
     ctx: &crate::execctx::ExecContext,
     string: &[u8],
     file: Option<FileId>,
-) -> Vec<u8> {
-    // `expand_for_opt_file` is reached only from `construct_command_argv`,
-    // which returns a bare `char **`; its own callers are `func_shell_base`
-    // (returns a raw pointer) and `start_job_command` (returns `()`), so there
-    // is no frame here to propagate into. The shell/argv-construction cone is
-    // its own slice, and this bridge retires with it (#432 Phase B, #442).
+) -> Result<Vec<u8>, crate::build_result::BuildError> {
     match file {
-        Some(f) => crate::expand::expand_string_for_file(ctx, string, f)
-            .unwrap_or_else(|e| crate::output::exit_on_err(e)),
+        Some(f) => crate::expand::expand_string_for_file(ctx, string, f),
         None => {
             let p = crate::expand::allocated_expand_string_for_file(
                 ctx,
                 string.as_ptr() as *const ::core::ffi::c_char,
                 ::core::ptr::null_mut::<crate::file::File>(),
-            )
-            .unwrap_or_else(|e| crate::output::exit_on_err(e));
+            )?;
             if p.is_null() {
-                return vec![0];
+                return Ok(vec![0]);
             }
             let len = libc::strlen(p) as usize;
             let mut v = ::core::slice::from_raw_parts(p as *const u8, len).to_vec();
             v.push(0);
             libc::free(p as *mut ::core::ffi::c_void);
-            v
+            Ok(v)
         }
     }
 }
@@ -3177,30 +3191,15 @@ pub unsafe fn construct_command_argv(
     file: Option<FileId>,
     cmd_flags: i32,
     batch_filename: *mut *mut ::core::ffi::c_char,
-) -> *mut *mut ::core::ffi::c_char {
+) -> Result<*mut *mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let argv: *mut *mut ::core::ffi::c_char;
-    let save: Action = warning::action(ctx, Type::UndefinedVar);
-    warning::set_action(ctx, Type::UndefinedVar, Action::Ignore);
     // Look up SHELL/.SHELLFLAGS/IFS in the target's variable context (or the
     // global context when `file` is None — the former null `*mut File`). Each
-    // returns an owned NUL-terminated buffer.
-    let shell_buf: Vec<u8> = expand_for_opt_file(ctx, b"$(SHELL)\0", file);
-    // `.SHELLFLAGS`: a non-empty (set) value is used verbatim; otherwise fall
-    // back to the posix-pedantic `-ec` or the default `-c`.
-    let shellflags_set: Vec<u8> = expand_for_opt_file(ctx, b"$(.SHELLFLAGS)\0", file);
-    let shellflags_owned: Vec<u8> = if shellflags_set.first().is_some_and(|&b| b != 0) {
-        let mut v = shellflags_set.clone();
-        if v.last() != Some(&0) {
-            v.push(0);
-        }
-        v
-    } else if posix_pedantic(ctx) && !crate::make_main::opt_ignore_errors(ctx) && !(cmd_flags & 4 != 0) {
-        b"-ec\0".to_vec()
-    } else {
-        b"-c\0".to_vec()
-    };
-    let ifs_buf: Vec<u8> = expand_for_opt_file(ctx, b"$(IFS)\0", file);
-    warning::set_action(ctx, Type::UndefinedVar, save);
+    // returns an owned NUL-terminated buffer. Split out so the
+    // undefined-variable suppression is restored on the rejection path as well
+    // as the success one (the cleanup-paths contract from #561).
+    let (shell_buf, shellflags_set, ifs_buf) = expand_shell_settings(ctx, file)?;
+    let shellflags_owned: Vec<u8> = resolve_shellflags(ctx, &shellflags_set, cmd_flags);
     let shell = shell_buf.as_ptr() as *const ::core::ffi::c_char;
     let shellflags = shellflags_owned.as_ptr() as *const ::core::ffi::c_char;
     let ifs = ifs_buf.as_ptr() as *const ::core::ffi::c_char;
@@ -3214,7 +3213,55 @@ pub unsafe fn construct_command_argv(
         cmd_flags,
         batch_filename,
     );
-    argv
+    Ok(argv)
+}
+
+/// Pick the flags to hand the shell: a `.SHELLFLAGS` value that expanded to
+/// something non-empty is used verbatim (NUL-terminated if it was not
+/// already), otherwise the posix-pedantic `-ec` or the default `-c`.
+fn resolve_shellflags(
+    ctx: &crate::execctx::ExecContext,
+    shellflags_set: &[u8],
+    cmd_flags: i32,
+) -> Vec<u8> {
+    if shellflags_set.first().is_some_and(|&b| b != 0) {
+        let mut v = shellflags_set.to_vec();
+        if v.last() != Some(&0) {
+            v.push(0);
+        }
+        v
+    } else if posix_pedantic(ctx)
+        && !crate::make_main::opt_ignore_errors(ctx)
+        && !(cmd_flags & 4 != 0)
+    {
+        b"-ec\0".to_vec()
+    } else {
+        b"-c\0".to_vec()
+    }
+}
+
+/// Expand `$(SHELL)`, `$(.SHELLFLAGS)` and `$(IFS)` in `file`'s variable
+/// context (or the global one when `file` is `None`), with the
+/// undefined-variable warning suppressed for the duration.
+///
+/// The three expansions are held across the restore so that a rejected one
+/// still puts the warning action back before the error leaves the frame.
+///
+/// # Safety
+/// As [`construct_command_argv`].
+type ShellSettings = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+unsafe fn expand_shell_settings(
+    ctx: &crate::execctx::ExecContext,
+    file: Option<FileId>,
+) -> Result<ShellSettings, crate::build_result::BuildError> {
+    let save: Action = warning::action(ctx, Type::UndefinedVar);
+    warning::set_action(ctx, Type::UndefinedVar, Action::Ignore);
+    let shell = expand_for_opt_file(ctx, b"$(SHELL)\0", file);
+    let shellflags = expand_for_opt_file(ctx, b"$(.SHELLFLAGS)\0", file);
+    let ifs = expand_for_opt_file(ctx, b"$(IFS)\0", file);
+    warning::set_action(ctx, Type::UndefinedVar, save);
+    Ok((shell?, shellflags?, ifs?))
 }
 
 #[cfg(test)]
@@ -3978,5 +4025,147 @@ mod start_waiting_jobs_tests {
         // Reclaim it: the re-queue path deliberately does not free the child.
         // SAFETY: nothing else owns `c`, and the chain is dropped with the ctx.
         unsafe { drop(Box::from_raw(c)) };
+    }
+}
+
+#[cfg(test)]
+mod shell_settings_tests {
+    //! Since #442 `construct_command_argv` returns `Result`: a `SHELL`,
+    //! `.SHELLFLAGS` or `IFS` value that cannot be expanded comes back as a
+    //! rejection instead of ending the process while a recipe is being built.
+    //! The lookup suppresses the undefined-variable warning for its duration,
+    //! so the rejection path has to put that action back too (the
+    //! cleanup-paths contract from #561).
+
+    use super::{construct_command_argv, expand_shell_settings, resolve_shellflags};
+    use crate::build_result::BuildError;
+    use crate::expand::VARIABLE_BUFFER_TEST_LOCK;
+    use crate::warning::{self, Action, Type};
+    use std::ffi::CString;
+
+    /// `$(word 1)` is a builtin called with the wrong number of arguments, so
+    /// expanding it is refused.
+    const BAD: &str = "$(word 1)";
+
+    /// Define `name` as a recursive global variable holding `value`.
+    ///
+    /// # Safety
+    /// `ctx` must have its global variable set initialized.
+    unsafe fn define_recursive(ctx: &crate::execctx::ExecContext, name: &str, value: &str) {
+        let cname = CString::new(name).unwrap();
+        let cvalue = CString::new(value).unwrap();
+        crate::variable::define_variable_in_set(
+            ctx,
+            cname.as_ptr(),
+            name.len() as crate::ffi_types::size_t,
+            cvalue.as_ptr(),
+            crate::variable::o_file,
+            1,
+            ctx.variable_globals.global_variable_set.as_ptr(),
+            ::core::ptr::null::<crate::floc::Floc>(),
+        );
+    }
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::expand::initialize_variable_output(&ctx);
+        }
+        ctx
+    }
+
+    /// A `SHELL` that cannot be expanded is refused, and the suppression the
+    /// lookup installed is lifted before the rejection leaves the frame.
+    #[test]
+    fn rejected_shell_restores_the_warning_action() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: NUL-terminated names; single-threaded fresh context.
+        unsafe {
+            define_recursive(&ctx, "SHELL", BAD);
+            warning::set_action(&ctx, Type::UndefinedVar, Action::Error);
+
+            assert!(matches!(
+                expand_shell_settings(&ctx, None),
+                Err(BuildError::Failure)
+            ));
+            assert_eq!(
+                warning::action(&ctx, Type::UndefinedVar),
+                Action::Error,
+                "the undefined-variable action must be restored on the \
+                 rejection path"
+            );
+
+            let mut line = *b"true\0";
+            assert!(matches!(
+                construct_command_argv(
+                    &ctx,
+                    line.as_mut_ptr() as *mut ::core::ffi::c_char,
+                    ::core::ptr::null_mut(),
+                    None,
+                    0,
+                    ::core::ptr::null_mut(),
+                ),
+                Err(BuildError::Failure)
+            ));
+        }
+    }
+
+    /// The same rejection reached through `.SHELLFLAGS` and through `IFS` —
+    /// all three expansions are held to the same restore.
+    #[test]
+    fn rejected_shellflags_and_ifs_also_propagate() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for name in [".SHELLFLAGS", "IFS"] {
+            let ctx = fresh_ctx();
+            // SAFETY: as above.
+            unsafe {
+                define_recursive(&ctx, name, BAD);
+                assert!(
+                    matches!(expand_shell_settings(&ctx, None), Err(BuildError::Failure)),
+                    "{name} must propagate its rejection"
+                );
+            }
+        }
+    }
+
+    /// Well-formed values still expand, and the warning action is untouched.
+    #[test]
+    fn well_formed_settings_still_expand() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: as above.
+        unsafe {
+            define_recursive(&ctx, "SHELL", "/bin/sh");
+            define_recursive(&ctx, "IFS", " ");
+            warning::set_action(&ctx, Type::UndefinedVar, Action::Error);
+            let (shell, _flags, ifs) = expand_shell_settings(&ctx, None).expect("well-formed");
+            assert_eq!(shell, b"/bin/sh\0");
+            assert_eq!(ifs, b" \0");
+            assert_eq!(warning::action(&ctx, Type::UndefinedVar), Action::Error);
+        }
+    }
+
+    /// `.SHELLFLAGS` chooses between the expanded value and the two defaults;
+    /// a value that did not arrive NUL-terminated is terminated in place.
+    #[test]
+    fn shellflags_fall_back_when_unset() {
+        let ctx = fresh_ctx();
+        assert_eq!(resolve_shellflags(&ctx, b"-x\0", 0), b"-x\0");
+        assert_eq!(resolve_shellflags(&ctx, b"-x", 0), b"-x\0");
+        // Unset (empty, or expanded to the empty string) takes the default; the
+        // posix-pedantic `-ec` arm needs `.POSIX:`, which this context lacks.
+        assert_eq!(resolve_shellflags(&ctx, b"", 0), b"-c\0");
+        assert_eq!(resolve_shellflags(&ctx, b"\0", 0), b"-c\0");
     }
 }

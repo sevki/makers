@@ -1763,7 +1763,7 @@ pub unsafe fn target_environment(
     ctx: &crate::execctx::ExecContext,
     file: Option<FileId>,
     recursive: i32,
-) -> *mut *mut ::core::ffi::c_char {
+) -> Result<*mut *mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let set_list: *mut variable_set_list;
     // For a target context, build the transient per-file variable chain and
     // install it as current so the nested `recursively_expand_for_file` calls
@@ -1887,6 +1887,11 @@ pub unsafe fn target_environment(
     result = result_0;
     v_slot = table.ht_vec as *mut *mut variable;
     v_end = v_slot.offset(table.ht_size as isize);
+    // Held rather than `?`-ed inside the walk: the teardown at the tail — the
+    // `env_recursion` decrement, restoring `current_variable_set_list` and
+    // freeing the transient per-file chain — has to run on the error path too
+    // (the cleanup-paths contract from #561).
+    let mut rejected = None;
     while v_slot < v_end {
         if !((*v_slot).is_null()
             || *v_slot as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
@@ -1911,17 +1916,19 @@ pub unsafe fn target_environment(
                 {
                     // `current_variable_set_list` is already the file's scope
                     // (installed above when `file` is Some), so expand in that
-                    // context with a null file pointer.
-                    //
-                    // `target_environment` still returns a bare `char **`, and
-                    // both its callers — `func_shell_base` in `function.rs` and
-                    // `start_job_command` in `job.rs` — return `()`/a raw
-                    // pointer, so there is no frame here to propagate into. The
-                    // environment-construction slice retires this bridge
-                    // (#432 Phase B, #442).
-                    cp = recursively_expand_for_file(ctx, v_0, ::core::ptr::null_mut::<file>())
-                        .unwrap_or_else(|e| crate::output::exit_on_err(e));
-                    value = cp;
+                    // context with a null file pointer. Since #442 a variable
+                    // whose exported value cannot be expanded stops the walk
+                    // and travels out instead of ending the process.
+                    match recursively_expand_for_file(ctx, v_0, ::core::ptr::null_mut::<file>()) {
+                        Ok(expanded) => {
+                            cp = expanded;
+                            value = cp;
+                        }
+                        Err(e) => {
+                            rejected = Some(e);
+                            break;
+                        }
+                    }
                 }
                 if added_shell == 0
                     && (*(*v_0).name as i32
@@ -2086,7 +2093,15 @@ pub unsafe fn target_environment(
             .set(saved_current);
         free_file_setlist(ctx, owned_list);
     }
-    result_0
+    match rejected {
+        // The environment block is incomplete, so it is released rather than
+        // handed to a caller that would treat it as a finished `envp`.
+        Some(e) => {
+            free(result_0 as *mut ::core::ffi::c_void);
+            Err(e)
+        }
+        None => Ok(result_0),
+    }
 }
 unsafe fn set_special_var(
     ctx: &crate::execctx::ExecContext,
@@ -2145,7 +2160,7 @@ unsafe fn set_special_var(
 pub unsafe fn shell_result(
     ctx: &crate::execctx::ExecContext,
     p: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut buf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut len: size_t = 0;
     let mut args: [*mut ::core::ffi::c_char; 2] =
@@ -2153,13 +2168,15 @@ pub unsafe fn shell_result(
     install_variable_buffer(ctx, &raw mut buf, &raw mut len);
     args[0_i32 as usize] = p as *mut ::core::ffi::c_char;
     args[1_i32 as usize] = ::core::ptr::null_mut::<::core::ffi::c_char>();
-    func_shell_base(
+    let outcome = func_shell_base(
         ctx,
         ctx.variable_buffer.ptr(),
         &raw mut args as *mut *mut ::core::ffi::c_char,
         0,
     );
-    swap_variable_buffer(ctx, buf, len)
+    // The installed buffer is swapped back before the rejection escapes, so the
+    // caller's expansion buffer is never left displaced by this shell.
+    crate::expand::claim_expansion(outcome.map(|_| ()), swap_variable_buffer(ctx, buf, len))
 }
 /// # Safety
 ///
@@ -2221,8 +2238,9 @@ pub unsafe fn do_variable_definition(
         5 => {
             let q: *mut ::core::ffi::c_char =
                 allocated_expand_string_for_file(ctx, value, ::core::ptr::null_mut::<file>())?;
-            alloc_value = shell_result(ctx, q);
+            let produced = shell_result(ctx, q);
             free(q as *mut ::core::ffi::c_void);
+            alloc_value = produced?;
             flavor = f_recursive;
             newval = alloc_value;
         }
@@ -3527,6 +3545,70 @@ mod file_context_coverage_tests {
             let current_list = ctx.variable_globals.current_variable_set_list.get();
             assert_eq!(current_list, saved_list);
             assert_eq!(ctx.reading_file.0.get(), saved_reading);
+        }
+    }
+}
+
+#[cfg(test)]
+mod shell_assignment_tests {
+    //! Since #442 `shell_result` returns `Result`: a `!=` assignment whose
+    //! right-hand side cannot be run comes back as a rejection instead of
+    //! ending the process. It installs a variable buffer for the shell's
+    //! output, so the swap back has to happen on the rejection path too (the
+    //! cleanup-paths contract from #561).
+
+    use super::shell_result;
+    use crate::build_result::BuildError;
+    use crate::expand::VARIABLE_BUFFER_TEST_LOCK;
+    use std::ffi::CString;
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::expand::initialize_variable_output(&ctx);
+        }
+        ctx
+    }
+
+    /// A `SHELL` that cannot be expanded makes the whole shell assignment
+    /// fail, and the buffer installed for the output is swapped back before
+    /// the rejection leaves the frame.
+    #[test]
+    fn rejected_shell_restores_the_variable_buffer() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: NUL-terminated command; single-threaded fresh context.
+        unsafe {
+            let name = CString::new("SHELL").unwrap();
+            let value = CString::new("$(word 1)").unwrap();
+            super::define_variable_in_set(
+                &ctx,
+                name.as_ptr(),
+                5,
+                value.as_ptr(),
+                super::o_file,
+                1,
+                ctx.variable_globals.global_variable_set.as_ptr(),
+                ::core::ptr::null::<crate::floc::Floc>(),
+            );
+            let outer = ctx.variable_buffer.ptr();
+
+            let cmd = CString::new("echo hi").unwrap();
+            assert!(matches!(
+                shell_result(&ctx, cmd.as_ptr()),
+                Err(BuildError::Failure)
+            ));
+            assert_eq!(
+                ctx.variable_buffer.ptr(),
+                outer,
+                "the caller's variable buffer must be swapped back in"
+            );
         }
     }
 }
