@@ -1064,7 +1064,7 @@ pub unsafe fn eval(
                                 ctx,
                                 p2,
                                 ::core::ptr::null_mut::<File>(),
-                            );
+                            )?;
                             cp = ap;
                             p = find_next_token(&raw mut cp, &raw mut l);
                             while !p.is_null() {
@@ -1228,7 +1228,7 @@ pub unsafe fn eval(
                             ctx,
                             p2,
                             ::core::ptr::null_mut::<file>(),
-                        );
+                        )?;
                         if *p as i32 == 0 {
                             free(p as *mut ::core::ffi::c_void);
                         } else {
@@ -1356,7 +1356,7 @@ pub unsafe fn eval(
                             ctx,
                             p2,
                             ::core::ptr::null_mut::<file>(),
-                        );
+                        )?;
                         if *p as i32 == 0 {
                             free(p as *mut ::core::ffi::c_void);
                         } else {
@@ -1968,7 +1968,7 @@ unsafe fn do_undefine(
     ebuf: *mut EBuffer,
 ) -> Result<(), crate::build_result::BuildError> {
     let var: *mut ::core::ffi::c_char =
-        allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
+        allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>())?;
     // Isolate the variable name (skip leading blanks, trim trailing blanks) via
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(var).to_bytes()) {
@@ -2043,7 +2043,7 @@ unsafe fn do_define(
         }
         *var.name.offset(var.length as isize) = 0;
     }
-    n = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
+    n = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>())?;
     // Isolate the variable name (skip leading blanks, trim trailing blanks) via
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(n).to_bytes()) {
@@ -2320,7 +2320,7 @@ unsafe fn conditional_line(
         {
             let v: *mut variable;
             let var: *mut ::core::ffi::c_char =
-                allocated_expand_string_for_file(ctx, line, ::core::ptr::null_mut::<file>());
+                allocated_expand_string_for_file(ctx, line, ::core::ptr::null_mut::<file>())?;
             // The condition is a single variable name: take the lone token (a
             // trailing second token is a syntax error) via the typed AST layer,
             // replacing the `end_of_token` + manual whitespace scan.
@@ -2441,7 +2441,7 @@ unsafe fn record_target_var(
                     ctx,
                     vref.value,
                     ::core::ptr::null_mut::<file>(),
-                );
+                )?;
             } else {
                 vref.value = xstrdup(vref.value);
             }

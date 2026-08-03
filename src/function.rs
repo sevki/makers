@@ -43,8 +43,8 @@ impl ExpandedArg {
         ctx: &crate::execctx::ExecContext,
         arg: *const ::core::ffi::c_char,
         end: *const ::core::ffi::c_char,
-    ) -> Self {
-        ExpandedArg(expand_argument(ctx, arg, end))
+    ) -> Result<Self, crate::build_result::BuildError> {
+        Ok(ExpandedArg(expand_argument(ctx, arg, end)?))
     }
 
     /// Take ownership of an already-expanded, `malloc`ed buffer (e.g. from
@@ -2745,12 +2745,12 @@ unsafe fn func_foreach(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
-    );
+    )?;
     let list = ExpandedArg::new(
         ctx,
         *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
-    );
+    )?;
     let body: *const ::core::ffi::c_char = *argv.offset(2_i32 as isize);
     let mut doneany: i32 = 0;
     let mut list_iterator: *const ::core::ffi::c_char = list.as_ptr();
@@ -2787,7 +2787,7 @@ unsafe fn func_foreach(
             ctx,
             body,
             ::core::ptr::null_mut::<File>(),
-        ));
+        )?);
         o = variable_buffer_output(ctx, o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
         o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         doneany = 1;
@@ -2808,12 +2808,12 @@ unsafe fn func_let(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
-    );
+    )?;
     let list = ExpandedArg::new(
         ctx,
         *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
-    );
+    )?;
     let body: *const ::core::ffi::c_char = *argv.offset(2_i32 as isize);
     let mut vp: *const ::core::ffi::c_char;
     let mut vp_next: *const ::core::ffi::c_char = varnames.as_ptr();
@@ -3442,12 +3442,12 @@ unsafe fn func_intcmp(
         ctx,
         *argv.offset(0_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
-    );
+    )?;
     let rhs_str = ExpandedArg::new(
         ctx,
         *argv.offset(1_i32 as isize),
         ::core::ptr::null::<::core::ffi::c_char>(),
-    );
+    )?;
     let llim: *const ::core::ffi::c_char = parse_textint(
         ctx,
         lhs_str.as_ptr(),
@@ -3494,7 +3494,7 @@ unsafe fn func_intcmp(
         }
     }
     if !(*argv).is_null() {
-        let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
+        let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>())?;
         o = variable_buffer_output(
             ctx,
             o,
@@ -3530,11 +3530,13 @@ fn trimmed_span_offsets(bytes: &[u8]) -> Option<(usize, usize)> {
 fn expand_trimmed(
     ctx: &crate::execctx::ExecContext,
     arg: *const ::core::ffi::c_char,
-) -> Option<ExpandedArg> {
+) -> Result<Option<ExpandedArg>, crate::build_result::BuildError> {
     // SAFETY: `arg` is a NUL-terminated C string supplied by the dispatcher.
     let with_nul = unsafe { ::core::ffi::CStr::from_ptr(arg) }.to_bytes_with_nul();
     let content = &with_nul[..with_nul.len() - 1];
-    let (start, end) = trimmed_span_offsets(content)?;
+    let Some((start, end)) = trimmed_span_offsets(content) else {
+        return Ok(None);
+    };
     // Index a NUL-inclusive view so the end pointer stays dereferenceable:
     // when the trimmed span has no trailing whitespace `end == content.len()`,
     // and `with_nul[end..]` then points *at* the terminator (in-bounds) rather
@@ -3544,7 +3546,7 @@ fn expand_trimmed(
     let end = with_nul[end..].as_ptr() as *const ::core::ffi::c_char;
     // SAFETY: `beg`/`end` index the NUL-inclusive slice, so both are valid,
     // in-bounds, dereferenceable pointers into the argument buffer.
-    Some(unsafe { ExpandedArg::new(ctx, beg, end) })
+    Ok(Some(unsafe { ExpandedArg::new(ctx, beg, end)? }))
 }
 unsafe fn func_if(
     ctx: &crate::execctx::ExecContext,
@@ -3555,12 +3557,12 @@ unsafe fn func_if(
     // The condition is true when its trimmed, expanded text is non-empty (first
     // byte is not the terminating NUL), matching the C `*expansion != '\0'`.
     let condition =
-        expand_trimmed(ctx, *argv.offset(0_i32 as isize)).is_some_and(|e| *e.as_ptr() != 0);
+        expand_trimmed(ctx, *argv.offset(0_i32 as isize))?.is_some_and(|e| *e.as_ptr() != 0);
     // then-branch is argv[1]; else-branch is argv[2]. Skip the extra argument
     // when the condition is false.
     argv = argv.offset((1 + (!condition) as i32) as isize);
     if !(*argv).is_null() {
-        let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>());
+        let expansion = ExpandedArg::new(ctx, *argv, ::core::ptr::null::<::core::ffi::c_char>())?;
         o = variable_buffer_output(
             ctx,
             o,
@@ -3577,7 +3579,7 @@ unsafe fn func_or(
     mut _funcname: *const ::core::ffi::c_char,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     while !(*argv).is_null() {
-        if let Some(expansion) = expand_trimmed(ctx, *argv) {
+        if let Some(expansion) = expand_trimmed(ctx, *argv)? {
             let result = strlen(expansion.as_ptr()) as size_t;
             if result != 0 {
                 o = variable_buffer_output(ctx, o, expansion.as_ptr(), result);
@@ -3597,7 +3599,7 @@ unsafe fn func_and(
     loop {
         // An empty argument (empty trimmed span) makes the whole `$(and ...)`
         // empty, matching the C `begp > endp` early return.
-        let Some(expansion) = expand_trimmed(ctx, *argv) else {
+        let Some(expansion) = expand_trimmed(ctx, *argv)? else {
             return Ok(o);
         };
         let result = strlen(expansion.as_ptr()) as size_t;
@@ -4929,7 +4931,7 @@ pub unsafe fn handle_function(
             } {
                 next = end;
             }
-            *argvp = expand_argument(ctx, p, next);
+            *argvp = expand_argument(ctx, p, next)?;
             p = next.offset(1_i32 as isize);
             argvp = argvp.offset(1_i32 as isize);
         }

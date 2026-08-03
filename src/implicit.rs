@@ -1121,7 +1121,7 @@ fn second_expansion_deps(
         // FileId-based `expand_string_for_file`.
         let mut buf = depname.clone();
         buf.push(0);
-        let expanded = crate::expand::expand_string_for_file(ctx, &buf, file);
+        let expanded = crate::expand::expand_string_for_file(ctx, &buf, file)?;
 
         // Parse the expanded result.
         let mut parsed_buf = expanded;

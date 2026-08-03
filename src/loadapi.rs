@@ -102,7 +102,12 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
 #[no_mangle]
 pub unsafe extern "C" fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut ::core::ffi::c_char {
     with_live_or_default_ctx(|ctx| unsafe {
+        // A permanent bridge, not a slice boundary: `gmk_expand` is a
+        // `#[no_mangle] extern "C"` plugin entry point whose signature is fixed
+        // by the `gnumake.h` ABI, so a rejected expansion has nowhere to
+        // propagate and must end the process here (#432 Phase B, #442).
         allocated_expand_string_for_file(ctx, ref_0, ::core::ptr::null_mut::<file>())
+            .unwrap_or_else(|e| crate::output::exit_on_err(e))
     })
 }
 /// Run `f` against `main_0`'s live context, reached through the `CTX_PTR`

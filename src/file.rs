@@ -1524,7 +1524,7 @@ pub unsafe fn expand_deps(
         // via the FileId form of `expand_string_for_file`.
         let mut name_c = name_bytes.clone();
         name_c.push(0);
-        let mut expanded = expand_string_for_file(ctx, &name_c, f);
+        let mut expanded = expand_string_for_file(ctx, &name_c, f)?;
 
         let mut new = split_prereqs(ctx, expanded.as_mut_ptr() as *mut ::core::ffi::c_char);
         changed_dep = true;

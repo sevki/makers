@@ -308,19 +308,11 @@ pub unsafe fn recursively_expand_for_file(
             Ok(xstrdup(pref.value))
         }
     } else if (*v).origin() == o_command || (*v).origin() == o_env_override {
-        Ok(allocated_expand_string_for_file(
-            ctx,
-            (*v).value,
-            ::core::ptr::null_mut::<file>(),
-        ))
+        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
     } else if (*v).append() != 0 {
         allocated_variable_append(ctx, v)
     } else {
-        Ok(allocated_expand_string_for_file(
-            ctx,
-            (*v).value,
-            ::core::ptr::null_mut::<file>(),
-        ))
+        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
     };
     (*v).set_expanding(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if set_reading != 0 {
@@ -536,7 +528,7 @@ pub unsafe fn expand_string_buf(
                             p = p.add(1);
                         }
                         if count == 0 {
-                            let owned = OwnedCStr(expand_argument(ctx, beg, p));
+                            let owned = OwnedCStr(expand_argument(ctx, beg, p)?);
                             beg = owned.as_ptr();
                             abeg = Some(owned);
                             end = strchr(beg, 0);
@@ -659,9 +651,9 @@ pub unsafe fn expand_argument(
     ctx: &crate::execctx::ExecContext,
     str: *const ::core::ffi::c_char,
     end: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     if str == end {
-        return xstrdup(c"".as_ptr());
+        return Ok(xstrdup(c"".as_ptr()));
     }
     if end.is_null() || *end.as_ref().unwrap() == 0 {
         return allocated_expand_string_for_file(ctx, str, ::core::ptr::null_mut::<file>());
@@ -685,28 +677,20 @@ pub unsafe fn expand_string_for_file_c(
     ctx: &crate::execctx::ExecContext,
     string: *const ::core::ffi::c_char,
     file: *mut File,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut savef: *const Floc = ::core::ptr::null::<Floc>();
     if file.is_null() {
-        // `expand_string_for_file_c` still returns a bare output pointer, and
-        // its cone (`allocated_expand_string_for_file`, 19 call sites, of which
-        // `do_variable_definition` and `assign_variable_definition` in
-        // `variable.rs` are the blockers) is the next slice. Until those
-        // callers return `Result` there is no frame here to propagate into, so
-        // the expander's diagnostics bridge (#432 Phase B, #442).
         return expand_string_buf(
             ctx,
             ::core::ptr::null_mut::<::core::ffi::c_char>(),
             string,
             SIZE_MAX,
-        )
-        .unwrap_or_else(|e| crate::output::exit_on_err(e));
+        );
     }
     install_file_context(ctx, file, &raw mut savev, &raw mut savef);
     // Held rather than `?`-ed: the file context must be restored before the
     // error leaves this frame, per the cleanup-paths-report contract (#561).
-    // The bridge below retires with the same slice as the one above.
     let result = expand_string_buf(
         ctx,
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -714,7 +698,7 @@ pub unsafe fn expand_string_for_file_c(
         SIZE_MAX,
     );
     restore_file_context(ctx, savev, savef);
-    result.unwrap_or_else(|e| crate::output::exit_on_err(e))
+    result
 }
 
 /// FileId-based string expansion in a target's variable context.
@@ -728,7 +712,7 @@ pub fn expand_string_for_file(
     ctx: &crate::execctx::ExecContext,
     string: &[u8],
     file: crate::file::FileId,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, crate::build_result::BuildError> {
     // SAFETY: the inner expander remains the c2rust pointer machinery; we feed
     // it a NUL-terminated buffer and a freshly-built per-file scope, then read
     // the NUL-terminated result back into an owned Vec.
@@ -740,10 +724,9 @@ pub fn expand_string_for_file(
         let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut olen: size_t = 0;
         install_variable_buffer(ctx, &raw mut obuf, &raw mut olen);
-        // Held rather than `?`-ed so the variable buffer is swapped back before
-        // the error leaves this frame. `expand_string_for_file` returns
-        // `Vec<u8>` and its callers include `expand_deps`/`second_expansion_deps`,
-        // which the following slices convert; it bridges until then (#442).
+        // Held rather than `?`-ed so the variable buffer is swapped back and
+        // the file context restored before the error leaves this frame (the
+        // cleanup-paths contract from #561).
         let expanded = expand_string_buf(
             ctx,
             ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -752,16 +735,7 @@ pub fn expand_string_for_file(
         );
         let result = swap_variable_buffer(ctx, obuf, olen);
         crate::variable::restore_file_context_id(ctx, cur, savev, savef);
-        expanded.unwrap_or_else(|e| crate::output::exit_on_err(e));
-        if result.is_null() {
-            vec![0]
-        } else {
-            let len = strlen(result) as usize;
-            let mut v = ::core::slice::from_raw_parts(result as *const u8, len).to_vec();
-            v.push(0);
-            free(result as *mut ::core::ffi::c_void);
-            v
-        }
+        claim_expansion(expanded.map(|_| ()), result).map(|p| owned_nul_bytes(p))
     }
 }
 /// # Safety
@@ -772,12 +746,59 @@ pub unsafe fn allocated_expand_string_for_file(
     ctx: &crate::execctx::ExecContext,
     string: *const ::core::ffi::c_char,
     file: *mut File,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(ctx, &raw mut obuf, &raw mut olen);
-    expand_string_for_file_c(ctx, string, file);
-    swap_variable_buffer(ctx, obuf, olen)
+    // Held rather than `?`-ed on the spot: the swap has to run on the error
+    // path too, or a failed expansion would leave the caller's variable buffer
+    // swapped out (the cleanup-paths contract from #561).
+    let expanded = expand_string_for_file_c(ctx, string, file);
+    claim_expansion(expanded.map(|_| ()), swap_variable_buffer(ctx, obuf, olen))
+}
+
+/// Hand the buffer a completed variable-buffer swap produced to the caller, or
+/// release it when the expansion that filled it was rejected.
+///
+/// The swap transfers ownership of the buffer out unconditionally, so on the
+/// error path nobody would claim it — the free belongs here. Shared by the two
+/// entry points that swap a buffer in, so neither of them grows a branch for
+/// the seam (#432 Phase B, #442).
+///
+/// # Safety
+///
+/// `produced` must be the (possibly null) buffer just returned by
+/// `swap_variable_buffer`; ownership transfers into this function.
+unsafe fn claim_expansion(
+    outcome: Result<(), crate::build_result::BuildError>,
+    produced: *mut ::core::ffi::c_char,
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
+    match outcome {
+        Ok(()) => Ok(produced),
+        Err(e) => {
+            free(produced as *mut ::core::ffi::c_void);
+            Err(e)
+        }
+    }
+}
+
+/// Copy a NUL-terminated expander result into owned bytes (keeping the
+/// terminator) and release the original. A null buffer — the expander produced
+/// nothing — reads as the empty string.
+///
+/// # Safety
+///
+/// `produced` must be null or a live NUL-terminated `malloc`ed buffer;
+/// ownership transfers into this function.
+unsafe fn owned_nul_bytes(produced: *mut ::core::ffi::c_char) -> Vec<u8> {
+    if produced.is_null() {
+        return vec![0];
+    }
+    let len = strlen(produced) as usize;
+    let mut v = ::core::slice::from_raw_parts(produced as *const u8, len).to_vec();
+    v.push(0);
+    free(produced as *mut ::core::ffi::c_void);
+    v
 }
 /// Walk the variable-set chain outward, concatenating every `+=`-style
 /// definition of `name` (oldest first) into the variable buffer.
@@ -1062,7 +1083,7 @@ mod recursive_expansion_tests {
     //! unit test for the first time — reaching it used to abort the test
     //! binary, which is why it sat at 0% coverage.
     //!
-    //! Both tests go in through a substitution reference (`$(NAME:a=b)`),
+    //! The tests go in through a substitution reference (`$(NAME:a=b)`),
     //! because that is the branch of `expand_string_buf` that propagates; the
     //! plain `$(NAME)` branch still runs through `expand_variable_output`,
     //! which bridges until its own cone converts.
@@ -1123,23 +1144,27 @@ mod recursive_expansion_tests {
     /// the expander refuses it. Before #442 this line ended the process from
     /// inside `recursively_expand_for_file`.
     ///
-    /// The definition has to be an appending one to be observable here: the
-    /// non-appending route re-enters through `allocated_expand_string_for_file`,
-    /// which is still one of the bridges #573 left behind, so the nested
-    /// rejection would exit before it could be returned. `variable_append`
-    /// calls `expand_string_buf` directly, so this route is `Result` end to end.
+    /// Both definition flavours are checked. The appending one (`+=`) reaches
+    /// the rejection through `variable_append`, which has called
+    /// `expand_string_buf` directly since #576. The plain one re-enters through
+    /// `allocated_expand_string_for_file` — a bridge until this slice, so the
+    /// nested rejection used to exit before it could be returned, and #576
+    /// could only test the appending route.
     #[test]
     fn rejects_self_referencing_recursive_variable() {
         // SAFETY: single-threaded under the shared variable-buffer lock; every
         // string handed across is a NUL-terminated `CString`.
         unsafe {
-            assert!(
-                matches!(
-                    expand_with("SELF", "$(SELF:x=y)", "$(SELF:x=y)", true),
-                    Err(BuildError::Failure)
-                ),
-                "a self-referencing recursive variable must come back as a value"
-            );
+            for appending in [true, false] {
+                assert!(
+                    matches!(
+                        expand_with("SELF", "$(SELF:x=y)", "$(SELF:x=y)", appending),
+                        Err(BuildError::Failure)
+                    ),
+                    "a self-referencing recursive variable must come back as a \
+                     value (appending = {appending})"
+                );
+            }
         }
     }
 
@@ -1162,5 +1187,225 @@ mod recursive_expansion_tests {
                 b"a.o b.o".to_vec()
             );
         }
+    }
+}
+
+
+#[cfg(test)]
+mod expander_cleanup_path_tests {
+    //! Since #442 the three expander entry points — `expand_argument`,
+    //! `expand_string_for_file{,_c}` and `allocated_expand_string_for_file` —
+    //! return `Result`, so a malformed reference comes back as a value instead
+    //! of ending the process. Each of them swaps a buffer or installs a context
+    //! that has to be undone before the error leaves the frame; these tests
+    //! drive that error path and then check the frame was left clean.
+
+    use super::{
+        allocated_expand_string_for_file, expand_argument, expand_string_for_file,
+        expand_string_for_file_c, install_variable_buffer, VARIABLE_BUFFER_TEST_LOCK,
+    };
+    use crate::build_result::BuildError;
+    use crate::ffi_types::size_t;
+    use crate::file::File;
+    use std::ffi::CString;
+
+    /// `$(word 1)` is a well-formed reference to a builtin called with the
+    /// wrong number of arguments, so expanding it is refused.
+    const BAD: &str = "$(word 1)";
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; both tables are initialized once per test.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+        }
+        ctx
+    }
+
+    /// The allocating entry point installs a fresh variable buffer and swaps it
+    /// back out. On the error path the swap still has to run — otherwise the
+    /// caller's buffer stays swapped out — and the partial expansion it hands
+    /// back is owned by nobody, so it is freed rather than leaked.
+    #[test]
+    fn allocated_expansion_rejects_and_restores_the_buffer() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: NUL-terminated source; null file means the global context.
+        unsafe {
+            let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut();
+            let mut olen: size_t = 0;
+            install_variable_buffer(&ctx, &raw mut obuf, &raw mut olen);
+            let outer = ctx.variable_buffer.ptr();
+
+            let bad = CString::new(BAD).unwrap();
+            let outcome =
+                allocated_expand_string_for_file(&ctx, bad.as_ptr(), ::core::ptr::null_mut::<File>());
+
+            assert!(matches!(outcome, Err(BuildError::Failure)));
+            assert_eq!(
+                ctx.variable_buffer.ptr(),
+                outer,
+                "the caller's variable buffer must be swapped back in"
+            );
+
+            // The same call on a well-formed source still yields the expansion.
+            let good = CString::new("plain").unwrap();
+            let p =
+                allocated_expand_string_for_file(&ctx, good.as_ptr(), ::core::ptr::null_mut::<File>())
+                    .expect("well-formed");
+            assert_eq!(::std::ffi::CStr::from_ptr(p).to_bytes(), b"plain");
+            libc::free(p as *mut ::core::ffi::c_void);
+        }
+    }
+
+    /// `expand_string_for_file_c` with a null file takes the no-context arm,
+    /// which now returns the expander's verdict directly.
+    #[test]
+    fn raw_expansion_without_a_file_context_rejects() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: NUL-terminated source; null file selects the global context.
+        unsafe {
+            super::initialize_variable_output(&ctx);
+            let bad = CString::new(BAD).unwrap();
+            assert!(matches!(
+                expand_string_for_file_c(&ctx, bad.as_ptr(), ::core::ptr::null_mut::<File>()),
+                Err(BuildError::Failure)
+            ));
+        }
+    }
+
+    /// `expand_argument` has two routes: a null/empty `end` delegates straight
+    /// to the allocating entry point, a non-null `end` copies the `[str, end)`
+    /// slice first. Both must surface the rejection, and the degenerate
+    /// `str == end` case still yields an empty string.
+    #[test]
+    fn expand_argument_rejects_on_both_routes() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: `bad` is NUL-terminated and the end pointer indexes it.
+        unsafe {
+            let bad = CString::new(BAD).unwrap();
+            let beg = bad.as_ptr();
+
+            assert!(matches!(
+                expand_argument(&ctx, beg, ::core::ptr::null()),
+                Err(BuildError::Failure)
+            ));
+            assert!(matches!(
+                expand_argument(&ctx, beg, beg.add(BAD.len())),
+                Err(BuildError::Failure)
+            ));
+
+            let empty = expand_argument(&ctx, beg, beg).expect("str == end is the empty string");
+            assert_eq!(::std::ffi::CStr::from_ptr(empty).to_bytes(), b"");
+            libc::free(empty as *mut ::core::ffi::c_void);
+        }
+    }
+
+    /// Expand `src` in a fresh global context and return the bytes.
+    unsafe fn expand(ctx: &crate::execctx::ExecContext, src: &str) -> Vec<u8> {
+        let c = CString::new(src).unwrap();
+        let p = allocated_expand_string_for_file(ctx, c.as_ptr(), ::core::ptr::null_mut::<File>())
+            .unwrap_or_else(|_| panic!("`{src}` should expand"));
+        let out = ::std::ffi::CStr::from_ptr(p).to_bytes().to_vec();
+        libc::free(p as *mut ::core::ffi::c_void);
+        out
+    }
+
+    /// The builtins that expand their own arguments — `$(foreach)`, `$(let)`,
+    /// `$(intcmp)`, `$(if)`, `$(or)`, `$(and)` — each grew a `?` on that
+    /// expansion in this slice. Pin their success paths so the rejection
+    /// plumbing below is a change in the failure behaviour only.
+    #[test]
+    fn argument_expanding_builtins_still_expand() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: every source is a NUL-terminated `CString` in a fresh context.
+        unsafe {
+            assert_eq!(expand(&ctx, "$(foreach v,a b,[$(v)])"), b"[a] [b]".to_vec());
+            assert_eq!(expand(&ctx, "$(let x,7,<$(x)>)"), b"<7>".to_vec());
+            assert_eq!(expand(&ctx, "$(intcmp 1,2,lt,eq,gt)"), b"lt".to_vec());
+            assert_eq!(expand(&ctx, "$(intcmp 2,2,lt,eq,gt)"), b"eq".to_vec());
+            assert_eq!(expand(&ctx, "$(if ,then,else)"), b"else".to_vec());
+            assert_eq!(expand(&ctx, "$(if x,then,else)"), b"then".to_vec());
+            assert_eq!(expand(&ctx, "$(or ,,last)"), b"last".to_vec());
+            assert_eq!(expand(&ctx, "$(and x,y)"), b"y".to_vec());
+            assert_eq!(expand(&ctx, "$(and x,,y)"), b"".to_vec());
+        }
+    }
+
+    /// ...and each of them now surfaces a rejection from inside an argument
+    /// instead of ending the process there.
+    #[test]
+    fn argument_expanding_builtins_propagate_rejections() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: as above.
+        unsafe {
+            for src in [
+                "$(foreach $(word 1),a,x)",
+                "$(let $(word 1),a,x)",
+                "$(intcmp $(word 1),2,lt,eq,gt)",
+                "$(if $(word 1),then)",
+                "$(or $(word 1))",
+                "$(and $(word 1))",
+            ] {
+                let c = CString::new(src).unwrap();
+                assert!(
+                    matches!(
+                        allocated_expand_string_for_file(
+                            &ctx,
+                            c.as_ptr(),
+                            ::core::ptr::null_mut::<File>()
+                        ),
+                        Err(BuildError::Failure)
+                    ),
+                    "`{src}` must come back as a value"
+                );
+            }
+        }
+    }
+
+    /// The `FileId` form installs the target's scope and a fresh buffer. Both
+    /// have to be undone on the error path, so a second expansion in the same
+    /// context still behaves.
+    #[test]
+    fn file_scoped_expansion_rejects_and_stays_usable() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        let f = crate::file::enter_file(&ctx, b"expander_reject_probe");
+        let before = ctx.variable_globals.current_variable_set_list.get();
+
+        let mut bad = BAD.as_bytes().to_vec();
+        bad.push(0);
+        assert!(matches!(
+            expand_string_for_file(&ctx, &bad, f),
+            Err(BuildError::Failure)
+        ));
+        assert_eq!(
+            ctx.variable_globals.current_variable_set_list.get(),
+            before,
+            "the file's scope must be restored on the error path too"
+        );
+
+        assert_eq!(
+            expand_string_for_file(&ctx, b"plain\0", f).expect("well-formed"),
+            b"plain\0".to_vec()
+        );
     }
 }
