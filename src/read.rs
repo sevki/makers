@@ -2024,7 +2024,6 @@ unsafe fn do_define(
     let mut definition: *mut ::core::ffi::c_char = def_buf.as_mut_ptr() as *mut ::core::ffi::c_char;
     let mut idx: size_t = 0;
     let mut p: *mut ::core::ffi::c_char;
-    let n: *mut ::core::ffi::c_char;
     defstart = (*ebuf).floc;
     p = parse_variable_definition(ctx, name, &raw mut var);
     if p.is_null() {
@@ -2043,7 +2042,7 @@ unsafe fn do_define(
         }
         *var.name.offset(var.length as isize) = 0;
     }
-    n = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>())?;
+    let n = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>())?;
     // Isolate the variable name (skip leading blanks, trim trailing blanks) via
     // the typed AST layer; an empty name is fatal.
     let span = match crate::parser::trimmed_token(::std::ffi::CStr::from_ptr(n).to_bytes()) {
