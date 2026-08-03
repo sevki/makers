@@ -448,7 +448,7 @@ pub fn execute_file_commands(
         return Ok(());
     }
 
-    initialize_file_variables(ctx, file, 0);
+    initialize_file_variables(ctx, file, 0)?;
     let stem = {
         let mut guard = node.lock().expect("file node poisoned");
         entry_node(&mut guard, entry).stem.as_ref().map(|s| s.clone().into_bytes())
