@@ -524,6 +524,21 @@ pub fn install_pattern_rule(
     dep: &[u8],
     commands: &[u8],
     terminal: bool,
+) -> Result<(), crate::build_result::BuildError> {
+    // `map` rather than `?`: the parse's verdict is the whole function, so
+    // threading it through keeps this frame branch-free.
+    parse_dep_names(ctx, dep)
+        .map(|deps| install_parsed_pattern_rule(ctx, target, deps, commands, terminal))
+}
+
+/// Install a pattern rule whose prerequisites have already been parsed —
+/// the half of [`install_pattern_rule`] below the `~`-expanding parse.
+fn install_parsed_pattern_rule(
+    ctx: &crate::execctx::ExecContext,
+    target: &[u8],
+    deps: Vec<DepNode>,
+    commands: &[u8],
+    terminal: bool,
 ) {
     let mut rule = Rule::new();
     rule.num = 1;
@@ -532,9 +547,7 @@ pub fn install_pattern_rule(
     rule.lens.push(target_v.len());
     rule.suffixes.push(percent + 1);
     rule.targets.push(target_v);
-
-    // Parse the dependency string into owned deps.
-    rule.deps = parse_dep_names(ctx, dep);
+    rule.deps = deps;
 
     let installed = {
         let dup = with_pattern_rules(ctx, |rules| {
@@ -581,10 +594,14 @@ pub fn install_pattern_rule(
 
 /// Parse a (NUL-terminated or plain) prerequisite string into owned deps.
 ///
-/// Wraps the still-legacy `parse_file_seq` (which returns owned `ParsedName`s).
-fn parse_dep_names(ctx: &crate::execctx::ExecContext, dep: &[u8]) -> Vec<DepNode> {
+/// Wraps [`parse_file_seq`](crate::read::parse_file_seq), whose `~` expansion
+/// can be refused; that refusal travels out rather than ending the process.
+fn parse_dep_names(
+    ctx: &crate::execctx::ExecContext,
+    dep: &[u8],
+) -> Result<Vec<DepNode>, crate::build_result::BuildError> {
     if dep.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut buf: Vec<u8> = dep.to_vec();
     if buf.last() != Some(&0) {
@@ -594,15 +611,15 @@ fn parse_dep_names(ctx: &crate::execctx::ExecContext, dep: &[u8]) -> Vec<DepNode
     // SAFETY: `parse_file_seq` reads through `p` until the NUL; `buf` is
     // NUL-terminated and lives for the call. MAP_NUL=1, PARSEFS_NONE=0.
     let parsed =
-        unsafe { crate::read::parse_file_seq(ctx, &raw mut p, 0, 0x1, ::core::ptr::null(), 0) };
-    parsed
+        unsafe { crate::read::parse_file_seq(ctx, &raw mut p, 0, 0x1, ::core::ptr::null(), 0) }?;
+    Ok(parsed
         .into_iter()
         .map(|pn| {
             let mut d = dep_with_name(pn.name);
             d.wait_here = pn.wait;
             d
         })
-        .collect()
+        .collect())
 }
 
 /// Create a new pattern rule with `n` targets and install it.

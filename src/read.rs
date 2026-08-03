@@ -1233,7 +1233,9 @@ pub unsafe fn eval(
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
-                            files = parse_file_seq(
+                            // The expanded line is released before a rejected
+                            // `~` expansion leaves the frame.
+                            let parsed = parse_file_seq(
                                 ctx,
                                 &raw mut p2,
                                 ::core::mem::size_of::<nameseq>() as size_t,
@@ -1242,6 +1244,7 @@ pub unsafe fn eval(
                                 0x2_i32,
                             );
                             free(p as *mut ::core::ffi::c_void);
+                            files = parsed?;
                             save = install_conditionals(ctx);
                             if filenames.is_some() {
                                 fi.lineno = tgts_started as ::core::ffi::c_ulong;
@@ -1361,7 +1364,8 @@ pub unsafe fn eval(
                             free(p as *mut ::core::ffi::c_void);
                         } else {
                             p2 = p;
-                            files_0 = parse_file_seq(
+                            // As above: the expanded line is released first.
+                            let parsed_0 = parse_file_seq(
                                 ctx,
                                 &raw mut p2,
                                 ::core::mem::size_of::<nameseq>() as size_t,
@@ -1370,6 +1374,7 @@ pub unsafe fn eval(
                                 0x2_i32,
                             );
                             free(p as *mut ::core::ffi::c_void);
+                            files_0 = parsed_0?;
                             for fentry in &files_0 {
                                 let mut name_buf = fentry.name.clone();
                                 name_buf.push(0);
@@ -1673,7 +1678,7 @@ pub unsafe fn eval(
                                         MAP_NUL,
                                         ::core::ptr::null::<::core::ffi::c_char>(),
                                         PARSEFS_NONE,
-                                    );
+                                    )?;
                                     filenames = if parsed_targets.is_empty() {
                                         None
                                     } else {
@@ -1822,7 +1827,7 @@ pub unsafe fn eval(
                                                     0x40_i32,
                                                     ::core::ptr::null::<::core::ffi::c_char>(),
                                                     0x4_i32,
-                                                );
+                                                )?;
                                                 p2 = p2.offset(1_i32 as isize);
                                                 if target.is_empty() {
                                                     return Err(fatal_err(
@@ -2739,7 +2744,7 @@ pub unsafe fn check_special_file(
 unsafe fn split_prereqs_vec(
     ctx: &crate::execctx::ExecContext,
     mut p: *mut ::core::ffi::c_char,
-) -> Vec<crate::dep::DepNode> {
+) -> Result<Vec<crate::dep::DepNode>, crate::build_result::BuildError> {
     // 0x100 = PARSEFS_NOSTRIP, 0x40 = PARSEFS_WAIT (recognise `.WAIT`).
     let names = parse_file_seq(
         ctx,
@@ -2748,7 +2753,7 @@ unsafe fn split_prereqs_vec(
         0x100_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x40_i32,
-    );
+    )?;
     let mut deps: Vec<crate::dep::DepNode> = names
         .into_iter()
         .map(|n| dep_from_name(n.name, n.wait, false))
@@ -2762,14 +2767,14 @@ unsafe fn split_prereqs_vec(
             0x1_i32,
             ::core::ptr::null::<::core::ffi::c_char>(),
             0x40_i32,
-        );
+        )?;
         for n in ood_names {
             let mut d = dep_from_name(n.name, n.wait, false);
             d.ignore_mtime = true;
             deps.push(d);
         }
     }
-    deps
+    Ok(deps)
 }
 
 /// Build a fresh [`DepNode`] from an owned prerequisite name plus its `.WAIT`
@@ -2957,8 +2962,11 @@ unsafe fn record_files(
             deps.push(d);
             free(depstr as *mut ::core::ffi::c_void);
         } else {
-            deps = split_prereqs_vec(ctx, depstr);
+            // The `depstr` buffer is released before a rejected `~` expansion
+            // leaves the frame.
+            let split = split_prereqs_vec(ctx, depstr);
             free(depstr as *mut ::core::ffi::c_void);
+            deps = split?;
             if pattern.is_null() && implicit_percent.is_null() {
                 deps = enter_prereqs_vec(ctx, deps, None);
             }
@@ -3485,7 +3493,7 @@ pub unsafe fn parse_file_seq(
     mut stopmap: i32,
     prefix: *const ::core::ffi::c_char,
     flags: i32,
-) -> Vec<ParsedName> {
+) -> Result<Vec<ParsedName>, crate::build_result::BuildError> {
     let cachep: i32 = !(flags & 0x10_i32 != 0) as i32;
     let _ = cachep;
     // Collected results, owned, replacing the `*mut T` intrusive chain.
@@ -3667,12 +3675,10 @@ pub unsafe fn parse_file_seq(
             } else {
                 name = tmpbuf;
                 if *tmpbuf.offset(0_i32 as isize) as i32 == '~' as i32 {
-                    // `parse_file_seq` returns a bare `Vec<ParsedName>` and is
-                    // reached from a dozen non-`Result` frames; that cone is its
-                    // own slice, so a rejected `~` expansion bridges here until
-                    // then (#432 Phase B, #442).
-                    tildep = tilde_expand(ctx, tmpbuf)
-                        .unwrap_or_else(|e| crate::output::exit_on_err(e));
+                    // Nothing is owned yet this iteration — `tildep` is still
+                    // null and the glob has not run — and `*stringp` is left
+                    // unadvanced, so the caller drops the whole sequence.
+                    tildep = tilde_expand(ctx, tmpbuf)?;
                     if !tildep.is_null() {
                         name = tildep;
                     }
@@ -3768,7 +3774,7 @@ pub unsafe fn parse_file_seq(
         }
     }
     *stringp = p;
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -3871,6 +3877,125 @@ mod vpath_pattern_token_unsafe_oracle {
                 oracle.as_slice(),
                 "vpath_pattern_token mismatch for {token:?}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod file_seq_rejection_tests {
+    //! Since #442 `parse_file_seq` returns `Result`: a `~` prefix whose home
+    //! lookup cannot be expanded comes back as a rejection instead of ending
+    //! the process from inside makefile parsing. The whole cone above it —
+    //! `split_prereqs{,_vec}`, `string_glob`, `parse_deps`, `parse_dep_names`
+    //! and the `.SUFFIXES`/builtin-rule setup — propagates the same verdict.
+
+    use super::parse_file_seq;
+    use crate::build_result::BuildError;
+    use crate::expand::VARIABLE_BUFFER_TEST_LOCK;
+    use std::ffi::CString;
+
+    /// Define `name` as a recursive global variable holding `value`.
+    ///
+    /// # Safety
+    /// `ctx` must have its global variable set initialized.
+    unsafe fn define_recursive(ctx: &crate::execctx::ExecContext, name: &str, value: &str) {
+        let cname = CString::new(name).unwrap();
+        let cvalue = CString::new(value).unwrap();
+        crate::variable::define_variable_in_set(
+            ctx,
+            cname.as_ptr(),
+            name.len() as crate::ffi_types::size_t,
+            cvalue.as_ptr(),
+            crate::variable::o_file,
+            1,
+            ctx.variable_globals.global_variable_set.as_ptr(),
+            ::core::ptr::null::<crate::floc::Floc>(),
+        );
+    }
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::expand::initialize_variable_output(&ctx);
+        }
+        ctx
+    }
+
+    /// Parse `seq` as a file sequence in a context where `HOME` expands to
+    /// `$(word 1)` — a builtin called with the wrong number of arguments, so
+    /// the expansion is refused.
+    ///
+    /// # Safety
+    /// Single-threaded fresh context; `seq` is copied into a writable buffer.
+    unsafe fn parse_with_rejected_home(
+        ctx: &crate::execctx::ExecContext,
+        seq: &str,
+    ) -> Result<Vec<super::ParsedName>, BuildError> {
+        define_recursive(ctx, "HOME", "$(word 1)");
+        let mut buf = seq.as_bytes().to_vec();
+        buf.push(0);
+        let mut p: *mut ::core::ffi::c_char = buf.as_mut_ptr().cast();
+        parse_file_seq(
+            ctx,
+            &raw mut p,
+            0,
+            0x1_i32,
+            ::core::ptr::null::<::core::ffi::c_char>(),
+            0,
+        )
+    }
+
+    /// `~/…` takes the `HOME` arm of `tilde_expand`, so the refused expansion
+    /// travels out of the parse rather than exiting.
+    #[test]
+    fn rejected_home_expansion_propagates() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: see `parse_with_rejected_home`.
+        unsafe {
+            assert!(matches!(
+                parse_with_rejected_home(&ctx, "~/somefile"),
+                Err(BuildError::Failure)
+            ));
+        }
+    }
+
+    /// A bare `~` is the other half of the same arm (`name[1]` is NUL).
+    #[test]
+    fn rejected_home_expansion_propagates_for_bare_tilde() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: as above.
+        unsafe {
+            assert!(matches!(
+                parse_with_rejected_home(&ctx, "~"),
+                Err(BuildError::Failure)
+            ));
+        }
+    }
+
+    /// Names without a `~` never reach `tilde_expand`, so the same context
+    /// still parses them — the flip did not turn ordinary parses into errors.
+    #[test]
+    fn plain_names_still_parse() {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = fresh_ctx();
+        // SAFETY: as above.
+        unsafe {
+            let parsed =
+                parse_with_rejected_home(&ctx, "alpha beta").expect("no `~`, so no home lookup");
+            let names: Vec<&[u8]> = parsed.iter().map(|p| p.name.as_slice()).collect();
+            assert_eq!(names, vec![&b"alpha"[..], &b"beta"[..]]);
         }
     }
 }

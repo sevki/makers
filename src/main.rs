@@ -2698,7 +2698,7 @@ unsafe fn main_0(
         SIGUSR1,
         Some(debug_signal_handler as unsafe extern "C" fn(i32) -> ()),
     );
-    set_default_suffixes(&ctx, options);
+    set_default_suffixes(&ctx, options)?;
     define_automatic_variables(&ctx);
     let fresh46 = &mut (*define_makeflags(&ctx, options, 0));
     (*fresh46).set_export(v_export as variable_export);
@@ -2940,7 +2940,7 @@ unsafe fn main_0(
     snap_deps(&ctx)?;
     install_default_suffix_rules(&ctx, options);
     convert_to_pattern(&ctx);
-    install_default_implicit_rules(&ctx, options);
+    install_default_implicit_rules(&ctx, options)?;
     snap_implicit_rules(&ctx);
     build_vpath_lists(&ctx)?;
     if !options.old_files.borrow().is_empty() {
@@ -3561,7 +3561,7 @@ unsafe fn main_0(
                     MAP_NUL,
                     ::core::ptr::null::<::core::ffi::c_char>(),
                     PARSEFS_NONE,
-                );
+                )?;
                 if !names.is_empty() {
                     if names.len() > 1 {
                         return Err(fatal_err(

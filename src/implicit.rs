@@ -283,22 +283,23 @@ fn parse_deps(
     stopmap: i32,
     prefix: *const ::core::ffi::c_char,
     flags: i32,
-) -> Vec<DepNode> {
+) -> Result<Vec<DepNode>, crate::build_result::BuildError> {
     if buf.last() != Some(&0) {
         buf.push(0);
     }
     let mut p: *mut ::core::ffi::c_char = buf.as_mut_ptr().cast();
     // SAFETY: `parse_file_seq` reads through `p` to the NUL; `buf` is
     // NUL-terminated and lives for the call.
-    let parsed = unsafe { crate::read::parse_file_seq(ctx, &raw mut p, 0, stopmap, prefix, flags) };
-    parsed
+    let parsed =
+        unsafe { crate::read::parse_file_seq(ctx, &raw mut p, 0, stopmap, prefix, flags) }?;
+    Ok(parsed
         .into_iter()
         .map(|pn| {
             let mut d = dep_with_name(pn.name);
             d.wait_here = pn.wait;
             d
         })
-        .collect()
+        .collect())
 }
 
 /// `parse_file_seq` flags (see `dep.h`).
@@ -568,7 +569,7 @@ pub fn pattern_search(
                         MAP_NUL,
                         ::core::ptr::null(),
                         PARSEFS_ONEWORD | PARSEFS_WAIT,
-                    );
+                    )?;
                     for d in &mut parsed {
                         deps_found = deps_found.wrapping_add(1);
                         d.ignore_mtime = dep.ignore_mtime;
@@ -1138,7 +1139,7 @@ fn second_expansion_deps(
         // SAFETY: NUL-terminated buffer for the call.
         let parsed = unsafe {
             crate::read::parse_file_seq(ctx, &raw mut p, 0, stopmap, prefix, PARSEFS_WAIT)
-        };
+        }?;
         for pn in parsed {
             let mut d = dep_with_name(pn.name);
             d.wait_here = pn.wait;
