@@ -2455,12 +2455,10 @@ pub unsafe fn try_variable_definition(
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     // SAFETY: dereference `flocp` only behind the null check; `as_ref` yields a
-    // checked reference so the read is provably valid.
-    if let Some(floc) = flocp.as_ref() {
-        v.fileinfo = *floc;
-    } else {
-        v.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
-    }
+    // checked reference so the read is provably valid. The `None` arm keeps the
+    // zeroed `fileinfo` the initializer above already installed, so a copied
+    // default is the same thing the former `else` branch wrote by hand.
+    v.fileinfo = flocp.as_ref().copied().unwrap_or(v.fileinfo);
     if assign_variable_definition(ctx, &raw mut v, line)?.is_null() {
         return Ok(::core::ptr::null_mut::<variable>());
     }
