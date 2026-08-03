@@ -259,7 +259,7 @@ use crate::load::load_file;
 use crate::misc::{concat, cstr_bytes_or_empty};
 pub use crate::output::output;
 use crate::output::{
-    error, exit_on_err, fatal_err, output_context, perror_with_name, pfatal_with_name_err,
+    error, fatal_err, output_context, perror_with_name, pfatal_with_name_err,
     set_output_context, set_stdio_traced,
     stdio_traced, FmtArg,
 };
@@ -3736,17 +3736,6 @@ unsafe fn handle_non_switch_argument(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-/// `reset_makeflags` for the makefile-time `MAKEFLAGS` reassignment callback
-/// (`set_special_var`), which is reached through `do_variable_definition`.
-///
-/// `set_special_var` is a `void` variable-definition callback with wide
-/// non-`Result` fan-out through the makefile reader, so a bad switch in a
-/// makefile-assigned `MAKEFLAGS` bridges through `exit_on_err` here rather
-/// than propagating a `Result` through that whole chain (#432 Phase B).
-pub unsafe fn reset_makeflags_special(ctx: &crate::execctx::ExecContext, origin: variable_origin) {
-    reset_makeflags(ctx, &ctx.options, origin).unwrap_or_else(|e| exit_on_err(e));
-}
-
 pub unsafe fn reset_makeflags(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
