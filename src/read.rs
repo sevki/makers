@@ -1139,7 +1139,7 @@ pub unsafe fn eval(
                             ::core::ptr::null_mut::<::core::ffi::c_char>(),
                             p2,
                             SIZE_MAX as size_t,
-                        );
+                        )?;
                         p = find_next_token(&raw mut cp_0, &raw mut l_0);
                         // Own the pattern token in a mutable, NUL-terminated
                         // `Vec<u8>` whose `Drop` releases it, replacing the
@@ -1544,7 +1544,7 @@ pub unsafe fn eval(
                                     ::core::ptr::null_mut::<::core::ffi::c_char>(),
                                     lb_next,
                                     wlen,
-                                );
+                                )?;
                                 loop {
                                     lb_next = lb_next.offset(wlen as isize);
                                     if cmdleft.is_null() {
@@ -1568,7 +1568,7 @@ pub unsafe fn eval(
                                                 pend,
                                                 lb_next,
                                                 SIZE_MAX as size_t,
-                                            );
+                                            )?;
                                             lb_next = lb_next.offset(strlen(lb_next) as isize);
                                             p2 = ctx.variable_buffer.ptr().add(p2_off);
                                             cmdleft = ctx.variable_buffer.ptr().add(cmd_off).offset(1);
@@ -1605,7 +1605,7 @@ pub unsafe fn eval(
                                         let fresh13 = p2;
                                         p2 = p2.offset(1_i32 as isize);
                                         *fresh13 = ' ' as i32 as ::core::ffi::c_char;
-                                        p2 = expand_string_buf(ctx, p2, lb_next, wlen);
+                                        p2 = expand_string_buf(ctx, p2, lb_next, wlen)?;
                                     }
                                 }
                                 p2 = next_token(ctx.variable_buffer.ptr());
@@ -1763,7 +1763,7 @@ pub unsafe fn eval(
                                                     p2.offset(plen as isize),
                                                     lb_next,
                                                     SIZE_MAX as size_t,
-                                                );
+                                                )?;
                                                 p2 = ctx.variable_buffer.ptr().add(l_3);
                                                 if cmdleft.is_null() {
                                                     cmdleft = find_char_unquote(p2, ';' as i32);
@@ -2343,15 +2343,16 @@ unsafe fn conditional_line(
             use crate::parser::ConditionalArgs;
             // Expand the argument occupying `range` (terminating it in place)
             // and return the expansion as an owned byte string.
-            let expand_arg = |range: ::core::ops::Range<usize>| -> Vec<u8> {
+            let expand_arg = |range: ::core::ops::Range<usize>|
+             -> Result<Vec<u8>, crate::build_result::BuildError> {
                 *line.add(range.end) = 0;
                 let p = expand_string_buf(
                     ctx,
                     ::core::ptr::null_mut::<::core::ffi::c_char>(),
                     line.add(range.start),
                     SIZE_MAX as size_t,
-                );
-                ::std::ffi::CStr::from_ptr(p).to_bytes().to_vec()
+                )?;
+                Ok(::std::ffi::CStr::from_ptr(p).to_bytes().to_vec())
             };
             match crate::parser::parse_conditional_args(::std::ffi::CStr::from_ptr(line).to_bytes())
             {
@@ -2359,7 +2360,7 @@ unsafe fn conditional_line(
                 ConditionalArgs::FirstArgOnly { arg1 } => {
                     // make expands the first argument (for its side effects)
                     // before reporting the second-argument syntax error.
-                    expand_arg(arg1);
+                    expand_arg(arg1)?;
                     return Ok(-1_i32);
                 }
                 ConditionalArgs::Both {
@@ -2379,8 +2380,8 @@ unsafe fn conditional_line(
                     }
                     // Expand the first argument to an owned string before
                     // expanding the second (they share one scratch buffer).
-                    let a1 = expand_arg(arg1);
-                    let a2 = expand_arg(arg2);
+                    let a1 = expand_arg(arg1)?;
+                    let a2 = expand_arg(arg2)?;
                     ctx.conditionals.borrow_mut().ignoring[o] = ((a1 == a2)
                         == (cmdtype as ::core::ffi::c_uint
                             == c_ifneq as i32 as ::core::ffi::c_uint))

@@ -3535,7 +3535,7 @@ unsafe fn main_0(
                 ::core::ptr::null_mut::<::core::ffi::c_char>(),
                 (*default_goal_var).value,
                 SIZE_MAX as size_t,
-            );
+            )?;
         } else {
             p_6 = variable_buffer_output(
                 &ctx,
