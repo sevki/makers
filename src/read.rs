@@ -2455,7 +2455,7 @@ unsafe fn record_target_var(
                 Some(existing) => existing,
                 None => enter_file(ctx, name_bytes),
             };
-            initialize_file_variables(ctx, fid, 1);
+            initialize_file_variables(ctx, fid, 1)?;
             let head = crate::variable::build_file_setlist(ctx, fid);
             ctx.variable_globals.current_variable_set_list.set(head);
             v = try_variable_definition(ctx, flocp, defn, origin, s_target)?;

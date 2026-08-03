@@ -11,7 +11,7 @@
 //! rather than by `*mut Rule`. No `*mut File`/`*mut Dep`/`*mut Commands`.
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::ar::ar_name;
+use crate::ar::ar_name_err;
 use crate::dep::{DepFlags, DepNode};
 use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
 use crate::file::{enter_file, lookup_file, FileId};
@@ -171,33 +171,54 @@ fn vpath_lookup(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<Vec<u8
 /// Search the implicit-rule database for a rule that can build `file`,
 /// retrying as an archive-member reference when the plain search fails.
 /// Returns `true` when a rule was found and applied to `file`.
-pub fn try_implicit_rule(ctx: &crate::execctx::ExecContext, file: FileId, depth: u32) -> bool {
+pub fn try_implicit_rule(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    depth: u32,
+) -> Result<bool, crate::build_result::BuildError> {
     let name = file_name(ctx, file);
     let mut msg = b"Looking for an implicit rule for '".to_vec();
     msg.extend_from_slice(&name);
     msg.extend_from_slice(b"'.\n");
     dbs(ctx, depth, &msg);
-    if pattern_search(ctx, file, 0, depth, 0, 0) {
-        return true;
+    if pattern_search(ctx, file, 0, depth, 0, 0)? {
+        return Ok(true);
     }
     let mut cname = name.clone();
     cname.push(0);
     // SAFETY: NUL-terminated.
-    let is_ar = unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast())) };
+    // `ar_name_err` rather than `ar_name`: this frame carries a `Result` since
+    // #442, so the unsupported nested `archive((member))` form travels out
+    // instead of ending the process.
+    let is_ar = unsafe { ar_name_err(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast()))? };
     if is_ar {
-        let mut msg = b"Looking for archive-member implicit rule for '".to_vec();
-        msg.extend_from_slice(&name);
-        msg.extend_from_slice(b"'.\n");
-        dbs(ctx, depth, &msg);
-        if pattern_search(ctx, file, 1, depth, 0, 0) {
-            return true;
-        }
-        let mut msg = b"No archive-member implicit rule found for '".to_vec();
-        msg.extend_from_slice(&name);
-        msg.extend_from_slice(b"'.\n");
-        dbs(ctx, depth, &msg);
+        return try_archive_member_rule(ctx, file, depth, &name);
     }
-    false
+    Ok(false)
+}
+
+/// The archive-member half of [`try_implicit_rule`]: announce the
+/// archive-member search, run it, and announce the miss if it finds nothing.
+/// Split out from the caller so each half is one search with its own tracing,
+/// and so the caller's complexity does not grow with the `Result` seam.
+fn try_archive_member_rule(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    depth: u32,
+    name: &[u8],
+) -> Result<bool, crate::build_result::BuildError> {
+    let mut msg = b"Looking for archive-member implicit rule for '".to_vec();
+    msg.extend_from_slice(name);
+    msg.extend_from_slice(b"'.\n");
+    dbs(ctx, depth, &msg);
+    if pattern_search(ctx, file, 1, depth, 0, 0)? {
+        return Ok(true);
+    }
+    let mut msg = b"No archive-member implicit rule found for '".to_vec();
+    msg.extend_from_slice(name);
+    msg.extend_from_slice(b"'.\n");
+    dbs(ctx, depth, &msg);
+    Ok(false)
 }
 
 /// Scan past leading blanks to the next word of `bytes` starting at `from`,
@@ -291,7 +312,7 @@ pub fn pattern_search(
     mut depth: u32,
     recursions: u32,
     allow_compat_rules: i32,
-) -> bool {
+) -> Result<bool, crate::build_result::BuildError> {
     // The full target name, and the matching slice (inside the parens for an
     // archive member reference).
     let full_name = file_name(ctx, file);
@@ -325,7 +346,10 @@ pub fn pattern_search(
     let mut cname = name.clone();
     cname.push(0);
     // SAFETY: NUL-terminated.
-    let is_ar = unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast())) };
+    // `ar_name_err` rather than `ar_name`: this frame carries a `Result` since
+    // #442, so the unsupported nested `archive((member))` form travels out
+    // instead of ending the process.
+    let is_ar = unsafe { ar_name_err(ctx, ::core::ffi::CStr::from_ptr(cname.as_ptr().cast()))? };
     let pathlen: usize = if archive != 0 || is_ar {
         0
     } else {
@@ -575,7 +599,7 @@ pub fn pattern_search(
                         &mut order_only,
                         &mut deps_found,
                         &mut file_vars_initialized,
-                    );
+                    )?;
                 }
                 if deps_found > max_deps {
                     let new_max = ctx.max_pattern_deps.get().max(deps_found);
@@ -687,7 +711,7 @@ pub fn pattern_search(
                                     depth,
                                     recursions.wrapping_add(1),
                                     allow_compat_rules,
-                                ) {
+                                )? {
                                     // The recursive search renamed the node to the
                                     // matched pattern; capture it as the dep's
                                     // pattern, then restore the node's concrete
@@ -893,7 +917,7 @@ pub fn pattern_search(
     msg.extend_from_slice(&full_name);
     msg.extend_from_slice(b"'.\n");
     dbs(ctx, depth, &msg);
-    true
+    Ok(true)
 }
 
 /// Merge an intermediate file's discovered state into the real arena node.
@@ -979,7 +1003,7 @@ fn finish_no_rule(
     archive: i32,
     recursions: u32,
     allow_compat_rules: i32,
-) -> bool {
+) -> Result<bool, crate::build_result::BuildError> {
     let depth = depth.wrapping_sub(1);
     if found_compat_rule {
         let mut msg = b"Searching for a compatibility rule for '".to_vec();
@@ -996,7 +1020,7 @@ fn finish_no_rule(
     msg.extend_from_slice(full_name);
     msg.extend_from_slice(b"'.\n");
     dbs(ctx, depth, &msg);
-    false
+    Ok(false)
 }
 
 /// Second-expansion prerequisite expansion.
@@ -1022,7 +1046,7 @@ fn second_expansion_deps(
     order_only: &mut bool,
     deps_found: &mut u32,
     file_vars_initialized: &mut bool,
-) -> Vec<DepNode> {
+) -> Result<Vec<DepNode>, crate::build_result::BuildError> {
     let mut out: Vec<DepNode> = Vec::new();
     let bytes = dep.name.clone().into_bytes();
     let mut cursor = 0usize;
@@ -1088,7 +1112,7 @@ fn second_expansion_deps(
                     .unwrap_or(stem_str.len());
                 &stem_str[..nul]
             };
-            crate::variable::initialize_file_variables(ctx, file, 0);
+            crate::variable::initialize_file_variables(ctx, file, 0)?;
             crate::commands::set_file_variables(ctx, file, Some(stem_slice));
             *file_vars_initialized = true;
         }
@@ -1127,7 +1151,7 @@ fn second_expansion_deps(
         }
         let _ = (stem_off, stemlen, pathlen);
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1158,5 +1182,60 @@ mod get_next_word_tests {
         // was already consumed is included in the returned length — so "a|" of
         // "a|b" is the word here.
         assert_eq!(get_next_word(b"a|b", 0), Some((0, 2)));
+    }
+}
+
+#[cfg(test)]
+mod try_implicit_rule_tests {
+    //! Since #442 `try_implicit_rule` returns `Result<bool, BuildError>`: the
+    //! per-target variable setup it reaches through `pattern_search` ->
+    //! `second_expansion_deps` -> `initialize_file_variables` now propagates,
+    //! and the `archive((member))` rejection from `ar_name_err` travels out of
+    //! the archive-member arm instead of ending the process.
+
+    use super::try_implicit_rule;
+    use crate::build_result::BuildError;
+    use crate::file::enter_file;
+    use std::sync::Mutex;
+
+    // The pattern-rule database and the file arena are process-wide.
+    static IMPLICIT_LOCK: Mutex<()> = Mutex::new(());
+
+    fn probe(name: &[u8]) -> Result<bool, BuildError> {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; the global set is initialized once per probe.
+        unsafe { crate::variable::init_hash_global_variable_set(&ctx) };
+        let f = enter_file(&ctx, name);
+        try_implicit_rule(&ctx, f, 0)
+    }
+
+    /// With no pattern rules defined, an ordinary target matches nothing. The
+    /// answer is `Ok(false)`, not a bare `false` — the seam the later expander
+    /// slices propagate through.
+    #[test]
+    fn plain_target_with_no_rules_finds_nothing() {
+        let _g = IMPLICIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(!probe(b"tir_probe_plain").expect("search rejected"));
+    }
+
+    /// An `archive(member)` target takes the second, archive-member search
+    /// arm. It also finds nothing here, but reaching it is what exercises the
+    /// `ar_name_err(..)?` call that replaced the old exiting `ar_name`.
+    #[test]
+    fn archive_member_target_takes_the_archive_arm() {
+        let _g = IMPLICIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(!probe(b"tir_probe_lib.a(member.o)").expect("search rejected"));
+    }
+
+    /// The nested `archive((member))` form is not supported. `ar_name` used to
+    /// end the process on it; the error is now a value the caller can act on.
+    #[test]
+    fn nested_archive_member_is_rejected_rather_than_fatal() {
+        let _g = IMPLICIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(matches!(
+            probe(b"tir_probe_lib.a((nested.o))"),
+            Err(BuildError::Failure)
+        ));
     }
 }

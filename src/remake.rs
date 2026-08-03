@@ -935,7 +935,7 @@ fn update_file_1(
     });
     if need_implicit {
         // lock: guard dropped before try_implicit_rule.
-        try_implicit_rule(ctx, file, depth);
+        try_implicit_rule(ctx, file, depth)?;
         with_entry!(n, {
             n.tried_implicit = true;
         });
@@ -962,7 +962,7 @@ fn update_file_1(
         if second_expansion(ctx) {
             // lock: guard dropped before expand_deps.
             unsafe {
-                expand_deps(ctx, amid);
+                expand_deps(ctx, amid)?;
             }
         }
         // Snapshot the deps Vec (trick #1: index-based writeback).
@@ -1642,7 +1642,7 @@ pub fn check_dep(
             .unwrap_or((false, false, false));
         if need_implicit {
             // lock: guard dropped before try_implicit_rule.
-            try_implicit_rule(ctx, file, depth);
+            try_implicit_rule(ctx, file, depth)?;
             if let Some(node) = ctx.filenodes.get(file) {
                 node.lock().expect("file node lock poisoned").tried_implicit = true;
             }
@@ -1687,7 +1687,7 @@ pub fn check_dep(
             if second_expansion(ctx) {
                 // lock: guard dropped before expand_deps.
                 unsafe {
-                    expand_deps(ctx, file);
+                    expand_deps(ctx, file)?;
                 }
             }
             // Snapshot the deps; walk by index while recursing into check_dep.

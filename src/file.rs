@@ -1458,17 +1458,20 @@ pub unsafe fn enter_prereqs(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: FileId) {
+pub unsafe fn expand_deps(
+    ctx: &crate::execctx::ExecContext,
+    f: FileId,
+) -> Result<(), crate::build_result::BuildError> {
     let Some(node) = ctx.filenodes.get(f) else {
-        return;
+        return Ok(());
     };
 
     // Latch `snapped` and snapshot the current deps + the file's own stem. The
     // guard is dropped before any reentrant variable/expansion call.
-    let (mut deps, file_stem): (Vec<DepNode>, Option<Vec<u8>>) = {
+    let (deps, file_stem): (Vec<DepNode>, Option<Vec<u8>>) = {
         let mut n = node.lock().expect("file node lock poisoned");
         if n.snapped {
-            return;
+            return Ok(());
         }
         n.snapped = true;
         (
@@ -1483,7 +1486,14 @@ pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: FileId) {
     // second-expansion dep is replaced by its expansion's resolved deps.
     let mut rebuilt: Vec<DepNode> = Vec::with_capacity(deps.len());
 
-    for d in deps.drain(..) {
+    // Walked by iterator rather than `drain` so that a rejected expansion can
+    // hand the untouched tail back to the node: the deps were moved out of the
+    // `FileNode` above, and since #442 this loop can stop early, so the list has
+    // to be put back rather than silently truncated (the cleanup-paths contract
+    // from #561).
+    let mut rest = deps.into_iter();
+    let mut rejected = None;
+    for d in rest.by_ref() {
         if d.name.is_empty() || !d.needs_second_expansion {
             rebuilt.push(d);
             continue;
@@ -1497,7 +1507,11 @@ pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: FileId) {
         }
 
         if !initialized {
-            initialize_file_variables(ctx, f, 0);
+            if let Err(e) = initialize_file_variables(ctx, f, 0) {
+                rejected = Some(e);
+                rebuilt.push(d);
+                break;
+            }
             initialized = true;
         }
         let stem: Option<&[u8]> = match &d.stem {
@@ -1532,13 +1546,18 @@ pub unsafe fn expand_deps(ctx: &crate::execctx::ExecContext, f: FileId) {
         rebuilt.append(&mut new);
     }
 
+    rebuilt.extend(rest);
     {
         let mut n = node.lock().expect("file node lock poisoned");
         n.deps = rebuilt;
     }
+    if let Some(e) = rejected {
+        return Err(e);
+    }
     if changed_dep {
         crate::shuffle::shuffle_deps_recursive(ctx, f);
     }
+    Ok(())
 }
 
 /// Rewrite a static-pattern prerequisite name for second expansion: each `%`

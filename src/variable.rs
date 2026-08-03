@@ -941,7 +941,11 @@ pub unsafe fn lookup_variable_in_set(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) {
+pub fn initialize_file_variables(
+    ctx: &ExecContext,
+    file: FileId,
+    reading: i32,
+) -> Result<(), crate::build_result::BuildError> {
     // Per-target variable storage now lives directly on the `FileNode`
     // (`variables` / `pat_variables` as `Vec<TargetVariable>`); there is no
     // per-file `variable_set_list` to allocate. The former chain wiring
@@ -950,7 +954,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
     // (see the slice5 boundary note below), so this routine's remaining job is to
     // perform the pattern-variable search and populate `FileNode.pat_variables`.
     let Some(node) = ctx.filenodes.get(file) else {
-        return;
+        return Ok(());
     };
 
     // Recurse into the parent first (matching the original ordering) without
@@ -960,7 +964,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
         guard.parent
     };
     if let Some(parent_id) = parent {
-        initialize_file_variables(ctx, parent_id, reading);
+        initialize_file_variables(ctx, parent_id, reading)?;
     }
 
     // The pattern-variable search only runs when building (not while reading)
@@ -970,7 +974,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
         (reading == 0 && !guard.pat_searched, guard.name.clone())
     };
     if !need_search {
-        return;
+        return Ok(());
     }
 
     let mut collected: Vec<TargetVariable> = Vec::new();
@@ -992,6 +996,11 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
                 ctx.variable_globals.current_variable_set_list.get();
             let scope = create_new_variable_set(ctx);
             ctx.variable_globals.current_variable_set_list.set(scope);
+            // Held rather than `?`-ed inside the loop: the teardown below has to
+            // run on the error path too, or a rejected pattern-variable
+            // definition would leave the throwaway scope installed as the
+            // current set list (the cleanup-paths contract from #561).
+            let mut rejected = None;
             loop {
                 let v = if (*p).variable.flavor() as i32 == f_simple as i32 {
                     let v = define_variable_in_set(
@@ -1009,7 +1018,11 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
                     v.set_flavor(f_simple as variable_flavor);
                     v
                 } else {
-                    do_variable_definition(
+                    // A malformed pattern-specific definition — say
+                    // `%.o: CFLAGS := $(word 1)` — now stops this search and
+                    // travels out to the caller instead of ending the process
+                    // (#442).
+                    match do_variable_definition(
                         ctx,
                         &raw mut (*p).variable.fileinfo,
                         (*p).variable.name,
@@ -1018,15 +1031,13 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
                         (*p).variable.flavor(),
                         (*p).variable.conditional() as i32,
                         s_pattern,
-                    )
-                    // `initialize_file_variables` still returns `()` and is
-                    // reached from `second_expansion_deps`, `expand_deps` and
-                    // `print_target_variables`, none of which carry a `Result`
-                    // yet; those convert with the later slices of #442 and this
-                    // bridge retires with them (#432 Phase B).
-                    .unwrap_or_else(|e| crate::output::exit_on_err(e))
-                    .as_mut()
-                    .expect("do_variable_definition returned null")
+                    ) {
+                        Ok(v) => v.as_mut().expect("do_variable_definition returned null"),
+                        Err(e) => {
+                            rejected = Some(e);
+                            break;
+                        }
+                    }
                 };
                 v.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
                 v.set_export((*p).variable.export() as variable_export);
@@ -1040,6 +1051,11 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
             // Tear the throwaway scope back down: we own the snapshots now.
             pop_variable_scope(ctx);
             ctx.variable_globals.current_variable_set_list.set(global);
+            if let Some(e) = rejected {
+                // The search never completed, so the node keeps its previous
+                // (unsearched) state and the partial snapshots are dropped.
+                return Err(e);
+            }
         }
     }
 
@@ -1049,6 +1065,7 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
         guard.pat_variables = collected;
         guard.pat_searched = true;
     }
+    Ok(())
 }
 /// # Safety
 ///
@@ -3115,7 +3132,7 @@ mod initialize_file_variables_tests {
         crate::make_main::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let f = enter_file(&ctx, b"ifv_probe_target");
-        initialize_file_variables(&ctx, f, 1);
+        initialize_file_variables(&ctx, f, 1).expect("initialize_file_variables rejected");
         let node = ctx.filenodes.get(f).expect("interned");
         assert!(
             !node.lock().unwrap().pat_searched,
@@ -3136,7 +3153,7 @@ mod initialize_file_variables_tests {
             let node = ctx.filenodes.get(f).expect("interned");
             assert!(!node.lock().unwrap().pat_searched, "starts un-searched");
         }
-        initialize_file_variables(&ctx, f, 0);
+        initialize_file_variables(&ctx, f, 0).expect("initialize_file_variables rejected");
         let node = ctx.filenodes.get(f).expect("interned");
         assert!(
             node.lock().unwrap().pat_searched,
@@ -3152,8 +3169,8 @@ mod initialize_file_variables_tests {
         crate::make_main::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let f = enter_file(&ctx, b"ifv_probe_once");
-        initialize_file_variables(&ctx, f, 0);
-        initialize_file_variables(&ctx, f, 0);
+        initialize_file_variables(&ctx, f, 0).expect("initialize_file_variables rejected");
+        initialize_file_variables(&ctx, f, 0).expect("initialize_file_variables rejected");
         let node = ctx.filenodes.get(f).expect("interned");
         assert!(node.lock().unwrap().pat_searched);
     }
@@ -3174,7 +3191,7 @@ mod initialize_file_variables_tests {
             .unwrap()
             .parent = Some(parent);
 
-        initialize_file_variables(&ctx, child, 0);
+        initialize_file_variables(&ctx, child, 0).expect("initialize_file_variables rejected");
 
         assert!(
             ctx.filenodes.get(parent).unwrap().lock().unwrap().pat_searched,
