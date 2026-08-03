@@ -261,7 +261,6 @@ use crate::{
     },
     output::{
         error,
-        exit_on_err,
         fatal_err,
         message,
         perror_with_name,
@@ -2600,7 +2599,7 @@ unsafe fn construct_command_argv_internal(
     ifs: *const ::core::ffi::c_char,
     flags: i32,
     mut _batch_filename: *mut *mut ::core::ffi::c_char,
-) -> *mut *mut ::core::ffi::c_char {
+) -> Result<*mut *mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     // Read-only tables (never reassigned): `const` avoids the `Sync` bound a
     // `static` would need for these raw-pointer elements (each use site gets
@@ -2671,7 +2670,7 @@ unsafe fn construct_command_argv_internal(
         line = line.offset(1_i32 as isize);
     }
     if *line as i32 == 0 {
-        return ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+        return Ok(::core::ptr::null_mut::<*mut ::core::ffi::c_char>());
     }
     if shell.is_null() {
         shell = default_shell;
@@ -2902,9 +2901,9 @@ unsafe fn construct_command_argv_internal(
         if (*new_argv.offset(0_i32 as isize)).is_null() {
             free(argstr as *mut ::core::ffi::c_void);
             free(new_argv as *mut ::core::ffi::c_void);
-            return ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+            return Ok(::core::ptr::null_mut::<*mut ::core::ffi::c_char>());
         }
-        return new_argv;
+        return Ok(new_argv);
     }
     if !new_argv.is_null() {
         free(argstr as *mut ::core::ffi::c_void);
@@ -3002,7 +3001,7 @@ unsafe fn construct_command_argv_internal(
                 ::core::ptr::null::<::core::ffi::c_char>(),
                 flags,
                 ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
-            );
+            )?;
             if !argv.is_null() {
                 let mut a: *mut *mut ::core::ffi::c_char;
                 a = argv;
@@ -3030,7 +3029,7 @@ unsafe fn construct_command_argv_internal(
         let fresh38 = n;
         let fresh39 = &mut (*new_argv.offset(fresh38 as isize));
         *fresh39 = ::core::ptr::null_mut::<::core::ffi::c_char>();
-        return new_argv;
+        return Ok(new_argv);
     }
     new_line = xmalloc(
         shell_len
@@ -3116,10 +3115,14 @@ unsafe fn construct_command_argv_internal(
             .offset(2_i32 as isize)
     {
         free(new_line as *mut ::core::ffi::c_void);
-        return ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
+        return Ok(::core::ptr::null_mut::<*mut ::core::ffi::c_char>());
     }
     *ap = 0;
     if ctx.shell_kind() == crate::execctx::ShellKind::Unixy {
+        // The nested call gets this same `ctx`, so it takes this same arm and
+        // can only fail by way of its own nested call — inductively, never.
+        // The rejection below is the function's only `Err`, so no cleanup is
+        // owed here and the tail's `free(new_line)` always runs.
         new_argv = construct_command_argv_internal(
             ctx,
             new_line,
@@ -3129,9 +3132,10 @@ unsafe fn construct_command_argv_internal(
             ::core::ptr::null::<::core::ffi::c_char>(),
             flags,
             ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
-        );
+        )?;
     } else {
-        exit_on_err(fatal_err(
+        free(new_line as *mut ::core::ffi::c_void);
+        return Err(fatal_err(
             ctx,
             NILF,
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t)
@@ -3149,7 +3153,7 @@ unsafe fn construct_command_argv_internal(
         ));
     }
     free(new_line as *mut ::core::ffi::c_void);
-    new_argv
+    Ok(new_argv)
 }
 pub const PRESERVE_BSNL: i32 = 1;
 /// # Safety
@@ -3192,7 +3196,6 @@ pub unsafe fn construct_command_argv(
     cmd_flags: i32,
     batch_filename: *mut *mut ::core::ffi::c_char,
 ) -> Result<*mut *mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    let argv: *mut *mut ::core::ffi::c_char;
     // Look up SHELL/.SHELLFLAGS/IFS in the target's variable context (or the
     // global context when `file` is None — the former null `*mut File`). Each
     // returns an owned NUL-terminated buffer. Split out so the
@@ -3203,7 +3206,9 @@ pub unsafe fn construct_command_argv(
     let shell = shell_buf.as_ptr() as *const ::core::ffi::c_char;
     let shellflags = shellflags_owned.as_ptr() as *const ::core::ffi::c_char;
     let ifs = ifs_buf.as_ptr() as *const ::core::ffi::c_char;
-    argv = construct_command_argv_internal(
+    // Returned directly rather than bound then `Ok`-wrapped, so the added
+    // seam costs this frame no decision point.
+    construct_command_argv_internal(
         ctx,
         line,
         restp,
@@ -3212,8 +3217,7 @@ pub unsafe fn construct_command_argv(
         ifs,
         cmd_flags,
         batch_filename,
-    );
-    Ok(argv)
+    )
 }
 
 /// Pick the flags to hand the shell: a `.SHELLFLAGS` value that expanded to

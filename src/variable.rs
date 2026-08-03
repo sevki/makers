@@ -2120,7 +2120,7 @@ unsafe fn set_special_var(
                 (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1_i32 as isize),
             ) == 0)
     {
-        crate::make_main::reset_makeflags_special(ctx, origin);
+        crate::make_main::reset_makeflags(ctx, &ctx.options, origin)?;
     } else if vn0 == *(b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
@@ -3609,6 +3609,80 @@ mod shell_assignment_tests {
                 outer,
                 "the caller's variable buffer must be swapped back in"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod special_var_rejection_tests {
+    //! Since #442 `set_special_var` returns `Result`, so the makefile-time
+    //! `MAKEFLAGS` reassignment it performs no longer needs the
+    //! `reset_makeflags_special` bridge: a bad switch in a makefile-assigned
+    //! `MAKEFLAGS` travels back out through `do_variable_definition` instead
+    //! of ending the process from inside the variable layer.
+
+    use super::set_special_var;
+    use crate::build_result::BuildError;
+    use std::ffi::CString;
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::expand::initialize_variable_output(&ctx);
+        }
+        ctx
+    }
+
+    /// Define `MAKEFLAGS` globally with `value` and hand it to
+    /// `set_special_var`, which is the arm `do_variable_definition` takes.
+    ///
+    /// # Safety
+    /// `ctx` must have its global variable set initialized.
+    unsafe fn assign_makeflags(
+        ctx: &crate::execctx::ExecContext,
+        value: &str,
+    ) -> Result<*mut super::variable, BuildError> {
+        let name = CString::new("MAKEFLAGS").unwrap();
+        let cvalue = CString::new(value).unwrap();
+        let v = super::define_variable_in_set(
+            ctx,
+            name.as_ptr(),
+            9,
+            cvalue.as_ptr(),
+            super::o_file,
+            0,
+            ctx.variable_globals.global_variable_set.as_ptr(),
+            ::core::ptr::null::<crate::floc::Floc>(),
+        );
+        set_special_var(ctx, v, super::o_file)
+    }
+
+    /// A switch that cannot be decoded is refused rather than exiting.
+    #[test]
+    fn bad_makeflags_switch_is_rejected() {
+        let ctx = fresh_ctx();
+        // SAFETY: see `assign_makeflags`; single-threaded fresh context.
+        unsafe {
+            assert!(matches!(
+                assign_makeflags(&ctx, "--output-sync=bogus"),
+                Err(BuildError::Failure)
+            ));
+        }
+    }
+
+    /// A well-formed assignment still returns the variable, so the flip did
+    /// not turn ordinary `MAKEFLAGS` reassignment into an error.
+    #[test]
+    fn well_formed_makeflags_still_applies() {
+        let ctx = fresh_ctx();
+        // SAFETY: as above.
+        unsafe {
+            let v = assign_makeflags(&ctx, "-k").expect("well-formed switch");
+            assert!(!v.is_null());
         }
     }
 }
