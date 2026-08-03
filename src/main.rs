@@ -1485,7 +1485,7 @@ unsafe fn expand_command_line_file(
         ));
     }
     if *name.offset(0_i32 as isize) as i32 == '~' as i32 {
-        expanded = tilde_expand(ctx, name);
+        expanded = tilde_expand(ctx, name)?;
         if !expanded.is_null() && *expanded.offset(0_i32 as isize) as i32 != 0 {
             name = expanded;
         }
@@ -2942,7 +2942,7 @@ unsafe fn main_0(
     convert_to_pattern(&ctx);
     install_default_implicit_rules(&ctx, options);
     snap_implicit_rules(&ctx);
-    build_vpath_lists(&ctx);
+    build_vpath_lists(&ctx)?;
     if !options.old_files.borrow().is_empty() {
         for of in options.old_files.borrow().iter() {
             let name_bytes = ::std::ffi::CStr::from_ptr(of.as_ptr()).to_bytes().to_vec();
@@ -4457,7 +4457,8 @@ unsafe fn decode_env_switches(
     len: size_t,
     origin: variable_origin,
 ) -> Result<(), crate::build_result::BuildError> {
-    let value = expand_variable_buf(ctx, ::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len);
+    let value =
+        expand_variable_buf(ctx, ::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len)?;
     let mut bytes = ::core::ffi::CStr::from_ptr(value).to_bytes();
     while !bytes.is_empty() && stopchar_map()[bytes[0] as usize] & (0x2 | 0x4) != 0 {
         bytes = &bytes[1..];

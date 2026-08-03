@@ -333,7 +333,7 @@ pub unsafe fn expand_variable_output(
     mut ptr: *mut ::core::ffi::c_char,
     name: *const ::core::ffi::c_char,
     length: size_t,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let v = lookup_variable(ctx, name, length);
     if v.is_null() {
         // SAFETY: `name` points to `length` valid bytes (caller contract);
@@ -344,26 +344,22 @@ pub unsafe fn expand_variable_output(
         );
     }
     if v.is_null() || *(*v).value.offset(0_i32 as isize) as i32 == 0 && (*v).append() == 0 {
-        return ptr;
+        return Ok(ptr);
     }
     // A recursive variable's value is freshly expanded and owned here; an
     // `OwnedCStr` reclaims it on drop instead of the manual `free` the C code
     // did. A non-recursive variable's value is borrowed from the variable.
     //
-    // `expand_variable_output` still returns a bare pointer, and its cone
-    // (`expand_variable_buf` and `allocated_expand_variable`, whose callers
-    // include `set_special_var`, `follow_symlink_mtime`, `tilde_expand` and
-    // `vpath_from_variable` — none of which return `Result` yet) is a later
-    // slice. Until then the recursion's diagnostics bridge (#432 Phase B, #442).
-    let owned = ((*v).recursive() != 0).then(|| {
-        OwnedCStr(
-            recursively_expand_for_file(ctx, v, ::core::ptr::null_mut::<file>())
-                .unwrap_or_else(|e| crate::output::exit_on_err(e)),
-        )
-    });
+    // Since #442 a rejected recursion travels out of here rather than ending
+    // the process; `OwnedCStr` still reclaims the buffer on the success path.
+    let owned = ((*v).recursive() != 0)
+        .then(|| {
+            recursively_expand_for_file(ctx, v, ::core::ptr::null_mut::<file>()).map(OwnedCStr)
+        })
+        .transpose()?;
     let value = owned.as_ref().map_or((*v).value, OwnedCStr::as_ptr);
     ptr = variable_buffer_output(ctx, ptr, value, strlen(value) as size_t);
-    ptr
+    Ok(ptr)
 }
 /// # Safety
 ///
@@ -374,7 +370,7 @@ pub unsafe fn expand_variable_buf(
     mut buf: *mut ::core::ffi::c_char,
     name: *const ::core::ffi::c_char,
     length: size_t,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     if buf.is_null() {
         buf = initialize_variable_output(ctx);
     }
@@ -386,8 +382,10 @@ pub unsafe fn expand_variable_buf(
         "output cursor past the buffer"
     );
     let offs = buf.offset_from(variable_buffer) as size_t;
-    expand_variable_output(ctx, buf, name, length);
-    ctx.variable_buffer.ptr().add(offs as usize)
+    // `map` rather than `?`: the cursor is recomputed from `offs` either way,
+    // and the combinator keeps this frame branch-free apart from the null check.
+    expand_variable_output(ctx, buf, name, length)
+        .map(|_| ctx.variable_buffer.ptr().add(offs as usize))
 }
 /// # Safety
 ///
@@ -397,12 +395,14 @@ pub unsafe fn allocated_expand_variable(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut olen: size_t = 0;
     install_variable_buffer(ctx, &raw mut obuf, &raw mut olen);
-    expand_variable_output(ctx, ctx.variable_buffer.ptr(), name, length);
-    swap_variable_buffer(ctx, obuf, olen)
+    // Held rather than `?`-ed on the spot so the swap runs on the error path
+    // too; `claim_expansion` releases the orphaned partial expansion (#561).
+    let expanded = expand_variable_output(ctx, ctx.variable_buffer.ptr(), name, length);
+    claim_expansion(expanded.map(|_| ()), swap_variable_buffer(ctx, obuf, olen))
 }
 /// # Safety
 ///
@@ -622,7 +622,7 @@ pub unsafe fn expand_string_buf(
                         }
                     }
                     if colon.is_null() {
-                        o = expand_variable_output(ctx, o, beg, end.offset_from(beg) as size_t);
+                        o = expand_variable_output(ctx, o, beg, end.offset_from(beg) as size_t)?;
                     }
                     // Free the expanded reference here, as the C code did.
                     drop(abeg);
@@ -632,7 +632,7 @@ pub unsafe fn expand_string_buf(
                 // `$X`: a single-character variable name. The guard mirrors
                 // the C original, which tests `p[-1]` (the `$` itself).
                 if !stop_set(*p1, MAP_BLANK | MAP_NEWLINE) {
-                    o = expand_variable_output(ctx, o, p, 1);
+                    o = expand_variable_output(ctx, o, p, 1)?;
                 }
             }
         }
@@ -1083,10 +1083,10 @@ mod recursive_expansion_tests {
     //! unit test for the first time — reaching it used to abort the test
     //! binary, which is why it sat at 0% coverage.
     //!
-    //! The tests go in through a substitution reference (`$(NAME:a=b)`),
-    //! because that is the branch of `expand_string_buf` that propagates; the
-    //! plain `$(NAME)` branch still runs through `expand_variable_output`,
-    //! which bridges until its own cone converts.
+    //! Both branches of `expand_string_buf` are covered: the substitution
+    //! reference (`$(NAME:a=b)`), which has propagated since #576, and the
+    //! plain `$(NAME)` reference, which goes through `expand_variable_output`
+    //! and only started propagating when that cone converted.
 
     use super::{expand_string_buf, initialize_variable_output, SIZE_MAX, VARIABLE_BUFFER_TEST_LOCK};
     use crate::build_result::BuildError;
@@ -1147,9 +1147,7 @@ mod recursive_expansion_tests {
     /// Both definition flavours are checked. The appending one (`+=`) reaches
     /// the rejection through `variable_append`, which has called
     /// `expand_string_buf` directly since #576. The plain one re-enters through
-    /// `allocated_expand_string_for_file` — a bridge until this slice, so the
-    /// nested rejection used to exit before it could be returned, and #576
-    /// could only test the appending route.
+    /// `allocated_expand_string_for_file`, which #578 flipped.
     #[test]
     fn rejects_self_referencing_recursive_variable() {
         // SAFETY: single-threaded under the shared variable-buffer lock; every
@@ -1165,6 +1163,33 @@ mod recursive_expansion_tests {
                      value (appending = {appending})"
                 );
             }
+        }
+    }
+
+    /// The same rejection reached through a plain `$(NAME)` reference rather
+    /// than a substitution reference. That route runs through
+    /// `expand_variable_output`, which bridged until this slice — so #576 and
+    /// #578 could only test the substitution form.
+    #[test]
+    fn rejects_self_reference_through_a_plain_reference() {
+        // SAFETY: as above.
+        unsafe {
+            for appending in [true, false] {
+                assert!(
+                    matches!(
+                        expand_with("PSELF", "$(PSELF)", "$(PSELF)", appending),
+                        Err(BuildError::Failure)
+                    ),
+                    "a plain self-reference must come back as a value \
+                     (appending = {appending})"
+                );
+            }
+            // A single-character name takes the `$X` arm of `expand_string_buf`,
+            // which reaches `expand_variable_output` by its own path.
+            assert!(matches!(
+                expand_with("S", "$S", "$S", false),
+                Err(BuildError::Failure)
+            ));
         }
     }
 

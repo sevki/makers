@@ -93,9 +93,20 @@ fn percent_off(pattern: &CStr, percent: Option<&CStr>) -> Option<usize> {
 /// # Safety
 /// Must run single-threaded: it reads and writes the module's vpath chains
 /// and expands make variables through the global variable tables.
-pub unsafe fn build_vpath_lists(ctx: &crate::execctx::ExecContext) {
-    // Reverse the chain so vpaths are searched in the order their
-    // directives appeared in the makefile.
+pub unsafe fn build_vpath_lists(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
+    reverse_vpath_chain(ctx);
+    install_variable_vpaths(ctx)
+}
+
+/// Reverse the directive-built chain so vpaths are searched in the order their
+/// directives appeared in the makefile.
+///
+/// # Safety
+/// The chain links must be valid and the caller single-threaded with respect
+/// to them.
+unsafe fn reverse_vpath_chain(ctx: &crate::execctx::ExecContext) {
     let mut reversed: *mut Vpath = null_mut();
     let mut old = ctx.vpaths.0.get();
     while !old.is_null() {
@@ -105,13 +116,24 @@ pub unsafe fn build_vpath_lists(ctx: &crate::execctx::ExecContext) {
         old = next;
     }
     ctx.vpaths.0.set(reversed);
+}
 
-    if let Some(list) = vpath_from_variable(ctx, b"VPATH\0") {
+/// Build the `VPATH`/`GPATH` chains from the variables of those names. Split
+/// from [`build_vpath_lists`] so the `Result` seam #442 introduced sits in one
+/// small function rather than adding branches to the chain reversal above.
+///
+/// # Safety
+/// As [`build_vpath_lists`].
+unsafe fn install_variable_vpaths(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
+    if let Some(list) = vpath_from_variable(ctx, b"VPATH\0")? {
         ctx.general_vpath.0.set(list);
     }
-    if let Some(list) = vpath_from_variable(ctx, b"GPATH\0") {
+    if let Some(list) = vpath_from_variable(ctx, b"GPATH\0")? {
         ctx.gpaths.0.set(list);
     }
+    Ok(())
 }
 
 /// Expand the named make variable and build a `%`-pattern vpath chain from
@@ -120,13 +142,29 @@ pub unsafe fn build_vpath_lists(ctx: &crate::execctx::ExecContext) {
 unsafe fn vpath_from_variable(
     ctx: &crate::execctx::ExecContext,
     name: &[u8],
-) -> Option<*mut Vpath> {
-    let p = expand_variable_buf(
+) -> Result<Option<*mut Vpath>, crate::build_result::BuildError> {
+    // `map` rather than `?`: everything downstream of the expansion is in
+    // `vpath_chain_from_expansion`, so the `Result` seam #442 introduced does
+    // not add a branch to the chain-building logic itself.
+    expand_variable_buf(
         ctx,
         null_mut(),
         name.as_ptr() as *const c_char,
         (name.len() - 1) as size_t,
-    );
+    )
+    .map(|p| vpath_chain_from_expansion(ctx, p))
+}
+
+/// Build a `%`-pattern vpath chain from an already-expanded search path.
+/// Returns `None` when the value is empty or whitespace-only.
+///
+/// # Safety
+/// `p` must be a live NUL-terminated buffer inside the variable buffer, and
+/// the caller must be single-threaded with respect to the vpath chains.
+unsafe fn vpath_chain_from_expansion(
+    ctx: &crate::execctx::ExecContext,
+    p: *mut c_char,
+) -> Option<*mut Vpath> {
     // The expansion lives in a mutable buffer that construct_vpath_list may
     // overwrite in place; view it (plus its NUL) as a byte slice.
     let len = strlen(p);
@@ -707,5 +745,89 @@ unsafe fn print_search_path(path: *const Vpath) {
             PATH_SEPARATOR_CHAR as u8
         };
         crate::output::trace_parts(&[CStr::from_ptr(entry).to_bytes(), &[sep]]);
+    }
+}
+
+#[cfg(test)]
+mod vpath_variable_rejection_tests {
+    //! Since #442 `vpath_from_variable` and `build_vpath_lists` return
+    //! `Result`: a `VPATH`/`GPATH` value that cannot be expanded comes back as
+    //! a rejection instead of ending the process from inside the vpath setup.
+
+    use super::{build_vpath_lists, vpath_from_variable};
+    use crate::build_result::BuildError;
+    use std::ffi::CString;
+
+    /// Define `name` as a recursive global variable holding `value`.
+    ///
+    /// # Safety
+    /// `ctx` must have its global variable set initialized.
+    unsafe fn define_recursive(ctx: &crate::execctx::ExecContext, name: &str, value: &str) {
+        let cname = CString::new(name).unwrap();
+        let cvalue = CString::new(value).unwrap();
+        crate::variable::define_variable_in_set(
+            ctx,
+            cname.as_ptr(),
+            name.len() as crate::ffi_types::size_t,
+            cvalue.as_ptr(),
+            crate::variable::o_file,
+            1,
+            ctx.variable_globals.global_variable_set.as_ptr(),
+            ::core::ptr::null::<crate::floc::Floc>(),
+        );
+    }
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+        }
+        ctx
+    }
+
+    /// `$(word 1)` is a builtin called with the wrong number of arguments, so
+    /// expanding it is refused — and the refusal now travels out of the vpath
+    /// setup rather than exiting.
+    #[test]
+    fn rejected_vpath_value_propagates() {
+        let ctx = fresh_ctx();
+        // SAFETY: NUL-terminated names; single-threaded fresh context.
+        unsafe {
+            define_recursive(&ctx, "VPATH", "$(word 1)");
+            assert!(matches!(
+                vpath_from_variable(&ctx, b"VPATH\0"),
+                Err(BuildError::Failure)
+            ));
+            assert!(
+                matches!(build_vpath_lists(&ctx), Err(BuildError::Failure)),
+                "the rejection must reach `build_vpath_lists`, which `main_0` \
+                 propagates"
+            );
+        }
+    }
+
+    /// A well-formed value still builds its chain, and an empty or
+    /// whitespace-only one is ignored rather than treated as a failure.
+    #[test]
+    fn well_formed_and_empty_values_still_build() {
+        let ctx = fresh_ctx();
+        // SAFETY: as above.
+        unsafe {
+            define_recursive(&ctx, "VPATH", "   ");
+            assert!(
+                vpath_from_variable(&ctx, b"VPATH\0").expect("well-formed").is_none(),
+                "a whitespace-only value yields no chain"
+            );
+
+            define_recursive(&ctx, "GPATH", "src:include");
+            assert!(
+                vpath_from_variable(&ctx, b"GPATH\0").expect("well-formed").is_some(),
+                "a real search path yields a chain"
+            );
+            assert!(build_vpath_lists(&ctx).is_ok());
+        }
     }
 }

@@ -2423,11 +2423,16 @@ unsafe extern "C" fn library_search(
     let mut best_vpath: ::core::ffi::c_uint = 0;
     let mut best_path: ::core::ffi::c_uint = 0;
     let mut dp: *const *const ::core::ffi::c_char;
+    // `library_search` returns a bare name pointer and its only caller is
+    // `f_mtime`, which returns `uintmax_t` across 24 call sites — that cone is
+    // its own slice, so a rejected `.LIBPATTERNS` expansion bridges here until
+    // then (#432 Phase B, #442).
     libpatterns = allocated_expand_variable(
         ctx,
         b".LIBPATTERNS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-    );
+    )
+    .unwrap_or_else(|e| crate::output::exit_on_err(e));
     lib = lib.offset(2_i32 as isize);
     liblen = strlen(lib) as size_t;
     p2 = libpatterns;
