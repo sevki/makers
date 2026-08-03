@@ -2471,7 +2471,7 @@ unsafe fn main_0(
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
-        construct_include_path(&ctx, &inc_paths);
+        construct_include_path(&ctx, &inc_paths)?;
     }
     if options.jobserver_auth.borrow().is_some() {
         // Reset the jobserver unless we successfully inherited the parent's.
@@ -3647,11 +3647,10 @@ unsafe fn handle_non_switch_argument(
     origin: variable_origin,
 ) -> Result<::core::ffi::c_uint, crate::build_result::BuildError> {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let v: *mut variable;
     if *arg.offset(0_i32 as isize) as i32 == '-' as i32 && *arg.offset(1_i32 as isize) as i32 == 0 {
         return Ok(0);
     }
-    v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global);
+    let v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global)?;
     if !v.is_null() {
         let mut cv: *mut CommandVariable;
         cv = ctx.command_variables.0.get();
@@ -3770,7 +3769,7 @@ pub unsafe fn reset_makeflags(
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
-        construct_include_path(ctx, &inc_paths);
+        construct_include_path(ctx, &inc_paths)?;
     }
     disable_builtins(ctx, options);
     define_makeflags(ctx, options, opt_rebuilding_makefiles(ctx) as i32);
@@ -7154,6 +7153,28 @@ mod decode_switches_error_paths {
             assert_eq!(r, Ok(()), "output-sync {name:?} should be accepted");
             assert_eq!(options.output_sync.get(), mode);
         }
+    }
+
+    /// `reset_makeflags` re-reads `MAKEFLAGS` and rebuilds the include path.
+    /// Since #442 both steps return `Result`, so the whole function propagates
+    /// instead of exiting; on a clean context there is nothing to reject, so it
+    /// succeeds and the `?` arms stay covered rather than sitting at 0%.
+    #[test]
+    fn reset_makeflags_succeeds_on_a_clean_context() {
+        super::initialize_stopchar_map();
+        let _ctx = install_default_exec_context_for_test();
+        let ctx = ExecContext::default();
+        // SAFETY: the global variable set and builtin function table must exist
+        // before `decode_env_switches` and `define_makeflags` look anything up.
+        unsafe {
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::function::hash_init_function_table(&ctx);
+        }
+        let options = Options::new();
+        // SAFETY: `reset_makeflags` is the c2rust raw-pointer API; `ctx` and
+        // `options` are freshly built and valid for the call.
+        let r = unsafe { super::reset_makeflags(&ctx, &options, super::o_env) };
+        assert!(r.is_ok(), "a clean context has no MAKEFLAGS to reject");
     }
 
     #[test]

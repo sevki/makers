@@ -591,7 +591,7 @@ unsafe fn eval_makefile(
         f_append_value,
         0,
         s_global,
-    );
+    )?;
     ebuf.size = 200;
     ebuf.bufstart = xmalloc(ebuf.size) as *mut ::core::ffi::c_char;
     ebuf.bufnext = ebuf.bufstart;
@@ -936,7 +936,7 @@ pub unsafe fn eval(
                         v = do_define(ctx, p, origin, ebuf)
                             ?;
                     } else {
-                        v = try_variable_definition(ctx, fstart, p, origin, s_global);
+                        v = try_variable_definition(ctx, fstart, p, origin, s_global)?;
                     }
                     let vref = v.as_mut().expect("assertion failed: v != NULL");
                     if vmod.export_v() as i32 != v_default as i32 {
@@ -2002,7 +2002,6 @@ unsafe fn do_define(
     origin: variable_origin,
     ebuf: *mut EBuffer,
 ) -> Result<*mut variable, crate::build_result::BuildError> {
-    let v: *mut variable;
     let mut var: variable = variable {
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         value: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -2133,7 +2132,10 @@ unsafe fn do_define(
     } else {
         *definition.offset(idx.wrapping_sub(1) as isize) = 0;
     }
-    v = do_variable_definition(
+    // Held rather than `?`-ed: `n` is `malloc`ed and must be released on the
+    // error path too, so the free below runs before the `BuildError` leaves
+    // this frame (the cleanup-paths-report contract from #561).
+    let defined = do_variable_definition(
         ctx,
         &raw mut defstart,
         name,
@@ -2144,7 +2146,7 @@ unsafe fn do_define(
         s_global,
     );
     free(n as *mut ::core::ffi::c_void);
-    Ok(v)
+    defined
 }
 /// Map a typed conditional [`crate::parser::Directive`] to make's internal
 /// `cmdtype` code, the discriminant the rest of `conditional_line` switches on.
@@ -2431,7 +2433,7 @@ unsafe fn record_target_var(
             let cached_percent = cached_name.offset(percent_off);
             p = create_pattern_var(ctx, cached_name, cached_percent);
             (*p).variable.fileinfo = *flocp;
-            v = assign_variable_definition(ctx, &raw mut (*p).variable, defn);
+            v = assign_variable_definition(ctx, &raw mut (*p).variable, defn)?;
             let vref = v.as_mut().expect("assertion failed: v != 0");
             vref.set_origin(origin as variable_origin);
             if vref.flavor() as i32 == f_simple as i32 {
@@ -2456,7 +2458,7 @@ unsafe fn record_target_var(
             initialize_file_variables(ctx, fid, 1);
             let head = crate::variable::build_file_setlist(ctx, fid);
             ctx.variable_globals.current_variable_set_list.set(head);
-            v = try_variable_definition(ctx, flocp, defn, origin, s_target);
+            v = try_variable_definition(ctx, flocp, defn, origin, s_target)?;
             if v.is_null() {
                 return Err(crate::output::fatal_err(
                     ctx,

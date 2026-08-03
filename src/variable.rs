@@ -1019,6 +1019,12 @@ pub fn initialize_file_variables(ctx: &ExecContext, file: FileId, reading: i32) 
                         (*p).variable.conditional() as i32,
                         s_pattern,
                     )
+                    // `initialize_file_variables` still returns `()` and is
+                    // reached from `second_expansion_deps`, `expand_deps` and
+                    // `print_target_variables`, none of which carry a `Result`
+                    // yet; those convert with the later slices of #442 and this
+                    // bridge retires with them (#432 Phase B).
+                    .unwrap_or_else(|e| crate::output::exit_on_err(e))
                     .as_mut()
                     .expect("do_variable_definition returned null")
                 };
@@ -2144,7 +2150,7 @@ pub unsafe fn do_variable_definition(
     mut flavor: variable_flavor,
     conditional: i32,
     scope: variable_scope,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     // Set to false by the one branch that must keep the existing value
     // (appending an empty string); every other branch defines the variable.
     let mut do_define = true;
@@ -2155,7 +2161,7 @@ pub unsafe fn do_variable_definition(
     if conditional != 0 {
         v = lookup_variable(ctx, varname, strlen(varname) as size_t);
         if !v.is_null() {
-            return v;
+            return Ok(v);
         }
     }
     match flavor as ::core::ffi::c_uint {
@@ -2336,10 +2342,10 @@ pub unsafe fn do_variable_definition(
         vr.set_conditional(conditional as ::core::ffi::c_uint as ::core::ffi::c_uint);
     }
     free(alloc_value as *mut ::core::ffi::c_void);
-    match v.as_mut() {
+    Ok(match v.as_mut() {
         Some(vr) if vr.special() as i32 != 0 => set_special_var(ctx, vr as *mut variable, origin),
         _ => v,
-    }
+    })
 }
 /// # Safety
 ///
@@ -2376,11 +2382,11 @@ pub unsafe fn assign_variable_definition(
     ctx: &crate::execctx::ExecContext,
     v: *mut variable,
     line: *const ::core::ffi::c_char,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let name: *mut ::core::ffi::c_char;
     if parse_variable_definition(ctx, line, v).is_null() {
-        return ::core::ptr::null_mut::<variable>();
+        return Ok(::core::ptr::null_mut::<variable>());
     }
     alloca_allocations.push(::std::vec::from_elem(
         0,
@@ -2394,8 +2400,8 @@ pub unsafe fn assign_variable_definition(
     );
     *name.offset((*v).length as isize) = 0;
     (*v).name = allocated_expand_string_for_file(ctx, name, ::core::ptr::null_mut::<file>());
-    fatal_on_empty_variable_name(ctx, v);
-    v
+    fatal_on_empty_variable_name(ctx, v)?;
+    Ok(v)
 }
 
 /// Abort with "empty variable name" when `v`'s (already expanded) name is the
@@ -2408,13 +2414,15 @@ pub unsafe fn assign_variable_definition(
 ///
 /// `v` must be a valid `variable` whose `name` points at a live NUL-terminated
 /// string, and `ctx` must be valid for diagnostic reporting.
-unsafe fn fatal_on_empty_variable_name(ctx: &crate::execctx::ExecContext, v: *mut variable) {
+unsafe fn fatal_on_empty_variable_name(
+    ctx: &crate::execctx::ExecContext,
+    v: *mut variable,
+) -> Result<(), crate::build_result::BuildError> {
     if *(*v).name.offset(0_i32 as isize) as i32 == 0 {
-        // `assign_variable_definition` (this function's only caller) returns
-        // a raw pointer, not `Result`; bridge through the shared
-        // `_err`/`exit_on_err` path rather than propagating `Result` through
-        // this whole call chain (#432 Phase B, #539).
-        crate::output::exit_on_err(fatal_err(
+        // Since #442 `assign_variable_definition` returns `Result`, so an
+        // empty variable name is handed back as a value instead of ending the
+        // process — the bridge this comment used to describe is gone.
+        return Err(fatal_err(
             ctx,
             &raw mut (*v).fileinfo,
             0,
@@ -2422,6 +2430,7 @@ unsafe fn fatal_on_empty_variable_name(ctx: &crate::execctx::ExecContext, v: *mu
             &[],
         ));
     }
+    Ok(())
 }
 /// # Safety
 ///
@@ -2433,7 +2442,7 @@ pub unsafe fn try_variable_definition(
     line: *const ::core::ffi::c_char,
     origin: variable_origin,
     scope: variable_scope,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let mut v: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -2445,18 +2454,18 @@ pub unsafe fn try_variable_definition(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    let vp: *mut variable;
     // SAFETY: dereference `flocp` only behind the null check; `as_ref` yields a
-    // checked reference so the read is provably valid.
-    if let Some(floc) = flocp.as_ref() {
-        v.fileinfo = *floc;
-    } else {
-        v.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
+    // checked reference so the read is provably valid. The `None` arm keeps the
+    // zeroed `fileinfo` the initializer above already installed, so a copied
+    // default is the same thing the former `else` branch wrote by hand.
+    v.fileinfo = flocp.as_ref().copied().unwrap_or(v.fileinfo);
+    if assign_variable_definition(ctx, &raw mut v, line)?.is_null() {
+        return Ok(::core::ptr::null_mut::<variable>());
     }
-    if assign_variable_definition(ctx, &raw mut v, line).is_null() {
-        return ::core::ptr::null_mut::<variable>();
-    }
-    vp = do_variable_definition(
+    // Held rather than `?`-ed: `v.name` is `malloc`ed and must be released on
+    // the error path too, so the free below has to run before the `BuildError`
+    // leaves this frame (the cleanup-paths-report contract from #561).
+    let defined = do_variable_definition(
         ctx,
         flocp,
         v.name,
@@ -2467,7 +2476,7 @@ pub unsafe fn try_variable_definition(
         scope,
     );
     free(v.name as *mut ::core::ffi::c_void);
-    vp
+    defined
 }
 // Read-only table (populated once by a c2rust `.init_array` ctor and never
 // mutated afterward): `const` avoids the `Sync` bound a `static` would need
@@ -3194,9 +3203,65 @@ mod assign_variable_definition_tests {
         unsafe {
             let mut v: variable = ::core::mem::zeroed();
             let not_def = c"just_a_bare_word";
-            let r = assign_variable_definition(&ctx, &raw mut v, not_def.as_ptr());
+            let r = assign_variable_definition(&ctx, &raw mut v, not_def.as_ptr())
+                .expect("a non-definition line is a reject, not an error");
             assert!(r.is_null(), "a non-definition line yields null");
             assert!(v.name.is_null(), "no name is allocated on the reject path");
+        }
+    }
+
+    /// A definition whose left-hand side is empty (`= value`) is fatal. Since
+    /// #442 `assign_variable_definition` returns `Result`, so the diagnostic
+    /// comes back as a value — reaching this line used to end the process, which
+    /// is why it sat uncovered.
+    #[test]
+    fn rejects_empty_variable_name() {
+        crate::make_main::initialize_stopchar_map();
+        let _g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: as above — a zeroed `variable` and a valid NUL-terminated
+        // line, exactly the shape `try_variable_definition` passes.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            super::init_hash_global_variable_set(&ctx);
+            for empty in [c"= value", c"  = value", c":= value"] {
+                let mut v: variable = ::core::mem::zeroed();
+                assert!(
+                    matches!(
+                        assign_variable_definition(&ctx, &raw mut v, empty.as_ptr()),
+                        Err(crate::build_result::BuildError::Failure)
+                    ),
+                    "an empty left-hand side must be rejected, not defined"
+                );
+            }
+        }
+    }
+
+    /// The matching well-formed definition still parses and names the variable,
+    /// so the rejection above is about the empty name and nothing else.
+    #[test]
+    fn accepts_named_definition() {
+        crate::make_main::initialize_stopchar_map();
+        let _g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: as above.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            super::init_hash_global_variable_set(&ctx);
+            let mut v: variable = ::core::mem::zeroed();
+            let def = c"FOO = bar";
+            let r = assign_variable_definition(&ctx, &raw mut v, def.as_ptr())
+                .expect("a well-formed definition is not an error");
+            assert!(!r.is_null(), "a well-formed definition yields the variable");
+            assert_eq!(
+                ::std::ffi::CStr::from_ptr(v.name).to_bytes(),
+                b"FOO",
+                "the parsed name is the left-hand side"
+            );
         }
     }
 }
