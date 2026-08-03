@@ -1895,7 +1895,15 @@ pub unsafe fn target_environment(
                     // `current_variable_set_list` is already the file's scope
                     // (installed above when `file` is Some), so expand in that
                     // context with a null file pointer.
-                    cp = recursively_expand_for_file(ctx, v_0, ::core::ptr::null_mut::<file>());
+                    //
+                    // `target_environment` still returns a bare `char **`, and
+                    // both its callers — `func_shell_base` in `function.rs` and
+                    // `start_job_command` in `job.rs` — return `()`/a raw
+                    // pointer, so there is no frame here to propagate into. The
+                    // environment-construction slice retires this bridge
+                    // (#432 Phase B, #442).
+                    cp = recursively_expand_for_file(ctx, v_0, ::core::ptr::null_mut::<file>())
+                        .unwrap_or_else(|e| crate::output::exit_on_err(e));
                     value = cp;
                 }
                 if added_shell == 0
