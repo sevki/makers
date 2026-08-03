@@ -130,19 +130,23 @@ pub fn construct_include_path(
 pub unsafe fn tilde_expand(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     if *name.offset(1_i32 as isize) as i32 == '/' as i32 || *name.offset(1_i32 as isize) as i32 == 0
     {
         let mut home_dir: *mut ::core::ffi::c_char;
         let is_variable: i32;
         let save: Action = warning::action(ctx, Type::UndefinedVar);
         warning::set_action(ctx, Type::UndefinedVar, Action::Ignore);
-        home_dir = allocated_expand_variable(
+        // Held rather than `?`-ed on the spot: the undefined-variable warning
+        // action was suppressed for this lookup and has to be put back before
+        // the error leaves the frame (the cleanup-paths contract from #561).
+        let expanded = allocated_expand_variable(
             ctx,
             b"HOME\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
         );
         warning::set_action(ctx, Type::UndefinedVar, save);
+        home_dir = expanded?;
         is_variable = (*home_dir.offset(0_i32 as isize) as i32 != 0) as i32;
         if is_variable == 0 {
             free(home_dir as *mut ::core::ffi::c_void);
@@ -166,7 +170,7 @@ pub unsafe fn tilde_expand(
             if is_variable != 0 {
                 free(home_dir as *mut ::core::ffi::c_void);
             }
-            return new;
+            return Ok(new);
         }
     } else {
         // `~user` / `~user/suffix`: split the name (after `~`) at the first `/`
@@ -184,23 +188,23 @@ pub unsafe fn tilde_expand(
         if !pwent.is_null() {
             match slash {
                 // `~user` — just the user's home directory.
-                None => return xstrdup((*pwent).pw_dir),
+                None => return Ok(xstrdup((*pwent).pw_dir)),
                 // `~user/suffix` — home + the `/suffix` tail (the byte at `i` is
                 // the `/`, so the tail after it starts at `1 + i + 1`).
                 Some(i) => {
-                    return xstrdup(
+                    return Ok(xstrdup(
                         concat(&[
                             cstr_bytes_or_empty((*pwent).pw_dir),
                             b"/",
                             cstr_bytes_or_empty(name.add(1 + i + 1)),
                         ])
                         .as_ptr() as *const ::core::ffi::c_char,
-                    );
+                    ));
                 }
             }
         }
     }
-    ::core::ptr::null_mut::<::core::ffi::c_char>()
+    Ok(::core::ptr::null_mut::<::core::ffi::c_char>())
 }
 
 #[cfg(test)]

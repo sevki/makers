@@ -5075,11 +5075,16 @@ unsafe fn func_call(
     (*v).set_exp_count(EXP_COUNT_MAX as ::core::ffi::c_uint as ::core::ffi::c_uint);
     let saved_args = ctx.max_args.0.load(Ordering::Relaxed) as i32;
     ctx.max_args.0.store(i, Ordering::Relaxed);
-    o = expand_variable_output(ctx, o, fname, flen);
+    // Held rather than `?`-ed on the spot: `max_args` and the recursion guard
+    // below must be put back on the error path too, or a rejected `$(call ...)`
+    // would leave the function stack skewed (the cleanup-paths contract
+    // from #561).
+    let expanded = expand_variable_output(ctx, o, fname, flen);
     ctx.max_args
         .0
         .store(saved_args as ::core::ffi::c_uint, Ordering::Relaxed);
     (*v).set_exp_count(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    o = expanded?;
     pop_variable_scope(ctx);
     Ok(o.add(strlen(o)))
 }

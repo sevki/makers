@@ -266,7 +266,7 @@ pub unsafe fn read_all_makefiles(
         ctx,
         b"MAKEFILES\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-    );
+    )?;
     p = value;
     loop {
         name = find_next_token(
@@ -443,7 +443,7 @@ unsafe fn eval_makefile(
         crate::output::trace_out(&msg);
     }
     if flags as i32 & RM_NO_TILDE == 0 && *filename.offset(0_i32 as isize) as i32 == '~' as i32 {
-        expanded = tilde_expand(ctx, filename);
+        expanded = tilde_expand(ctx, filename)?;
         if !expanded.is_null() {
             filename = expanded;
         }
@@ -3667,7 +3667,12 @@ pub unsafe fn parse_file_seq(
             } else {
                 name = tmpbuf;
                 if *tmpbuf.offset(0_i32 as isize) as i32 == '~' as i32 {
-                    tildep = tilde_expand(ctx, tmpbuf);
+                    // `parse_file_seq` returns a bare `Vec<ParsedName>` and is
+                    // reached from a dozen non-`Result` frames; that cone is its
+                    // own slice, so a rejected `~` expansion bridges here until
+                    // then (#432 Phase B, #442).
+                    tildep = tilde_expand(ctx, tmpbuf)
+                        .unwrap_or_else(|e| crate::output::exit_on_err(e));
                     if !tildep.is_null() {
                         name = tildep;
                     }

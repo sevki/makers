@@ -2092,9 +2092,9 @@ unsafe fn set_special_var(
     ctx: &crate::execctx::ExecContext,
     var: *mut variable,
     origin: variable_origin,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let Some(varr) = var.as_ref() else {
-        return var;
+        return Ok(var);
     };
     let vname: *const ::core::ffi::c_char = varr.name;
     let vn0: i32 = vname.as_ref().map_or(-1, |c| *c as i32);
@@ -2131,12 +2131,12 @@ unsafe fn set_special_var(
             ctx,
             b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
             (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        );
+        )?;
         let arg = ::core::ffi::CStr::from_ptr(actions).to_str().unwrap_or("");
         warning::decode_actions(ctx, arg, Some(&varr.fileinfo));
         free(actions as *mut ::core::ffi::c_void);
     }
-    var
+    Ok(var)
 }
 /// # Safety
 ///
@@ -2368,7 +2368,7 @@ pub unsafe fn do_variable_definition(
     }
     free(alloc_value as *mut ::core::ffi::c_void);
     Ok(match v.as_mut() {
-        Some(vr) if vr.special() as i32 != 0 => set_special_var(ctx, vr as *mut variable, origin),
+        Some(vr) if vr.special() as i32 != 0 => set_special_var(ctx, vr as *mut variable, origin)?,
         _ => v,
     })
 }
