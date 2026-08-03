@@ -2146,7 +2146,7 @@ unsafe fn do_define(
         s_global,
     );
     free(n as *mut ::core::ffi::c_void);
-    Ok(defined?)
+    defined
 }
 /// Map a typed conditional [`crate::parser::Directive`] to make's internal
 /// `cmdtype` code, the discriminant the rest of `conditional_line` switches on.

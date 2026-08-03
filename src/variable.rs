@@ -2476,7 +2476,7 @@ pub unsafe fn try_variable_definition(
         scope,
     );
     free(v.name as *mut ::core::ffi::c_void);
-    Ok(defined?)
+    defined
 }
 // Read-only table (populated once by a c2rust `.init_array` ctor and never
 // mutated afterward): `const` avoids the `Sync` bound a `static` would need
