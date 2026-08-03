@@ -3647,11 +3647,10 @@ unsafe fn handle_non_switch_argument(
     origin: variable_origin,
 ) -> Result<::core::ffi::c_uint, crate::build_result::BuildError> {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
-    let v: *mut variable;
     if *arg.offset(0_i32 as isize) as i32 == '-' as i32 && *arg.offset(1_i32 as isize) as i32 == 0 {
         return Ok(0);
     }
-    v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global)?;
+    let v = try_variable_definition(ctx, ::core::ptr::null::<Floc>(), arg, origin, s_global)?;
     if !v.is_null() {
         let mut cv: *mut CommandVariable;
         cv = ctx.command_variables.0.get();

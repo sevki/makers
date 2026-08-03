@@ -2454,7 +2454,6 @@ pub unsafe fn try_variable_definition(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    let vp: *mut variable;
     // SAFETY: dereference `flocp` only behind the null check; `as_ref` yields a
     // checked reference so the read is provably valid.
     if let Some(floc) = flocp.as_ref() {
@@ -2479,8 +2478,7 @@ pub unsafe fn try_variable_definition(
         scope,
     );
     free(v.name as *mut ::core::ffi::c_void);
-    vp = defined?;
-    Ok(vp)
+    Ok(defined?)
 }
 // Read-only table (populated once by a c2rust `.init_array` ctor and never
 // mutated afterward): `const` avoids the `Sync` bound a `static` would need

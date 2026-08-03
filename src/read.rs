@@ -2002,7 +2002,6 @@ unsafe fn do_define(
     origin: variable_origin,
     ebuf: *mut EBuffer,
 ) -> Result<*mut variable, crate::build_result::BuildError> {
-    let v: *mut variable;
     let mut var: variable = variable {
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         value: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -2147,8 +2146,7 @@ unsafe fn do_define(
         s_global,
     );
     free(n as *mut ::core::ffi::c_void);
-    v = defined?;
-    Ok(v)
+    Ok(defined?)
 }
 /// Map a typed conditional [`crate::parser::Directive`] to make's internal
 /// `cmdtype` code, the discriminant the rest of `conditional_line` switches on.
