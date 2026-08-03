@@ -1578,8 +1578,13 @@ pub unsafe fn expand_extra_prereqs(
     if extra.is_null() {
         return Vec::new();
     }
-    // Expand the `.EXTRA_PREREQS` value, then split it into prerequisites. The
-    // expansion buffer is a freshly-allocated C string we own and free.
+    // Expand the `.EXTRA_PREREQS` value, then split it into prerequisites.
+    //
+    // The result is *borrowed*, not owned: `expand_string_buf` with a null
+    // `buf` writes into `ctx.variable_buffer` and hands back a cursor into it,
+    // exactly as the C `variable_expand` returns the shared `variable_buffer`
+    // and leaves ownership with the caller's context. The `allocated_*`
+    // wrappers are the ones that swap the buffer out and transfer ownership.
     let expanded = expand_string_buf(
         ctx,
         ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -1587,7 +1592,6 @@ pub unsafe fn expand_extra_prereqs(
         SIZE_MAX as size_t,
     );
     let mut prereqs = split_prereqs(ctx, expanded);
-    free(expanded as *mut ::core::ffi::c_void);
     // Resolve each prerequisite to a target and flag it so automatic variables
     // are ignored when it is evaluated.
     for d in prereqs.iter_mut() {
@@ -1687,8 +1691,9 @@ unsafe fn expand_extra_prereqs_value(
         value_c.as_ptr() as *const ::core::ffi::c_char,
         SIZE_MAX as size_t,
     );
+    // Borrowed from `ctx.variable_buffer`, not owned — see the note in
+    // `expand_extra_prereqs`.
     let mut prereqs = split_prereqs(ctx, expanded);
-    free(expanded as *mut ::core::ffi::c_void);
     for d in prereqs.iter_mut() {
         let name_bytes = d.name.clone().into_bytes();
         let fid = lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
