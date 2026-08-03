@@ -3972,6 +3972,32 @@ mod read_all_pipe_tests {
     }
 }
 
+/// Remove and free the temporary batch file `construct_command_argv` may have
+/// written for this shell, tracing the cleanup under `-d`. A null name means
+/// no batch file was used.
+///
+/// # Safety
+///
+/// `batch_filename` must be null or a NUL-terminated allocation owned by the
+/// caller; ownership transfers into this function.
+unsafe fn discard_batch_file(
+    ctx: &crate::execctx::ExecContext,
+    batch_filename: *mut ::core::ffi::c_char,
+) {
+    if batch_filename.is_null() {
+        return;
+    }
+    if 0x2_i32 & db_level(ctx) != 0 {
+        crate::output::trace_parts(&[
+            b"Cleaning up temporary batch file ",
+            ::core::ffi::CStr::from_ptr(batch_filename).to_bytes(),
+            b"\n",
+        ]);
+    }
+    remove(batch_filename);
+    free(batch_filename as *mut ::core::ffi::c_void);
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -3981,7 +4007,7 @@ pub unsafe fn func_shell_base(
     mut o: *mut ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
     trim_newlines: i32,
-) -> *mut ::core::ffi::c_char {
+) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
     let mut child: ChildBase = ChildBase {
         cmd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         environment: ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
@@ -4005,9 +4031,9 @@ pub unsafe fn func_shell_base(
         None,
         0,
         &raw mut batch_filename,
-    );
+    )?;
     if command_argv.is_null() {
-        return o;
+        return Ok(o);
     }
     crate::output::output_start(ctx);
     let osync = output_context();
@@ -4016,73 +4042,79 @@ pub unsafe fn func_shell_base(
     } else {
         fileno(stderr)
     };
-    child.environment = target_environment(ctx, None, 0);
-    if pipe(&raw mut pipedes as *mut i32) < 0 {
-        error(
-            ctx,
-            ctx.reading_file.0.get(),
-            strlen(strerror(*__errno_location())) as size_t,
-            b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
-            &[FmtArg::Str(
-                (strerror(*__errno_location())) as *const ::core::ffi::c_char,
-            )],
-        );
-    } else {
-        fd_noinherit(pipedes[1_i32 as usize]);
-        fd_noinherit(pipedes[0_i32 as usize]);
-        child
-            .output
-            .set_syncout(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        child.output.out = pipedes[1_i32 as usize];
-        child.output.err = errfd;
-        pid = child_execute_job(ctx, &raw mut child, 1, command_argv);
-        if pid < 0 {
-            shell_completed(ctx, 127, 0);
-        } else {
-            ctx.shell_function_pid.0.store(pid, Ordering::Relaxed);
-            ctx.shell_function_completed.0.store(0, Ordering::Relaxed);
-            if pipedes[1_i32 as usize] >= 0 {
-                close(pipedes[1_i32 as usize]);
-            }
-            let (mut buffer, mut i) = read_all_pipe(pipedes[0_i32 as usize]);
-            close(pipedes[0_i32 as usize]);
-            while shell_function_completed(ctx) == 0 {
-                // The last `exit_on_err` left in this module. #442 made the
-                // builtin dispatch ABI `Result`-carrying, so `func_shell` above
-                // could propagate — but `func_shell_base` itself still returns a
-                // raw output pointer and has a second caller in `variable.rs`
-                // (`$(shell …)` via `do_variable_definition`), so converting it
-                // would push a fresh bridge into that module instead of
-                // retiring one. It retires with the expander sub-stack, which
-                // reaches that caller too (#432 Phase B, #441, #539).
-                reap_children(ctx, 1, 0).unwrap_or_else(|e| crate::output::exit_on_err(e));
-            }
-            if !batch_filename.is_null() {
-                if 0x2_i32 & db_level(ctx) != 0 {
-                    crate::output::trace_parts(&[
-                        b"Cleaning up temporary batch file ",
-                        ::core::ffi::CStr::from_ptr(batch_filename).to_bytes(),
-                        b"\n",
-                    ]);
-                }
-                remove(batch_filename);
-                free(batch_filename as *mut ::core::ffi::c_void);
-            }
-            ctx.shell_function_pid.0.store(0, Ordering::Relaxed);
-            fold_newlines(
-                buffer.as_mut_ptr() as *mut ::core::ffi::c_char,
-                &raw mut i,
-                trim_newlines,
+    // The two rejections below are held rather than `?`-ed on the spot: the
+    // argv buffer and the `childbase` are released at the tail, and that has to
+    // run on the error path too (the cleanup-paths contract from #561).
+    let rejected: Option<crate::build_result::BuildError> = 'shell: {
+        child.environment = match target_environment(ctx, None, 0) {
+            Ok(env) => env,
+            Err(e) => break 'shell Some(e),
+        };
+        if pipe(&raw mut pipedes as *mut i32) < 0 {
+            error(
+                ctx,
+                ctx.reading_file.0.get(),
+                strlen(strerror(*__errno_location())) as size_t,
+                b"pipe: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str(
+                    (strerror(*__errno_location())) as *const ::core::ffi::c_char,
+                )],
             );
-            o = variable_buffer_output(ctx, o, buffer.as_mut_ptr() as *mut ::core::ffi::c_char, i);
+        } else {
+            fd_noinherit(pipedes[1_i32 as usize]);
+            fd_noinherit(pipedes[0_i32 as usize]);
+            child
+                .output
+                .set_syncout(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
+            child.output.out = pipedes[1_i32 as usize];
+            child.output.err = errfd;
+            pid = child_execute_job(ctx, &raw mut child, 1, command_argv);
+            if pid < 0 {
+                shell_completed(ctx, 127, 0);
+            } else {
+                ctx.shell_function_pid.0.store(pid, Ordering::Relaxed);
+                ctx.shell_function_completed.0.store(0, Ordering::Relaxed);
+                if pipedes[1_i32 as usize] >= 0 {
+                    close(pipedes[1_i32 as usize]);
+                }
+                let (mut buffer, mut i) = read_all_pipe(pipedes[0_i32 as usize]);
+                close(pipedes[0_i32 as usize]);
+                while shell_function_completed(ctx) == 0 {
+                    // #539 left this bridging because `func_shell_base` returned a
+                    // raw pointer and its second caller (`$(shell …)` reached
+                    // through `variable::do_variable_definition`) would have needed
+                    // a fresh bridge. Both frames carry a `Result` now, so the
+                    // reaping failure propagates (#432 Phase B, #441, #539).
+                    if let Err(e) = reap_children(ctx, 1, 0) {
+                        break 'shell Some(e);
+                    }
+                }
+                discard_batch_file(ctx, batch_filename);
+                ctx.shell_function_pid.0.store(0, Ordering::Relaxed);
+                fold_newlines(
+                    buffer.as_mut_ptr() as *mut ::core::ffi::c_char,
+                    &raw mut i,
+                    trim_newlines,
+                );
+                o = variable_buffer_output(
+                    ctx,
+                    o,
+                    buffer.as_mut_ptr() as *mut ::core::ffi::c_char,
+                    i,
+                );
+            }
         }
-    }
+        None
+    };
     if !command_argv.is_null() {
         free(*command_argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
         free(command_argv as *mut ::core::ffi::c_void);
     }
     free_childbase(&raw mut child);
-    o
+    match rejected {
+        Some(e) => Err(e),
+        None => Ok(o),
+    }
 }
 unsafe fn func_shell(
     ctx: &crate::execctx::ExecContext,
@@ -4090,7 +4122,7 @@ unsafe fn func_shell(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    Ok(func_shell_base(ctx, o, argv, 1))
+    func_shell_base(ctx, o, argv, 1)
 }
 pub const ROOT_LEN: i32 = 1;
 /// Normalize a path into `out`, mirroring GNU make's `abspath`.

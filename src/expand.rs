@@ -769,7 +769,7 @@ pub unsafe fn allocated_expand_string_for_file(
 ///
 /// `produced` must be the (possibly null) buffer just returned by
 /// `swap_variable_buffer`; ownership transfers into this function.
-unsafe fn claim_expansion(
+pub(crate) unsafe fn claim_expansion(
     outcome: Result<(), crate::build_result::BuildError>,
     produced: *mut ::core::ffi::c_char,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
