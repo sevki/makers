@@ -251,12 +251,12 @@ const DEFAULT_VARIABLES: &[(&CStr, &CStr)] = &[
 pub unsafe fn set_default_suffixes(
     ctx: &crate::execctx::ExecContext,
     options: &crate::make_main::Options,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let suffix_file = enter_file(ctx, b".SUFFIXES");
     if let Some(node) = ctx.filenodes.get(suffix_file) {
         node.lock().expect("file node poisoned").builtin = true;
     }
-    populate_suffixes(ctx, options, suffix_file);
+    populate_suffixes(ctx, options, suffix_file)
 }
 
 /// Define the `SUFFIXES` variable for [`set_default_suffixes`]: empty under
@@ -269,7 +269,7 @@ unsafe fn populate_suffixes(
     ctx: &crate::execctx::ExecContext,
     options: &crate::make_main::Options,
     suffix_file: crate::file::FileId,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     if options.no_builtin_rules.get() {
         define_variable_in_set(
             ctx,
@@ -282,8 +282,9 @@ unsafe fn populate_suffixes(
             null::<Floc>(),
         );
     } else {
-        install_builtin_suffixes(ctx, suffix_file);
+        install_builtin_suffixes(ctx, suffix_file)?;
     }
+    Ok(())
 }
 
 /// Parse the built-in `.SUFFIXES` list, resolve+enter each prerequisite, mark
@@ -296,10 +297,10 @@ unsafe fn populate_suffixes(
 unsafe fn install_builtin_suffixes(
     ctx: &crate::execctx::ExecContext,
     suffix_file: crate::file::FileId,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let mut default_suffixes = DEFAULT_SUFFIXES;
     let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
-    let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE);
+    let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE)?;
     let deps: Vec<DepNode> = parsed
         .into_iter()
         .map(|pn| {
@@ -327,6 +328,7 @@ unsafe fn install_builtin_suffixes(
         (*ctx.variable_globals.current_variable_set_list.get()).set,
         null::<Floc>(),
     );
+    Ok(())
 }
 
 /// Build a fresh [`DepNode`] carrying just a name (no resolved file yet) — the
@@ -401,28 +403,32 @@ unsafe fn install_one_suffix_rule(
 pub unsafe fn install_default_implicit_rules(
     ctx: &crate::execctx::ExecContext,
     options: &crate::make_main::Options,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     if options.no_builtin_rules.get() {
-        return;
+        return Ok(());
     }
-    for &(target, dep, commands) in DEFAULT_PATTERN_RULES {
+    install_rule_table(ctx, DEFAULT_PATTERN_RULES, false)?;
+    install_rule_table(ctx, DEFAULT_TERMINAL_RULES, true)
+}
+
+/// Install every `(target, dep, commands)` triple in `table` as a pattern
+/// rule. Split out of [`install_default_implicit_rules`] so the two tables
+/// share one walk.
+fn install_rule_table(
+    ctx: &crate::execctx::ExecContext,
+    table: &[(&::core::ffi::CStr, &::core::ffi::CStr, &::core::ffi::CStr)],
+    terminal: bool,
+) -> Result<(), crate::build_result::BuildError> {
+    for &(target, dep, commands) in table {
         install_pattern_rule(
             ctx,
             target.to_bytes(),
             dep.to_bytes(),
             commands.to_bytes(),
-            false,
-        );
+            terminal,
+        )?;
     }
-    for &(target, dep, commands) in DEFAULT_TERMINAL_RULES {
-        install_pattern_rule(
-            ctx,
-            target.to_bytes(),
-            dep.to_bytes(),
-            commands.to_bytes(),
-            true,
-        );
-    }
+    Ok(())
 }
 
 /// Define the default variables, unless `--no-builtin-variables` was given.

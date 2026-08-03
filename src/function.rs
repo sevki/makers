@@ -572,7 +572,7 @@ fn find_next_argument(startparen: u8, endparen: u8, bytes: &[u8]) -> Option<usiz
 pub unsafe fn string_glob(
     ctx: &crate::execctx::ExecContext,
     mut line: *mut ::core::ffi::c_char,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, crate::build_result::BuildError> {
     // 0x1 = MAP_NUL stopmap; 0x1|0x10|0x8 = PARSEFS_NOSTRIP|PARSEFS_NOCACHE|PARSEFS_EXISTS
     let chain = parse_file_seq(
         ctx,
@@ -581,8 +581,8 @@ pub unsafe fn string_glob(
         0x1_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x1_i32 | 0x10_i32 | 0x8_i32,
-    );
-    join_glob_names(&chain)
+    )?;
+    Ok(join_glob_names(&chain))
 }
 
 /// Join glob-matched names into an owned buffer, replacing the pre-conversion
@@ -3682,14 +3682,17 @@ unsafe fn func_wildcard(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    let names = string_glob(ctx, *argv.offset(0_i32 as isize));
-    o = variable_buffer_output(
-        ctx,
-        o,
-        names.as_ptr() as *const ::core::ffi::c_char,
-        names.len() as size_t,
-    );
-    Ok(o)
+    // `map` rather than `?`: the glob's verdict is the whole function, so
+    // threading it through keeps this frame branch-free.
+    string_glob(ctx, *argv.offset(0_i32 as isize)).map(|names| {
+        o = variable_buffer_output(
+            ctx,
+            o,
+            names.as_ptr() as *const ::core::ffi::c_char,
+            names.len() as size_t,
+        );
+        o
+    })
 }
 unsafe fn func_eval(
     ctx: &crate::execctx::ExecContext,

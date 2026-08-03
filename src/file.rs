@@ -1312,7 +1312,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
 pub unsafe fn split_prereqs(
     ctx: &crate::execctx::ExecContext,
     mut p: *mut ::core::ffi::c_char,
-) -> Vec<DepNode> {
+) -> Result<Vec<DepNode>, crate::build_result::BuildError> {
     // 0x100 = PARSEFS_NOSTRIP, 0x40 = PARSEFS_WAIT (recognise `.WAIT`).
     let names = parse_file_seq(
         ctx,
@@ -1321,29 +1321,43 @@ pub unsafe fn split_prereqs(
         0x100_i32,
         ::core::ptr::null::<::core::ffi::c_char>(),
         0x40_i32,
-    );
+    )?;
     let mut deps: Vec<DepNode> = names
         .into_iter()
         .map(|n| dep_node_from_name(n.name, n.wait, false))
         .collect();
-    // Order-only prerequisites follow a `|`: they are tagged `ignore_mtime`.
-    if p.as_ref().is_some_and(|c| *c != 0) {
-        p = p.offset(1_i32 as isize);
-        let ood_names = parse_file_seq(
-            ctx,
-            &raw mut p,
-            ::core::mem::size_of::<dep>() as size_t,
-            0x1_i32,
-            ::core::ptr::null::<::core::ffi::c_char>(),
-            0x40_i32,
-        );
-        for n in ood_names {
-            let mut d = dep_node_from_name(n.name, n.wait, false);
-            d.ignore_mtime = true;
-            deps.push(d);
-        }
+    push_order_only_prereqs(ctx, p, &mut deps).map(|()| deps)
+}
+
+/// Append the order-only prerequisites that follow a `|` (tagged
+/// `ignore_mtime`) to `deps`. Split out of [`split_prereqs`] so the second
+/// `~`-expanding parse does not add a decision point to the first one's frame.
+///
+/// # Safety
+/// As [`split_prereqs`]: `p` must point just past the parsed head.
+unsafe fn push_order_only_prereqs(
+    ctx: &crate::execctx::ExecContext,
+    mut p: *mut ::core::ffi::c_char,
+    deps: &mut Vec<DepNode>,
+) -> Result<(), crate::build_result::BuildError> {
+    if p.as_ref().is_none_or(|c| *c == 0) {
+        return Ok(());
     }
-    deps
+    p = p.offset(1_i32 as isize);
+    let ood_names = parse_file_seq(
+        ctx,
+        &raw mut p,
+        ::core::mem::size_of::<dep>() as size_t,
+        0x1_i32,
+        ::core::ptr::null::<::core::ffi::c_char>(),
+        0x40_i32,
+    )?;
+    for n in ood_names {
+        let mut d = dep_node_from_name(n.name, n.wait, false);
+        d.ignore_mtime = true;
+        deps.push(d);
+    }
+    Ok(())
 }
 
 /// Build a fresh [`DepNode`] from an owned prerequisite name plus its `.WAIT`
@@ -1526,7 +1540,7 @@ pub unsafe fn expand_deps(
         name_c.push(0);
         let mut expanded = expand_string_for_file(ctx, &name_c, f)?;
 
-        let mut new = split_prereqs(ctx, expanded.as_mut_ptr() as *mut ::core::ffi::c_char);
+        let mut new = split_prereqs(ctx, expanded.as_mut_ptr() as *mut ::core::ffi::c_char)?;
         changed_dep = true;
         if new.is_empty() {
             continue;
@@ -1615,7 +1629,7 @@ pub unsafe fn expand_extra_prereqs(
         (*extra).value,
         SIZE_MAX as size_t,
     )?;
-    let mut prereqs = split_prereqs(ctx, expanded);
+    let mut prereqs = split_prereqs(ctx, expanded)?;
     // Resolve each prerequisite to a target and flag it so automatic variables
     // are ignored when it is evaluated.
     for d in prereqs.iter_mut() {
@@ -1722,7 +1736,7 @@ unsafe fn expand_extra_prereqs_value(
     )?;
     // Borrowed from `ctx.variable_buffer`, not owned — see the note in
     // `expand_extra_prereqs`.
-    let mut prereqs = split_prereqs(ctx, expanded);
+    let mut prereqs = split_prereqs(ctx, expanded)?;
     for d in prereqs.iter_mut() {
         let name_bytes = d.name.clone().into_bytes();
         let fid = lookup_file(ctx, &name_bytes).unwrap_or_else(|| enter_file(ctx, &name_bytes));
