@@ -7,8 +7,10 @@
 # instead of ending the process in place.
 BASE = one
 override BASE += two
+# `$(value ...)` had no coverage anywhere in the tree before this fixture.
+VAL := $(value BASE)
 SUB := $(MISSING:a=b)
 PLAIN := $(ALSO_MISSING)
 
 all:
-	@echo appended $(BASE) sub "$(SUB)" plain "$(PLAIN)"
+	@echo appended $(BASE) value "$(VAL)" sub "$(SUB)" plain "$(PLAIN)"

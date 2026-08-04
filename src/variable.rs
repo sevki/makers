@@ -872,41 +872,52 @@ pub unsafe fn lookup_variable(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> Result<*mut variable, crate::build_result::BuildError> {
-    let mut setlist: *const variable_set_list;
+    check_variable_reference(ctx, name, length)?;
+    Ok(search_variable_set_list(ctx, name, length))
+}
+/// Walk the current variable set list outward looking for `name`, honouring
+/// the privacy rule that a parent scope's private variables are invisible.
+/// Returns null when no set defines it.
+///
+/// # Safety
+///
+/// `name` must point to `length` readable bytes that stay live for the call.
+unsafe fn search_variable_set_list(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
+) -> *mut variable {
     let mut var_key: variable = variable {
-        name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
+        name: name as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
             filenm: ::core::ptr::null::<::core::ffi::c_char>(),
             lineno: 0,
             offset: 0,
         },
-        length: 0,
+        length: length as ::core::ffi::c_uint,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     let mut is_parent: i32 = 0;
-    check_variable_reference(ctx, name, length)?;
-    var_key.name = name as *mut ::core::ffi::c_char;
-    var_key.length = length as ::core::ffi::c_uint;
-    setlist = ctx.variable_globals.current_variable_set_list.get();
+    let mut setlist: *const variable_set_list =
+        ctx.variable_globals.current_variable_set_list.get();
     while !setlist.is_null() {
         let set: *const variable_set = (*setlist).set;
-        let v: *mut variable;
-        v = hash_find_item(
+        let v: *mut variable = hash_find_item(
             &raw const (*set).table as *mut HashTable,
             &raw mut var_key as *const ::core::ffi::c_void,
         ) as *mut variable;
         if !v.is_null() && (is_parent == 0 || (*v).private_var() == 0) {
-            return Ok(if (*v).special() as i32 != 0 {
+            return if (*v).special() as i32 != 0 {
                 lookup_special_var(ctx, v)
             } else {
                 v
-            });
+            };
         }
         is_parent |= (*setlist).next_is_parent;
         setlist = (*setlist).next;
     }
-    Ok(::core::ptr::null_mut::<variable>())
+    ::core::ptr::null_mut::<variable>()
 }
 /// # Safety
 ///

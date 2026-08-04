@@ -342,6 +342,30 @@ unsafe fn append_override_parent(
     }
     Ok(parent)
 }
+/// Resolve `name` the way variable output needs it: the variable if one is
+/// defined, null otherwise, having first announced an undefined reference
+/// under the `undefined-var` warning. Since #442 that announcement can be a
+/// rejection, which travels out instead of ending the process.
+///
+/// # Safety
+///
+/// `name` must point to `length` readable bytes that stay live for the call.
+unsafe fn lookup_for_output(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
+) -> Result<*mut variable, crate::build_result::BuildError> {
+    let v = lookup_variable(ctx, name, length)?;
+    if v.is_null() {
+        // SAFETY: `name` points to `length` valid bytes (caller contract);
+        // read-only bridge to the safe `warn_undefined`.
+        warn_undefined(
+            ctx,
+            ::core::slice::from_raw_parts(name as *const u8, length),
+        )?;
+    }
+    Ok(v)
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -352,15 +376,7 @@ pub unsafe fn expand_variable_output(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    let v = lookup_variable(ctx, name, length)?;
-    if v.is_null() {
-        // SAFETY: `name` points to `length` valid bytes (caller contract);
-        // read-only bridge to the safe `warn_undefined`.
-        warn_undefined(
-            ctx,
-            ::core::slice::from_raw_parts(name as *const u8, length),
-        )?;
-    }
+    let v = lookup_for_output(ctx, name, length)?;
     if v.is_null() || *(*v).value.offset(0_i32 as isize) as i32 == 0 && (*v).append() == 0 {
         return Ok(ptr);
     }
