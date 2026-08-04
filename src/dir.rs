@@ -133,7 +133,7 @@ fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut Director
 pub unsafe fn find_directory(
     ctx: &crate::execctx::ExecContext,
     name: *const c_char,
-) -> *mut directory {
+) -> Result<*mut directory, crate::build_result::BuildError> {
     // Look the directory up by its name bytes in the idiomatic `FxHashMap`
     // cache on the context.
     let key: Box<[u8]> = ::core::ffi::CStr::from_ptr(name).to_bytes().into();
@@ -150,7 +150,7 @@ pub unsafe fn find_directory(
             if ctr == crate::make_main::opt_command_count(ctx) {
                 // Valid hit. The `Box` keeps the entry at a stable heap address,
                 // so this raw pointer outlives the released map borrow.
-                return (&mut **boxed) as *mut directory;
+                return Ok((&mut **boxed) as *mut directory);
             }
             if DB_VERBOSE & db_level(ctx) != 0 {
                 crate::output::trace_parts(&[
@@ -191,7 +191,7 @@ pub unsafe fn find_directory(
     }
     if r < 0 {
         // Couldn't stat the directory; leave a contents-less entry.
-        return dir;
+        return Ok(dir);
     }
 
     // Directory contents are shared across names via the dev/ino key, held in
@@ -239,11 +239,13 @@ pub unsafe fn find_directory(
             ctx.open_directories.set(ctx.open_directories.get() + 1);
             if ctx.open_directories.get() == MAX_OPEN_DIRECTORIES as u32 {
                 // Too many streams open: read this one to completion now.
-                dir_contents_file_exists_p(ctx, dir, null());
+                // `map` rather than `?`: the entry is fully built either way,
+                // so the read's verdict is threaded out without branching here.
+                return dir_contents_file_exists_p(ctx, dir, null()).map(|_| dir);
             }
         }
     }
-    dir
+    Ok(dir)
 }
 
 /// Does `filename` exist in `dir`? Reads the directory incrementally,
@@ -252,31 +254,31 @@ unsafe fn dir_contents_file_exists_p(
     ctx: &crate::execctx::ExecContext,
     dir: *mut directory,
     filename: *const c_char,
-) -> i32 {
+) -> Result<i32, crate::build_result::BuildError> {
     let dir = dir.as_ref().expect("dir_contents_file_exists_p: null dir");
     let Some(dc) = dir.contents.as_mut() else {
         // The directory could not be stat'd.
-        return 0;
+        return Ok(0);
     };
     if dc.dirfiles.is_none() {
         // The directory could not be opened.
-        return 0;
+        return Ok(0);
     }
 
     if !filename.is_null() {
         let key = ::core::ffi::CStr::from_ptr(filename).to_bytes();
         if key.is_empty() {
             // Checking for the directory itself; it exists.
-            return 1;
+            return Ok(1);
         }
         if let Some(entry) = dc.dirfiles.as_ref().and_then(|m| m.get(key)) {
-            return (!entry.impossible) as i32;
+            return Ok((!entry.impossible) as i32);
         }
     }
 
     if dc.dirstream.is_null() {
         // The directory has been read in full and the name wasn't there.
-        return 0;
+        return Ok(0);
     }
 
     // Keep reading entries (caching each one) until we hit the name or
@@ -292,12 +294,11 @@ unsafe fn dir_contents_file_exists_p(
         }
         let Some(entry) = d.as_mut() else {
             if *__errno_location() != 0 {
-                // `dir_contents_file_exists_p` is `i32`-returning with three
-                // non-`Result` callers (dir.rs, plus `dir_file_exists_p`'s own
-                // wide fan-out); bridge through the shared `_err`/`exit_on_err`
-                // path rather than propagating `Result` through this whole
-                // call chain (#432 Phase B, #539).
-                crate::output::exit_on_err(fatal_err(
+                // The scan is abandoned mid-directory: the stream stays open
+                // and cached entries stay cached, exactly as they were before
+                // this failure, so a later scan of the same directory resumes
+                // where this one stopped.
+                return Err(fatal_err(
                     ctx,
                     null::<Floc>(),
                     0,
@@ -331,7 +332,7 @@ unsafe fn dir_contents_file_exists_p(
             );
         // Early exit once we have cached the name we were asked about.
         if !filename.is_null() && name == ::core::ffi::CStr::from_ptr(filename).to_bytes() {
-            return 1;
+            return Ok(1);
         }
     }
 
@@ -341,7 +342,7 @@ unsafe fn dir_contents_file_exists_p(
         closedir(dc.dirstream);
         dc.dirstream = null_mut();
     }
-    0
+    Ok(0)
 }
 
 /// Does `filename` exist in directory `dirname`?
@@ -353,8 +354,10 @@ pub unsafe fn dir_file_exists_p(
     ctx: &crate::execctx::ExecContext,
     dirname: *const c_char,
     filename: *const c_char,
-) -> i32 {
-    dir_contents_file_exists_p(ctx, find_directory(ctx, dirname), filename)
+) -> Result<i32, crate::build_result::BuildError> {
+    // `and_then` rather than `?`: the lookup's verdict is the whole function,
+    // so threading it through keeps this frame branch-free.
+    find_directory(ctx, dirname).and_then(|d| dir_contents_file_exists_p(ctx, d, filename))
 }
 
 /// Compute how `name` splits at its final slash.
@@ -393,13 +396,72 @@ fn split_dir(name: &::core::ffi::CStr) -> Option<(Vec<u8>, &::core::ffi::CStr)> 
 ///
 /// `name` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_exists_p(ctx: &crate::execctx::ExecContext, name: *const c_char) -> i32 {
-    if crate::ar::ar_name(ctx, ::core::ffi::CStr::from_ptr(name)) {
-        return (crate::ar::ar_member_date(ctx, name) != -1) as i32;
-    }
+pub unsafe fn file_exists_p(
+    ctx: &crate::execctx::ExecContext,
+    name: *const c_char,
+) -> Result<i32, crate::build_result::BuildError> {
+    // `and_then` rather than `?`: the classification's verdict feeds straight
+    // into the arm choice, so the seam costs this frame no decision point.
+    crate::ar::ar_name_err(ctx, ::core::ffi::CStr::from_ptr(name)).and_then(|is_ar| {
+        if is_ar {
+            ar_member_exists_p(ctx, name)
+        } else {
+            dir_lookup_exists_p(ctx, name)
+        }
+    })
+}
+
+/// Does the plain (non-archive) path `name` exist, per the directory cache?
+/// Split out of [`file_exists_p`] so its two arms stay one decision each.
+///
+/// # Safety
+/// As [`file_exists_p`].
+unsafe fn dir_lookup_exists_p(
+    ctx: &crate::execctx::ExecContext,
+    name: *const c_char,
+) -> Result<i32, crate::build_result::BuildError> {
     match split_dir(::core::ffi::CStr::from_ptr(name)) {
         None => dir_file_exists_p(ctx, c".".as_ptr(), name),
         Some((dirname, base)) => dir_file_exists_p(ctx, dirname.as_ptr().cast(), base.as_ptr()),
+    }
+}
+
+/// Does the `archive(member)` reference `name` name an existing member?
+/// Split out of [`file_exists_p`] so the archive arm's `Result` seam does not
+/// add a decision point to the directory-lookup path.
+///
+/// # Safety
+/// As [`file_exists_p`].
+unsafe fn ar_member_exists_p(
+    ctx: &crate::execctx::ExecContext,
+    name: *const c_char,
+) -> Result<i32, crate::build_result::BuildError> {
+    crate::ar::ar_member_date(ctx, name).map(|d| (d != -1) as i32)
+}
+
+/// Record that `filename` is an impossible target: make tried to build it
+/// and couldn't, so don't consider it again this command.
+///
+/// # Safety
+///
+/// `filename` must be NUL-terminated; the directory tables must be
+/// initialized.
+/// Split `filename` at its final slash and look the directory part up,
+/// returning it alongside the base name. Split out of [`file_impossible`] so
+/// both arms share one lookup and the `Result` seam costs that frame no
+/// decision point.
+///
+/// # Safety
+/// `filename` must be NUL-terminated; the directory tables must be initialized.
+unsafe fn split_for_directory(
+    ctx: &crate::execctx::ExecContext,
+    filename: *const c_char,
+) -> Result<(*mut directory, *const c_char), crate::build_result::BuildError> {
+    match split_dir(::core::ffi::CStr::from_ptr(filename)) {
+        None => find_directory(ctx, c".".as_ptr()).map(|d| (d, filename)),
+        Some((dirname, base)) => {
+            find_directory(ctx, dirname.as_ptr().cast()).map(|d| (d, base.as_ptr()))
+        }
     }
 }
 
@@ -410,11 +472,11 @@ pub unsafe fn file_exists_p(ctx: &crate::execctx::ExecContext, name: *const c_ch
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *const c_char) {
-    let (dir, filename) = match split_dir(::core::ffi::CStr::from_ptr(filename)) {
-        None => (find_directory(ctx, c".".as_ptr()), filename),
-        Some((dirname, base)) => (find_directory(ctx, dirname.as_ptr().cast()), base.as_ptr()),
-    };
+pub unsafe fn file_impossible(
+    ctx: &crate::execctx::ExecContext,
+    filename: *const c_char,
+) -> Result<(), crate::build_result::BuildError> {
+    let (dir, filename) = split_for_directory(ctx, filename)?;
     let dir = dir.as_mut().expect("find_directory never returns null");
 
     if dir.contents.is_null() {
@@ -441,6 +503,7 @@ pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *cons
             type_0: 0,
             impossible: true,
         });
+    Ok(())
 }
 
 /// Has `filename` been recorded as impossible?
@@ -449,23 +512,59 @@ pub unsafe fn file_impossible(ctx: &crate::execctx::ExecContext, filename: *cons
 ///
 /// `filename` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn file_impossible_p(ctx: &crate::execctx::ExecContext, filename: *const c_char) -> i32 {
-    let (dir, filename) = match split_dir(::core::ffi::CStr::from_ptr(filename)) {
-        None => {
-            let dir_ptr = find_directory(ctx, c".".as_ptr());
-            let contents = dir_ptr
-                .as_ref()
-                .map_or(::core::ptr::null_mut(), |d| d.contents);
-            (contents, filename)
-        }
+/// The cached contents of directory `name`, or null when it has none. Split
+/// out of [`file_impossible_p`] so both arms share one lookup.
+///
+/// # Safety
+/// `name` must be NUL-terminated; the directory tables must be initialized.
+unsafe fn dir_contents_of(
+    ctx: &crate::execctx::ExecContext,
+    name: *const c_char,
+) -> Result<*mut DirectoryContents, crate::build_result::BuildError> {
+    find_directory(ctx, name).map(|d| {
+        d.as_ref()
+            .map_or(::core::ptr::null_mut(), |d| d.contents)
+    })
+}
+
+/// Has `filename` been recorded as impossible?
+///
+/// # Safety
+///
+/// `filename` must be NUL-terminated; the directory tables must be
+/// initialized.
+pub unsafe fn file_impossible_p(
+    ctx: &crate::execctx::ExecContext,
+    filename: *const c_char,
+) -> Result<i32, crate::build_result::BuildError> {
+    // `and_then` rather than `?`: the lookup's verdict is the whole function,
+    // so threading it through keeps this frame branch-free.
+    split_for_contents(ctx, filename).map(|(dir, base)| impossible_flag(dir, base))
+}
+
+/// Split `filename` at its final slash and return the directory part's cached
+/// contents (null when it has none) alongside the base name. Split out of
+/// [`file_impossible_p`] so both arms share one lookup.
+///
+/// # Safety
+/// As [`file_impossible_p`].
+unsafe fn split_for_contents(
+    ctx: &crate::execctx::ExecContext,
+    filename: *const c_char,
+) -> Result<(*mut DirectoryContents, *const c_char), crate::build_result::BuildError> {
+    match split_dir(::core::ffi::CStr::from_ptr(filename)) {
+        None => dir_contents_of(ctx, c".".as_ptr()).map(|d| (d, filename)),
         Some((dirname, base)) => {
-            let dir_ptr = find_directory(ctx, dirname.as_ptr().cast());
-            let contents = dir_ptr
-                .as_ref()
-                .map_or(::core::ptr::null_mut(), |d| d.contents);
-            (contents, base.as_ptr())
+            dir_contents_of(ctx, dirname.as_ptr().cast()).map(|d| (d, base.as_ptr()))
         }
-    };
+    }
+}
+
+/// Is `filename` marked impossible in `dir`'s cached contents?
+///
+/// # Safety
+/// `dir` must be null or a live contents entry; `filename` NUL-terminated.
+unsafe fn impossible_flag(dir: *mut DirectoryContents, filename: *const c_char) -> i32 {
     let Some(dir) = dir.as_mut() else { return 0 };
     let key = ::core::ffi::CStr::from_ptr(filename).to_bytes();
     match dir.dirfiles.as_ref().and_then(|m| m.get(key)) {
@@ -480,11 +579,15 @@ pub unsafe fn file_impossible_p(ctx: &crate::execctx::ExecContext, filename: *co
 ///
 /// `dir` must be NUL-terminated; the directory tables must be
 /// initialized.
-pub unsafe fn dir_name(ctx: &crate::execctx::ExecContext, dir: *const c_char) -> *const c_char {
-    find_directory(ctx, dir)
-        .as_ref()
-        .expect("find_directory never returns null")
-        .name
+pub unsafe fn dir_name(
+    ctx: &crate::execctx::ExecContext,
+    dir: *const c_char,
+) -> Result<*const c_char, crate::build_result::BuildError> {
+    find_directory(ctx, dir).map(|d| {
+        d.as_ref()
+            .expect("find_directory never returns null")
+            .name
+    })
 }
 
 /// Print `n`, or `word` when `n` is zero (the "No files" / "no
@@ -586,20 +689,38 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
     // it populates lives on that context, so we reach the live per-run context
     // through the `CTX_PTR` borrow channel (installed for the extent of
     // `main_0`), exactly as `with_options` does for `Options`.
-    crate::make_main::with_exec_context(|ctx| unsafe {
-        let dir = find_directory(ctx, directory)
+    // `open_dirstream` returns `*mut c_void` to a C caller: there is no Rust
+    // frame between here and the glob machinery to carry a `Result`, so the
+    // whole body's verdict bridges once, here, rather than at each fallible
+    // call inside it. This is the one site in this cone that keeps bridging
+    // (#432 Phase B, #539).
+    crate::make_main::with_exec_context(|ctx| unsafe { open_dirstream_cached(ctx, directory) })
+        .unwrap_or_else(|e| crate::output::exit_on_err(e))
+}
+
+/// The body of [`open_dirstream`], with the fallible directory-cache reads
+/// left propagating so the callback's C boundary is the only bridge.
+///
+/// # Safety
+/// As [`open_dirstream`]: `directory` must be NUL-terminated.
+unsafe fn open_dirstream_cached(
+    ctx: &crate::execctx::ExecContext,
+    directory: *const c_char,
+) -> Result<*mut c_void, crate::build_result::BuildError> {
+    {
+        let dir = find_directory(ctx, directory)?
             .as_mut()
             .expect("find_directory never returns null");
         let Some(dc) = dir.contents.as_mut() else {
             // The directory could not be stat'd.
-            return null_mut();
+            return Ok(null_mut());
         };
         if dc.dirfiles.is_none() {
             // The directory could not be opened.
-            return null_mut();
+            return Ok(null_mut());
         }
         // Read it all in now so the cache is complete.
-        dir_contents_file_exists_p(ctx, &raw mut *dir, null());
+        dir_contents_file_exists_p(ctx, &raw mut *dir, null())?;
 
         // Snapshot the non-impossible entries once. The cache is fully read and
         // is not mutated during the glob, so a flat `Vec` lets `read_dirstream`
@@ -613,8 +734,8 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
             .filter(|(_, e)| !e.impossible)
             .map(|(name, e)| (name.clone(), e.type_0))
             .collect();
-        Box::into_raw(Box::new(DirStream { entries, index: 0 })).cast()
-    })
+        Ok(Box::into_raw(Box::new(DirStream { entries, index: 0 })).cast())
+    }
 }
 
 /// glob `readdir` callback: synthesize a `dirent` for the next cached

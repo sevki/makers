@@ -1532,7 +1532,7 @@ pub unsafe fn expand_deps(
             Some(s) => Some(s.as_bytes()),
             None => file_stem.as_deref(),
         };
-        set_file_variables(ctx, f, stem);
+        set_file_variables(ctx, f, stem)?;
 
         // Second-expansion string expansion in this target's variable context,
         // via the FileId form of `expand_string_for_file`.

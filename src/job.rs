@@ -1020,7 +1020,7 @@ pub unsafe fn reap_children(
                     .store(is_target as i32, Ordering::Relaxed);
             }
             if exit_sig != 0 || ctx.delete_on_error.0.load(Ordering::Relaxed) != 0 {
-                delete_child_targets(ctx, c);
+                delete_child_targets(ctx, c)?;
             }
         } else {
             if child_failed != 0 {
@@ -1050,7 +1050,7 @@ pub unsafe fn reap_children(
                 }
                 if file_update_status_entry(ctx, (*c).file, (*c).entry) as i32 != us_success as i32
                 {
-                    delete_child_targets(ctx, c);
+                    delete_child_targets(ctx, c)?;
                 }
             } else {
                 set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_success);
@@ -1058,7 +1058,7 @@ pub unsafe fn reap_children(
         }
         crate::output::output_dump(ctx, &raw mut (*c).output);
         if !handling_fatal_signal(ctx) {
-            notice_finished_file(ctx, (*c).file, (*c).entry);
+            notice_finished_file(ctx, (*c).file, (*c).entry)?;
         }
         block_sigs(ctx);
         if (*c).pid > 0 && 0x4_i32 & db_level(ctx) != 0 {
@@ -1303,7 +1303,7 @@ pub unsafe fn start_job_command(
                 free(argv as *mut ::core::ffi::c_void);
             }
             set_file_update_status_entry(ctx, (*child).file, (*child).entry, us_question);
-            notice_finished_file(ctx, (*child).file, (*child).entry);
+            notice_finished_file(ctx, (*child).file, (*child).entry)?;
             return Ok(());
         }
         if crate::make_main::opt_touch(ctx) && !(flags & 1 != 0) {
@@ -1468,7 +1468,7 @@ pub unsafe fn start_job_command(
     } else {
         set_file_command_state_entry(ctx, (*child).file, (*child).entry, cs_running);
         set_file_update_status_entry(ctx, (*child).file, (*child).entry, us_success);
-        notice_finished_file(ctx, (*child).file, (*child).entry);
+        notice_finished_file(ctx, (*child).file, (*child).entry)?;
         Ok(())
     };
     set_output_context(::core::ptr::null_mut::<output>());
@@ -1537,7 +1537,7 @@ pub unsafe fn start_waiting_job(
         }
     }
     if finish {
-        notice_finished_file(ctx, f, e);
+        notice_finished_file(ctx, f, e)?;
         free_child(ctx, c)?;
     }
     Ok(1)

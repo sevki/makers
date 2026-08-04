@@ -97,8 +97,14 @@ fn classify_ar_name(bytes: &[u8]) -> ArName {
 ///
 /// Aborts via [`fatal`](crate::output::fatal) on the unsupported nested
 /// `archive((member))` form, matching make's behavior. Thin wrapper around
-/// [`ar_name_err`]; call sites not yet migrated to `Result` propagation
-/// (#432 Phase B) bridge through here.
+/// [`ar_name_err`].
+///
+/// Test-only since #442: every production caller propagates the `BuildError`
+/// now, and the sole remaining caller is the verbatim-C oracle in
+/// `commands::autovar_dep_name`'s tests, which must keep the original
+/// diverging behaviour to stay faithful to the translated source
+/// (AGENTS.md rule 3).
+#[cfg(test)]
 pub fn ar_name(ctx: &crate::execctx::ExecContext, name: &::core::ffi::CStr) -> bool {
     ar_name_err(ctx, name).unwrap_or_else(|e| crate::output::exit_on_err(e))
 }
@@ -220,7 +226,7 @@ impl ParsedArName {
 pub unsafe fn ar_member_date(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
-) -> time_t {
+) -> Result<time_t, crate::build_result::BuildError> {
     // `name` is `archive(member)`; own the split buffer here so it drops on
     // return (replacing the old `ar_parse_name` xstrdup + `free`).
     let parsed = ParsedArName::parse(::core::ffi::CStr::from_ptr(name));
@@ -229,11 +235,11 @@ pub unsafe fn ar_member_date(
     let val: intmax_t;
     let arname_bytes = ::core::ffi::CStr::from_ptr(arname).to_bytes();
     let mut arfile = lookup_file(ctx, arname_bytes);
-    if arfile.is_none() && file_exists_p(ctx, arname) != 0 {
+    if arfile.is_none() && file_exists_p(ctx, arname)? != 0 {
         arfile = Some(enter_file(ctx, arname_bytes));
     }
     if let Some(fid) = arfile {
-        f_mtime(ctx, fid, false);
+        f_mtime(ctx, fid, false)?;
     }
     val = ar_scan(
         ctx,
@@ -255,16 +261,19 @@ pub unsafe fn ar_member_date(
                     + 1 as time_t
             }) as intmax_t
     {
-        val as time_t
+        Ok(val as time_t)
     } else {
-        -1_i32 as time_t
+        Ok(-1_i32 as time_t)
     }
 }
 /// # Safety
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
 /// valid (NUL-terminated where strings are expected) for the call.
-pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::ffi::c_char) -> i32 {
+pub unsafe fn ar_touch(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+) -> Result<i32, crate::build_result::BuildError> {
     // Own the split `archive`/`member` buffer for the call (replacing the old
     // `ar_parse_name` xstrdup + `free`).
     let parsed = ParsedArName::parse(::core::ffi::CStr::from_ptr(name));
@@ -272,7 +281,7 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
     let memname = parsed.memname();
     let mut val: i32;
     let arfile = enter_file(ctx, ::core::ffi::CStr::from_ptr(arname).to_bytes());
-    f_mtime(ctx, arfile, false);
+    f_mtime(ctx, arfile, false)?;
     val = 1;
     match ar_member_touch(ctx, arname, memname) {
         -1 => {
@@ -327,7 +336,7 @@ pub unsafe fn ar_touch(ctx: &crate::execctx::ExecContext, name: *const ::core::f
             );
         }
     }
-    val
+    Ok(val)
 }
 // The argument list is the fixed ar_scan callback protocol.
 #[allow(clippy::too_many_arguments)]
@@ -598,5 +607,52 @@ mod parsed_ar_name_tests {
         assert_same(b"/path/to/lib.a(very_long_member_name.o)");
         assert_same(b"\xc3\xa9lib.a(m\xc3\xa9mber.o)"); // high bytes both sides
         assert_same(b"x(\xff)"); // high-byte single-byte member
+    }
+}
+
+#[cfg(test)]
+mod ar_date_touch_rejection_tests {
+    //! Since #442 `ar_member_date` and `ar_touch` return `Result`: an
+    //! `archive(member)` reference whose enclosing archive cannot be resolved
+    //! travels back out instead of ending the process from inside the archive
+    //! layer. These also give the two functions their first coverage.
+
+    use super::{ar_member_date, ar_touch};
+    use std::ffi::CString;
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::expand::initialize_variable_output(&ctx);
+        }
+        ctx
+    }
+
+    /// A member of an archive that does not exist has no date: the scan finds
+    /// nothing and the result is the `-1` sentinel, not a rejection.
+    #[test]
+    fn missing_archive_member_has_no_date() {
+        let ctx = fresh_ctx();
+        let name = CString::new("no_such_archive_xyz.a(member.o)").unwrap();
+        // SAFETY: NUL-terminated `archive(member)` name; fresh context.
+        let date = unsafe { ar_member_date(&ctx, name.as_ptr()) }
+            .expect("a missing archive is reported, not refused");
+        assert_eq!(date, -1, "no such archive, so no member date");
+    }
+
+    /// Touching a member of an archive that does not exist reports failure
+    /// (non-zero) through the normal return, again without exiting.
+    #[test]
+    fn touching_a_missing_archive_reports_failure() {
+        let ctx = fresh_ctx();
+        let name = CString::new("no_such_archive_xyz.a(member.o)").unwrap();
+        // SAFETY: as above.
+        let val = unsafe { ar_touch(&ctx, name.as_ptr()) }
+            .expect("a missing archive is reported, not refused");
+        assert_ne!(val, 0, "touch of a nonexistent archive does not succeed");
     }
 }
