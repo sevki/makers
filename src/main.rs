@@ -2681,12 +2681,15 @@ unsafe fn main_0(
     );
     set_default_suffixes(&ctx, options)?;
     define_automatic_variables(&ctx);
-    // Bound before the dereference rather than `?`-ed inside it: the pointer
-    // only exists once the `Result` has been unwrapped, and spelling that out
-    // keeps the deref off an expression that has an error edge in it.
-    let makeflags = define_makeflags(&ctx, options, 0)?;
-    let fresh46 = &mut (*makeflags);
-    (*fresh46).set_export(v_export as variable_export);
+    // Bound before the dereference rather than `?`-ed inside it, and reached
+    // through `as_mut` rather than a bare `*`: the pointer only exists once
+    // the `Result` has been unwrapped, and `define_makeflags` returns whatever
+    // `define_variable_in_set` produced, which the checked reference asserts
+    // is non-null instead of assuming it.
+    define_makeflags(&ctx, options, 0)?
+        .as_mut()
+        .expect("define_makeflags always defines MAKEFLAGS")
+        .set_export(v_export as variable_export);
     define_default_variables(&ctx, options);
     enter_file(&ctx, b".DEFAULT");
     ctx.default_goal_var.0.set(define_variable_in_set(
